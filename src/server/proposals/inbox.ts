@@ -1,4 +1,9 @@
-import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
+import {
+  type AiProposalKindT,
+  type AiProposalPayloadT,
+  aiProposalKinds,
+  parseAiProposalPayload,
+} from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
@@ -184,6 +189,126 @@ function proposalWhere() {
     // Surface them in the unified inbox so the rollback / accept UI sees them.
     eq(event.action, 'experimental:propose_learning_intent'),
   );
+}
+
+/**
+ * Count the exact pending inbox projection by proposal kind in one database query.
+ *
+ * The interactive inbox reader intentionally performs Zod projection, correction folding, signal
+ * joins, and cursor ranking. Reusing it for a workbench KPI would require walking every cursor page
+ * and materializing every proposal row, making Today latency grow linearly with historical backlog.
+ * This aggregate mirrors only the status/kind parts of that projection and leaves ranking/signals out.
+ */
+export async function countPendingProposalInboxByKind(
+  db: DbLike,
+): Promise<Partial<Record<AiProposalKindT, number>>> {
+  const knownKinds = sql.join(
+    aiProposalKinds.map((kind) => sql`${kind}`),
+    sql`, `,
+  );
+  const rows = await db.execute<{ proposal_kind: string; proposal_count: number }>(sql`
+    WITH proposal_events AS (
+      SELECT
+        ${event.id} AS proposal_id,
+        ${event.action} AS action,
+        ${event.subject_kind} AS subject_kind,
+        ${event.payload} AS payload,
+        CASE
+          WHEN ${event.payload} ? 'ai_proposal' THEN
+            jsonb_typeof(${event.payload}->'ai_proposal') = 'object'
+            AND jsonb_typeof(${event.payload}->'ai_proposal'->'target') = 'object'
+            AND jsonb_typeof(${event.payload}->'ai_proposal'->'reason_md') = 'string'
+            AND jsonb_typeof(${event.payload}->'ai_proposal'->'evidence_refs') = 'array'
+            AND jsonb_typeof(${event.payload}->'ai_proposal'->'proposed_change') = 'object'
+          WHEN ${event.action} = 'experimental:proposal' THEN
+            jsonb_typeof(${event.payload}->'target') = 'object'
+            AND jsonb_typeof(${event.payload}->'reason_md') = 'string'
+            AND jsonb_typeof(${event.payload}->'evidence_refs') = 'array'
+            AND jsonb_typeof(${event.payload}->'proposed_change') = 'object'
+          ELSE true
+        END AS proposal_shape_valid,
+        CASE
+          WHEN ${event.payload} ? 'ai_proposal'
+            THEN ${event.payload}->'ai_proposal'->>'kind'
+          WHEN ${event.action} = 'experimental:proposal'
+            THEN ${event.payload}->>'kind'
+          WHEN ${event.action} LIKE 'experimental:knowledge_%'
+            AND ${event.subject_kind} = 'knowledge'
+            THEN CASE COALESCE(
+              ${event.payload}->>'mutation',
+              regexp_replace(${event.action}, '^experimental:knowledge_', '')
+            )
+              WHEN 'propose' THEN 'knowledge_node'
+              WHEN 'propose_new' THEN 'knowledge_node'
+              WHEN 'reparent' THEN 'knowledge_mutation'
+              WHEN 'merge' THEN 'knowledge_mutation'
+              WHEN 'split' THEN 'knowledge_mutation'
+              ELSE 'archive'
+            END
+          WHEN ${event.action} = 'propose' AND ${event.subject_kind} = 'knowledge'
+            THEN 'knowledge_node'
+          WHEN ${event.action} = 'propose' AND ${event.subject_kind} = 'knowledge_edge'
+            THEN 'knowledge_edge'
+          ELSE NULL
+        END AS proposal_kind
+      FROM ${event}
+      WHERE ${proposalWhere()}
+    ),
+    latest_rate AS (
+      SELECT DISTINCT ON (rate_event.caused_by_event_id)
+        rate_event.caused_by_event_id AS proposal_id,
+        rate_event.payload->>'rating' AS rating
+      FROM ${event} rate_event
+      INNER JOIN proposal_events proposal
+        ON proposal.proposal_id = rate_event.caused_by_event_id
+      WHERE rate_event.action = 'rate'
+        AND rate_event.caused_by_event_id IS NOT NULL
+      ORDER BY rate_event.caused_by_event_id, rate_event.created_at DESC, rate_event.id DESC
+    ),
+    latest_valid_correction AS (
+      SELECT DISTINCT ON (correction_event.subject_id)
+        correction_event.subject_id AS proposal_id,
+        correction_event.payload->>'correction_kind' AS correction_kind
+      FROM ${event} correction_event
+      INNER JOIN proposal_events proposal ON proposal.proposal_id = correction_event.subject_id
+      WHERE correction_event.action = 'correct'
+        AND correction_event.subject_kind = 'event'
+        AND correction_event.payload->>'correction_kind'
+          IN ('retract', 'mark_wrong', 'supersede', 'restore')
+        AND (
+          correction_event.payload->>'correction_kind' <> 'supersede'
+          OR jsonb_typeof(correction_event.payload->'replacement_event_id') = 'string'
+        )
+      ORDER BY correction_event.subject_id, correction_event.created_at DESC, correction_event.id DESC
+    )
+    SELECT
+      proposal.proposal_kind,
+      cast(count(*) AS int) AS proposal_count
+    FROM proposal_events proposal
+    LEFT JOIN latest_rate rate ON rate.proposal_id = proposal.proposal_id
+    LEFT JOIN latest_valid_correction correction
+      ON correction.proposal_id = proposal.proposal_id
+    WHERE proposal.proposal_kind IN (${knownKinds})
+      AND proposal.proposal_shape_valid
+      AND (correction.correction_kind IS NULL OR correction.correction_kind = 'restore')
+      AND (
+        rate.rating IS NULL
+        OR rate.rating NOT IN ('accept', 'reverse', 'change_type', 'dismiss', 'rollback')
+      )
+      AND NOT COALESCE((
+        jsonb_typeof(proposal.payload->'rubric_verdict') = 'object'
+        AND proposal.payload->'rubric_verdict'->'ok' = 'false'::jsonb
+      ), false)
+      AND NOT COALESCE((
+        jsonb_typeof(proposal.payload->'topology_verdict') = 'object'
+        AND proposal.payload->'topology_verdict'->>'status' = 'reject'
+      ), false)
+    GROUP BY proposal.proposal_kind
+  `);
+
+  return Object.fromEntries(
+    rows.map((row) => [row.proposal_kind, Number(row.proposal_count)]),
+  ) as Partial<Record<AiProposalKindT, number>>;
 }
 
 // YUK-520 (A1 夜窗 digest) — windowed proposal count for the overnight-digest read

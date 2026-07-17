@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  countPendingProposalInboxByKind,
   getProposalInboxRow,
   listLegacyKnowledgeProposals,
   listProposalInboxPage,
@@ -768,5 +769,127 @@ describe('proposal inbox reader', () => {
     // non-pending just like rubric_rejected was).
     const pending = await listProposalInboxRows(db, { status: 'pending' });
     expect(pending.find((r) => r.id === 'edge_folded_corrected')).toBeUndefined();
+  });
+
+  it('aggregates exact pending counts without materializing ranked inbox pages', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'count_defer',
+      payload: {
+        kind: 'defer',
+        target: { subject_kind: 'learning_item', subject_id: 'item_count' },
+        reason_md: 'observe only',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'item_count',
+          defer_until: '2026-07-18T00:00:00.000Z',
+          reason: 'low energy',
+        },
+      },
+    });
+    for (const id of ['count_pending', 'count_accepted'] as const) {
+      await writeAiProposal(db, {
+        id,
+        payload: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: id,
+          evidence_refs: [],
+          proposed_change: {
+            from_knowledge_id: `${id}_from`,
+            to_knowledge_id: `${id}_to`,
+            relation_type: 'related_to',
+            weight: 1,
+          },
+        },
+      });
+    }
+    await db.insert(event).values({
+      id: 'count_rate',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'count_accepted',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'count_accepted',
+      created_at: new Date('2026-07-17T00:00:00.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_item',
+      outcome: 'partial',
+      payload: { ai_proposal: { kind: 'completion' } },
+      created_at: new Date('2026-07-17T00:00:30.000Z'),
+    });
+    await writeAiProposal(db, {
+      id: 'count_folded',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'folded',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'folded_from',
+          to_knowledge_id: 'folded_to',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'folded_from',
+          to_knowledge_id: 'folded_to',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: 'folded',
+          rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        },
+      },
+    });
+
+    await writeEvent(db, {
+      id: 'count_retract',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_pending',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'temporary retract',
+        affected_refs: [{ kind: 'open_inquiry', id: 'count_pending' }],
+      },
+      caused_by_event_id: 'count_pending',
+      created_at: new Date('2026-07-17T00:01:00.000Z'),
+    });
+    await writeEvent(db, {
+      id: 'count_restore',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_pending',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'restore pending proposal',
+        affected_refs: [{ kind: 'open_inquiry', id: 'count_pending' }],
+      },
+      caused_by_event_id: 'count_retract',
+      created_at: new Date('2026-07-17T00:02:00.000Z'),
+    });
+
+    const counts = await countPendingProposalInboxByKind(db);
+
+    expect(counts).toEqual({ defer: 1, knowledge_edge: 1 });
   });
 });

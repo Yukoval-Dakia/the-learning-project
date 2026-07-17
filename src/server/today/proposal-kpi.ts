@@ -5,9 +5,8 @@ import {
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import {
-  type ProposalInboxRow,
   type ProposalStatus,
-  listProposalInboxPage,
+  countPendingProposalInboxByKind,
 } from '@/server/proposals/inbox';
 
 type DbLike = Db | Tx;
@@ -27,84 +26,36 @@ export interface TodayProposalKpi {
   status: ProposalStatus;
 }
 
-interface ProposalKpiPage {
-  rows: Pick<ProposalInboxRow, 'kind'>[];
-  next_cursor: string | null;
-}
-
-export type ProposalKpiPageLoader = (opts: {
-  status: ProposalStatus;
-  limit: number;
-  cursor?: string;
-}) => Promise<ProposalKpiPage>;
-
 function emptyKindCounts(): ProposalKindCounts {
   return Object.fromEntries(aiProposalKinds.map((kind) => [kind, 0])) as ProposalKindCounts;
 }
 
 export function summarizeTodayProposalKpi(
-  rows: Pick<ProposalInboxRow, 'kind'>[],
-  opts: { hasMore?: boolean; limit?: number; status?: ProposalStatus } = {},
+  counts: Partial<Record<AiProposalKindT, number>>,
 ): TodayProposalKpi {
   const byKind = emptyKindCounts();
+  let total = 0;
   let decisionTotal = 0;
-  for (const row of rows) {
-    byKind[row.kind] += 1;
+  for (const kind of aiProposalKinds) {
+    const count = counts[kind] ?? 0;
+    byKind[kind] = count;
+    total += count;
     // A 档若仍处于 pending，表示 breaker 已把它退回人审；B 档天然人审。
     // 只有 C 档是 observe-only，既无 accept applier，也没有目标 mutation。
-    if (aiProposalKindStrength[row.kind] !== 'C') decisionTotal += 1;
+    if (aiProposalKindStrength[kind] !== 'C') decisionTotal += count;
   }
   return {
-    total: rows.length,
+    total,
     decision_total: decisionTotal,
     by_kind: byKind,
-    has_more: opts.hasMore ?? false,
-    limit: opts.limit ?? TODAY_PROPOSAL_KPI_LIMIT,
-    status: opts.status ?? 'pending',
+    // This KPI is now an aggregate query, not a truncated inbox page. Keep the legacy fields in the
+    // public contract for compatibility while restoring their original meaning.
+    has_more: false,
+    limit: TODAY_PROPOSAL_KPI_LIMIT,
+    status: 'pending',
   };
 }
 
-/**
- * 穿透 pending 投影的全部 cursor 页，计算未截断 KPI。不能只看首 500 行：排序首批可能全是
- * C-strength，而后续仍有真正待人审的 A/B 行。`has_more` 记录本次读取是否跨过首个分页，
- * `limit` 是内部页大小，不是 total 的截断上限。
- */
-export async function loadTodayProposalKpiFromPages(
-  loadPage: ProposalKpiPageLoader,
-): Promise<TodayProposalKpi> {
-  const aggregate = summarizeTodayProposalKpi([], {
-    limit: TODAY_PROPOSAL_KPI_LIMIT,
-    status: 'pending',
-  });
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-
-  while (true) {
-    const page = await loadPage({
-      status: 'pending',
-      limit: TODAY_PROPOSAL_KPI_LIMIT,
-      ...(cursor ? { cursor } : {}),
-    });
-    const pageSummary = summarizeTodayProposalKpi(page.rows);
-    aggregate.total += pageSummary.total;
-    aggregate.decision_total += pageSummary.decision_total;
-    for (const kind of aiProposalKinds) {
-      aggregate.by_kind[kind] += pageSummary.by_kind[kind];
-    }
-
-    const nextCursor = page.next_cursor;
-    if (!nextCursor) break;
-    aggregate.has_more = true;
-    if (seenCursors.has(nextCursor)) {
-      throw new Error('proposal KPI pagination repeated cursor');
-    }
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-
-  return aggregate;
-}
-
 export async function loadTodayProposalKpi(db: DbLike): Promise<TodayProposalKpi> {
-  return loadTodayProposalKpiFromPages((opts) => listProposalInboxPage(db, opts));
+  return summarizeTodayProposalKpi(await countPendingProposalInboxByKind(db));
 }
