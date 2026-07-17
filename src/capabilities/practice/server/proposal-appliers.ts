@@ -648,7 +648,7 @@ export async function acceptQuestionEditProposal(
     if (!existing) {
       throw new ApiError(
         'inconsistent_state',
-        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; retract + retry`,
+        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; submit a new question_edit proposal or investigate the event/projection state manually`,
         500,
       );
     }
