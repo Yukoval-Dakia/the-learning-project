@@ -41,7 +41,9 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
-          persist-credentials: false
+          # The repository is private, so the explicit PR-head fetch below needs
+          # checkout's token (contents: read). That step removes it before OCR runs.
+          persist-credentials: true
 
       - name: Resolve OCR binary
         id: ocr_bin
@@ -81,9 +83,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          cleanup_checkout_credentials() {
+            git config --local --unset-all http.https://github.com/.extraheader || true
+          }
+          trap cleanup_checkout_credentials EXIT
+
           git fetch --no-tags origin \
             "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" \
             "+refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head"
+
+          cleanup_checkout_credentials
+          trap - EXIT
 
           git cat-file -e "${BASE_SHA}^{commit}"
           git cat-file -e "refs/remotes/pull/${PR_NUMBER}/head^{commit}"
