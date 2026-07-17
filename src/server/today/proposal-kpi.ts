@@ -17,7 +17,7 @@ export const TODAY_PROPOSAL_KPI_LIMIT = 500;
 export type ProposalKindCounts = Record<AiProposalKindT, number>;
 
 export interface TodayProposalKpi {
-  /** 全部 pending proposal 记录；保留 C 档以维持事实/冷启动证据。 */
+  /** 全部 pending proposal 记录的未截断总数；保留 C 档以维持事实/冷启动证据。 */
   total: number;
   /** 真正需要学习者裁决的 pending proposal；C-strength observe-only 不计入。 */
   decision_total: number;
@@ -26,6 +26,17 @@ export interface TodayProposalKpi {
   limit: number;
   status: ProposalStatus;
 }
+
+interface ProposalKpiPage {
+  rows: Pick<ProposalInboxRow, 'kind'>[];
+  next_cursor: string | null;
+}
+
+export type ProposalKpiPageLoader = (opts: {
+  status: ProposalStatus;
+  limit: number;
+  cursor?: string;
+}) => Promise<ProposalKpiPage>;
 
 function emptyKindCounts(): ProposalKindCounts {
   return Object.fromEntries(aiProposalKinds.map((kind) => [kind, 0])) as ProposalKindCounts;
@@ -53,14 +64,47 @@ export function summarizeTodayProposalKpi(
   };
 }
 
+/**
+ * 穿透 pending 投影的全部 cursor 页，计算未截断 KPI。不能只看首 500 行：排序首批可能全是
+ * C-strength，而后续仍有真正待人审的 A/B 行。`has_more` 记录本次读取是否跨过首个分页，
+ * `limit` 是内部页大小，不是 total 的截断上限。
+ */
+export async function loadTodayProposalKpiFromPages(
+  loadPage: ProposalKpiPageLoader,
+): Promise<TodayProposalKpi> {
+  const aggregate = summarizeTodayProposalKpi([], {
+    limit: TODAY_PROPOSAL_KPI_LIMIT,
+    status: 'pending',
+  });
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  while (true) {
+    const page = await loadPage({
+      status: 'pending',
+      limit: TODAY_PROPOSAL_KPI_LIMIT,
+      ...(cursor ? { cursor } : {}),
+    });
+    const pageSummary = summarizeTodayProposalKpi(page.rows);
+    aggregate.total += pageSummary.total;
+    aggregate.decision_total += pageSummary.decision_total;
+    for (const kind of aiProposalKinds) {
+      aggregate.by_kind[kind] += pageSummary.by_kind[kind];
+    }
+
+    const nextCursor = page.next_cursor;
+    if (!nextCursor) break;
+    aggregate.has_more = true;
+    if (seenCursors.has(nextCursor)) {
+      throw new Error('proposal KPI pagination repeated cursor');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return aggregate;
+}
+
 export async function loadTodayProposalKpi(db: DbLike): Promise<TodayProposalKpi> {
-  const page = await listProposalInboxPage(db, {
-    status: 'pending',
-    limit: TODAY_PROPOSAL_KPI_LIMIT,
-  });
-  return summarizeTodayProposalKpi(page.rows, {
-    hasMore: page.next_cursor !== null,
-    limit: TODAY_PROPOSAL_KPI_LIMIT,
-    status: 'pending',
-  });
+  return loadTodayProposalKpiFromPages((opts) => listProposalInboxPage(db, opts));
 }
