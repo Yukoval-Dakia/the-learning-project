@@ -4,11 +4,17 @@ import {
   aiProposalKinds,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { type ProposalStatus, countPendingProposalInboxByKind } from '@/server/proposals/inbox';
+import {
+  PENDING_PROPOSAL_COUNT_BATCH_SIZE,
+  PENDING_PROPOSAL_COUNT_MAX_BATCHES,
+  type ProposalStatus,
+  countPendingProposalInboxByKind,
+} from '@/server/proposals/inbox';
 
 type DbLike = Db | Tx;
 
-export const TODAY_PROPOSAL_KPI_LIMIT = 500;
+export const TODAY_PROPOSAL_KPI_LIMIT =
+  PENDING_PROPOSAL_COUNT_BATCH_SIZE * PENDING_PROPOSAL_COUNT_MAX_BATCHES;
 
 export type ProposalKindCounts = Record<AiProposalKindT, number>;
 
@@ -46,7 +52,7 @@ export function summarizeTodayProposalKpi(
     total,
     decision_total: decisionTotal,
     by_kind: byKind,
-    // Normally exact. At the 50k candidate accident ceiling the counts are explicit lower bounds;
+    // Normally exact. At the candidate accident ceiling the counts are explicit lower bounds;
     // keep serving Today and surface the existing truncation signal instead of throwing a 500.
     has_more: hasMore,
     limit: TODAY_PROPOSAL_KPI_LIMIT,

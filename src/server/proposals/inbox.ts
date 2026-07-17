@@ -232,6 +232,9 @@ export interface PendingProposalCountResult {
   hasMore: boolean;
 }
 
+export const PENDING_PROPOSAL_COUNT_BATCH_SIZE = 500;
+export const PENDING_PROPOSAL_COUNT_MAX_BATCHES = 100;
+
 export async function countPendingProposalInboxByKind(
   db: DbLike,
   options: { maxBatches?: number } = {},
@@ -268,8 +271,8 @@ export async function countPendingProposalInboxByKind(
     );
 
   const counts: Partial<Record<AiProposalKindT, number>> = {};
-  const batchSize = 500;
-  const maxBatches = options.maxBatches ?? 100;
+  const batchSize = PENDING_PROPOSAL_COUNT_BATCH_SIZE;
+  const maxBatches = options.maxBatches ?? PENDING_PROPOSAL_COUNT_MAX_BATCHES;
   let after: Pick<EventRow, 'created_at' | 'id'> | null = null;
   let batchCount = 0;
 

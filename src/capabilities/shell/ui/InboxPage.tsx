@@ -266,6 +266,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   };
 
   const rows = q.data?.rows ?? [];
+  const decisionTruncated = q.data?.decision_truncated === true;
   const observationTruncated = q.data?.observation_truncated === true;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
@@ -395,6 +396,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {/* ── B 档 · 逐条人审 ── */}
         <section>
           <TierHead tier="B" count={decideRemaining} />
+          {decisionTruncated && (
+            <LoomCard pad sunk>
+              <div className="meta">
+                待裁决提议当前显示前 {decide.length}{' '}
+                条，还有更多记录未在本页展开；处理后刷新即可继续。
+              </div>
+            </LoomCard>
+          )}
           {decide.length === 0 ? (
             <LoomCard pad sunk>
               <div className="meta">没有待裁决的提议。</div>
@@ -440,10 +449,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
             <TierHead tier="C" count={moved.length} />
             {observationTruncated && (
               <LoomCard pad sunk>
-                <output className="meta">
+                <div className="meta">
                   AI 观察当前显示前 {moved.length}{' '}
                   条，还有更多记录未在本页展开；待裁决提议不受影响。
-                </output>
+                </div>
               </LoomCard>
             )}
             {moved.length > 0 && <TierCBlock items={moved} navigate={navigate} />}

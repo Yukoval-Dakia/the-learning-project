@@ -110,6 +110,8 @@ export interface ProposalInboxRow {
 interface ProposalPageWire {
   rows: ProposalInboxRow[];
   next_cursor: string | null;
+  /** Present when the decision lane reached its defensive client-side page ceiling. */
+  decision_truncated?: boolean;
   /** Present on the merged Inbox response when the bounded C-lane preview has more rows. */
   observation_truncated?: boolean;
 }
@@ -128,7 +130,10 @@ function listProposalPage(
   return apiJson<ProposalPageWire>(`/api/proposals?${query.toString()}`);
 }
 
-async function listAllDecisionProposals(): Promise<ProposalInboxRow[]> {
+async function listAllDecisionProposals(): Promise<{
+  rows: ProposalInboxRow[];
+  truncated: boolean;
+}> {
   const rows: ProposalInboxRow[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -138,11 +143,11 @@ async function listAllDecisionProposals(): Promise<ProposalInboxRow[]> {
     pageCount += 1;
     const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
     rows.push(...page.rows);
-    if (!page.next_cursor) return rows;
+    if (!page.next_cursor) return { rows, truncated: false };
     if (pageCount >= DECISION_MAX_PAGES) {
-      throw new Error(
-        `待裁决提议超过安全加载上限（${DECISION_MAX_PAGES * DECISION_PAGE_LIMIT} 条），请先处理或归档部分积压。`,
-      );
+      // Keep the loaded decisions actionable. Failing the whole Inbox here would
+      // prevent the learner from reducing the very backlog that hit the guard.
+      return { rows, truncated: true };
     }
     if (seenCursors.has(page.next_cursor)) {
       throw new Error('提议分页游标重复，无法完整加载待裁决项。');
@@ -157,16 +162,17 @@ async function listAllDecisionProposals(): Promise<ProposalInboxRow[]> {
  * large C-strength backlog from making Today advertise decisions that the Inbox cannot reach.
  */
 export async function listProposals(): Promise<ProposalPageWire> {
-  const [decisionRows, observationPage] = await Promise.all([
+  const [decisionPage, observationPage] = await Promise.all([
     listAllDecisionProposals(),
     listProposalPage('observation', OBSERVATION_PAGE_LIMIT),
   ]);
   return {
-    rows: [...decisionRows, ...observationPage.rows],
+    rows: [...decisionPage.rows, ...observationPage.rows],
     // This response merges a fully consumed decision lane with one bounded
     // observation preview. A cursor for only one half would imply a unified
     // continuation that does not exist, so do not expose it.
     next_cursor: null,
+    decision_truncated: decisionPage.truncated,
     observation_truncated: observationPage.next_cursor !== null,
   };
 }

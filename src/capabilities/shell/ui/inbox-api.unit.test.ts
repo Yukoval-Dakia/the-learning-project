@@ -42,6 +42,7 @@ describe('listProposals', () => {
 
     expect(page.rows.map((row) => row.id)).toEqual(['decision_1', 'decision_2', 'observe_1']);
     expect(page.next_cursor).toBeNull();
+    expect(page.decision_truncated).toBe(false);
     expect(page.observation_truncated).toBe(true);
     expect(apiJsonMock).toHaveBeenNthCalledWith(
       1,
@@ -69,7 +70,7 @@ describe('listProposals', () => {
     await expect(listProposals()).rejects.toThrow('提议分页游标重复');
   });
 
-  it('fails visibly when a pathological decision backlog exceeds the page safety cap', async () => {
+  it('keeps a bounded decision subset actionable when the page safety cap is reached', async () => {
     apiJsonMock.mockImplementation(async (url) => {
       if (String(url).includes('lane=observation')) return { rows: [], next_cursor: null };
       const cursor = new URL(String(url), 'http://localhost').searchParams.get('cursor');
@@ -80,7 +81,11 @@ describe('listProposals', () => {
       };
     });
 
-    await expect(listProposals()).rejects.toThrow('超过安全加载上限');
+    const page = await listProposals();
+
+    expect(page.rows).toHaveLength(20);
+    expect(page.decision_truncated).toBe(true);
+    expect(page.observation_truncated).toBe(false);
     expect(apiJsonMock).toHaveBeenCalledTimes(21); // 20 decision pages + observation preview
   });
 });
