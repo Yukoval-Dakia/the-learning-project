@@ -8,10 +8,7 @@
 // 红线（ADR-0035 三轴正交，同 effectiveness-trend）：本模块只做计数 / 分组 / 窗口算，绝不输出
 // 任何内部校准概率（confidence / predicted_p）。digest 是只读观测面，不是反馈环。
 
-import type {
-  DegradedKind,
-  OvernightRunGroup,
-} from '@/server/today/overnight-digest';
+import type { DegradedKind, OvernightRunGroup } from '@/server/today/overnight-digest';
 
 export type {
   DegradedKind,
@@ -52,7 +49,6 @@ export function overnightWindow(now: Date): { from: Date; to: Date } {
   };
 }
 
-/** 一个 task_kind 的夜间运行聚合（ai_task_runs 按 kind 卷起 + 按 status 细分）。 */
 /** ai_task_runs 的窗内分组原始行（一行 = 一个 (task_kind, status) 计数）。 */
 export interface RunStatusCountRow {
   task_kind: string;
