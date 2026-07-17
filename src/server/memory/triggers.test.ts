@@ -4,7 +4,10 @@ import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import { resolveQualifyingEventSubjects } from './active-subjects';
 import {
   MEMORY_BRIEF_REGEN_QUEUE,
+  MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
+  MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+  MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
   MEMORY_RECONCILE_QUEUE,
   buildMemoryEventIngestHandler,
   enqueueBriefRegen,
@@ -394,12 +397,15 @@ describe('shouldExtractToMemory (extraction gate invariant)', () => {
 });
 
 describe('registerMemoryHandlers', () => {
-  it('registers 6 queues (event ingest, brief regen, sweep, outbox poll, outbox recover, reconcile) with 3 schedules', async () => {
+  it('tunes all 6 memory queues and creates DLQs before paid-LLM queues (YUK-248)', async () => {
     const schedule = vi.fn(
       async (_name: string, _cron: string, _data: object, _opts: object) => undefined,
     );
+    const createQueue = vi.fn(async (_name: string, _opts?: object) => undefined);
+    const updateQueue = vi.fn(async (_name: string, _opts?: object) => undefined);
     const boss = {
-      createQueue: vi.fn(async (_name: string) => undefined),
+      createQueue,
+      updateQueue,
       work: vi.fn(async (..._args: unknown[]) => undefined),
       schedule,
       send: vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1'),
@@ -410,14 +416,48 @@ describe('registerMemoryHandlers', () => {
       generateBrief: vi.fn(),
     });
 
-    // 6 createQueue calls
-    expect(boss.createQueue).toHaveBeenCalledTimes(6);
-    expect(boss.createQueue).toHaveBeenCalledWith(MEMORY_EVENT_INGEST_QUEUE);
-    expect(boss.createQueue).toHaveBeenCalledWith(MEMORY_BRIEF_REGEN_QUEUE);
-    expect(boss.createQueue).toHaveBeenCalledWith('memory_brief_sweep');
-    expect(boss.createQueue).toHaveBeenCalledWith('memory_ingest_outbox_poll');
-    expect(boss.createQueue).toHaveBeenCalledWith('memory_ingest_outbox_recover');
-    expect(boss.createQueue).toHaveBeenCalledWith(MEMORY_RECONCILE_QUEUE);
+    const fastOpts = {
+      expireInSeconds: 3_600,
+      retentionSeconds: 604_800,
+    };
+    const paidQueues = [
+      MEMORY_EVENT_INGEST_QUEUE,
+      MEMORY_BRIEF_REGEN_QUEUE,
+      MEMORY_RECONCILE_QUEUE,
+    ];
+    const housekeepingQueues = [
+      MEMORY_BRIEF_SWEEP_QUEUE,
+      MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+      MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
+    ];
+
+    // Three paid queues each create a DLQ + main queue; three housekeeping
+    // queues create only themselves. Every row is reconciled for existing DBs.
+    expect(createQueue).toHaveBeenCalledTimes(9);
+    expect(updateQueue).toHaveBeenCalledTimes(9);
+
+    const created = createQueue.mock.calls.map(([name]) => name);
+    for (const name of paidQueues) {
+      const dlq = `${name}_dlq`;
+      const mainOpts = {
+        expireInSeconds: 3_600,
+        retentionSeconds: 604_800,
+        deadLetter: dlq,
+        retryLimit: 2,
+        retryDelay: 30,
+        retryBackoff: true,
+      };
+      expect(createQueue).toHaveBeenCalledWith(dlq, fastOpts);
+      expect(createQueue).toHaveBeenCalledWith(name, mainOpts);
+      expect(updateQueue).toHaveBeenCalledWith(dlq, fastOpts);
+      expect(updateQueue).toHaveBeenCalledWith(name, mainOpts);
+      expect(created.indexOf(dlq)).toBeLessThan(created.indexOf(name));
+    }
+
+    for (const name of housekeepingQueues) {
+      expect(createQueue).toHaveBeenCalledWith(name, fastOpts);
+      expect(updateQueue).toHaveBeenCalledWith(name, fastOpts);
+    }
 
     // 6 work calls
     expect(boss.work).toHaveBeenCalledTimes(6);
