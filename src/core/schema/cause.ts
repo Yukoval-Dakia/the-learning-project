@@ -50,21 +50,18 @@ export const MetaCauseFields = z.object({
 });
 export type MetaCauseFieldsT = z.infer<typeof MetaCauseFields>;
 
-export const CauseSchema = z.object({
-  primary_category: CauseCategoryId,
-  secondary_categories: z.array(CauseCategoryId).default([]),
-  analysis_md: z.string(),
-  confidence: z.number().min(0).max(1),
+export const CauseSchema = z
+  .object({
+    primary_category: CauseCategoryId,
+    secondary_categories: z.array(CauseCategoryId).default([]),
+    analysis_md: z.string(),
+    confidence: z.number().min(0).max(1),
+  })
   // YUK-672: optional at the event boundary so every historical judge remains
-  // parseable. The live attribution writer completes all six fields (nullable)
-  // before writing a new judge event.
-  meta_cause: MetaCause.nullish(),
-  meta_cause_secondary: MetaCause.nullish(),
-  metacog_flag: MetacogFlag.nullish(),
-  bloom_level: BloomLevel.nullish(),
-  self_corrected_on_hint: z.boolean().nullish(),
-  recurred_cross_item: z.boolean().nullish(),
-});
+  // parseable. Derive the six optional-nullable fields from the strict live-writer
+  // shape above, so adding or renaming one field cannot silently drift the two
+  // contracts. The live attribution writer completes all six before writing.
+  .extend(MetaCauseFields.partial().shape);
 export type CauseSchemaT = z.infer<typeof CauseSchema>;
 
 /**
