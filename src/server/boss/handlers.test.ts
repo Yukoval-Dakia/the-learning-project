@@ -82,13 +82,10 @@ describe('registerHandlers + registerCapabilityJobs', () => {
 
     await registerAll(boss);
 
-    // The `memory_*` queues are registered by registerMemoryHandlers (the memory
-    // module, NOT this file) and intentionally excluded — their expire/retention
-    // tuning is tracked separately. Assert the invariant on the queues owned by
-    // the 渐缩簿 + the capability jobs registry.
-    const ownedCalls = createQueue.mock.calls.filter(
-      ([name]) => !(name as string).startsWith('memory_'),
-    );
+    // YUK-248 closes the prior memory_* exception: registerHandlers composes the
+    // memory registrar, so this invariant now covers every queue in the worker
+    // composition root without a prefix allowlist.
+    const ownedCalls = createQueue.mock.calls;
     for (const [name, opts] of ownedCalls) {
       expect(opts, `queue ${name} must carry createQueue options`).toBeDefined();
       const o = opts as { expireInSeconds?: number; retentionSeconds?: number };
@@ -110,9 +107,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     // YUK-237 (CODEX-2 round-2): every owned queue is also reconciled via
     // updateQueue with the SAME opts (createQueue is ON CONFLICT DO NOTHING, so
     // an already-existing queue would otherwise keep stale config on upgrade).
-    const updatedCalls = updateQueue.mock.calls.filter(
-      ([name]) => !(name as string).startsWith('memory_'),
-    );
+    const updatedCalls = updateQueue.mock.calls;
     const updated = updatedCalls.map((c) => c[0] as string);
     for (const name of created) {
       expect(updated, `queue ${name} must be reconciled via updateQueue`).toContain(name);

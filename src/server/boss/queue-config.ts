@@ -35,6 +35,8 @@ import type { PgBoss } from 'pg-boss';
 
 import { isQueueCreateRace } from '@/server/boss/client';
 
+type QueueAdmin = Pick<PgBoss, 'createQueue' | 'updateQueue'>;
+
 export const RETENTION_7D = 604_800; // 7 days, brief floor
 export const EXPIRE_FAST = 3_600; // 1h — brief minimum floor for cheap jobs
 export const EXPIRE_LLM = 3_600; // 1h — single LLM call handlers
@@ -114,7 +116,7 @@ function jobQueueOpts(queueName: string, expireInSeconds: number) {
  * error is re-thrown.
  */
 export async function createOrUpdateQueue(
-  boss: PgBoss,
+  boss: QueueAdmin,
   name: string,
   opts: {
     expireInSeconds: number;
@@ -150,7 +152,7 @@ export async function createOrUpdateQueue(
  * expire) — it only holds inert failed payloads, never runs a worker.
  */
 export async function createJobQueue(
-  boss: PgBoss,
+  boss: QueueAdmin,
   name: string,
   expireInSeconds: number,
 ): Promise<void> {
