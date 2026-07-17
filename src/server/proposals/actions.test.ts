@@ -1624,6 +1624,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
 
     const accept = await acceptAiProposal(db, 'knode_retract_p1');
     if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
     const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
     expect(newNodeId).not.toBe('');
 
@@ -1673,6 +1674,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     });
     const accept = await acceptAiProposal(db, 'knode_retract_p2');
     if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
     const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
 
     await retractAiProposal(db, 'knode_retract_p2', { reason_md: 'first retract' });
@@ -1708,6 +1710,7 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     });
     const accept = await acceptAiProposal(db, 'knode_atomic_p1');
     if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    if (!accept.result) throw new Error('expected a materialized result on a fresh accept');
     const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
 
     // Corrupt the node row OUT OF BAND (rename it without an event) so the in-tx parity

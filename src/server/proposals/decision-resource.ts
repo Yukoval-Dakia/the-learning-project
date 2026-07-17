@@ -82,21 +82,16 @@ export async function createProposalDecision(
   }
 
   if (input.decision !== 'retract') {
+    // Keep the cross-decision conflict guard, but DROP the idempotent short-circuit:
+    // a same-decision re-decision now falls through to acceptAiProposal / dismissAiProposal,
+    // whose per-kind appliers self-guard idempotency (YUK-681 audit: all 16 accept-family
+    // kinds SAFE). This is what makes learning_item's idempotent branch re-drive the
+    // best-effort note_generate enqueue on re-accept — the recovery path this early return
+    // previously made unreachable (YUK-681 P2). The applier's result carries `idempotent:true`,
+    // which `resultIsIdempotent` below detects, so the response still reports created:false.
     const existingRate = await findExistingRateEvent(db, proposalId);
-    if (existingRate) {
-      if (existingRate.decision !== input.decision) {
-        throw conflict(proposalId, existingRate.decision);
-      }
-      return {
-        proposal_id: proposalId,
-        proposal_kind: proposal.kind,
-        decision: input.decision,
-        decision_event_id: existingRate.id,
-        proposal_status: proposal.status,
-        created: false,
-        idempotent: true,
-        result: null,
-      };
+    if (existingRate && existingRate.decision !== input.decision) {
+      throw conflict(proposalId, existingRate.decision);
     }
   }
 

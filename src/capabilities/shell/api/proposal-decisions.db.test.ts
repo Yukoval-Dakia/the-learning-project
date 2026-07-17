@@ -49,6 +49,20 @@ async function seedEdgeProposal(id = 'edge_p1'): Promise<void> {
   });
 }
 
+async function seedNodeProposal(id = 'node_p1'): Promise<void> {
+  await seedKnowledge(['seed:yuwen:shici']);
+  await writeAiProposal(testDb(), {
+    id,
+    payload: {
+      kind: 'knowledge_node',
+      target: { subject_kind: 'knowledge', subject_id: null },
+      reason_md: 'propose a new node',
+      evidence_refs: [],
+      proposed_change: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:shici' },
+    },
+  });
+}
+
 function decide(id: string, body: unknown): Promise<Response> {
   return POST(
     new Request(`http://test/api/proposals/${id}/decisions`, {
@@ -114,13 +128,50 @@ describe('POST /api/proposals/[id]/decisions', () => {
       decision_event_id: firstBody.decision_event_id,
       created: false,
       idempotent: true,
-      result: null,
     });
+    // YUK-681 P2: the decision-resource idempotent short-circuit is gone, so a same-decision
+    // replay now falls through to the applier, whose idempotent branch returns its own result
+    // (previously the short-circuit returned `result: null` before the applier ran). No new
+    // rate event is written — the applier self-guards idempotency.
+    expect(replayBody.result).toMatchObject({ kind: 'knowledge_edge', idempotent: true });
 
     const rateRows = await testDb()
       .select()
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_p1')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('makes knowledge_node re-accept idempotent (200, not a 409 conflict)', async () => {
+    await seedNodeProposal();
+
+    const first = await decide('node_p1', { decision: 'accept' });
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as DecisionBody;
+    expect(firstBody).toMatchObject({
+      proposal_kind: 'knowledge_node',
+      created: true,
+      idempotent: false,
+    });
+
+    // YUK-681 P2: removing the decision-resource short-circuit routes re-accepts into the
+    // applier, whose knowledge_node case now returns idempotently instead of throwing 409
+    // (assertPending). This also fixes a prior inconsistency where the HTTP route replied 200
+    // (via the short-circuit) while direct acceptAiProposal callers 409'd on the same re-accept.
+    const replay = await decide('node_p1', { decision: 'accept' });
+    expect(replay.status).toBe(200);
+    const replayBody = (await replay.json()) as DecisionBody;
+    expect(replayBody).toMatchObject({
+      decision_event_id: firstBody.decision_event_id,
+      created: false,
+      idempotent: true,
+    });
+    expect(replayBody.result).toMatchObject({ kind: 'knowledge_node', idempotent: true });
+
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'node_p1')));
     expect(rateRows).toHaveLength(1);
   });
 
