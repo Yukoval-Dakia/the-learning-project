@@ -4,10 +4,7 @@ import {
   aiProposalKinds,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import {
-  type ProposalStatus,
-  countPendingProposalInboxByKind,
-} from '@/server/proposals/inbox';
+import { type ProposalStatus, countPendingProposalInboxByKind } from '@/server/proposals/inbox';
 
 type DbLike = Db | Tx;
 
