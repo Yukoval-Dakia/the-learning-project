@@ -15,8 +15,8 @@ describe('backup and restore runbook drift guard', () => {
     expect(runbook).toContain('docker compose exec -T postgres pg_dump');
     expect(runbook).toContain('docker compose exec -T postgres pg_restore');
     expect(runbook).toContain('aws s3api get-object');
-    expect(runbook).toContain('.question_block[]?.crop_refs[]?');
-    expect(runbook).toContain('.question_block[]?.figures[]?.asset_id');
+    expect(runbook.match(/\.question_block\[\]\?\.crop_refs\[\]\?/gu)).toHaveLength(2);
+    expect(runbook.match(/\.question_block\[\]\?\.figures\[\]\?\.asset_id/gu)).toHaveLength(2);
     expect(runbook).toContain('--single-transaction --exit-on-error');
     expect(runbook).toContain('Postgres');
   });

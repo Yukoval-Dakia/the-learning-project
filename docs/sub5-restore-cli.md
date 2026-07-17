@@ -80,7 +80,11 @@ test -n "$R2_ENDPOINT" && test -n "$R2_BUCKET"
 
 rm -f /tmp/loom-r2-keys.txt
 unzip -p "$BACKUP" data.json \
-  | jq -r '.source_asset[].storage_key' \
+  | jq -r '
+      .source_asset[]?.storage_key,
+      (.question_block[]?.crop_refs[]? | "figures/\(.).png"),
+      (.question_block[]?.figures[]?.asset_id | "figures/\(.).png")
+    ' \
   | sort -u > /tmp/loom-r2-keys.txt
 
 mkdir -p r2-sidecar
