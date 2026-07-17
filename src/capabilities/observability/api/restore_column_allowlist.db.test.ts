@@ -36,12 +36,14 @@ vi.mock('@/server/r2', () => ({
 const enc = new TextEncoder();
 
 /** Build a minimal valid ZIP archive from a data.json object. */
-function makeArchive(data: Record<string, unknown[]>): Uint8Array {
+function makeArchive(data: Record<string, unknown>): Uint8Array {
   const manifest = {
     schema_version: SCHEMA_VERSION,
     exported_at: Math.floor(Date.now() / 1000),
     include_assets: false,
-    row_counts: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length])),
+    row_counts: Object.fromEntries(
+      Object.entries(data).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]),
+    ),
     asset_count: 0,
     missing_assets: [],
   };
@@ -169,6 +171,18 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
       const rows = await db.select().from(knowledge);
       expect(rows.map((row) => row.id)).toEqual(['sentinel_invalid_row']);
     }
+
+    const mixedRes = await POST(
+      importRequest(makeArchive({ knowledge: [null], event: { malformed: true } })),
+    );
+    expect(mixedRes.status).toBe(400);
+    await expect(mixedRes.json()).resolves.toMatchObject({
+      error: 'data_validation_failed',
+      issues: ['event: not an array'],
+    });
+    expect((await db.select().from(knowledge)).map((row) => row.id)).toEqual([
+      'sentinel_invalid_row',
+    ]);
   });
 
   it('still performs a valid round-trip restore (allowlist does not break the happy path)', async () => {

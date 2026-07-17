@@ -474,8 +474,24 @@ export async function restoreFromArchive({
   for (const [table, rows] of Object.entries(rawData)) {
     if (!Array.isArray(rows)) {
       validationErrors.push(`${table}: not an array`);
-      continue;
     }
+  }
+  if (validationErrors.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'data_validation_failed',
+        message: 'Pre-flight validation caught issues; DB was NOT wiped.',
+        issues: validationErrors.slice(0, 20),
+      },
+    };
+  }
+
+  // Table-level errors take deterministic precedence and are reported together.
+  // Once every value is known to be an array, return the first invalid row with
+  // the structured table/index contract required by import clients.
+  for (const [table, rows] of Object.entries(rawData)) {
+    if (!Array.isArray(rows)) continue;
     for (let index = 0; index < rows.length; index++) {
       const row = rows[index];
       if (typeof row !== 'object' || row === null || Array.isArray(row)) {
@@ -490,16 +506,6 @@ export async function restoreFromArchive({
         };
       }
     }
-  }
-  if (validationErrors.length > 0) {
-    return {
-      status: 400,
-      body: {
-        error: 'data_validation_failed',
-        message: 'Pre-flight validation caught issues; DB was NOT wiped.',
-        issues: validationErrors.slice(0, 20),
-      },
-    };
   }
 
   const data = rawData as Record<string, Array<Record<string, unknown>> | undefined>;
