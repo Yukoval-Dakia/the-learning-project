@@ -152,7 +152,11 @@ object. Audit before deleting anything:
 
 ```bash
 unzip -p "$BACKUP" data.json \
-  | jq -r '.source_asset[].storage_key' \
+  | jq -r '
+      .source_asset[]?.storage_key,
+      (.question_block[]?.crop_refs[]? | "figures/\(.).png"),
+      (.question_block[]?.figures[]?.asset_id | "figures/\(.).png")
+    ' \
   | sort -u > /tmp/loom-r2-referenced.txt
 
 aws s3api list-objects-v2 \
@@ -168,6 +172,10 @@ comm -23 /tmp/loom-r2-present.txt /tmp/loom-r2-referenced.txt \
   > /tmp/loom-r2-orphans.txt
 cat /tmp/loom-r2-orphans.txt
 ```
+
+The referenced set includes both `source_asset.storage_key` objects and OCR figure crops. Crop
+objects use the `figures/<asset_id>.png` key convention and are referenced by
+`question_block.crop_refs` / `question_block.figures[].asset_id`, not by `source_asset`.
 
 Treat the output as a review list, not an automatic delete list. Take an R2 backup first. To
 delete one confirmed orphan explicitly:
@@ -212,7 +220,7 @@ docker compose stop app worker
 docker compose exec -T postgres pg_restore \
   -U "${POSTGRES_USER:-loom}" \
   -d "${POSTGRES_DB:-loom}" \
-  --clean --if-exists --no-owner \
+  --clean --if-exists --no-owner --single-transaction --exit-on-error \
   < "$DUMP"
 
 docker compose up -d migrate app worker
