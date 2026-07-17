@@ -103,8 +103,8 @@ export interface RunEdgeProposeAndWriteResult {
   // (validateProposalQuality) and were FOLDED (a rubric-rejected propose event is
   // still written, marked, but no live pending proposal is created).
   folded_rubric_rejected: number;
-  // ADR-0034 §2 / YUK-344 — TOPOLOGY gate hard-rejects (cycle / direction
-  // contradiction on the prerequisite graph). Folded like rubric rejects: a
+  // ADR-0034 §2 / YUK-344 / YUK-674 — TOPOLOGY gate hard-rejects tree
+  // redundancy, cycles and direction contradictions on the prerequisite graph. Folded like rubric rejects: a
   // marked propose event is written for audit, no live pending proposal.
   folded_topology_rejected: number;
   // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS. The edge is
@@ -242,6 +242,9 @@ export async function runEdgeProposeAndWrite(
     const parsed = parseEdgeProposeOutput(result.text);
 
     const validNodeIds = new Set(tree.map((n) => n.id));
+    const treeParentLinks = tree.flatMap((node) =>
+      node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+    );
     const stats = { ...EMPTY_RESULT };
 
     for (const p of parsed.proposals) {
@@ -335,8 +338,8 @@ export async function runEdgeProposeAndWrite(
       };
 
       // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
-      // layer). Pure graph checks (cycle / direction contradiction / transitive
-      // redundancy) on the prerequisite graph, orthogonal to the semantic rubric
+      // layer). Pure graph checks (tree redundancy / cycle / direction contradiction /
+      // transitive redundancy) on the prerequisite graph, orthogonal to the semantic rubric
       // gate below. `liveTopologyEdges` accumulates edges accepted EARLIER in this
       // same batch so two proposals that TOGETHER form a cycle are caught (the
       // batch is not yet persisted, so a fresh DB read would miss them).
@@ -347,10 +350,11 @@ export async function runEdgeProposeAndWrite(
           relation_type: p.relation_type,
         },
         liveTopologyEdges,
+        treeParentLinks,
       );
 
       if (topology.status === 'reject') {
-        // Cycle / direction contradiction = HARD reject. Fold like a rubric
+        // Tree redundancy / cycle / direction contradiction = HARD reject. Fold like a rubric
         // reject (RB-6 / §3.4): write a MARKED propose event for audit, no live
         // pending proposal, and exclude it from cross-batch dedup so a later
         // batch can re-evaluate against an evolved graph. The marker is a

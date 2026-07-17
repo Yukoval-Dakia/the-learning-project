@@ -129,6 +129,24 @@ describe('checkEdgeTopology — relation scoping', () => {
   });
 });
 
+describe('checkEdgeTopology — tree/mesh redundancy (YUK-674)', () => {
+  const treeLinks = [{ child_id: 'child', parent_id: 'parent' }];
+
+  it('rejects prerequisite edges that repeat a direct tree link in either direction', () => {
+    for (const candidate of [edge('child', 'parent'), edge('parent', 'child')]) {
+      const verdict = checkEdgeTopology(candidate, [], treeLinks);
+      expect(verdict).toMatchObject({ status: 'reject', gate: 'tree_redundancy' });
+    }
+  });
+
+  it('allows an unrelated prerequisite pair and keeps non-prerequisite scoping unchanged', () => {
+    expect(checkEdgeTopology(edge('child', 'other'), [], treeLinks)).toEqual({ status: 'ok' });
+    expect(checkEdgeTopology(edge('child', 'parent', 'related_to'), [], treeLinks)).toEqual({
+      status: 'ok',
+    });
+  });
+});
+
 describe('checkEdgeTopology — self edge', () => {
   it('rejects a self-loop as a degenerate cycle', () => {
     const verdict = checkEdgeTopology(edge('A', 'A'), []);

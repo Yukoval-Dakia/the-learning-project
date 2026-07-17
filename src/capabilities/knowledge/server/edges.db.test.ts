@@ -106,6 +106,27 @@ describe('createKnowledgeEdge', () => {
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
 
+  it('rejects mesh edges that repeat a direct tree parent relationship', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent', 'child']);
+    await db.update(knowledge).set({ parent_id: 'parent' }).where(eq(knowledge.id, 'child'));
+
+    await expect(
+      createKnowledgeEdge(db, {
+        from_knowledge_id: 'child',
+        to_knowledge_id: 'parent',
+        relation_type: 'prerequisite',
+      }),
+    ).rejects.toMatchObject({ code: 'tree_redundancy', status: 409 });
+    await expect(
+      createKnowledgeEdge(db, {
+        from_knowledge_id: 'parent',
+        to_knowledge_id: 'child',
+        relation_type: 'related_to',
+      }),
+    ).rejects.toMatchObject({ code: 'tree_redundancy', status: 409 });
+  });
+
   it('rejects duplicate (from, to, relation_type) with 409', async () => {
     const db = testDb();
     await seedKnowledge(['k1', 'k2']);

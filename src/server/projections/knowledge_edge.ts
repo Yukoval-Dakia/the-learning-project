@@ -7,7 +7,8 @@
 // reducer reads no rate events; edge create/archive take effect directly).
 //
 // The reducer DOES need the live topology mesh: a generate-create that adds a LIVE
-// prerequisite edge is re-checked against ADR-0034 (cycle / direction contradiction). The
+// prerequisite edge is re-checked against ADR-0034 (cycle / direction contradiction), and every
+// live projected mesh edge is checked against the ADR-0011 tree-backbone invariant. The
 // shell supplies liveMesh = the current archived_at IS NULL edge set. NOTE: foldKnowledgeEdge
 // THROWS on a topology reject — we let it PROPAGATE so the caller's transaction aborts (in
 // PR-B this shell runs inside the accept tx; a reject must roll the whole accept back, not
@@ -22,11 +23,12 @@
 // IDENTICALLY (single gather implementation — see gather.ts header). This shell adds only
 // the WRITE-THROUGH.
 
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
+import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { knowledge_edge } from '@/db/schema';
+import { knowledge, knowledge_edge } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from './gather';
 
 type DbLike = Db | Tx;
@@ -75,7 +77,8 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
  * fold is blind to (e.g. one written by the public POST /edges path that emits no event) — the
  * guarded write-through keeps the imperative row intact rather than destroying it. Only the
  * unguarded projectKnowledgeEdge (rebuild / auditor) deletes on fold-null. Like
- * projectKnowledgeEdge it lets a topology reject from the fold propagate.
+ * projectKnowledgeEdge it lets a topology reject from the fold, or a tree-redundancy reject from
+ * the IO write-through, propagate.
  */
 export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
   const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
@@ -97,6 +100,26 @@ async function upsertProjectedKnowledgeEdge(
   db: DbLike,
   projected: KnowledgeEdgeRowSnapshotT,
 ): Promise<void> {
+  if (projected.archived_at === null) {
+    const endpointRows = await db
+      .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+      .from(knowledge)
+      .where(inArray(knowledge.id, [projected.from_knowledge_id, projected.to_knowledge_id]));
+    if (
+      isDirectTreePair(
+        projected.from_knowledge_id,
+        projected.to_knowledge_id,
+        endpointRows.flatMap((node) =>
+          node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+        ),
+      )
+    ) {
+      throw new Error(
+        `projectKnowledgeEdge: tree redundancy for ${projected.from_knowledge_id} ↔ ${projected.to_knowledge_id}`,
+      );
+    }
+  }
+
   await db
     .insert(knowledge_edge)
     .values({

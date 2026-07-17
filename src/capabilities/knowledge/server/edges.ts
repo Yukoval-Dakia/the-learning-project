@@ -20,6 +20,7 @@ import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/even
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
+import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;
 
@@ -308,8 +309,8 @@ export interface CreateKnowledgeEdgeInput {
 
 /**
  * Insert a knowledge_edge with Zod validation on `relation_type` (must be one
- * of 5 core enums or `experimental:*` per ADR-0010), FK existence check on
- * both endpoints, and UNIQUE(from, to, relation_type) violation surfacing as
+ * of 5 core enums or `experimental:*` per ADR-0010), active-endpoint and direct
+ * tree-pair checks, and UNIQUE(from, to, relation_type) violation surfacing as
  * ApiError('conflict', 409).
  *
  * @returns the new edge id (assigned here unless caller pre-computes one).
@@ -347,7 +348,11 @@ export async function createKnowledgeEdge(
   //    raw pg error code 23503 in errorResponse).
   const ids = Array.from(new Set([input.from_knowledge_id, input.to_knowledge_id]));
   const found = await db
-    .select({ id: knowledge.id, archived_at: knowledge.archived_at })
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
+    })
     .from(knowledge)
     .where(inArray(knowledge.id, ids));
   const foundActive = new Set(found.filter((r) => r.archived_at === null).map((r) => r.id));
@@ -357,6 +362,25 @@ export async function createKnowledgeEdge(
       'not_found',
       `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
       404,
+    );
+  }
+
+  // ADR-0011 / YUK-674 — tree is the structural backbone; a mesh edge over a
+  // direct child↔parent pair would represent and weight the same relationship a
+  // second time. Enforce this at the single INSERT owner so CRUD, proposal accept,
+  // supersede and merge-rewire callers cannot bypass the invariant.
+  const repeatsTreeLink = isDirectTreePair(
+    input.from_knowledge_id,
+    input.to_knowledge_id,
+    found.flatMap((node) =>
+      node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+    ),
+  );
+  if (repeatsTreeLink) {
+    throw new ApiError(
+      'tree_redundancy',
+      `mesh edge repeats direct tree relationship: ${input.from_knowledge_id} ↔ ${input.to_knowledge_id}`,
+      409,
     );
   }
 

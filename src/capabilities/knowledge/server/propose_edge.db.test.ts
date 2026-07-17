@@ -85,14 +85,14 @@ describe('runEdgeProposeAndWrite', () => {
     await resetDb();
   });
 
-  async function insertKnowledge(id: string) {
+  async function insertKnowledge(id: string, parentId: string | null = null) {
     const db = testDb();
     const now = new Date();
     await db.insert(knowledge).values({
       id,
       name: id,
       domain: 'yuwen',
-      parent_id: null,
+      parent_id: parentId,
       merged_from: [],
       proposed_by_ai: false,
       approval_status: 'approved',
@@ -244,7 +244,7 @@ describe('runEdgeProposeAndWrite', () => {
     });
     const stats = await runEdgeProposeAndWrite({
       db,
-      recentFailures: emptyAttempts(),
+      recentFailures: [],
       runTaskFn: fakeRunTask,
     });
     expect(stats.proposed).toBe(0);
@@ -980,14 +980,14 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     await resetDb();
   });
 
-  async function insertKnowledge(id: string) {
+  async function insertKnowledge(id: string, parentId: string | null = null) {
     const db = testDb();
     const now = new Date();
     await db.insert(knowledge).values({
       id,
       name: id,
       domain: 'yuwen',
-      parent_id: null,
+      parent_id: parentId,
       merged_from: [],
       proposed_by_ai: false,
       approval_status: 'approved',
@@ -1118,6 +1118,42 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     };
     expect(payload.topology_verdict?.status).toBe('reject');
     expect(payload.topology_verdict?.gate).toBe('cycle');
+  });
+
+  it('folds a prerequisite edge that repeats the direct tree parent relationship', async () => {
+    const db = testDb();
+    await insertKnowledge('kParent');
+    await insertKnowledge('kChild', 'kParent');
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kChild',
+            to_knowledge_id: 'kParent',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: '不应把 tree 父子关系重复成 mesh prerequisite。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures: [],
+      runTaskFn: fakeRunTask,
+    });
+    expect(stats.folded_topology_rejected).toBe(1);
+    expect(stats.proposed).toBe(0);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    expect(proposeEvents[0].payload).toMatchObject({
+      topology_verdict: { status: 'reject', gate: 'tree_redundancy' },
+    });
   });
 
   it('folds a direction-contradiction prerequisite (A→B live, propose B→A)', async () => {

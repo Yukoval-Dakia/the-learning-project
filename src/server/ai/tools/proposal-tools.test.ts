@@ -423,6 +423,15 @@ describe('Wave 3 proposal/action DomainTools', () => {
     });
     expect(parentOnly.status).toBe('skipped:parent_semantic_duplicate');
 
+    const parentPrerequisite = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_yuwen',
+      relation_type: 'prerequisite',
+      weight: 1,
+      reasoning: 'this also repeats the tree',
+    });
+    expect(parentPrerequisite.status).toBe('skipped:parent_semantic_duplicate');
+
     const crossSubject = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
       to_knowledge_id: 'k_math',

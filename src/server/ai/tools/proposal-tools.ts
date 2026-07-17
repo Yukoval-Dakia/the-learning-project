@@ -352,13 +352,11 @@ async function proposeKnowledgeEdgeCreate(
     };
   }
 
-  const repeatsTreeParent =
-    relationType === 'related_to' &&
-    (fromNode.parent_id === toNode.id || toNode.parent_id === fromNode.id);
+  const repeatsTreeParent = fromNode.parent_id === toNode.id || toNode.parent_id === fromNode.id;
   if (repeatsTreeParent) {
     return {
       status: 'skipped:parent_semantic_duplicate',
-      reason: 'related_to would only repeat the tree parent relationship',
+      reason: `${relationType} would repeat the tree parent relationship`,
     };
   }
 
