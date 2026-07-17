@@ -12,7 +12,8 @@
  *   1. A malicious / unknown column for some table → 400 invalid_column AND the
  *      pre-seeded row STILL EXISTS (no wipe happened).
  *   2. An unknown top-level table key → 400 invalid_table AND no wipe.
- *   3. A valid round-trip restore still succeeds (allowlist does not break the
+ *   3. A non-object row → 400 invalid_row AND no wipe (YUK-159).
+ *   4. A valid round-trip restore still succeeds (allowlist does not break the
  *      happy path).
  *
  * Real Postgres (testcontainer) → DB partition. Mirrors _round_trip.test.ts.
@@ -35,12 +36,14 @@ vi.mock('@/server/r2', () => ({
 const enc = new TextEncoder();
 
 /** Build a minimal valid ZIP archive from a data.json object. */
-function makeArchive(data: Record<string, unknown[]>): Uint8Array {
+function makeArchive(data: Record<string, unknown>): Uint8Array {
   const manifest = {
     schema_version: SCHEMA_VERSION,
     exported_at: Math.floor(Date.now() / 1000),
     include_assets: false,
-    row_counts: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length])),
+    row_counts: Object.fromEntries(
+      Object.entries(data).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]),
+    ),
     asset_count: 0,
     missing_assets: [],
   };
@@ -140,6 +143,46 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     const rows = await db.select().from(knowledge);
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('sentinel2');
+  });
+
+  it('rejects every non-object row with 400 invalid_row AND does NOT wipe the DB', async () => {
+    const db = testDb();
+    const now = new Date('2024-01-01T00:00:00Z');
+    await db.insert(knowledge).values({
+      id: 'sentinel_invalid_row',
+      name: '畸形行也不能删我',
+      domain: 'yuwen',
+      parent_id: null,
+      merged_from: [],
+      archived_at: null,
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    for (const invalidRow of [null, 42, true, []]) {
+      const res = await POST(importRequest(makeArchive({ knowledge: [invalidRow] })));
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; table?: string; index?: number };
+      expect(body).toMatchObject({ error: 'invalid_row', table: 'knowledge', index: 0 });
+
+      const rows = await db.select().from(knowledge);
+      expect(rows.map((row) => row.id)).toEqual(['sentinel_invalid_row']);
+    }
+
+    const mixedRes = await POST(
+      importRequest(makeArchive({ knowledge: [null], event: { malformed: true } })),
+    );
+    expect(mixedRes.status).toBe(400);
+    await expect(mixedRes.json()).resolves.toMatchObject({
+      error: 'data_validation_failed',
+      issues: ['event: not an array'],
+    });
+    expect((await db.select().from(knowledge)).map((row) => row.id)).toEqual([
+      'sentinel_invalid_row',
+    ]);
   });
 
   it('still performs a valid round-trip restore (allowlist does not break the happy path)', async () => {

@@ -320,6 +320,8 @@ export type RestoreResult =
       // Set by the YUK-136 pre-flight allowlist rejections (before any wipe).
       table?: string;
       column?: string;
+      // Set by the YUK-159 per-row shape barrier.
+      index?: number;
     };
 
 export interface RestoreFromArchiveOpts {
@@ -421,12 +423,9 @@ export async function restoreFromArchive({
     };
   }
 
-  let data: Record<string, Array<Record<string, unknown>>>;
+  let parsedData: unknown;
   try {
-    data = JSON.parse(new TextDecoder().decode(dataBytes)) as Record<
-      string,
-      Array<Record<string, unknown>>
-    >;
+    parsedData = JSON.parse(new TextDecoder().decode(dataBytes));
   } catch {
     return {
       status: 400,
@@ -434,26 +433,27 @@ export async function restoreFromArchive({
     };
   }
 
-  // `event.ingest_at` is an internal dispatch cursor, not restored memory
-  // state. A backup restore starts from an empty memory backend, so restored
-  // events must be considered pending for the outbox poller.
-  for (const row of data.event ?? []) {
-    if (Object.prototype.hasOwnProperty.call(row, 'ingest_at')) {
-      row.ingest_at = null;
-    }
+  if (typeof parsedData !== 'object' || parsedData === null || Array.isArray(parsedData)) {
+    return {
+      status: 400,
+      body: {
+        error: 'invalid_data',
+        message: 'data.json must contain a table-keyed object; DB was NOT wiped.',
+      },
+    };
   }
+  const rawData = parsedData as Record<string, unknown>;
 
   // YUK-355: the mem0 collection key is restorable but NOT in FK_ORDER (it is the
   // resolved collection table name, restored through the dedicated branch below).
   const mem0Table = mem0CollectionTable();
-  const mem0Rows = Array.isArray(data[mem0Table]) ? data[mem0Table] : undefined;
 
   // Pre-flight (security, YUK-136): reject unknown top-level keys BEFORE we wipe
   // the DB. Previously any key in data.json that was not in FK_ORDER was silently
   // ignored; that masks a malformed/hostile archive. Anything outside FK_ORDER
   // (or the mem0 collection key) is a hard 400.
   const allowedTables = new Set<string>([...FK_ORDER, mem0Table]);
-  for (const key of Object.keys(data)) {
+  for (const key of Object.keys(rawData)) {
     if (!allowedTables.has(key)) {
       return {
         status: 400,
@@ -465,6 +465,61 @@ export async function restoreFromArchive({
       };
     }
   }
+
+  // Pre-flight (YUK-159): JSON.parse does not guarantee either the table arrays or
+  // their elements have the object shape assumed by Object.keys / INSERT below.
+  // Reject every malformed row before column inspection and, critically, before
+  // entering the destructive transaction.
+  const tableValidationErrors: string[] = [];
+  for (const [table, rows] of Object.entries(rawData)) {
+    if (!Array.isArray(rows)) {
+      tableValidationErrors.push(`${table}: not an array`);
+    }
+  }
+  if (tableValidationErrors.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'data_validation_failed',
+        message: 'Pre-flight validation caught issues; DB was NOT wiped.',
+        issues: tableValidationErrors.slice(0, 20),
+      },
+    };
+  }
+
+  // Table-level errors take deterministic precedence and are reported together.
+  // Once every value is known to be an array, return the first invalid row with
+  // the structured table/index contract required by import clients.
+  for (const [table, rows] of Object.entries(rawData)) {
+    if (!Array.isArray(rows)) continue;
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+        return {
+          status: 400,
+          body: {
+            error: 'invalid_row',
+            message: `Invalid row at ${table}[${index}]; expected a plain object. DB was NOT wiped.`,
+            table,
+            index,
+          },
+        };
+      }
+    }
+  }
+
+  const data = rawData as Record<string, Array<Record<string, unknown>> | undefined>;
+
+  // `event.ingest_at` is an internal dispatch cursor, not restored memory
+  // state. A backup restore starts from an empty memory backend, so restored
+  // events must be considered pending for the outbox poller.
+  for (const row of data.event ?? []) {
+    if (Object.prototype.hasOwnProperty.call(row, 'ingest_at')) {
+      row.ingest_at = null;
+    }
+  }
+
+  const mem0Rows = data[mem0Table];
 
   // Pre-flight (security): validate mem0 collection column names against the fixed
   // mem0 createCol() allowlist (id/vector/payload) BEFORE we wipe — same raw-SQL
@@ -512,21 +567,17 @@ export async function restoreFromArchive({
     }
   }
 
-  // Pre-flight: catch common shape errors BEFORE we wipe the DB.
-  const validationErrors: string[] = [];
+  // Pre-flight: catch inconsistent column shapes BEFORE we wipe the DB.
+  const columnValidationErrors: string[] = [];
   for (const t of FK_ORDER) {
     const rows = data[t];
     if (rows === undefined) continue;
-    if (!Array.isArray(rows)) {
-      validationErrors.push(`${t}: not an array`);
-      continue;
-    }
     if (rows.length === 0) continue;
     const expectedCols = new Set(Object.keys(rows[0]));
     for (let i = 1; i < rows.length; i++) {
       const cols = new Set(Object.keys(rows[i]));
       if (cols.size !== expectedCols.size) {
-        validationErrors.push(`${t}[${i}]: column count mismatch`);
+        columnValidationErrors.push(`${t}[${i}]: column count mismatch`);
         break;
       }
       let missing: string | null = null;
@@ -537,32 +588,18 @@ export async function restoreFromArchive({
         }
       }
       if (missing) {
-        validationErrors.push(`${t}[${i}]: missing column ${missing}`);
+        columnValidationErrors.push(`${t}[${i}]: missing column ${missing}`);
         break;
       }
     }
   }
-  // Cursor Bugbot (PR #491): give the mem0 collection entry the SAME present-but-
-  // not-an-array shape guard the FK_ORDER tables get above. Without it, a data.json
-  // whose mem0 key is PRESENT but malformed (object/string/number rather than an
-  // array) collapsed `mem0Rows` to `undefined` at the top of this function —
-  // indistinguishable from the legitimate ABSENT case — so NO shape error was
-  // raised, the FK_ORDER tables were still wiped + reloaded, and the mem0 collection
-  // was SILENTLY skipped (a silent recoverability break: restore must NEVER drop a
-  // present-but-malformed table without failing). Mirror FK_ORDER's "not an array"
-  // branch: a PRESENT-but-non-array mem0 key is a hard shape error BEFORE any wipe.
-  // The ABSENT case (key missing -> fresh DB / mem0 never self-init) stays a graceful
-  // skip (mem0Rows === undefined, handled by the dedicated restore branch below).
-  if (Object.prototype.hasOwnProperty.call(data, mem0Table) && !Array.isArray(data[mem0Table])) {
-    validationErrors.push(`${mem0Table}: not an array`);
-  }
-  if (validationErrors.length > 0) {
+  if (columnValidationErrors.length > 0) {
     return {
       status: 400,
       body: {
         error: 'data_validation_failed',
         message: 'Pre-flight validation caught issues; DB was NOT wiped.',
-        issues: validationErrors.slice(0, 20),
+        issues: columnValidationErrors.slice(0, 20),
       },
     };
   }
