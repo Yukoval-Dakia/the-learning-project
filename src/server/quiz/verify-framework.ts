@@ -331,9 +331,10 @@ function stripTrailingPunct(value: string): string | null {
 
 function addChoiceExpansion(out: string[], choice: string | undefined): void {
   if (!choice) return;
+  // `choices_md` entries are option bodies, not answer wrappers. Re-running
+  // wrapper stripping here would turn a real option such as F(x) into the false
+  // candidate x. Explicit labels are stripped only from answer strings above.
   out.push(choice);
-  const stripped = stripLeadingChoiceLabel(choice);
-  if (stripped) out.push(stripped);
 }
 
 function answerCandidates(

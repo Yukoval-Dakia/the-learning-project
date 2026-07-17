@@ -205,6 +205,24 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     ).resolves.toMatchObject({ verdict: 'pass' });
   });
 
+  it('does not strip function notation from a real choice body', async () => {
+    const question: SolveCheckQuestion = {
+      ...exactQuestion,
+      prompt_md: '选择目标函数。',
+      reference_md: 'A',
+      choices_md: ['F(x)', 'G(x)'],
+    };
+    const runTaskFn = confidentlyWrongExactAnswer('x');
+
+    await expect(
+      runSolveCheck(question, { runTaskFn, profile: fakeProfile, db: fakeDb }),
+    ).resolves.toMatchObject({
+      verdict: 'fail',
+      compared_by: 'semantic',
+      normalized_exact_mismatch: true,
+    });
+  });
+
   it.each([
     ['A（公元前 202 年）', '公元前 202 年'],
     ['B(answer)', 'answer'],
