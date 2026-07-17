@@ -16,7 +16,7 @@
 import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
-import { event, knowledge } from '@/db/schema';
+import { ai_task_runs, event, knowledge, knowledge_edge, tool_call_log } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +28,9 @@ const mockAgentSdk = vi.hoisted(() => ({
   capturedQueryPrompt: undefined as unknown,
   capturedMcpServerOptions: undefined as unknown,
   toolDefinitions: [] as Array<{ name: string; description: string }>,
+  toolHandlers: [] as Array<
+    (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
+  >,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -51,8 +54,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     mockAgentSdk.capturedMcpServerOptions = opts;
     return { type: 'sdk', name: (opts as { name: string }).name, instance: {} };
   }),
-  tool: vi.fn((name: string, description: string, _schema: unknown, _handler: unknown) => {
+  tool: vi.fn((name: string, description: string, _schema: unknown, handler: unknown) => {
     mockAgentSdk.toolDefinitions.push({ name, description });
+    mockAgentSdk.toolHandlers.push(
+      handler as (args: Record<string, unknown>) => Promise<{
+        content: Array<{ type: string; text: string }>;
+      }>,
+    );
     return { name, description };
   }),
 }));
@@ -222,8 +230,8 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(payload.ai_proposal?.kind).toBe('archive');
   });
 
-  // P5.4 / YUK-143 — the legacy MCP edge path attaches no evidence_event_ids,
-  // so the rubric (isAgent: true) rejects it on the RB-4 evidence floor. The
+  // P5.4 / YUK-143 — an evidence-free legacy MCP edge is rejected by the
+  // rubric (isAgent: true) on the RB-4 evidence floor. The
   // event is STILL written, folded with a rubric_verdict marker (RB-6); the
   // ProposeKnowledgeEdge event shape + parseEvent roundtrip are unchanged.
   it('payload-embedded propose_knowledge_edge folds a rubric-rejected ProposeKnowledgeEdge event', async () => {
@@ -301,6 +309,82 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(parsed.subject_kind).toBe('knowledge_edge');
   });
 
+  it('writes an evidence-backed maintenance edge as a live proposal with task correlation', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+    await seedAttemptWithJudge({
+      attemptId: 'attempt_edge_evidence',
+      questionId: 'q_edge_evidence',
+      knowledgeIds: ['k_from'],
+      primary_category: 'concept',
+      analysis_md: 'k_from must be understood before k_to',
+    });
+
+    const result = await runWriteProposal(
+      db,
+      {
+        payload: {
+          mutation: 'propose_knowledge_edge',
+          from_knowledge_id: 'k_from',
+          to_knowledge_id: 'k_to',
+          relation_type: 'prerequisite',
+        },
+        reasoning:
+          'attempt attempt_edge_evidence 的 judge analysis 指向 k_from 是 k_to 的学习前置。',
+        evidence_event_ids: ['attempt_edge_evidence'],
+      },
+      { taskRunId: 'tr_maintenance_edge' },
+    );
+
+    expect(result.kind).toBe('knowledge_edge_propose');
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task_run_id).toBe('tr_maintenance_edge');
+    expect(rows[0].payload).toMatchObject({
+      ai_proposal: {
+        evidence_refs: [{ kind: 'event', id: 'attempt_edge_evidence' }],
+      },
+    });
+    expect(rows[0].payload).not.toHaveProperty('rubric_verdict');
+  });
+
+  it('skips an already-live symmetric edge before pending/rubric gates', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+    await db.insert(knowledge_edge).values({
+      id: 'edge_live_reverse',
+      from_knowledge_id: 'k_to',
+      to_knowledge_id: 'k_from',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'related_to',
+      },
+      reasoning: 'already live',
+      evidence_event_ids: ['unused_evidence'],
+    });
+
+    expect(result).toEqual({
+      kind: 'skipped:duplicate_live_edge',
+      edge_id: 'edge_live_reverse',
+    });
+    const proposalRows = await db.select().from(event).where(eq(event.action, 'propose'));
+    expect(proposalRows).toHaveLength(0);
+  });
+
   it('top-level mutation=propose_knowledge_edge with payload=edge fields routes to ProposeKnowledgeEdge (folded rubric-rejected)', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_from');
@@ -342,10 +426,10 @@ describe('runWriteProposal — pure dispatch', () => {
 
   // P5.4 / YUK-143 (RB-7) — legacy-MCP path regression. A folded
   // rubric-rejected proposal on key K must NOT occupy the (kind, cooldown_key)
-  // slot for dup-pending dedup: a later runWriteProposal on K must NOT come back
-  // skipped_duplicate. (The legacy path hardcodes evidence_refs: [], so every
-  // agent edge re-folds as rubric_rejected rather than ever becoming a clean
-  // 'proposed' — the load-bearing assertion is simply "not skipped_duplicate".)
+  // slot for dup-pending dedup: a later evidence-free runWriteProposal on K must
+  // NOT come back skipped_duplicate. Both calls deliberately omit
+  // evidence_event_ids, so they re-fold rather than becoming live proposals; the
+  // load-bearing assertion is simply "not skipped_duplicate".
   // Mirrors the DomainTool RB-7 test for the legacy path.
   it('RB-7 (legacy path): a folded proposal on K does NOT block a later runWriteProposal on K', async () => {
     const db = testDb();
@@ -379,7 +463,7 @@ describe('runWriteProposal — pure dispatch', () => {
 
     // Second call on the SAME key K: the prior fold is terminal, NOT
     // live-pending, so checkProposalGate must NOT short-circuit with
-    // skipped_duplicate. It re-folds (legacy path is always evidence-free).
+    // skipped_duplicate. It re-folds because this test omits evidence again.
     const second = await runWriteProposal(db, edgeArgs);
     expect(second.kind).not.toBe('skipped_duplicate');
     expect(second.kind).toBe('rubric_rejected');
@@ -449,6 +533,7 @@ describe('streamReviewTask — SDK wiring smoke', () => {
   beforeEach(async () => {
     await resetDb();
     mockAgentSdk.toolDefinitions = [];
+    mockAgentSdk.toolHandlers = [];
     mockAgentSdk.capturedQueryOptions = undefined;
     mockAgentSdk.capturedQueryPrompt = undefined;
     mockAgentSdk.capturedMcpServerOptions = undefined;
@@ -486,6 +571,55 @@ describe('streamReviewTask — SDK wiring smoke', () => {
     };
     expect(queryOpts.mcpServers?.loom).toBeTruthy();
     expect(queryOpts.tools).toEqual(['mcp__loom__write_proposal']);
+  });
+
+  it('logs a rubric reject once with the real KnowledgeReviewTask run id and output', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+
+    const response = await streamReviewTask({ db });
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+
+    const handler = mockAgentSdk.toolHandlers[0];
+    if (!handler) throw new Error('write_proposal handler not captured');
+    const toolResult = await handler({
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'prerequisite',
+      },
+      reasoning: 'attempt missing_evidence is not supplied as evidence',
+    });
+    expect(JSON.parse(toolResult.content[0]?.text ?? '{}')).toMatchObject({
+      kind: 'rubric_rejected',
+      gate: 'evidence_missing',
+    });
+
+    const runs = await db
+      .select({ id: ai_task_runs.id })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.task_kind, 'KnowledgeReviewTask'));
+    expect(runs).toHaveLength(1);
+    const logs = await db
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.tool_name, 'mcp__loom__write_proposal'));
+    expect(logs).toHaveLength(1);
+    expect(logs[0].task_run_id).toBe(runs[0].id);
+    expect(logs[0].effect).toBe('propose');
+    expect(logs[0].error_reason).toBeNull();
+    expect(logs[0].output_json).toMatchObject({
+      kind: 'rubric_rejected',
+      gate: 'evidence_missing',
+    });
   });
 
   it('passes recent-mistakes shape projected from event stream into the prompt', async () => {

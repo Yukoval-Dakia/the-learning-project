@@ -224,6 +224,8 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('科目上下文：数学');
     expect(prompt).toContain('数学定义、条件、方法或易错模式');
     expect(prompt).toContain('mcp__loom__write_proposal');
+    expect(prompt).toContain('evidence_event_ids');
+    expect(prompt).toContain('recent_mistakes[].id');
     expect(prompt).not.toContain('文言文');
   });
 

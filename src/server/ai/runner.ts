@@ -211,6 +211,17 @@ export type StreamTaskCtx = RunTaskCtx & {
    * follow-up (YUK-238).
    */
   signal?: AbortSignal;
+  /**
+   * Optional caller-owned correlation id for an in-process MCP server that must
+   * log its tool result against the same task run. Omitted callers keep the
+   * runner-generated id.
+   */
+  taskRunId?: string;
+  /**
+   * Disable the runner's input-only tool log when the in-process MCP owner writes
+   * the authoritative input + output log itself. Defaults to true.
+   */
+  autoLogToolCalls?: boolean;
 };
 
 export interface MultimodalTaskInput {
@@ -831,7 +842,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const taskRunId = createId();
+  const taskRunId = ctx.taskRunId ?? createId();
   const resolved = resolveTaskProvider(kind, ctx.override);
   let stepStartTime = Date.now();
   let iteration = 0;
@@ -898,7 +909,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             const stepLatencyMs = Date.now() - stepStartTime;
             const blocks = (msg.message.content ?? []) as ContentBlock[];
             for (const block of blocks) {
-              if (block.type === 'tool_use') {
+              if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
                 try {
                   await writeToolCallLog(ctx.db, {
                     task_run_id: taskRunId,

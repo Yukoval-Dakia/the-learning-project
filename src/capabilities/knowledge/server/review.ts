@@ -26,7 +26,8 @@ import { newId } from '@/core/ids';
 import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, proposal_signals } from '@/db/schema';
+import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
+import { writeToolCallLog } from '@/server/ai/log';
 import { streamTask } from '@/server/ai/runner';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
@@ -41,7 +42,7 @@ import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
@@ -128,6 +129,11 @@ export interface WriteProposalArgs {
   mutation?: string;
   payload: unknown;
   reasoning: string;
+  evidence_event_ids?: string[];
+}
+
+interface WriteProposalCtx {
+  taskRunId?: string;
 }
 
 export type WriteProposalResult =
@@ -146,6 +152,10 @@ export type WriteProposalResult =
       kind: 'skipped_cooldown';
       cooldown_key: string;
       cooldown_until: string;
+    }
+  | {
+      edge_id: string;
+      kind: 'skipped:duplicate_live_edge';
     }
   // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
   // still written (folded, marked rubric-rejected); the verdict is surfaced to
@@ -357,22 +367,77 @@ async function findProposalRowsForGate(
 export async function runWriteProposal(
   db: Db,
   args: WriteProposalArgs,
+  ctx: WriteProposalCtx = {},
 ): Promise<WriteProposalResult> {
   const candidate = proposalGateCandidate(args);
+  const edgePayload =
+    args.mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(args.payload)
+      ? extractEdgePayload(args.payload)
+      : null;
   if (candidate) {
     return await db.transaction(async (tx) => {
+      if (edgePayload) {
+        const duplicateLiveEdge = await findLiveDuplicateEdge(tx, edgePayload);
+        if (duplicateLiveEdge) {
+          return { kind: 'skipped:duplicate_live_edge', edge_id: duplicateLiveEdge.id };
+        }
+      }
       const gate = await checkProposalGate(tx, candidate);
       if (gate) return gate;
-      return await writeProposalAfterGate(tx, args);
+      return await writeProposalAfterGate(tx, args, ctx);
     });
   }
 
-  return await writeProposalAfterGate(db, args);
+  return await writeProposalAfterGate(db, args, ctx);
+}
+
+async function findLiveDuplicateEdge(
+  db: DbLike,
+  edgePayload: {
+    from_knowledge_id: string;
+    to_knowledge_id: string;
+    relation_type: string;
+  },
+): Promise<{ id: string } | null> {
+  const {
+    from_knowledge_id: fromId,
+    to_knowledge_id: toId,
+    relation_type: relationType,
+  } = edgePayload;
+  const endpoints =
+    relationType === 'related_to' || relationType === 'contrasts_with'
+      ? or(
+          and(
+            eq(knowledge_edge.from_knowledge_id, fromId),
+            eq(knowledge_edge.to_knowledge_id, toId),
+          ),
+          and(
+            eq(knowledge_edge.from_knowledge_id, toId),
+            eq(knowledge_edge.to_knowledge_id, fromId),
+          ),
+        )
+      : and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId));
+  return (
+    (
+      await db
+        .select({ id: knowledge_edge.id })
+        .from(knowledge_edge)
+        .where(
+          and(
+            endpoints,
+            eq(knowledge_edge.relation_type, relationType),
+            isNull(knowledge_edge.archived_at),
+          ),
+        )
+        .limit(1)
+    )[0] ?? null
+  );
 }
 
 async function writeProposalAfterGate(
   db: DbLike,
   args: WriteProposalArgs,
+  ctx: WriteProposalCtx,
 ): Promise<WriteProposalResult> {
   const { mutation, payload, reasoning } = args;
   const isEdgeProposal = mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
@@ -384,6 +449,7 @@ async function writeProposalAfterGate(
       const id = await writeKnowledgeProposeEvent(db, {
         payload: payload as KnowledgeMutationPayload,
         reasoning,
+        task_run_id: ctx.taskRunId,
       });
       return { proposal_id: id, kind: 'tree_mutation' };
     }
@@ -392,9 +458,10 @@ async function writeProposalAfterGate(
       kind: 'knowledge_edge' as const,
       target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
       reason_md: reasoning,
-      // Legacy MCP path attaches no evidence_event_ids today — the RB-4 floor
-      // will reject evidence-free agent edges and fold them (RB-6).
-      evidence_refs: [],
+      evidence_refs: [...new Set(args.evidence_event_ids ?? [])].map((id) => ({
+        kind: 'event' as const,
+        id,
+      })),
       proposed_change: {
         from_knowledge_id: edgePayload.from_knowledge_id,
         to_knowledge_id: edgePayload.to_knowledge_id,
@@ -411,10 +478,9 @@ async function writeProposalAfterGate(
     // ND-5 (additive only): the L2 read must NEVER block L1. A throw from the
     // digest read degrades to `adaptive = undefined` so `validateProposalQuality`
     // runs the pure-L1 floor unchanged (the optional `adaptive` param omitted →
-    // pure L1, rubric-validator.ts:426). No task_run_id exists on this legacy
-    // dispatcher path (see the RB-6 note below, :401–:407), so the downgrade is
-    // surfaced via console.error like the sibling L2 feedback-read degradation
-    // (copilot/chat.ts:264), not the task-run-scoped log.ts helpers.
+    // pure L1, rubric-validator.ts:426). The downgrade remains a console signal;
+    // the MCP owner writes one authoritative tool_call_log for the completed
+    // proposal result below, avoiding a second row for this optional read.
     let adaptive: AdaptiveGateInput | undefined;
     try {
       adaptive = await resolveEdgeGateBump(
@@ -442,20 +508,15 @@ async function writeProposalAfterGate(
       adaptive,
     );
     if (!verdict.ok) {
-      // RB-6 step 7 (evidence-first logging): the DomainTool path's reject is
-      // logged once by the mcp-bridge wrapper (per tool call, from the return
-      // value), but this legacy MCP path has no such wrapper and intentionally
-      // does NOT log here. tool_call_log.task_run_id is NOT NULL (schema.ts:424) and
-      // WriteProposalArgs carries no task_run_id — the value lives only in the
-      // SDK runner above this in-process MCP tool, not in this pure dispatcher.
-      // Threading a real task_run_id down through the MCP boundary is out of
-      // scope for P5.4 (§5 Q2); the fold itself (the rubric_verdict marker on
-      // the event below) is the durable, queryable audit trail. If a nullable
-      // task_run_id or a threaded value lands later, add the reject log here.
+      // RB-6 evidence-first logging is owned by buildKnowledgeReviewMcpServer:
+      // it has the real runner task_run_id and records this structured return
+      // value once. Keeping logging outside this pure dispatcher avoids double
+      // counting direct callers and mirrors the DomainTool bridge boundary.
       const eventId = await writeAiProposal(db, {
         actor_ref: 'dreaming',
         outcome: 'success',
         payload: edgeProposalPayload,
+        task_run_id: ctx.taskRunId ?? null,
         event_override: {
           action: 'propose',
           subject_kind: 'knowledge_edge',
@@ -481,12 +542,14 @@ async function writeProposalAfterGate(
       actor_ref: 'dreaming',
       outcome: 'success',
       payload: edgeProposalPayload,
+      task_run_id: ctx.taskRunId ?? null,
     });
     return { event_id: eventId, kind: 'knowledge_edge_propose' };
   }
   const id = await writeKnowledgeProposeEvent(db, {
     payload: payload as KnowledgeMutationPayload,
     reasoning,
+    task_run_id: ctx.taskRunId,
   });
   return { proposal_id: id, kind: 'tree_mutation' };
 }
@@ -497,21 +560,67 @@ const WriteProposalSchema = {
   mutation: z.string().optional(),
   payload: z.unknown(),
   reasoning: z.string(),
+  evidence_event_ids: z.array(z.string().min(1)).optional(),
 } as const;
 
-function buildKnowledgeReviewMcpServer(db: Db) {
+function buildKnowledgeReviewMcpServer(db: Db, taskRunId: string) {
+  let toolIteration = 0;
   return createSdkMcpServer({
     name: 'loom',
     tools: [
       tool(
         'write_proposal',
-        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type, reasoning}. reasoning must be concrete. If the result kind is skipped_duplicate or skipped_cooldown, do not retry the same mutation in this run.',
+        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.',
         WriteProposalSchema,
         async (args) => {
-          const result = await runWriteProposal(db, args as WriteProposalArgs);
-          return {
-            content: [{ type: 'text', text: JSON.stringify(result) }],
-          };
+          const input = args as WriteProposalArgs;
+          const startedAt = Date.now();
+          const iteration = ++toolIteration;
+          try {
+            const result = await runWriteProposal(db, input, { taskRunId });
+            try {
+              await writeToolCallLog(db, {
+                task_run_id: taskRunId,
+                task_kind: 'KnowledgeReviewTask',
+                tool_name: 'mcp__loom__write_proposal',
+                effect: 'propose',
+                input_json: input,
+                output_json: result,
+                iteration,
+                latency_ms: Date.now() - startedAt,
+                cost: 0,
+              });
+            } catch (logErr) {
+              console.error('[KnowledgeReviewTask] write_proposal result log failed', {
+                task_run_id: taskRunId,
+                err: logErr,
+              });
+            }
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result) }],
+            };
+          } catch (err) {
+            try {
+              await writeToolCallLog(db, {
+                task_run_id: taskRunId,
+                task_kind: 'KnowledgeReviewTask',
+                tool_name: 'mcp__loom__write_proposal',
+                effect: 'propose',
+                input_json: input,
+                output_json: {},
+                error_reason: err instanceof Error ? err.message : String(err),
+                iteration,
+                latency_ms: Date.now() - startedAt,
+                cost: 0,
+              });
+            } catch (logErr) {
+              console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
+                task_run_id: taskRunId,
+                err: logErr,
+              });
+            }
+            throw err;
+          }
         },
       ),
     ],
@@ -532,12 +641,15 @@ export interface StreamReviewTaskCtx {
  */
 export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Response> {
   const { input, subjectProfile } = await buildReviewInput(ctx.db);
-  const mcpServer = buildKnowledgeReviewMcpServer(ctx.db);
+  const taskRunId = newId();
+  const mcpServer = buildKnowledgeReviewMcpServer(ctx.db, taskRunId);
 
   return streamTask('KnowledgeReviewTask', input, {
     db: ctx.db,
     subjectProfile,
     mcpServers: { loom: mcpServer },
+    taskRunId,
+    autoLogToolCalls: false,
   });
 }
 
