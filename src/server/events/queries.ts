@@ -1031,10 +1031,12 @@ export interface WriteEventInput {
   /**
    * ADR-0021 opt-out: when set non-NULL at INSERT, the memory-ingestion outbox
    * poller (`src/server/memory/triggers.ts` — `WHERE ingest_at IS NULL`) skips
-   * this event, so it never spawns a Mem0 `add` or brief-regen. Default NULL
-   * preserves the pending-ingest semantics for every existing caller. Stamping
-   * `ingest_at = now` is an *opt-out of memory ingestion*, NOT a claim that
-   * ingestion already ran. Used by the observe-only auto-enroll trail (YUK-190).
+   * this event, so it never spawns a Mem0 `add` or brief-regen. Unless the caller
+   * explicitly supplies affected_scopes, writeEvent also stores an empty scope
+   * set so later brief scans cannot mistake the opt-out row for learner evidence.
+   * Default NULL preserves the pending-ingest semantics for every existing
+   * caller. Stamping `ingest_at = now` is an *opt-out of memory ingestion*, NOT
+   * a claim that ingestion already ran. Used by internal/observe-only ledgers.
    */
   ingest_at?: Date | null;
 }
@@ -1068,7 +1070,14 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
     cost_micro_usd: input.cost_micro_usd ?? undefined,
   });
 
-  const affectedScopes = input.affected_scopes ?? computeAffectedScopes(input);
+  // YUK-565 — preserve insert-time outbox intent in the immutable scope tags.
+  // The poller later stamps normal learner rows' ingest_at, so the FINAL
+  // ingest_at value cannot distinguish "processed" from "born opted-out".
+  // Empty affected_scopes makes every brief reader ignore internal ledgers while
+  // processed learner rows keep the scopes computed at INSERT.
+  const affectedScopes =
+    input.affected_scopes ??
+    (input.ingest_at === undefined || input.ingest_at === null ? computeAffectedScopes(input) : []);
 
   await db
     .insert(event)
@@ -1087,7 +1096,7 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
       task_run_id: input.task_run_id ?? null,
       cost_micro_usd: input.cost_micro_usd ?? null,
       // NULL default = pending ingest (ADR-0021). A non-NULL stamp opts the row
-      // out of the memory outbox poller (see WriteEventInput.ingest_at).
+      // out of both the outbox poller and implicit brief scopes (see above).
       ingest_at: input.ingest_at ?? null,
       created_at: input.created_at ?? new Date(),
     })
