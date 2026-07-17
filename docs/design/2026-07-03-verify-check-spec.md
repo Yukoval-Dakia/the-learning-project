@@ -1,5 +1,11 @@
 # verify-check-sets-tier-solve-threshold — 设计 spec（打磨 worklist #8，reconciled v2）
 
+> **2026-07-17 / YUK-612 amendment**：9 科评测证明 exact normalize mismatch 的假否决并非
+> 边缘风险（16/58 正确题被拦）。`runSolveCheck` 现先确定性匹配结构化答案、选项标签/内容与
+> `答案+解析` 首行（含 `A（内容）` 形态）；仍不匹配时转入既有高阈值 SemanticJudge，只有
+> semantic confident-incorrect 才 fail。下文关于“normalize mismatch 直接 hold-for-review”是
+> YUK-612 前的历史裁决，已被本 amendment 取代。
+
 > **Program**: YUK-538（全项目逻辑打磨），单元 `verify-check-sets-tier-solve-threshold`（master register
 > `docs/design/2026-07-02-project-logic-master-register.md` 约 line 961 ESCALATE trace + 约 line 1150
 > reslotting 表 "ACCEPT. Strongest P1 of the four"）。

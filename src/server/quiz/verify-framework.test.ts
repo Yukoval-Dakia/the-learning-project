@@ -126,6 +126,14 @@ const openQuestion: SolveCheckQuestion = {
 
 const fakeDb = {} as never;
 
+function confidentlyWrongExactAnswer(solverAnswer: string) {
+  return vi.fn(async (kind: string) => {
+    if (kind === 'SolutionGenerateTask') return { text: solverOutput(solverAnswer) };
+    if (kind === 'SemanticJudgeTask') return { text: semanticOutput('incorrect', 0.95) };
+    throw new Error(`unexpected task ${kind}`);
+  });
+}
+
 // ---------- solveCheckBlocks (YUK-538 / YUK-554 — per-axis veto seam) ----------
 
 describe('solveCheckBlocks (tier3/4 per-axis veto)', () => {
@@ -198,10 +206,38 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
   });
 
   it('fails when the solver answer disagrees with the reference', async () => {
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前 221 年') }));
-    const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
+    const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
+    const result = await runSolveCheck(exactQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
     expect(result.verdict).toBe('fail');
     expect(result.solver_final_answer).toBe('公元前 221 年');
+    expect(result.compared_by).toBe('semantic');
+  });
+
+  it('falls back to SemanticJudge when exact normalization cannot establish equivalence', async () => {
+    const trueFalse: SolveCheckQuestion = {
+      ...exactQuestion,
+      kind: 'true_false',
+      reference_md: '正确。命题满足定义。',
+      choices_md: null,
+    };
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') return { text: solverOutput('真') };
+      if (kind === 'SemanticJudgeTask') return { text: semanticOutput('correct', 0.95) };
+      throw new Error(`unexpected task ${kind}`);
+    });
+
+    const result = await runSolveCheck(trueFalse, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+
+    expect(result).toMatchObject({ verdict: 'pass', compared_by: 'semantic' });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
   });
 
   it('does NOT feed the question reference answer back to the solver as a hint', async () => {
@@ -224,12 +260,16 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
       kind: 'single_choice',
       judge_kind_override: null,
     };
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前 221 年') }));
-    const result = await runSolveCheck(singleChoice, { runTaskFn, profile: fakeProfile });
+    const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
+    const result = await runSolveCheck(singleChoice, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
     // A wrong reference answer is now CAUGHT (would have been a conservative semantic
     // pass / skip before F1).
     expect(result.verdict).toBe('fail');
-    expect(result.compared_by).toBe('normalize');
+    expect(result.compared_by).toBe('semantic');
   });
 
   it('compares against the structured rubric final_answer, not the worked-solution prose (F2)', async () => {
@@ -316,10 +356,14 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
   });
 
   it('still fails on a genuine disagreement against the same reference shape', async () => {
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') }));
-    const result = await runSolveCheck(fillBlank, { runTaskFn, profile: fakeProfile });
+    const runTaskFn = confidentlyWrongExactAnswer('助词');
+    const result = await runSolveCheck(fillBlank, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
     expect(result.verdict).toBe('fail');
-    expect(result.compared_by).toBe('normalize');
+    expect(result.compared_by).toBe('semantic');
   });
 
   it('passes via the first-line candidate on a multi-line 答案+解析 reference', async () => {
@@ -327,6 +371,33 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
     const result = await runSolveCheck(multiLine, { runTaskFn, profile: fakeProfile });
     expect(result.verdict).toBe('pass');
+  });
+
+  it.each([
+    {
+      name: '语文选项内容',
+      reference_md: 'B（凭借、借助）\n\n解析：这里表示凭借某种条件。',
+      choices_md: ['因为、由于', '凭借、借助', '趁着、随着', '沿着、顺着'],
+      solver: '凭借、借助',
+    },
+    {
+      name: '数学字母加答案',
+      reference_md: 'A（m<1）\n\n解析：由判别式条件可得。',
+      choices_md: ['m<1', 'm≥1', 'm=1', 'm∈R'],
+      solver: 'A. m<1',
+    },
+  ])('matches parenthesized choice references from the 9-subject eval: $name', async (fixture) => {
+    const question: SolveCheckQuestion = {
+      ...fillBlank,
+      kind: 'choice',
+      reference_md: fixture.reference_md,
+      choices_md: fixture.choices_md,
+    };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput(fixture.solver) }));
+
+    const result = await runSolveCheck(question, { runTaskFn, profile: fakeProfile });
+
+    expect(result).toMatchObject({ verdict: 'pass', compared_by: 'normalize' });
   });
 
   it('trailing sentence punctuation does not fail a bare-answer match (both directions)', async () => {
@@ -350,8 +421,12 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
 
   it('never truncates decimals (sentence split excludes ASCII "." — 3 ≠ 3.14)', async () => {
     const decimal = { ...fillBlank, prompt_md: '圆周率约等于____。', reference_md: '3.14' };
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('3') }));
-    const result = await runSolveCheck(decimal, { runTaskFn, profile: fakeProfile });
+    const runTaskFn = confidentlyWrongExactAnswer('3');
+    const result = await runSolveCheck(decimal, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
     expect(result.verdict).toBe('fail');
   });
 });
@@ -419,6 +494,16 @@ describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('') }));
     const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
     expect(result.verdict).toBe('unsupported');
+  });
+
+  it('returns unsupported when an exact mismatch cannot run its semantic fallback', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前 221 年') }));
+
+    const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
+
+    expect(result).toMatchObject({ verdict: 'unsupported', compared_by: 'none' });
+    expect(result.reason).toContain('SemanticJudge fallback needs a Db handle');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
   it('returns unsupported when the question has no reference answer — WITHOUT spending the solver call (EFF-3)', async () => {

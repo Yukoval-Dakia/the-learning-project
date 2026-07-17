@@ -19,6 +19,7 @@ import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { event, knowledge, question } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { runSourceVerify } from './source_verify';
 
 // Solver output shape consumed by verify-framework.runSolveCheck (it only reads
@@ -30,6 +31,15 @@ function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
   return JSON.stringify({
     reference_solution: { final_answer: finalAnswer, answer_equivalents: equivalents },
   });
+}
+
+function confidentlyWrongSolver(finalAnswer: string) {
+  return vi.fn(async (kind: string) => ({
+    text:
+      kind === 'SemanticJudgeTask'
+        ? semanticJudgeOutput('incorrect', 0.95)
+        : solverOutput(finalAnswer),
+  }));
 }
 
 async function seedKnowledge(id: string, domain = 'yuwen', opts: { archived?: boolean } = {}) {
@@ -153,8 +163,8 @@ describe('runSourceVerify', () => {
     const db = testDb();
     await seedKnowledge('k1');
     const qid = await seedQuestion({ knowledgeIds: ['k1'] });
-    // solver says '助词' but reference is '代词' → exact mismatch → solve_check fail.
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') }));
+    // normalize cannot match 助词 vs 代词; SemanticJudge confirms the disagreement.
+    const runTaskFn = confidentlyWrongSolver('助词');
 
     const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
     expect(result.status).toBe('failed');
@@ -196,8 +206,8 @@ describe('runSourceVerify', () => {
     // Cold-start image-upload shape: web_sourced + draft_status='active' PRE-PROMOTED before
     // source_verify runs (image-candidate-accept.ts, no inbox wall).
     const qid = await seedQuestion({ knowledgeIds: ['k1'], draftStatus: 'active' });
-    // solver disagrees with the reference → solve_check fail → no promote.
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') }));
+    // solver disagrees and SemanticJudge confirms → solve_check fail → no promote.
+    const runTaskFn = confidentlyWrongSolver('助词');
 
     const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
     expect(result.status).toBe('failed');
@@ -220,7 +230,7 @@ describe('runSourceVerify', () => {
     await seedKnowledge('k1');
     // Normal sourcing.ts shape: draft_status defaults to 'draft' before verify.
     const qid = await seedQuestion({ knowledgeIds: ['k1'] });
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') })); // solve_check fail
+    const runTaskFn = confidentlyWrongSolver('助词'); // semantic-confirmed solve_check fail
 
     const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
     expect(result.status).toBe('failed');

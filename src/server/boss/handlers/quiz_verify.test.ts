@@ -750,7 +750,7 @@ describe('runQuizVerify', () => {
     expect(axes.find((a) => a.axis_name === 'solve_check')).toMatchObject({ verdict: 'pass' });
   });
 
-  it('solve_check fail (exact normalize mismatch) → needs_review, stays draft, records fail', async () => {
+  it('solve_check fail (exact mismatch confirmed semantically) → needs_review and stays draft', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({
       id: 'qsolve_fail',
@@ -761,17 +761,18 @@ describe('runQuizVerify', () => {
       referenceMd: '代词',
       rubricJson: { required_points: [] },
     });
-    // solver DISAGREES (助词 vs reference 代词) → normalize mismatch → solve_check fail.
+    // Normalize cannot establish equivalence; SemanticJudge confirms a real disagreement.
     const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass' }),
-      { SolutionGenerateTask: solverOutput('助词') },
+      {
+        SolutionGenerateTask: solverOutput('助词'),
+        SemanticJudgeTask: semanticJudgeOutput('incorrect', 0.95),
+      },
       'tr_sf',
     );
 
     const result = await runQuizVerify({ db: testDb(), questionId: 'qsolve_fail', runTaskFn });
-    // Q1: an exact normalize-fail VETOES promotion but records `needs_review` (hold for human
-    // review), NOT `failed` — the model self-review said pass, only the weak normalize signal
-    // disagreed.
+    // The model self-review said pass, while the independent solve + semantic confirmation failed.
     expect(result.status).toBe('needs_review');
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'qsolve_fail'));
@@ -786,7 +787,7 @@ describe('runQuizVerify', () => {
     // Q4/#6 payload completeness — all four solve_check fields present + typed.
     expect(payload.solve_check).toMatchObject({
       verdict: 'fail',
-      compared_by: 'normalize',
+      compared_by: 'semantic',
       solver_final_answer: '助词',
     });
     expect(typeof (payload.solve_check as Record<string, unknown>).reason).toBe('string');
