@@ -97,14 +97,14 @@ export interface CopilotRunJobData {
 
 // YUK-575 (N5/MF-A) — durable run 的三旋钮预算，经 runner budgetOverride seam
 // （maxIterations→SDK maxTurns、timeoutMs→streamTaskCollecting abort timer）+ 本
-// handler 的 ContextBudgetTracker（maxToolCalls）per-call 覆盖 inline CopilotTask
-// registry 默认（maxIterations:6 / maxToolCalls:10 / timeout:60_000），**不 mutate
+// handler 的 ContextBudgetTracker（toolCalls）per-call 覆盖 inline CopilotTask
+// registry 默认（maxIterations:6 / warning:10 / hard:25 / timeout:60_000），**不 mutate
 // 共享 registry**（YUK-458 revert 教训：抬 inline 默认只把 error_max_turns 变成
 // inline-request abort，不解 endurance）。
 //   • maxIterations:24 — 给多步 propose 编排足够回合（YUK-458 证 6 太紧）。
 //   • maxToolCalls:60 — **MF-A**：durable 与 inline 同 surface='copilot'，共用
-//     COPILOT_CONTEXT_BUDGET.maxToolCalls=10；不抬它则 24 回合 × ~2-4 tool-call/回合
-//     在 ~7-10 回合就 soft-stop，10 成真正 binding、iterations 24 变死。60 覆盖
+//     COPILOT_CONTEXT_BUDGET.toolCalls.hard=25；不抬它则 24 回合 × ~2-4
+//     tool-call/回合会提前 soft-stop。durable 以 25 为 warning、60 为 hard，覆盖
 //     24 × 2.5/回合均值，把「谁先 bind」推回 iterations 侧。
 //   • timeoutMs:12min — 封病态 loop 的浪费上限；**承重约束（S6）**：必须 <
 //     STUCK_RUN_THRESHOLD_MS(1h)，否则 stuck-in-running sweeper 误收敛 live run
@@ -256,25 +256,30 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
 
   // YUK-364 (bot-review C4) — anti-runaway 护栏（tool-call ceiling），故意 NOT 复用
   // inline 的 per-message row cap。ContextBudgetTracker 暴露两个互相独立的 seam：
-  //   • beforeExecute → tool-call ceiling（maxToolCalls）：纯 anti-runaway，与
+  //   • beforeExecute → tool-call hard ceiling：纯 anti-runaway，与
   //     per-message context 大小无关 —— durable 也需要它，防 run 在单个 SDK 循环里
   //     狂刷工具 / propose_*。这里挂上。
   //   • interceptInput → per-message row cap（maxNodesPlusEdges / maxEventRows）：
   //     这是「单条用户消息别把太多行塞进上下文」的 per-message 预算。endurance =
   //     「跑得久」，**故意要超过 inline 的 per-message 预算**，照搬会自相矛盾 ——
-  //     所以 durable **不挂 interceptInput**（row cap 不适用于 endurance）。
+  //     所以 durable 的 interceptInput 只回传 tool-call warning，**不调用
+  //     capInput**、不做 row accounting/cap（row cap 不适用于 endurance）。
   // 两个 seam 在 buildMcpServerFromRegistry 上是独立可选回调（BuildMcpServerOptions），
   // 天然可分离，故只取 beforeExecute。
   //
   // YUK-575 (MF-A) — **抬 tool-call ceiling 到 DURABLE_BUDGET.maxToolCalls(60)**。
   // 这是抬 maxIterations 的必要伴随：durable 与 inline 同 surface='copilot'，共用
-  // COPILOT_CONTEXT_BUDGET.maxToolCalls=10；不抬它则 24 回合的 propose 编排在 ~7-10
-  // 回合就被 10 tool-call soft-stop、maxIterations:24 变死（MF-A 要消灭的失效模式）。
-  // 只覆盖 maxToolCalls，其余 context 维度（nodes/edges/events/excerpt）仍取 copilot
-  // 预算（durable NOT 挂 interceptInput，那些 per-message row cap 不生效，见上）。
+  // COPILOT_CONTEXT_BUDGET.toolCalls.hard=25；durable 需要更高事故顶，避免复杂
+  // propose 编排在 maxIterations:24 之前被 inline ceiling 截断（MF-A）。
+  // YUK-290：base Copilot hard=25 作为 durable warning；60 仍是事故硬顶。
+  // 其余 context 维度保留 base 配置但不经 capInput，故不参与 endurance row cap。
+  const baseContextBudget = resolveContextBudget(surface);
   const budgetTracker = new ContextBudgetTracker({
-    ...resolveContextBudget(surface),
-    maxToolCalls: DURABLE_BUDGET.maxToolCalls,
+    ...baseContextBudget,
+    toolCalls: {
+      warning: baseContextBudget.toolCalls.hard,
+      hard: DURABLE_BUDGET.maxToolCalls,
+    },
   });
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
@@ -292,9 +297,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames,
     taskKind: 'CopilotTask',
-    // C4 — 仅 tool-call ceiling（anti-runaway）；NO interceptInput（per-message
-    // row cap 对 endurance 不适用，见上）。
+    // C4 — tool-call hard ceiling（anti-runaway）。interceptInput 仅回传
+    // warning 状态，不执行 capInput，故仍无 per-message row cap。
     beforeExecute: (tool) => budgetTracker.beforeExecute(tool),
+    interceptInput: (_tool, args) => ({
+      args,
+      truncationNote: budgetTracker.currentNotice(),
+      softStop: null,
+    }),
   });
 
   // YUK-364 (bot-review C5) — env-gated Tavily 远程 MCP（web grounding），照 inline

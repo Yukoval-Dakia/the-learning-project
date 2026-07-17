@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BUDGETS_BY_SURFACE,
   COACH_CONTEXT_BUDGET,
   COPILOT_CONTEXT_BUDGET,
   COPILOT_HISTORY_BUDGET,
@@ -18,24 +19,23 @@ import {
 describe('context budgets — locked constants', () => {
   it('COPILOT_CONTEXT_BUDGET matches the spec CB-2 numbers', () => {
     expect(COPILOT_CONTEXT_BUDGET).toEqual({
-      maxToolCalls: 10,
-      maxNodesPlusEdges: 250,
-      maxEventRows: 1000,
+      toolCalls: { warning: 10, hard: 25 },
+      nodesPlusEdges: { warning: 250, hard: 1000 },
+      eventRows: { warning: 1000, hard: 4000 },
       maxExcerptChars: 180,
     });
   });
 
-  // Byte-unchanged guard: these MUST equal the values Dreaming/Coach hardcoded
-  // before P5.1 (max_tool_calls 8/12, max_proposals 5/5). If this ever changes,
-  // Dreaming/Coach behavior changed — which the relocation refactor forbids.
-  it('DREAMING_CONTEXT_BUDGET preserves the prior hardcoded caps (8 / 5)', () => {
-    expect(DREAMING_CONTEXT_BUDGET.maxToolCalls).toBe(8);
+  // YUK-290 keeps the prior tool-call caps as warning watermarks while raising
+  // the accident ceilings. Proposal caps remain byte-unchanged.
+  it('DREAMING_CONTEXT_BUDGET preserves the prior warning/proposal caps (8 / 5)', () => {
+    expect(DREAMING_CONTEXT_BUDGET.toolCalls).toEqual({ warning: 8, hard: 24 });
     expect(DREAMING_CONTEXT_BUDGET.maxProposals).toBe(5);
     expect(DREAMING_CONTEXT_BUDGET.maxExcerptChars).toBe(180);
   });
 
-  it('COACH_CONTEXT_BUDGET preserves the prior hardcoded caps (12 / 5)', () => {
-    expect(COACH_CONTEXT_BUDGET.maxToolCalls).toBe(12);
+  it('COACH_CONTEXT_BUDGET preserves the prior warning/proposal caps (12 / 5)', () => {
+    expect(COACH_CONTEXT_BUDGET.toolCalls).toEqual({ warning: 12, hard: 36 });
     expect(COACH_CONTEXT_BUDGET.maxProposals).toBe(5);
     expect(COACH_CONTEXT_BUDGET.maxExcerptChars).toBe(180);
   });
@@ -93,7 +93,16 @@ describe('context budgets — locked constants', () => {
     expect(resolveContextBudget('dreaming')).toBe(DREAMING_CONTEXT_BUDGET);
     expect(resolveContextBudget('coach')).toBe(COACH_CONTEXT_BUDGET);
     // knowledge_review / maintenance fall back to a generous default budget.
-    expect(resolveContextBudget('maintenance').maxToolCalls).toBeGreaterThan(0);
-    expect(resolveContextBudget('knowledge_review').maxNodesPlusEdges).toBe(250);
+    expect(resolveContextBudget('maintenance').toolCalls.hard).toBeGreaterThan(0);
+    expect(resolveContextBudget('knowledge_review').nodesPlusEdges.warning).toBe(250);
+  });
+
+  it('keeps every hard ceiling above its warning watermark', () => {
+    for (const budget of Object.values(BUDGETS_BY_SURFACE)) {
+      for (const threshold of [budget.toolCalls, budget.nodesPlusEdges, budget.eventRows]) {
+        expect(threshold.warning).toBeGreaterThan(0);
+        expect(threshold.hard).toBeGreaterThan(threshold.warning);
+      }
+    }
   });
 });

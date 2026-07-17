@@ -2,9 +2,10 @@
 // Spec: `docs/superpowers/specs/2026-05-31-p5.1-context-budget-design.md` §3.2 / §3.4.
 //
 // The NEW runtime piece. Copilot has no per-message budget today (it inherits
-// only maxIterations:6 from the task registry). This tracker bounds the SUM of
-// nodes+edges / event-rows / tool-calls a single user message contributes to
-// the agent's context, across all the message's tool calls (§3.4 "tracked").
+// only maxIterations:6 from the task registry). This tracker measures the SUM
+// of nodes+edges / event-rows / tool-calls a single user message contributes to
+// the agent's context, across all tool calls (§3.4 "tracked"). YUK-290 splits
+// each dimension into an advisory warning and a materially higher hard ceiling.
 //
 // It mirrors the per-run `proposalWrites` accumulator Dreaming/Coach already
 // hold: a small mutable object created once per message/run and threaded into
@@ -13,22 +14,18 @@
 //
 // Two seams, because `beforeExecute` only sees {name, effect} (no args, no
 // result):
-//   1. tool-call ceiling → exposed as a `beforeExecute`-shaped gate that
-//      returns a soft-stop string once maxToolCalls is reached (same mechanism
-//      as the proposal cap; no thrown rejection).
-//   2. limit cap + accounting + truncation note → exposed as `capInput` /
-//      `accountOutput` the bridge calls around execute. We cap the REQUESTED
-//      limit param down to remaining budget BEFORE execute, then account the
-//      capped amount and attach a `{ applied_limit, budget_remaining,
-//      truncated }` block to the output so the agent can self-correct (§5 Q2:
-//      surface it, consistent with the existing filter_applied echo).
+//   1. tool-call hard ceiling → `beforeExecute` returns a soft-stop string only
+//      at the accident limit (same mechanism as the proposal cap; no throw).
+//   2. row accounting + warning/hard notice → `capInput` leaves args untouched
+//      through warning and attaches `context_budget`; only hard rewrites limits.
 
 import type { ContextBudget } from './budgets';
 import { TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { ToolEffect } from './types';
 
 /** Which budget dimension a given read tool's row count draws from. */
-type BudgetDimension = 'nodesPlusEdges' | 'eventRows';
+type RowBudgetDimension = 'nodesPlusEdges' | 'eventRows';
+type BudgetDimension = 'toolCalls' | RowBudgetDimension;
 
 // Map each limited read tool to:
 //   - the JSON path of its limit param (top-level vs nested under `filter`)
@@ -41,7 +38,7 @@ interface LimitedToolSpec {
   /** Courtesy default applied when the caller omits the limit. */
   courtesyDefault: number;
   /** Which per-message budget dimension this tool's rows draw down. */
-  dimension: BudgetDimension;
+  dimension: RowBudgetDimension;
 }
 
 // Every budgeted read tool's limit param has a Zod minimum of 1 (verified in
@@ -132,25 +129,31 @@ function writeLimit(args: unknown, path: readonly string[], value: number): unkn
   return root;
 }
 
-/** Truncation metadata attached to a capped tool output (§5 Q2). */
-export interface ContextBudgetTruncation {
-  /** The effective limit the tool actually ran with after capping. */
-  applied_limit: number;
-  /** The limit the agent asked for (or the courtesy default when omitted). */
-  requested_limit: number;
-  /** Remaining budget in the relevant dimension after this call accounted. */
-  budget_remaining: number;
-  /** True when applied_limit < requested_limit (the agent got fewer rows). */
+export interface ContextBudgetDimensionStatus {
+  used: number;
+  warning_limit: number;
+  hard_limit: number;
+  hard_remaining: number;
+}
+
+/** Warning/hard-cap metadata attached to a tool output as `context_budget`. */
+export interface ContextBudgetNotice {
+  level: 'warning' | 'hard';
+  dimensions: Partial<Record<BudgetDimension, ContextBudgetDimensionStatus>>;
+  /** True only when this call was capped at a hard row ceiling. */
   truncated: boolean;
-  /** Which dimension was drawn down. */
-  dimension: BudgetDimension;
+  /** Present on hard row truncation for backward-compatible audit detail. */
+  applied_limit?: number;
+  requested_limit?: number;
+  budget_remaining?: number;
+  dimension?: RowBudgetDimension;
 }
 
 export interface CapInputResult {
-  /** Args to actually execute with (limit capped down to remaining budget). */
+  /** Args to execute with (unchanged at warning, capped only at hard). */
   args: unknown;
-  /** Set when the requested limit was capped; null when nothing was throttled. */
-  truncation: ContextBudgetTruncation | null;
+  /** Warning/hard state surfaced to the model and persisted in tool_call_log. */
+  contextBudget: ContextBudgetNotice | null;
   /**
    * Set ONLY when the dimension is exhausted (cannot fund even one row). The
    * bridge treats this exactly like a `beforeExecute` gate reason: it does NOT
@@ -176,35 +179,32 @@ export class ContextBudgetTracker {
   constructor(private readonly budget: ContextBudget) {}
 
   /**
-   * Tool-call ceiling gate, shaped exactly like the existing proposal-cap
-   * `beforeExecute`: returns a soft-stop string once maxToolCalls is reached
-   * (the model reads it as the tool result and stops), otherwise increments
-   * the counter and returns undefined. No thrown rejection (§6).
+   * Tool-call hard gate, shaped like the existing proposal-cap `beforeExecute`.
+   * Crossing warning still increments and executes; only hard returns a
+   * soft-stop string. The subsequent input interceptor surfaces warning state.
    *
    * Counts every DomainTool invocation (read / propose / write) against the
    * per-message tool-call budget, since each call adds to the context.
    */
   beforeExecute(_tool: { name: string; effect: ToolEffect }): string | undefined {
-    if (this.toolCalls >= this.budget.maxToolCalls) {
-      return `context budget reached (${this.budget.maxToolCalls} tool calls); stop calling tools and answer with what you have`;
+    if (this.toolCalls >= this.budget.toolCalls.hard) {
+      return `hard context budget reached (${this.toolCalls}/${this.budget.toolCalls.hard} tool calls); stop calling tools and answer with what you have`;
     }
     this.toolCalls += 1;
     return undefined;
   }
 
   /**
-   * Cap a read tool's requested limit down to whatever the per-message budget
-   * has left in the relevant dimension, applying the courtesy default when the
-   * caller omitted the limit (CB-5). Returns the args to execute with plus
-   * optional truncation metadata. Tools without a registered limit param pass
-   * through untouched (only the tool-call ceiling applies to them).
+   * Account a read tool's requested limit against the two-tier budget. Warning
+   * leaves args untouched and emits a notice; hard caps to remaining capacity.
+   * Tools without a registered limit still receive tool-call warning notices.
    */
   capInput(toolName: string, args: unknown): CapInputResult {
     const spec = LIMITED_TOOLS[toolName];
-    if (!spec) return { args, truncation: null, softStop: null };
+    if (!spec) return { args, contextBudget: this.currentNotice(), softStop: null };
 
     const requested = readLimit(args, spec.limitPath) ?? spec.courtesyDefault;
-    const remaining = this.remainingFor(spec.dimension);
+    const remaining = this.remainingForHard(spec.dimension);
 
     // EXHAUSTED: the dimension can't fund even one row (remaining < the tool's
     // min of 1). Do NOT execute with limit:0 — that would make the tool's own
@@ -216,14 +216,13 @@ export class ContextBudgetTracker {
     if (remaining < MIN_TOOL_ROWS) {
       return {
         args,
-        truncation: null,
-        softStop: `context budget exhausted (${spec.dimension}); stop calling read tools and answer with what you have`,
+        contextBudget: this.currentNotice(),
+        softStop: `hard context budget exhausted (${spec.dimension}: ${this.usedFor(spec.dimension)}/${this.thresholdFor(spec.dimension).hard}); stop calling read tools and answer with what you have`,
       };
     }
 
-    // PARTIAL or FULL: clamp the requested limit down to what's left, but never
-    // below the tool's min of 1 — we return SOME rows, never 0. Since
-    // remaining >= 1 here, `min(requested, remaining)` is already >= 1.
+    // Clamp only against HARD. The warning threshold is intentionally absent
+    // from this calculation, so heavy-but-valid requests stay complete.
     const applied = Math.min(requested, remaining);
 
     // Account the (capped) amount up front. Row counting is request-side: we
@@ -232,38 +231,72 @@ export class ContextBudgetTracker {
     // is adequate to prevent bloat).
     this.accountFor(spec.dimension, applied);
 
-    // Nothing was capped: pass args through UNCHANGED (don't materialize an
-    // omitted limit into the args, don't echo a truncation note). The tool
-    // applies its own courtesy default exactly as before.
-    if (applied === requested) {
-      return { args, truncation: null, softStop: null };
-    }
-
-    // Capped (but >= 1): rewrite the limit down to what fits + surface the
-    // truncation note so the agent can self-correct (graceful degradation,
-    // truncated-but-non-empty, never a throw).
+    const truncated = applied < requested;
     return {
-      args: writeLimit(args, spec.limitPath, applied),
-      truncation: {
-        applied_limit: applied,
-        requested_limit: requested,
-        budget_remaining: this.remainingFor(spec.dimension),
-        truncated: true,
-        dimension: spec.dimension,
-      },
+      args: truncated ? writeLimit(args, spec.limitPath, applied) : args,
+      contextBudget: this.currentNotice(
+        truncated ? { applied, dimension: spec.dimension, requested } : undefined,
+      ),
       softStop: null,
     };
   }
 
-  private remainingFor(dimension: BudgetDimension): number {
-    return dimension === 'nodesPlusEdges'
-      ? this.budget.maxNodesPlusEdges - this.nodesPlusEdgesUsed
-      : this.budget.maxEventRows - this.eventRowsUsed;
+  private thresholdFor(dimension: BudgetDimension) {
+    if (dimension === 'toolCalls') return this.budget.toolCalls;
+    if (dimension === 'nodesPlusEdges') return this.budget.nodesPlusEdges;
+    return this.budget.eventRows;
   }
 
-  private accountFor(dimension: BudgetDimension, amount: number): void {
+  private usedFor(dimension: BudgetDimension): number {
+    if (dimension === 'toolCalls') return this.toolCalls;
+    if (dimension === 'nodesPlusEdges') return this.nodesPlusEdgesUsed;
+    return this.eventRowsUsed;
+  }
+
+  private remainingForHard(dimension: BudgetDimension): number {
+    return Math.max(0, this.thresholdFor(dimension).hard - this.usedFor(dimension));
+  }
+
+  private accountFor(dimension: RowBudgetDimension, amount: number): void {
     if (dimension === 'nodesPlusEdges') this.nodesPlusEdgesUsed += amount;
     else this.eventRowsUsed += amount;
+  }
+
+  /** Current warning state, also used by durable runs that opt out of row caps. */
+  currentNotice(truncation?: {
+    applied: number;
+    requested: number;
+    dimension: RowBudgetDimension;
+  }): ContextBudgetNotice | null {
+    const dimensions: ContextBudgetNotice['dimensions'] = {};
+    let hardReached = false;
+    for (const dimension of ['toolCalls', 'nodesPlusEdges', 'eventRows'] as const) {
+      const used = this.usedFor(dimension);
+      const threshold = this.thresholdFor(dimension);
+      if (used < threshold.warning) continue;
+      dimensions[dimension] = {
+        used,
+        warning_limit: threshold.warning,
+        hard_limit: threshold.hard,
+        hard_remaining: this.remainingForHard(dimension),
+      };
+      if (used >= threshold.hard) hardReached = true;
+    }
+    if (Object.keys(dimensions).length === 0 && !truncation) return null;
+
+    return {
+      level: truncation || hardReached ? 'hard' : 'warning',
+      dimensions,
+      truncated: Boolean(truncation),
+      ...(truncation
+        ? {
+            applied_limit: truncation.applied,
+            requested_limit: truncation.requested,
+            budget_remaining: this.remainingForHard(truncation.dimension),
+            dimension: truncation.dimension,
+          }
+        : {}),
+    };
   }
 
   /** Test/observability snapshot. */

@@ -79,16 +79,15 @@ export interface ToolExecutionGateInput {
 
 /**
  * Result of the optional per-call input interceptor (P5.1 / YUK-143). Lets the
- * Copilot context-budget tracker cap a read tool's requested `limit` down to
- * the remaining per-message budget BEFORE execute and surface a truncation
- * note to the agent. `args` is what the tool actually runs with;
- * `truncationNote`, when present, is merged into the tool's JSON output under
- * `context_budget` so the agent can self-correct (spec §3.2 / §5 Q2).
+ * Copilot context-budget tracker account a tool call and surface warning/hard
+ * state. `args` is what the tool actually runs with; `truncationNote` (historic
+ * field name), when present, is merged into output under `context_budget` so
+ * the agent can self-correct and tool_call_log preserves the notice.
  */
 export interface ToolInputInterceptResult {
   args: unknown;
   /**
-   * Structured truncation note (any object). Merged verbatim into the tool
+   * Structured budget notice (any object). Merged verbatim into the tool
    * output as `context_budget`. Kept as `object` (not a named shape) so the
    * bridge stays decoupled from the throttle's `ContextBudgetTruncation` type.
    */
@@ -209,8 +208,8 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         }
       }
 
-      // P5.1 / YUK-143 — surface the truncation note inside the tool output so
-      // the agent sees it was capped and can re-strategise (spec §3.2 / §5 Q2).
+      // P5.1 / YUK-143 + YUK-290 — surface warning/hard state inside the tool
+      // output so the agent can self-regulate before the hard cap intervenes.
       // Object outputs gain a `context_budget` field; non-object outputs are
       // wrapped. Only attaches on the happy path (no error).
       if (errorReason === undefined && truncationNote) {

@@ -27,10 +27,9 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-// P5.1 / YUK-143 — single tunable source for the Coach run caps. The values
-// below are byte-identical to the numbers previously hardcoded here
-// (max_proposals 5 / max_tool_calls 12); pure constant relocation, so Coach
-// behavior is unchanged (spec §3.3).
+// P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
+// old max_tool_calls=12 as an advisory warning and moves the accident ceiling
+// to 36; max_proposals remains byte-identical at 5.
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
@@ -235,9 +234,9 @@ function buildCoachInput(
       ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
     })),
     budget: {
-      // P5.1 / YUK-143 — sourced from COACH_CONTEXT_BUDGET (12 / 5),
-      // byte-identical to the prior hardcoded literals.
-      max_tool_calls: COACH_CONTEXT_BUDGET.maxToolCalls,
+      // YUK-290 — warning is advisory; max_tool_calls is the higher hard ceiling.
+      warning_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.warning,
+      max_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.hard,
       max_proposals: COACH_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },
