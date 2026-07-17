@@ -312,7 +312,98 @@ export async function countPendingProposalInboxByKind(
                   ELSE false
                 END
               WHEN 'knowledge_mutation' THEN
-                proposal_json->'proposed_change'->>'mutation' IN ('reparent', 'merge', 'split')
+                CASE proposal_json->'proposed_change'->>'mutation'
+                  WHEN 'reparent' THEN
+                    jsonb_typeof(proposal_json->'proposed_change'->'node_id') = 'string'
+                    AND length(proposal_json->'proposed_change'->>'node_id') > 0
+                    AND proposal_json->'proposed_change' ? 'new_parent_id'
+                    AND CASE jsonb_typeof(proposal_json->'proposed_change'->'new_parent_id')
+                      WHEN 'null' THEN true
+                      WHEN 'string' THEN
+                        length(proposal_json->'proposed_change'->>'new_parent_id') > 0
+                      ELSE false
+                    END
+                    AND CASE jsonb_typeof(
+                      proposal_json->'proposed_change'->'expected_version'
+                    )
+                      WHEN 'number' THEN
+                        (proposal_json->'proposed_change'->>'expected_version')::numeric >= 0
+                        AND mod(
+                          (proposal_json->'proposed_change'->>'expected_version')::numeric,
+                          1
+                        ) = 0
+                      ELSE false
+                    END
+                  WHEN 'merge' THEN
+                    CASE jsonb_typeof(proposal_json->'proposed_change'->'from_ids')
+                      WHEN 'array' THEN
+                        jsonb_array_length(
+                          proposal_json->'proposed_change'->'from_ids'
+                        ) > 0
+                        AND NOT EXISTS (
+                          SELECT 1
+                          FROM jsonb_array_elements(
+                            proposal_json->'proposed_change'->'from_ids'
+                          ) from_id
+                          WHERE jsonb_typeof(from_id) IS DISTINCT FROM 'string'
+                            OR length(from_id #>> '{}') = 0
+                        )
+                      ELSE false
+                    END
+                    AND jsonb_typeof(proposal_json->'proposed_change'->'into_id') = 'string'
+                    AND length(proposal_json->'proposed_change'->>'into_id') > 0
+                    AND CASE jsonb_typeof(
+                      proposal_json->'proposed_change'->'expected_versions'
+                    )
+                      WHEN 'object' THEN NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each(
+                          proposal_json->'proposed_change'->'expected_versions'
+                        ) expected_version
+                        WHERE CASE
+                          WHEN jsonb_typeof(expected_version.value) <> 'number' THEN true
+                          ELSE (expected_version.value #>> '{}')::numeric < 0
+                            OR mod((expected_version.value #>> '{}')::numeric, 1) <> 0
+                        END
+                      )
+                      ELSE false
+                    END
+                  WHEN 'split' THEN
+                    jsonb_typeof(proposal_json->'proposed_change'->'from_id') = 'string'
+                    AND length(proposal_json->'proposed_change'->>'from_id') > 0
+                    AND CASE jsonb_typeof(proposal_json->'proposed_change'->'into')
+                      WHEN 'array' THEN
+                        jsonb_array_length(proposal_json->'proposed_change'->'into') > 0
+                        AND NOT EXISTS (
+                          SELECT 1
+                          FROM jsonb_array_elements(
+                            proposal_json->'proposed_change'->'into'
+                          ) split_target
+                          WHERE jsonb_typeof(split_target) IS DISTINCT FROM 'object'
+                            OR jsonb_typeof(split_target->'name') IS DISTINCT FROM 'string'
+                            OR length(split_target->>'name') NOT BETWEEN 1 AND 120
+                            OR NOT (split_target ? 'parent_id')
+                            OR CASE jsonb_typeof(split_target->'parent_id')
+                              WHEN 'null' THEN false
+                              WHEN 'string' THEN length(split_target->>'parent_id') = 0
+                              ELSE true
+                            END
+                        )
+                      ELSE false
+                    END
+                    AND CASE jsonb_typeof(
+                      proposal_json->'proposed_change'->'expected_version'
+                    )
+                      WHEN 'number' THEN
+                        (proposal_json->'proposed_change'->>'expected_version')::numeric >= 0
+                        AND mod(
+                          (proposal_json->'proposed_change'->>'expected_version')::numeric,
+                          1
+                        ) = 0
+                      ELSE false
+                    END
+                  ELSE false
+                END
               WHEN 'goal_scope' THEN
                 jsonb_typeof(proposal_json->'proposed_change'->'title') = 'string'
                 AND length(proposal_json->'proposed_change'->>'title') BETWEEN 1 AND 280

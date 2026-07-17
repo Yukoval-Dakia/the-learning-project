@@ -879,6 +879,93 @@ describe('proposal inbox reader', () => {
       },
       created_at: new Date('2026-07-17T00:00:42.000Z'),
     });
+    await writeAiProposal(db, {
+      id: 'count_valid_reparent',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_a' },
+        reason_md: 'Move the node under its corrected parent.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'reparent',
+          node_id: 'node_a',
+          new_parent_id: null,
+          expected_version: 1,
+        },
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'count_valid_merge',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_b' },
+        reason_md: 'Merge duplicate nodes into the canonical node.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'merge',
+          from_ids: ['node_b'],
+          into_id: 'node_a',
+          expected_versions: { node_a: 2, node_b: 1 },
+        },
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'count_valid_split',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_c' },
+        reason_md: 'Split the overloaded concept into two focused nodes.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'split',
+          from_id: 'node_c',
+          into: [
+            { name: 'Child A', parent_id: null },
+            { name: 'Child B', parent_id: 'node_a' },
+          ],
+          expected_version: 3,
+        },
+      },
+    });
+    for (const [id, proposedChange] of [
+      ['count_invalid_reparent', { mutation: 'reparent' }],
+      [
+        'count_invalid_merge',
+        {
+          mutation: 'merge',
+          from_ids: ['node_a'],
+          into_id: 'node_b',
+          expected_versions: { node_a: 1.5 },
+        },
+      ],
+      [
+        'count_invalid_split',
+        {
+          mutation: 'split',
+          from_id: 'node_a',
+          into: [{ name: 'child without required parent_id' }],
+          expected_version: 1,
+        },
+      ],
+    ] as const) {
+      await db.insert(event).values({
+        id,
+        actor_kind: 'agent',
+        actor_ref: 'bad_writer',
+        action: 'experimental:proposal',
+        subject_kind: 'knowledge',
+        subject_id: 'node_a',
+        outcome: 'partial',
+        payload: {
+          kind: 'knowledge_mutation',
+          target: { subject_kind: 'knowledge', subject_id: 'node_a' },
+          reason_md: 'The mutation discriminator is valid but its variant shape is not.',
+          evidence_refs: [],
+          proposed_change: proposedChange,
+        },
+        created_at: new Date('2026-07-17T00:00:43.000Z'),
+      });
+    }
     await db.insert(event).values({
       id: 'count_legacy_without_evidence_refs',
       actor_kind: 'agent',
@@ -964,7 +1051,12 @@ describe('proposal inbox reader', () => {
       return acc;
     }, {});
 
-    expect(counts).toEqual({ completion: 1, defer: 1, knowledge_edge: 1 });
+    expect(counts).toEqual({
+      completion: 1,
+      defer: 1,
+      knowledge_edge: 1,
+      knowledge_mutation: 3,
+    });
     expect(counts).toEqual(projectedCounts);
   });
 });
