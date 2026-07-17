@@ -315,6 +315,55 @@ describe('getFailureAttempts', () => {
     expect(results.map((r) => r.question_id)).toEqual(['q_fail']);
   });
 
+  it('includes again review failures and normalizes their learner evidence', async () => {
+    const db = testDb();
+    const reviewId = await seedReviewEvent({
+      id: 'evt_review_again',
+      question_id: 'q_review_again',
+      rating: 'again',
+      user_response_md: 'review answer',
+      answer_image_refs: ['asset_review'],
+      referenced_knowledge_ids: ['k_review'],
+    });
+    await seedReviewEvent({
+      id: 'evt_review_hard',
+      question_id: 'q_review_hard',
+      rating: 'hard',
+    });
+
+    const defaultResults = await getFailureAttempts(db);
+    const results = await getFailureAttempts(db, { includeReviewFailures: true });
+
+    expect(defaultResults).toEqual([]);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      attempt_event_id: reviewId,
+      question_id: 'q_review_again',
+      answer_md: 'review answer',
+      answer_image_refs: ['asset_review'],
+      referenced_knowledge_ids: ['k_review'],
+    });
+  });
+
+  it('getFailureAttemptById resolves an again review for downstream evidence tools', async () => {
+    const db = testDb();
+    const reviewId = await seedReviewEvent({
+      question_id: 'q_review_lookup',
+      rating: 'again',
+      user_response_md: 'again response',
+      referenced_knowledge_ids: ['k_lookup'],
+    });
+
+    const failure = await getFailureAttemptById(db, reviewId);
+
+    expect(failure).toMatchObject({
+      attempt_event_id: reviewId,
+      question_id: 'q_review_lookup',
+      answer_md: 'again response',
+      referenced_knowledge_ids: ['k_lookup'],
+    });
+  });
+
   // YUK-76 codex round-3 P1 — `perQuestionLimit` opt caps per question in SQL.
   //
   // The previous global `limit` is the active-rows-overall cap. When a hot
@@ -757,6 +806,9 @@ async function seedReviewEvent(opts: {
   id?: string;
   question_id: string;
   rating?: 'again' | 'hard' | 'good';
+  user_response_md?: string | null;
+  answer_image_refs?: string[];
+  referenced_knowledge_ids?: string[];
   created_at?: Date;
 }): Promise<string> {
   const db = testDb();
@@ -786,8 +838,9 @@ async function seedReviewEvent(opts: {
         state: 'review',
         last_review: new Date('2026-05-15T00:00:00Z').toISOString(),
       },
-      user_response_md: null,
-      referenced_knowledge_ids: [],
+      user_response_md: opts.user_response_md ?? null,
+      answer_image_refs: opts.answer_image_refs ?? [],
+      referenced_knowledge_ids: opts.referenced_knowledge_ids ?? [],
     },
     caused_by_event_id: null,
     task_run_id: null,

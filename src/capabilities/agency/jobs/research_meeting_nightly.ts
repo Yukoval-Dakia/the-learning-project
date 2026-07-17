@@ -210,7 +210,10 @@ export async function runResearchMeetingNightly(
 
   // ── PRE-LLM reads (OUTSIDE the per-cell swallow — a throw here is retryable) ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const failures: FailureAttempt[] = await getFailureAttemptsFn(db, { since });
+  const failures: FailureAttempt[] = await getFailureAttemptsFn(db, {
+    includeReviewFailures: true,
+    since,
+  });
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
