@@ -10,7 +10,6 @@
 
 import type {
   DegradedKind,
-  OvernightDigest,
   OvernightRunGroup,
 } from '@/server/today/overnight-digest';
 
