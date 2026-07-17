@@ -879,6 +879,26 @@ describe('proposal inbox reader', () => {
       },
       created_at: new Date('2026-07-17T00:00:42.000Z'),
     });
+    await db.insert(event).values({
+      id: 'count_invalid_question_edit',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'question',
+      subject_id: 'question_invalid_edit',
+      outcome: 'partial',
+      payload: {
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: 'question_invalid_edit' },
+        reason_md: 'The operation discriminator is valid but its required fields are absent.',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: 'question_invalid_edit',
+          edit: { op: 'set_choice' },
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:42.500Z'),
+    });
     await writeAiProposal(db, {
       id: 'count_valid_reparent',
       payload: {
@@ -1041,6 +1061,20 @@ describe('proposal inbox reader', () => {
       },
       caused_by_event_id: 'count_retract',
       created_at: new Date('2026-07-17T00:02:00.000Z'),
+    });
+    // A correction-shaped row is not a correction unless it passes CorrectEvent.
+    // The Inbox skips this missing reason/affected_refs payload, so the KPI must too.
+    await db.insert(event).values({
+      id: 'count_malformed_correction',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_defer',
+      outcome: 'success',
+      payload: { correction_kind: 'retract' },
+      caused_by_event_id: 'count_defer',
+      created_at: new Date('2026-07-17T00:03:00.000Z'),
     });
 
     const counts = await countPendingProposalInboxByKind(db);
