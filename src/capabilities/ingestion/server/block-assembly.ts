@@ -232,7 +232,7 @@ export function humanizeBlockMergeReason(
   let readable = reason;
   for (const [index, block] of blocks.entries()) {
     const token = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(block.id)}(?![A-Za-z0-9_-])`, 'g');
-    readable = readable.replace(token, readableBlockLabel(block, index));
+    readable = readable.replace(token, () => readableBlockLabel(block, index));
   }
   return readable.replace(OPAQUE_BLOCK_REF_RE, '某题块');
 }

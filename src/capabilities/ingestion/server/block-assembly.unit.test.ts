@@ -68,6 +68,13 @@ describe('humanizeBlockMergeReason (YUK-337)', () => {
     );
   });
 
+  it('treats dollar patterns in question numbers as literal replacement text', () => {
+    const id = 'cdollarquestionblock000001';
+    expect(humanizeBlockMergeReason(`${id}需要并入前题。`, [makeBlock(id, 0, '题面', '$&')])).toBe(
+      '第 1 块（题号 $&）需要并入前题。',
+    );
+  });
+
   it('masks an opaque id hallucinated only inside the reason', () => {
     const hallucinated = 'challucinatedblock0000000';
     expect(humanizeBlockMergeReason(`${hallucinated}似乎承接前题。`, blocks)).toBe(
