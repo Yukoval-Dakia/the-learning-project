@@ -922,6 +922,29 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             }
             stepStartTime = Date.now();
           } else if (msg.type === 'result') {
+            // YUK-590: streamTask shares buildQueryOptions with runTask, including
+            // maxBudgetUsd. Every terminal SDK error must therefore close the
+            // ai_task_runs row as failure instead of falling through with status
+            // 'running'. The success+is_error API shape is also a failure, matching
+            // runTask's global truthfulness invariant.
+            if (isApiErrorSuccessResult(msg)) {
+              throw new AgentRunError({
+                kind,
+                taskRunId,
+                subtype: 'api_error_result',
+                apiErrorStatus: msg.api_error_status ?? null,
+                errors: [msg.result ?? ''],
+              });
+            }
+            if (msg.subtype !== 'success') {
+              throw new AgentRunError({
+                kind,
+                taskRunId,
+                subtype: msg.subtype,
+                errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+              });
+            }
+
             if (msg.subtype === 'success') {
               const u = msg.usage;
               usage = {

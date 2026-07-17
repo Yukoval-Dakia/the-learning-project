@@ -184,7 +184,7 @@ describe('induceConjecture self-consistency', () => {
       .mockRejectedValue(new Error('provider unavailable'));
 
     await expect(induceConjecture({ cells: [cell()], samples: 2, runTaskFn })).rejects.toThrow(
-      /no sample produced a valid ConjectureDraft/,
+      /no sample produced a valid ConjectureDraft.*provider unavailable/,
     );
 
     expect(runTaskFn).toHaveBeenCalledTimes(2);

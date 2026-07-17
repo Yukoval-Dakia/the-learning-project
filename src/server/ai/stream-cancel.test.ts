@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
   gate: undefined as undefined | Promise<void>,
+  terminalMessage: undefined as undefined | Record<string, unknown>,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -32,7 +33,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
         message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
       };
       if (mockSdk.gate) await mockSdk.gate;
-      yield {
+      yield mockSdk.terminalMessage ?? {
         type: 'result',
         subtype: 'success',
         result: 'hi',
@@ -62,6 +63,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
+import { writeAiTaskRunFinished, writeCostLedger } from '@/server/ai/log';
 import { streamTask } from './runner';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
@@ -84,6 +86,7 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
     mockSdk.gate = undefined;
+    mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
@@ -170,6 +173,7 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
     mockSdk.gate = undefined;
+    mockSdk.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
@@ -210,5 +214,73 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     expect(stuck).toBeUndefined();
 
     warn.mockRestore();
+  });
+});
+
+describe('streamTask — YUK-590 terminal failure honesty', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.gate = undefined;
+    mockSdk.terminalMessage = undefined;
+    logMocks.finishedShouldThrow = false;
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('records error_max_budget_usd as failure and exposes the terminal reason', async () => {
+    mockSdk.terminalMessage = {
+      type: 'result',
+      subtype: 'error_max_budget_usd',
+      duration_ms: 10,
+      duration_api_ms: 8,
+      is_error: true,
+      num_turns: 1,
+      session_id: 'session-test',
+      total_cost_usd: 0.5,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      errors: ['budget exhausted'],
+    };
+
+    const body = await streamTask('AttributionTask', { q: 'x' }, { db: fakeDb }).text();
+
+    expect(writeAiTaskRunFinished).toHaveBeenCalledTimes(1);
+    expect(writeAiTaskRunFinished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        status: 'failure',
+        finish_reason: 'error',
+        error_message: expect.stringContaining('error_max_budget_usd'),
+      }),
+    );
+    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(body).toContain('error_max_budget_usd');
+  });
+
+  it('records success+is_error as failure instead of charging a successful run', async () => {
+    mockSdk.terminalMessage = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      api_error_status: 429,
+      result: 'rate limited',
+      stop_reason: 'end_turn',
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 0 },
+    };
+
+    const body = await streamTask('AttributionTask', { q: 'x' }, { db: fakeDb }).text();
+
+    expect(writeAiTaskRunFinished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        status: 'failure',
+        error_message: expect.stringContaining('api_error_result http=429'),
+      }),
+    );
+    expect(writeCostLedger).not.toHaveBeenCalled();
+    expect(body).toContain('api_error_result http=429');
   });
 });
