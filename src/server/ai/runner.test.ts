@@ -384,6 +384,50 @@ describe('streamTask middleware + cost', () => {
     expect(JSON.stringify(mockSdk.capturedPrompt)).toContain('pre-stream-memory');
   });
 
+  it('uses a caller-owned task run id and can suppress the input-only tool log', async () => {
+    mockSdk.messages = [
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_use_maintenance',
+              name: 'mcp__loom__write_proposal',
+              input: { payload: { mutation: 'propose_knowledge_edge' } },
+            },
+          ],
+        },
+      },
+      successResult('done'),
+    ];
+
+    const response = streamTask(
+      'KnowledgeReviewTask',
+      { input: 'x' },
+      {
+        db: testDb(),
+        r2: memR2(),
+        taskRunId: 'tr_caller_owned',
+        autoLogToolCalls: false,
+      },
+    );
+    await response.text();
+
+    const { ai_task_runs, tool_call_log } = await import('@/db/schema');
+    const { eq } = await import('drizzle-orm');
+    const runs = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, 'tr_caller_owned'));
+    expect(runs).toHaveLength(1);
+    const logs = await testDb()
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.task_run_id, 'tr_caller_owned'));
+    expect(logs).toHaveLength(0);
+  });
+
   it('writes USD cost via cost_ledger (not micro-USD)', async () => {
     mockSdk.messages = [successResult('hello', 0.005)];
 

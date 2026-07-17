@@ -99,3 +99,8 @@ export const ExperimentalRelationType = z.string().refine((s) => s.startsWith('e
 
 export const RelationTypeSchema = z.union([CoreRelationType, ExperimentalRelationType]);
 export type RelationTypeSchemaT = z.infer<typeof RelationTypeSchema>;
+
+/** ADR-0010 relation semantics shared by every edge dedup/cooldown call site. */
+export function isSymmetricKnowledgeRelation(relationType: string): boolean {
+  return relationType === 'related_to' || relationType === 'contrasts_with';
+}

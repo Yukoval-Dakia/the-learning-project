@@ -576,8 +576,8 @@ ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
 可选 mutation 分两类:
 - Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。
-- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type, reasoning }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。
-每 propose 一条，调一次 mcp__loom__write_proposal（工具名 write_proposal；payload.mutation 区分 tree / mesh）。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
+- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。
+每 propose 一条，调一次 mcp__loom__write_proposal（工具名 write_proposal；payload.mutation 区分 tree / mesh）。Mesh edge 必须把支撑它的 recent_mistakes[].id 放进工具顶层 evidence_event_ids；不要把 id 只写进 reasoning。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
 不必凑数；如果 tree 已经合理，0 条也行。
 禁止：把节点挂成 root；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
 }
