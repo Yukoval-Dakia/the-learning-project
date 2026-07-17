@@ -235,6 +235,7 @@ describe('readLearnerStateProjection overnight handoff', () => {
   });
 
   it('keeps Copilot available while naming an unavailable handoff honestly', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const projection = await readLearnerStateProjection({} as never, {
       ...baseDeps,
       loadOvernightDigestFn: async () => {
@@ -243,6 +244,13 @@ describe('readLearnerStateProjection overnight handoff', () => {
     });
 
     expect(projection.overnightSentence).toBe(OVERNIGHT_HANDOFF_UNAVAILABLE);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[learner-state] overnight_digest_unavailable',
+      expect.objectContaining({
+        event: 'overnight_digest_unavailable',
+        error: 'digest unavailable',
+      }),
+    );
   });
 });
 

@@ -288,7 +288,13 @@ export async function readLearnerStateProjection(
 
   const overnightSentencePromise = loadOvernightDigest(db)
     .then(formatOvernightHandoffSentence)
-    .catch(() => OVERNIGHT_HANDOFF_UNAVAILABLE);
+    .catch((err) => {
+      console.warn('[learner-state] overnight_digest_unavailable', {
+        event: 'overnight_digest_unavailable',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return OVERNIGHT_HANDOFF_UNAVAILABLE;
+    });
   const [summary, goals, failures, overnightSentence] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
