@@ -36,6 +36,28 @@ updates:
       # Revisit when drizzle-zod's >=0.8 type regression is resolved upstream.
       - dependency-name: "drizzle-zod"
         versions: [">=0.8.0"]
+      # mem0ai >=3.1.0 makes the OSS entry point dynamically import the
+      # optional @huggingface/transformers package. Our server/worker bundles
+      # do not ship that local-embedder dependency, so the bump poisons the
+      # whole production group at build time. Revisit when mem0 makes the
+      # optional import bundle-safe (YUK-671).
+      - dependency-name: "mem0ai"
+        versions: [">=3.1.0"]
+      # lucide-react 1.x is a breaking icon/API migration and needs explicit
+      # import plus visual/a11y regression coverage. Track that migration in
+      # YUK-684 instead of letting a major occupy the weekly update queue.
+      - dependency-name: "lucide-react"
+        update-types: ["version-update:semver-major"]
+      # Biome 2.x rejects the current 1.x config keys and changes lint policy.
+      # YUK-685 owns the controlled config/rule migration; keep routine dev
+      # dependency updates flowing until that work is complete.
+      - dependency-name: "@biomejs/biome"
+        update-types: ["version-update:semver-major"]
+      # Testcontainers 12 pulls undici 8, whose Node >=22.19 engine is stricter
+      # than this repo's declared Node >=22.0 support. YUK-686 owns the runtime
+      # floor decision and minimum-version DB test before adopting the major.
+      - dependency-name: "@testcontainers/postgresql"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
     commit-message:
