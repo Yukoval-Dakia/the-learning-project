@@ -23,7 +23,7 @@ import {
 import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
 import { newId } from '@/core/ids';
 import { QuestionKind } from '@/core/schema/business';
-import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { RelationTypeSchema, isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).
 import { SuggestionKind } from '@/core/schema/event/known';
@@ -112,13 +112,9 @@ async function pendingProposalWithAnyCooldown(
   );
 }
 
-function isSymmetricRelation(relationType: string): boolean {
-  return relationType === 'related_to' || relationType === 'contrasts_with';
-}
-
 function edgeCooldownKeys(fromId: string, toId: string, relationType: string): string[] {
   const directional = `knowledge_edge:${fromId}|${toId}|${relationType}`;
-  if (!isSymmetricRelation(relationType)) return [directional];
+  if (!isSymmetricKnowledgeRelation(relationType)) return [directional];
   const normalized = [fromId, toId].sort().join('|');
   return [
     `knowledge_edge:${normalized}|${relationType}`,
@@ -372,7 +368,7 @@ async function proposeKnowledgeEdgeCreate(
       .from(knowledge_edge)
       .where(
         and(
-          isSymmetricRelation(relationType)
+          isSymmetricKnowledgeRelation(relationType)
             ? or(
                 and(
                   eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),

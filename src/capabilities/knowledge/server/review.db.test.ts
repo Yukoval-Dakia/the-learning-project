@@ -352,6 +352,27 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(rows[0].payload).not.toHaveProperty('rubric_verdict');
   });
 
+  it('folds a fabricated evidence id instead of treating non-empty refs as valid evidence', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'prerequisite',
+      },
+      reasoning: 'attempt fabricated_attempt claims k_from is required before k_to',
+      evidence_event_ids: ['fabricated_attempt'],
+    });
+
+    expect(result.kind).toBe('rubric_rejected');
+    if (result.kind !== 'rubric_rejected') throw new Error(`unexpected kind ${result.kind}`);
+    expect(result.gate).toBe('evidence_level');
+  });
+
   it('skips an already-live symmetric edge before pending/rubric gates', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_from');
@@ -383,6 +404,50 @@ describe('runWriteProposal — pure dispatch', () => {
     });
     const proposalRows = await db.select().from(event).where(eq(event.action, 'propose'));
     expect(proposalRows).toHaveLength(0);
+  });
+
+  it('skips a reverse pending symmetric edge across legacy directional cooldown keys', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+    await writeAiProposal(db, {
+      id: 'reverse_pending_edge',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'reverse pending fixture',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k_to',
+          to_knowledge_id: 'k_from',
+          relation_type: 'contrasts_with',
+          weight: 1,
+        },
+        // Pre-canonical legacy key in the reverse direction.
+        cooldown_key: 'knowledge_edge:k_to|k_from|contrasts_with',
+      },
+    });
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'contrasts_with',
+      },
+      reasoning: 'same symmetric edge in the forward direction',
+      evidence_event_ids: ['unused_because_gate_short_circuits'],
+    });
+
+    expect(result).toMatchObject({
+      kind: 'skipped_duplicate',
+      proposal_id: 'reverse_pending_edge',
+    });
+    const edgeProposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(edgeProposals).toHaveLength(1);
   });
 
   it('top-level mutation=propose_knowledge_edge with payload=edge fields routes to ProposeKnowledgeEdge (folded rubric-rejected)', async () => {

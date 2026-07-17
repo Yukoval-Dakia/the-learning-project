@@ -23,6 +23,7 @@
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
+import { isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
 import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -170,6 +171,22 @@ export type WriteProposalResult =
 interface ProposalGateCandidate {
   kind: ProposalInboxRow['kind'];
   cooldown_key: string;
+  equivalent_cooldown_keys?: string[];
+}
+
+function edgeCooldownKeys(
+  fromId: string,
+  toId: string,
+  relationType: string,
+): [string, ...string[]] {
+  const directional = `knowledge_edge:${fromId}|${toId}|${relationType}`;
+  if (!isSymmetricKnowledgeRelation(relationType)) return [directional];
+  const normalized = [fromId, toId].sort().join('|');
+  return [
+    `knowledge_edge:${normalized}|${relationType}`,
+    directional,
+    `knowledge_edge:${toId}|${fromId}|${relationType}`,
+  ];
 }
 
 function proposalGateCandidate(args: WriteProposalArgs): ProposalGateCandidate | null {
@@ -178,9 +195,15 @@ function proposalGateCandidate(args: WriteProposalArgs): ProposalGateCandidate |
       ? extractEdgePayload(args.payload)
       : null;
   if (edgePayload) {
+    const cooldownKeys = edgeCooldownKeys(
+      edgePayload.from_knowledge_id,
+      edgePayload.to_knowledge_id,
+      edgePayload.relation_type,
+    );
     return {
       kind: 'knowledge_edge',
-      cooldown_key: `knowledge_edge:${edgePayload.from_knowledge_id}|${edgePayload.to_knowledge_id}|${edgePayload.relation_type}`,
+      cooldown_key: cooldownKeys[0],
+      equivalent_cooldown_keys: cooldownKeys,
     };
   }
 
@@ -336,13 +359,14 @@ async function findProposalRowsForGate(
   db: DbLike,
   candidate: ProposalGateCandidate,
 ): Promise<Array<{ id: string }>> {
+  const cooldownKeys = candidate.equivalent_cooldown_keys ?? [candidate.cooldown_key];
   return await db
     .select({ id: event.id })
     .from(event)
     .where(
       and(
         sql`${event.payload}->'ai_proposal'->>'kind' = ${candidate.kind}`,
-        sql`${event.payload}->'ai_proposal'->>'cooldown_key' = ${candidate.cooldown_key}`,
+        inArray(sql<string>`${event.payload}->'ai_proposal'->>'cooldown_key'`, cooldownKeys),
         // P5.4 / YUK-143 (RB-7) — exclude rubric-rejected (folded) propose
         // events. They are terminal, NOT live-pending; counting them would lock
         // out the very edge the rubric rejected and block a later valid
@@ -404,19 +428,12 @@ async function findLiveDuplicateEdge(
     to_knowledge_id: toId,
     relation_type: relationType,
   } = edgePayload;
-  const endpoints =
-    relationType === 'related_to' || relationType === 'contrasts_with'
-      ? or(
-          and(
-            eq(knowledge_edge.from_knowledge_id, fromId),
-            eq(knowledge_edge.to_knowledge_id, toId),
-          ),
-          and(
-            eq(knowledge_edge.from_knowledge_id, toId),
-            eq(knowledge_edge.to_knowledge_id, fromId),
-          ),
-        )
-      : and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId));
+  const endpoints = isSymmetricKnowledgeRelation(relationType)
+    ? or(
+        and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId)),
+        and(eq(knowledge_edge.from_knowledge_id, toId), eq(knowledge_edge.to_knowledge_id, fromId)),
+      )
+    : and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId));
   return (
     (
       await db
@@ -453,7 +470,11 @@ async function writeProposalAfterGate(
       });
       return { proposal_id: id, kind: 'tree_mutation' };
     }
-    const cooldownKey = `knowledge_edge:${edgePayload.from_knowledge_id}|${edgePayload.to_knowledge_id}|${edgePayload.relation_type}`;
+    const cooldownKey = edgeCooldownKeys(
+      edgePayload.from_knowledge_id,
+      edgePayload.to_knowledge_id,
+      edgePayload.relation_type,
+    )[0];
     const edgeProposalPayload = {
       kind: 'knowledge_edge' as const,
       target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
