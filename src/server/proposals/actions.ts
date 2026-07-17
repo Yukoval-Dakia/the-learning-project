@@ -125,6 +125,7 @@ import {
   rollbackRecordsActioned,
 } from '@/server/records/record_processing';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
@@ -1117,16 +1118,6 @@ export async function retractAiProposal(
   opts: RetractAiProposalOpts = {},
 ): Promise<RetractAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
-  if (proposal.kind === 'question_edit') {
-    const existingRate = await findExistingRateEvent(db, proposalId);
-    if (existingRate?.decision === 'accept') {
-      throw new ApiError(
-        'question_edit_retract_conflict',
-        '题目修订已应用，无法安全撤销；请提交新的题目修订来纠正当前内容。',
-        409,
-      );
-    }
-  }
   const correctionEventId = newId();
 
   // YUK-471 (retract fold/rollback) — SINGLE retract transaction (augment#3 + OCR
@@ -1139,6 +1130,18 @@ export async function retractAiProposal(
   // (variant_question / learning_item / goal_scope) are folded in too — strictly safer,
   // behavior unchanged.
   await db.transaction(async (tx) => {
+    if (proposal.kind === 'question_edit') {
+      await acquireProposalDecisionLock(tx, proposalId);
+      const existingRate = await findExistingRateEvent(tx, proposalId);
+      if (existingRate?.decision === 'accept') {
+        throw new ApiError(
+          'question_edit_retract_conflict',
+          '题目修订已应用，无法安全撤销；请提交新的题目修订来纠正当前内容。',
+          409,
+        );
+      }
+    }
+
     // YUK-471 W2 — capture the correction timestamp ONCE so the goal_scope dormant UPDATE below
     // reuses the SAME value the `correct` event carries for updated_at. The goal reducer reads
     // updated_at off the correct event's created_at, so a separate `new Date()` for the imperative

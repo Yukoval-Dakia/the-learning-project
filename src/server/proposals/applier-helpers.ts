@@ -4,13 +4,20 @@
 // The import-cycle gate forbids capability appliers from importing
 // producers/writer/actions; this file is the sanctioned shared surface.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 
 type DbLike = Db | Tx;
+
+/** Serialize one proposal across lifecycle paths that opt into the shared decision lock. */
+export async function acquireProposalDecisionLock(tx: Tx, proposalId: string): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`proposal_decision:${proposalId}`}, 0))`,
+  );
+}
 
 export type ExistingRateDecision = 'accept' | 'dismiss' | 'reverse' | 'change_type' | 'rollback';
 
