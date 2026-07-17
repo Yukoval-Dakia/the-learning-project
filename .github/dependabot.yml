@@ -53,6 +53,11 @@ updates:
       # dependency updates flowing until that work is complete.
       - dependency-name: "@biomejs/biome"
         update-types: ["version-update:semver-major"]
+      # Testcontainers 12 pulls undici 8, whose Node >=22.19 engine is stricter
+      # than this repo's declared Node >=22.0 support. YUK-686 owns the runtime
+      # floor decision and minimum-version DB test before adopting the major.
+      - dependency-name: "@testcontainers/postgresql"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
     commit-message:
