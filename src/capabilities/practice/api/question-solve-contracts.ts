@@ -1,5 +1,5 @@
 import { QuestionKind } from '@/core/schema/business';
-import { MAX_HINT_INDEX } from '@/core/schema/event/known';
+import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { collectionResponseSchema } from '@/kernel/http-contracts';
 import { z } from 'zod';
 
@@ -147,7 +147,7 @@ export const SolveSubmissionBodySchema = z.object({
   student_text_steps: z.array(z.string()).optional(),
   student_final_answer_text: z.string().optional(),
   student_image_refs: z.array(z.string()).optional(),
-  hints_used: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
+  hints_used: z.number().int().nonnegative().max(MAX_HINT_COUNT).optional(),
   final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
 });
 export const CreateSolveSubmissionBodySchema = SolveSubmissionBodySchema.extend({

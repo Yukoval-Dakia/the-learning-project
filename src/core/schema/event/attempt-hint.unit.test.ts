@@ -5,7 +5,7 @@
 // 前置原料）。两字段 OPTIONAL：非 tutor-solve 路径（卷题 / FSRS 复习 / copilot 提示）的
 // attempt 不带 → 既有读路径逐字不变（byte-identical 回归锚）。
 import { describe, expect, it } from 'vitest';
-import { AttemptOnQuestion, KnownEvent, MAX_HINT_INDEX } from './known';
+import { AttemptOnQuestion, KnownEvent, MAX_HINT_COUNT, MAX_HINT_INDEX } from './known';
 
 function attemptRow(payloadOverrides: Record<string, unknown>) {
   return {
@@ -59,12 +59,12 @@ describe('AttemptOnQuestion hint capture (YUK-352)', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects hints_used above MAX_HINT_INDEX (durable value is bounded by the hint ceiling)', () => {
-    expect(AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_INDEX })).success).toBe(
+  it('accepts the full inclusive hint count and rejects values above it', () => {
+    expect(AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_COUNT })).success).toBe(
       true,
     );
     expect(
-      AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_INDEX + 1 })).success,
+      AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_COUNT + 1 })).success,
     ).toBe(false);
   });
 
