@@ -16,7 +16,14 @@
 import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
-import { ai_task_runs, event, knowledge, knowledge_edge, tool_call_log } from '@/db/schema';
+import {
+  ai_task_runs,
+  event,
+  knowledge,
+  knowledge_edge,
+  proposal_signals,
+  tool_call_log,
+} from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -442,6 +449,73 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(result).toMatchObject({
       kind: 'skipped_duplicate',
       proposal_id: 'reverse_pending_edge',
+    });
+    const edgeProposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(edgeProposals).toHaveLength(1);
+  });
+
+  it('honors an active cooldown stored under a legacy reverse symmetric key', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    await seedKnowledgeNode('k_to');
+    await writeAiProposal(db, {
+      id: 'reverse_dismissed_edge',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'reverse dismissed fixture',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k_to',
+          to_knowledge_id: 'k_from',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+        cooldown_key: 'knowledge_edge:k_to|k_from|related_to',
+      },
+    });
+    await db.insert(event).values({
+      id: 'reverse_dismiss_rate',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'reverse_dismissed_edge',
+      outcome: 'success',
+      payload: { rating: 'dismiss' },
+      caused_by_event_id: 'reverse_dismissed_edge',
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+    const cooldownUntil = new Date(Date.now() + 60_000);
+    await db.insert(proposal_signals).values({
+      id: 'reverse_legacy_signal',
+      kind: 'knowledge_edge',
+      cooldown_key: 'knowledge_edge:k_to|k_from|related_to',
+      cooldown_until: cooldownUntil,
+    });
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'related_to',
+      },
+      reasoning: 'same symmetric edge after a legacy reverse dismissal',
+      evidence_event_ids: ['unused_because_cooldown_short_circuits'],
+    });
+
+    expect(result).toEqual({
+      kind: 'skipped_cooldown',
+      proposal_id: 'reverse_dismissed_edge',
+      cooldown_key: 'knowledge_edge:k_from|k_to|related_to',
+      cooldown_until: cooldownUntil.toISOString(),
     });
     const edgeProposals = await db
       .select()

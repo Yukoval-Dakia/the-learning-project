@@ -236,7 +236,7 @@ async function checkProposalGate(
   { kind: 'skipped_duplicate' | 'skipped_cooldown' }
 > | null> {
   const now = new Date();
-  const signal = await lockProposalSignal(db, candidate);
+  const signals = await lockProposalSignals(db, candidate);
   const duplicate = await findPendingProposalForGate(db, candidate);
   if (duplicate) {
     return {
@@ -245,22 +245,29 @@ async function checkProposalGate(
       cooldown_key: candidate.cooldown_key,
     };
   }
-  if (signal.cooldown_until && signal.cooldown_until > now) {
+  const activeSignal = signals
+    .filter((signal) => signal.cooldown_until && signal.cooldown_until > now)
+    .sort(
+      (left, right) =>
+        (right.cooldown_until?.getTime() ?? 0) - (left.cooldown_until?.getTime() ?? 0),
+    )[0];
+  if (activeSignal?.cooldown_until) {
     const sourceProposal = await findLatestProposalForGate(db, candidate);
     return {
-      proposal_id: sourceProposal?.id ?? signal.id,
+      proposal_id: sourceProposal?.id ?? activeSignal.id,
       kind: 'skipped_cooldown',
       cooldown_key: candidate.cooldown_key,
-      cooldown_until: signal.cooldown_until.toISOString(),
+      cooldown_until: activeSignal.cooldown_until.toISOString(),
     };
   }
   return null;
 }
 
-async function lockProposalSignal(
+async function lockProposalSignals(
   db: DbLike,
   candidate: ProposalGateCandidate,
-): Promise<{ id: string; cooldown_until: Date | null }> {
+): Promise<Array<{ id: string; cooldown_until: Date | null }>> {
+  const cooldownKeys = candidate.equivalent_cooldown_keys ?? [candidate.cooldown_key];
   await db.execute(sql`
     INSERT INTO proposal_signals (
       id,
@@ -284,31 +291,28 @@ async function lockProposalSignal(
     )
     ON CONFLICT (kind, cooldown_key) DO NOTHING
   `);
-  await db.execute(sql`
-    SELECT id
-    FROM proposal_signals
-    WHERE kind = ${candidate.kind}
-      AND cooldown_key = ${candidate.cooldown_key}
-    FOR UPDATE
-  `);
-
-  const row = (
-    await db
-      .select({
-        id: proposal_signals.id,
-        cooldown_until: proposal_signals.cooldown_until,
-      })
-      .from(proposal_signals)
-      .where(
-        and(
-          eq(proposal_signals.kind, candidate.kind),
-          eq(proposal_signals.cooldown_key, candidate.cooldown_key),
-        ),
-      )
-      .limit(1)
-  )[0];
-  if (!row) throw new Error(`proposal signal lock row missing: ${candidate.cooldown_key}`);
-  return row;
+  // Symmetric edges previously wrote directional keys. Lock every equivalent
+  // signal in a stable order so an active legacy dismissal cannot be bypassed
+  // by the new canonical key (and concurrent forward/reverse calls cannot
+  // deadlock while acquiring the same row set).
+  const rows = await db
+    .select({
+      id: proposal_signals.id,
+      cooldown_until: proposal_signals.cooldown_until,
+    })
+    .from(proposal_signals)
+    .where(
+      and(
+        eq(proposal_signals.kind, candidate.kind),
+        inArray(proposal_signals.cooldown_key, cooldownKeys),
+      ),
+    )
+    .orderBy(proposal_signals.cooldown_key)
+    .for('update');
+  if (rows.length === 0) {
+    throw new Error(`proposal signal lock row missing: ${candidate.cooldown_key}`);
+  }
+  return rows;
 }
 
 async function findLatestProposalForGate(
@@ -581,7 +585,9 @@ const WriteProposalSchema = {
   mutation: z.string().optional(),
   payload: z.unknown(),
   reasoning: z.string(),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
+  // resolveEvidence currently resolves refs one-by-one; cap agent input so a
+  // malformed tool call cannot amplify into an unbounded query sequence.
+  evidence_event_ids: z.array(z.string().min(1)).max(20).optional(),
 } as const;
 
 function buildKnowledgeReviewMcpServer(db: Db, taskRunId: string) {
