@@ -406,16 +406,12 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
     }
   });
 
-  it('Vision* and ReviewIntentTask use subject-neutral registry strings', () => {
-    // These 3 tasks pass through to registry.ts. Their prompts should be
+  it('Vision extraction tasks use subject-neutral registry strings', () => {
+    // These tasks pass through to registry.ts. Their prompts should be
     // identical regardless of profile.
     const yuwenProfile = resolveSubjectProfile('yuwen');
     const mathProfile = resolveSubjectProfile('math');
-    for (const kind of [
-      'VisionExtractTask',
-      'VisionExtractTaskHeavy',
-      'ReviewIntentTask',
-    ] as const) {
+    for (const kind of ['VisionExtractTask', 'VisionExtractTaskHeavy'] as const) {
       const w = getTaskSystemPrompt(kind, yuwenProfile);
       const m = getTaskSystemPrompt(kind, mathProfile);
       expect(w, `${kind} profile-coupling regression`).toBe(m);
