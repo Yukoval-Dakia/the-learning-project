@@ -207,42 +207,170 @@ export async function countPendingProposalInboxByKind(
     sql`, `,
   );
   const rows = await db.execute<{ proposal_kind: string; proposal_count: number }>(sql`
-    WITH proposal_events AS (
+    WITH raw_proposal_events AS (
       SELECT
         ${event.id} AS proposal_id,
         ${event.action} AS action,
         ${event.subject_kind} AS subject_kind,
         ${event.payload} AS payload,
         CASE
-          WHEN ${event.payload} ? 'ai_proposal' THEN
-            jsonb_typeof(${event.payload}->'ai_proposal') = 'object'
-            AND jsonb_typeof(${event.payload}->'ai_proposal'->'target') = 'object'
-            AND jsonb_typeof(${event.payload}->'ai_proposal'->'reason_md') = 'string'
-            AND (
-              NOT (${event.payload}->'ai_proposal' ? 'evidence_refs')
-              OR jsonb_typeof(${event.payload}->'ai_proposal'->'evidence_refs') = 'array'
-            )
-            AND jsonb_typeof(${event.payload}->'ai_proposal'->'proposed_change') = 'object'
-          WHEN ${event.action} = 'experimental:proposal' THEN
-            jsonb_typeof(${event.payload}->'target') = 'object'
-            AND jsonb_typeof(${event.payload}->'reason_md') = 'string'
-            AND (
-              NOT (${event.payload} ? 'evidence_refs')
-              OR jsonb_typeof(${event.payload}->'evidence_refs') = 'array'
-            )
-            AND jsonb_typeof(${event.payload}->'proposed_change') = 'object'
+          WHEN ${event.payload} ? 'ai_proposal' THEN ${event.payload}->'ai_proposal'
+          WHEN ${event.action} = 'experimental:proposal' THEN ${event.payload}
+          ELSE NULL
+        END AS proposal_json
+      FROM ${event}
+      WHERE ${proposalWhere()}
+    ),
+    proposal_events AS (
+      SELECT
+        proposal_id,
+        action,
+        subject_kind,
+        payload,
+        CASE
+          WHEN proposal_json IS NOT NULL THEN
+            jsonb_typeof(proposal_json) = 'object'
+            AND jsonb_typeof(proposal_json->'target') = 'object'
+            AND jsonb_typeof(proposal_json->'target'->'subject_kind') = 'string'
+            AND length(proposal_json->'target'->>'subject_kind') > 0
+            AND proposal_json->'target' ? 'subject_id'
+            AND CASE jsonb_typeof(proposal_json->'target'->'subject_id')
+              WHEN 'null' THEN true
+              WHEN 'string' THEN length(proposal_json->'target'->>'subject_id') > 0
+              ELSE false
+            END
+            AND jsonb_typeof(proposal_json->'reason_md') = 'string'
+            AND length(proposal_json->>'reason_md') BETWEEN 1 AND 4000
+            AND CASE
+              WHEN NOT (proposal_json ? 'evidence_refs') THEN true
+              WHEN jsonb_typeof(proposal_json->'evidence_refs') <> 'array' THEN false
+              ELSE NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(proposal_json->'evidence_refs') evidence_ref
+                WHERE jsonb_typeof(evidence_ref) IS DISTINCT FROM 'object'
+                  OR jsonb_typeof(evidence_ref->'kind') IS DISTINCT FROM 'string'
+                  OR evidence_ref->>'kind'
+                    NOT IN ('event', 'question', 'knowledge', 'artifact', 'record')
+                  OR jsonb_typeof(evidence_ref->'id') IS DISTINCT FROM 'string'
+                  OR length(evidence_ref->>'id') = 0
+              )
+            END
+            AND CASE
+              WHEN NOT (proposal_json ? 'cooldown_key') THEN true
+              WHEN jsonb_typeof(proposal_json->'cooldown_key') = 'string'
+                THEN length(proposal_json->>'cooldown_key') BETWEEN 1 AND 300
+              ELSE false
+            END
+            AND CASE
+              WHEN NOT (proposal_json ? 'suggestion_kind') THEN true
+              ELSE proposal_json->>'suggestion_kind' IN ('proactive', 'corrective')
+            END
+            AND jsonb_typeof(proposal_json->'proposed_change') = 'object'
+            AND proposal_json->'proposed_change' <> '{}'::jsonb
+            AND CASE proposal_json->>'kind'
+              WHEN 'knowledge_node' THEN proposal_json->'target'->>'subject_kind' = 'knowledge'
+              WHEN 'knowledge_edge' THEN proposal_json->'target'->>'subject_kind' = 'knowledge_edge'
+              WHEN 'knowledge_mutation' THEN proposal_json->'target'->>'subject_kind' = 'knowledge'
+              WHEN 'defer' THEN proposal_json->'target'->>'subject_kind' = 'learning_item'
+              WHEN 'record_links' THEN proposal_json->'target'->>'subject_kind' = 'record'
+              WHEN 'record_promotion' THEN proposal_json->'target'->>'subject_kind' = 'record'
+              WHEN 'goal_scope' THEN proposal_json->'target'->>'subject_kind' = 'goal'
+              WHEN 'block_merge' THEN proposal_json->'target'->>'subject_kind' = 'question_block'
+              WHEN 'image_candidate' THEN proposal_json->'target'->>'subject_kind' = 'source_asset'
+              WHEN 'question_draft' THEN proposal_json->'target'->>'subject_kind' = 'question'
+              WHEN 'question_edit' THEN proposal_json->'target'->>'subject_kind' = 'question'
+              WHEN 'conjecture' THEN proposal_json->'target'->>'subject_kind' = 'mind_model'
+              ELSE true
+            END
+            AND CASE proposal_json->>'kind'
+              WHEN 'knowledge_node' THEN
+                proposal_json->'proposed_change'->>'mutation' = 'propose_new'
+                AND jsonb_typeof(proposal_json->'proposed_change'->'name') = 'string'
+                AND length(proposal_json->'proposed_change'->>'name') BETWEEN 1 AND 120
+                AND jsonb_typeof(proposal_json->'proposed_change'->'parent_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'parent_id') > 0
+              WHEN 'knowledge_edge' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'from_knowledge_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'from_knowledge_id') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'to_knowledge_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'to_knowledge_id') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'relation_type') = 'string'
+                AND (
+                  proposal_json->'proposed_change'->>'relation_type' IN (
+                    'prerequisite', 'related_to', 'contrasts_with', 'applied_in', 'derived_from'
+                  )
+                  OR proposal_json->'proposed_change'->>'relation_type' LIKE 'experimental:%'
+                )
+                AND CASE
+                  WHEN NOT (proposal_json->'proposed_change' ? 'edge_op') THEN true
+                  ELSE proposal_json->'proposed_change'->>'edge_op' IN ('create', 'archive')
+                END
+                AND CASE
+                  WHEN NOT (proposal_json->'proposed_change' ? 'weight') THEN true
+                  WHEN jsonb_typeof(proposal_json->'proposed_change'->'weight') = 'number'
+                    THEN (proposal_json->'proposed_change'->>'weight')::numeric BETWEEN 0 AND 1
+                  ELSE false
+                END
+              WHEN 'knowledge_mutation' THEN
+                proposal_json->'proposed_change'->>'mutation' IN ('reparent', 'merge', 'split')
+              WHEN 'goal_scope' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'title') = 'string'
+                AND length(proposal_json->'proposed_change'->>'title') BETWEEN 1 AND 280
+                AND jsonb_typeof(proposal_json->'proposed_change'->'reasoning') = 'string'
+                AND length(proposal_json->'proposed_change'->>'reasoning') BETWEEN 1 AND 4000
+              WHEN 'block_merge' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'primary_block_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'primary_block_id') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'merge_block_ids') = 'array'
+                AND jsonb_array_length(proposal_json->'proposed_change'->'merge_block_ids') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'ingestion_session_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'ingestion_session_id') > 0
+              WHEN 'image_candidate' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'source_url') = 'string'
+                AND length(proposal_json->'proposed_change'->>'source_url') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'source_title') = 'string'
+                AND length(proposal_json->'proposed_change'->>'source_title') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'summary_md') = 'string'
+                AND length(proposal_json->'proposed_change'->>'summary_md') BETWEEN 1 AND 4000
+              WHEN 'question_draft' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'question_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'question_id') > 0
+                AND proposal_json->'proposed_change'->>'kind' IN (
+                  'choice', 'true_false', 'fill_blank', 'short_answer', 'essay',
+                  'computation', 'reading', 'translation', 'derivation'
+                )
+                AND jsonb_typeof(proposal_json->'proposed_change'->'difficulty') = 'number'
+                AND (proposal_json->'proposed_change'->>'difficulty')::numeric BETWEEN 1 AND 5
+                AND jsonb_typeof(proposal_json->'proposed_change'->'knowledge_ids') = 'array'
+                AND proposal_json->'proposed_change'->>'seed_mode' IN ('knowledge', 'material')
+              WHEN 'question_edit' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'question_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'question_id') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'edit') = 'object'
+                AND proposal_json->'proposed_change'->'edit'->>'op' IN (
+                  'edit_node_text', 'edit_reference', 'set_choice', 'set_node_kind'
+                )
+              WHEN 'conjecture' THEN
+                jsonb_typeof(proposal_json->'proposed_change'->'claim_md') = 'string'
+                AND length(proposal_json->'proposed_change'->>'claim_md') BETWEEN 1 AND 280
+                AND jsonb_typeof(proposal_json->'proposed_change'->'knowledge_id') = 'string'
+                AND length(proposal_json->'proposed_change'->>'knowledge_id') > 0
+                AND jsonb_typeof(proposal_json->'proposed_change'->'probe_md') = 'string'
+                AND length(proposal_json->'proposed_change'->>'probe_md') BETWEEN 1 AND 2000
+                AND jsonb_typeof(proposal_json->'proposed_change'->'probe_reference_md') = 'string'
+                AND length(proposal_json->'proposed_change'->>'probe_reference_md')
+                  BETWEEN 1 AND 2000
+              ELSE true
+            END
           ELSE true
         END AS proposal_shape_valid,
         CASE
-          WHEN ${event.payload} ? 'ai_proposal'
-            THEN ${event.payload}->'ai_proposal'->>'kind'
-          WHEN ${event.action} = 'experimental:proposal'
-            THEN ${event.payload}->>'kind'
-          WHEN ${event.action} LIKE 'experimental:knowledge_%'
-            AND ${event.subject_kind} = 'knowledge'
+          WHEN proposal_json IS NOT NULL THEN proposal_json->>'kind'
+          WHEN action LIKE 'experimental:knowledge_%'
+            AND subject_kind = 'knowledge'
             THEN CASE COALESCE(
-              ${event.payload}->>'mutation',
-              regexp_replace(${event.action}, '^experimental:knowledge_', '')
+              payload->>'mutation',
+              regexp_replace(action, '^experimental:knowledge_', '')
             )
               WHEN 'propose' THEN 'knowledge_node'
               WHEN 'propose_new' THEN 'knowledge_node'
@@ -251,14 +379,13 @@ export async function countPendingProposalInboxByKind(
               WHEN 'split' THEN 'knowledge_mutation'
               ELSE 'archive'
             END
-          WHEN ${event.action} = 'propose' AND ${event.subject_kind} = 'knowledge'
+          WHEN action = 'propose' AND subject_kind = 'knowledge'
             THEN 'knowledge_node'
-          WHEN ${event.action} = 'propose' AND ${event.subject_kind} = 'knowledge_edge'
+          WHEN action = 'propose' AND subject_kind = 'knowledge_edge'
             THEN 'knowledge_edge'
           ELSE NULL
         END AS proposal_kind
-      FROM ${event}
-      WHERE ${proposalWhere()}
+      FROM raw_proposal_events
     ),
     latest_rate AS (
       SELECT DISTINCT ON (rate_event.caused_by_event_id)

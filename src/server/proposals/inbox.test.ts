@@ -828,6 +828,58 @@ describe('proposal inbox reader', () => {
       created_at: new Date('2026-07-17T00:00:30.000Z'),
     });
     await db.insert(event).values({
+      id: 'count_invalid_empty_change',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_empty_change',
+      outcome: 'partial',
+      payload: {
+        ai_proposal: {
+          kind: 'completion',
+          target: { subject_kind: 'learning_item', subject_id: 'invalid_empty_change' },
+          reason_md: 'Looks complete at the base level but violates the kind schema.',
+          evidence_refs: [],
+          proposed_change: {},
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:40.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_target_kind',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_target_kind',
+      outcome: 'partial',
+      payload: {
+        kind: 'defer',
+        target: { subject_kind: 'question', subject_id: 'invalid_target_kind' },
+        reason_md: 'The kind-specific target does not match the proposal schema.',
+        proposed_change: { defer_until: '2026-07-18T00:00:00.000Z' },
+      },
+      created_at: new Date('2026-07-17T00:00:41.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_evidence_ref',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_evidence_ref',
+      outcome: 'partial',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'invalid_evidence_ref' },
+        reason_md: 'The evidence item lacks its required kind discriminator.',
+        evidence_refs: [{ id: 'event_without_kind' }],
+        proposed_change: { learning_item_id: 'invalid_evidence_ref' },
+      },
+      created_at: new Date('2026-07-17T00:00:42.000Z'),
+    });
+    await db.insert(event).values({
       id: 'count_legacy_without_evidence_refs',
       actor_kind: 'agent',
       actor_ref: 'legacy_writer',
@@ -905,7 +957,14 @@ describe('proposal inbox reader', () => {
     });
 
     const counts = await countPendingProposalInboxByKind(db);
+    const projectedCounts = (await listProposalInboxRows(db, { status: 'pending' })).reduce<
+      Record<string, number>
+    >((acc, row) => {
+      acc[row.kind] = (acc[row.kind] ?? 0) + 1;
+      return acc;
+    }, {});
 
     expect(counts).toEqual({ completion: 1, defer: 1, knowledge_edge: 1 });
+    expect(counts).toEqual(projectedCounts);
   });
 });
