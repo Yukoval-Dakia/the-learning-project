@@ -97,10 +97,22 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       outcome: j.outcome,
       payload: j.payload,
       caused_by_event_id: j.caused_by_event_id ?? undefined,
-    }) as { action: string; payload: { cause: { analysis_md: string; confidence: number } } };
+    }) as {
+      action: string;
+      payload: {
+        cause: {
+          analysis_md: string;
+          confidence: number;
+          meta_cause?: string | null;
+          metacog_flag?: string | null;
+        };
+      };
+    };
     expect(parsed.action).toBe('judge');
     expect(parsed.payload.cause.analysis_md).toContain('主谓间');
     expect(parsed.payload.cause.confidence).toBe(0.82);
+    expect(parsed.payload.cause.meta_cause).toBe('flawed_model');
+    expect(parsed.payload.cause.metacog_flag).toBeNull();
   });
 
   it('KnowledgeReviewTask propose_knowledge_edge tool-call → event row parses through parseEvent', async () => {
