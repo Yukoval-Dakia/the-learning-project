@@ -361,6 +361,9 @@ export async function runCoach(
       ),
       {
         db,
+        // YUK-290: SDK maxTurns must not pre-empt the runtime tool-call ceiling.
+        // Keep one final turn for the TodayPlan after the last allowed tool call.
+        budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         allowedTools: [...resolveMcpAllowedTools('coach')],
       },

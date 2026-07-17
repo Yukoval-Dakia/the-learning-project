@@ -141,6 +141,7 @@ describe('runCoach', () => {
         budget: expect.objectContaining({ max_proposals: COACH_MAX_PROPOSALS }),
       }),
       expect.objectContaining({
+        budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         allowedTools: [...resolveMcpAllowedTools('coach')],
       }),
