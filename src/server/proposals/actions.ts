@@ -1117,6 +1117,16 @@ export async function retractAiProposal(
   opts: RetractAiProposalOpts = {},
 ): Promise<RetractAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
+  if (proposal.kind === 'question_edit') {
+    const existingRate = await findExistingRateEvent(db, proposalId);
+    if (existingRate?.decision === 'accept') {
+      throw new ApiError(
+        'question_edit_retract_conflict',
+        '题目修订已应用，无法安全撤销；请提交新的题目修订来纠正当前内容。',
+        409,
+      );
+    }
+  }
   const correctionEventId = newId();
 
   // YUK-471 (retract fold/rollback) — SINGLE retract transaction (augment#3 + OCR
