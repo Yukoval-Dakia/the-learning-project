@@ -8,19 +8,21 @@
 // 红线（ADR-0035 三轴正交，同 effectiveness-trend）：本模块只做计数 / 分组 / 窗口算，绝不输出
 // 任何内部校准概率（confidence / predicted_p）。digest 是只读观测面，不是反馈环。
 
+import type { DegradedKind, OvernightRunGroup } from '@/server/today/overnight-digest';
+
+export type {
+  DegradedKind,
+  OvernightDigest,
+  OvernightRunGroup,
+  OvernightWindow,
+} from '@/server/today/overnight-digest';
+
 // Asia/Shanghai 是固定 UTC+8（无 DST），所以「昨夜=BJT 前一日历日」窗口可在纯 JS 里确定性
 // 计算，无需 SQL 时区换算。注意：workbench-summary.ts 的 loadWeekHeat 把日界算放 SQL 是因为
 // 它在一条 generate_series 里混用 JS/SQL 日期会漂；这里全程用同一份 JS 算出的 UTC 瞬时喂给所有
 // 查询（无 JS/SQL 混算），故无漂移风险，且可落 unit 测。
 const BJT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-export interface OvernightWindow {
-  /** 窗口起（含）——昨日 00:00 BJT，ISO-8601 UTC。 */
-  from: string;
-  /** 窗口止（不含）——今日 00:00 BJT，ISO-8601 UTC。 */
-  to: string;
-}
 
 /**
  * 「昨夜」窗口 = Asia/Shanghai 日界的**前一日历日** [from, to)。
@@ -45,15 +47,6 @@ export function overnightWindow(now: Date): { from: Date; to: Date } {
     from: new Date(todayStartUtcMs - DAY_MS),
     to: new Date(todayStartUtcMs),
   };
-}
-
-/** 一个 task_kind 的夜间运行聚合（ai_task_runs 按 kind 卷起 + 按 status 细分）。 */
-export interface OvernightRunGroup {
-  task_kind: string;
-  /** 该 kind 窗内 finished 的 run 总数。 */
-  count: number;
-  /** status → count（success / error / running 等，按窗内实际出现的 status 列）。 */
-  status_breakdown: Record<string, number>;
 }
 
 /** ai_task_runs 的窗内分组原始行（一行 = 一个 (task_kind, status) 计数）。 */
@@ -106,34 +99,6 @@ export function hasOvernightActivity(parts: OvernightActivityParts): boolean {
   );
 }
 
-/** /api/workbench/overnight-digest 的 wire 形状契约（read model + web client 共用）。 */
-export interface OvernightDigest {
-  window: OvernightWindow;
-  /**
-   * 5 源任一窗内有事实 → true；全 0 → false（空夜显式信号）。UI 据此区分「空夜态」与
-   * 「加载中/失败」，且空夜永不落回 ColdStart（YUK-520 红线②）。
-   */
-  has_overnight_activity: boolean;
-  /** ai_task_runs 按 task_kind 聚合（每组带 status_breakdown）。 */
-  runs: OvernightRunGroup[];
-  /** 窗内 note refine apply 次数。 */
-  note_changes_count: number;
-  /** 窗内新 proposals 数（**不含** conjecture——后者单列，两数不重叠）。 */
-  new_proposals_count: number;
-  /** 窗内新 conjectures（备课台）数。 */
-  new_conjectures_count: number;
-  /** 窗内新 agent notes 数。 */
-  agent_notes_count: number;
-  /**
-   * 静默失败标红（YUK-580）：窗内 error 计数达阈值的 task_kind 列表。空数组 = 无降级 kind。
-   * 注意这不是独立信号——error runs 本身计入 runs_total，故 degraded_kinds 非空时
-   * has_overnight_activity 必为 true（单向蕴含，非对称正交）；反之 has_overnight_activity=true
-   * 不代表有降级 kind。UI 侧的标红渲染独立于 has_overnight_activity 分支（见 TodayPage 注释），
-   * 但这只是渲染路径独立，不代表两个字段在数据上互不相关。
-   */
-  degraded_kinds: DegradedKind[];
-}
-
 // ── YUK-580：degraded_kinds（AI 运维看门狗最小切片）──
 // 范围红线：①不做成本/去重轴；②不做滚动基线回归/聚类——group-by top error 足够；
 // ③不新增 schema/cron/agent；④与 YUK-576 stuck-run sweeper 正交（那边管 running 卡死，
@@ -168,15 +133,6 @@ export interface RunErrorRow {
   error_message: string | null;
   /** ISO-8601 UTC，用于按新→旧排序取最近 N 条。 */
   finished_at: string;
-}
-
-/** 一个被判定为「降级」的 task_kind：error 计数 + 最近 N 条 error_message（已截断）。 */
-export interface DegradedKind {
-  task_kind: string;
-  /** 窗内该 kind 的 error 总计数（不止 recent_error_messages 展示的那几条）。 */
-  error_count: number;
-  /** 最近 N 条 error_message 原串（新→旧排序，超长已截断）。 */
-  recent_error_messages: string[];
 }
 
 /** error_message 为 null 时的占位串（导出供测试按符号断言，不重复字面量）。 */
