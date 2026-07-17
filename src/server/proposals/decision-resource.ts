@@ -82,16 +82,32 @@ export async function createProposalDecision(
   }
 
   if (input.decision !== 'retract') {
-    // Keep the cross-decision conflict guard, but DROP the idempotent short-circuit:
-    // a same-decision re-decision now falls through to acceptAiProposal / dismissAiProposal,
-    // whose per-kind appliers self-guard idempotency (YUK-681 audit: all 16 accept-family
-    // kinds SAFE). This is what makes learning_item's idempotent branch re-drive the
-    // best-effort note_generate enqueue on re-accept — the recovery path this early return
-    // previously made unreachable (YUK-681 P2). The applier's result carries `idempotent:true`,
-    // which `resultIsIdempotent` below detects, so the response still reports created:false.
     const existingRate = await findExistingRateEvent(db, proposalId);
-    if (existingRate && existingRate.decision !== input.decision) {
-      throw conflict(proposalId, existingRate.decision);
+    if (existingRate) {
+      if (existingRate.decision !== input.decision) {
+        throw conflict(proposalId, existingRate.decision);
+      }
+      // Only `accept` falls through to acceptAiProposal → the per-kind applier: that is where
+      // learning_item re-drives the best-effort note_generate enqueue on re-accept, the recovery
+      // path this early return previously made unreachable (YUK-681 P2). The audit confirmed all
+      // accept-family appliers self-guard re-accept idempotency, and the applier result carries
+      // `idempotent:true` for `resultIsIdempotent` below.
+      //
+      // reverse/change_type/dismiss have no re-drive hop, and acceptAiProposal's top guard only
+      // admits an existing `accept` decision — routing them through it would regress their
+      // same-decision idempotent replay from 200 to 409. Keep serving that replay here.
+      if (input.decision !== 'accept') {
+        return {
+          proposal_id: proposalId,
+          proposal_kind: proposal.kind,
+          decision: input.decision,
+          decision_event_id: existingRate.id,
+          proposal_status: proposal.status,
+          created: false,
+          idempotent: true,
+          result: null,
+        };
+      }
     }
   }
 

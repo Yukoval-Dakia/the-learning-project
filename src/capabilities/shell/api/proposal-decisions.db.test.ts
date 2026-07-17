@@ -175,6 +175,30 @@ describe('POST /api/proposals/[id]/decisions', () => {
     expect(rateRows).toHaveLength(1);
   });
 
+  it('keeps change_type re-decision idempotent (200, not 409)', async () => {
+    await seedEdgeProposal();
+
+    const first = await decide('edge_p1', { decision: 'change_type', new_relation_type: 'related_to' });
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as DecisionBody;
+    expect(firstBody).toMatchObject({ decision: 'change_type', created: true, idempotent: false });
+
+    // YUK-681 P2: only `accept` falls through to the applier now; change_type/reverse must keep
+    // their same-decision idempotent replay served by the resource, because acceptAiProposal's
+    // top guard is accept-only and would 409 them (Codex review on the first cut of this PR).
+    const replay = await decide('edge_p1', {
+      decision: 'change_type',
+      new_relation_type: 'related_to',
+    });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      decision_event_id: firstBody.decision_event_id,
+      created: false,
+      idempotent: true,
+      result: null,
+    });
+  });
+
   it('returns 409 when a different terminal decision already exists', async () => {
     await seedEdgeProposal();
     expect((await decide('edge_p1', { decision: 'accept' })).status).toBe(201);
