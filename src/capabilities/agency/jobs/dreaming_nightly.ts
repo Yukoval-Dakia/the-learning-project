@@ -24,6 +24,7 @@ import {
 // P5.4-L2 / YUK-174 (Facet A, §3.2) — PROPOSAL_FEEDBACK_BUDGET bounds the new
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import {
@@ -320,6 +321,7 @@ export async function runDreamingNightly(
   try {
     const toolNames = resolveDomainToolNames('dreaming');
     let proposalWrites = 0;
+    const budgetTracker = new ContextBudgetTracker(DREAMING_CONTEXT_BUDGET);
     const mcpServer = buildMcpServer({
       ctx: {
         db,
@@ -331,12 +333,18 @@ export async function runDreamingNightly(
       toolNames,
       taskKind: 'DreamingTask',
       beforeExecute: (tool) => {
+        const budgetReason = budgetTracker.beforeExecute(tool);
+        if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
         if (proposalWrites >= DREAMING_MAX_PROPOSALS) {
           return `dreaming proposal cap reached (${DREAMING_MAX_PROPOSALS}); stop creating proposals in this run`;
         }
         proposalWrites += 1;
         return undefined;
+      },
+      interceptInput: (tool, args) => {
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
       },
     });
 

@@ -119,7 +119,7 @@ export interface BuildMcpServerOptions {
    * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
    * the zod-parsed args and returns the (possibly limit-capped) args plus an
    * optional truncation note. Used by the Copilot per-message context-budget
-   * throttle; Dreaming/Coach do not pass it, so their behavior is unchanged.
+   * throttle. Dreaming and Coach use the same seam with their per-run budgets.
    */
   interceptInput?: (tool: ToolExecutionGateInput, args: unknown) => ToolInputInterceptResult;
 }

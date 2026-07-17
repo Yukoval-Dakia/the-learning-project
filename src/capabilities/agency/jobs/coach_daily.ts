@@ -31,6 +31,7 @@ import {
 // old max_tool_calls=12 as an advisory warning and moves the accident ceiling
 // to 36; max_proposals remains byte-identical at 5.
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
@@ -319,6 +320,7 @@ export async function runCoach(
   try {
     const toolNames = resolveDomainToolNames('coach');
     let proposalWrites = 0;
+    const budgetTracker = new ContextBudgetTracker(COACH_CONTEXT_BUDGET);
     const mcpServer = buildMcpServer({
       ctx: {
         db,
@@ -330,12 +332,18 @@ export async function runCoach(
       toolNames,
       taskKind: 'CoachTask',
       beforeExecute: (tool) => {
+        const budgetReason = budgetTracker.beforeExecute(tool);
+        if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
         if (proposalWrites >= COACH_MAX_PROPOSALS) {
           return `coach proposal cap reached (${COACH_MAX_PROPOSALS}); stop creating proposals in this run`;
         }
         proposalWrites += 1;
         return undefined;
+      },
+      interceptInput: (tool, args) => {
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
       },
     });
 
