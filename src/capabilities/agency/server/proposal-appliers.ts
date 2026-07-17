@@ -102,12 +102,12 @@ async function defaultEnqueueLearningIntentNote(artifactId: string): Promise<voi
  * Enqueue only still-pending note artifacts, keyed by an artifact-scoped
  * singleton window so a re-send never duplicates active work.
  *
- * NOTE (YUK-681): a failed enqueue is swallowed (warn only) and leaves the
- * artifact at generation_status='pending'. This does NOT self-recover in
- * production — the canonical decision route (createProposalDecision) short-
- * circuits idempotent re-accepts before reaching this path, and no sweep re-
- * drives pending note artifacts. A reachable recovery (idempotent-hit re-drive
- * or a pending-note sweep) is tracked in YUK-681. Tests inject the send seam.
+ * A failed enqueue is swallowed (warn only) and leaves the artifact at
+ * generation_status='pending'. Recovery is a re-accept: since YUK-681 P2 the
+ * canonical decision route no longer short-circuits an `accept` re-decision, so
+ * repeating the accept of the same learning_item proposal reaches this
+ * idempotent branch (via acceptAiProposal → acceptLearningItemProposal) and
+ * re-drives the still-pending enqueue. Tests inject the send seam.
  */
 export async function enqueueLearningIntentNotes(
   db: Db,
