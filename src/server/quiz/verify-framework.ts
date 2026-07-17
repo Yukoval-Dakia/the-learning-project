@@ -16,7 +16,7 @@
 // (different task/prompt dimension than the generator, YUK-193) and the shipped
 // SemanticJudge for the open-question comparison. OWNER-FORK OF-4 (plan §12):
 //   - exact questions (choice / true_false / fill_blank / exact-style)  → normalize
-//     string compare of solver answer vs the question's own reference answer.
+//     first; a mismatch falls through to SemanticJudge instead of becoming a string-only veto.
 //   - open questions (essay / reading / translation / derivation)       → SemanticJudge
 //     with a CONSERVATIVE threshold — 宁可漏过不误杀真题 (R2): only an outright,
 //     confident 'incorrect' fails the check; 'unsupported' / 'partial' / low
@@ -138,8 +138,10 @@ export interface SolveCheckResult {
   solver_final_answer?: string;
   // why we landed on the verdict (audit trail).
   reason: string;
-  // 'normalize' (exact) vs 'semantic' (open) — which comparison axis ran.
+  // Which comparison established the terminal verdict. Exact mismatches fall through to semantic.
   compared_by: 'normalize' | 'semantic' | 'none';
+  /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
+  normalized_exact_mismatch?: boolean;
   // EFF-1 (YUK-554 review) — provenance/cost of the 1 (exact) or 2 (semantic: solver +
   // judge) LLM calls this check spent, in call order, when the runner reported them.
   // cost_usd is the SUM across legs; absent when no leg reported a number.
@@ -153,7 +155,7 @@ export interface SolveCheckResult {
 export interface SolveCheckOptions {
   runTaskFn: SolveCheckRunTaskFn;
   profile: SolveCheckProfile;
-  // db is only needed for the semantic (open-question) path's SemanticJudge.
+  // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
   // biome-ignore lint/suspicious/noExplicitAny: leaf forwards the caller's Db handle to SemanticJudge.
   db?: any;
   /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx. */
@@ -174,14 +176,10 @@ export const SOLVE_CHECK_SEMANTIC_THRESHOLD = 0.8;
 //   - semantic (open kinds): runSemanticJudge + the conservative confidence>=0.8 gate
 //     (SOLVE_CHECK_SEMANTIC_THRESHOLD, :393-394) → a confident independent disagreement
 //     is worth blocking promotion → CONFIGURED TO VETO.
-//   - normalize (exact kinds): bare NFKC+lowercase+strip string equality (normalizeAnswer,
-//     :199-205) — NO confidence gate, NO boolean synonymy (真/对/正确/√/T) or numeric
-//     equivalence (0.5↔1/2), and for quiz_gen rows it necessarily compares one solver
-//     final_answer against the WHOLE reference_md (F2 note :171-176 admits "would falsely
-//     fail"). tier3/4 generator=solver=mimo-v2.5-pro (registry.ts:705/721), so same-model
-//     format jitter is a FALSE-veto-rich region → blocks promotion but records
-//     `needs_review` ("hold for human review", NOT "proven wrong"), and is separately
-//     switchable so exact false-vetoes can be turned off WITHOUT touching the semantic veto.
+//   - normalize (exact kinds): cheap deterministic PASS when candidates match. YUK-612 routes a
+//     mismatch through the conservative semantic path instead of emitting a normalize FAIL, because
+//     boolean/numeric/format equivalence cannot be proven by string normalization. The normalize
+//     switch remains for backward-compatible handling of historical/externally supplied results.
 // OWNER (2026-07-03): normalize default = true, hold-for-review (needs_review → /drafts,
 // DraftReviewPage YUK-403); NOT `failed`. Both flags are compile-time consts — flipping one
 // needs a source edit + esbuild rebundle + worker redeploy (NOT a runtime toggle, unlike
@@ -196,13 +194,17 @@ export const SOLVE_CHECK_TIER34_VETO = {
 // answer "does this block promotion?". Only a 'fail' verdict can block; the axis
 // (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
 // — a solver that couldn't independently solve, or that agreed, must not kill a question).
+// Every live tier3/4 caller supplies `db`, so an exact mismatch can reach SemanticJudge. If a
+// future caller omits it, `normalized_exact_mismatch + unsupported` intentionally remains
+// non-blocking here; that caller must add its own provenance hold (as tier2 does) rather than
+// silently changing this shared conservative policy.
 //
-// R4 (YUK-554 review) — DELIBERATE tier asymmetry: tier2 (source_verify.ts) vetoes EVERY
-// solve fail including normalize, because its reference answers are anchored on real web
-// extracts (source_consistency forces overlap) — a normalize mismatch there is a strong
-// signal. tier3/4 references are same-model self-authored (quiz_verify.ts), where normalize
-// mismatch is format-jitter-rich → per-axis split here. Do NOT "unify" the two handlers'
-// veto semantics without revisiting that provenance difference.
+// R4 (YUK-554 review) — DELIBERATE tier asymmetry remains at the CONSUMER: tier2
+// (source_verify.ts) vetoes every emitted solve fail, while tier3/4 selects the axis flag here.
+// YUK-612 supersedes the old producer assumption that a raw normalize mismatch is itself a strong
+// fail signal: all callers now route that mismatch through SemanticJudge first. The normalize flag
+// remains for historical or externally supplied results; changing how either handler consumes an
+// actual normalize fail still requires revisiting the source-provenance difference.
 export function solveCheckBlocks(
   result: SolveCheckResult,
   flags: { semantic: boolean; normalize: boolean } = SOLVE_CHECK_TIER34_VETO,
@@ -304,8 +306,16 @@ function stripLeadingChoiceLabel(value: string): string | null {
   // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
   // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
   // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
-  const match = /^([A-F])[\s.、:：)\]）-]+(.+)$/iu.exec(normalized);
-  const stripped = match?.[2]?.trim();
+  // Try the balanced-bracket shape first. Otherwise `A (content)` is consumed
+  // by the generic separator branch at the space and retains `(content)`.
+  // A labelled answer is persisted with an uppercase option marker. Keep this
+  // case-sensitive: treating lowercase function names such as `f(x)` as an
+  // option wrapper would add the false candidate `x` and could normalize-pass
+  // an actually wrong fill-blank answer.
+  const match = /^([A-F])(?:\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
+    normalized,
+  );
+  const stripped = (match?.[2] ?? match?.[3])?.trim();
   return stripped && stripped.length > 0 ? stripped : null;
 }
 
@@ -321,14 +331,21 @@ function stripTrailingPunct(value: string): string | null {
 
 function addChoiceExpansion(out: string[], choice: string | undefined): void {
   if (!choice) return;
+  // `choices_md` entries are option bodies, not answer wrappers. Re-running
+  // wrapper stripping here would turn a real option such as F(x) into the false
+  // candidate x. Explicit labels are stripped only from answer strings above.
   out.push(choice);
-  const stripped = stripLeadingChoiceLabel(choice);
-  if (stripped) out.push(stripped);
 }
 
-function answerCandidates(text: string, choices: readonly string[]): string[] {
+function answerCandidates(
+  text: string,
+  choices: readonly string[],
+  allowChoiceWrapper: boolean,
+): string[] {
   const out = [text];
-  const stripped = stripLeadingChoiceLabel(text);
+  // Parenthesized A-F wrappers are only meaningful for an actual choice item.
+  // Outside that context, F(x) / A(t) are load-bearing mathematical notation.
+  const stripped = allowChoiceWrapper ? stripLeadingChoiceLabel(text) : null;
   if (stripped) out.push(stripped);
 
   const labelIndex = choiceLabelIndex(text);
@@ -372,7 +389,7 @@ function extractJsonObject(text: string, label: string): unknown {
  * CONSERVATIVE by design (R2): the goal is to catch broken questions WITHOUT killing
  * legitimate hard ones the solver merely failed. So:
  *   - solver throws / unparseable / empty answer  → 'unsupported' (NOT fail — no signal)
- *   - exact kinds: normalize mismatch             → 'fail'; match → 'pass'
+ *   - exact kinds: normalize match → 'pass'; mismatch → conservative SemanticJudge fallback
  *   - open kinds: SemanticJudge confidently says the answers disagree → 'fail';
  *                 anything softer (unsupported / partial / low confidence) → 'pass'
  */
@@ -474,37 +491,43 @@ export async function runSolveCheck(
     };
   }
 
-  // ----- exact path: normalize compare -----
+  // ----- exact path: normalize compare, then semantic fallback on mismatch -----
+  let normalizedExactMismatch = false;
   if (isExactQuestion(question)) {
     const choices = question.choices_md ?? [];
+    const allowChoiceWrapper = question.kind === 'choice' || choices.length > 0;
     const refCandidates = referenceCandidates
-      .flatMap((candidate) => answerCandidates(candidate, choices))
+      .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
       .map(normalizeAnswer)
       .filter((c) => c.length > 0);
     const solverCandidates = [solverFinalAnswer, ...solverEquivalents]
-      .flatMap((candidate) => answerCandidates(candidate, choices))
+      .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
       .map(normalizeAnswer)
       .filter((c) => c.length > 0);
     const agree = solverCandidates.some((candidate) => refCandidates.includes(candidate));
-    return {
-      verdict: agree ? 'pass' : 'fail',
-      solver_final_answer: solverFinalAnswer,
-      reason: agree
-        ? 'solver answer matches the question reference (normalized)'
-        : `solver answer "${solverFinalAnswer}" disagrees with reference "${referenceAnswer}" (normalized)`,
-      compared_by: 'normalize',
-      ...runProvenance(),
-    };
+    if (agree) {
+      return {
+        verdict: 'pass',
+        solver_final_answer: solverFinalAnswer,
+        reason: 'solver answer matches the question reference (normalized)',
+        compared_by: 'normalize',
+        ...runProvenance(),
+      };
+    }
+    normalizedExactMismatch = true;
   }
 
-  // ----- open path: SemanticJudge, conservative -----
+  // ----- open path / exact-mismatch fallback: SemanticJudge, conservative -----
   if (!opts.db) {
     // Without a Db handle the semantic path cannot run; be conservative.
     return {
       verdict: 'unsupported',
       solver_final_answer: solverFinalAnswer,
-      reason: 'open-question solve-check needs a Db handle for SemanticJudge; skipped',
+      reason: normalizedExactMismatch
+        ? 'normalized exact answers disagreed, but SemanticJudge fallback needs a Db handle; skipped'
+        : 'open-question solve-check needs a Db handle for SemanticJudge; skipped',
       compared_by: 'none',
+      ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
       ...runProvenance(),
     };
   }
@@ -518,8 +541,9 @@ export async function runSolveCheck(
   // Treat the question's reference answer as the rubric/reference and the solver's
   // independent answer as the "submission". If the semantic judge CONFIDENTLY says
   // the solver answer is incorrect vs the reference, the persisted answer is suspect
-  // → fail. Anything softer (partial / correct / unsupported / low confidence) PASSES
-  // — 宁可漏过不误杀真题 (OF-4 / R2).
+  // → fail. Open questions keep the R2 conservative pass for softer outcomes. Exact
+  // mismatches are stricter: only `correct` establishes equivalence; partial/unsupported/
+  // low-confidence disagreement remains unresolved for provenance-aware consumers.
   const semParams: JudgeAnswerParams = {
     db: opts.db,
     question: {
@@ -542,13 +566,36 @@ export async function runSolveCheck(
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
+  const confidentlyEquivalent =
+    judged.coarse_outcome === 'correct' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
+  // For an exact mismatch, anything other than an explicit `correct` or a confident
+  // `incorrect` does not establish equivalence. Preserve it as `unsupported`
+  // so provenance-anchored tier 2 can hold for review instead of silently
+  // promoting; tier 3/4 continues treating unsupported as non-blocking.
+  const exactFallbackUnresolved =
+    normalizedExactMismatch && !confidentlyEquivalent && !confidentlyDisagrees;
+  const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
+  let verdict: SolveCheckResult['verdict'];
+  let reason: string;
+  if (confidentlyDisagrees) {
+    verdict = 'fail';
+    reason = `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
+  } else if (exactFallbackUnresolved) {
+    verdict = 'unsupported';
+    reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;
+  } else if (confidentlyEquivalent) {
+    verdict = 'pass';
+    reason = `${fallbackPrefix}SemanticJudge established equivalence (outcome=correct, confidence=${judged.confidence.toFixed(2)})`;
+  } else {
+    verdict = 'pass';
+    reason = `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`;
+  }
   return {
-    verdict: confidentlyDisagrees ? 'fail' : 'pass',
+    verdict,
     solver_final_answer: solverFinalAnswer,
-    reason: confidentlyDisagrees
-      ? `SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`
-      : `SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
+    reason,
     compared_by: 'semantic',
+    ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
     ...runProvenance(),
   };
 }
