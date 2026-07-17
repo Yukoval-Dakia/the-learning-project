@@ -21,6 +21,7 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   type BlockAssemblyInputBlock,
   type BlockAssemblySourceBlock,
+  humanizeBlockMergeReason,
   isAllPlaceholderPageIndex,
   projectBlock,
   runBlockAssemblyTask,
@@ -55,6 +56,31 @@ function makeBlockNoSpans(id: string): BlockAssemblySourceBlock {
     layout_quality: 'structured',
   };
 }
+
+describe('humanizeBlockMergeReason (YUK-337)', () => {
+  const firstId = 'cknownfirstblock000000001';
+  const secondId = 'cknownsecondblock00000002';
+  const blocks = [makeBlock(firstId, 0, '大题题干', '1'), makeBlock(secondId, 1, '后续小问', '2')];
+
+  it('maps known ids to session positions and question numbers', () => {
+    expect(humanizeBlockMergeReason(`${secondId}承接${firstId}的编号。`, blocks)).toBe(
+      '第 2 块（题号 2）承接第 1 块（题号 1）的编号。',
+    );
+  });
+
+  it('masks an opaque id hallucinated only inside the reason', () => {
+    const hallucinated = 'challucinatedblock0000000';
+    expect(humanizeBlockMergeReason(`${hallucinated}似乎承接前题。`, blocks)).toBe(
+      '某题块似乎承接前题。',
+    );
+  });
+
+  it('does not replace a short id embedded inside ordinary prose', () => {
+    expect(
+      humanizeBlockMergeReason('data remains readable', [makeBlock('a', 0, '题面', '1')]),
+    ).toBe('data remains readable');
+  });
+});
 
 // ---------- isAllPlaceholderPageIndex ----------
 

@@ -421,6 +421,13 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
     }
   });
 
+  it('keeps opaque block ids out of BlockAssemblyTask user-facing reasons', () => {
+    const prompt = getTaskSystemPrompt('BlockAssemblyTask');
+    expect(prompt).toContain('reason_md');
+    expect(prompt).toContain('禁止写入 block_id');
+    expect(prompt).toContain('第 N 块');
+  });
+
   // YUK-227 S3 Slice C (FIX-1) — the SourcingTask prompt MUST teach the agent the
   // image_candidate contract, otherwise the new accept path is unreachable in
   // production (the agent never emits image_candidates). These pins are the prompt

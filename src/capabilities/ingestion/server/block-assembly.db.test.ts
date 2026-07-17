@@ -152,6 +152,42 @@ describe('runBlockAssemblyForSession', () => {
     });
   });
 
+  it('replaces opaque block ids in the persisted reason with readable positions', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seed(db, 2);
+    const [a, b] = blockIds;
+    const runTaskFn: BlockAssemblyRunTaskFn = async () => ({
+      text: JSON.stringify({
+        candidates: [
+          {
+            primary_block_id: a,
+            merge_block_ids: [b],
+            confidence: 0.9,
+            signal: 'numbering',
+            reason_md: `${b}的题号承接${a}，应合并。`,
+          },
+        ],
+      }),
+    });
+
+    const result = await runBlockAssemblyForSession(db, {
+      sessionId,
+      blocks: [
+        { id: a, structured: structured('大题题干', '1'), layout_quality: 'structured' },
+        { id: b, structured: structured('后续小问', '2'), layout_quality: 'structured' },
+      ],
+      runTaskFn,
+    });
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    const proposal = rows.find((row) => row.id === result.proposal_ids[0]);
+    expect(proposal?.payload.reason_md).toBe(
+      '第 2 块（题号 2）的题号承接第 1 块（题号 1），应合并。',
+    );
+    expect(proposal?.payload.reason_md).not.toContain(a);
+    expect(proposal?.payload.reason_md).not.toContain(b);
+  });
+
   it('drops candidates referencing block ids outside the session (hallucinated)', async () => {
     const db = testDb();
     const { sessionId, blockIds } = await seed(db, 2);

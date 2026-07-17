@@ -237,7 +237,7 @@ function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
 - 同一个 block 不要出现在多个候选里（一个块只属于一次合并）。
 - signal 选最贴切的那条线索；page_edge 代表跨页切断，仅在 page_index 信号佐证时使用。
 - confidence 反映你对「这几块确实是一道题」的把握；吃不准就给低分（下游只是 propose，用户会复核，但别凑数）。
-- reason_md 必须具体：引用 question_no 或题面文字，说清为什么该合并。
+- reason_md 必须具体：引用 question_no、题面文字或数组位置（如「第 N 块」），说清为什么该合并；这是用户可见文案，**禁止写入 block_id 或其他不透明 ID**。
 - **宁缺毋滥**：没有明确该合并的相邻块时，输出空 candidates。禁止套话、禁止 JSON 之外的文字。`;
 }
 
