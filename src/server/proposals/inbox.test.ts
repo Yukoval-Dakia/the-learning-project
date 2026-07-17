@@ -224,6 +224,32 @@ describe('proposal inbox reader', () => {
     });
   });
 
+  it('pushes the legacy knowledge archive fallback into the observation lane', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'legacy_archive_observation',
+      actor_kind: 'agent',
+      actor_ref: 'maintenance',
+      action: 'experimental:knowledge_archive',
+      subject_kind: 'knowledge',
+      subject_id: 'k_stale',
+      outcome: 'partial',
+      payload: { node_id: 'k_stale', reasoning: 'No longer supported by evidence.' },
+      created_at: new Date(),
+    });
+
+    await expect(
+      listProposalInboxRows(db, { lane: 'decision', status: 'pending' }),
+    ).resolves.toEqual([]);
+    const observations = await listProposalInboxRows(db, {
+      lane: 'observation',
+      status: 'pending',
+    });
+    expect(observations.map((row) => [row.id, row.kind])).toEqual([
+      ['legacy_archive_observation', 'archive'],
+    ]);
+  });
+
   it('skips and logs invalid proposal payloads without failing the whole inbox', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const db = testDb();
@@ -1183,7 +1209,9 @@ describe('proposal inbox reader', () => {
     }));
     await db.insert(event).values(rows);
 
-    await expect(countPendingProposalInboxByKind(db, { maxBatches: 1 })).resolves.toEqual({
+    await expect(
+      countPendingProposalInboxByKind(db, { batchSize: 500, maxBatches: 1 }),
+    ).resolves.toEqual({
       byKind: { defer: 500 },
       hasMore: true,
     });
