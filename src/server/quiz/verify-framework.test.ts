@@ -205,6 +205,25 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     ).resolves.toMatchObject({ verdict: 'pass' });
   });
 
+  it.each([
+    ['A（公元前 202 年）', '公元前 202 年'],
+    ['B(answer)', 'answer'],
+    ['C[choice]', 'choice'],
+    ['D【答案】', '答案'],
+  ])('extracts parenthesized choice content from %s', async (reference, solverAnswer) => {
+    const question: SolveCheckQuestion = {
+      ...exactQuestion,
+      reference_md: `${reference}\n\n解析：这里是不会参与精确答案比较的说明。`,
+      choices_md: null,
+    };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput(solverAnswer) }));
+
+    await expect(
+      runSolveCheck(question, { runTaskFn, profile: fakeProfile }),
+    ).resolves.toMatchObject({ verdict: 'pass', compared_by: 'normalize' });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+
   it('fails when the solver answer disagrees with the reference', async () => {
     const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
     const result = await runSolveCheck(exactQuestion, {

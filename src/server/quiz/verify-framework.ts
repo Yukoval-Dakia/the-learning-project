@@ -193,12 +193,12 @@ export const SOLVE_CHECK_TIER34_VETO = {
 // (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
 // — a solver that couldn't independently solve, or that agreed, must not kill a question).
 //
-// R4 (YUK-554 review) — DELIBERATE tier asymmetry: tier2 (source_verify.ts) vetoes EVERY
-// solve fail including normalize, because its reference answers are anchored on real web
-// extracts (source_consistency forces overlap) — a normalize mismatch there is a strong
-// signal. tier3/4 references are same-model self-authored (quiz_verify.ts), where normalize
-// mismatch is format-jitter-rich → per-axis split here. Do NOT "unify" the two handlers'
-// veto semantics without revisiting that provenance difference.
+// R4 (YUK-554 review) — DELIBERATE tier asymmetry remains at the CONSUMER: tier2
+// (source_verify.ts) vetoes every emitted solve fail, while tier3/4 selects the axis flag here.
+// YUK-612 supersedes the old producer assumption that a raw normalize mismatch is itself a strong
+// fail signal: all callers now route that mismatch through SemanticJudge first. The normalize flag
+// remains for historical or externally supplied results; changing how either handler consumes an
+// actual normalize fail still requires revisiting the source-provenance difference.
 export function solveCheckBlocks(
   result: SolveCheckResult,
   flags: { semantic: boolean; normalize: boolean } = SOLVE_CHECK_TIER34_VETO,
