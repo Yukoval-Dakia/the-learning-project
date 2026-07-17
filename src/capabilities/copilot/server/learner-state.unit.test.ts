@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { LEARNER_STATE_HEADER_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
+import type { CopilotSummary } from '@/server/today/copilot-summary';
+import {
+  OVERNIGHT_HANDOFF_UNAVAILABLE,
+  type OvernightDigest,
+} from '@/server/today/overnight-digest';
 import {
   type LearnerStateHeaderCache,
   type LearnerStateProjection,
@@ -10,6 +15,7 @@ import {
   assembleLearnerStateHeaderMd,
   dayBucket,
   isLearnerStateHeaderStale,
+  readLearnerStateProjection,
   resolveLearnerStateHeader,
   scopeCopilotProposalFeedback,
 } from './learner-state';
@@ -35,6 +41,33 @@ const PROJECTION = (over: Partial<LearnerStateProjection> = {}): LearnerStatePro
   masterySummary: null,
   meanTheta: null,
   overnightSentence: null,
+  ...over,
+});
+
+const SUMMARY = (over: Partial<CopilotSummary> = {}): CopilotSummary => ({
+  daily_focus: '先复习',
+  plan_adjustments_count: null,
+  review_due_count: 0,
+  brief_global_md: null,
+  dreaming_preview: [],
+  pending_proposals_total: 0,
+  coach_last_run_at: null,
+  dreaming_last_run_at: null,
+  ...over,
+});
+
+const DIGEST = (over: Partial<OvernightDigest> = {}): OvernightDigest => ({
+  window: {
+    from: '2026-07-15T16:00:00.000Z',
+    to: '2026-07-16T16:00:00.000Z',
+  },
+  has_overnight_activity: false,
+  runs: [],
+  note_changes_count: 0,
+  new_proposals_count: 0,
+  new_conjectures_count: 0,
+  agent_notes_count: 0,
+  degraded_kinds: [],
   ...over,
 });
 
@@ -161,6 +194,55 @@ describe('assembleLearnerStateHeaderMd', () => {
       }),
     );
     expect(md.length).toBeLessThanOrEqual(LEARNER_STATE_HEADER_BUDGET.maxChars);
+  });
+});
+
+describe('readLearnerStateProjection overnight handoff', () => {
+  const baseDeps = {
+    loadCopilotSummaryFn: async () => SUMMARY(),
+    listActiveGoalsFn: async () => [],
+    getFailureAttemptsFn: async () => [],
+    getMasteryProjectionFn: async () => new Map(),
+  };
+
+  it('uses the shared digest quiet-night signal instead of a stale global memory brief', async () => {
+    const projection = await readLearnerStateProjection({} as never, {
+      ...baseDeps,
+      loadCopilotSummaryFn: async () =>
+        SUMMARY({
+          brief_global_md: '这段全局摘要不是昨夜交班。',
+          dreaming_last_run_at: '2026-07-16T18:00:00.000Z',
+        }),
+      loadOvernightDigestFn: async () => DIGEST(),
+    });
+
+    expect(projection.overnightSentence).toBeNull();
+  });
+
+  it('projects the shared five-source digest into the Copilot handoff line', async () => {
+    const projection = await readLearnerStateProjection({} as never, {
+      ...baseDeps,
+      loadOvernightDigestFn: async () =>
+        DIGEST({
+          has_overnight_activity: true,
+          runs: [{ task_kind: 'dreaming', count: 1, status_breakdown: { success: 1 } }],
+          note_changes_count: 2,
+          new_conjectures_count: 1,
+        }),
+    });
+
+    expect(projection.overnightSentence).toBe('夜间任务 1 次，笔记精炼 2 次，备课猜想 1 条。');
+  });
+
+  it('keeps Copilot available while naming an unavailable handoff honestly', async () => {
+    const projection = await readLearnerStateProjection({} as never, {
+      ...baseDeps,
+      loadOvernightDigestFn: async () => {
+        throw new Error('digest unavailable');
+      },
+    });
+
+    expect(projection.overnightSentence).toBe(OVERNIGHT_HANDOFF_UNAVAILABLE);
   });
 });
 

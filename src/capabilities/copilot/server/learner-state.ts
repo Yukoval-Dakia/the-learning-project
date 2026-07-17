@@ -55,6 +55,12 @@ import {
   getProposalFeedbackDigest,
 } from '@/server/proposals/adaptive-bias';
 import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
+import {
+  type LoadTodayOvernightDigest,
+  OVERNIGHT_HANDOFF_UNAVAILABLE,
+  formatOvernightHandoffSentence,
+  loadTodayOvernightDigest,
+} from '@/server/today/overnight-digest';
 
 type DbLike = Db | Tx;
 
@@ -159,16 +165,6 @@ export function isLearnerStateHeaderStale(
   );
 }
 
-/** First sentence (up to the first 。/！/？/newline) of a markdown blob, trimmed. */
-function firstSentence(md: string | null, maxLen: number): string | null {
-  if (!md) return null;
-  const flat = md.replace(/\s+/g, ' ').trim();
-  if (flat.length === 0) return null;
-  const cut = flat.search(/[。！？\n]/);
-  const sentence = cut >= 0 ? flat.slice(0, cut + 1) : flat;
-  return sentence.slice(0, maxLen).trim() || null;
-}
-
 /**
  * Deterministic projection → header prose, hard-truncated to the size budget.
  * The due line is always present; the goal / 误区 / mastery / 交班 lines render
@@ -267,6 +263,7 @@ function summarizeMastery(proj: Map<string, MasteryProjection>): {
 /** IO dependencies for the projection read (injected in tests). */
 export interface ReadProjectionDeps {
   loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
+  loadOvernightDigestFn?: LoadTodayOvernightDigest;
   listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
   getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
   getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
@@ -277,6 +274,7 @@ export async function readLearnerStateProjection(
   deps: ReadProjectionDeps = {},
 ): Promise<LearnerStateProjection> {
   const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
+  const loadOvernightDigest = deps.loadOvernightDigestFn ?? loadTodayOvernightDigest;
   // YUK-603 — resolved read. The default is only ever invoked with the outer Db (call site
   // below); the DbLike dep shape stays for test fakes, hence the narrow cast.
   const loadGoals =
@@ -288,10 +286,14 @@ export async function readLearnerStateProjection(
     deps.getMasteryProjectionFn ??
     ((d: DbLike, ids: string[]) => getMasteryProjection(d as Db, ids));
 
-  const [summary, goals, failures] = await Promise.all([
+  const overnightSentencePromise = loadOvernightDigest(db)
+    .then(formatOvernightHandoffSentence)
+    .catch(() => OVERNIGHT_HANDOFF_UNAVAILABLE);
+  const [summary, goals, failures, overnightSentence] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
     loadFailures(db),
+    overnightSentencePromise,
   ]);
   const activeGoal = goals[0] ?? null;
   const topCauseCategories = rankTopCauseCategories(failures, 2);
@@ -303,14 +305,6 @@ export async function readLearnerStateProjection(
     const proj = await loadMastery(db, scopeKcs);
     ({ masterySummary, meanTheta } = summarizeMastery(proj));
   }
-
-  // No dedicated YUK-520 "交班缕" read point exists yet; the global memory-brief
-  // gestalt (which dreaming/coach feed nightly) is the closest overnight digest.
-  // Gate on dreaming having run so the sentence reads as a genuine 交班. (Follow-up:
-  // a dedicated dreaming 交班 read point when YUK-520 lands one.)
-  const overnightSentence = summary.dreaming_last_run_at
-    ? firstSentence(summary.brief_global_md, 120)
-    : null;
 
   return {
     reviewDueCount: summary.review_due_count,
