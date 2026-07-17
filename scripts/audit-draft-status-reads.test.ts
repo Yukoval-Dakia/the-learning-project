@@ -14,7 +14,6 @@
 //   - validateReadGate.ok (drives --strict exit) is false on a planted violation, true on clean
 //   - real-tree baseline is clean (0 flagged, 0 UNKNOWN) — the strict-in-pnpm-test wire is safe
 
-import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -22,6 +21,7 @@ import {
   HELPER_SENTINEL,
   checkHelperSentinels,
   findJsTwins,
+  readFileOrNull,
   scanReads,
   validateReadGate,
   walkSource,
@@ -315,7 +315,8 @@ describe('real-tree baseline is clean (strict-in-pnpm-test is safe)', () => {
     const hits = [];
     const unknown = [];
     for (const file of files) {
-      const src = readFileSync(join(REPO_ROOT, file), 'utf-8');
+      const src = readFileOrNull(file);
+      if (src === null) continue;
       if (!src.includes('draft_status')) continue;
       const r = scanReads(file, src);
       hits.push(...r.hits);
@@ -328,13 +329,10 @@ describe('real-tree baseline is clean (strict-in-pnpm-test is safe)', () => {
   });
 
   it('the helper definition file carries the sentinel marker', () => {
-    const read = (f: string) => {
-      try {
-        return readFileSync(join(REPO_ROOT, f), 'utf-8');
-      } catch {
-        return null;
-      }
-    };
-    expect(checkHelperSentinels(read)).toEqual([]);
+    expect(checkHelperSentinels(readFileOrNull)).toEqual([]);
+  });
+
+  it('skips a source file removed after enumeration', () => {
+    expect(readFileOrNull('src/subjects/definitely-missing-yuk-613.ts')).toBeNull();
   });
 });
