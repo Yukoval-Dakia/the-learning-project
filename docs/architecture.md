@@ -192,7 +192,7 @@ interface DomainTool<Input, Output> {
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。**YUK-576（2026-07-07）**：原声明性字段 `maxCost` 与 `fallbackChain` 已删除（零消费者 = 声明性谎言；全量 chain 审计见 `docs/design/2026-07-07-yuk576-registry-honesty.md`）。取而代之的是真实接线的 `TaskBudget.transientRetries`——runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。
+`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 仅在 Anthropic direct 这条会回报 USD 的 pay-as-you-go lane 映射到 SDK `maxBudgetUsd`；mimo（不回 SDK cost）与 subscription OAuth（flat quota）明确不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 Claude Code 内部 API retry 默认从 10 收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖），让 5xx 终态在任务预算内回到 loom 分类层。
 
 ### 5.3 成本控制
 
@@ -200,7 +200,7 @@ interface DomainTool<Input, Output> {
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 Claude Agent SDK 所需 env/baseUrl/model。
 - 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
-- **尚未实现**：per-run 硬成本预算（原 `maxCost` 已随 YUK-576 删除——将来 cost-reporting lane 进现役时经 SDK 原生 `Options.maxBudgetUsd` 一行接回）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略。不要在实现计划中假设这些已经生效。已实现（YUK-576）：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper。
+- **尚未实现**：mimo / flat OAuth 的 per-run 美元硬预算（两者无可用 SDK cost 信号）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略。已实现：Anthropic direct 的 `maxBudgetUsd`、同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper。
 
 ### 5.4 Skill / MCP Server / Plugin
 

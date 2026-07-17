@@ -100,7 +100,7 @@ export interface RunTaskCtx {
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /**
    * YUK-576 — in-process transient-retry opt-in. Default OFF (undefined):
-   * every existing caller is byte-identical. ONLY call paths with NO durable
+   * existing callers still make one loom-level attempt. ONLY call paths with NO durable
    * backstop may set this (single-transient-layer principle) — today exactly
    * the two vision judges (steps-judge.ts / multimodal-direct-judge.ts), whose
    * catch swallows failures into 'unsupported' so pg-boss never sees a throw.
@@ -389,6 +389,15 @@ function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | unde
 
   base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
   base.CLAUDE_AGENT_SDK_CLIENT_APP = base.CLAUDE_AGENT_SDK_CLIENT_APP ?? 'loom/0.1';
+  // YUK-590 — Claude Code 2.1.168 defaults API retries to 10 (11 requests) and
+  // honours this integer env override. A persistent 5xx took 177.7s in the frozen
+  // probe, well beyond most task budgets and before loom could classify the terminal.
+  // Three total CLI attempts keep short transient absorption while returning control
+  // to loom's one deliberate retry layer (in-process opt-in OR pg-boss redelivery).
+  // Preserve an explicit operator value, including '0'.
+  if (base.CLAUDE_CODE_MAX_RETRIES === undefined) {
+    base.CLAUDE_CODE_MAX_RETRIES = '2';
+  }
   return base;
 }
 
@@ -469,6 +478,12 @@ function buildQueryOptions(
   if (ctx.canUseTool !== undefined) {
     options.canUseTool = ctx.canUseTool;
   }
+  // YUK-590 — Anthropic direct is the only wired pay-as-you-go lane whose SDK
+  // result reports USD. Mimo has no SDK cost signal and anthropic-sub is flat
+  // subscription quota, so writing maxBudgetUsd there would be a wired-but-inert lie.
+  if (resolved.provider === 'anthropic') {
+    options.maxBudgetUsd = def.budget.maxCost;
+  }
   return options;
 }
 
@@ -481,7 +496,7 @@ function buildQueryOptions(
 /**
  * YUK-576 — should this call participate in the in-process transient-retry
  * loop? Gate order (design doc §3.2): call-site opt-in (default OFF, so every
- * existing caller is byte-identical) → caller-pinned routing OFF → env-pinned
+ * non-opt-in caller keeps one loom-level attempt) → caller-pinned routing OFF → env-pinned
  * routing OFF (pinned routing is an explicit decision — e.g. induce.ts pins
  * anthropic-sub per call for self-consistency sampling, where a silent retry
  * would still be same-target but the pin marks a lane where wall-clock
@@ -560,8 +575,8 @@ async function runTaskAttempt(args: {
         if (msg.subtype === 'success') {
           // YUK-576 (§2.4, probe-frozen): ALL API-level errors (4xx/429/5xx/
           // connection-class) terminate as success+is_error — never as
-          // SDKResultError. Breadcrumb for every caller; opt-in paths classify
-          // it as an attempt failure so the transient family can be retried.
+          // SDKResultError. YUK-590: this is a failed attempt for EVERY caller;
+          // only the outer retry gates decide whether that failure gets retried.
           if (isApiErrorSuccessResult(msg)) {
             console.warn('[runTask] task_run_success_with_error_flag', {
               event: 'task_run_success_with_error_flag',
@@ -569,18 +584,13 @@ async function runTaskAttempt(args: {
               kind,
               api_error_status: msg.api_error_status ?? null,
             });
-            if (transientRetryEnabled(ctx)) {
-              throw new AgentRunError({
-                kind,
-                taskRunId,
-                subtype: 'api_error_result',
-                apiErrorStatus: msg.api_error_status ?? null,
-                errors: [msg.result ?? ''],
-              });
-            }
-            // Non-opt-in: byte-identical to before — the error text is the
-            // result and the run is recorded as success (see design doc §2.4;
-            // the global reclassification is a tracked follow-up).
+            throw new AgentRunError({
+              kind,
+              taskRunId,
+              subtype: 'api_error_result',
+              apiErrorStatus: msg.api_error_status ?? null,
+              errors: [msg.result ?? ''],
+            });
           }
           resultText = msg.result ?? '';
           const u = msg.usage;
@@ -730,7 +740,7 @@ export async function runTask(
   const inputHashValue = inputHash(actualInput);
 
   // YUK-576 — bounded same-resolved-target transient retry (design doc §3).
-  // maxAttempts = 1 for every caller that doesn't opt in (byte-identical), and
+  // maxAttempts = 1 for every caller that doesn't opt in, and
   // 1 + budget.transientRetries (== 2 for the two vision judges) when the
   // gates open. No while, no recursion — the loop bound is the whole story.
   const maxAttempts = 1 + (transientRetryEnabled(ctx) ? def.budget.transientRetries : 0);
@@ -912,6 +922,29 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             }
             stepStartTime = Date.now();
           } else if (msg.type === 'result') {
+            // YUK-590: streamTask shares buildQueryOptions with runTask, including
+            // maxBudgetUsd. Every terminal SDK error must therefore close the
+            // ai_task_runs row as failure instead of falling through with status
+            // 'running'. The success+is_error API shape is also a failure, matching
+            // runTask's global truthfulness invariant.
+            if (isApiErrorSuccessResult(msg)) {
+              throw new AgentRunError({
+                kind,
+                taskRunId,
+                subtype: 'api_error_result',
+                apiErrorStatus: msg.api_error_status ?? null,
+                errors: [msg.result ?? ''],
+              });
+            }
+            if (msg.subtype !== 'success') {
+              throw new AgentRunError({
+                kind,
+                taskRunId,
+                subtype: msg.subtype,
+                errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+              });
+            }
+
             if (msg.subtype === 'success') {
               const u = msg.usage;
               usage = {

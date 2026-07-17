@@ -182,19 +182,35 @@ export async function induceConjecture(
   // from the AI_PROVIDER_MODEL guard via ANTHROPIC_SUB_DEFAULT_MODEL).
   const drafts: ConjectureDraftT[] = [];
   const taskRunIds: string[] = [];
+  const sampleErrors: string[] = [];
   let costUsd = 0;
   for (let i = 0; i < samples; i++) {
-    const result = await runTaskFn('MindModelInductionTask', taskInput, {
-      override: { provider: 'anthropic-sub' as const },
-      outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
-    });
-    if (result.task_run_id) taskRunIds.push(result.task_run_id);
-    costUsd += result.cost_usd ?? 0;
-    const draft = parseSampleDraft(result);
-    if (draft) drafts.push(draft);
+    try {
+      const result = await runTaskFn('MindModelInductionTask', taskInput, {
+        override: { provider: 'anthropic-sub' as const },
+        outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
+      });
+      if (result.task_run_id) taskRunIds.push(result.task_run_id);
+      costUsd += result.cost_usd ?? 0;
+      const draft = parseSampleDraft(result);
+      if (draft) drafts.push(draft);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      sampleErrors.push(`sample ${i + 1}: ${errorMessage.slice(0, 300)}`);
+      // Self-consistency samples are independent. A single provider/stream failure
+      // counts as non-agreement (the denominator remains `samples`) without
+      // discarding valid siblings; all-failed still hits the anti-fabrication guard.
+      console.warn('[induceConjecture] induction sample failed, skipping', {
+        sample: i + 1,
+        requested_samples: samples,
+        error: errorMessage,
+      });
+    }
   }
   if (drafts.length === 0) {
-    throw new Error('induceConjecture: no sample produced a valid ConjectureDraft');
+    const details =
+      sampleErrors.length > 0 ? `; failures: ${sampleErrors.slice(0, 3).join(' | ')}` : '';
+    throw new Error(`induceConjecture: no sample produced a valid ConjectureDraft${details}`);
   }
 
   // Fast path: claimKey clustering (byte-identical after normalisation).
