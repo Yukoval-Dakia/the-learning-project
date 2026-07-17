@@ -218,12 +218,18 @@ export async function countPendingProposalInboxByKind(
             jsonb_typeof(${event.payload}->'ai_proposal') = 'object'
             AND jsonb_typeof(${event.payload}->'ai_proposal'->'target') = 'object'
             AND jsonb_typeof(${event.payload}->'ai_proposal'->'reason_md') = 'string'
-            AND jsonb_typeof(${event.payload}->'ai_proposal'->'evidence_refs') = 'array'
+            AND (
+              NOT (${event.payload}->'ai_proposal' ? 'evidence_refs')
+              OR jsonb_typeof(${event.payload}->'ai_proposal'->'evidence_refs') = 'array'
+            )
             AND jsonb_typeof(${event.payload}->'ai_proposal'->'proposed_change') = 'object'
           WHEN ${event.action} = 'experimental:proposal' THEN
             jsonb_typeof(${event.payload}->'target') = 'object'
             AND jsonb_typeof(${event.payload}->'reason_md') = 'string'
-            AND jsonb_typeof(${event.payload}->'evidence_refs') = 'array'
+            AND (
+              NOT (${event.payload} ? 'evidence_refs')
+              OR jsonb_typeof(${event.payload}->'evidence_refs') = 'array'
+            )
             AND jsonb_typeof(${event.payload}->'proposed_change') = 'object'
           ELSE true
         END AS proposal_shape_valid,

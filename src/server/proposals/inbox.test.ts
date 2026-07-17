@@ -827,6 +827,22 @@ describe('proposal inbox reader', () => {
       payload: { ai_proposal: { kind: 'completion' } },
       created_at: new Date('2026-07-17T00:00:30.000Z'),
     });
+    await db.insert(event).values({
+      id: 'count_legacy_without_evidence_refs',
+      actor_kind: 'agent',
+      actor_ref: 'legacy_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'legacy_item',
+      outcome: 'partial',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'legacy_item' },
+        reason_md: 'Legacy schema defaulted evidence_refs to an empty array.',
+        proposed_change: { learning_item_id: 'legacy_item', completion_evidence: 'done' },
+      },
+      created_at: new Date('2026-07-17T00:00:45.000Z'),
+    });
     await writeAiProposal(db, {
       id: 'count_folded',
       payload: {
@@ -890,6 +906,6 @@ describe('proposal inbox reader', () => {
 
     const counts = await countPendingProposalInboxByKind(db);
 
-    expect(counts).toEqual({ defer: 1, knowledge_edge: 1 });
+    expect(counts).toEqual({ completion: 1, defer: 1, knowledge_edge: 1 });
   });
 });
