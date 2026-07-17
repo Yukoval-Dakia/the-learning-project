@@ -19,6 +19,18 @@ describe('parseAttributionOutput', () => {
     expect(out.secondary_categories).toEqual(['memory']);
     expect(out.analysis_md).toBe('用户混淆了「之」的助词和动词用法');
     expect(out.confidence).toBe(0.85);
+    expect(out.meta_cause).toBe('flawed_model');
+    expect(out.metacog_flag).toBeNull();
+    expect(out.self_corrected_on_hint).toBeNull();
+  });
+
+  it('preserves an explicit violation classification without forcing a main meta cause', () => {
+    const text =
+      '{"primary_category":"carelessness","secondary_categories":[],"analysis_md":"会做但故意跳过验算","confidence":0.9,"meta_cause":null,"meta_cause_secondary":null,"metacog_flag":"regulation_gap","bloom_level":null,"self_corrected_on_hint":null,"recurred_cross_item":null}';
+    const out = parseAttributionOutput(text);
+
+    expect(out.meta_cause).toBeNull();
+    expect(out.metacog_flag).toBe('regulation_gap');
   });
 
   it('rejects legacy ai_analysis_md (Step 7 removed the Zod bridge)', () => {
@@ -176,11 +188,19 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(judge.subject_id).toBe(attemptId);
     expect(judge.outcome).toBe('success');
     const payload = judge.payload as {
-      cause: { primary_category: string; analysis_md: string; confidence: number };
+      cause: {
+        primary_category: string;
+        analysis_md: string;
+        confidence: number;
+        meta_cause: string | null;
+        metacog_flag: string | null;
+      };
     };
     expect(payload.cause.primary_category).toBe('concept');
     expect(payload.cause.analysis_md).toBe('why');
     expect(payload.cause.confidence).toBe(0.8);
+    expect(payload.cause.meta_cause).toBe('flawed_model');
+    expect(payload.cause.metacog_flag).toBeNull();
   });
 
   // ── YUK-462: retrieve→rerank pipeline ───────────────────────────────────────

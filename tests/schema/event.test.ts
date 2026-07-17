@@ -150,6 +150,34 @@ describe('JudgeOnEvent', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts meta-cause evidence while keeping historical judge events optional', () => {
+    const result = JudgeOnEvent.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'e_1',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'reading',
+          secondary_categories: [],
+          analysis_md: '题意转译失败。',
+          confidence: 0.8,
+          meta_cause: 'representation_failure',
+          meta_cause_secondary: null,
+          metacog_flag: null,
+          bloom_level: 'analyze',
+          self_corrected_on_hint: null,
+          recurred_cross_item: false,
+        },
+        referenced_knowledge_ids: [],
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it('rejects judge with subject_kind=question (must be event)', () => {
     const result = JudgeOnEvent.safeParse({
       actor_kind: 'agent',

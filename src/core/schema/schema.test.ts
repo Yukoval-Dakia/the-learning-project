@@ -2,13 +2,14 @@
 // (Mistake / ReviewEvent / IngestionSession / DreamingProposal) removed.
 // Surviving tests cover the schemas that still exist post-DROP.
 
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import { parseEvent } from './event';
 import {
   Artifact,
   CauseCategory,
   CauseSchema,
+  DEFAULT_META_CAUSE_BY_CATEGORY,
   FsrsState,
   KnowledgeInsert,
   LearningItemInsert,
@@ -88,6 +89,34 @@ describe('schema generated from drizzle', () => {
         confidence: 0.8,
       }).success,
     ).toBe(true);
+  });
+
+  it('CauseSchema accepts the six nullable meta-cause evidence fields', () => {
+    const parsed = CauseSchema.parse({
+      primary_category: 'concept',
+      secondary_categories: [],
+      analysis_md: '稳定地把定义边界理解反了。',
+      confidence: 0.9,
+      meta_cause: 'flawed_model',
+      meta_cause_secondary: null,
+      metacog_flag: 'overconfident',
+      bloom_level: 'understand',
+      self_corrected_on_hint: false,
+      recurred_cross_item: true,
+    });
+
+    expect(parsed.meta_cause).toBe('flawed_model');
+    expect(parsed.metacog_flag).toBe('overconfident');
+  });
+
+  it('keeps a cold-start meta-cause prior for every built-in profile category', () => {
+    for (const profile of Object.values(subjectProfiles)) {
+      for (const category of profile.causeCategories) {
+        expect(DEFAULT_META_CAUSE_BY_CATEGORY, `${profile.id}:${category.id}`).toHaveProperty(
+          category.id,
+        );
+      }
+    }
   });
 
   it('profile validation rejects causes outside the current SubjectProfile', () => {

@@ -181,6 +181,10 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('你是错题归因助手');
     expect(prompt).not.toContain('文言文');
     expect(prompt).not.toContain('古文');
+    expect(prompt).toContain('self_corrected_on_hint');
+    expect(prompt).toContain('recurred_cross_item');
+    expect(prompt).toContain('信心与表现是否脱节');
+    expect(prompt).toContain('metacog_flag="regulation_gap" 且 meta_cause=null');
   });
 
   // Lane D (YUK-482): KnowledgeProposeTask prompt test removed — task deleted

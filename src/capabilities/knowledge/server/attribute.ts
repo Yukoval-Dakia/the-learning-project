@@ -10,7 +10,13 @@
 // per ADR-0005 — never call db.insert(event) directly; goes through writeEvent.
 
 import { newId } from '@/core/ids';
-import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business';
+import {
+  CauseSchema,
+  type CauseSchemaT,
+  type MetaCauseFieldsT,
+  getDefaultMetaCause,
+  validateCauseAgainstProfile,
+} from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -32,7 +38,7 @@ const AttributionOutputSchema = CauseSchema.extend({
   analysis_md: z.string().min(1).max(2000),
 });
 
-export type AttributionOutput = z.infer<typeof AttributionOutputSchema>;
+export type AttributionOutput = Omit<CauseSchemaT, keyof MetaCauseFieldsT> & MetaCauseFieldsT;
 
 export function parseAttributionOutput(
   text: string,
@@ -50,7 +56,21 @@ export function parseAttributionOutput(
   } catch (e) {
     throw new Error(`parseAttributionOutput: JSON.parse failed: ${(e as Error).message}`);
   }
-  return validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
+  const parsed = validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
+  return {
+    ...parsed,
+    // Explicit null from the model is meaningful (for example a violation).
+    // Only an omitted field falls back to the profile category's cold-start prior.
+    meta_cause:
+      parsed.meta_cause === undefined
+        ? (getDefaultMetaCause(parsed.primary_category) ?? null)
+        : parsed.meta_cause,
+    meta_cause_secondary: parsed.meta_cause_secondary ?? null,
+    metacog_flag: parsed.metacog_flag ?? null,
+    bloom_level: parsed.bloom_level ?? null,
+    self_corrected_on_hint: parsed.self_corrected_on_hint ?? null,
+    recurred_cross_item: parsed.recurred_cross_item ?? null,
+  };
 }
 
 export interface AttributionInput {
@@ -250,6 +270,12 @@ export async function runAttributionAndWriteJudgeEvent(
           secondary_categories: parsed.secondary_categories,
           analysis_md: parsed.analysis_md,
           confidence: parsed.confidence,
+          meta_cause: parsed.meta_cause,
+          meta_cause_secondary: parsed.meta_cause_secondary,
+          metacog_flag: parsed.metacog_flag,
+          bloom_level: parsed.bloom_level,
+          self_corrected_on_hint: parsed.self_corrected_on_hint,
+          recurred_cross_item: parsed.recurred_cross_item,
         },
         referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
         profile_version: profileVersion,

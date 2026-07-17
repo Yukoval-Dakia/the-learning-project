@@ -299,6 +299,59 @@ describe('integration: mistake read-path back-compat (event stream → mistake-s
     expect(reviews).toHaveLength(0);
   });
 
+  it('supersedes the whole judge cause, including meta-cause evidence', async () => {
+    await seedFixture();
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'evt_judge_replacement',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'evt_attempt_with_judge',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'memory',
+          secondary_categories: [],
+          analysis_md: '提示后立即想起，属于提取失败。',
+          confidence: 0.91,
+          meta_cause: 'retrieval_failure',
+          meta_cause_secondary: null,
+          metacog_flag: 'calibrated',
+          bloom_level: 'remember',
+          self_corrected_on_hint: true,
+          recurred_cross_item: false,
+        },
+        referenced_knowledge_ids: ['k_memory'],
+      },
+      caused_by_event_id: 'evt_attempt_with_judge',
+      task_run_id: null,
+      cost_micro_usd: null,
+      // Older than the original judge: it becomes effective only through the
+      // explicit supersede correction, not through newest-wins selection.
+      created_at: new Date(FIXTURE_TIME.getTime() + 30_000),
+    });
+    await seedCorrectionEvent({
+      id: 'evt_correct_judge_meta',
+      target_event_id: 'evt_judge_for_attempt_1',
+      correction_kind: 'supersede',
+      replacement_event_id: 'evt_judge_replacement',
+      created_at: new Date(FIXTURE_TIME.getTime() + 240_000),
+    });
+
+    const attempts = await getFailureAttempts(db);
+    const withJudge = attempts.find(
+      (attempt) => attempt.attempt_event_id === 'evt_attempt_with_judge',
+    );
+
+    expect(withJudge?.judge?.judge_event_id).toBe('evt_judge_replacement');
+    expect(withJudge?.judge?.cause.meta_cause).toBe('retrieval_failure');
+    expect(withJudge?.judge?.cause.self_corrected_on_hint).toBe(true);
+    expect(withJudge?.judge?.correction_state.effective_event_id).toBe('evt_judge_replacement');
+  });
+
   it('getRecentReviewEvents returns the seeded review with parsed FSRS state', async () => {
     await seedFixture();
     const db = testDb();
