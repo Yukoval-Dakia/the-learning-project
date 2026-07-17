@@ -178,7 +178,10 @@ describe('POST /api/proposals/[id]/decisions', () => {
   it('keeps change_type re-decision idempotent (200, not 409)', async () => {
     await seedEdgeProposal();
 
-    const first = await decide('edge_p1', { decision: 'change_type', new_relation_type: 'related_to' });
+    const first = await decide('edge_p1', {
+      decision: 'change_type',
+      new_relation_type: 'related_to',
+    });
     expect(first.status).toBe(201);
     const firstBody = (await first.json()) as DecisionBody;
     expect(firstBody).toMatchObject({ decision: 'change_type', created: true, idempotent: false });
