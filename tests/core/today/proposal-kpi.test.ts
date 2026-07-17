@@ -1,5 +1,5 @@
 import { aiProposalKinds } from '@/core/schema/proposal';
-import { summarizeTodayProposalKpi } from '@/server/today/proposal-kpi';
+import { TODAY_PROPOSAL_KPI_LIMIT, summarizeTodayProposalKpi } from '@/server/today/proposal-kpi';
 import { describe, expect, it } from 'vitest';
 
 describe('summarizeTodayProposalKpi', () => {
@@ -41,7 +41,7 @@ describe('summarizeTodayProposalKpi', () => {
     expect(summary.total).toBe(503);
     expect(summary.decision_total).toBe(2);
     expect(summary.has_more).toBe(false);
-    expect(summary.limit).toBe(500);
+    expect(summary.limit).toBe(TODAY_PROPOSAL_KPI_LIMIT);
     expect(summary.by_kind.defer).toBe(500);
     expect(summary.by_kind.archive).toBe(1);
     expect(summary.by_kind.knowledge_edge).toBe(1);
