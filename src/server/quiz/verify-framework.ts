@@ -194,6 +194,10 @@ export const SOLVE_CHECK_TIER34_VETO = {
 // answer "does this block promotion?". Only a 'fail' verdict can block; the axis
 // (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
 // — a solver that couldn't independently solve, or that agreed, must not kill a question).
+// Every live tier3/4 caller supplies `db`, so an exact mismatch can reach SemanticJudge. If a
+// future caller omits it, `normalized_exact_mismatch + unsupported` intentionally remains
+// non-blocking here; that caller must add its own provenance hold (as tier2 does) rather than
+// silently changing this shared conservative policy.
 //
 // R4 (YUK-554 review) — DELIBERATE tier asymmetry remains at the CONSUMER: tier2
 // (source_verify.ts) vetoes every emitted solve fail, while tier3/4 selects the axis flag here.
@@ -525,8 +529,9 @@ export async function runSolveCheck(
   // Treat the question's reference answer as the rubric/reference and the solver's
   // independent answer as the "submission". If the semantic judge CONFIDENTLY says
   // the solver answer is incorrect vs the reference, the persisted answer is suspect
-  // → fail. Anything softer (partial / correct / unsupported / low confidence) PASSES
-  // — 宁可漏过不误杀真题 (OF-4 / R2).
+  // → fail. Open questions keep the R2 conservative pass for softer outcomes. Exact
+  // mismatches are stricter: only `correct` establishes equivalence; partial/unsupported/
+  // low-confidence disagreement remains unresolved for provenance-aware consumers.
   const semParams: JudgeAnswerParams = {
     db: opts.db,
     question: {
@@ -549,23 +554,29 @@ export async function runSolveCheck(
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
-  // For an exact mismatch, an unavailable judge or an additional low-confidence
-  // disagreement does not establish equivalence. Preserve it as `unsupported`
+  // For an exact mismatch, anything other than an explicit `correct` or a confident
+  // `incorrect` does not establish equivalence. Preserve it as `unsupported`
   // so provenance-anchored tier 2 can hold for review instead of silently
   // promoting; tier 3/4 continues treating unsupported as non-blocking.
   const exactFallbackUnresolved =
-    normalizedExactMismatch &&
-    (judged.coarse_outcome === 'unsupported' ||
-      (judged.coarse_outcome === 'incorrect' && !confidentlyDisagrees));
+    normalizedExactMismatch && judged.coarse_outcome !== 'correct' && !confidentlyDisagrees;
   const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
+  let verdict: SolveCheckResult['verdict'];
+  let reason: string;
+  if (confidentlyDisagrees) {
+    verdict = 'fail';
+    reason = `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
+  } else if (exactFallbackUnresolved) {
+    verdict = 'unsupported';
+    reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;
+  } else {
+    verdict = 'pass';
+    reason = `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`;
+  }
   return {
-    verdict: confidentlyDisagrees ? 'fail' : exactFallbackUnresolved ? 'unsupported' : 'pass',
+    verdict,
     solver_final_answer: solverFinalAnswer,
-    reason: confidentlyDisagrees
-      ? `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`
-      : exactFallbackUnresolved
-        ? `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`
-        : `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
+    reason,
     compared_by: 'semantic',
     ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
     ...runProvenance(),

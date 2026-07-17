@@ -564,6 +564,23 @@ describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
     });
   });
 
+  it('keeps an exact mismatch unresolved when SemanticJudge says only partial', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text:
+        kind === 'SolutionGenerateTask'
+          ? solverOutput('公元前 221 年')
+          : semanticOutput('partial', 0.99),
+    }));
+
+    await expect(
+      runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile, db: fakeDb }),
+    ).resolves.toMatchObject({
+      verdict: 'unsupported',
+      compared_by: 'semantic',
+      normalized_exact_mismatch: true,
+    });
+  });
+
   it('returns unsupported when the question has no reference answer — WITHOUT spending the solver call (EFF-3)', async () => {
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('x') }));
     const result = await runSolveCheck(
