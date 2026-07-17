@@ -146,9 +146,8 @@ describe('runCopilotChat (two-surface routing)', () => {
   // P5.1 / YUK-143 — Copilot wires the per-message context-budget throttle into
   // the MCP bridge: a beforeExecute tool-call ceiling + an interceptInput limit
   // cap. We assert the wiring end-to-end through the budget tracker by driving
-  // the captured hooks: 10 tool calls allowed then a soft-stop, and an
-  // over-budget node request capped down with a truncation note (graceful, not
-  // a throw).
+  // the captured hooks: warning at 10 with no stop, hard stop after 25, and
+  // row warning without cap followed by hard truncation (graceful, not throw).
   it('wires the per-message context budget (tool-call ceiling + limit cap) into the bridge', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;
@@ -181,18 +180,28 @@ describe('runCopilotChat (two-surface routing)', () => {
       throw new Error('expected beforeExecute + interceptInput throttle wiring');
     }
 
-    // Tool-call ceiling: COPILOT_CONTEXT_BUDGET.maxToolCalls = 10 allowed, then
-    // a soft-stop string (not a throw).
+    // Calls 1–25 execute. At 10 the interceptor returns an advisory notice;
+    // only call 26 soft-stops.
     for (let i = 0; i < 10; i += 1) {
       expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
     }
+    const warning = opts.interceptInput(
+      { name: 'get_subject_graph_overview', effect: 'read' },
+      { subjectId: 'yuwen' },
+    );
+    expect(warning.truncationNote).toMatchObject({
+      level: 'warning',
+      truncated: false,
+      dimensions: { toolCalls: { used: 10, hard_remaining: 15 } },
+    });
+    for (let i = 10; i < 25; i += 1) {
+      expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
+    }
     expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toMatch(
-      /context budget reached/,
+      /hard context budget reached/,
     );
 
-    // Limit cap: an over-budget maxNodes request is capped to remaining
-    // nodes+edges budget (≤250) with a truncation note. Run a fresh turn so the
-    // accumulator is clean (per-message tracker, spec §3.4).
+    // Run a fresh turn for row budgets (per-message tracker, spec §3.4).
     await runCopilotChat(
       db,
       { user_message: '展开子图', triggered_by: 'chat' },
@@ -209,12 +218,23 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
     const opts2 = buildMcpServerFn.mock.calls[1]?.[0];
     if (!opts2?.interceptInput) throw new Error('expected interceptInput on second turn');
+    const warned = opts2.interceptInput(
+      { name: 'expand_knowledge_subgraph', effect: 'read' },
+      { centerNodeId: 'k_1', maxNodes: 300 },
+    );
+    expect((warned.args as { maxNodes: number }).maxNodes).toBe(300);
+    expect(warned.truncationNote).toMatchObject({ level: 'warning', truncated: false });
+
     const capped = opts2.interceptInput(
       { name: 'expand_knowledge_subgraph', effect: 'read' },
       { centerNodeId: 'k_1', maxNodes: 9999 },
     );
-    expect((capped.args as { maxNodes: number }).maxNodes).toBe(250);
-    expect(capped.truncationNote).toMatchObject({ truncated: true, applied_limit: 250 });
+    expect((capped.args as { maxNodes: number }).maxNodes).toBe(700);
+    expect(capped.truncationNote).toMatchObject({
+      level: 'hard',
+      truncated: true,
+      applied_limit: 700,
+    });
   });
 
   it('chip path uses copilot_user_suggested_mistake_action allowlist and does NOT write user_ask', async () => {

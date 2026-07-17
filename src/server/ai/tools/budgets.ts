@@ -18,52 +18,52 @@
 import type { GateBiasConfig } from '@/server/proposals/adaptive-bias';
 import type { DomainToolSurface } from './allowlists';
 
+export interface ContextBudgetThreshold {
+  /** Advisory watermark: crossing it informs the model but never changes execution. */
+  warning: number;
+  /** Accident ceiling: only this threshold may truncate or soft-stop a tool call. */
+  hard: number;
+}
+
 export interface ContextBudget {
-  /** Max DomainTool invocations counted against this budget for the run/message. */
-  maxToolCalls: number;
-  /** Max combined knowledge nodes + edges returned across the run/message. */
-  maxNodesPlusEdges: number;
-  /** Max event-table rows (query_events + query_mistakes + timelines) across the run/message. */
-  maxEventRows: number;
+  /** DomainTool invocations counted across the run/message. */
+  toolCalls: ContextBudgetThreshold;
+  /** Combined knowledge nodes + edges returned across the run/message. */
+  nodesPlusEdges: ContextBudgetThreshold;
+  /** Event-table rows (query_events + query_mistakes + timelines) across the run/message. */
+  eventRows: ContextBudgetThreshold;
   /** Max characters per text excerpt (prompt / answer / reasoning snippet). */
   maxExcerptChars: number;
   /** Existing Dreaming/Coach proposal-write cap; undefined for read-only surfaces. */
   maxProposals?: number;
 }
 
-// CB-2 — Copilot per-user-message budget (loosened). Single-user self-hosted;
-// Copilot is user-facing and streams, so the user sees + recovers from any
-// truncation. Generous-but-bounded; the bound exists only to stop context
-// bloat that would distort reasoning. 180 aligns to knowledge-readers'
-// TEXT_SNIPPET_MAX (the existing per-excerpt max).
+// CB-2 / YUK-290 — the original limits are advisory warning watermarks. The
+// higher hard limits exist only to stop accidental context bloat/runaway loops;
+// crossing warning never rewrites tool args or stops execution.
 export const COPILOT_CONTEXT_BUDGET: ContextBudget = {
-  maxToolCalls: 10,
-  maxNodesPlusEdges: 250,
-  maxEventRows: 1000,
+  toolCalls: { warning: 10, hard: 25 },
+  nodesPlusEdges: { warning: 250, hard: 1000 },
+  eventRows: { warning: 1000, hard: 4000 },
   maxExcerptChars: 180,
 };
 
-// CB-3 — Dreaming budget unchanged. `maxToolCalls: 8` and `maxProposals: 5`
-// are the numbers previously hardcoded in dreaming_nightly.ts
-// (`max_tool_calls` literal + DREAMING_MAX_PROPOSALS). The nodes/edges/events
-// ceilings DOCUMENT the prior implicit ceiling (same generous values as
-// Copilot); Dreaming already stops on maxToolCalls / maxProposals well before
-// it could approach them, so they change no observable behavior (§3.1, §7).
+// CB-3 / YUK-290 — the prior `maxToolCalls: 8` becomes Dreaming's advisory
+// warning; 24 is the new accident ceiling. The proposal-write cap remains 5.
 export const DREAMING_CONTEXT_BUDGET: ContextBudget = {
-  maxToolCalls: 8,
-  maxNodesPlusEdges: 250,
-  maxEventRows: 1000,
+  toolCalls: { warning: 8, hard: 24 },
+  nodesPlusEdges: { warning: 250, hard: 1000 },
+  eventRows: { warning: 1000, hard: 4000 },
   maxExcerptChars: 180,
   maxProposals: 5,
 };
 
-// CB-4 — Coach budget unchanged. `maxToolCalls: 12` and `maxProposals: 5` are
-// the numbers previously hardcoded in coach_daily.ts (`max_tool_calls` literal
-// + COACH_MAX_PROPOSALS). Same documentation-of-prior-ceiling note as Dreaming.
+// CB-4 / YUK-290 — the prior `maxToolCalls: 12` becomes Coach's advisory
+// warning; 36 is the new accident ceiling. The proposal-write cap remains 5.
 export const COACH_CONTEXT_BUDGET: ContextBudget = {
-  maxToolCalls: 12,
-  maxNodesPlusEdges: 250,
-  maxEventRows: 1000,
+  toolCalls: { warning: 12, hard: 36 },
+  nodesPlusEdges: { warning: 250, hard: 1000 },
+  eventRows: { warning: 1000, hard: 4000 },
   maxExcerptChars: 180,
   maxProposals: 5,
 };
@@ -73,9 +73,9 @@ export const COACH_CONTEXT_BUDGET: ContextBudget = {
 // generous default until they need an explicit budget. The chip surface shares
 // the Copilot budget because it runs the same user-facing CopilotTask path.
 const GENERIC_CONTEXT_BUDGET: ContextBudget = {
-  maxToolCalls: 12,
-  maxNodesPlusEdges: 250,
-  maxEventRows: 1000,
+  toolCalls: { warning: 12, hard: 36 },
+  nodesPlusEdges: { warning: 250, hard: 1000 },
+  eventRows: { warning: 1000, hard: 4000 },
   maxExcerptChars: 180,
 };
 
@@ -101,8 +101,8 @@ export function resolveContextBudget(surface: DomainToolSurface): ContextBudget 
 // The value a read tool returns when the caller omits a `limit`. These are the
 // tools' CURRENT defaults (NOT a behavior change) — centralized here so the
 // single tunable source documents both the per-surface budget AND the per-call
-// courtesy default. The tool runtime applies min(courtesy default, caller
-// requested limit, remaining budget) per the throttle below.
+// courtesy default. The tool runtime applies min(requested/default, remaining
+// hard budget); the warning watermark is intentionally not part of that min.
 //
 // Verified against the tool implementations:
 //   - query_knowledge.limit          default 10  (knowledge-readers.ts)

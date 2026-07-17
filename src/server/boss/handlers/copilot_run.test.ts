@@ -257,9 +257,8 @@ describe('runCopilotRun', () => {
   });
 
   // YUK-575 (N5/MF-A) — durable budget：runner budgetOverride（maxIterations/timeoutMs）
-  // 经 ctx 透传；tool-call ceiling（maxToolCalls）抬到 60，第 11 次工具调用不被 soft-stop
-  // （inline 的 10 会在第 11 次停）。
-  it('N5/MF-A — budgetOverride 透传 + tool-call ceiling 抬到 60（第 11 次不 soft-stop）', async () => {
+  // 经 ctx 透传；durable 在 25 发 advisory warning、60 才 hard-stop。
+  it('N5/MF-A — budgetOverride 透传 + durable tool-call warning 25 / hard 60', async () => {
     const runId = 'run_budget';
     const run = streamMock('ok');
     const buildMcp = mcpMock();
@@ -276,15 +275,23 @@ describe('runCopilotRun', () => {
       maxIterations: DURABLE_BUDGET.maxIterations,
       timeoutMs: DURABLE_BUDGET.timeoutMs,
     });
-    // MF-A：ContextBudgetTracker 用抬升的 maxToolCalls=60 构造 → 捕获 handler 传给
-    // buildMcpServer 的 beforeExecute gate，连调 11 次不 soft-stop（inline 的 10 会停）。
+    // MF-A + YUK-290：25 只是 warning，60 才是 hard ceiling。
     const opts = (
-      buildMcp.mock.calls[0] as unknown as [{ beforeExecute: (t: unknown) => string | undefined }]
+      buildMcp.mock.calls[0] as unknown as [
+        {
+          beforeExecute: (t: unknown) => string | undefined;
+          interceptInput: (t: unknown, args: unknown) => { truncationNote?: object | null };
+        },
+      ]
     )[0];
     const fakeTool = { name: 'query_knowledge', effect: 'read' };
-    let lastStop: string | undefined;
-    for (let i = 0; i < 11; i++) lastStop = opts.beforeExecute(fakeTool);
-    expect(lastStop).toBeUndefined();
+    for (let i = 0; i < 25; i++) expect(opts.beforeExecute(fakeTool)).toBeUndefined();
+    expect(opts.interceptInput(fakeTool, {}).truncationNote).toMatchObject({
+      level: 'warning',
+      dimensions: { toolCalls: { used: 25, hard_remaining: 35 } },
+    });
+    for (let i = 25; i < 60; i++) expect(opts.beforeExecute(fakeTool)).toBeUndefined();
+    expect(opts.beforeExecute(fakeTool)).toMatch(/hard context budget reached/);
     // 常量对齐。
     expect(DURABLE_BUDGET).toMatchObject({
       maxIterations: 24,

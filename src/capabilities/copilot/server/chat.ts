@@ -926,18 +926,17 @@ async function runCopilotChatImpl(
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: resolveDomainToolNames(surface),
     taskKind: 'CopilotTask',
-    // Tool-call ceiling: soft-stop once maxToolCalls is reached (same mechanism
-    // as Dreaming/Coach's proposal cap; the model reads the string + stops).
+    // Tool-call ceiling: soft-stop only at the YUK-290 hard watermark (same
+    // mechanism as Dreaming/Coach's proposal cap; the model reads + stops).
     beforeExecute: (tool) => budgetTracker.beforeExecute(tool),
-    // Limit cap + accounting + truncation note: cap the requested limit down to
-    // remaining nodes+edges / event-rows budget before execute, surface what
-    // was capped to the agent. Graceful degradation, never a hard reject.
+    // Two-tier accounting: warning leaves args intact and informs the model;
+    // only the materially higher hard ceiling caps or soft-stops.
     interceptInput: (tool, args) => {
-      const { args: capped, truncation, softStop } = budgetTracker.capInput(tool.name, args);
+      const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
       // FIX 1 (YUK-143): when the dimension is exhausted, propagate the
       // soft-stop string so the bridge skips execute (graceful stop, never a
       // limit:0 → Zod throw). Otherwise pass the (possibly capped) args + note.
-      return { args: capped, truncationNote: truncation, softStop };
+      return { args: capped, truncationNote: contextBudget, softStop };
     },
   });
 

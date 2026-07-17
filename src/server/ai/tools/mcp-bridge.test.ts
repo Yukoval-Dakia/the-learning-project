@@ -181,8 +181,8 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.output_json).toEqual({ error: 'quota exceeded' });
   });
 
-  // P5.1 / YUK-143 — interceptInput caps the executed args and merges a
-  // truncation note into the output the agent reads.
+  // P5.1 / YUK-143 + YUK-290 — interceptInput merges context_budget into both
+  // the agent output and persisted tool-call log (warning observability seam).
   it('interceptInput rewrites the executed args and merges context_budget into output', async () => {
     const runFn = vi.fn((i: { limit: number }) => ({ rows: i.limit }));
     registerTool(
@@ -219,6 +219,9 @@ describe('buildMcpServerFromRegistry', () => {
     // The agent-visible mirror/log args record the ORIGINAL request (10).
     const log = captured.toolCallLogs[0] as Record<string, unknown>;
     expect((log.input_json as { limit: number }).limit).toBe(10);
+    expect(log.output_json).toMatchObject({
+      context_budget: { applied_limit: 3, requested_limit: 10, truncated: true },
+    });
   });
 
   // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When interceptInput

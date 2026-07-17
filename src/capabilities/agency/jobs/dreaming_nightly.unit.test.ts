@@ -6,6 +6,7 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
+import { DREAMING_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   DREAMING_ACCEPTANCE_RATE_TOP_N,
@@ -72,6 +73,7 @@ describe('runDreamingNightly', () => {
     );
     const buildOptions = buildMcpServerFn.mock.calls[0]?.[0];
     if (!buildOptions?.beforeExecute) throw new Error('expected beforeExecute gate');
+    if (!buildOptions.interceptInput) throw new Error('expected context-budget input interceptor');
     for (let i = 0; i < DREAMING_MAX_PROPOSALS; i++) {
       expect(buildOptions.beforeExecute?.({ name: `propose_${i}`, effect: 'propose' })).toBe(
         undefined,
@@ -81,6 +83,36 @@ describe('runDreamingNightly', () => {
       /proposal cap reached/,
     );
     expect(buildOptions.beforeExecute?.({ name: 'query_records', effect: 'read' })).toBeUndefined();
+    for (let used = 7; used < DREAMING_CONTEXT_BUDGET.toolCalls.warning; used += 1) {
+      expect(
+        buildOptions.beforeExecute?.({ name: `query_warning_${used}`, effect: 'read' }),
+      ).toBeUndefined();
+    }
+    expect(
+      buildOptions.interceptInput({ name: 'query_records', effect: 'read' }, { limit: 1 }),
+    ).toMatchObject({
+      truncationNote: {
+        level: 'warning',
+        dimensions: {
+          toolCalls: {
+            used: DREAMING_CONTEXT_BUDGET.toolCalls.warning,
+            hard_limit: DREAMING_CONTEXT_BUDGET.toolCalls.hard,
+          },
+        },
+      },
+    });
+    for (
+      let used = DREAMING_CONTEXT_BUDGET.toolCalls.warning;
+      used < DREAMING_CONTEXT_BUDGET.toolCalls.hard;
+      used += 1
+    ) {
+      expect(
+        buildOptions.beforeExecute?.({ name: `query_hard_${used}`, effect: 'read' }),
+      ).toBeUndefined();
+    }
+    expect(buildOptions.beforeExecute({ name: 'query_over_hard', effect: 'read' })).toMatch(
+      /hard context budget reached/,
+    );
     expect(runAgentTaskFn).toHaveBeenCalledWith(
       'DreamingTask',
       expect.objectContaining({
@@ -89,6 +121,7 @@ describe('runDreamingNightly', () => {
         budget: expect.objectContaining({ max_proposals: DREAMING_MAX_PROPOSALS }),
       }),
       expect.objectContaining({
+        budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         allowedTools: [...resolveMcpAllowedTools('dreaming')],
       }),

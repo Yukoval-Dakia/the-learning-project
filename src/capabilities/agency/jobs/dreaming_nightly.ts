@@ -18,13 +18,13 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-// P5.1 / YUK-143 — single tunable source for the Dreaming run caps. The values
-// below are byte-identical to the numbers previously hardcoded here
-// (max_proposals 5 / max_tool_calls 8); this is a pure constant relocation, so
-// Dreaming behavior is unchanged (spec §3.3).
+// P5.1 / YUK-143 — single tunable source for Dreaming run caps. YUK-290 keeps
+// the old max_tool_calls=8 as an advisory warning and moves the accident
+// ceiling to 24; max_proposals remains byte-identical at 5.
 // P5.4-L2 / YUK-174 (Facet A, §3.2) — PROPOSAL_FEEDBACK_BUDGET bounds the new
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import {
@@ -252,9 +252,9 @@ function buildDreamingInput(
       ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
     })),
     budget: {
-      // P5.1 / YUK-143 — sourced from DREAMING_CONTEXT_BUDGET (8 / 5),
-      // byte-identical to the prior hardcoded literals.
-      max_tool_calls: DREAMING_CONTEXT_BUDGET.maxToolCalls,
+      // YUK-290 — warning is advisory; max_tool_calls is the higher hard ceiling.
+      warning_tool_calls: DREAMING_CONTEXT_BUDGET.toolCalls.warning,
+      max_tool_calls: DREAMING_CONTEXT_BUDGET.toolCalls.hard,
       max_proposals: DREAMING_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },
@@ -321,6 +321,7 @@ export async function runDreamingNightly(
   try {
     const toolNames = resolveDomainToolNames('dreaming');
     let proposalWrites = 0;
+    const budgetTracker = new ContextBudgetTracker(DREAMING_CONTEXT_BUDGET);
     const mcpServer = buildMcpServer({
       ctx: {
         db,
@@ -332,12 +333,18 @@ export async function runDreamingNightly(
       toolNames,
       taskKind: 'DreamingTask',
       beforeExecute: (tool) => {
+        const budgetReason = budgetTracker.beforeExecute(tool);
+        if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
         if (proposalWrites >= DREAMING_MAX_PROPOSALS) {
           return `dreaming proposal cap reached (${DREAMING_MAX_PROPOSALS}); stop creating proposals in this run`;
         }
         proposalWrites += 1;
         return undefined;
+      },
+      interceptInput: (tool, args) => {
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
       },
     });
 
@@ -346,6 +353,9 @@ export async function runDreamingNightly(
       buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes),
       {
         db,
+        // YUK-290: SDK maxTurns must not pre-empt the runtime tool-call ceiling.
+        // Keep one final turn for the agent's summary after the last allowed tool call.
+        budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         allowedTools: [...resolveMcpAllowedTools('dreaming')],
       },

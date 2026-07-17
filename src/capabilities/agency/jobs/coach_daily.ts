@@ -27,11 +27,11 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-// P5.1 / YUK-143 — single tunable source for the Coach run caps. The values
-// below are byte-identical to the numbers previously hardcoded here
-// (max_proposals 5 / max_tool_calls 12); pure constant relocation, so Coach
-// behavior is unchanged (spec §3.3).
+// P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
+// old max_tool_calls=12 as an advisory warning and moves the accident ceiling
+// to 36; max_proposals remains byte-identical at 5.
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
@@ -235,9 +235,9 @@ function buildCoachInput(
       ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
     })),
     budget: {
-      // P5.1 / YUK-143 — sourced from COACH_CONTEXT_BUDGET (12 / 5),
-      // byte-identical to the prior hardcoded literals.
-      max_tool_calls: COACH_CONTEXT_BUDGET.maxToolCalls,
+      // YUK-290 — warning is advisory; max_tool_calls is the higher hard ceiling.
+      warning_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.warning,
+      max_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.hard,
       max_proposals: COACH_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },
@@ -320,6 +320,7 @@ export async function runCoach(
   try {
     const toolNames = resolveDomainToolNames('coach');
     let proposalWrites = 0;
+    const budgetTracker = new ContextBudgetTracker(COACH_CONTEXT_BUDGET);
     const mcpServer = buildMcpServer({
       ctx: {
         db,
@@ -331,12 +332,18 @@ export async function runCoach(
       toolNames,
       taskKind: 'CoachTask',
       beforeExecute: (tool) => {
+        const budgetReason = budgetTracker.beforeExecute(tool);
+        if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
         if (proposalWrites >= COACH_MAX_PROPOSALS) {
           return `coach proposal cap reached (${COACH_MAX_PROPOSALS}); stop creating proposals in this run`;
         }
         proposalWrites += 1;
         return undefined;
+      },
+      interceptInput: (tool, args) => {
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
       },
     });
 
@@ -354,6 +361,9 @@ export async function runCoach(
       ),
       {
         db,
+        // YUK-290: SDK maxTurns must not pre-empt the runtime tool-call ceiling.
+        // Keep one final turn for the TodayPlan after the last allowed tool call.
+        budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         allowedTools: [...resolveMcpAllowedTools('coach')],
       },
