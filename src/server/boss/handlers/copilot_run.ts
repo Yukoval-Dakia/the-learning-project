@@ -265,7 +265,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   //     所以 durable 的 interceptInput 只回传 tool-call warning，**不调用
   //     capInput**、不做 row accounting/cap（row cap 不适用于 endurance）。
   // 两个 seam 在 buildMcpServerFromRegistry 上是独立可选回调（BuildMcpServerOptions），
-  // 天然可分离，故只取 beforeExecute。
+  // 天然可分离：beforeExecute 执行 hard ceiling，interceptInput 只暴露 warning notice。
   //
   // YUK-575 (MF-A) — **抬 tool-call ceiling 到 DURABLE_BUDGET.maxToolCalls(60)**。
   // 这是抬 maxIterations 的必要伴随：durable 与 inline 同 surface='copilot'，共用
