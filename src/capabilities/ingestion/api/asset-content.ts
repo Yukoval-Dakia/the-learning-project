@@ -14,7 +14,15 @@ import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getR2 } from '@/server/r2';
 
-export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
+function matchesIfNoneMatch(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header.split(',').some((candidate) => {
+    const tag = candidate.trim();
+    return tag === '*' || tag === etag || tag === `W/${etag}`;
+  });
+}
+
+export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const id = params.id;
     const [row] = await db
@@ -23,11 +31,18 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         storage_key: source_asset.storage_key,
         mime_type: source_asset.mime_type,
         byte_size: source_asset.byte_size,
+        sha256: source_asset.sha256,
       })
       .from(source_asset)
       .where(eq(source_asset.id, id))
       .limit(1);
     if (!row) throw new ApiError('not_found', `asset ${id} not found`, 404);
+
+    const etag = `"${row.sha256}"`;
+    const cacheHeaders = { ETag: etag, 'Cache-Control': 'private, max-age=60' };
+    if (matchesIfNoneMatch(req.headers.get('if-none-match'), etag)) {
+      return new Response(null, { status: 304, headers: cacheHeaders });
+    }
 
     const bytes = await getR2().get(row.storage_key);
     if (!bytes) throw new ApiError('not_found', `asset ${id} bytes missing from R2`, 404);
@@ -37,7 +52,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       headers: {
         'Content-Type': row.mime_type,
         'Content-Length': String(row.byte_size),
-        'Cache-Control': 'private, max-age=60',
+        ...cacheHeaders,
       },
     });
   } catch (err) {

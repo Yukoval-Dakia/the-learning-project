@@ -39,8 +39,10 @@ async function seedAsset(
   r2Store.set(opts.storage_key, opts.bytes);
 }
 
-async function fetchContent(id: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/assets/${id}/content`, { method: 'GET' }), { id });
+async function fetchContent(id: string, headers?: HeadersInit): Promise<Response> {
+  return GET(new Request(`http://localhost/api/assets/${id}/content`, { method: 'GET', headers }), {
+    id,
+  });
 }
 
 describe('GET /api/assets/[id]/content', () => {
@@ -57,8 +59,28 @@ describe('GET /api/assets/[id]/content', () => {
     expect(res.headers.get('content-type')).toBe('image/png');
     expect(res.headers.get('content-length')).toBe(String(fakeBytes.byteLength));
     expect(res.headers.get('cache-control')).toBe('private, max-age=60');
+    expect(res.headers.get('etag')).toBe('"fake-sha"');
     const out = new Uint8Array(await res.arrayBuffer());
     expect(out).toEqual(fakeBytes);
+  });
+
+  it('returns 304 from the stored hash without reading R2 when If-None-Match matches', async () => {
+    await seedAsset('asset_cached', {
+      storage_key: 'assets/cached',
+      mime: 'image/png',
+      bytes: fakeBytes,
+    });
+    const first = await fetchContent('asset_cached');
+    const etag = first.headers.get('etag');
+    expect(etag).toBe('"fake-sha"');
+
+    r2Store.clear();
+    const cached = await fetchContent('asset_cached', { 'If-None-Match': `"other", W/${etag}` });
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get('etag')).toBe(etag);
+    expect(cached.headers.get('cache-control')).toBe('private, max-age=60');
+    expect(await cached.text()).toBe('');
   });
 
   it('404s when the asset id does not exist', async () => {
