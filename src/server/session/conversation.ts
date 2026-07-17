@@ -425,13 +425,16 @@ export async function assertAcceptingTurns(
   });
 }
 
-// ---------- assertActive (deprecated) ----------
+// ---------- assertActive (strict no-resume variant) ----------
 
 /**
- * @deprecated YUK-14 — use `assertAcceptingTurns` instead, which also accepts
- *   `idle` (auto-resume) and reports wasIdle to the caller. Kept temporarily
- *   to keep this PR's diff focused; a follow-up PR removes this fn entirely.
- *   New call sites MUST use `assertAcceptingTurns`.
+ * Require an already-active conversation without changing lifecycle state.
+ *
+ * This and `assertAcceptingTurns` are both supported but intentionally differ:
+ * this strict variant rejects every non-active status with no side effects;
+ * `assertAcceptingTurns` accepts idle and writes `conversation.resumed` while
+ * returning `wasIdle`. Choose based on whether the caller owns resume semantics.
+ * In particular, accept-chip PIN 9 requires this no-resume variant.
  */
 export async function assertActive(db: Db, sessionId: string): Promise<{ goalId: string | null }> {
   const rows = await db
