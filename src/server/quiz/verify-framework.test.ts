@@ -228,6 +228,26 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
+  it('does not strip a lowercase function name as if it were a choice label', async () => {
+    const question: SolveCheckQuestion = {
+      ...exactQuestion,
+      kind: 'fill_blank',
+      prompt_md: '写出函数。',
+      reference_md: 'f(x)',
+      choices_md: null,
+    };
+    const runTaskFn = confidentlyWrongExactAnswer('x');
+
+    await expect(
+      runSolveCheck(question, { runTaskFn, profile: fakeProfile, db: fakeDb }),
+    ).resolves.toMatchObject({
+      verdict: 'fail',
+      compared_by: 'semantic',
+      normalized_exact_mismatch: true,
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+  });
+
   it('fails when the solver answer disagrees with the reference', async () => {
     const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
     const result = await runSolveCheck(exactQuestion, {

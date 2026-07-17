@@ -308,7 +308,11 @@ function stripLeadingChoiceLabel(value: string): string | null {
   // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
   // Try the balanced-bracket shape first. Otherwise `A (content)` is consumed
   // by the generic separator branch at the space and retains `(content)`.
-  const match = /^([A-F])(?:\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/iu.exec(
+  // A labelled answer is persisted with an uppercase option marker. Keep this
+  // case-sensitive: treating lowercase function names such as `f(x)` as an
+  // option wrapper would add the false candidate `x` and could normalize-pass
+  // an actually wrong fill-blank answer.
+  const match = /^([A-F])(?:\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
     normalized,
   );
   const stripped = (match?.[2] ?? match?.[3])?.trim();
