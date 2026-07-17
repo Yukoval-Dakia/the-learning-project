@@ -374,6 +374,61 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(second).toEqual({ status: 'skipped', reason: 'already_resolved' });
   });
 
+  it('serializes concurrent delivery so only one overturn commits without a spurious conflict marker', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { judgeEventId, appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 1.2,
+    });
+
+    // Hold both workers after their out-of-tx preflight so they enter the write
+    // race together. This deterministically exercises the TOCTOU window.
+    let judgeCalls = 0;
+    let releaseBoth!: () => void;
+    const bothEntered = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const answer = mockJudge('correct', 'concurrent overturn');
+    const concurrentJudge: NonNullable<RejudgeDeps['judgeFn']> = async () => {
+      judgeCalls += 1;
+      if (judgeCalls === 2) releaseBoth();
+      await bothEntered;
+      return answer();
+    };
+
+    const outcomes = await Promise.all([
+      handleRejudge(db, { appeal_event_id: appealEventId }, { judgeFn: concurrentJudge }),
+      handleRejudge(db, { appeal_event_id: appealEventId }, { judgeFn: concurrentJudge }),
+    ]);
+
+    expect(judgeCalls).toBe(2);
+    expect(outcomes.map((result) => result.status).sort()).toEqual(['overturned', 'skipped']);
+    expect(outcomes.find((result) => result.status === 'skipped')).toEqual({
+      status: 'skipped',
+      reason: 'already_resolved',
+    });
+
+    const committedJudges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, appealEventId)));
+    expect(committedJudges).toHaveLength(1);
+    const corrections = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, judgeEventId)));
+    expect(corrections).toHaveLength(1);
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].reason).toBe('reverted');
+    expect(await readTheta(kcId)).toBe(0.3);
+  });
+
   // ── YUK-561 S4 — θ̂ revert-on-overturn (the live caller) ──────────────────────
 
   it('paper overturn (incorrect→correct): θ̂ reverted + reproject_deferred(reapply) + retract', async () => {

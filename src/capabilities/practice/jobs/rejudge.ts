@@ -8,7 +8,8 @@
 // ① send 层 singletonKey + singletonSeconds（REJUDGE_SINGLETON_SECONDS）杀重复
 //   enqueue（YUK-491：裸 singletonKey 在 standard-policy 队列上 inert，需配
 //   singletonSeconds 才真生效）；② 本 handler 下方 caused_by 查重 = 结构性兜底
-//   （结论已写则跳过，即使 send 层漏过也不会重复改判）。
+//   （快速跳过）；最终写入事务再按 appeal id 取 advisory xact lock 并重查，
+//   关闭两个 worker 同时越过快速守卫的 TOCTOU 窗口（YUK-564）。
 //
 // FSRS 段刻意不在此重写：设计稿语义里评级是用户确认动作——改判回执把「评级建议
 // 上调」推回反馈卡，用户确认评级走既有 submit/rate 单一入口。
@@ -51,6 +52,24 @@ export type RejudgeOutcome =
       new_outcome: string;
     };
 
+type RejudgeDb = Db | Tx;
+
+async function appealAlreadyResolved(db: RejudgeDb, appealId: string): Promise<boolean> {
+  const [existing] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(eq(event.caused_by_event_id, appealId))
+    .limit(1);
+  return existing !== undefined;
+}
+
+async function lockAppealResolution(tx: Tx, appealId: string): Promise<void> {
+  // Commit-stage lock only: the expensive judge call stays outside a DB tx.
+  // 64-bit hash keeps unrelated-appeal collision risk negligible; xact scope
+  // guarantees release on commit/rollback without a cleanup path.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appealId}, 0))`);
+}
+
 export async function handleRejudge(
   db: Db,
   input: RejudgeJobInput,
@@ -64,11 +83,9 @@ export async function handleRejudge(
     return { status: 'skipped', reason: 'appeal_event_not_found' };
   }
   // 幂等：本申诉已产生过重判结论（改判 judge 或维持 appeal_upheld）则跳过。
-  const [existing] = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(eq(event.caused_by_event_id, appeal.id));
-  if (existing) return { status: 'skipped', reason: 'already_resolved' };
+  if (await appealAlreadyResolved(db, appeal.id)) {
+    return { status: 'skipped', reason: 'already_resolved' };
+  }
 
   const [judgeEvent] = await db
     .select()
@@ -111,24 +128,29 @@ export async function handleRejudge(
 
   // 复核结论与原判一致（或复核不可用）→ 维持原判留痕。
   if (newOutcome === priorOutcome || newOutcome === 'unsupported') {
-    const upheldId = await writeEvent(db, {
-      id: newId(),
-      session_id: judgeEvent.session_id,
-      actor_kind: 'agent',
-      actor_ref: 'rejudge',
-      action: 'experimental:appeal_upheld',
-      subject_kind: 'event',
-      subject_id: judgeEvent.id,
-      outcome: null,
-      payload: {
-        reason_md: invoked.result.feedback_md,
-        prior_outcome: priorOutcome,
-        rejudge_outcome: newOutcome,
-        appeal_event_id: appeal.id,
-      },
-      caused_by_event_id: appeal.id,
-      created_at: now,
+    const upheldId = await db.transaction(async (tx) => {
+      await lockAppealResolution(tx, appeal.id);
+      if (await appealAlreadyResolved(tx, appeal.id)) return null;
+      return writeEvent(tx, {
+        id: newId(),
+        session_id: judgeEvent.session_id,
+        actor_kind: 'agent',
+        actor_ref: 'rejudge',
+        action: 'experimental:appeal_upheld',
+        subject_kind: 'event',
+        subject_id: judgeEvent.id,
+        outcome: null,
+        payload: {
+          reason_md: invoked.result.feedback_md,
+          prior_outcome: priorOutcome,
+          rejudge_outcome: newOutcome,
+          appeal_event_id: appeal.id,
+        },
+        caused_by_event_id: appeal.id,
+        created_at: now,
+      });
     });
+    if (!upheldId) return { status: 'skipped', reason: 'already_resolved' };
     return { status: 'upheld', appeal_event_id: appeal.id, upheld_event_id: upheldId };
   }
 
@@ -168,7 +190,10 @@ export async function handleRejudge(
   let newJudgeId = '';
   let correctionId = '';
 
-  await db.transaction(async (tx) => {
+  const committed = await db.transaction(async (tx) => {
+    await lockAppealResolution(tx, appeal.id);
+    if (await appealAlreadyResolved(tx, appeal.id)) return false;
+
     newJudgeId = await writeEvent(tx, {
       id: newId(),
       session_id: judgeEvent.session_id,
@@ -221,7 +246,7 @@ export async function handleRejudge(
     });
 
     // O3：门不满足（手评 solo / 位未翻转）→ 无 θ̂ 残留 → 不 revert、不写 marker。
-    if (!shouldRevertTheta) return;
+    if (!shouldRevertTheta) return true;
 
     // 撤 θ̂ 段 = 撤 θ̂ checkpoint（O2 双 sibling，无 revertSegments；只撤 θ̂ 不碰 FSRS）。
     // 同 tx——orchestrator step-6 在此 tx 上开 SAVEPOINT，conflict/legacy 回滚 savepoint
@@ -272,7 +297,10 @@ export async function handleRejudge(
         `rejudge overturn: cascade revert of ${answerEvent.id}:checkpoint:theta returned impossible refusal '${revert.refusal}' — a θ̂ checkpoint closure must be reversible. Aborting overturn (fail-loud).`,
       );
     }
+    return true;
   });
+
+  if (!committed) return { status: 'skipped', reason: 'already_resolved' };
 
   return {
     status: 'overturned',
