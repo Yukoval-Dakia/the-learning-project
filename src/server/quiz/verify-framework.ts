@@ -336,9 +336,15 @@ function addChoiceExpansion(out: string[], choice: string | undefined): void {
   if (stripped) out.push(stripped);
 }
 
-function answerCandidates(text: string, choices: readonly string[]): string[] {
+function answerCandidates(
+  text: string,
+  choices: readonly string[],
+  allowChoiceWrapper: boolean,
+): string[] {
   const out = [text];
-  const stripped = stripLeadingChoiceLabel(text);
+  // Parenthesized A-F wrappers are only meaningful for an actual choice item.
+  // Outside that context, F(x) / A(t) are load-bearing mathematical notation.
+  const stripped = allowChoiceWrapper ? stripLeadingChoiceLabel(text) : null;
   if (stripped) out.push(stripped);
 
   const labelIndex = choiceLabelIndex(text);
@@ -488,12 +494,13 @@ export async function runSolveCheck(
   let normalizedExactMismatch = false;
   if (isExactQuestion(question)) {
     const choices = question.choices_md ?? [];
+    const allowChoiceWrapper = question.kind === 'choice' || choices.length > 0;
     const refCandidates = referenceCandidates
-      .flatMap((candidate) => answerCandidates(candidate, choices))
+      .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
       .map(normalizeAnswer)
       .filter((c) => c.length > 0);
     const solverCandidates = [solverFinalAnswer, ...solverEquivalents]
-      .flatMap((candidate) => answerCandidates(candidate, choices))
+      .flatMap((candidate) => answerCandidates(candidate, choices, allowChoiceWrapper))
       .map(normalizeAnswer)
       .filter((c) => c.length > 0);
     const agree = solverCandidates.some((candidate) => refCandidates.includes(candidate));
@@ -558,12 +565,14 @@ export async function runSolveCheck(
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
+  const confidentlyEquivalent =
+    judged.coarse_outcome === 'correct' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
   // For an exact mismatch, anything other than an explicit `correct` or a confident
   // `incorrect` does not establish equivalence. Preserve it as `unsupported`
   // so provenance-anchored tier 2 can hold for review instead of silently
   // promoting; tier 3/4 continues treating unsupported as non-blocking.
   const exactFallbackUnresolved =
-    normalizedExactMismatch && judged.coarse_outcome !== 'correct' && !confidentlyDisagrees;
+    normalizedExactMismatch && !confidentlyEquivalent && !confidentlyDisagrees;
   const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
   let verdict: SolveCheckResult['verdict'];
   let reason: string;
@@ -573,6 +582,9 @@ export async function runSolveCheck(
   } else if (exactFallbackUnresolved) {
     verdict = 'unsupported';
     reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;
+  } else if (confidentlyEquivalent) {
+    verdict = 'pass';
+    reason = `${fallbackPrefix}SemanticJudge established equivalence (outcome=correct, confidence=${judged.confidence.toFixed(2)})`;
   } else {
     verdict = 'pass';
     reason = `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`;

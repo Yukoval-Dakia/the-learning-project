@@ -228,25 +228,28 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
-  it('does not strip a lowercase function name as if it were a choice label', async () => {
-    const question: SolveCheckQuestion = {
-      ...exactQuestion,
-      kind: 'fill_blank',
-      prompt_md: '写出函数。',
-      reference_md: 'f(x)',
-      choices_md: null,
-    };
-    const runTaskFn = confidentlyWrongExactAnswer('x');
+  it.each(['f(x)', 'F(x)', 'A(t)'])(
+    'does not strip function notation %s as if it were a choice label',
+    async (reference) => {
+      const question: SolveCheckQuestion = {
+        ...exactQuestion,
+        kind: 'fill_blank',
+        prompt_md: '写出函数。',
+        reference_md: reference,
+        choices_md: null,
+      };
+      const runTaskFn = confidentlyWrongExactAnswer('x');
 
-    await expect(
-      runSolveCheck(question, { runTaskFn, profile: fakeProfile, db: fakeDb }),
-    ).resolves.toMatchObject({
-      verdict: 'fail',
-      compared_by: 'semantic',
-      normalized_exact_mismatch: true,
-    });
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
-  });
+      await expect(
+        runSolveCheck(question, { runTaskFn, profile: fakeProfile, db: fakeDb }),
+      ).resolves.toMatchObject({
+        verdict: 'fail',
+        compared_by: 'semantic',
+        normalized_exact_mismatch: true,
+      });
+      expect(runTaskFn).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('fails when the solver answer disagrees with the reference', async () => {
     const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
@@ -580,6 +583,26 @@ describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
       runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile, db: fakeDb }),
     ).resolves.toMatchObject({
       verdict: 'unsupported',
+      normalized_exact_mismatch: true,
+    });
+  });
+
+  it('keeps an exact mismatch unresolved on a low-confidence semantic agreement', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text:
+        kind === 'SolutionGenerateTask'
+          ? solverOutput('真')
+          : semanticOutput('correct', SOLVE_CHECK_SEMANTIC_THRESHOLD - 0.1),
+    }));
+
+    await expect(
+      runSolveCheck(
+        { ...exactQuestion, kind: 'true_false', reference_md: '正确', choices_md: null },
+        { runTaskFn, profile: fakeProfile, db: fakeDb },
+      ),
+    ).resolves.toMatchObject({
+      verdict: 'unsupported',
+      compared_by: 'semantic',
       normalized_exact_mismatch: true,
     });
   });
