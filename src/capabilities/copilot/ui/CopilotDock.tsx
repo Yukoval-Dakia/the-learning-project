@@ -536,6 +536,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         skill: 'quiz',
         ref: { kind: 'knowledge', id: focusedKnowledgeId },
       };
+    } else {
+      // Replay can restore a long-lived teaching/solve context without a knowledge
+      // ref. The global quiz prompt is a deliberate context switch: clear that
+      // stale behavior-pack route so the no-scope fallback reaches free-form
+      // Copilot, which can clarify what the learner wants to practise.
+      activeSkillRef.current = null;
     }
     void send('出题');
   }, [focusedKnowledgeId, send]);
