@@ -208,6 +208,35 @@ export interface RunBlockAssemblyForSessionResult {
 // PROMPT_HEAD_CHARS here, not inline.
 const PROMPT_HEAD_CHARS = 400;
 
+const OPAQUE_BLOCK_REF_RE = /block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function readableBlockLabel(block: BlockAssemblySourceBlock, index: number): string {
+  const questionNo = block.structured?.question_no?.trim();
+  return questionNo ? `第 ${index + 1} 块（题号 ${questionNo}）` : `第 ${index + 1} 块`;
+}
+
+/**
+ * YUK-337 — proposal reasons are learner-facing Inbox prose, not an audit surface.
+ * Replace model-copied block ids with stable session positions (plus question_no
+ * when available), then mask any hallucinated opaque id that was not in the
+ * session. Typed ids remain available in proposed_change/evidence_refs.
+ */
+export function humanizeBlockMergeReason(
+  reason: string,
+  blocks: BlockAssemblySourceBlock[],
+): string {
+  let readable = reason;
+  for (const [index, block] of blocks.entries()) {
+    const token = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(block.id)}(?![A-Za-z0-9_-])`, 'g');
+    readable = readable.replace(token, () => readableBlockLabel(block, index));
+  }
+  return readable.replace(OPAQUE_BLOCK_REF_RE, '某题块');
+}
+
 /**
  * YUK-227 S3 Slice A (F4): returns true when ALL blocks in the session carry
  * placeholder page_index=0 (i.e. the Tencent fallback path or sessions from
@@ -326,7 +355,7 @@ export async function runBlockAssemblyForSession(
       merge_block_ids: candidate.merge_block_ids,
       confidence: candidate.confidence,
       continuity_signal: candidate.signal,
-      reason_md: candidate.reason_md,
+      reason_md: humanizeBlockMergeReason(candidate.reason_md, params.blocks),
     });
     proposalIds.push(id);
   }
