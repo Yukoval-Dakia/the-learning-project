@@ -945,6 +945,7 @@ export function BlockEditor({
                 onClick={() => onSplitMerge(f.id)}
                 style={splitBtnStyle}
                 title="解除合并"
+                aria-label={`解除合并片段 ${index + 2}`}
               >
                 ×
               </button>
@@ -994,6 +995,7 @@ export function BlockEditor({
           <button
             type="button"
             key={q.id}
+            aria-pressed={form.question_kind === q.id}
             onClick={() => setForm((cur) => ({ ...cur, question_kind: q.id }))}
             style={chipStyle(form.question_kind === q.id)}
             disabled={form.ignored}
@@ -1029,6 +1031,7 @@ export function BlockEditor({
           <button
             type="button"
             key={n.id}
+            aria-pressed={form.knowledge_ids.includes(n.id)}
             onClick={() => toggleKid(n.id)}
             style={chipStyle(form.knowledge_ids.includes(n.id))}
             disabled={form.ignored}
@@ -1043,6 +1046,7 @@ export function BlockEditor({
       <div style={chipRowStyle}>
         <button
           type="button"
+          aria-pressed={form.cause_primary === ''}
           onClick={() => setForm((cur) => ({ ...cur, cause_primary: '' }))}
           style={chipStyle(form.cause_primary === '')}
           disabled={form.ignored}
@@ -1053,6 +1057,7 @@ export function BlockEditor({
           <button
             type="button"
             key={c.id}
+            aria-pressed={form.cause_primary === c.id}
             onClick={() => setForm((cur) => ({ ...cur, cause_primary: c.id }))}
             style={chipStyle(form.cause_primary === c.id)}
             disabled={form.ignored}

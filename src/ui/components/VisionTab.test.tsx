@@ -72,7 +72,14 @@ const form = {
 
 const noop = () => {};
 
-function renderEditor(primary: BlockRow) {
+function renderEditor(
+  primary: BlockRow,
+  options: {
+    followers?: BlockRow[];
+    editorForm?: typeof form;
+    knowledgeNodes?: Array<{ id: string; name: string; effective_domain: string | null }>;
+  } = {},
+) {
   // YUK-598：BlockEditor 内 useSubjects()（错因下拉行驱动）需要 QueryClient 上下文；
   // provider 的 initialData = 编译期投影 → renderToString 零请求零 effect，行为
   // 与 hook 化前逐位一致。
@@ -81,12 +88,12 @@ function renderEditor(primary: BlockRow) {
     <QueryClientProvider client={qc}>
       <BlockEditor
         primary={primary}
-        followers={[]}
+        followers={options.followers ?? []}
         primaryIndex={0}
         canMergeIntoPrev={false}
-        form={form}
+        form={options.editorForm ?? form}
         setForm={noop}
-        knowledgeNodes={[]}
+        knowledgeNodes={options.knowledgeNodes ?? []}
         onMergeIntoPrev={noop}
         onSplitMerge={noop}
         onRescue={noop}
@@ -107,6 +114,32 @@ describe('VisionTab BlockEditor — AI prefill badge', () => {
   it('omits the badge for a plain block with no observation', () => {
     const html = renderEditor(block({ auto_enroll_observation: null }));
     expect(html).not.toContain('AI 预填，可改');
+  });
+});
+
+describe('VisionTab BlockEditor — review control accessibility', () => {
+  it('exposes selected state for question kind, knowledge, and cause chips', () => {
+    const html = renderEditor(block(), {
+      editorForm: { ...form, knowledge_ids: ['k_selected'] },
+      knowledgeNodes: [
+        { id: 'k_selected', name: '已选知识点', effective_domain: null },
+        { id: 'k_other', name: '未选知识点', effective_domain: null },
+      ],
+    });
+
+    expect(html).toMatch(/aria-pressed="true"[^>]*>简答<\/button>/);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>已选知识点<\/button>/);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>未选知识点<\/button>/);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>不指定<\/button>/);
+  });
+
+  it('names each merged-fragment removal action with its visible sequence', () => {
+    const html = renderEditor(block(), {
+      followers: [block({ id: 'blk_2' }), block({ id: 'blk_3' })],
+    });
+
+    expect(html).toContain('aria-label="解除合并片段 2"');
+    expect(html).toContain('aria-label="解除合并片段 3"');
   });
 });
 
