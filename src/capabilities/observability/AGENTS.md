@@ -17,7 +17,8 @@
 | `api/event-correct.ts` | 统一事件流撤回 |
 | `api/job-events.ts` | 通用异步 job SSE tracker |
 | `server/` | AI observability 读模型、cost 汇总、failure 聚类、覆盖细目、备份/恢复、event correction |
-| `ui/observability.tsx` / `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | admin 五页 React 面 |
+| `ui/admin-runs.tsx` / `admin-cost.tsx` / `admin-failures.tsx` | 三张独立 lazy admin React 面；共享 chrome/helper 在 `observability-shared.tsx`，`observability.tsx` 仅兼容 barrel |
+| `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | subject 与覆盖细目 admin React 面 |
 
 ## CONVENTIONS
 - admin 路由照常套主 chrome（`web/src/router.tsx` RootShell）；不另设 admin 独立壳。决策记录见 `docs/design/2026-07-07-yuk579-coverage-lattice.md` §6（loom app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，owner 已收编；`docs/audit/2026-06-13-visual-gap.md` §5 决策点③ 收口）。
