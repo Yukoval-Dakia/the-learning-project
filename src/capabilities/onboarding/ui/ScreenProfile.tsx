@@ -65,6 +65,39 @@ export interface ScreenProfileProps {
   navigate: (to: string) => void;
 }
 
+export interface ProfilePresentation {
+  /** Evidence-sorted server surface plus any full-set weakest KCs missing from that cap. */
+  displayedKcs: ProfileKc[];
+  /** Weakest KCs appended after the evidence-sorted surface, in server weakest order. */
+  weakestExtras: ProfileKc[];
+  /** Full-set count with real answer evidence; visible-row fallback only guards stale caches. */
+  evidencedCount: number;
+}
+
+/**
+ * Reconcile the /today weakest preview with the /profile deep-read surface (YUK-616).
+ *
+ * `kcs` is capped after sorting by evidence, while `weakest` is derived from the full evidenced
+ * set by p(L). Their union keeps the deep-read list compact without making the card's highlighted
+ * weak point disappear. The server order of both segments is preserved and ids are deduplicated.
+ */
+export function deriveProfilePresentation(data: PlacementProfile): ProfilePresentation {
+  const seen = new Set(data.kcs.map((kc) => kc.id));
+  const weakestExtras: ProfileKc[] = [];
+  for (const kc of data.weakest ?? []) {
+    if (seen.has(kc.id)) continue;
+    seen.add(kc.id);
+    weakestExtras.push(kc);
+  }
+
+  return {
+    displayedKcs: [...data.kcs, ...weakestExtras],
+    weakestExtras,
+    evidencedCount:
+      data.evidencedCount ?? data.kcs.filter((kc) => kc.tested && kc.evidence_count > 0).length,
+  };
+}
+
 export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   const goalId = new URLSearchParams(window.location.search).get('goal');
 
@@ -151,15 +184,19 @@ function ProfileBody({
   data: PlacementProfile;
   navigate: (to: string) => void;
 }) {
-  const { kcs, testedCount, totalKcs } = data;
-  const shown = kcs.length;
+  const { kcs, totalKcs } = data;
+  const { displayedKcs, weakestExtras, evidencedCount } = useMemo(
+    () => deriveProfilePresentation(data),
+    [data],
+  );
+  const shown = displayedKcs.length;
   const truncated = totalKcs > shown;
   const sigmaMode: SigmaMode = data.sigma_mode ?? 'libm';
 
   // Re-derive every KC on-device and roll up the verify summary (only when the layer is on).
   const summary = useMemo(
-    () => (RECOMPUTE_BADGE_ENABLED ? summarizeRecompute(kcs, sigmaMode) : null),
-    [kcs, sigmaMode],
+    () => (RECOMPUTE_BADGE_ENABLED ? summarizeRecompute(displayedKcs, sigmaMode) : null),
+    [displayedKcs, sigmaMode],
   );
   const verdictById = useMemo(
     () => new Map<string, RcKcVerdict>(summary?.verdicts.map((v) => [v.id, v]) ?? []),
@@ -188,8 +225,8 @@ function ProfileBody({
   );
 
   const narrative =
-    testedCount > 0
-      ? `基于你在 ${testedCount} 个知识点上的作答，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
+    evidencedCount > 0
+      ? `基于你在 ${evidencedCount} 个知识点上的作答，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
       : '还没有作答证据，先做一轮定位或上传材料，画像会随练习长出来。';
 
   return (
@@ -197,8 +234,14 @@ function ProfileBody({
       <p className="ob-prof-narr ob-rise">{narrative}</p>
       <div className="ob-prof-honest ob-rise">
         <LoomIcon name="alert" size={13} />
-        基于 {testedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步判断</b> ·
-        多数还需更多练习确认，下面把不确定一并摆出来
+        {evidencedCount > 0 ? (
+          <>
+            基于 {evidencedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步判断</b> ·
+            多数还需更多练习确认，下面把不确定一并摆出来
+          </>
+        ) : (
+          <>当前还没有作答证据 · 下面的范围只是起点，会随练习收紧</>
+        )}
       </div>
 
       <LoomCard pad padLg className="ob-rise" {...(showVerify ? { 'data-rc': rcState } : {})}>
@@ -225,6 +268,25 @@ function ProfileBody({
           ))}
         </div>
 
+        {weakestExtras.length > 0 && (
+          <section className="ob-prof-weakest" aria-labelledby="ob-prof-weakest-title">
+            <h2 id="ob-prof-weakest-title">仍需留意的薄弱点</h2>
+            <p>
+              这些知识点的证据较少，但当前判断更薄弱；即使不在上面的高证据列表里，也会保留在这里。
+            </p>
+            <div className="ob-kc-list">
+              {weakestExtras.map((k) => (
+                <KcRow
+                  key={k.id}
+                  kc={k}
+                  verdict={showVerify ? verdictById.get(k.id) : undefined}
+                  rcState={rcState}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
         {showVerify && detailOpen && summary && <RcDetailPanel summary={summary} />}
 
         <div className="ob-prof-legend">
@@ -244,7 +306,8 @@ function ProfileBody({
 
         {truncated && (
           <div className="ob-prof-trunc meta">
-            显示前 {shown} · 共 {totalKcs} 个知识点
+            {weakestExtras.length > 0 ? `显示 ${shown} 个重点（含当前最弱项）` : `显示前 ${shown}`}{' '}
+            · 共 {totalKcs} 个知识点
           </div>
         )}
       </LoomCard>
