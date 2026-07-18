@@ -731,6 +731,24 @@
   flex-direction: column;
   gap: 0;
 }
+.ob-prof-weakest {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.ob-prof-weakest h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-body-lg);
+  color: var(--ink);
+}
+.ob-prof-weakest > p {
+  margin: var(--s-1) 0 var(--s-2);
+  max-width: var(--cap-prose);
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-snug);
+}
 .ob-kc {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto;

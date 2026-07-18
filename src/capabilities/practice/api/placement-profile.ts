@@ -165,15 +165,15 @@ export async function GET(req: Request): Promise<Response> {
     );
 
     // YUK-614 — KCs with real answer evidence (evidence_count>0), over the FULL set (before the
-    // PROFILE_KC_LIMIT cap). Drives both the /today card's weakest-first preview AND its honest
-    // coverage count — neither must be undercounted by the (evidence-sorted) truncation of kcs,
+    // PROFILE_KC_LIMIT cap). Drives /today's preview plus /profile's deep-read reconciliation and
+    // their shared honest coverage count — neither may be undercounted by the truncation of kcs,
     // nor inflated by KG-borrow soft-layer rows (evidence_count:0) that testedCount can include.
     const evidencedKcs = kcs.filter(
       (k): k is TestedPlacementProfileKc => k.tested && k.evidence_count > 0 && k.p_l !== undefined,
     );
     const evidencedCount = evidencedKcs.length;
-    // "weakest" preview: lowest p(L) first, over that full evidenced set — so a truly weak but
-    // low-evidence KC ranked past #20 by evidence still surfaces.
+    // "weakest" surface: lowest p(L) first, over that full evidenced set — so a truly weak but
+    // low-evidence KC ranked past #20 by evidence still surfaces on both learner pages.
     const weakest = [...evidencedKcs]
       .sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1))
       .slice(0, WEAKEST_LIMIT);
