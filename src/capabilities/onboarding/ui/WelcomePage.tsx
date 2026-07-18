@@ -27,6 +27,7 @@ const PACES = [
   { id: 'medium', label: '适中', sub: '≈20 分钟 / 天' },
   { id: 'dense', label: '密集', sub: '≈40 分钟 / 天' },
 ] as const;
+const UNCONFIGURED_SUBJECT_HELP = '标为“未配置学科”的选项暂不可选择；请先完成学科配置。';
 
 export interface WelcomePageProps {
   navigate: (to: string) => void;
@@ -37,6 +38,9 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   const { subjects: subjectRows } = useSubjects();
   const SUBJECTS = listSubjectChoices(subjectRows);
   const LEANINGS = SUBJECTS;
+  const hasUnconfiguredSubjects = SUBJECTS.some(
+    (subject) => subject.configurationStatus === 'unconfigured',
+  );
   // YUK-602 §1.2 — 通用模式 badge 的 flag 从原始 subjectRows 按 id join：
   // listSubjectChoices 只投影 {id,label}，isGeneralFallback 在投影里被丢弃（owner
   // review P2 点名的断链）。只认 === true（general 的 null 不挂标）。
@@ -150,9 +154,9 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                 className={`chip${leanings.includes(l.id) ? ' is-on' : ''}`}
                 aria-pressed={leanings.includes(l.id)}
                 disabled={l.configurationStatus === 'unconfigured'}
-                title={
+                aria-describedby={
                   l.configurationStatus === 'unconfigured'
-                    ? '该 domain 已在知识库出现，但尚未配置为可选学科'
+                    ? 'onboarding-leanings-unconfigured-help'
                     : undefined
                 }
                 onClick={() => togLean(l.id)}
@@ -162,6 +166,11 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
               </button>
             ))}
           </fieldset>
+          {hasUnconfiguredSubjects ? (
+            <p id="onboarding-leanings-unconfigured-help" className="ob-field-hint">
+              {UNCONFIGURED_SUBJECT_HELP}
+            </p>
+          ) : null}
           <div className="ob-field-hint">每天大概投入：</div>
           <fieldset
             className="ob-pick"
@@ -223,9 +232,9 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                 className={`chip${subject === s.id ? ' is-on' : ''}`}
                 aria-pressed={subject === s.id}
                 disabled={s.configurationStatus === 'unconfigured'}
-                title={
+                aria-describedby={
                   s.configurationStatus === 'unconfigured'
-                    ? '该 domain 已在知识库出现，但尚未配置为可选学科'
+                    ? 'onboarding-subjects-unconfigured-help'
                     : undefined
                 }
                 onClick={() => setSubject(subject === s.id ? null : s.id)}
@@ -245,6 +254,11 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
             ))}
             <CreateSubjectChip onCreated={(id) => setSubject(id)} />
           </fieldset>
+          {hasUnconfiguredSubjects ? (
+            <p id="onboarding-subjects-unconfigured-help" className="ob-field-hint">
+              {UNCONFIGURED_SUBJECT_HELP}
+            </p>
+          ) : null}
           {goalReady && err === false && (
             <div className="ob-scope-note">
               <LoomIcon name="knowledge" size={13} />
