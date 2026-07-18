@@ -90,19 +90,22 @@ function EvidenceChip({
   // S7 (YUK-335)：去重后 count>1 时把数量并进文案（「源自 N 次 AI 判定事件」式），
   // 单枚保持原句不动。
   const label = count > 1 ? text.replace('一', String(count)) : text;
-  return (
-    <button
-      type="button"
-      className="evidence-readable"
-      title={`${er.kind}:${er.id}`}
-      disabled={!route}
-      onClick={route ? () => navigate(route) : undefined}
-    >
+  const content = (
+    <>
       <span className="er-ic">
         <LoomIcon name={EV_ICON[er.kind] ?? 'record'} size={13} />
       </span>
       <span className="er-text">{label}</span>
-      {route && <span className="er-go">查看 →</span>}
+    </>
+  );
+
+  // A missing detail route is display-only evidence, not a disabled action.
+  if (!route) return <span className="evidence-readable">{content}</span>;
+
+  return (
+    <button type="button" className="evidence-readable" onClick={() => navigate(route)}>
+      {content}
+      <span className="er-go">查看 →</span>
     </button>
   );
 }
