@@ -30,8 +30,8 @@ describe('aiProposalKindStrength', () => {
   });
 
   it('A tier is empty: no proposal auto-applies without a user decision', () => {
-    const aTier = aiProposalKinds.filter((k) => aiProposalKindStrength[k] === 'A');
-    expect(aTier).toEqual([]);
+    const strengths = new Set<string>(Object.values(aiProposalKindStrength));
+    expect(strengths.has('A')).toBe(false);
   });
 
   // The double-SoT drift guard: the observe-only (C) set must equal the set of
