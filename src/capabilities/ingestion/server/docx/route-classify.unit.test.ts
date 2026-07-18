@@ -106,6 +106,21 @@ describe('classifyDocx', () => {
     );
   });
 
+  it('parses a greater-than sign inside a quoted attribute before TargetMode', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Target="http://169.254.169.254/?x=>" TargetMode="External" Type="image"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
   it('decodes XML character references before checking TargetMode', async () => {
     const { zipSync } = await import('fflate');
     const enc = new TextEncoder();
@@ -152,6 +167,19 @@ describe('classifyDocx', () => {
     expect(() => classifyDocx(bytes)).toThrowError(
       expect.objectContaining({ status: 400, message: expect.stringMatching(/字符引用无效/) }),
     );
+  });
+
+  it('maps a forbidden XML NUL character reference to validation_error 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="image" TargetMode="&#0;External" Target="x"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(expect.objectContaining({ status: 400 }));
   });
 
   it('allows inert external hyperlink metadata', async () => {

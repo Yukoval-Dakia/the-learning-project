@@ -1,3 +1,4 @@
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { type UnzipFileInfo, unzipSync } from 'fflate';
 
 import { ApiError } from '@/server/http/errors';
@@ -67,27 +68,21 @@ function decodeXml(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
-function decodeXmlEntities(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (entity, token: string) => {
-    const lower = token.toLowerCase();
-    if (lower.startsWith('#')) {
-      const codePoint = Number.parseInt(
-        lower.slice(lower.startsWith('#x') ? 2 : 1),
-        lower.startsWith('#x') ? 16 : 10,
-      );
-      // XML 1.0 character references cannot name surrogate code points or values
-      // beyond Unicode. Map malformed uploads to the same deliberate 400 as a
-      // corrupt DOCX instead of leaking RangeError as a route-level 500.
-      if (
-        !Number.isInteger(codePoint) ||
-        codePoint > 0x10ffff ||
-        (codePoint >= 0xd800 && codePoint <= 0xdfff)
-      ) {
-        throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 字符引用无效）', 400);
-      }
-      return String.fromCodePoint(codePoint);
+function decodeNumericXmlEntities(value: string): string {
+  return value.replace(/&#(x[0-9a-f]+|\d+);/gi, (_entity, token: string) => {
+    const hexadecimal = token[0]?.toLowerCase() === 'x';
+    const codePoint = Number.parseInt(hexadecimal ? token.slice(1) : token, hexadecimal ? 16 : 10);
+    const validXml10CodePoint =
+      codePoint === 0x09 ||
+      codePoint === 0x0a ||
+      codePoint === 0x0d ||
+      (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+      (codePoint >= 0x10000 && codePoint <= 0x10ffff);
+    if (!validXml10CodePoint) {
+      throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 字符引用无效）', 400);
     }
-    return { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' }[lower] ?? entity;
+    return String.fromCodePoint(codePoint);
   });
 }
 
@@ -96,18 +91,44 @@ function hasDangerousExternalRelationship(bytes: Uint8Array): boolean {
   // Custom entities can make raw-text validation diverge from a converter's XML
   // parser. OOXML relationship parts do not require DTDs, so reject them outright.
   if (/<!DOCTYPE\b/i.test(xml)) return true;
+  // fast-xml-parser normalizes some forbidden numeric references permissively;
+  // validate every numeric reference against XML 1.0 before object parsing.
+  decodeNumericXmlEntities(xml);
 
-  const relationshipTag = /<(?:[\w.-]+:)?Relationship\b([^>]*)\/?\s*>/gi;
-  for (const match of xml.matchAll(relationshipTag)) {
-    const attributes = new Map<string, string>();
-    const attribute = /([\w:.-]+)\s*=\s*(['"])([\s\S]*?)\2/g;
-    for (const attr of match[1].matchAll(attribute)) {
-      attributes.set(attr[1].toLowerCase(), decodeXmlEntities(attr[3]));
-    }
-    if (attributes.get('targetmode')?.toLowerCase() !== 'external') continue;
+  const validation = XMLValidator.validate(xml, { allowBooleanAttributes: false });
+  if (validation !== true) {
+    throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
+  }
+
+  let parsed: {
+    Relationships?: { Relationship?: Array<Record<string, unknown>> };
+  };
+  try {
+    parsed = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      removeNSPrefix: true,
+      parseAttributeValue: false,
+      processEntities: true,
+      strictReservedNames: true,
+      isArray: (tagName) => tagName === 'Relationship',
+    }).parse(xml) as typeof parsed;
+  } catch {
+    throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
+  }
+
+  for (const attributes of parsed.Relationships?.Relationship ?? []) {
+    const normalizedAttributes = new Map(
+      Object.entries(attributes).map(([name, value]) => [name.toLowerCase(), value]),
+    );
+    const rawTargetMode = normalizedAttributes.get('targetmode');
+    const targetMode =
+      typeof rawTargetMode === 'string' ? decodeNumericXmlEntities(rawTargetMode) : '';
+    if (targetMode.toLowerCase() !== 'external') continue;
     // External hyperlinks are inert clickable metadata; converters do not fetch
     // them while rendering. Unknown/resource-loading external types stay blocked.
-    const type = attributes.get('type')?.toLowerCase() ?? '';
+    const rawType = normalizedAttributes.get('type');
+    const type = typeof rawType === 'string' ? decodeNumericXmlEntities(rawType).toLowerCase() : '';
     if (!type.endsWith('/hyperlink')) return true;
   }
   return false;
