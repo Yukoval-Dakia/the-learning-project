@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-18　·　历史头部日志（2026-06-23 ~ 07-16）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-18 · 12 小时产品推进收口：26 PR 全合并 + 性能/可用性/a11y 连续打磨】** main 从遗留票清扫推进到 `f99e5382`：12 个独立交付 PR（YUK-674/683/535/534/332/334/609/211/673/328/616 + YUK-354 C-lane；YUK-349 随子单收口）和 14 个 YUK-169 性能/体验切片全部经 1–2 轮有效 review 后自主合并。性能主线落 route code-splitting、KaTeX/Cytoscape/Markdown 按需加载、Knowledge 图谱/题目知识点选项延迟请求；体验主线落 Inbox 渐进加载与证据语义、Copilot fallback/launcher、onboarding disabled reason、Note 键盘重排、WeekHeat 非色彩通道、Vision 复核选择语义。最终权威态：GitHub 开放 PR = 0，`main == origin/main == f99e5382`；YUK-674/683/535/534/332/334/609/211/673/349/328/616 = Done，YUK-354/YUK-169 作为 umbrella 保持 In Progress。全量 gate：411 unit files / 4496 tests、338 DB files / 3400 tests、23 migration tests，API/profile/copy/style/draft/schema/partition audits 与 SPA/server/worker/migrate build 全绿。YUK-669 当前 tip containment 再验证为 private + backup 未跟踪；历史清洗仍 owner-gated。（上一条 07-16 re-grounding【更新】已滚存 → 归档文件）
+> **【更新 2026-07-18 · 12 小时产品推进收口：26 PR 全合并 + 性能/可用性/a11y 连续打磨】** main 从遗留票清扫推进到产品 commit `f99e5382`，随后合入 cockpit closeout：12 个独立交付 PR（YUK-674/683/535/534/332/334/609/211/673/328/616 + YUK-354 C-lane；YUK-349 随子单收口）和 14 个 YUK-169 性能/体验切片全部经 1–2 轮有效 review 后自主合并。性能主线落 route code-splitting、KaTeX/Cytoscape/Markdown 按需加载、Knowledge 图谱/题目知识点选项延迟请求；体验主线落 Inbox 渐进加载与证据语义、Copilot fallback/launcher、onboarding disabled reason、Note 键盘重排、WeekHeat 非色彩通道、Vision 复核选择语义。最终权威态：GitHub 开放 PR = 0，main 与 `origin/main` 已同步；YUK-674/683/535/534/332/334/609/211/673/349/328/616 = Done，YUK-354/YUK-169 作为 umbrella 保持 In Progress。全量 gate：411 unit files / 4496 tests、338 DB files / 3400 tests、23 migration tests，API/profile/copy/style/draft/schema/partition audits 与 SPA/server/worker/migrate build 全绿。YUK-669 当前 tip containment 再验证为 private + backup 未跟踪；历史清洗仍 owner-gated。（上一条 07-16 re-grounding【更新】已滚存 → 归档文件）
 
 ## 🎯 主线方向（当前）
 
@@ -53,7 +53,7 @@
 ## 在飞（PRs / workflows / worktrees）
 
 - **PR 在飞：0**（GitHub 权威查询，2026-07-18 收口）。本轮 #836/#867-891 共 26 个 PR 均已合并。
-- **main**：`f99e5382`，与 `origin/main` 精确一致；最终 full test/build/audits 全绿。
+- **main**：与 `origin/main` 精确一致；最终 full test/build/audits 全绿。这里刻意不嵌自身 closeout PR 的 SHA，避免文档合并后立刻自制造漂移。
 - **外部/owner 门控**：YUK-669 历史清洗；GitHub Actions 因账户 billing/spending 零步失败，Cursor/CodeRabbit review 配额耗尽。本轮每个 PR 仍由 OCR/Codex 等 1–2 轮有效 review 覆盖。
 - **本地工作树**：仅 owner 既有 `.codex/hooks.json`、`AGENTS.md`、四个 `.codex/hooks/*` 未跟踪脚本与 `docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`；本轮未暂存、未改写。
 
