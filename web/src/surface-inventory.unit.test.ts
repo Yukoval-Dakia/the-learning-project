@@ -107,6 +107,10 @@ describe('shipped UI surface inventory', () => {
       '@/capabilities/shell/ui/workbench-api',
     ]);
     expect(routerSource).toContain("import('./routes/MistakesPage')");
+    expect(routerSource).not.toContain("import('@/capabilities/observability/ui/observability')");
+    for (const adminModule of ['admin-runs', 'admin-cost', 'admin-failures']) {
+      expect(routerSource).toContain(`import('@/capabilities/observability/ui/${adminModule}')`);
+    }
     expect(routerSource).toContain('lazyRouteComponent');
     expect(routerSource).toContain('defaultPendingComponent: RoutePending');
     expect(routerSource).toContain('aria-live="polite"');

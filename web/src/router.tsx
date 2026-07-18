@@ -533,7 +533,7 @@ const coachRoute = createRoute({
 });
 
 const AdminRunsRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/observability').then((module) => module.AdminRunsSurface),
+  import('@/capabilities/observability/ui/admin-runs').then((module) => module.AdminRunsSurface),
 );
 
 const adminRunsRoute = createRoute({
@@ -543,7 +543,7 @@ const adminRunsRoute = createRoute({
 });
 
 const AdminCostRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/observability').then((module) => module.AdminCostSurface),
+  import('@/capabilities/observability/ui/admin-cost').then((module) => module.AdminCostSurface),
 );
 
 const adminCostRoute = createRoute({
@@ -553,7 +553,7 @@ const adminCostRoute = createRoute({
 });
 
 const AdminFailuresRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/observability').then(
+  import('@/capabilities/observability/ui/admin-failures').then(
     (module) => module.AdminFailuresSurface,
   ),
 );
