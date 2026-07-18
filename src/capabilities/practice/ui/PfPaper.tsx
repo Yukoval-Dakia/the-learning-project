@@ -149,6 +149,10 @@ export function PfPaper({
     const sid = sessionRef.current;
     if (!sid || submitting) return;
     setSubmitting(true);
+    // Claim the terminal transition before any network request so pagehide cannot
+    // race a completion attempt with a competing pause PATCH.
+    sessionOpenRef.current = false;
+    let completionCommitted = false;
     try {
       for (const s of slots) {
         if (submittedKeys.has(slotKey(s))) continue;
@@ -160,10 +164,12 @@ export function PfPaper({
         });
       }
       await endPaperSession(sid);
-      sessionOpenRef.current = false;
+      completionCommitted = true;
       await qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       onSubmitted();
     } catch (e) {
+      // The page is still alive, so let a retry or explicit exit own the session.
+      if (!completionCommitted) sessionOpenRef.current = true;
       addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       setSubmitting(false);

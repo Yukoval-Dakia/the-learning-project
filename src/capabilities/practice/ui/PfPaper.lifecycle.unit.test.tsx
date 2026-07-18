@@ -114,4 +114,24 @@ describe('PfPaper session lifecycle (YUK-211)', () => {
     expect(mocks.endPaperSession).toHaveBeenCalledWith('review_1');
     expect(mocks.pausePaperSession).not.toHaveBeenCalled();
   });
+
+  it('claims the completion transition before submitting slots so pagehide cannot pause it', async () => {
+    let resolveSubmission: ((value: { ok: boolean }) => void) | undefined;
+    mocks.submitPaperSlot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSubmission = resolve;
+        }),
+    );
+    const props = renderPaper();
+
+    await userEvent.click(await screen.findByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(1));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+
+    expect(mocks.pausePaperSession).not.toHaveBeenCalled();
+
+    resolveSubmission?.({ ok: true });
+    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
+  });
 });
