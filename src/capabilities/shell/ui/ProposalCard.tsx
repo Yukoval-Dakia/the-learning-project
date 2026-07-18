@@ -160,6 +160,31 @@ export function ProposalCard({
 
   const isEdge = p.kind === 'knowledge_edge';
   const change = p.payload.proposed_change;
+  // ADR-0032 D4-E1 / YUK-332 — legacy proposals have no discriminator and are creates.
+  // Archive proposals are destructive and only support accept/dismiss server-side, so their
+  // operation, CTA copy, and available controls must not masquerade as create semantics.
+  const isArchiveEdge = isEdge && change?.edge_op === 'archive';
+  const archiveTargetMissing = isArchiveEdge && !change?.archive_edge_id;
+  let cardLabel = meta.label;
+  let cardIcon = meta.icon;
+  let cardTone = meta.tone;
+  let acceptButtonLabel = '接受';
+  let acceptedLabel = '已接受';
+  let edgeOperationLabel = '将新增';
+  if (p.kind === 'block_merge') {
+    acceptButtonLabel = '接受合并';
+  } else if (isArchiveEdge) {
+    cardLabel = '归档知识关系';
+    cardIcon = 'archive';
+    cardTone = 'hard';
+    acceptButtonLabel = '确认归档';
+    acceptedLabel = '已归档';
+    edgeOperationLabel = archiveTargetMissing ? '归档目标缺失' : '将归档';
+  } else if (isEdge) {
+    cardLabel = '新增知识关系';
+    acceptButtonLabel = '建立关系';
+    acceptedLabel = '已建立';
+  }
   const edgeFrom = isEdge ? change?.from_knowledge_id : undefined;
   const edgeTo = isEdge ? change?.to_knowledge_id : undefined;
   const rel = change?.relation_type;
@@ -174,9 +199,9 @@ export function ProposalCard({
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="proposal-head">
-        <span className={`kind-tag tone-chip-${meta.tone}`}>
-          <LoomIcon name={meta.icon as LoomIconName} size={12} />
-          {meta.label}
+        <span className={`kind-tag tone-chip-${cardTone}`}>
+          <LoomIcon name={cardIcon as LoomIconName} size={12} />
+          {cardLabel}
         </span>
         <span className="ai-tag">
           <LoomIcon name="sparkle" size={12} />
@@ -235,6 +260,10 @@ export function ProposalCard({
 
       {isEdge && edgeFrom && edgeTo && (
         <div className="edge-preview nowrap-meta">
+          <span className={`badge ${isArchiveEdge ? 'tone-again' : 'tone-info'}`}>
+            <LoomIcon name={isArchiveEdge ? 'archive' : 'link'} size={12} />
+            {edgeOperationLabel}
+          </span>
           <span className="rel-pill">{(rel && REL_LABEL[rel]) || rel || '关系'}</span>
           <span className="chip chip-k mono">{nameOf(edgeFrom)}</span>
           <LoomIcon name="arrow" size={14} />
@@ -252,15 +281,15 @@ export function ProposalCard({
           {isAcceptSupported(p.kind) && (
             <Btn
               size="sm"
-              variant="good"
-              icon="check"
-              disabled={locked}
-              onClick={() => void decide('accept', '已接受')}
+              variant={isArchiveEdge ? 'again' : 'good'}
+              icon={isArchiveEdge ? 'archive' : 'check'}
+              disabled={locked || archiveTargetMissing}
+              onClick={() => void decide('accept', acceptedLabel)}
             >
-              {p.kind === 'block_merge' ? '接受合并' : '接受'}
+              {acceptButtonLabel}
             </Btn>
           )}
-          {isEdge && (
+          {isEdge && !isArchiveEdge && (
             <>
               <Btn
                 size="sm"
@@ -287,9 +316,9 @@ export function ProposalCard({
             variant="ghost"
             icon="close"
             disabled={locked}
-            onClick={() => void decide('dismiss', '已忽略')}
+            onClick={() => void decide('dismiss', isArchiveEdge ? '已保留' : '已忽略')}
           >
-            忽略
+            {isArchiveEdge ? '保留关系' : '忽略'}
           </Btn>
         </div>
         <div className="meta-row">
@@ -308,7 +337,7 @@ export function ProposalCard({
         </div>
       </div>
 
-      {pickingRel && !resolved && (
+      {pickingRel && !resolved && !isArchiveEdge && (
         <div
           className="seg"
           role="tablist"

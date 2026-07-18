@@ -82,6 +82,9 @@ export interface ProposalPayloadWire {
   evidence_refs: ProposalEvidenceRefWire[];
   confidence?: number;
   proposed_change?: {
+    /** Legacy edge proposals omit this field and therefore mean create. */
+    edge_op?: 'create' | 'archive';
+    archive_edge_id?: string;
     from_knowledge_id?: string;
     to_knowledge_id?: string;
     relation_type?: string;

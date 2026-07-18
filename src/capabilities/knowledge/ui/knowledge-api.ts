@@ -225,12 +225,21 @@ export interface EdgeProposalInboxRow {
   payload: {
     reason_md?: string;
     proposed_change: {
+      /** Pre-D4-E1 proposals omit edge_op and remain create proposals. */
+      edge_op?: 'create' | 'archive';
+      archive_edge_id?: string;
       from_knowledge_id?: string;
       to_knowledge_id?: string;
       relation_type?: string;
       weight?: number;
     };
   };
+}
+
+export function edgeProposalOperation(
+  proposal: Pick<EdgeProposalInboxRow, 'payload'>,
+): 'create' | 'archive' {
+  return proposal.payload.proposed_change.edge_op === 'archive' ? 'archive' : 'create';
 }
 
 export const getEdgeProposals = () =>

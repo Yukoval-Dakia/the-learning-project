@@ -22,6 +22,7 @@ import {
   type KnowledgeTreeNode,
   createEdge,
   decideEdgeProposal,
+  edgeProposalOperation,
   getNodePage,
 } from './knowledge-api';
 
@@ -51,6 +52,11 @@ function EdgeProposalRow({
 }) {
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const operation = edgeProposalOperation(e);
+  const isArchive = operation === 'archive';
+  const archiveTargetMissing = isArchive && !e.payload.proposed_change.archive_edge_id;
+  let operationLabel = '新增关系';
+  if (isArchive) operationLabel = archiveTargetMissing ? '归档目标缺失' : '归档关系';
   const rel = e.payload.proposed_change.relation_type ?? 'related_to';
   const cue = REL_CUE[rel] ?? REL_CUE.related_to;
   const act = (decision: 'accept' | 'reverse' | 'change_type' | 'dismiss', label: string) => {
@@ -71,6 +77,10 @@ function EdgeProposalRow({
   return (
     <div className="edge-prop">
       <div className="edge-prop-head">
+        <span className={`badge ${isArchive ? 'tone-again' : 'tone-info'}`}>
+          <LoomIcon name={isArchive ? 'archive' : 'link'} size={12} />
+          {operationLabel}
+        </span>
         <span className={`rel-tag rel-tag-${rel}`}>
           <span className="mono">{cue.glyph}</span>
           {cue.label}
@@ -86,30 +96,32 @@ function EdgeProposalRow({
       <div className="edge-prop-acts">
         <Btn
           size="sm"
-          variant="good"
-          icon="check"
-          disabled={busy}
-          onClick={() => act('accept', '接受')}
+          variant={isArchive ? 'again' : 'good'}
+          icon={isArchive ? 'archive' : 'check'}
+          disabled={busy || archiveTargetMissing}
+          onClick={() => act('accept', isArchive ? '已归档' : '已建立')}
         >
-          接受
+          {isArchive ? '确认归档' : '建立关系'}
         </Btn>
-        <Btn
-          size="sm"
-          variant="ghost"
-          icon="reverse"
-          disabled={busy}
-          onClick={() => act('reverse', '已反向接受')}
-        >
-          反向
-        </Btn>
+        {!isArchive && (
+          <Btn
+            size="sm"
+            variant="ghost"
+            icon="reverse"
+            disabled={busy}
+            onClick={() => act('reverse', '已反向接受')}
+          >
+            反向
+          </Btn>
+        )}
         <Btn
           size="sm"
           variant="ghost"
           icon="close"
           disabled={busy}
-          onClick={() => act('dismiss', '已忽略')}
+          onClick={() => act('dismiss', isArchive ? '已保留' : '已忽略')}
         >
-          忽略
+          {isArchive ? '保留关系' : '忽略'}
         </Btn>
       </div>
     </div>
@@ -316,7 +328,7 @@ export function NodeDrawer({
             <div className="drawer-sec">
               <div className="drawer-sec-h">
                 <LoomIcon name="sparkle" size={14} />
-                AI 提议的关系 · {props.length}
+                AI 提议的关系变更 · {props.length}
               </div>
               {props.map((p) => (
                 <EdgeProposalRow
