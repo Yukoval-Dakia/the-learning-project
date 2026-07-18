@@ -2,10 +2,10 @@ import { type UnzipFileInfo, unzipSync } from 'fflate';
 
 import { ApiError } from '@/server/http/errors';
 
-// YUK-258 — DOCX routing predicate. Deterministic, sub-millisecond, runs
-// synchronously in the upload route BEFORE any converter spawn. A .docx is a zip;
-// we unzip in-memory (fflate, zero native deps) and count MathType OLE objects by
-// substring-matching `ProgID="Equation` in word/document*.xml.
+// YUK-258/YUK-273 — DOCX routing + converter security preflight. It runs
+// synchronously BEFORE any Pandoc/LibreOffice spawn. A .docx is a zip; we inflate
+// only bounded document XML and relationship parts, reject external relationships,
+// then count MathType OLE objects in word/document*.xml.
 //
 //   count > 0 → 'visual'  (MathType 卷: formulas are OLE images — pandoc/OMML
 //                          cannot extract them, so the file must go through the
@@ -39,6 +39,15 @@ const DOC_XML_PARTS = ['word/document.xml', 'word/document2.xml'];
 // legitimate paper).
 const MAX_DECOMPRESSED_PART_BYTES = 50_000_000;
 
+// Converters may resolve OOXML relationships while rendering. Reject external
+// templates/images/objects before either converter sees the file. Relationship
+// parts are tiny in normal documents; these bounds prevent the security preflight
+// itself becoming a decompression/count DoS.
+const MAX_RELATIONSHIP_PART_BYTES = 1_000_000;
+const MAX_RELATIONSHIP_PARTS = 256;
+const RELATIONSHIP_PART_RE = /(?:^|\/)_rels\/[^/]*\.rels$/i;
+const EXTERNAL_TARGET_MODE_RE = /\bTargetMode\s*=\s*(['"])External\1/i;
+
 function decodeXml(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes);
 }
@@ -52,21 +61,29 @@ function decodeXml(bytes: Uint8Array): string {
  */
 export function classifyDocx(docxBytes: Uint8Array): DocxLine {
   const docXmlParts = new Set<string>(DOC_XML_PARTS);
+  let relationshipPartCount = 0;
   let entries: Record<string, Uint8Array>;
   try {
-    // Only inflate the document body XML part(s); the filter runs per-entry
-    // BEFORE inflation, so the archive's media/styles/etc. are never
-    // decompressed. Reject a body part whose decompressed size is implausibly
-    // large (zip-bomb guard) before fflate inflates it.
+    // Only inflate document body XML + relationship parts. The filter runs before
+    // inflation, so media/styles/etc. are skipped and size/count bounds can reject
+    // suspicious relationship manifests without allocating their contents.
     entries = unzipSync(docxBytes, {
       filter: (file: UnzipFileInfo) => {
-        if (!docXmlParts.has(file.name)) return false;
-        if (file.originalSize > MAX_DECOMPRESSED_PART_BYTES) {
+        if (docXmlParts.has(file.name)) {
+          if (file.originalSize <= MAX_DECOMPRESSED_PART_BYTES) return true;
           throw new ApiError(
             'validation_error',
             '无法解析 DOCX（word/document.xml 解压后过大，可能是异常文件）',
             400,
           );
+        }
+        if (!RELATIONSHIP_PART_RE.test(file.name)) return false;
+        relationshipPartCount += 1;
+        if (relationshipPartCount > MAX_RELATIONSHIP_PARTS) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件数量异常）', 400);
+        }
+        if (file.originalSize > MAX_RELATIONSHIP_PART_BYTES) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件解压后过大）', 400);
         }
         return true;
       },
@@ -87,6 +104,17 @@ export function classifyDocx(docxBytes: Uint8Array): DocxLine {
       '无法解析 DOCX（缺少 word/document.xml，可能不是有效 .docx）',
       400,
     );
+  }
+
+  for (const [part, bytes] of Object.entries(entries)) {
+    if (!RELATIONSHIP_PART_RE.test(part)) continue;
+    if (EXTERNAL_TARGET_MODE_RE.test(decodeXml(bytes))) {
+      throw new ApiError(
+        'validation_error',
+        `DOCX 包含外部资源关系（${part}）；请移除链接图片、模板或对象后重试`,
+        400,
+      );
+    }
   }
 
   let mathTypeCount = 0;

@@ -65,6 +65,50 @@ describe('classifyDocx', () => {
     expect(classifyDocx(bytes)).toBe('visual');
   });
 
+  it('rejects an external OOXML relationship before converter execution', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(`<?xml version="1.0"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Target="http://169.254.169.254/latest/meta-data/" Id="rId1" TargetMode="External" Type="image"/>
+        </Relationships>`),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('detects external TargetMode independent of attribute order, quote and casing', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      '_rels/.rels': enc.encode(
+        "<Relationships><Relationship type='template' targetmode='external' Target='http://127.0.0.1/'/></Relationships>",
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('allows bounded internal OOXML relationships', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Id="rId1" Target="media/image1.png" Type="image"/></Relationships>',
+      ),
+    });
+
+    expect(classifyDocx(bytes)).toBe('text');
+  });
+
   // codex-5 / coderabbit-C — selective inflation: only word/document*.xml is
   // decompressed. A large non-document entry must NOT block classification (it is
   // never inflated by the filter).
@@ -98,5 +142,18 @@ describe('classifyDocx', () => {
       expect((err as ApiError).status).toBe(400);
       expect((err as ApiError).message).toMatch(/解压后过大/);
     }
+  });
+
+  it('rejects a relationship part that decompresses past its ceiling → 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': new Uint8Array(1_100_000),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/关系文件解压后过大/) }),
+    );
   });
 });
