@@ -104,6 +104,24 @@ export interface PracticeApplierOpts {
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
 }
 
+async function loadAcceptedQuestionOrThrow(
+  db: Db,
+  proposalId: string,
+  questionId: string,
+): Promise<typeof question.$inferSelect> {
+  const existing = (
+    await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+  )[0];
+  if (!existing) {
+    throw new ApiError(
+      'inconsistent_state',
+      `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; submit a new question_edit proposal or investigate the event/projection state manually`,
+      500,
+    );
+  }
+  return existing;
+}
+
 /**
  * YUK-17 / ADR-0018 — variant_question accept materializes the question row
  * (source='mistake_variant', draft_status='active'), flips the mistake_variant
@@ -642,16 +660,7 @@ export async function acceptQuestionEditProposal(
   const existingRate = await existingAcceptRate(db, proposalId);
   if (existingRate) {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const existing = (
-      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
-    )[0];
-    if (!existing) {
-      throw new ApiError(
-        'inconsistent_state',
-        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; submit a new question_edit proposal or investigate the event/projection state manually`,
-        500,
-      );
-    }
+    const existing = await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
     return {
       kind: 'question_edit',
       rate_event_id: existingRate.id,
@@ -782,16 +791,7 @@ export async function acceptQuestionEditProposal(
 
   if (concurrentAcceptRate) {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const existing = (
-      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
-    )[0];
-    if (!existing) {
-      throw new ApiError(
-        'inconsistent_state',
-        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; retract + retry`,
-        500,
-      );
-    }
+    const existing = await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
     return {
       kind: 'question_edit',
       rate_event_id: concurrentAcceptRate.id,
