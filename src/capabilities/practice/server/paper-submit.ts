@@ -30,7 +30,7 @@ import { validateCauseAgainstProfile } from '@/core/schema/cause';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the snapshot `before`.
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db as defaultDb } from '@/db/client';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { answer, event, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -69,6 +69,7 @@ const PAID_PAPER_JUDGE_ROUTES = new Set([
   'ai_flexible',
 ]);
 const PAPER_JUDGE_STARTED_ACTION = 'experimental:paper_slot_judge_started';
+const PAPER_JUDGE_RELEASED_ACTION = 'experimental:paper_slot_judge_released';
 const PAPER_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
 
 // F3 (PR #309 round-1, YUK-215) — order-sensitive element-wise array equality.
@@ -122,6 +123,57 @@ export interface PaperSubmitSlotResult {
   score: number | null;
 }
 
+async function lockAndReadPaperSlot(tx: Tx, input: PaperSubmitSlotInput, partRef: string | null) {
+  const sessionRows = await tx.execute<{
+    type: string;
+    status: string;
+    artifact_id: string | null;
+    started_at: string;
+  }>(
+    sql`SELECT type, status, artifact_id, started_at FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
+  );
+  const session = (
+    sessionRows as unknown as Array<{
+      type: string;
+      status: string;
+      artifact_id: string | null;
+      started_at: string;
+    }>
+  )[0];
+  if (!session || session.type !== 'review' || session.artifact_id !== input.paperArtifactId) {
+    throw new ApiError('validation_error', 'paper review session binding is invalid', 400);
+  }
+  if (session.status !== 'started' && session.status !== 'paused') {
+    throw new ApiError(
+      'validation_error',
+      `session ${input.sessionId} is in status '${session.status}' and cannot accept submissions`,
+      400,
+    );
+  }
+
+  const [latestFrozen] = await tx
+    .select({
+      id: answer.id,
+      event_id: answer.event_id,
+      content_md: answer.content_md,
+      image_refs: answer.image_refs,
+      submitted_at: answer.submitted_at,
+    })
+    .from(answer)
+    .where(
+      and(
+        eq(answer.session_id, input.sessionId),
+        eq(answer.question_id, input.questionId),
+        sql`COALESCE(${answer.part_ref}, '') = COALESCE(${partRef}, '')`,
+        not(isNull(answer.submitted_at)),
+      ),
+    )
+    .orderBy(desc(answer.submitted_at))
+    .limit(1);
+
+  return { sessionStartedAt: new Date(session.started_at), latestFrozen };
+}
+
 /**
  * Persist a short-lived per-slot claim before a paid judge invocation.
  * The advisory lock closes concurrent read→judge races; a current-attempt
@@ -138,53 +190,11 @@ async function claimPaidPaperJudge(
     const lockKey = `paper-judge:${input.sessionId}:${input.questionId}:${partRef ?? ''}`;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
-    const sessionRows = await tx.execute<{
-      type: string;
-      status: string;
-      artifact_id: string | null;
-      started_at: string;
-    }>(
-      sql`SELECT type, status, artifact_id, started_at FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
+    const { sessionStartedAt, latestFrozen: frozen } = await lockAndReadPaperSlot(
+      tx,
+      input,
+      partRef,
     );
-    const session = (
-      sessionRows as unknown as Array<{
-        type: string;
-        status: string;
-        artifact_id: string | null;
-        started_at: string;
-      }>
-    )[0];
-    if (!session || session.type !== 'review' || session.artifact_id !== input.paperArtifactId) {
-      throw new ApiError('validation_error', 'paper review session binding is invalid', 400);
-    }
-    if (session.status !== 'started' && session.status !== 'paused') {
-      throw new ApiError(
-        'validation_error',
-        `session ${input.sessionId} is in status '${session.status}' and cannot accept submissions`,
-        400,
-      );
-    }
-    const sessionStartedAt = new Date(session.started_at);
-
-    const [frozen] = await tx
-      .select({
-        id: answer.id,
-        event_id: answer.event_id,
-        content_md: answer.content_md,
-        image_refs: answer.image_refs,
-        submitted_at: answer.submitted_at,
-      })
-      .from(answer)
-      .where(
-        and(
-          eq(answer.session_id, input.sessionId),
-          eq(answer.question_id, input.questionId),
-          sql`COALESCE(${answer.part_ref}, '') = COALESCE(${partRef}, '')`,
-          not(isNull(answer.submitted_at)),
-        ),
-      )
-      .orderBy(desc(answer.submitted_at))
-      .limit(1);
     const frozenInCurrentAttempt =
       frozen?.submitted_at != null && frozen.submitted_at >= sessionStartedAt;
     if (frozenInCurrentAttempt) {
@@ -238,7 +248,27 @@ async function claimPaidPaperJudge(
       )
       .orderBy(desc(event.created_at))
       .limit(1);
-    const claimAgeMs = latestClaim ? now.getTime() - latestClaim.created_at.getTime() : null;
+    const [latestRelease] = await tx
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PAPER_JUDGE_RELEASED_ACTION),
+          eq(event.session_id, input.sessionId),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, input.questionId),
+          gte(event.created_at, sessionStartedAt),
+          sql`COALESCE(${event.payload}->>'part_ref', '') = ${partRef ?? ''}`,
+        ),
+      )
+      .orderBy(desc(event.created_at))
+      .limit(1);
+    const claimIsReleased =
+      latestClaim !== undefined &&
+      latestRelease !== undefined &&
+      latestRelease.created_at.getTime() >= latestClaim.created_at.getTime();
+    const claimAgeMs =
+      latestClaim && !claimIsReleased ? now.getTime() - latestClaim.created_at.getTime() : null;
     if (claimAgeMs !== null && claimAgeMs < PAPER_JUDGE_CLAIM_TTL_MS) {
       throw new ApiError(
         'paper_judge_in_progress',
@@ -269,6 +299,30 @@ async function claimPaidPaperJudge(
       created_at: now,
     });
     return null;
+  });
+}
+
+async function releasePaidPaperJudge(
+  db: Db,
+  input: PaperSubmitSlotInput,
+  now: Date = new Date(),
+): Promise<void> {
+  const partRef = input.partRef ?? null;
+  await db.transaction(async (tx) => {
+    const lockKey = `paper-judge:${input.sessionId}:${input.questionId}:${partRef ?? ''}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    await writeEvent(tx, {
+      id: newId(),
+      session_id: input.sessionId,
+      actor_kind: 'system',
+      actor_ref: 'paper_judge',
+      action: PAPER_JUDGE_RELEASED_ACTION,
+      subject_kind: 'question',
+      subject_id: input.questionId,
+      payload: { part_ref: partRef, released_at: now.toISOString() },
+      caused_by_event_id: null,
+      created_at: now,
+    });
   });
 }
 
@@ -422,10 +476,18 @@ export async function submitPaperSlot(
   const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
 
+  let paidJudgeClaimed = false;
   if (!photoOnlyUnsupported && PAID_PAPER_JUDGE_ROUTES.has(resolvedRoute)) {
-    checkRateLimit();
     const claimedResult = await claimPaidPaperJudge(db, input, now);
     if (claimedResult) return claimedResult;
+    paidJudgeClaimed = true;
+    try {
+      // Charge the shared budget only after this request owns the paid slot.
+      checkRateLimit();
+    } catch (err) {
+      await releasePaidPaperJudge(db, input);
+      throw err;
+    }
   }
 
   // Route through the existing judge invoker (Q13: no new capability). Paper
@@ -434,23 +496,28 @@ export async function submitPaperSlot(
   // photo-only unsupported case above (no judge event is written for it).
   const invoked = photoOnlyUnsupported
     ? null
-    : await createDefaultJudgeInvoker().invoke({
-        db,
-        question: q,
-        answer_md: input.answerMd,
-        // YUK-215 — pass the learner's handwriting-photo refs to the judge so a
-        // photographed answer is judged on what was actually written (not just the
-        // typed text). `input.answerImageRefs` is already frozen into the attempt
-        // event payload (:425) + supplied by the practice submit route; the invoker
-        // input schema already accepts `student_image_refs` (invoker.ts:46) — this
-        // was the one missing wire. Optional → no-image submits are unchanged.
-        student_image_refs: input.answerImageRefs,
-        subjectProfile,
-        // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub (the
-        // structured node addressed by partRef). null for atomic slots → no-op
-        // (whole-row). The invoker narrows text + structured before routing.
-        part_ref: partRef,
-      });
+    : await createDefaultJudgeInvoker()
+        .invoke({
+          db,
+          question: q,
+          answer_md: input.answerMd,
+          // YUK-215 — pass the learner's handwriting-photo refs to the judge so a
+          // photographed answer is judged on what was actually written (not just the
+          // typed text). `input.answerImageRefs` is already frozen into the attempt
+          // event payload (:425) + supplied by the practice submit route; the invoker
+          // input schema already accepts `student_image_refs` (invoker.ts:46) — this
+          // was the one missing wire. Optional → no-image submits are unchanged.
+          student_image_refs: input.answerImageRefs,
+          subjectProfile,
+          // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub (the
+          // structured node addressed by partRef). null for atomic slots → no-op
+          // (whole-row). The invoker narrows text + structured before routing.
+          part_ref: partRef,
+        })
+        .catch(async (err) => {
+          if (paidJudgeClaimed) await releasePaidPaperJudge(db, input);
+          throw err;
+        });
   const judgeResult = invoked?.result ?? null;
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
   const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';
@@ -513,88 +580,10 @@ export async function submitPaperSlot(
     subjectProfile,
   );
 
-  await db.transaction(async (tx) => {
-    // Session validation (FOR UPDATE): lock the session row to prevent a concurrent
-    // status transition (e.g. session completed between route and here). Validates
-    // type='review', artifact_id binding, and status ∈ started|paused.
-    // Also reads started_at which serves as the reopen marker (see below).
-    const sessRows = await tx.execute<{
-      type: string;
-      status: string;
-      artifact_id: string | null;
-      started_at: string;
-    }>(
-      sql`SELECT type, status, artifact_id, started_at FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
-    );
-    const sess = (
-      sessRows as unknown as Array<{
-        type: string;
-        status: string;
-        artifact_id: string | null;
-        started_at: string;
-      }>
-    )[0];
-    if (!sess) {
-      throw new ApiError('validation_error', `session ${input.sessionId} not found`, 400);
-    }
-    if (sess.type !== 'review') {
-      throw new ApiError(
-        'validation_error',
-        `session ${input.sessionId} is not a review session`,
-        400,
-      );
-    }
-    if (sess.artifact_id !== input.paperArtifactId) {
-      throw new ApiError(
-        'validation_error',
-        `session ${input.sessionId} is not bound to paper ${input.paperArtifactId}`,
-        400,
-      );
-    }
-    if (sess.status !== 'started' && sess.status !== 'paused') {
-      throw new ApiError(
-        'validation_error',
-        `session ${input.sessionId} is in status '${sess.status}' and cannot accept submissions`,
-        400,
-      );
-    }
-
-    // Idempotent resubmit guard (authoritative — FOR UPDATE ensures no concurrent
-    // freeze wins between the pre-check above and this point).
-    // Same content → return existing ids without writing (pre-check usually catches
-    // this first, but the transaction re-confirms under lock).
-    //
-    // Round-3 fix #2 (P2): changed-content guard (§4.9 plan).
-    // `started_at` is reset to now() on every reopenAbandonedReviewSession, so it
-    // serves as the reopen marker without any new column:
-    //   - frozen row submitted_at < started_at → slot was frozen in a previous
-    //     attempt (before the last reopen) → changed content is a legitimate
-    //     reopen-resubmit, allow append.
-    //   - frozen row submitted_at >= started_at → slot was frozen in THIS attempt
-    //     → changed content means the active slot is already answered. The user
-    //     must abandon→reopen before changing their answer. Reject 409.
-    const sessionStartedAt = new Date(sess.started_at);
-    const existingFrozen = await tx
-      .select({
-        id: answer.id,
-        event_id: answer.event_id,
-        content_md: answer.content_md,
-        image_refs: answer.image_refs,
-        submitted_at: answer.submitted_at,
-      })
-      .from(answer)
-      .where(
-        and(
-          eq(answer.session_id, input.sessionId),
-          eq(answer.question_id, input.questionId),
-          sql`COALESCE(${answer.part_ref}, '') = COALESCE(${partRef}, '')`,
-          not(isNull(answer.submitted_at)),
-        ),
-      )
-      .orderBy(desc(answer.submitted_at))
-      .limit(1);
-
-    const latestFrozen = existingFrozen[0];
+  const persistSubmission = db.transaction(async (tx) => {
+    // Lock and validate the session, then read the latest frozen slot through the
+    // same helper used by the paid-judge claim so both paths share one policy.
+    const { sessionStartedAt, latestFrozen } = await lockAndReadPaperSlot(tx, input, partRef);
     if (latestFrozen) {
       // Round-6 fix #4 (CR 3359820529): same-content idempotency only applies when
       // the frozen row belongs to the CURRENT attempt (submitted_at >= started_at).
@@ -988,6 +977,12 @@ export async function submitPaperSlot(
     frozenAnswerId = frozen.answerId;
     wroteNewAttempt = true; // a new attempt was actually persisted (not a replay).
   });
+  try {
+    await persistSubmission;
+  } catch (err) {
+    if (paidJudgeClaimed) await releasePaidPaperJudge(db, input);
+    throw err;
+  }
 
   // YUK-459 — paper/exam 作答的 success 块，与 solo submit (submit.ts:709) 对齐。paper 路径过去
   // 既不 emit p(L) delta 埋点（ADR-0040 决定2 的 experimental:mastery_progress）也不触发

@@ -1114,6 +1114,46 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
+  it('YUK-695: failed paid judge releases its claim for an immediate retry', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const invoke = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('transient judge failure'))
+      .mockResolvedValueOnce({
+        route: 'semantic',
+        result: {
+          coarse_outcome: 'correct',
+          score: 1,
+          score_meaning: 'percentage',
+          confidence: 0.9,
+          feedback_md: 'ok',
+          evidence_json: {},
+          capability_ref: { id: 'semantic', version: '1' },
+        },
+        telemetry: {},
+      });
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({ invoke } as never);
+    const input = {
+      sessionId,
+      paperArtifactId: 'paper1',
+      questionId: 'q1',
+      answerMd: 'true',
+      primaryKnowledgeId: 'k1',
+    };
+
+    try {
+      await expect(submitPaperSlot(input, db)).rejects.toThrow(/transient judge failure/);
+      await expect(submitPaperSlot(input, db)).resolves.toMatchObject({ coarseOutcome: 'correct' });
+      expect(invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   // ── round-3 fix #2 (P2): changed-content resubmit in active session → 409 ───
   it('round-3 fix #2: changed content while session is active is rejected with 409', async () => {
     const db = testDb();
