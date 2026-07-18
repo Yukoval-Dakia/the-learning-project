@@ -77,7 +77,11 @@ export interface ImageCandidateAcceptResult {
 // non-DB side effects) and assert the cost-ledger / source_verify wiring runs WITHOUT
 // real R2 / real model spend.
 export interface ImageCandidateAcceptDeps {
-  /** Download the image bytes for the candidate's source_url. */
+  /**
+   * Trusted-only test/composition seam. A replacement owns the complete SSRF
+   * invariant (DNS validation, address pinning, redirect checks and byte cap);
+   * production leaves this unset and uses defaultFetchImageBytes below.
+   */
   fetchImageBytesFn?: (url: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
   /** DNS resolver seam for deterministic SSRF tests. Defaults to node:dns lookup. */
   lookupFn?: LookupFn;
@@ -264,6 +268,16 @@ function isBlockedIpAddress(address: string): boolean {
     return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(compatibleIpv4, base, prefix));
   }
 
+  // RFC 6052 well-known NAT64 prefix 64:ff9b::/96 embeds an IPv4 destination in
+  // the final 32 bits. Treat a mapped non-public IPv4 exactly like ::ffff:x.y.z.w;
+  // otherwise a NAT64-enabled host could reach metadata/loopback through the WKP.
+  if (words[0] === 0x0064 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0)) {
+    const nat64Ipv4 = words[6] * 65_536 + words[7];
+    if (BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(nat64Ipv4, base, prefix))) {
+      return true;
+    }
+  }
+
   return (
     (words[0] & 0xfe00) === 0xfc00 || // unique-local fc00::/7
     (words[0] & 0xffc0) === 0xfe80 || // link-local fe80::/10
@@ -392,7 +406,15 @@ async function defaultFetchImageBytes(
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = assertPublicHttpUrl(currentUrl);
     const approvedAddresses = await resolvePublicAddresses(parsed, lookupFn);
-    const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(approvedAddresses) } });
+    const dispatcher = new Agent({
+      connect: {
+        lookup: createPinnedLookup(approvedAddresses),
+        // Ask Undici's connector for all vetted A/AAAA answers so it can race/fall
+        // back across legitimate multi-address origins without performing DNS again.
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 250,
+      },
+    });
     try {
       // The URL retains its original hostname (Host + TLS SNI), while the Agent's
       // connector can use only the exact public answers validated above. This closes
@@ -460,7 +482,11 @@ async function defaultFetchImageBytes(
       }
       return { bytes: await readBoundedResponseBody(res, url), mimeType };
     } finally {
-      await dispatcher.close();
+      // Cleanup must never replace the fetch/validation error that explains the
+      // failed accept. There are no reusable sockets beyond this one guarded hop.
+      await dispatcher.close().catch((err) => {
+        console.warn('[image_candidate_accept] failed to close pinned dispatcher', err);
+      });
     }
   }
   throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);

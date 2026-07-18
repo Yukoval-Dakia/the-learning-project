@@ -867,6 +867,18 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
         }),
       ).rejects.toMatchObject({ code: 'validation_error' });
 
+      await seedImageCandidateProposal('img_cand_nat64_metadata', {
+        source_url: 'http://[64:ff9b::a9fe:a9fe]/latest/meta-data.png',
+      });
+      await expect(
+        acceptAiProposal(db, 'img_cand_nat64_metadata', {
+          imageCandidateDeps: {
+            runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT })),
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+
       await seedImageCandidateProposal('img_cand_cgnat', {
         source_url: 'https://images.example.edu/internal.png',
       });
