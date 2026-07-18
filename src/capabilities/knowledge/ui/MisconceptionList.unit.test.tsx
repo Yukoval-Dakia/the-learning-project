@@ -8,8 +8,15 @@
 
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { MisconceptionCardView, MisconceptionList, applyVeto } from './MisconceptionList';
+import {
+  MisconceptionCardView,
+  MisconceptionList,
+  applyVeto,
+  misconceptionPracticeHref,
+} from './MisconceptionList';
 import type { MisconceptionRow } from './knowledge-api';
+
+const KNOWLEDGE_ID = 'kc/判断句';
 
 /** Recursively collect every onClick handler in a React element tree (renderToString drops
  *  events, so we walk the element tree directly — robust to wrapper changes). */
@@ -58,7 +65,12 @@ function candidate(overrides: Partial<MisconceptionRow> = {}): MisconceptionRow 
 describe('MisconceptionList', () => {
   it('shows an honest empty state when nothing points here', () => {
     const html = renderToString(
-      <MisconceptionList items={[]} navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[]}
+        knowledgeId={KNOWLEDGE_ID}
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(html).toContain('目前没有已记录的相关误区');
     expect(html).toContain('这不代表已经排除');
@@ -67,7 +79,13 @@ describe('MisconceptionList', () => {
 
   it('shows a loading state while the read model is in flight (NOT empty)', () => {
     const html = renderToString(
-      <MisconceptionList items={[]} isLoading navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[]}
+        knowledgeId={KNOWLEDGE_ID}
+        isLoading
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(html).toContain('正在看有没有指向此点的误区');
     expect(html).not.toContain('没有指向此点的误区 ——'); // 不折叠成业务空态
@@ -79,6 +97,7 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionList
         items={[]}
+        knowledgeId={KNOWLEDGE_ID}
         isError
         onRetry={onRetry}
         navigate={vi.fn()}
@@ -90,7 +109,14 @@ describe('MisconceptionList', () => {
     expect(html).not.toContain('kd-misc-card');
     // retry wired
     const clicks = findOnClicks(
-      MisconceptionList({ items: [], isError: true, onRetry, navigate: vi.fn(), onVeto: vi.fn() }),
+      MisconceptionList({
+        items: [],
+        knowledgeId: KNOWLEDGE_ID,
+        isError: true,
+        onRetry,
+        navigate: vi.fn(),
+        onVeto: vi.fn(),
+      }),
     );
     expect(clicks).toHaveLength(1);
     clicks[0]();
@@ -99,7 +125,12 @@ describe('MisconceptionList', () => {
 
   it('renders a CONFIRMED misconception with a user-readable evidence source', () => {
     const html = renderToString(
-      <MisconceptionList items={[confirmed()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[confirmed()]}
+        knowledgeId={KNOWLEDGE_ID}
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(html).toContain('把导数相乘当链式法则');
     expect(html).toContain('链式法则');
@@ -116,6 +147,7 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionList
         items={[confirmed({ status: 'fading', conf: '低' })]}
+        knowledgeId={KNOWLEDGE_ID}
         navigate={vi.fn()}
         onVeto={vi.fn()}
       />,
@@ -126,7 +158,12 @@ describe('MisconceptionList', () => {
 
   it('distinguishes a CANDIDATE with a provisional user-readable source', () => {
     const html = renderToString(
-      <MisconceptionList items={[candidate()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[candidate()]}
+        knowledgeId={KNOWLEDGE_ID}
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(html).toContain('猜想 · 候选'); // honest hypothesis label
     expect(html).toContain('kd-misc-tag-candidate');
@@ -142,6 +179,7 @@ describe('MisconceptionList', () => {
     const closed = renderToString(
       <MisconceptionCardView
         mc={confirmed()}
+        knowledgeId={KNOWLEDGE_ID}
         trace={false}
         verdict={null}
         navigate={vi.fn()}
@@ -155,6 +193,7 @@ describe('MisconceptionList', () => {
     const open = renderToString(
       <MisconceptionCardView
         mc={confirmed()}
+        knowledgeId={KNOWLEDGE_ID}
         trace
         verdict={null}
         navigate={vi.fn()}
@@ -172,6 +211,7 @@ describe('MisconceptionList', () => {
     const open = renderToString(
       <MisconceptionCardView
         mc={candidate({ evidence: [] })}
+        knowledgeId={KNOWLEDGE_ID}
         trace
         verdict={null}
         navigate={vi.fn()}
@@ -186,6 +226,7 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionCardView
         mc={confirmed()}
+        knowledgeId={KNOWLEDGE_ID}
         trace={false}
         verdict="wrong"
         navigate={vi.fn()}
@@ -208,6 +249,7 @@ describe('MisconceptionList', () => {
       MisconceptionCardView({
         // candidate has an ACTIVE 判错了 (live dismiss). Confirmed disables it (see below).
         mc: candidate(),
+        knowledgeId: KNOWLEDGE_ID,
         trace: false,
         verdict: null,
         navigate,
@@ -218,7 +260,8 @@ describe('MisconceptionList', () => {
     // 针对性练习 (Btn) + 追溯 + 判错了 = three clickable actions.
     expect(clicks).toHaveLength(3);
     for (const click of clicks) click();
-    expect(navigate).toHaveBeenCalledWith('/practice');
+    expect(navigate).toHaveBeenCalledWith(misconceptionPracticeHref(KNOWLEDGE_ID));
+    expect(misconceptionPracticeHref(KNOWLEDGE_ID)).toContain('kc%2F');
     expect(onToggleTrace).toHaveBeenCalled();
     expect(onVerdictWrong).toHaveBeenCalled();
   });
@@ -228,6 +271,7 @@ describe('MisconceptionList', () => {
     const clicks = findOnClicks(
       MisconceptionCardView({
         mc: confirmed(),
+        knowledgeId: KNOWLEDGE_ID,
         trace: false,
         verdict: null,
         navigate: vi.fn(),
@@ -242,12 +286,22 @@ describe('MisconceptionList', () => {
     expect(onVerdictWrong).not.toHaveBeenCalled();
 
     const html = renderToString(
-      <MisconceptionList items={[confirmed()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[confirmed()]}
+        knowledgeId={KNOWLEDGE_ID}
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(html).toContain('暂不可否决'); // honest 旁注 instead of a clickable veto
     // the candidate card carries no such deferred note — its veto is live.
     const candidateHtml = renderToString(
-      <MisconceptionList items={[candidate()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+      <MisconceptionList
+        items={[candidate()]}
+        knowledgeId={KNOWLEDGE_ID}
+        navigate={vi.fn()}
+        onVeto={vi.fn()}
+      />,
     );
     expect(candidateHtml).not.toContain('暂不可否决');
   });
@@ -278,6 +332,7 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionCardView
         mc={candidate()}
+        knowledgeId={KNOWLEDGE_ID}
         trace={false}
         verdict={null}
         error="撤销失败，请重试"
@@ -288,12 +343,14 @@ describe('MisconceptionList', () => {
     );
     expect(html).toContain('撤销失败，请重试');
     expect(html).toContain('kd-misc-error');
+    expect(html).toContain('role="alert"');
   });
 
   it('E: 去重学习记录后只显示数量，不显示原始事件标识', () => {
     const open = renderToString(
       <MisconceptionCardView
         mc={confirmed({ evidence: ['evt_dup', 'evt_dup', 'evt_other'] })}
+        knowledgeId={KNOWLEDGE_ID}
         trace
         verdict={null}
         navigate={vi.fn()}
@@ -311,6 +368,7 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionList
         items={[confirmed({ conf: '高', seen: 9 }), candidate({ conf: '低', seen: 5 })]}
+        knowledgeId={KNOWLEDGE_ID}
         navigate={vi.fn()}
         onVeto={vi.fn()}
       />,

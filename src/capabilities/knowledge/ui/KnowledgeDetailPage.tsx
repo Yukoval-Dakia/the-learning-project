@@ -260,6 +260,7 @@ export default function KnowledgeDetailPage({
           <SectionLabel count={miscRows.length || null}>可能相关的误区</SectionLabel>
           <MisconceptionList
             items={miscRows}
+            knowledgeId={node.id}
             isLoading={miscQ.isLoading}
             isError={miscQ.isError}
             onRetry={() => void miscQ.refetch()}
