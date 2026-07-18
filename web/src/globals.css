@@ -647,6 +647,15 @@ ol {
 .page.prose {
   max-width: 720px;
 }
+.route-pending {
+  min-height: 35vh;
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+}
+.route-pending output {
+  margin: 0;
+}
 
 .seg-row {
   display: flex;

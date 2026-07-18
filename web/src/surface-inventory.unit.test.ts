@@ -94,4 +94,21 @@ describe('shipped UI surface inventory', () => {
       expect((capability.ui as Record<string, unknown> | undefined)?.todayBlocks).toBeUndefined();
     }
   });
+
+  it('keeps page surfaces lazy while the shared shell remains eager', () => {
+    const staticCapabilityUiImports = [
+      ...routerSource.matchAll(/from\s+['"](@\/capabilities\/[^'"]+\/ui(?:\/[^'"]*)?)['"]/g),
+    ]
+      .map((match) => match[1])
+      .sort();
+
+    expect(staticCapabilityUiImports).toEqual([
+      '@/capabilities/copilot/ui/CopilotDock',
+      '@/capabilities/shell/ui/workbench-api',
+    ]);
+    expect(routerSource).toContain("import('./routes/MistakesPage')");
+    expect(routerSource).toContain('lazyRouteComponent');
+    expect(routerSource).toContain('defaultPendingComponent: RoutePending');
+    expect(routerSource).toContain('aria-live="polite"');
+  });
 });

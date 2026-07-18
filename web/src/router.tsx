@@ -1,33 +1,7 @@
 // M0 (YUK-313) — SPA 路由表。规则（记入 ARCHITECTURE）：capability ui 不 import
 // 路由库；导航以 (to: string) => void prop 注入——路由耦合只存在于本壳层。
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
-import AgentNotesPage from '@/capabilities/agency/ui/page';
 import { CopilotDock } from '@/capabilities/copilot/ui/CopilotDock';
-import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
-import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
-import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
-import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
-import EventDetailPage from '@/capabilities/observability/ui/EventDetailPage';
-import { AdminConjectureScoresSurface } from '@/capabilities/observability/ui/conjecture-scores';
-import { AdminCoverageLatticeSurface } from '@/capabilities/observability/ui/coverage-lattice';
-import {
-  AdminCostSurface,
-  AdminFailuresSurface,
-  AdminRunsSurface,
-} from '@/capabilities/observability/ui/observability';
-import { AdminSubjectTraitsSurface } from '@/capabilities/observability/ui/subject-traits';
-import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
-import OnboardRecord from '@/capabilities/onboarding/ui/OnboardRecord';
-import ScreenPlacement from '@/capabilities/onboarding/ui/ScreenPlacement';
-import ScreenProfile from '@/capabilities/onboarding/ui/ScreenProfile';
-import WelcomePage from '@/capabilities/onboarding/ui/WelcomePage';
-import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
-import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
-import QuestionDetailPage from '@/capabilities/practice/ui/QuestionDetailPage';
-import QuestionsPage from '@/capabilities/practice/ui/QuestionsPage';
-import CoachHub from '@/capabilities/shell/ui/CoachHub';
-import InboxPage from '@/capabilities/shell/ui/InboxPage';
-import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
 import { surfacePath } from '@/kernel/ui-surfaces';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
@@ -41,12 +15,13 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
   useRouter,
   useRouterState,
 } from '@tanstack/react-router';
+import type { ComponentType } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import MistakesPage from './routes/MistakesPage';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
@@ -214,6 +189,34 @@ function RootShell() {
   );
 }
 
+type Navigate = (to: string) => void;
+type NavigablePage = ComponentType<{ navigate: Navigate }>;
+
+/**
+ * Keep router hooks in the web shell while preserving TanStack Router's preload seam.
+ * Each caller supplies an explicit dynamic import so Vite can emit one async route chunk.
+ */
+function lazyNavigableRoute(loadPage: () => Promise<NavigablePage>) {
+  return lazyRouteComponent(async () => {
+    const Page = await loadPage();
+
+    function NavigableRoute() {
+      const router = useRouter();
+      return <Page navigate={(to) => router.history.push(to)} />;
+    }
+
+    return { default: NavigableRoute };
+  });
+}
+
+function RoutePending() {
+  return (
+    <main className="page route-pending" aria-busy="true">
+      <output aria-live="polite">正在打开页面…</output>
+    </main>
+  );
+}
+
 const rootRoute = createRootRoute({ component: RootShell });
 
 // M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
@@ -227,10 +230,9 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-function TodayRoute() {
-  const router = useRouter();
-  return <TodayPage navigate={(to) => router.history.push(to)} />;
-}
+const TodayRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/shell/ui/TodayPage').then((module) => module.default),
+);
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -243,10 +245,9 @@ const todayRoute = createRoute({
 // auto-enroll 尾巴入池）。Slice 3：/placement = 真 ScreenPlacement（③ 探针 start→submit
 // (auto_rate→θ̂)→next→end），gated on PLACEMENT_PROBE_ENABLED；goalId 经 `?goal=<id>`
 // query 从 Welcome 串过来。导航走壳层 prop 注入（同 TodayRoute）。
-function WelcomeRoute() {
-  const router = useRouter();
-  return <WelcomePage navigate={(to) => router.history.push(to)} />;
-}
+const WelcomeRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/onboarding/ui/WelcomePage').then((module) => module.default),
+);
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -254,10 +255,9 @@ const welcomeRoute = createRoute({
   component: WelcomeRoute,
 });
 
-function OnboardingUploadRoute() {
-  const router = useRouter();
-  return <OnboardRecord navigate={(to) => router.history.push(to)} />;
-}
+const OnboardingUploadRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/onboarding/ui/OnboardRecord').then((module) => module.default),
+);
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -265,10 +265,9 @@ const onboardingUploadRoute = createRoute({
   component: OnboardingUploadRoute,
 });
 
-function PlacementRoute() {
-  const router = useRouter();
-  return <ScreenPlacement navigate={(to) => router.history.push(to)} />;
-}
+const PlacementRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/onboarding/ui/ScreenPlacement').then((module) => module.default),
+);
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -278,10 +277,9 @@ const placementRoute = createRoute({
 
 // YUK-473 Slice 4 — placement-done 起始档案。placement 的 settling 落到这里
 //（?goal 串过来）；「开始日常练习」→ /today。
-function ProfileRoute() {
-  const router = useRouter();
-  return <ScreenProfile navigate={(to) => router.history.push(to)} />;
-}
+const ProfileRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/onboarding/ui/ScreenProfile').then((module) => module.default),
+);
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -289,10 +287,9 @@ const profileRoute = createRoute({
   component: ProfileRoute,
 });
 
-function InboxRoute() {
-  const router = useRouter();
-  return <InboxPage navigate={(to) => router.history.push(to)} />;
-}
+const InboxRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/shell/ui/InboxPage').then((module) => module.default),
+);
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -303,10 +300,9 @@ const inboxRoute = createRoute({
 // Usability Step1 (YUK-354) — 错题本面（loom screen-mistakes ScreenMistakes）。闭合
 // record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
 // 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
-function MistakesRoute() {
-  const router = useRouter();
-  return <MistakesPage navigate={(to) => router.history.push(to)} />;
-}
+const MistakesRoute = lazyNavigableRoute(() =>
+  import('./routes/MistakesPage').then((module) => module.default),
+);
 
 const mistakesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -314,10 +310,9 @@ const mistakesRoute = createRoute({
   component: MistakesRoute,
 });
 
-function AgentNotesRoute() {
-  const router = useRouter();
-  return <AgentNotesPage navigate={(to) => router.history.push(to)} />;
-}
+const AgentNotesRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/agency/ui/page').then((module) => module.default),
+);
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -325,17 +320,25 @@ const agentNotesRoute = createRoute({
   component: AgentNotesRoute,
 });
 
-function EventDetailRouteC() {
-  const router = useRouter();
-  const { id } = eventDetailRoute.useParams();
-  return (
-    <EventDetailPage
-      id={id}
-      navigate={(to) => router.history.push(to)}
-      onBack={() => router.history.back()}
-    />
+const EventDetailRouteC = lazyRouteComponent(async () => {
+  const { default: EventDetailPage } = await import(
+    '@/capabilities/observability/ui/EventDetailPage'
   );
-}
+
+  function EventDetailRouteComponent() {
+    const router = useRouter();
+    const { id } = eventDetailRoute.useParams();
+    return (
+      <EventDetailPage
+        id={id}
+        navigate={(to) => router.history.push(to)}
+        onBack={() => router.history.back()}
+      />
+    );
+  }
+
+  return { default: EventDetailRouteComponent };
+});
 
 const eventDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -346,23 +349,29 @@ const eventDetailRoute = createRoute({
 // M1-T6 (YUK-314) — 录入面。query 读写直接走 window.location + history.replace：
 // getQuery 只在 VisionTab 的 mount-only 恢复 effect 里读一次（不需要 reactive
 // 订阅）；setQuery 是 replace 语义（?ingest= 进行中会话的持久化/清除）。
-function RecordRoute() {
-  const router = useRouter();
-  return (
-    <RecordPage
-      navigate={(to) => router.history.push(to)}
-      getQuery={(key) => new URLSearchParams(window.location.search).get(key)}
-      setQuery={(key, value) => {
-        const sp = new URLSearchParams(window.location.search);
-        if (value === null) sp.delete(key);
-        else sp.set(key, value);
-        router.history.replace(
-          `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
-        );
-      }}
-    />
-  );
-}
+const RecordRoute = lazyRouteComponent(async () => {
+  const { default: RecordPage } = await import('@/capabilities/ingestion/ui/RecordPage');
+
+  function RecordRouteComponent() {
+    const router = useRouter();
+    return (
+      <RecordPage
+        navigate={(to) => router.history.push(to)}
+        getQuery={(key) => new URLSearchParams(window.location.search).get(key)}
+        setQuery={(key, value) => {
+          const sp = new URLSearchParams(window.location.search);
+          if (value === null) sp.delete(key);
+          else sp.set(key, value);
+          router.history.replace(
+            `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+          );
+        }}
+      />
+    );
+  }
+
+  return { default: RecordRouteComponent };
+});
 
 const recordRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -372,32 +381,38 @@ const recordRoute = createRoute({
 
 // M2-T6 (YUK-316) — 练习面。query 协议同 RecordRoute：?view=shelf 切卷架，
 // setQuery 是 replace 语义（视图切换不进 history 栈）。
-function PracticeRoute() {
-  const router = useRouter();
-  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-  const getQuery = useCallback(
-    (key: string) => new URLSearchParams(searchStr).get(key),
-    [searchStr],
-  );
-  const setQuery = useCallback(
-    (key: string, value: string | null) => {
-      const sp = new URLSearchParams(window.location.search);
-      if (value === null) sp.delete(key);
-      else sp.set(key, value);
-      router.history.replace(
-        `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
-      );
-    },
-    [router],
-  );
-  return (
-    <PracticeFacePage
-      navigate={(to) => router.history.push(to)}
-      getQuery={getQuery}
-      setQuery={setQuery}
-    />
-  );
-}
+const PracticeRoute = lazyRouteComponent(async () => {
+  const { default: PracticeFacePage } = await import('@/capabilities/practice/ui/PracticeFacePage');
+
+  function PracticeRouteComponent() {
+    const router = useRouter();
+    const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+    const getQuery = useCallback(
+      (key: string) => new URLSearchParams(searchStr).get(key),
+      [searchStr],
+    );
+    const setQuery = useCallback(
+      (key: string, value: string | null) => {
+        const sp = new URLSearchParams(window.location.search);
+        if (value === null) sp.delete(key);
+        else sp.set(key, value);
+        router.history.replace(
+          `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+        );
+      },
+      [router],
+    );
+    return (
+      <PracticeFacePage
+        navigate={(to) => router.history.push(to)}
+        getQuery={getQuery}
+        setQuery={setQuery}
+      />
+    );
+  }
+
+  return { default: PracticeRouteComponent };
+});
 
 const practiceRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -408,10 +423,9 @@ const practiceRoute = createRoute({
 // inc-4b (YUK-403) — 草稿审核面（owner manual gate /drafts）。loom
 // screen-draft-review。导航走壳层 prop 注入（同 PracticeRoute），page 自持
 // list/detail query + verify/force-enable mutation。
-function DraftReviewRoute() {
-  const router = useRouter();
-  return <DraftReviewPage navigate={(to) => router.history.push(to)} />;
-}
+const DraftReviewRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/practice/ui/DraftReviewPage').then((module) => module.default),
+);
 
 const draftsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -424,10 +438,9 @@ const draftsRoute = createRoute({
 // page 自持 list query（多轴筛选 + composite 展开 + variant lineage）。row-click →
 // /questions/$id（QuestionDetailPage：inline 编辑 + 变体家族 + 约束删除，YUK-413 替
 // YUK-409 的 stub）。
-function QuestionsRoute() {
-  const router = useRouter();
-  return <QuestionsPage navigate={(to) => router.history.push(to)} />;
-}
+const QuestionsRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/practice/ui/QuestionsPage').then((module) => module.default),
+);
 
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -435,11 +448,19 @@ const questionsRoute = createRoute({
   component: QuestionsRoute,
 });
 
-function QuestionDetailRouteC() {
-  const router = useRouter();
-  const { id } = questionDetailRoute.useParams();
-  return <QuestionDetailPage id={id} navigate={(to) => router.history.push(to)} />;
-}
+const QuestionDetailRouteC = lazyRouteComponent(async () => {
+  const { default: QuestionDetailPage } = await import(
+    '@/capabilities/practice/ui/QuestionDetailPage'
+  );
+
+  function QuestionDetailRouteComponent() {
+    const router = useRouter();
+    const { id } = questionDetailRoute.useParams();
+    return <QuestionDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+  }
+
+  return { default: QuestionDetailRouteComponent };
+});
 
 const questionDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -448,10 +469,9 @@ const questionDetailRoute = createRoute({
 });
 
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
-function KnowledgeIndexRoute() {
-  const router = useRouter();
-  return <KnowledgePage navigate={(to) => router.history.push(to)} />;
-}
+const KnowledgeIndexRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/knowledge/ui/KnowledgePage').then((module) => module.default),
+);
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -459,11 +479,19 @@ const knowledgeRoute = createRoute({
   component: KnowledgeIndexRoute,
 });
 
-function KnowledgeDetailRouteC() {
-  const router = useRouter();
-  const { id } = knowledgeDetailRoute.useParams();
-  return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
-}
+const KnowledgeDetailRouteC = lazyRouteComponent(async () => {
+  const { default: KnowledgeDetailPage } = await import(
+    '@/capabilities/knowledge/ui/KnowledgeDetailPage'
+  );
+
+  function KnowledgeDetailRouteComponent() {
+    const router = useRouter();
+    const { id } = knowledgeDetailRoute.useParams();
+    return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+  }
+
+  return { default: KnowledgeDetailRouteComponent };
+});
 
 const knowledgeDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -472,11 +500,17 @@ const knowledgeDetailRoute = createRoute({
 });
 
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
-function NoteReaderRouteC() {
-  const router = useRouter();
-  const { id } = noteReaderRoute.useParams();
-  return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
-}
+const NoteReaderRouteC = lazyRouteComponent(async () => {
+  const { default: NoteReaderPage } = await import('@/capabilities/notes/ui/NoteReaderPage');
+
+  function NoteReaderRouteComponent() {
+    const router = useRouter();
+    const { id } = noteReaderRoute.useParams();
+    return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
+  }
+
+  return { default: NoteReaderRouteComponent };
+});
 
 const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -488,10 +522,9 @@ const noteReaderRoute = createRoute({
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
-function CoachRoute() {
-  const router = useRouter();
-  return <CoachHub navigate={(to) => router.history.push(to)} />;
-}
+const CoachRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/shell/ui/CoachHub').then((module) => module.default),
+);
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -499,10 +532,9 @@ const coachRoute = createRoute({
   component: CoachRoute,
 });
 
-function AdminRunsRoute() {
-  const router = useRouter();
-  return <AdminRunsSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminRunsRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/observability').then((module) => module.AdminRunsSurface),
+);
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -510,10 +542,9 @@ const adminRunsRoute = createRoute({
   component: AdminRunsRoute,
 });
 
-function AdminCostRoute() {
-  const router = useRouter();
-  return <AdminCostSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminCostRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/observability').then((module) => module.AdminCostSurface),
+);
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -521,10 +552,11 @@ const adminCostRoute = createRoute({
   component: AdminCostRoute,
 });
 
-function AdminFailuresRoute() {
-  const router = useRouter();
-  return <AdminFailuresSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminFailuresRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/observability').then(
+    (module) => module.AdminFailuresSurface,
+  ),
+);
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -532,10 +564,9 @@ const adminFailuresRoute = createRoute({
   component: AdminFailuresRoute,
 });
 
-function AdminSubjectsRoute() {
-  const router = useRouter();
-  return <AdminSubjectsSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminSubjectsRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/subjects').then((module) => module.AdminSubjectsSurface),
+);
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -545,11 +576,19 @@ const adminSubjectsRoute = createRoute({
 
 // YUK-601 — trait 编辑面 detail（TanStack $id 语法；capability 组件零路由库
 // import，param 由本 wrapper 读出后以 subjectId prop 注入——design doc v1.1 §0.3）。
-function AdminSubjectTraitsRoute() {
-  const router = useRouter();
-  const { id } = adminSubjectTraitsRoute.useParams();
-  return <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />;
-}
+const AdminSubjectTraitsRoute = lazyRouteComponent(async () => {
+  const { AdminSubjectTraitsSurface } = await import(
+    '@/capabilities/observability/ui/subject-traits'
+  );
+
+  function AdminSubjectTraitsRouteComponent() {
+    const router = useRouter();
+    const { id } = adminSubjectTraitsRoute.useParams();
+    return <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />;
+  }
+
+  return { default: AdminSubjectTraitsRouteComponent };
+});
 
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -558,10 +597,11 @@ const adminSubjectTraitsRoute = createRoute({
 });
 
 // YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
-function AdminCoverageLatticeRoute() {
-  const router = useRouter();
-  return <AdminCoverageLatticeSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminCoverageLatticeRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/coverage-lattice').then(
+    (module) => module.AdminCoverageLatticeSurface,
+  ),
+);
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -569,10 +609,11 @@ const adminCoverageLatticeRoute = createRoute({
   component: AdminCoverageLatticeRoute,
 });
 
-function AdminConjectureScoresRoute() {
-  const router = useRouter();
-  return <AdminConjectureScoresSurface navigate={(to) => router.history.push(to)} />;
-}
+const AdminConjectureScoresRoute = lazyNavigableRoute(() =>
+  import('@/capabilities/observability/ui/conjecture-scores').then(
+    (module) => module.AdminConjectureScoresSurface,
+  ),
+);
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-conjecture-scores'),
@@ -608,7 +649,12 @@ const routeTree = rootRoute.addChildren([
   adminConjectureScoresRoute,
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  defaultPendingComponent: RoutePending,
+  defaultPendingMs: 300,
+  defaultPendingMinMs: 300,
+});
 
 declare module '@tanstack/react-router' {
   interface Register {
