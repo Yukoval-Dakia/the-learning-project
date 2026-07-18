@@ -4,11 +4,12 @@
 // 后端语义：草稿 PUT answer 自动保存；「交卷」= 未提交 slot 逐个 POST submit
 //（judge-now-show-later，visible_to_user=false 缓冲）+ session end → 可见性解锁。
 
+import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PfToast } from './PracticeFacePage';
 import {
@@ -16,6 +17,7 @@ import {
   type PaperSlot,
   endPaperSession,
   getPaperDetail,
+  pausePaperSession,
   savePaperAnswer,
   startPaperSession,
   submitPaperSlot,
@@ -49,6 +51,7 @@ export function PfPaper({
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const sessionRef = useRef<string | null>(null);
+  const sessionOpenRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 已有 session 复用；没有则开卷即建（answer/submit 都需要 session_id）。
@@ -56,11 +59,13 @@ export function PfPaper({
     if (!detail) return;
     if (detail.session) {
       sessionRef.current = detail.session.id;
+      sessionOpenRef.current = ['started', 'paused'].includes(detail.session.status);
       return;
     }
     void startPaperSession(artifactId)
       .then((r) => {
         sessionRef.current = r.session_id;
+        sessionOpenRef.current = true;
       })
       .catch((e) => addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert'));
   }, [detail, artifactId, addToast]);
@@ -78,6 +83,25 @@ export function PfPaper({
       return next;
     });
   }, [slots]);
+
+  const pauseCurrentSession = useCallback((keepalive = false) => {
+    const sid = sessionRef.current;
+    if (!sid || !sessionOpenRef.current) return Promise.resolve();
+    // Claim the transition before starting the request so duplicate pagehide
+    // events and the explicit exit button cannot emit parallel PATCHes.
+    sessionOpenRef.current = false;
+    return pausePaperSession(sid, { keepalive }).catch((error) => {
+      sessionOpenRef.current = true;
+      throw error;
+    });
+  }, []);
+
+  usePagehideTransition(() => pauseCurrentSession(true));
+
+  const exitPaper = () => {
+    void pauseCurrentSession().catch(() => {});
+    onExit();
+  };
 
   if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
   if (detailQ.isError || !detail || slots.length === 0)
@@ -136,6 +160,7 @@ export function PfPaper({
         });
       }
       await endPaperSession(sid);
+      sessionOpenRef.current = false;
       await qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       onSubmitted();
     } catch (e) {
@@ -148,7 +173,7 @@ export function PfPaper({
   return (
     <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`}>
       <div className="pfp-top">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onExit}>
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={exitPaper}>
           退出 · 进度保留
         </Btn>
         <span className="pfp-title">{detail.title}</span>

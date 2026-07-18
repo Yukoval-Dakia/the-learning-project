@@ -10,6 +10,10 @@ import {
   clearInternalToken,
   getInternalToken,
 } from '@/ui/lib/api';
+import {
+  type SessionTransitionRequestOptions,
+  buildSessionTransitionRequest,
+} from '@/ui/lib/session-transition';
 
 // ── 流 ──────────────────────────────────────────────────────────
 // 'frontier'（YUK-551）= B3 learnable_frontier 尾（前置全掌握、自身未掌握的可学前沿 KC）。
@@ -573,10 +577,19 @@ export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>
   });
 
 export const endPaperSession = (sessionId: string) =>
-  apiJson(`/api/review-sessions/${encodeURIComponent(sessionId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status: 'completed' }),
-  });
+  apiJson(
+    `/api/review-sessions/${encodeURIComponent(sessionId)}`,
+    buildSessionTransitionRequest('completed'),
+  );
+
+export const pausePaperSession = (
+  sessionId: string,
+  options: SessionTransitionRequestOptions = {},
+) =>
+  apiJson(
+    `/api/review-sessions/${encodeURIComponent(sessionId)}`,
+    buildSessionTransitionRequest('paused', options),
+  );
 
 // ── 草稿审核池（owner manual gate, YUK-402/403 inc-4） ─────────────
 // 后端 server/draft-review.ts 的投影：list 是截断预览 + verify 状态；detail 是
