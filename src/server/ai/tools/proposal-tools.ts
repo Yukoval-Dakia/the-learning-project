@@ -49,7 +49,7 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 // + question_draft proposal in one tx).
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
-import { getFailureAttemptById, getJudgeForAttempt, writeEvent } from '@/server/events/queries';
+import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
