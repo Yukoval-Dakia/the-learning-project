@@ -27,6 +27,8 @@ import type { MisconceptionRow } from './knowledge-api';
 
 export interface MisconceptionListProps {
   items: MisconceptionRow[];
+  /** 当前详情页 KC；「针对性练习」必须把它带进 practice scope，不能退回通用日流。 */
+  knowledgeId: string;
   /** 读模型加载中 → loading 态（别折叠成业务空态，CodeRabbit）。 */
   isLoading?: boolean;
   /** 读模型失败 → 错误 + 重试（别误显示成空态）。 */
@@ -77,6 +79,10 @@ const SOURCE_LABEL: Record<MisconceptionRow['source'], string> = {
   soft: 'AI 初步判断',
 };
 
+export function misconceptionPracticeHref(knowledgeId: string): string {
+  return `/practice?kc=${encodeURIComponent(knowledgeId)}`;
+}
+
 /**
  * 纯渲染体（trace / verdict 由父注入）。抽出来让 renderToString 单测能钉 trace 开态的
  * evidence chips + verdict 的「已纠偏」卡，并让 element-tree 浅遍历直接命中三个 onClick。
@@ -86,6 +92,7 @@ export function MisconceptionCardView({
   trace,
   verdict,
   error,
+  knowledgeId,
   navigate,
   onToggleTrace,
   onVerdictWrong,
@@ -95,6 +102,7 @@ export function MisconceptionCardView({
   verdict: 'wrong' | null;
   /** B (PR-5): 乐观 verdict 回滚后的内联诚实错误（null = 无错误）。 */
   error?: string | null;
+  knowledgeId: string;
   navigate: (to: string) => void;
   onToggleTrace: () => void;
   onVerdictWrong: () => void;
@@ -158,7 +166,12 @@ export function MisconceptionCardView({
         </div>
       )}
       <div className="kd-misc-acts">
-        <Btn size="sm" variant="secondary" icon="review" onClick={() => navigate('/practice')}>
+        <Btn
+          size="sm"
+          variant="secondary"
+          icon="review"
+          onClick={() => navigate(misconceptionPracticeHref(knowledgeId))}
+        >
           针对性练习
         </Btn>
         <button type="button" className="kd-misc-link" onClick={onToggleTrace}>
@@ -196,7 +209,9 @@ export function MisconceptionCardView({
       {error && (
         // B (PR-5 review) — 乐观 verdict 回滚后的内联诚实错误（mirror FrontierRail 的 error
         // body-state .quiet-empty 风格；不引第三方 toast）。⑥：失败绝不滞留假「已纠偏」。
-        <p className="kd-misc-error quiet-empty">{error}</p>
+        <p className="kd-misc-error quiet-empty" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );
@@ -209,10 +224,12 @@ export function MisconceptionCardView({
  */
 export function MisconceptionCard({
   mc,
+  knowledgeId,
   navigate,
   onVeto,
 }: {
   mc: MisconceptionRow;
+  knowledgeId: string;
   navigate: (to: string) => void;
   onVeto: MisconceptionListProps['onVeto'];
 }) {
@@ -225,6 +242,7 @@ export function MisconceptionCard({
       trace={trace}
       verdict={verdict}
       error={error}
+      knowledgeId={knowledgeId}
       navigate={navigate}
       onToggleTrace={() => setTrace((v) => !v)}
       onVerdictWrong={() => {
@@ -239,6 +257,7 @@ export function MisconceptionList({
   isLoading = false,
   isError = false,
   onRetry,
+  knowledgeId,
   navigate,
   onVeto,
 }: MisconceptionListProps) {
@@ -270,7 +289,13 @@ export function MisconceptionList({
   return (
     <>
       {items.map((mc) => (
-        <MisconceptionCard key={mc.id} mc={mc} navigate={navigate} onVeto={onVeto} />
+        <MisconceptionCard
+          key={mc.id}
+          mc={mc}
+          knowledgeId={knowledgeId}
+          navigate={navigate}
+          onVeto={onVeto}
+        />
       ))}
     </>
   );
