@@ -44,12 +44,49 @@ const MAX_DECOMPRESSED_PART_BYTES = 50_000_000;
 // parts are tiny in normal documents; these bounds prevent the security preflight
 // itself becoming a decompression/count DoS.
 const MAX_RELATIONSHIP_PART_BYTES = 1_000_000;
+const MAX_RELATIONSHIP_TOTAL_BYTES = 4_000_000;
 const MAX_RELATIONSHIP_PARTS = 256;
 const RELATIONSHIP_PART_RE = /(?:^|\/)_rels\/[^/]*\.rels$/i;
-const EXTERNAL_TARGET_MODE_RE = /\bTargetMode\s*=\s*(['"])External\1/i;
 
 function decodeXml(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
   return new TextDecoder('utf-8').decode(bytes);
+}
+
+function decodeXmlEntities(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (entity, token: string) => {
+    const lower = token.toLowerCase();
+    if (lower.startsWith('#x')) return String.fromCodePoint(Number.parseInt(lower.slice(2), 16));
+    if (lower.startsWith('#')) return String.fromCodePoint(Number.parseInt(lower.slice(1), 10));
+    return { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' }[lower] ?? entity;
+  });
+}
+
+function hasDangerousExternalRelationship(bytes: Uint8Array): boolean {
+  const xml = decodeXml(bytes);
+  // Custom entities can make raw-text validation diverge from a converter's XML
+  // parser. OOXML relationship parts do not require DTDs, so reject them outright.
+  if (/<!DOCTYPE\b/i.test(xml)) return true;
+
+  const relationshipTag = /<(?:[\w.-]+:)?Relationship\b([^>]*)\/?\s*>/gi;
+  for (const match of xml.matchAll(relationshipTag)) {
+    const attributes = new Map<string, string>();
+    const attribute = /([\w:.-]+)\s*=\s*(['"])([\s\S]*?)\2/g;
+    for (const attr of match[1].matchAll(attribute)) {
+      attributes.set(attr[1].toLowerCase(), decodeXmlEntities(attr[3]));
+    }
+    if (attributes.get('targetmode')?.toLowerCase() !== 'external') continue;
+    // External hyperlinks are inert clickable metadata; converters do not fetch
+    // them while rendering. Unknown/resource-loading external types stay blocked.
+    const type = attributes.get('type')?.toLowerCase() ?? '';
+    if (!type.endsWith('/hyperlink')) return true;
+  }
+  return false;
 }
 
 /**
@@ -62,6 +99,8 @@ function decodeXml(bytes: Uint8Array): string {
 export function classifyDocx(docxBytes: Uint8Array): DocxLine {
   const docXmlParts = new Set<string>(DOC_XML_PARTS);
   let relationshipPartCount = 0;
+  let relationshipTotalBytes = 0;
+  const relationshipPartNames = new Set<string>();
   let entries: Record<string, Uint8Array>;
   try {
     // Only inflate document body XML + relationship parts. The filter runs before
@@ -78,12 +117,21 @@ export function classifyDocx(docxBytes: Uint8Array): DocxLine {
           );
         }
         if (!RELATIONSHIP_PART_RE.test(file.name)) return false;
+        const normalizedName = file.name.toLowerCase();
+        if (relationshipPartNames.has(normalizedName)) {
+          throw new ApiError('validation_error', '无法解析 DOCX（存在重复关系文件）', 400);
+        }
+        relationshipPartNames.add(normalizedName);
         relationshipPartCount += 1;
         if (relationshipPartCount > MAX_RELATIONSHIP_PARTS) {
           throw new ApiError('validation_error', '无法解析 DOCX（关系文件数量异常）', 400);
         }
         if (file.originalSize > MAX_RELATIONSHIP_PART_BYTES) {
           throw new ApiError('validation_error', '无法解析 DOCX（关系文件解压后过大）', 400);
+        }
+        relationshipTotalBytes += file.originalSize;
+        if (relationshipTotalBytes > MAX_RELATIONSHIP_TOTAL_BYTES) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件解压总量过大）', 400);
         }
         return true;
       },
@@ -108,7 +156,7 @@ export function classifyDocx(docxBytes: Uint8Array): DocxLine {
 
   for (const [part, bytes] of Object.entries(entries)) {
     if (!RELATIONSHIP_PART_RE.test(part)) continue;
-    if (EXTERNAL_TARGET_MODE_RE.test(decodeXml(bytes))) {
+    if (hasDangerousExternalRelationship(bytes)) {
       throw new ApiError(
         'validation_error',
         `DOCX 包含外部资源关系（${part}）；请移除链接图片、模板或对象后重试`,
