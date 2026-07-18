@@ -13,12 +13,11 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
 import './knowledge.css';
 
 import { BandChip } from './BandChip';
 import { FrontierRail } from './FrontierRail';
-import { MeshGraph } from './MeshGraph';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 import {
   type KnowledgeTreeNode,
@@ -28,6 +27,11 @@ import {
   getReviewDueSummary,
   getTree,
 } from './knowledge-api';
+
+const LazyMeshGraph = lazy(async () => {
+  const { MeshGraph } = await import('./MeshGraph');
+  return { default: MeshGraph };
+});
 
 export interface KnowledgePageProps {
   navigate: (to: string) => void;
@@ -231,7 +235,15 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
           })}
         </div>
       ) : (
-        <MeshGraph nodes={nodes} edges={edges} onPick={setPicked} activeId={picked?.id} />
+        <Suspense
+          fallback={
+            <output className="quiet-empty" aria-live="polite" aria-busy="true">
+              正在打开关系图…
+            </output>
+          }
+        >
+          <LazyMeshGraph nodes={nodes} edges={edges} onPick={setPicked} activeId={picked?.id} />
+        </Suspense>
       )}
 
       <NodeDrawer
