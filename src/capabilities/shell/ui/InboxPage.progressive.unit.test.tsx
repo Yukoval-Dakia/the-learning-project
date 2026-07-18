@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProposalInboxRow, ProposalPageWire } from './inbox-api';
@@ -45,6 +45,34 @@ function proposal(id: string, reason: string): ProposalInboxRow {
     source_action: 'experimental:proposal',
     source_subject_kind: 'learning_item',
     signals: null,
+  };
+}
+
+function edgeProposal(
+  id: string,
+  reason: string,
+  operation?: 'create' | 'archive',
+  includeArchiveTarget = true,
+): ProposalInboxRow {
+  return {
+    ...proposal(id, reason),
+    kind: 'knowledge_edge',
+    target: { subject_kind: 'knowledge_edge', subject_id: `${id}_edge` },
+    payload: {
+      kind: 'knowledge_edge',
+      reason_md: reason,
+      evidence_refs: [],
+      proposed_change: {
+        ...(operation ? { edge_op: operation } : {}),
+        ...(operation === 'archive' && includeArchiveTarget
+          ? { archive_edge_id: `${id}_edge` }
+          : {}),
+        from_knowledge_id: 'kc_from',
+        to_knowledge_id: 'kc_to',
+        relation_type: 'prerequisite',
+        weight: 1,
+      },
+    },
   };
 }
 
@@ -192,5 +220,65 @@ describe('InboxPage progressive decision loading', () => {
     expect(mocks.listAutoApplied).toHaveBeenCalledTimes(2);
     expect(mocks.listDecisionProposalPage).toHaveBeenCalledTimes(1);
     expect(mocks.listObservationProposalPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders archive edge proposals as destructive accept/dismiss-only decisions', async () => {
+    mocks.listDecisionProposalPage.mockResolvedValue(
+      page([edgeProposal('archive_1', '旧关系已被更准确的边取代', 'archive')], null),
+    );
+    const user = userEvent.setup();
+
+    renderInbox();
+
+    const reason = await screen.findByText('旧关系已被更准确的边取代');
+    const card = reason.closest('.proposal');
+    expect(card).not.toBeNull();
+    const archiveCard = within(card as HTMLElement);
+    expect(archiveCard.getByText('归档知识关系')).toBeTruthy();
+    expect(archiveCard.getByText('将归档')).toBeTruthy();
+    expect(archiveCard.queryByRole('button', { name: '改方向' })).toBeNull();
+    expect(archiveCard.queryByRole('button', { name: '改关系' })).toBeNull();
+    expect(archiveCard.getByRole('button', { name: '保留关系' })).toBeTruthy();
+
+    await user.click(archiveCard.getByRole('button', { name: '确认归档' }));
+
+    expect(mocks.decideProposal).toHaveBeenCalledWith('archive_1', 'accept', {});
+    expect(await archiveCard.findByText('已归档')).toBeTruthy();
+  });
+
+  it('keeps legacy edge proposals on explicit create semantics', async () => {
+    mocks.listDecisionProposalPage.mockResolvedValue(
+      page([edgeProposal('create_1', '建议补充前置关系')], null),
+    );
+
+    renderInbox();
+
+    const reason = await screen.findByText('建议补充前置关系');
+    const card = reason.closest('.proposal');
+    expect(card).not.toBeNull();
+    const createCard = within(card as HTMLElement);
+    expect(createCard.getByText('新增知识关系')).toBeTruthy();
+    expect(createCard.getByText('将新增')).toBeTruthy();
+    expect(createCard.getByRole('button', { name: '建立关系' })).toBeTruthy();
+    expect(createCard.getByRole('button', { name: '改方向' })).toBeTruthy();
+    expect(createCard.getByRole('button', { name: '改关系' })).toBeTruthy();
+  });
+
+  it('fails closed when an archive proposal has no archive target', async () => {
+    mocks.listDecisionProposalPage.mockResolvedValue(
+      page([edgeProposal('archive_invalid', '缺少归档目标', 'archive', false)], null),
+    );
+
+    renderInbox();
+
+    const reason = await screen.findByText('缺少归档目标');
+    const card = reason.closest('.proposal');
+    expect(card).not.toBeNull();
+    const archiveCard = within(card as HTMLElement);
+    expect(archiveCard.getByText('归档目标缺失')).toBeTruthy();
+    expect(archiveCard.getByRole<HTMLButtonElement>('button', { name: '确认归档' }).disabled).toBe(
+      true,
+    );
+    expect(archiveCard.getByRole('button', { name: '保留关系' })).toBeTruthy();
   });
 });

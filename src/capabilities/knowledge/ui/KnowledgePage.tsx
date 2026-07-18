@@ -147,7 +147,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
             <LoomIcon name="link" size={18} />
           </span>
           <div style={{ flex: 1, minWidth: 180 }}>
-            <div style={{ fontWeight: 500 }}>AI 提议了 {edgeProposals.length} 条新关系</div>
+            <div style={{ fontWeight: 500 }}>AI 提议了 {edgeProposals.length} 项关系变更</div>
             <div className="meta">来自夜间整理 · 可在收件箱统一确认或忽略</div>
           </div>
           <Btn
