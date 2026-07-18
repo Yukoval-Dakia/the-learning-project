@@ -310,6 +310,13 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     const [row] = await testDb().select().from(question).where(eq(question.id, probeId)).limit(1);
     expect(row.draft_status).toBe('draft');
     expect(await fsrsRowCount()).toBe(0);
+
+    // The failed paid claim is released immediately; a corrected retry does not
+    // wait for the five-minute stale-claim TTL.
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+    const retry = await answer(probeId, 'corrected answer');
+    expect(retry.status).toBe(200);
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
   });
 
   it('judge partial → 422 fail-closed (ambiguous outcome does not discriminate)', async () => {

@@ -66,6 +66,8 @@ export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
 /** Persisted claim written before a paid probe judge invocation (YUK-691). */
 export const PROBE_JUDGE_STARTED_ACTION = 'experimental:probe_judge_started' as const;
+/** Compensating marker that releases a failed paid-judge claim immediately. */
+export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' as const;
 
 /**
  * A failed/ambiguous judge may be retried, but not by a concurrent request burst.
@@ -216,6 +218,21 @@ export interface AnswerProbeResult {
   idempotent?: boolean;
 }
 
+function parseProbeResultEvent(
+  existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
+): AnswerProbeResult | null {
+  const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
+  const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
+  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
+  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  return {
+    status: recordedResolution,
+    outcome: recordedOutcome,
+    probe_result_event_id: existing.id,
+    idempotent: true,
+  };
+}
+
 /**
  * Atomically claim the paid judge slot for one probe.
  *
@@ -245,19 +262,8 @@ export async function claimProbeJudging(
       )
       .limit(1);
     if (completed) {
-      const resolution = (completed.payload as { resolution?: unknown }).resolution;
-      const outcome = (completed.payload as { outcome?: unknown }).outcome;
-      if (
-        (resolution === 'confirmed' || resolution === 'retired') &&
-        (outcome === 0 || outcome === 1)
-      ) {
-        return {
-          status: resolution,
-          outcome,
-          probe_result_event_id: completed.id,
-          idempotent: true,
-        };
-      }
+      const parsed = parseProbeResultEvent(completed);
+      if (parsed) return parsed;
     }
 
     const [latestClaim] = await tx
@@ -272,7 +278,24 @@ export async function claimProbeJudging(
       )
       .orderBy(desc(event.created_at))
       .limit(1);
-    const claimAgeMs = latestClaim ? now.getTime() - latestClaim.created_at.getTime() : null;
+    const [latestRelease] = await tx
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_JUDGE_RELEASED_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+        ),
+      )
+      .orderBy(desc(event.created_at))
+      .limit(1);
+    const claimIsReleased =
+      latestClaim !== undefined &&
+      latestRelease !== undefined &&
+      latestRelease.created_at.getTime() >= latestClaim.created_at.getTime();
+    const claimAgeMs =
+      latestClaim && !claimIsReleased ? now.getTime() - latestClaim.created_at.getTime() : null;
     if (claimAgeMs !== null && claimAgeMs < PROBE_JUDGE_CLAIM_TTL_MS) {
       const retryAfterSeconds = Math.max(
         1,
@@ -299,6 +322,27 @@ export async function claimProbeJudging(
       created_at: now,
     });
     return null;
+  });
+}
+
+/** Release a failed judge claim without deleting append-only audit history. */
+export async function releaseProbeJudging(
+  db: Db,
+  probeQuestionId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_JUDGE_RELEASED_ACTION,
+      subject_kind: 'question',
+      subject_id: probeQuestionId,
+      payload: { released_at: now.toISOString() },
+      created_at: now,
+    });
   });
 }
 
@@ -370,31 +414,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       // written with a valid resolution; a missing/invalid one means a corrupt event
       // row (e.g. a manual DB edit), which we surface loudly rather than paper over by
       // blending in the caller's value.
-      const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
-      if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') {
+      const parsed = parseProbeResultEvent(existing);
+      if (!parsed) {
         throw new ApiError(
           'probe_result_corrupt',
-          `probe ${probeQuestionId} has a probe_result event with an invalid resolution`,
+          `probe ${probeQuestionId} has a probe_result event with an invalid resolution or outcome`,
           500,
         );
       }
-      // Faithful idempotent report: return the RECORDED outcome (not the caller's
-      // current value). A re-answer with a different outcome must never rewrite what
-      // the record says happened. Validate it lands on 0|1; a corrupt row surfaces 500.
-      const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-      if (recordedOutcome !== 0 && recordedOutcome !== 1) {
-        throw new ApiError(
-          'probe_result_corrupt',
-          `probe ${probeQuestionId} has a probe_result event with an invalid outcome`,
-          500,
-        );
-      }
-      return {
-        status: recordedResolution,
-        outcome: recordedOutcome,
-        probe_result_event_id: existing.id,
-        idempotent: true,
-      };
+      return parsed;
     }
 
     const probeResultEventId = newId();
@@ -458,14 +486,5 @@ export async function peekExistingProbeResult(
     )
     .limit(1);
   if (!existing) return null;
-  const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
-  const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
-  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
-  return {
-    status: recordedResolution,
-    outcome: recordedOutcome,
-    probe_result_event_id: existing.id,
-    idempotent: true,
-  };
+  return parseProbeResultEvent(existing);
 }

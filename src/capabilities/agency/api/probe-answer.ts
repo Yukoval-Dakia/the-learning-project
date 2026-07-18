@@ -59,6 +59,7 @@ import {
   answerProbe,
   claimProbeJudging,
   peekExistingProbeResult,
+  releaseProbeJudging,
 } from '../server/conjecture/probe-lifecycle';
 import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from './contracts';
 
@@ -200,7 +201,6 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // YUK-691 — close both amplification dimensions immediately before the paid
     // call: the process-wide AI budget bounds bursts across probes, while the
     // persisted per-probe claim closes concurrent read-then-judge races.
-    checkRateLimit();
     const claimedResult = await claimProbeJudging(db, probeQuestionId);
     if (claimedResult) {
       return Response.json({
@@ -212,47 +212,59 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         idempotent: true,
       });
     }
-    const invoked = await createDefaultJudgeInvoker().invoke({
-      db,
-      question: probe,
-      answer_md: answerMd,
-      student_image_refs: answerImageRefs,
-      subjectProfile,
-    });
-    const judgeResult = invoked.result;
+    try {
+      // Charge the shared budget only after this request owns the paid slot.
+      checkRateLimit();
+      const invoked = await createDefaultJudgeInvoker().invoke({
+        db,
+        question: probe,
+        answer_md: answerMd,
+        student_image_refs: answerImageRefs,
+        subjectProfile,
+      });
+      const judgeResult = invoked.result;
 
-    const mapped = mapOutcome(judgeResult.coarse_outcome);
-    if (mapped === null) {
-      // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
-      // (its slot is not consumed) so the owner can re-answer or resolve via admin.
-      throw new ApiError(
-        'unsupported_judge_route',
-        `judge returned coarse_outcome='${judgeResult.coarse_outcome}' for probe ${probeQuestionId} (fail-closed: no probe_result written; probe stays active)`,
-        422,
-      );
+      const mapped = mapOutcome(judgeResult.coarse_outcome);
+      if (mapped === null) {
+        // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
+        // (its slot is not consumed) so the owner can re-answer or resolve via admin.
+        throw new ApiError(
+          'unsupported_judge_route',
+          `judge returned coarse_outcome='${judgeResult.coarse_outcome}' for probe ${probeQuestionId} (fail-closed: no probe_result written; probe stays active)`,
+          422,
+        );
+      }
+
+      const result = await answerProbe({
+        db,
+        probeQuestionId,
+        outcome: mapped.outcome,
+        resolution: mapped.resolution,
+        answer_md: answerMd,
+        answer_image_refs: answerImageRefs,
+      });
+
+      // The response reports the RECORDED outcome/resolution (from answerProbe),
+      // NOT the current request's mapping — on an idempotent re-answer the recorded
+      // values are faithful while the current judge call was NOT the basis. The
+      // coarse_outcome field is informational about THIS call's judge verdict.
+      return Response.json({
+        status: result.status,
+        resolution: result.status,
+        outcome: result.outcome,
+        probe_result_event_id: result.probe_result_event_id,
+        coarse_outcome: judgeResult.coarse_outcome,
+        idempotent: result.idempotent ?? false,
+      });
+    } catch (err) {
+      await releaseProbeJudging(db, probeQuestionId).catch((releaseErr) => {
+        console.error(
+          `[probe-answer] failed to release judge claim for ${probeQuestionId}`,
+          releaseErr,
+        );
+      });
+      throw err;
     }
-
-    const result = await answerProbe({
-      db,
-      probeQuestionId,
-      outcome: mapped.outcome,
-      resolution: mapped.resolution,
-      answer_md: answerMd,
-      answer_image_refs: answerImageRefs,
-    });
-
-    // The response reports the RECORDED outcome/resolution (from answerProbe),
-    // NOT the current request's mapping — on an idempotent re-answer the recorded
-    // values are faithful while the current judge call was NOT the basis. The
-    // coarse_outcome field is informational about THIS call's judge verdict.
-    return Response.json({
-      status: result.status,
-      resolution: result.status,
-      outcome: result.outcome,
-      probe_result_event_id: result.probe_result_event_id,
-      coarse_outcome: judgeResult.coarse_outcome,
-      idempotent: result.idempotent ?? false,
-    });
   } catch (err) {
     return errorResponse(err);
   }
