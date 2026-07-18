@@ -22,15 +22,18 @@ vi.mock('./practice-api', async (importOriginal) => {
 vi.mock('./PfSolo', () => ({
   PfSolo: ({
     item,
+    sessionId,
     onDone,
     onCommittedBack,
   }: {
     item: StreamItem;
+    sessionId?: string | null;
     onDone: () => void;
     onCommittedBack: () => void;
   }) => (
     <div>
       <span>solo:{item.id}</span>
+      <span>session:{sessionId ?? 'none'}</span>
       <button type="button" onClick={onDone}>
         完成此题
       </button>
@@ -76,18 +79,55 @@ function stream(status: StreamStatus = 'pending'): StreamView {
   };
 }
 
+function scopedStream(status: StreamStatus = 'pending'): StreamView {
+  return {
+    ...stream(status),
+    scope: {
+      kind: 'knowledge',
+      id: 'kc-judgement',
+      label: '判断句',
+      session_id: 'review_scope_1',
+    },
+    opening_line: '这里只显示判断句相关题目。',
+  };
+}
+
+function scopedStreamFor(knowledgeId: string, label: string, sessionId: string): StreamView {
+  const view = scopedStream();
+  return {
+    ...view,
+    scope: { kind: 'knowledge', id: knowledgeId, label, session_id: sessionId },
+    opening_line: `这里只显示${label}相关题目。`,
+  };
+}
+
 function confirmed(status: StreamStatus) {
   return { item: item(status) };
 }
 
-function renderPage() {
+function renderPage(
+  options: {
+    getQuery?: (key: string) => string | null;
+    setQuery?: (key: string, value: string | null) => void;
+    seedQuery?: (queryClient: QueryClient) => void;
+  } = {},
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  options.seedQuery?.(queryClient);
+  const renderWith = (pageOptions: typeof options) => (
     <QueryClientProvider client={queryClient}>
-      <PracticeFacePage getQuery={() => null} setQuery={() => {}} navigate={() => {}} />
-    </QueryClientProvider>,
+      <PracticeFacePage
+        getQuery={pageOptions.getQuery ?? (() => null)}
+        setQuery={pageOptions.setQuery ?? (() => {})}
+        navigate={() => {}}
+      />
+    </QueryClientProvider>
   );
-  return queryClient;
+  const rendered = render(renderWith(options));
+  return {
+    queryClient,
+    rerenderPage: (nextOptions: typeof options) => rendered.rerender(renderWith(nextOptions)),
+  };
 }
 
 beforeEach(() => {
@@ -100,6 +140,67 @@ afterEach(() => {
 });
 
 describe('PracticeFacePage stream mutation failure handling', () => {
+  it('YUK-535: consumes ?kc, isolates its query cache, and offers an honest return to the daily flow', async () => {
+    getStreamMock.mockResolvedValueOnce(scopedStream()).mockResolvedValueOnce(stream());
+    const setQuery = vi.fn();
+    const user = userEvent.setup();
+    renderPage({
+      getQuery: (key) => (key === 'kc' ? 'kc-judgement' : null),
+      setQuery,
+    });
+
+    expect(await screen.findByRole('heading', { name: '针对性练习' })).toBeTruthy();
+    expect(await screen.findByText('知识点专项 · 判断句')).toBeTruthy();
+    expect(getStreamMock).toHaveBeenCalledWith('kc-judgement');
+    expect(screen.queryByRole('tablist', { name: '练习视图' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '返回今日流' }));
+    expect(setQuery).toHaveBeenCalledWith('kc', null);
+    expect(setQuery).toHaveBeenCalledWith('view', null);
+    await waitFor(() => expect(getStreamMock).toHaveBeenCalledWith(undefined));
+    expect(await screen.findByRole('heading', { name: '练习' })).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: '练习视图' })).toBeTruthy();
+  });
+
+  it('YUK-535: threads the server-owned scoped session into solo attempts', async () => {
+    getStreamMock.mockResolvedValueOnce(scopedStream());
+    advanceMock.mockResolvedValueOnce(confirmed('in_progress'));
+    const user = userEvent.setup();
+    renderPage({ getQuery: (key) => (key === 'kc' ? 'kc-judgement' : null) });
+
+    await user.click(await screen.findByRole('button', { name: '开始作答' }));
+    expect(await screen.findByText('session:review_scope_1')).toBeTruthy();
+  });
+
+  it('YUK-535: never renders cached daily items under a scoped heading', async () => {
+    getStreamMock.mockImplementationOnce(() => new Promise(() => {}));
+    renderPage({
+      getQuery: (key) => (key === 'kc' ? 'kc-judgement' : null),
+      seedQuery: (queryClient) => {
+        queryClient.setQueryData(['practice-stream', 'kc-judgement'], stream());
+      },
+    });
+
+    expect(screen.getByRole('heading', { name: '针对性练习' })).toBeTruthy();
+    expect(screen.getByText('知识点专项 · 正在读取范围')).toBeTruthy();
+    expect(screen.queryByText('今天先做这一题。')).toBeNull();
+    expect(screen.queryByRole('button', { name: '开始作答' })).toBeNull();
+  });
+
+  it('YUK-535: follows search-only navigation from one KC scope to another', async () => {
+    getStreamMock
+      .mockResolvedValueOnce(scopedStreamFor('kc-a', '判断句', 'review_a'))
+      .mockResolvedValueOnce(scopedStreamFor('kc-b', '被动句', 'review_b'));
+    const page = renderPage({ getQuery: (key) => (key === 'kc' ? 'kc-a' : null) });
+
+    expect(await screen.findByText('知识点专项 · 判断句')).toBeTruthy();
+    page.rerenderPage({ getQuery: (key) => (key === 'kc' ? 'kc-b' : null) });
+
+    expect(await screen.findByText('知识点专项 · 被动句')).toBeTruthy();
+    expect(getStreamMock).toHaveBeenLastCalledWith('kc-b');
+    expect(screen.queryByText('知识点专项 · 判断句')).toBeNull();
+  });
+
   it('开始失败时不进入作答面，并可显式重试', async () => {
     getStreamMock.mockResolvedValueOnce(stream());
     advanceMock

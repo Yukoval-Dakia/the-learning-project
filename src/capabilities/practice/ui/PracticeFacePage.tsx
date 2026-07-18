@@ -3,10 +3,11 @@
 // 卷架(?view=shelf)/散题作答/卷模式/结果/复盘；机制不暴露——页面只见 AI 的一句话
 // 理由与判定）。路由耦合走 props 注入（壳层规则，web/src/router.tsx）。
 
+import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './practice-face.css';
 
@@ -47,6 +48,8 @@ interface StreamActionFailure {
   retry: () => void;
 }
 
+const SCOPE_MISMATCH_ERROR = new Error('练习范围与请求不一致，请重试。');
+
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
   if (!view) return view;
   const items = view.items.map((item) => (item.id === confirmed.id ? confirmed : item));
@@ -68,13 +71,26 @@ function failureMessage(action: string, error: unknown) {
   return `${action}失败：${error instanceof Error ? error.message : String(error)}`;
 }
 
+function streamForRequestedScope(
+  stream: StreamView | undefined,
+  scopeKnowledgeId: string | null,
+): StreamView | undefined {
+  if (!stream) return undefined;
+  if (scopeKnowledgeId) return stream.scope?.id === scopeKnowledgeId ? stream : undefined;
+  return stream.scope ? undefined : stream;
+}
+
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
 export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
   const qc = useQueryClient();
+  const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
+    const value = getQuery('kc')?.trim();
+    return value || null;
+  });
   // getQuery 非 reactive（history.replace 不触发重渲染）——view 走本地 state，
   // URL 只是持久化副本（mount 时读一次，刷新/直链 ?view=shelf 落对）。
   const [view, setView] = useState<'stream' | 'shelf'>(() =>
-    getQuery('view') === 'shelf' ? 'shelf' : 'stream',
+    !scopeKnowledgeId && getQuery('view') === 'shelf' ? 'shelf' : 'stream',
   );
   const switchView = useCallback(
     (next: 'stream' | 'shelf') => {
@@ -87,7 +103,34 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
-  const streamQ = useQuery({ queryKey: ['practice-stream'], queryFn: getStream });
+  // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
+  // location.searchStr 更新；这里同步本地交互状态，确保 kc=a → kc=b 不会继续使用旧 session。
+  useLayoutEffect(() => {
+    const value = getQuery('kc')?.trim();
+    const nextScope = value || null;
+    let nextView: 'stream' | 'shelf' = 'stream';
+    if (!nextScope && getQuery('view') === 'shelf') nextView = 'shelf';
+    setScopeKnowledgeId(nextScope);
+    setView(nextView);
+    setMode({ kind: 'list' });
+    setActionFailure(null);
+  }, [getQuery]);
+
+  const streamQueryKey = useMemo(
+    () => ['practice-stream', scopeKnowledgeId] as const,
+    [scopeKnowledgeId],
+  );
+  const streamQ = useQuery({
+    queryKey: streamQueryKey,
+    queryFn: () => getStream(scopeKnowledgeId ?? undefined),
+  });
+  // 路由范围切换/HMR 期间，Query cache 可能短暂保留上一分区的数据。范围与 payload
+  // 不一致时宁可展示读取态，也不能把「今日流」题目挂在专项标题下（反向亦然）。
+  const visibleStream = streamForRequestedScope(streamQ.data, scopeKnowledgeId);
+  const streamScopeMismatch = streamQ.data !== undefined && visibleStream === undefined;
+  let streamError: Error | null = null;
+  if (streamQ.isError) streamError = streamQ.error as Error;
+  else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -101,10 +144,10 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
 
   // 只在 GET 真成功后替换 cache；失败时保留最后一份由 PATCH 回执确认过的状态。
   const fetchFreshStream = useCallback(async () => {
-    const fresh = await getStream();
-    qc.setQueryData<StreamView>(['practice-stream'], fresh);
+    const fresh = await getStream(scopeKnowledgeId ?? undefined);
+    qc.setQueryData<StreamView>(streamQueryKey, fresh);
     return fresh;
-  }, [qc]);
+  }, [qc, scopeKnowledgeId, streamQueryKey]);
 
   const refreshStream = useCallback(
     async function refresh(): Promise<StreamView | null> {
@@ -137,14 +180,21 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
 
       // PATCH 回执是服务端确认态。先写 cache，再做导航或 refresh；后续 GET 即使失败，
       // 也不能把 UI 退回 mutation 前的状态。
-      qc.setQueryData<StreamView>(['practice-stream'], (view) =>
-        replaceConfirmedItem(view, confirmed),
-      );
+      qc.setQueryData<StreamView>(streamQueryKey, (view) => replaceConfirmedItem(view, confirmed));
       setActionFailure(null);
       await onConfirmed(confirmed);
     },
-    [qc, recordFailure],
+    [qc, recordFailure, streamQueryKey],
   );
+
+  const clearScope = useCallback(() => {
+    setScopeKnowledgeId(null);
+    setQuery('kc', null);
+    setQuery('view', null);
+    setView('stream');
+    setMode({ kind: 'list' });
+    setActionFailure(null);
+  }, [setQuery]);
 
   const openItem = useCallback(
     (item: StreamItem) => {
@@ -224,7 +274,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     [commitStreamItem, refreshStream],
   );
 
-  const items = useMemo(() => streamQ.data?.items ?? [], [streamQ.data]);
+  const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
 
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
@@ -234,6 +284,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
         key={mode.item.id}
         item={mode.item}
+        sessionId={visibleStream?.scope?.session_id ?? null}
         pos={pos || mode.item.position}
         total={items.length}
         onDone={() => void completeSolo(mode.item)}
@@ -273,36 +324,46 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       />
     );
   } else {
+    let eyebrowText = '今日练习 · 按当前学习状态编排';
+    if (scopeKnowledgeId) {
+      eyebrowText = `知识点专项 · ${visibleStream?.scope?.label ?? '正在读取范围'}`;
+    } else if (view === 'shelf') {
+      eyebrowText = '练习卷 · 待做 / 在做 / 已完成';
+    }
     body = (
       <>
         <div className="page-head">
-          <span className="eyebrow">
-            {view === 'shelf' ? '练习卷 · 待做 / 在做 / 已完成' : '今日练习 · 按当前学习状态编排'}
-          </span>
+          <span className="eyebrow">{eyebrowText}</span>
           <div className="pface-head-row">
-            <h1 className="page-title">练习</h1>
-            <div className="seg" role="tablist" aria-label="练习视图">
-              <button
-                type="button"
-                className={view === 'stream' ? 'on' : ''}
-                role="tab"
-                aria-selected={view === 'stream'}
-                onClick={() => switchView('stream')}
-              >
-                <LoomIcon name="review" size={14} />
-                今日流
-              </button>
-              <button
-                type="button"
-                className={view === 'shelf' ? 'on' : ''}
-                role="tab"
-                aria-selected={view === 'shelf'}
-                onClick={() => switchView('shelf')}
-              >
-                <LoomIcon name="archive" size={14} />
-                卷架
-              </button>
-            </div>
+            <h1 className="page-title">{scopeKnowledgeId ? '针对性练习' : '练习'}</h1>
+            {scopeKnowledgeId ? (
+              <Btn size="sm" variant="ghost" icon="arrowL" onClick={clearScope}>
+                返回今日流
+              </Btn>
+            ) : (
+              <div className="seg" role="tablist" aria-label="练习视图">
+                <button
+                  type="button"
+                  className={view === 'stream' ? 'on' : ''}
+                  role="tab"
+                  aria-selected={view === 'stream'}
+                  onClick={() => switchView('stream')}
+                >
+                  <LoomIcon name="review" size={14} />
+                  今日流
+                </button>
+                <button
+                  type="button"
+                  className={view === 'shelf' ? 'on' : ''}
+                  role="tab"
+                  aria-selected={view === 'shelf'}
+                  onClick={() => switchView('shelf')}
+                >
+                  <LoomIcon name="archive" size={14} />
+                  卷架
+                </button>
+              </div>
+            )}
           </div>
         </div>
         {view === 'shelf' ? (
@@ -312,9 +373,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           />
         ) : (
           <PfStream
-            stream={streamQ.data ?? null}
-            loading={streamQ.isLoading}
-            error={streamQ.isError ? (streamQ.error as Error) : null}
+            stream={visibleStream ?? null}
+            loading={streamQ.isLoading || (streamScopeMismatch && streamQ.isFetching)}
+            error={streamError}
             openItem={openItem}
             refresh={refreshStream}
             updateItem={commitStreamItem}

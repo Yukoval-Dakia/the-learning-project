@@ -374,18 +374,27 @@ const recordRoute = createRoute({
 // setQuery 是 replace 语义（视图切换不进 history 栈）。
 function PracticeRoute() {
   const router = useRouter();
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+  const getQuery = useCallback(
+    (key: string) => new URLSearchParams(searchStr).get(key),
+    [searchStr],
+  );
+  const setQuery = useCallback(
+    (key: string, value: string | null) => {
+      const sp = new URLSearchParams(window.location.search);
+      if (value === null) sp.delete(key);
+      else sp.set(key, value);
+      router.history.replace(
+        `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+      );
+    },
+    [router],
+  );
   return (
     <PracticeFacePage
       navigate={(to) => router.history.push(to)}
-      getQuery={(key) => new URLSearchParams(window.location.search).get(key)}
-      setQuery={(key, value) => {
-        const sp = new URLSearchParams(window.location.search);
-        if (value === null) sp.delete(key);
-        else sp.set(key, value);
-        router.history.replace(
-          `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
-        );
-      }}
+      getQuery={getQuery}
+      setQuery={setQuery}
     />
   );
 }

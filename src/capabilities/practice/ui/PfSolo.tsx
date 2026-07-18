@@ -100,6 +100,7 @@ export function appealEntryAvailable(opts: {
 
 export function PfSolo({
   item,
+  sessionId,
   pos,
   total,
   onDone,
@@ -108,6 +109,8 @@ export function PfSolo({
   addToast,
 }: {
   item: StreamItem;
+  /** YUK-535 — server-resolved KC-scoped review session; null for the daily stream. */
+  sessionId?: string | null;
   pos: number;
   total: number;
   onDone: () => void;
@@ -190,6 +193,7 @@ export function PfSolo({
     try {
       const res = await submitReview({
         question_id: q.id,
+        session_id: sessionId ?? undefined,
         rating: opts.rating,
         response_md: answerMd,
         referenced_knowledge_ids: q.labels.map((l) => l.id),

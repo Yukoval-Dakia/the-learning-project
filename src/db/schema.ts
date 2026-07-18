@@ -764,11 +764,11 @@ export const learning_session = pgTable('learning_session', {
   // startReviewSession({ artifactId }) binding (RL4: write path same PR → no
   // allowlist entry).
   artifact_id: text('artifact_id'),
-  // YUK-470 — placement-only: the resolved goal-subgraph KC set this probe walks, captured at
-  // start (Placement.startPlacementSession). The placement /next route reads it server-side
-  // instead of trusting a client-supplied knowledgeIds body (pre-go-live hardening). NULL for
-  // non-placement sessions (review/ingestion/conversation/tutor never scope by a KC set here).
-  // Write path = startPlacementSession({ knowledgeIds }) in the same PR (RL4 → no allowlist).
+  // YUK-470/YUK-535 — server-owned KC scope. Placement captures the resolved goal-subgraph set;
+  // KC-scoped review captures the single requested knowledge id. Both consumers read it
+  // server-side instead of trusting repeated client bodies. NULL for unscoped review and every
+  // other session type. Write paths = startPlacementSession({ knowledgeIds }) and
+  // startReviewSession({ scopeKnowledgeIds }).
   // YUK-543 — DELIBERATELY LEFT STALE on a KC merge: applyMerge does NOT rewrite this column. It is
   // session-ephemeral — an in-flight placement probe holding a since-merged KC just returns an empty
   // pool for that id and silently skips it for the session's remaining duration. A declared, accepted
@@ -1450,6 +1450,11 @@ export const practice_stream_item = pgTable(
     id: text('id').primaryKey(),
     // 流按天组织（YYYY-MM-DD；本地日由 API 层裁定后落库）
     date: text('date').notNull(),
+    // YUK-535 — NULL = 既有整档案日流；非 NULL = 独立的按需 review session。
+    // 软引用 learning_session.id（与 artifact_id/event.task_run_id 同项目惯例，不设 FK）：
+    // scoped session 的题项必须与日流物理隔离，避免一个 `?kc=` 请求使日流的 lazy-compose
+    // 误判「今天已编排」，也避免专项完成/跳过状态污染整档案日流。
+    session_id: text('session_id'),
     position: integer('position').notNull(),
     item_kind: text('item_kind').$type<'question' | 'paper'>().notNull(),
     // question.id 或 paper artifact id（软引用，沿用项目惯例）
@@ -1479,8 +1484,15 @@ export const practice_stream_item = pgTable(
   },
   (t) => [
     index('practice_stream_date_idx').on(t.date, t.position),
-    // 同日同 ref 不重复排入（点播/增补的幂等护栏）
-    uniqueIndex('practice_stream_date_ref_unique').on(t.date, t.ref_id),
+    index('practice_stream_session_idx').on(t.session_id, t.position),
+    // 日流同日同 ref 不重复；session 流则在 session 内同 ref 不重复。partial unique 明确
+    // 分开两个 partition，使同一道题可以在日流与专项 session 各有独立进度。
+    uniqueIndex('practice_stream_daily_ref_unique')
+      .on(t.date, t.ref_id)
+      .where(sql`${t.session_id} IS NULL`),
+    uniqueIndex('practice_stream_session_ref_unique')
+      .on(t.session_id, t.ref_id)
+      .where(sql`${t.session_id} IS NOT NULL`),
   ],
 );
 

@@ -456,6 +456,13 @@
       "when": 1783670000000,
       "tag": "0064_yuk599_subject_trait_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1784350000000,
+      "tag": "0065_yuk535_scoped_practice_session",
+      "breakpoints": true
     }
   ]
 }
