@@ -25,9 +25,13 @@ describe('MarkdownRenderer', () => {
     expect(html).not.toContain('<b>');
   });
 
-  it('keeps the global Copilot module graph free of math plugins', () => {
+  it('keeps the global Copilot module graph free of eager Markdown and math plugins', () => {
     const copilotSource = readFileSync(
       join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
+      'utf8',
+    );
+    const deferredSource = readFileSync(
+      join(process.cwd(), 'src/ui/lib/deferred-markdown-renderer.tsx'),
       'utf8',
     );
     const rendererSource = readFileSync(
@@ -35,7 +39,9 @@ describe('MarkdownRenderer', () => {
       'utf8',
     );
 
-    expect(copilotSource).toContain("from '@/ui/lib/markdown-renderer'");
+    expect(copilotSource).not.toContain("from '@/ui/lib/markdown-renderer'");
+    expect(deferredSource).toContain("import('./markdown-renderer')");
+    expect(deferredSource).not.toContain("import { MarkdownRenderer } from './markdown-renderer'");
     expect(copilotSource).not.toContain("from '@/ui/lib/math-markdown'");
     expect(rendererSource).not.toMatch(/from ['"](?:remark-math|rehype-katex|katex)/);
   });
