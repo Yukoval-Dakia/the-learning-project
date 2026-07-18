@@ -153,7 +153,10 @@ describe('classifyDocx', () => {
     });
 
     expect(() => classifyDocx(bytes)).toThrowError(
-      expect.objectContaining({ status: 400, message: expect.stringMatching(/关系文件解压后过大/) }),
+      expect.objectContaining({
+        status: 400,
+        message: expect.stringMatching(/关系文件解压后过大/),
+      }),
     );
   });
 });
