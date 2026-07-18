@@ -107,19 +107,13 @@ export interface ProposalInboxRow {
   signals: Record<string, unknown> | null;
 }
 
-interface ProposalPageWire {
+export interface ProposalPageWire {
   rows: ProposalInboxRow[];
   next_cursor: string | null;
-  /** Present when the decision lane reached its defensive client-side page ceiling. */
-  decision_truncated?: boolean;
-  /** Present on the merged Inbox response when the bounded C-lane preview has more rows. */
-  observation_truncated?: boolean;
-  /** The non-critical C-lane preview failed; actionable decisions are still complete/usable. */
-  observation_unavailable?: boolean;
 }
 
 const DECISION_PAGE_LIMIT = 500;
-const DECISION_MAX_PAGES = 20;
+export const DECISION_MAX_PAGES = 20;
 const OBSERVATION_PAGE_LIMIT = 200;
 
 function listProposalPage(
@@ -132,57 +126,62 @@ function listProposalPage(
   return apiJson<ProposalPageWire>(`/api/proposals?${query.toString()}`);
 }
 
-async function listAllDecisionProposals(): Promise<{
-  rows: ProposalInboxRow[];
-  truncated: boolean;
-}> {
-  const rows: ProposalInboxRow[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  let pageCount = 0;
+/** Fetch exactly one actionable-decision page so the first page can render before the backlog drains. */
+export function listDecisionProposalPage(cursor?: string | null): Promise<ProposalPageWire> {
+  return listProposalPage('decision', DECISION_PAGE_LIMIT, cursor ?? undefined);
+}
 
-  while (true) {
-    pageCount += 1;
-    const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
-    rows.push(...page.rows);
-    if (!page.next_cursor) return { rows, truncated: false };
-    if (seenCursors.has(page.next_cursor)) {
-      throw new Error('Duplicate decision cursor detected; unable to load all pending decisions.');
+/** The C-strength preview is deliberately bounded and independent from actionable decisions. */
+export function listObservationProposalPreview(): Promise<ProposalPageWire> {
+  return listProposalPage('observation', OBSERVATION_PAGE_LIMIT);
+}
+
+/** Stable first-seen merge: later pages may overlap after concurrent decisions, but cards never duplicate. */
+export function mergeProposalPages(pages: readonly ProposalPageWire[]): ProposalInboxRow[] {
+  const rows = new Map<string, ProposalInboxRow>();
+  for (const page of pages) {
+    for (const row of page.rows) {
+      if (!rows.has(row.id)) rows.set(row.id, row);
     }
-    if (pageCount >= DECISION_MAX_PAGES) {
-      // Keep the loaded decisions actionable. Failing the whole Inbox here would
-      // prevent the learner from reducing the very backlog that hit the guard.
-      return { rows, truncated: true };
-    }
-    seenCursors.add(page.next_cursor);
-    cursor = page.next_cursor;
   }
+  return [...rows.values()];
 }
 
 /**
- * Load every actionable proposal independently from the bounded observation preview. This prevents a
- * large C-strength backlog from making Today advertise decisions that the Inbox cannot reach.
+ * TanStack Query v5 continuation policy. Repeated cursors and the defensive page ceiling stop
+ * background loading while preserving every already-loaded decision for the learner to act on.
  */
-export async function listProposals(): Promise<ProposalPageWire> {
-  const [decisionPage, observationResult] = await Promise.all([
-    listAllDecisionProposals(),
-    listProposalPage('observation', OBSERVATION_PAGE_LIMIT)
-      .then((page) => ({ page, unavailable: false as const }))
-      .catch(() => ({
-        page: { rows: [] as ProposalInboxRow[], next_cursor: null },
-        unavailable: true as const,
-      })),
-  ]);
-  const observationPage = observationResult.page;
+export function getNextDecisionPageParam(
+  lastPage: ProposalPageWire,
+  allPages: readonly ProposalPageWire[],
+  _lastPageParam: string | null,
+  allPageParams: readonly (string | null)[],
+): string | undefined {
+  const next = lastPage.next_cursor;
+  if (!next) return undefined;
+  if (allPageParams.includes(next)) return undefined;
+  if (allPages.length >= DECISION_MAX_PAGES) return undefined;
+  return next;
+}
+
+export interface DecisionPaginationDiagnostics {
+  cursorRepeated: boolean;
+  pageLimitReached: boolean;
+  incomplete: boolean;
+}
+
+/** Explain why a non-null continuation stopped instead of presenting the loaded subset as complete. */
+export function decisionPaginationDiagnostics(
+  pages: readonly ProposalPageWire[],
+  pageParams: readonly (string | null)[],
+): DecisionPaginationDiagnostics {
+  const next = pages.at(-1)?.next_cursor ?? null;
+  const cursorRepeated = next !== null && pageParams.includes(next);
+  const pageLimitReached = next !== null && !cursorRepeated && pages.length >= DECISION_MAX_PAGES;
   return {
-    rows: [...decisionPage.rows, ...observationPage.rows],
-    // This response merges a fully consumed decision lane with one bounded
-    // observation preview. A cursor for only one half would imply a unified
-    // continuation that does not exist, so do not expose it.
-    next_cursor: null,
-    decision_truncated: decisionPage.truncated,
-    observation_truncated: observationPage.next_cursor !== null,
-    observation_unavailable: observationResult.unavailable,
+    cursorRepeated,
+    pageLimitReached,
+    incomplete: cursorRepeated || pageLimitReached,
   };
 }
 

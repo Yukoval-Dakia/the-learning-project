@@ -1,10 +1,19 @@
 import { apiJson } from '@/ui/lib/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { type ProposalInboxRow, listProposals } from './inbox-api';
+import {
+  DECISION_MAX_PAGES,
+  type ProposalInboxRow,
+  type ProposalPageWire,
+  decisionPaginationDiagnostics,
+  getNextDecisionPageParam,
+  listDecisionProposalPage,
+  listObservationProposalPreview,
+  mergeProposalPages,
+} from './inbox-api';
 
 vi.mock('@/ui/lib/api', () => ({ apiJson: vi.fn() }));
 
-function proposal(id: string, kind: string): ProposalInboxRow {
+function proposal(id: string, kind = 'learning_item'): ProposalInboxRow {
   return {
     id,
     kind,
@@ -22,99 +31,108 @@ function proposal(id: string, kind: string): ProposalInboxRow {
   };
 }
 
-describe('listProposals', () => {
+function page(ids: string[], next: string | null): ProposalPageWire {
+  return { rows: ids.map((id) => proposal(id)), next_cursor: next };
+}
+
+describe('progressive proposal page callers', () => {
   const apiJsonMock = vi.mocked(apiJson);
 
   beforeEach(() => {
     apiJsonMock.mockReset();
   });
 
-  it('loads every decision page independently from the bounded observation preview', async () => {
-    apiJsonMock
-      .mockResolvedValueOnce({ rows: [proposal('decision_1', 'learning_item')], next_cursor: 'd2' })
-      .mockResolvedValueOnce({ rows: [proposal('observe_1', 'defer')], next_cursor: 'o2' })
-      .mockResolvedValueOnce({
-        rows: [proposal('decision_2', 'knowledge_edge')],
-        next_cursor: null,
-      });
+  it('fetches only the first decision page when no cursor is supplied', async () => {
+    apiJsonMock.mockResolvedValueOnce(page(['decision_1'], 'd2'));
 
-    const page = await listProposals();
+    await expect(listDecisionProposalPage()).resolves.toEqual(page(['decision_1'], 'd2'));
 
-    expect(page.rows.map((row) => row.id)).toEqual(['decision_1', 'decision_2', 'observe_1']);
-    expect(page.next_cursor).toBeNull();
-    expect(page.decision_truncated).toBe(false);
-    expect(page.observation_truncated).toBe(true);
-    expect(page.observation_unavailable).toBe(false);
-    expect(apiJsonMock).toHaveBeenNthCalledWith(
-      1,
+    expect(apiJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiJsonMock).toHaveBeenCalledWith(
       '/api/proposals?lane=decision&limit=500&status=pending',
     );
-    expect(apiJsonMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/proposals?lane=observation&limit=200&status=pending',
-    );
-    expect(apiJsonMock).toHaveBeenNthCalledWith(
-      3,
+  });
+
+  it('fetches exactly the requested continuation page', async () => {
+    apiJsonMock.mockResolvedValueOnce(page(['decision_2'], null));
+
+    await listDecisionProposalPage('d2');
+
+    expect(apiJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiJsonMock).toHaveBeenCalledWith(
       '/api/proposals?lane=decision&limit=500&status=pending&cursor=d2',
     );
   });
 
-  it('keeps actionable decisions available when the observation preview fails', async () => {
-    apiJsonMock
-      .mockResolvedValueOnce({ rows: [proposal('decision_1', 'learning_item')], next_cursor: null })
-      .mockRejectedValueOnce(new Error('observation preview unavailable'));
+  it('keeps the bounded observation preview on an independent request', async () => {
+    apiJsonMock.mockResolvedValueOnce(page(['observe_1'], 'o2'));
 
-    const page = await listProposals();
+    await listObservationProposalPreview();
 
-    expect(page.rows.map((row) => row.id)).toEqual(['decision_1']);
-    expect(page.decision_truncated).toBe(false);
-    expect(page.observation_truncated).toBe(false);
-    expect(page.observation_unavailable).toBe(true);
+    expect(apiJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiJsonMock).toHaveBeenCalledWith(
+      '/api/proposals?lane=observation&limit=200&status=pending',
+    );
+  });
+});
+
+describe('progressive proposal page state', () => {
+  it('merges incremental pages in first-seen order and deduplicates overlapping rows', () => {
+    const first = page(['decision_1', 'decision_2'], 'd2');
+    const second = page(['decision_2', 'decision_3'], null);
+    second.rows[0] = {
+      ...second.rows[0],
+      payload: { ...second.rows[0].payload, reason_md: 'later duplicate' },
+    };
+
+    const merged = mergeProposalPages([first, second]);
+
+    expect(merged.map((row) => row.id)).toEqual(['decision_1', 'decision_2', 'decision_3']);
+    expect(merged[1].payload.reason_md).toBe('decision_2');
   });
 
-  it('fails visibly instead of looping forever on a repeated decision cursor', async () => {
-    apiJsonMock
-      .mockResolvedValueOnce({ rows: [proposal('decision_1', 'learning_item')], next_cursor: 'd2' })
-      .mockResolvedValueOnce({ rows: [], next_cursor: null })
-      .mockResolvedValueOnce({
-        rows: [proposal('decision_2', 'knowledge_edge')],
-        next_cursor: 'd2',
-      });
-
-    await expect(listProposals()).rejects.toThrow('Duplicate decision cursor detected');
+  it('continues normally, then stops when the server reports no next cursor', () => {
+    expect(getNextDecisionPageParam(page(['d1'], 'd2'), [page(['d1'], 'd2')], null, [null])).toBe(
+      'd2',
+    );
+    expect(
+      getNextDecisionPageParam(page(['d2'], null), [page(['d2'], null)], 'd2', [null, 'd2']),
+    ).toBeUndefined();
   });
 
-  it('surfaces a repeated decision cursor even on the final allowed page', async () => {
-    apiJsonMock.mockImplementation(async (url) => {
-      if (String(url).includes('lane=observation')) return { rows: [], next_cursor: null };
-      const cursor = new URL(String(url), 'http://localhost').searchParams.get('cursor');
-      const page = cursor ? Number(cursor.slice(1)) : 1;
-      return {
-        rows: [proposal(`decision_${page}`, 'learning_item')],
-        next_cursor: page === 20 ? 'd20' : `d${page + 1}`,
-      };
+  it('stops and diagnoses a repeated cursor instead of looping', () => {
+    const pages = [page(['decision_1'], 'd2'), page(['decision_2'], 'd2')];
+    const params = [null, 'd2'];
+
+    expect(getNextDecisionPageParam(pages[1], pages, 'd2', params)).toBeUndefined();
+    expect(decisionPaginationDiagnostics(pages, params)).toEqual({
+      cursorRepeated: true,
+      pageLimitReached: false,
+      incomplete: true,
     });
-
-    await expect(listProposals()).rejects.toThrow('Duplicate decision cursor detected');
-    expect(apiJsonMock).toHaveBeenCalledTimes(21); // 20 decision pages + observation preview
   });
 
-  it('keeps a bounded decision subset actionable when the page safety cap is reached', async () => {
-    apiJsonMock.mockImplementation(async (url) => {
-      if (String(url).includes('lane=observation')) return { rows: [], next_cursor: null };
-      const cursor = new URL(String(url), 'http://localhost').searchParams.get('cursor');
-      const page = cursor ? Number(cursor.slice(1)) : 1;
-      return {
-        rows: [proposal(`decision_${page}`, 'learning_item')],
-        next_cursor: `d${page + 1}`,
-      };
+  it('stops at the safety cap and keeps the loaded subset explicitly incomplete', () => {
+    const pages = Array.from({ length: DECISION_MAX_PAGES }, (_, index) =>
+      page([`decision_${index + 1}`], `d${index + 2}`),
+    );
+    const params = [
+      null,
+      ...Array.from({ length: DECISION_MAX_PAGES - 1 }, (_, index) => `d${index + 2}`),
+    ];
+
+    expect(
+      getNextDecisionPageParam(
+        pages[DECISION_MAX_PAGES - 1],
+        pages,
+        params[DECISION_MAX_PAGES - 1],
+        params,
+      ),
+    ).toBeUndefined();
+    expect(decisionPaginationDiagnostics(pages, params)).toEqual({
+      cursorRepeated: false,
+      pageLimitReached: true,
+      incomplete: true,
     });
-
-    const page = await listProposals();
-
-    expect(page.rows).toHaveLength(20);
-    expect(page.decision_truncated).toBe(true);
-    expect(page.observation_truncated).toBe(false);
-    expect(apiJsonMock).toHaveBeenCalledTimes(21); // 20 decision pages + observation preview
   });
 });
