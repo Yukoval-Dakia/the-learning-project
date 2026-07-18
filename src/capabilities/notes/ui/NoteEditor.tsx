@@ -247,9 +247,10 @@ export function NoteEditor({
                   setOverIdx(null);
                 }}
                 onKeyDown={(e) => {
-                  const to = e.key === 'ArrowUp' ? i - 1 : e.key === 'ArrowDown' ? i + 1 : null;
-                  if (to == null || to < 0 || to >= blocks.length) return;
+                  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
                   e.preventDefault();
+                  const to = e.key === 'ArrowUp' ? i - 1 : i + 1;
+                  if (to < 0 || to >= blocks.length) return;
                   moveBlock(i, to);
                 }}
               >

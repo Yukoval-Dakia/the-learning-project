@@ -44,7 +44,7 @@ describe('NoteEditor block controls', () => {
       name: '重排第 1 块（共 2 块）；用上下方向键移动',
     });
 
-    expect(fireEvent.keyDown(grip, { key: 'ArrowUp' })).toBe(true);
+    expect(fireEvent.keyDown(grip, { key: 'ArrowUp' })).toBe(false);
     expect(onChange).not.toHaveBeenCalled();
   });
 
