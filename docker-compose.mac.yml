@@ -5,7 +5,7 @@
 services:
   app:
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     # YUK-471 SoT flip: projection becomes the row writer (rollback = remove + recreate).
     #   PROJECTION_IS_WRITER          = W1 knowledge / knowledge_edge (live since W1).
     #   PROJECTION_IS_WRITER_ARTIFACT = W3-D artifact fold (flipped 2026-06-28 after prod-clone + live audit:projection CLEAN).
@@ -36,4 +36,4 @@ services:
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
   postgres:
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
