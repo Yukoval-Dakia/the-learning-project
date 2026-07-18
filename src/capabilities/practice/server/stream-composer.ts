@@ -11,24 +11,47 @@
 //   R4 同 questionId 去重（decay 先到先得）
 //   R5 容量护栏两层：分钟预算先保到期前缀再填其余；item max 仍作事故硬顶
 //   R6 position 从 1 连续；R7 reasoning 模板非空（M4 夜链 AI 化后替换模板）
+//   R8 L3 learning-mix：同 KC/题型 fatigue 稳定重排；frontier floor 退化产结构化诊断
 
+import {
+  type LearningMixDiagnostic,
+  applyL3LearningMixGuard,
+  learningMixContextFromInputs,
+} from './post-filter';
 import { fitStreamToTimeBudget } from './stream-budget';
+
+interface ComposerQuestionMetadata {
+  knowledgeId?: string;
+  questionKind?: string;
+}
 
 export interface ComposerInputs {
   /** YYYY-MM-DD（本地日由 API 层裁定） */
   date: string;
   /** FSRS 到期投影（due-list rows 的最小投影；已跨学科平衡） */
-  dueItems: Array<{ questionId: string; knowledgeLabel?: string; dueAt?: string }>;
+  dueItems: Array<
+    { questionId: string; knowledgeLabel?: string; dueAt?: string } & ComposerQuestionMetadata
+  >;
   /** 错题变式（近期失败题的变体轮换选题） */
-  variantItems: Array<{ questionId: string; rootQuestionId: string; knowledgeLabel?: string }>;
+  variantItems: Array<
+    {
+      questionId: string;
+      rootQuestionId: string;
+      knowledgeLabel?: string;
+    } & ComposerQuestionMetadata
+  >;
   /** 新学待检（learning_item 路径上未检验的知识点自测题） */
-  newCheckItems: Array<{ questionId: string; knowledgeId: string; knowledgeLabel?: string }>;
+  newCheckItems: Array<
+    { questionId: string; knowledgeId: string; knowledgeLabel?: string } & ComposerQuestionMetadata
+  >;
   /**
    * B3 learnable_frontier（YUK-349 #3，ADR-0037 #4）——前置全掌握、自身未掌握的「可学前沿」
    * KC 各取一道题。**OPTIONAL**：现有 caller/测试不传 → undefined → 零新增项（NO-OP，
    * 输出 byte-identical）。稀疏先决图上 learnableFrontier 返 [] → 此处恒空（defer-flip）。
    */
-  frontierItems?: Array<{ questionId: string; knowledgeId: string; knowledgeLabel?: string }>;
+  frontierItems?: Array<
+    { questionId: string; knowledgeId: string; knowledgeLabel?: string } & ComposerQuestionMetadata
+  >;
   /** 当日待做卷（AI 打包 / 点播 / 导入） */
   pendingPapers: Array<{
     paperId: string;
@@ -58,6 +81,8 @@ export interface StreamPlan {
   items: StreamPlanItem[];
   truncated: boolean;
   warned: boolean;
+  /** YUK-673: structured stream-level L3 degradation signals; omitted when the mix is healthy. */
+  diagnostics?: LearningMixDiagnostic[];
 }
 
 const DEFAULT_WARN = 12;
@@ -150,10 +175,11 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const overItemMax = budgeted.kept.length > max;
   const kept = overItemMax ? budgeted.kept.slice(0, max) : budgeted.kept;
 
-  return {
+  const plan: StreamPlan = {
     date: inputs.date,
     items: kept.map((d, i) => ({ ...d, position: i + 1 })),
     truncated: budgeted.truncated || overItemMax,
     warned: all.length > warn || budgeted.truncated,
   };
+  return applyL3LearningMixGuard(plan, learningMixContextFromInputs(inputs, frontierTail.length));
 }

@@ -1243,8 +1243,11 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
     const { frontierKc, questionId } = await seedFrontierGraph();
     const inputs = await collectComposerInputs(testDb(), TODAY);
     const pick = (inputs.frontierItems ?? []).find((f) => f.knowledgeId === frontierKc);
-    expect(pick).toBeDefined();
-    expect(pick?.questionId).toBe(questionId);
+    expect(pick).toMatchObject({
+      questionId,
+      knowledgeId: frontierKc,
+      questionKind: 'choice',
+    });
   });
 
   it('(c) frontier KC 无题 → SKIP（不进 frontierItems，不触发供给）', async () => {

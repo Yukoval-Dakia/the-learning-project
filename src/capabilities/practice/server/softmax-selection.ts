@@ -24,8 +24,9 @@
 //     └─ L2 fallback（候选收集本身挂 / catastrophic）：退确定性 composeDailyStream
 //          （legacy，π_i 不记）。
 //
-// composeDailyStream（stream-composer.ts）保持 PURE 不动——它是 L2 fallback + legacy
-// policy 的承重确定性核心（7 单测钉死）。本模块是它之外的**独立新 async 路径**。
+// composeDailyStream（stream-composer.ts）仍是 PURE 的 L2 fallback + legacy policy 核心；
+// YUK-673 起，两条路径在返回前都经过同一个纯函数 learning-mix post-filter。本模块仍负责
+// 它之外的 async 信号/LLM/sampler 路径。
 
 import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
@@ -42,6 +43,7 @@ import {
   type CollectedSignal,
   collectCandidateSignals,
 } from './candidate-signals';
+import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {
   DEFAULT_TEMPERATURE,
   MEM0_PRIOR_CAP,
@@ -503,12 +505,18 @@ export async function composeSoftmaxStream(
     max,
   );
 
-  const plan: StreamPlan = {
-    date: inputs.date,
-    items: capacityResult.kept.map((d, i) => ({ ...d, position: i + 1 })),
-    truncated: budgeted.truncated || capacityResult.truncated,
-    warned: assembled.length > warn || budgeted.truncated,
-  };
+  const plan = applyL3LearningMixGuard(
+    {
+      date: inputs.date,
+      items: capacityResult.kept.map((d, i) => ({ ...d, position: i + 1 })),
+      truncated: budgeted.truncated || capacityResult.truncated,
+      warned: assembled.length > warn || budgeted.truncated,
+    } satisfies StreamPlan,
+    learningMixContextFromInputs(
+      inputs,
+      assembled.filter((item) => item.source === 'frontier').length,
+    ),
+  );
 
   // ── L3 守门断言（presence + due-ORDER / recall）——assemble 后校验，违例即 bug，
   //    throw 留痕（这是确定性逻辑 bug，不是 LLM/IO 失败——不该被 fallback 吞，要在
