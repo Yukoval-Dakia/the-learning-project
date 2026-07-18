@@ -40,6 +40,12 @@ export interface StreamItem {
 
 export interface StreamView {
   date: string;
+  scope?: {
+    kind: 'knowledge';
+    id: string;
+    label: string;
+    session_id: string | null;
+  } | null;
   opening_line: string;
   items: StreamItem[];
   budget: { pace: 'light' | 'medium' | 'dense'; minutes: number };
@@ -51,7 +57,15 @@ export interface StreamView {
   };
 }
 
-export const getStream = () => apiJson<StreamView>('/api/practice/stream?date=today');
+export function buildPracticeStreamUrl(knowledgeId?: string): string {
+  const query = new URLSearchParams({ date: 'today' });
+  const normalized = knowledgeId?.trim();
+  if (normalized) query.set('kc', normalized);
+  return `/api/practice/stream?${query.toString()}`;
+}
+
+export const getStream = (knowledgeId?: string) =>
+  apiJson<StreamView>(buildPracticeStreamUrl(knowledgeId));
 
 export const advanceStreamItem = (id: string, status: StreamStatus) =>
   apiJson<{ item: StreamItem }>(`/api/practice/stream/items/${id}`, {
@@ -329,6 +343,8 @@ export function computeLatencyMs(shownAtMs: number | null, nowMs: number): numbe
 
 export const submitReview = (input: {
   question_id: string;
+  /** YUK-535 — scoped review session envelope; omitted for the ordinary daily stream. */
+  session_id?: string;
   rating: 'again' | 'hard' | 'good';
   response_md: string;
   referenced_knowledge_ids: string[];

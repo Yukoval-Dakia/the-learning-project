@@ -116,10 +116,16 @@ export function PfStream({
   const [demand, setDemand] = useState('');
   const [recomposing, setRecomposing] = useState(false);
 
-  if (loading) return <p className="quiet-empty">正在编排今天的流…</p>;
-  if (error) return <p className="quiet-empty">流加载失败：{error.message}</p>;
+  if (loading) return <p className="quiet-empty">正在准备练习流…</p>;
+  if (error)
+    return (
+      <p className="quiet-empty" role="alert">
+        流加载失败：{error.message}
+      </p>
+    );
   if (!stream) return null;
 
+  const scope = stream.scope ?? null;
   const items = stream.items;
   const active = items.filter((it) => it.status !== 'skipped');
   const skipped = items.filter((it) => it.status === 'skipped');
@@ -278,10 +284,15 @@ export function PfStream({
         </span>
         <div>
           <p className="pf-open-line">
-            {allDone ? '都织完了——下面是今天的线头。' : stream.opening_line}
+            {allDone
+              ? scope
+                ? `「${scope.label}」这轮已经完成。`
+                : '都织完了——下面是今天的线头。'
+              : stream.opening_line}
           </p>
           <span className="pf-open-meta">
-            今日练习 · {stream.date} · 预算 {stream.budget.minutes} 分钟
+            {scope ? `知识点专项 · ${scope.label}` : '今日练习'} · {stream.date} · 预算{' '}
+            {stream.budget.minutes} 分钟
           </span>
         </div>
       </div>
@@ -294,15 +305,21 @@ export function PfStream({
           <div className="bar thin">
             <span style={{ width: `${(stream.progress.done / stream.progress.total) * 100}%` }} />
           </div>
-          <span className="pf-prog-eta">{allDone ? '今日完成' : `预计还剩 ~${etaMin} 分钟`}</span>
+          <span className="pf-prog-eta">
+            {allDone ? (scope ? '本轮完成' : '今日完成') : `预计还剩 ~${etaMin} 分钟`}
+          </span>
         </div>
       )}
 
       {items.length === 0 ? (
         <EmptyState
           icon="review"
-          title="今天流里还没有东西"
-          text="录几道题，或让我按当前信号重排一次。"
+          title={scope ? `「${scope.label}」暂无可练题目` : '今天流里还没有东西'}
+          text={
+            scope
+              ? '当前题库里没有关联到这个知识点的已发布题目；返回知识页补题或稍后再试。'
+              : '录几道题，或让我按当前信号重排一次。'
+          }
         />
       ) : (
         <div className="pf-thread">{active.map(row)}</div>
@@ -330,49 +347,57 @@ export function PfStream({
             <LoomIcon name="checkCircle" size={18} />
           </span>
           <div>
-            <p className="pf-close-line">今天的线都织完了——回头看哪根还松，随时叫我补。</p>
-            <span className="pf-close-meta">今日小结 · 已完成</span>
+            <p className="pf-close-line">
+              {scope
+                ? `「${scope.label}」这轮题目都完成了。`
+                : '今天的线都织完了——回头看哪根还松，随时叫我补。'}
+            </p>
+            <span className="pf-close-meta">{scope ? '专项练习' : '今日小结'} · 已完成</span>
           </div>
         </div>
       )}
 
-      <div className="pf-item-cta" style={{ marginTop: 'var(--s-5)' }}>
-        <Btn
-          size="sm"
-          variant="ghost"
-          icon="refresh"
-          disabled={recomposing}
-          onClick={() => void recompose()}
-        >
-          {recomposing ? '重排中…' : '按当前信号重排'}
-        </Btn>
-      </div>
+      {!scope && (
+        <div className="pf-item-cta" style={{ marginTop: 'var(--s-5)' }}>
+          <Btn
+            size="sm"
+            variant="ghost"
+            icon="refresh"
+            disabled={recomposing}
+            onClick={() => void recompose()}
+          >
+            {recomposing ? '重排中…' : '按当前信号重排'}
+          </Btn>
+        </div>
+      )}
 
-      <div className="pf-ondemand">
-        <div className="pf-ondemand-label">
-          <LoomIcon name="send" size={13} />
-          临时加练
+      {!scope && (
+        <div className="pf-ondemand">
+          <div className="pf-ondemand-label">
+            <LoomIcon name="send" size={13} />
+            临时加练
+          </div>
+          <div className="composer">
+            <textarea
+              rows={1}
+              value={demand}
+              placeholder="向我点播：比如「来份判断句专项卷」"
+              onChange={(e) => setDemand(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handoffDemand();
+                }
+              }}
+              aria-label="向 AI 点播"
+            />
+            <IconBtn icon="send" size={16} title="交给 Copilot 点播" onClick={handoffDemand} />
+          </div>
+          <p className="pf-ondemand-hint">
+            将在 Copilot 中执行；生成过程、失败与可运行卷链接都在那里显示。
+          </p>
         </div>
-        <div className="composer">
-          <textarea
-            rows={1}
-            value={demand}
-            placeholder="向我点播：比如「来份判断句专项卷」"
-            onChange={(e) => setDemand(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handoffDemand();
-              }
-            }}
-            aria-label="向 AI 点播"
-          />
-          <IconBtn icon="send" size={16} title="交给 Copilot 点播" onClick={handoffDemand} />
-        </div>
-        <p className="pf-ondemand-hint">
-          将在 Copilot 中执行；生成过程、失败与可运行卷链接都在那里显示。
-        </p>
-      </div>
+      )}
     </div>
   );
 }

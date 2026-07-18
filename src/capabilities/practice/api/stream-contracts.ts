@@ -1,10 +1,13 @@
 import { z } from 'zod';
 
 export const PracticeStreamCalendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const PracticeStreamKnowledgeIdSchema = z.string().trim().min(1).max(200);
 
 export const PracticeStreamQuerySchema = z.object({
   // `?date=` is treated like an omitted date by the existing handler.
   date: z.union([z.literal(''), z.literal('today'), PracticeStreamCalendarDateSchema]).optional(),
+  // YUK-535 — an explicit KC scope creates/recovers a separate on-demand review session.
+  kc: PracticeStreamKnowledgeIdSchema.optional(),
 });
 
 export const RecomposePracticeStreamBodySchema = z.object({
@@ -41,6 +44,14 @@ const PracticeStreamViewItemSchema = z.object({
 
 export const PracticeStreamResponseSchema = z.object({
   date: z.string(),
+  scope: z
+    .object({
+      kind: z.literal('knowledge'),
+      id: z.string(),
+      label: z.string(),
+      session_id: z.string().nullable(),
+    })
+    .nullable(),
   opening_line: z.string(),
   items: z.array(PracticeStreamViewItemSchema),
   budget: z.object({
@@ -62,6 +73,7 @@ export const PracticeStreamRecomposedResponseSchema = PracticeStreamResponseSche
 const PersistedPracticeStreamItemSchema = z.object({
   id: z.string(),
   date: z.string(),
+  session_id: z.string().nullable(),
   position: z.number().int(),
   item_kind: PracticeStreamItemKindSchema,
   ref_id: z.string(),

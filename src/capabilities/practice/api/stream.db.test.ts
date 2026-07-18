@@ -5,6 +5,8 @@ import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import {
   event,
   item_calibration,
+  knowledge,
+  learning_session,
   mastery_state,
   material_fsrs_state,
   mistake_variant,
@@ -13,7 +15,7 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -58,6 +60,12 @@ async function seedDueQuestion(): Promise<string> {
     updated_at: now,
     version: 0,
   });
+  await markQuestionDue(qid);
+  return qid;
+}
+
+async function markQuestionDue(qid: string): Promise<void> {
+  const now = new Date();
   await testDb()
     .insert(material_fsrs_state)
     .values({
@@ -78,6 +86,50 @@ async function seedDueQuestion(): Promise<string> {
       due_at: new Date(now.getTime() - 3600_000),
       last_review_event_id: null,
       updated_at: now,
+    });
+}
+
+async function seedScopedQuestion(input: {
+  knowledgeId: string;
+  knowledgeName?: string;
+  draftStatus?: string | null;
+}): Promise<string> {
+  const now = new Date();
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id: input.knowledgeId,
+      name: input.knowledgeName ?? input.knowledgeId,
+      domain: 'yuwen',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })
+    .onConflictDoNothing();
+  const qid = createId();
+  await testDb()
+    .insert(question)
+    .values({
+      id: qid,
+      kind: 'choice',
+      prompt_md: '专项题',
+      reference_md: 'B',
+      knowledge_ids: [input.knowledgeId],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: input.draftStatus ?? null,
+      variant_depth: 0,
+      figures: [],
+      image_refs: [],
+      structured: null,
+      metadata: {},
+      created_at: now,
+      updated_at: now,
+      version: 0,
     });
   return qid;
 }
@@ -239,6 +291,80 @@ describe('practice stream API', () => {
       .from(practice_stream_item)
       .where(eq(practice_stream_item.date, '2020-01-01'));
     expect(rows).toHaveLength(0);
+  });
+
+  it('YUK-535: GET ?kc creates a recoverable scoped session without composing or leaking the daily stream', async () => {
+    const kc = createId();
+    const scopedQuestion = await seedScopedQuestion({
+      knowledgeId: kc,
+      knowledgeName: '判断句',
+    });
+    await seedScopedQuestion({ knowledgeId: kc, draftStatus: 'draft' });
+    // The same question is also due in the daily stream; the two partitions must be able to
+    // materialize independent rows/progress for one ref_id.
+    await markQuestionDue(scopedQuestion);
+
+    const scopedRes = await GET(
+      new Request(`http://t/api/practice/stream?date=today&kc=${encodeURIComponent(kc)}`),
+    );
+    expect(scopedRes.status).toBe(200);
+    const scoped = PracticeStreamResponseSchema.parse(await scopedRes.json());
+    expect(scoped.scope).toMatchObject({
+      kind: 'knowledge',
+      id: kc,
+      label: '判断句',
+    });
+    expect(scoped.scope?.session_id).toBeTruthy();
+    expect(scoped.items.map((item) => item.ref_id)).toEqual([scopedQuestion]);
+    expect(scoped.items[0]).toMatchObject({ source: 'on_demand', status: 'pending' });
+    expect(scoped.opening_line).toContain('判断句');
+    expect(runTaskMock).not.toHaveBeenCalled();
+
+    const sessionRows = await testDb()
+      .select({ scope: learning_session.scope_knowledge_ids })
+      .from(learning_session)
+      .where(eq(learning_session.id, scoped.scope?.session_id as string));
+    expect(sessionRows).toEqual([{ scope: [kc] }]);
+    const dailyBefore = await testDb()
+      .select()
+      .from(practice_stream_item)
+      .where(and(eq(practice_stream_item.date, TODAY), isNull(practice_stream_item.session_id)));
+    expect(dailyBefore).toEqual([]);
+
+    // Completing the only scoped item closes the same review-session envelope.
+    const completed = await PATCH(
+      new Request('http://t/api/practice/stream/items/scoped', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'done' }),
+      }),
+      { id: scoped.items[0].id },
+    );
+    expect(completed.status).toBe(200);
+    const [closedSession] = await testDb()
+      .select({ status: learning_session.status })
+      .from(learning_session)
+      .where(eq(learning_session.id, scoped.scope?.session_id as string));
+    expect(closedSession?.status).toBe('completed');
+
+    // Reload resolves the same server-owned session and the same materialized item.
+    const scopedAgain = PracticeStreamResponseSchema.parse(
+      await (await GET(new Request(`http://t/api/practice/stream?date=today&kc=${kc}`))).json(),
+    );
+    expect(scopedAgain.scope?.session_id).toBe(scoped.scope?.session_id);
+    expect(scopedAgain.items.map((item) => item.id)).toEqual(scoped.items.map((item) => item.id));
+    expect(scopedAgain.items[0].status).toBe('done');
+
+    // The independent scoped partition must not suppress normal daily lazy-compose.
+    const daily = PracticeStreamResponseSchema.parse(await (await GET(getReq('today'))).json());
+    expect(daily.scope).toBeNull();
+    const dailyCopy = daily.items.find((item) => item.ref_id === scopedQuestion);
+    expect(dailyCopy).toBeDefined();
+    expect(dailyCopy?.id).not.toBe(scoped.items[0].id);
+  });
+
+  it('YUK-535: scoped GET rejects an unknown KC instead of showing a deceptive empty session', async () => {
+    const res = await GET(new Request('http://t/api/practice/stream?date=today&kc=missing-kc'));
+    expect(res.status).toBe(404);
   });
 
   it('PATCH advances item status and rejects illegal transitions (done 是终态)', async () => {

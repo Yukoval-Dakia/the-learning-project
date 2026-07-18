@@ -27,7 +27,8 @@ import {
 import { ApiError } from '@/server/http/errors';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
-import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { Review } from '@/server/session';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 
 import { notDraftPredicate } from '@/db/predicates';
 
@@ -92,6 +93,24 @@ export function streamLocalDate(now: Date = new Date()): string {
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`（single-flight 锁需要事务）。 */
 type DbLike = Db | Tx;
+
+/**
+ * `practice_stream_item` now has two physical partitions in one table:
+ *   - session_id IS NULL: the existing whole-profile daily stream;
+ *   - session_id = <review session>: an independent KC-scoped on-demand stream.
+ *
+ * Every date-only daily query must use this predicate. A bare `date = …` would leak scoped
+ * progress into the daily stream and could make lazy-compose falsely think the day is ready.
+ */
+function streamPartitionPredicate(date: string, sessionId?: string | null) {
+  return sessionId
+    ? and(eq(practice_stream_item.date, date), eq(practice_stream_item.session_id, sessionId))
+    : and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id));
+}
+
+function streamPartitionLockKey(date: string, sessionId?: string | null): string {
+  return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
+}
 
 // ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may reorder
 // / de-emphasize but MUST NOT drop a due item from the queue. So feed it the /api/review/due
@@ -331,7 +350,7 @@ export async function materializeStream(
       position: practice_stream_item.position,
     })
     .from(practice_stream_item)
-    .where(eq(practice_stream_item.date, plan.date));
+    .where(streamPartitionPredicate(plan.date));
   const existingByRef = new Map(existing.map((r) => [r.ref_id, r]));
 
   if (plan.items.length === 0 && existing.length === 0) {
@@ -481,7 +500,7 @@ async function composeMaterializeCollect(
     const rows = await db
       .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date));
+      .where(streamPartitionPredicate(date));
     const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
     for (const [refId, pi] of result.sampledInclusion) {
       // 只收集本轮新插入的项——存活行的观测在它首次物化那轮已写过。
@@ -569,7 +588,7 @@ async function singleFlightCompose(
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date));
+      .where(streamPartitionPredicate(date));
     if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     return composeMaterializeCollect(tx, date, policy, deps, capacity, addedBy);
@@ -613,8 +632,17 @@ export async function composeNightly(
   );
 }
 
+export interface StreamScope {
+  kind: 'knowledge';
+  id: string;
+  label: string;
+  /** Server-resolved session identity; null only when viewing an unmaterialized historical scope. */
+  session_id: string | null;
+}
+
 export interface StreamView {
   date: string;
+  scope: StreamScope | null;
   opening_line: string;
   items: Array<{
     id: string;
@@ -635,6 +663,225 @@ export interface StreamView {
   };
 }
 
+function buildStreamView(input: {
+  date: string;
+  rows: StreamItemRow[];
+  budget: { pace: DailyPracticePace; minutes: number };
+  scope: StreamScope | null;
+  openingLine: string;
+}): StreamView {
+  const { date, rows, budget, scope, openingLine } = input;
+  const done = rows.filter((row) => row.status === 'done').length;
+  const estimatedTotalMinutes = rows.reduce(
+    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+    0,
+  );
+  const estimatedRemainingMinutes = rows
+    .filter((row) => row.status === 'pending' || row.status === 'in_progress')
+    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
+
+  return {
+    date,
+    scope,
+    opening_line: openingLine,
+    items: rows.map((row) => ({
+      id: row.id,
+      position: row.position,
+      item_kind: row.item_kind,
+      ref_id: row.ref_id,
+      source: row.source,
+      reasoning: row.reasoning,
+      status: row.status,
+      estimated_minutes: estimateStreamItemMinutes(row.item_kind),
+    })),
+    budget,
+    progress: {
+      done,
+      total: rows.length,
+      estimated_total_minutes: estimatedTotalMinutes,
+      estimated_remaining_minutes: estimatedRemainingMinutes,
+    },
+  };
+}
+
+const SCOPED_QUESTION_LIMIT = 5;
+
+function scopedSessionDateBounds(date: string): { start: Date; end: Date } {
+  const start = new Date(`${date}T00:00:00+08:00`);
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
+interface KnowledgeScopedSessionRef {
+  id: string;
+  status: string;
+}
+
+async function findKnowledgeScopedSession(
+  db: DbLike,
+  date: string,
+  knowledgeId: string,
+): Promise<KnowledgeScopedSessionRef | null> {
+  const { start, end } = scopedSessionDateBounds(date);
+  const [session] = await db
+    .select({ id: learning_session.id, status: learning_session.status })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.type, 'review'),
+        inArray(learning_session.status, ['started', 'paused', 'completed']),
+        isNull(learning_session.artifact_id),
+        gte(learning_session.created_at, start),
+        lt(learning_session.created_at, end),
+        sql`${learning_session.scope_knowledge_ids} = ${JSON.stringify([knowledgeId])}::jsonb`,
+      ),
+    )
+    .orderBy(desc(learning_session.created_at), desc(learning_session.id))
+    .limit(1);
+  return session ?? null;
+}
+
+async function materializeKnowledgeScopedSession(
+  db: Db,
+  date: string,
+  knowledgeId: string,
+  knowledgeLabel: string,
+): Promise<{ sessionId: string; rows: StreamItemRow[] }> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:scope:${date}:${knowledgeId}`}))`,
+    );
+
+    let session = await findKnowledgeScopedSession(tx, date, knowledgeId);
+    if (!session) {
+      const created = await Review.startReviewSession(tx, {
+        scopeKnowledgeIds: [knowledgeId],
+      });
+      session = { id: created.sessionId, status: 'started' };
+    }
+    const sessionId = session.id;
+
+    const existing = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(streamPartitionPredicate(date, sessionId))
+      .orderBy(asc(practice_stream_item.position));
+
+    if (session.status === 'started' && existing.length < SCOPED_QUESTION_LIMIT) {
+      // Deterministic, local-only selection: a user-requested scope must not pay the daily LLM
+      // compose cost or inherit unrelated whole-profile candidates. Pull only published questions
+      // carrying this KC; keep the session snapshot stable and fill newly available vacancies.
+      const candidates = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(
+          and(
+            sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+            notDraftPredicate(question.draft_status),
+          ),
+        )
+        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id))
+        .limit(SCOPED_QUESTION_LIMIT * 5);
+      const existingRefs = new Set(existing.map((row) => row.ref_id));
+      const available = candidates
+        .filter((candidate) => !existingRefs.has(candidate.id))
+        .slice(0, SCOPED_QUESTION_LIMIT - existing.length);
+      if (available.length > 0) {
+        const now = new Date();
+        const startPosition = existing.reduce((max, row) => Math.max(max, row.position), 0) + 1;
+        await tx
+          .insert(practice_stream_item)
+          .values(
+            available.map((candidate, index) => ({
+              id: newId(),
+              date,
+              session_id: sessionId,
+              position: startPosition + index,
+              item_kind: 'question' as const,
+              ref_id: candidate.id,
+              source: 'on_demand' as const,
+              status: 'pending' as const,
+              reasoning: `你点了「${knowledgeLabel}」专项——这道题只来自该知识点的现有题库。`,
+              added_by: 'user' as const,
+              signals: { scopeKind: 'knowledge', scopeId: knowledgeId },
+              created_at: now,
+              updated_at: now,
+            })),
+          )
+          .onConflictDoNothing();
+      }
+    }
+
+    const rows = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(streamPartitionPredicate(date, sessionId))
+      .orderBy(asc(practice_stream_item.position));
+    return { sessionId, rows };
+  });
+}
+
+async function getKnowledgeScopedStream(
+  db: Db,
+  date: string,
+  knowledgeId: string,
+  materialize: boolean,
+): Promise<StreamView> {
+  const [knowledgeRow] = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
+    .limit(1);
+  if (!knowledgeRow) {
+    throw new ApiError('not_found', `knowledge ${knowledgeId} not found`, 404);
+  }
+
+  let sessionId: string | null;
+  let rows: StreamItemRow[];
+  if (materialize) {
+    ({ sessionId, rows } = await materializeKnowledgeScopedSession(
+      db,
+      date,
+      knowledgeId,
+      knowledgeRow.name,
+    ));
+  } else {
+    const session = await findKnowledgeScopedSession(db, date, knowledgeId);
+    sessionId = session?.id ?? null;
+    rows = sessionId
+      ? await db
+          .select()
+          .from(practice_stream_item)
+          .where(streamPartitionPredicate(date, sessionId))
+          .orderBy(asc(practice_stream_item.position))
+      : [];
+  }
+
+  const dailyBudget = await resolveDailyPracticeBudget(db);
+  const budget = {
+    pace: dailyBudget.pace,
+    minutes: Math.min(
+      dailyBudget.minutes,
+      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question'),
+    ),
+  };
+  const scope: StreamScope = {
+    kind: 'knowledge',
+    id: knowledgeId,
+    label: knowledgeRow.name,
+    session_id: sessionId,
+  };
+  return buildStreamView({
+    date,
+    rows,
+    budget,
+    scope,
+    openingLine:
+      rows.length === 0
+        ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
+        : `这里仅显示「${knowledgeRow.name}」相关的题目——按顺序练即可。`,
+  });
+}
+
 async function trimStoredPendingItemsToBudget(
   db: Db,
   date: string,
@@ -645,7 +892,7 @@ async function trimStoredPendingItemsToBudget(
     const current = await tx
       .select()
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date))
+      .where(streamPartitionPredicate(date))
       .orderBy(asc(practice_stream_item.position));
 
     const frozen = current.filter((row) => row.status !== 'pending');
@@ -665,7 +912,7 @@ async function trimStoredPendingItemsToBudget(
     return tx
       .select()
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date))
+      .where(streamPartitionPredicate(date))
       .orderBy(asc(practice_stream_item.position));
   });
 }
@@ -691,12 +938,18 @@ export async function getStream(
     /** YUK-474 — refill DI（测试注 fake dispatch 捕获、不打真 pg-boss）。production 省略 →
      *  refillActiveLearningPools 走默认 demandToSupplyTarget + dispatchSupplyTarget。 */
     refillDeps?: RefillDeps;
+    /** YUK-535 — server-resolved independent on-demand review session for this KC. */
+    knowledgeId?: string;
   } = {},
 ): Promise<StreamView> {
+  if (opts.knowledgeId) {
+    return getKnowledgeScopedStream(db, date, opts.knowledgeId, opts.composeIfEmpty ?? false);
+  }
+
   let rows = await db
     .select()
     .from(practice_stream_item)
-    .where(eq(practice_stream_item.date, date))
+    .where(streamPartitionPredicate(date))
     .orderBy(asc(practice_stream_item.position));
 
   if (rows.length === 0 && opts.composeIfEmpty) {
@@ -727,7 +980,7 @@ export async function getStream(
     rows = await db
       .select()
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date))
+      .where(streamPartitionPredicate(date))
       .orderBy(asc(practice_stream_item.position));
   }
 
@@ -740,39 +993,17 @@ export async function getStream(
     rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
   }
 
-  const done = rows.filter((r) => r.status === 'done').length;
-  const estimatedTotalMinutes = rows.reduce(
-    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
-    0,
-  );
-  const estimatedRemainingMinutes = rows
-    .filter((row) => row.status === 'pending' || row.status === 'in_progress')
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
-  return {
+  return buildStreamView({
     date,
+    rows,
+    budget,
+    scope: null,
     // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
-    opening_line:
+    openingLine:
       rows.length === 0
         ? '今天流里还没有东西——录几道题，或向我点播一份卷。'
         : '今天的流我排好了——从上往下做，卡住随时叫我。',
-    items: rows.map((r) => ({
-      id: r.id,
-      position: r.position,
-      item_kind: r.item_kind,
-      ref_id: r.ref_id,
-      source: r.source,
-      reasoning: r.reasoning,
-      status: r.status,
-      estimated_minutes: estimateStreamItemMinutes(r.item_kind),
-    })),
-    budget,
-    progress: {
-      done,
-      total: rows.length,
-      estimated_total_minutes: estimatedTotalMinutes,
-      estimated_remaining_minutes: estimatedRemainingMinutes,
-    },
-  };
+  });
 }
 
 const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
@@ -782,6 +1013,32 @@ const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
   skipped: ['pending', 'in_progress'],
   done: [],
 };
+
+async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<void> {
+  if (!row.session_id || row.status !== 'done') return;
+  try {
+    const [{ remaining }] = await db
+      .select({ remaining: sql<number>`count(*)::int` })
+      .from(practice_stream_item)
+      .where(
+        and(
+          eq(practice_stream_item.session_id, row.session_id),
+          inArray(practice_stream_item.status, ['pending', 'in_progress', 'skipped']),
+        ),
+      );
+    if (remaining === 0) {
+      await Review.completeReviewSession(db, row.session_id);
+    }
+  } catch (err) {
+    // The stream-item transition is already committed. Session-envelope closeout is important
+    // observability, but must not turn a confirmed answer into a false PATCH failure.
+    console.error('[stream-store] scoped review session completion failed (best-effort)', {
+      sessionId: row.session_id,
+      streamItemId: row.id,
+      err,
+    });
+  }
+}
 
 /**
  * 推进 item 状态（作答事实由 submit 路由写 event；这里只动日程行）。
@@ -825,6 +1082,8 @@ export async function advanceStreamItem(
     .returning();
   if (!updated) return null;
 
+  await completeScopedSessionIfDone(db, updated);
+
   // Task 9：作答推进到 done 的**题项**触发有界增量重排（best-effort，post-commit）。
   //   只 question 项（paper 内部题不在流层重排）；只 done（in_progress/skipped/pending 不触发）。
   //
@@ -841,6 +1100,7 @@ export async function advanceStreamItem(
     try {
       await reRankAfterAnswer(db, {
         date: updated.date,
+        sessionId: updated.session_id,
         answeredQuestionId: updated.ref_id,
         rng: rerankDeps.rng,
       });
@@ -883,7 +1143,7 @@ export async function recomposeStream(
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
     await tx
       .delete(practice_stream_item)
-      .where(and(eq(practice_stream_item.date, date), eq(practice_stream_item.status, 'pending')));
+      .where(and(streamPartitionPredicate(date), eq(practice_stream_item.status, 'pending')));
     return composeMaterializeCollect(
       tx,
       date,
@@ -998,9 +1258,14 @@ function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undef
  */
 export async function reRankAfterAnswer(
   db: Db,
-  opts: { date: string; answeredQuestionId: string; rng?: () => number },
+  opts: {
+    date: string;
+    sessionId?: string | null;
+    answeredQuestionId: string;
+    rng?: () => number;
+  },
 ): Promise<number> {
-  const { date, answeredQuestionId } = opts;
+  const { date, sessionId, answeredQuestionId } = opts;
 
   // 受影响 KC = 刚答完那题的 knowledge_ids。空 → 无 θ̂ 移动锚点 → no-op（不触发重排）。
   const [answered] = await db
@@ -1013,12 +1278,14 @@ export async function reRankAfterAnswer(
 
   const { added, observations } = await db.transaction(async (tx) => {
     // 单飞锁（与所有 compose 路径共用键）——重排与 lazy/recompose/nightly 互斥。
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date, sessionId)}))`,
+    );
 
     const rows = await tx
       .select()
       .from(practice_stream_item)
-      .where(eq(practice_stream_item.date, date))
+      .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
     if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
@@ -1217,7 +1484,7 @@ export async function reRankAfterAnswer(
     //    原封不动——FINDING 1：绝不删一个不会回填的 slot（无 shrink、无 position 空洞）。
     await tx.delete(practice_stream_item).where(
       and(
-        eq(practice_stream_item.date, date),
+        streamPartitionPredicate(date, sessionId),
         inArray(
           practice_stream_item.id,
           rowsToDelete.map((r) => r.id),
@@ -1247,6 +1514,7 @@ export async function reRankAfterAnswer(
         .values({
           id: newRowId,
           date,
+          session_id: sessionId ?? null,
           position: pos,
           item_kind: 'question' as const,
           ref_id: s.refId,

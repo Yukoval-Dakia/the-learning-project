@@ -13,9 +13,22 @@ import {
   buildDraftListQuery,
   buildPaperAnswerDraftBody,
   buildPaperSubmissionBody,
+  buildPracticeStreamUrl,
   buildQuestionsListQuery,
   computeLatencyMs,
 } from './practice-api';
+
+describe('buildPracticeStreamUrl — KC-scoped on-demand stream (YUK-535)', () => {
+  it('keeps the daily route when no scope is requested', () => {
+    expect(buildPracticeStreamUrl()).toBe('/api/practice/stream?date=today');
+  });
+
+  it('trims and URL-encodes the KC id', () => {
+    expect(buildPracticeStreamUrl('  kc/判断句  ')).toBe(
+      '/api/practice/stream?date=today&kc=kc%2F%E5%88%A4%E6%96%AD%E5%8F%A5',
+    );
+  });
+});
 
 describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
   it('shownAt 为 null → 返回 null（计时器未起 / 题面未就绪，不发噪声）', () => {

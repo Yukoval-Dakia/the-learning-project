@@ -57,6 +57,18 @@ const completedStream: StreamView = {
   },
 };
 
+const scopedEmptyStream: StreamView = {
+  ...stream,
+  scope: {
+    kind: 'knowledge',
+    id: 'kc-judgement',
+    label: '判断句',
+    session_id: 'review_scope_1',
+  },
+  opening_line: '「判断句」暂时没有可练的已发布题目。',
+  budget: { pace: 'medium', minutes: 10 },
+};
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -88,6 +100,25 @@ describe('PfStream on-demand handoff (YUK-626)', () => {
 });
 
 describe('PfStream item semantics', () => {
+  it('YUK-535: explains an empty KC scope and hides unrelated daily-flow controls', () => {
+    render(
+      <PfStream
+        stream={scopedEmptyStream}
+        loading={false}
+        error={null}
+        openItem={() => {}}
+        refresh={async () => null}
+        updateItem={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('「判断句」暂无可练题目')).toBeTruthy();
+    expect(screen.getByText(/知识点专项 · 判断句 · 2026-07-13/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '按当前信号重排' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: '向 AI 点播' })).toBeNull();
+  });
+
   it('keeps the card static and exposes its actions as native buttons', async () => {
     const openItem = vi.fn();
     const { container } = render(

@@ -180,6 +180,12 @@ export type StartReviewSessionParams = {
    * FSRS-逐张 /review flow. No FK (Q4) — loose text ref.
    */
   artifactId?: string | null;
+  /**
+   * YUK-535 — optional server-owned KC scope for an on-demand review session. Daily/FSRS and
+   * paper review sessions leave this null; scoped practice persists `[kc]` so reloads can recover
+   * the same session without trusting a client-supplied session id.
+   */
+  scopeKnowledgeIds?: string[] | null;
 };
 
 /**
@@ -207,6 +213,7 @@ export async function startReviewSession(
       summary_md: null,
       goal_id: params.goalId ?? null,
       artifact_id: params.artifactId ?? null,
+      scope_knowledge_ids: params.scopeKnowledgeIds ?? null,
       started_at: now,
       created_at: now,
       updated_at: now,
