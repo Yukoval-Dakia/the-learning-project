@@ -2,6 +2,7 @@ import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/prop
 import {
   artifact,
   completion_evidence,
+  edge_reconciliation_log,
   event,
   knowledge,
   knowledge_edge,
@@ -251,6 +252,131 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'edge_live_archive2'));
     expect(stillLive[0].archived_at).toBeNull();
+  });
+
+  it('acceptAiProposal applies an edge_op:supersede proposal atomically after user approval', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2', 'k3']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_superseded',
+      from_knowledge_id: 'k2',
+      to_knowledge_id: 'k1',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+    await writeAiProposal(db, {
+      id: 'edge_supersede_p1',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_superseded' },
+        reason_md: 'the candidate corrects the old edge',
+        evidence_refs: [{ kind: 'event', id: 'attempt_1' }],
+        proposed_change: {
+          edge_op: 'supersede',
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k3',
+          relation_type: 'contrasts_with',
+          weight: 0.8,
+          archive_edge_id: 'edge_superseded',
+          supersede_confidence: 0.91,
+          supersede_neighbor_index: 0,
+          supersede_affected_refs: [{ kind: 'question', id: 'question_1' }],
+        },
+        cooldown_key: 'knowledge_edge_supersede:edge_superseded:k1|k3|contrasts_with',
+      },
+    });
+
+    const before = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_superseded'));
+    expect(before[0].archived_at).toBeNull();
+
+    const result = await acceptAiProposal(db, 'edge_supersede_p1');
+    expect(result.kind).toBe('knowledge_edge');
+    if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    expect(result.edge_id).not.toBe('edge_superseded');
+
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_superseded'));
+    expect(oldEdge[0].archived_at).not.toBeNull();
+    const replacement = await db
+      .select()
+      .from(knowledge_edge)
+      .where(and(eq(knowledge_edge.from_knowledge_id, 'k1'), isNull(knowledge_edge.archived_at)));
+    expect(replacement).toHaveLength(1);
+    expect(replacement[0].to_knowledge_id).toBe('k3');
+
+    const logs = await db.select().from(edge_reconciliation_log);
+    expect(logs).toHaveLength(1);
+    expect(logs[0].superseded_edge_id).toBe('edge_superseded');
+    expect(logs[0].applied_at).not.toBeNull();
+    const corrections = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_kind, 'event')));
+    expect(corrections).toHaveLength(1);
+    expect(corrections[0].actor_kind).toBe('user');
+    expect(corrections[0].actor_ref).toBe('self');
+
+    const replay = await acceptAiProposal(db, 'edge_supersede_p1');
+    expect(replay.kind).toBe('knowledge_edge');
+    if (replay.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    expect(replay.idempotent).toBe(true);
+    expect(replay.edge_id).toBe(result.edge_id);
+    expect(await db.select().from(edge_reconciliation_log)).toHaveLength(1);
+  });
+
+  it('dismissAiProposal leaves an edge_op:supersede proposal unapplied', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2', 'k3']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_supersede_dismiss',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+    await writeAiProposal(db, {
+      id: 'edge_supersede_p2',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_supersede_dismiss' },
+        reason_md: 'candidate replacement',
+        evidence_refs: [],
+        proposed_change: {
+          edge_op: 'supersede',
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k3',
+          relation_type: 'contrasts_with',
+          weight: 0.8,
+          archive_edge_id: 'edge_supersede_dismiss',
+          supersede_confidence: 0.9,
+          supersede_neighbor_index: 0,
+          supersede_affected_refs: [{ kind: 'question', id: 'question_2' }],
+        },
+        cooldown_key: 'knowledge_edge_supersede:dismiss',
+      },
+    });
+
+    await dismissAiProposal(db, 'edge_supersede_p2');
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_supersede_dismiss'));
+    expect(oldEdge[0].archived_at).toBeNull();
+    expect(await db.select().from(edge_reconciliation_log)).toHaveLength(0);
+    const candidate = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.to_knowledge_id, 'k3'));
+    expect(candidate).toHaveLength(0);
   });
 
   it('acceptAiProposal applies a note_update patch proposal and writes a rate event', async () => {

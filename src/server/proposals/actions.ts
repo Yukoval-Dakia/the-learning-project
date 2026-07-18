@@ -47,6 +47,7 @@ import {
   applyArchive,
   dismissProposal,
 } from '@/capabilities/knowledge/server/proposals';
+import { applyApprovedEdgeSupersede } from '@/capabilities/knowledge/server/propose_edge';
 import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
@@ -320,8 +321,11 @@ export async function decideKnowledgeEdgeProposal(
     // ADR-0032 D4-E1 (YUK-203) — edge_op discriminator on the raw event payload
     // (writer.ts stamps it; legacy events written before this field are absent →
     // treated as 'create' below, the backward-compatible default).
-    edge_op?: 'create' | 'archive';
+    edge_op?: 'create' | 'archive' | 'supersede';
     archive_edge_id?: string;
+    supersede_confidence?: number;
+    supersede_neighbor_index?: number | null;
+    supersede_affected_refs?: ActivityRefT[];
     from_knowledge_id: string;
     to_knowledge_id: string;
     relation_type: string;
@@ -356,6 +360,9 @@ export async function decideKnowledgeEdgeProposal(
           eq(event.action, 'generate'),
           eq(event.subject_kind, 'knowledge_edge'),
           eq(event.caused_by_event_id, proposeEventId),
+          ...(edgeOp === 'supersede'
+            ? [sql`(${event.payload}->>'edge_op') IS DISTINCT FROM 'archive'`]
+            : []),
         ),
       )
       .limit(1);
@@ -511,6 +518,111 @@ export async function decideKnowledgeEdgeProposal(
       rate_event_id: rateEventId,
       generate_event_id: generateEventId,
       edge_id: archiveEdgeId,
+    };
+  }
+
+  // YUK-689 — SUPERSEDE is proposal-only until this explicit accept. The model's
+  // reconcile decision is carried on the proposal, while the replacement create,
+  // old-edge archive, correction provenance and audit log apply atomically here.
+  if (edgeOp === 'supersede') {
+    if (decision !== 'accept') {
+      throw new ApiError(
+        'validation_error',
+        `knowledge_edge supersede proposal only supports accept/dismiss, got ${decision}`,
+        400,
+      );
+    }
+    const supersededEdgeId = proposePayload.archive_edge_id;
+    const confidence = proposePayload.supersede_confidence;
+    const affectedRefs = proposePayload.supersede_affected_refs;
+    if (!supersededEdgeId || confidence === undefined || !affectedRefs?.length) {
+      throw new ApiError(
+        'validation_error',
+        `edge supersede proposal ${proposeEventId} is missing its judged decision metadata`,
+        400,
+      );
+    }
+
+    const applied = await db.transaction(async (tx) => {
+      const oldEdge = (
+        await tx
+          .select()
+          .from(knowledge_edge)
+          .where(eq(knowledge_edge.id, supersededEdgeId))
+          .limit(1)
+          .for('update')
+      )[0];
+      if (!oldEdge || oldEdge.archived_at !== null) {
+        throw new ApiError(
+          'conflict',
+          `superseded knowledge_edge is no longer live: ${supersededEdgeId}`,
+          409,
+        );
+      }
+      const candidateTouchesOld =
+        oldEdge.from_knowledge_id === proposePayload.from_knowledge_id ||
+        oldEdge.to_knowledge_id === proposePayload.from_knowledge_id ||
+        oldEdge.from_knowledge_id === proposePayload.to_knowledge_id ||
+        oldEdge.to_knowledge_id === proposePayload.to_knowledge_id;
+      if (!candidateTouchesOld) {
+        throw new ApiError(
+          'validation_error',
+          `supersede candidate does not touch target edge ${supersededEdgeId}`,
+          400,
+        );
+      }
+
+      await writeEvent(tx, {
+        id: rateEventId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'knowledge_edge',
+        subject_id: proposeSubjectId,
+        outcome: 'success',
+        payload: {
+          rating: 'accept',
+          edge_op: 'supersede',
+          ...(user_note ? { user_note } : {}),
+        },
+        caused_by_event_id: proposeEventId,
+        created_at: now,
+      });
+
+      return applyApprovedEdgeSupersede(tx, {
+        candidate: {
+          from_knowledge_id: proposePayload.from_knowledge_id,
+          to_knowledge_id: proposePayload.to_knowledge_id,
+          relation_type: proposePayload.relation_type,
+          weight: proposePayload.weight ?? 1,
+          reasoning: proposePayload.reasoning ?? 'accepted reconcile supersede',
+        },
+        supersededEdgeId,
+        supersededEdge: {
+          from_knowledge_id: oldEdge.from_knowledge_id,
+          to_knowledge_id: oldEdge.to_knowledge_id,
+          relation_type: oldEdge.relation_type,
+        },
+        decision: {
+          action: 'SUPERSEDE',
+          neighbor_index: proposePayload.supersede_neighbor_index ?? null,
+          superseded_edge_id: supersededEdgeId,
+          confidence,
+          reason: proposePayload.reasoning ?? 'accepted reconcile supersede',
+        },
+        affectedRefs,
+        proposeEventId,
+      });
+    });
+
+    if (proposal) {
+      await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
+    }
+    return {
+      kind: 'knowledge_edge',
+      rate_event_id: rateEventId,
+      generate_event_id: applied.generateEventId,
+      edge_id: applied.edgeId,
     };
   }
 

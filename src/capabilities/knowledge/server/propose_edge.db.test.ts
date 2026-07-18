@@ -1449,9 +1449,8 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
 // runEdgeProposeAndWrite. The pure decision layer (judgeEdgeReconcile / parse /
 // confidence threshold) is unit-tested in edge-reconcile.unit.test.ts; here we
 // confirm the WIRING: topology runs first and short-circuits (reconcile never
-// sees a topology-rejected edge), a SUPERSEDE archives the old edge + writes the
-// log row + emits a CorrectionKind correction event + writes the new live edge, a
-// KEEP_BOTH proceeds as a pending proposal unchanged, and parse-error /
+// sees a topology-rejected edge), a SUPERSEDE becomes a pending proposal without
+// mutating either edge, KEEP_BOTH proceeds as a pending proposal unchanged, and parse-error /
 // low-confidence safe-degrade to KEEP_BOTH. The judge is INJECTED (judgeReconcileFn)
 // so no live GLM call is made.
 describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344)', () => {
@@ -1569,18 +1568,11 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     reason: 'candidate semantically corrects the live neighbor',
   });
 
-  it('SUPERSEDE: archives the old edge + writes the log row + emits the correction event + writes the new edge', async () => {
+  it('SUPERSEDE: writes a pending proposal and leaves both live-edge mutation and correction unapplied', async () => {
     const db = testDb();
     await insertKnowledge('kA');
     await insertKnowledge('kB');
     await insertKnowledge('kC');
-    // CodeRabbit/Bugbot Finding 1 regression lock: the OLD/neighbor edge endpoints
-    // must DIFFER from the candidate on every axis the archive payload records
-    // (from, to, AND relation_type) so a step-4 archive event that wrongly used the
-    // CANDIDATE endpoints would be DETECTABLY wrong. Old edge = kB --related_to--> kA
-    // (shares endpoint kA, but from/to are reversed AND a different relation_type vs
-    // the candidate kA --contrasts_with--> kC). The reconcile neighbor filter only
-    // requires sharing ONE endpoint, so this is a valid neighbor.
     await insertLiveEdge('e_old', 'kB', 'kA', 'related_to');
     await seedJudgeFailure('att_sup_1', ['kA', 'kC']);
     await seedJudgeFailure('att_sup_2', ['kA', 'kC']);
@@ -1588,7 +1580,6 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     const recentFailures = await getFailureAttempts(db, {
       since: new Date(Date.now() - 5 * DAY_MS),
     });
-
     const fakeRunTask = async () => ({
       text: JSON.stringify({
         proposals: [
@@ -1610,100 +1601,42 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       judgeReconcileFn: supersedeFirstNeighbor,
     });
     expect(stats.reconcile_superseded).toBe(1);
-    // No live PENDING proposal was written for a superseded candidate.
     expect(stats.proposed).toBe(0);
 
-    // Old edge soft-archived (the load-bearing removal).
     const oldEdge = await db
       .select()
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'e_old'))
       .limit(1);
-    expect(oldEdge[0].archived_at).not.toBeNull();
-
-    // A new LIVE edge kA --contrasts_with--> kC exists (not archived).
-    const liveEdges = await db
+    expect(oldEdge[0].archived_at).toBeNull();
+    const candidateEdges = await db
       .select()
       .from(knowledge_edge)
-      .where(and(eq(knowledge_edge.from_knowledge_id, 'kA'), isNull(knowledge_edge.archived_at)));
-    expect(liveEdges).toHaveLength(1);
-    expect(liveEdges[0].to_knowledge_id).toBe('kC');
-    expect(liveEdges[0].relation_type).toBe('contrasts_with');
+      .where(eq(knowledge_edge.from_knowledge_id, 'kA'));
+    expect(candidateEdges).toHaveLength(0);
 
-    // Finding 1 regression lock: the step-4 OLD-edge archive-provenance event must
-    // describe the SUPERSEDED OLD edge endpoints (kB --related_to--> kA), NOT the
-    // candidate's (kA --contrasts_with--> kC). It is the `generate` event anchored
-    // to the superseded edge id (e_old) carrying an `edge_op: 'archive'` marker.
-    const archiveEvents = await db
+    const proposals = await db
       .select()
       .from(event)
-      .where(
-        and(
-          eq(event.action, 'generate'),
-          eq(event.subject_kind, 'knowledge_edge'),
-          eq(event.subject_id, 'e_old'),
-        ),
-      );
-    expect(archiveEvents).toHaveLength(1);
-    const archivePayload = archiveEvents[0].payload as {
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposals).toHaveLength(1);
+    const proposalPayload = proposals[0].payload as {
       edge_op?: string;
       archive_edge_id?: string;
-      from_knowledge_id?: string;
-      to_knowledge_id?: string;
-      relation_type?: string;
+      supersede_confidence?: number;
+      supersede_affected_refs?: unknown[];
     };
-    expect(archivePayload.edge_op).toBe('archive');
-    expect(archivePayload.archive_edge_id).toBe('e_old');
-    // EQUAL the OLD edge endpoints…
-    expect(archivePayload.from_knowledge_id).toBe('kB');
-    expect(archivePayload.to_knowledge_id).toBe('kA');
-    expect(archivePayload.relation_type).toBe('related_to');
-    // …and NOT the candidate's endpoints (the exact misdescription Finding 1 fixes).
-    expect(archivePayload.from_knowledge_id).not.toBe('kA');
-    expect(archivePayload.to_knowledge_id).not.toBe('kC');
-    expect(archivePayload.relation_type).not.toBe('contrasts_with');
+    expect(proposalPayload.edge_op).toBe('supersede');
+    expect(proposalPayload.archive_edge_id).toBe('e_old');
+    expect(proposalPayload.supersede_confidence).toBe(0.9);
+    expect(proposalPayload.supersede_affected_refs).toHaveLength(2);
 
-    // Audit-log row written AND applied within the single tx (applied_at set;
-    // no row left unapplied).
-    const logRows = await db.select().from(edge_reconciliation_log);
-    expect(logRows).toHaveLength(1);
-    expect(logRows[0].action).toBe('SUPERSEDE');
-    expect(logRows[0].superseded_edge_id).toBe('e_old');
-    expect(logRows[0].applied_at).not.toBeNull();
-    const unapplied = await db
-      .select()
-      .from(edge_reconciliation_log)
-      .where(isNull(edge_reconciliation_log.applied_at));
-    expect(unapplied).toHaveLength(0);
-
-    // A CorrectionKind supersede correction event was emitted (provenance). It
-    // targets the OLD edge's archive-provenance generate event; that event is
-    // therefore SUPERSEDED with a replacement pointing at the new edge's
-    // generate event.
-    const correctRows = await db
+    expect(await db.select().from(edge_reconciliation_log)).toHaveLength(0);
+    const corrections = await db
       .select()
       .from(event)
       .where(and(eq(event.action, 'correct'), eq(event.subject_kind, 'event')));
-    expect(correctRows).toHaveLength(1);
-    const correctPayload = correctRows[0].payload as { correction_kind?: string };
-    expect(correctPayload.correction_kind).toBe('supersede');
-    // YUK-344 attribution: an AUTONOMOUS nightly supersede is attributed to the
-    // dreaming AGENT, NOT user/self (it is not a human correction).
-    expect(correctRows[0].actor_kind).toBe('agent');
-    expect(correctRows[0].actor_ref).toBe('dreaming');
-
-    const status = await getCorrectionStatus(db, correctRows[0].subject_id);
-    expect(status.state).toBe('superseded');
-    if (status.state === 'superseded') {
-      // The replacement is the NEW edge's generate event (a real event row).
-      const replacement = await db
-        .select()
-        .from(event)
-        .where(eq(event.id, status.replacement_event_id))
-        .limit(1);
-      expect(replacement[0].action).toBe('generate');
-      expect(replacement[0].subject_kind).toBe('knowledge_edge');
-    }
+    expect(corrections).toHaveLength(0);
   });
 
   it('KEEP_BOTH: a no-contradiction candidate proceeds as a pending proposal unchanged (no archive, no new edge, no correction)', async () => {
@@ -1935,7 +1868,7 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(oldEdge[0].archived_at).toBeNull();
   });
 
-  it('no double-apply: the UNIQUE(from,to,relation_type) constraint makes a re-proposed superseded candidate skipped_duplicate_edge (not a second archive/new edge)', async () => {
+  it('pending supersede proposal dedupes a repeated nightly candidate without applying it', async () => {
     const db = testDb();
     await insertKnowledge('kA');
     await insertKnowledge('kB');
@@ -1947,7 +1880,6 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     const recentFailures = await getFailureAttempts(db, {
       since: new Date(Date.now() - 5 * DAY_MS),
     });
-
     const fakeRunTask = async () => ({
       text: JSON.stringify({
         proposals: [
@@ -1962,7 +1894,6 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       }),
     });
 
-    // First run: SUPERSEDE applied (archive old, write new, log applied).
     const first = await runEdgeProposeAndWrite({
       db,
       recentFailures,
@@ -1971,46 +1902,27 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     });
     expect(first.reconcile_superseded).toBe(1);
 
-    const logAfterFirst = await db.select().from(edge_reconciliation_log);
-    expect(logAfterFirst).toHaveLength(1);
-    expect(logAfterFirst[0].applied_at).not.toBeNull();
-    const liveAfterFirst = await db
-      .select()
-      .from(knowledge_edge)
-      .where(isNull(knowledge_edge.archived_at));
-    // Exactly one live edge: the new kA→kC (old kA→kB archived).
-    expect(liveAfterFirst).toHaveLength(1);
-    expect(liveAfterFirst[0].to_knowledge_id).toBe('kC');
-
-    // The apply ran in a single tx, so the audit-log row is stamped applied_at
-    // (no row left unapplied). There is no replay cursor — a crash would have
-    // rolled the row back entirely.
-    const unapplied = await db
-      .select()
-      .from(edge_reconciliation_log)
-      .where(isNull(edge_reconciliation_log.applied_at));
-    expect(unapplied).toHaveLength(0);
-
-    // The real no-double-apply guard: the new candidate edge is now a real live
-    // row, so a SUBSEQUENT batch proposing the SAME (from,to,relation_type) edge
-    // is `skipped_duplicate_edge` via the UNIQUE constraint BEFORE the apply path
-    // (it does not double-archive / double-write).
     const second = await runEdgeProposeAndWrite({
       db,
       recentFailures,
       runTaskFn: fakeRunTask,
       judgeReconcileFn: supersedeFirstNeighbor,
     });
-    expect(second.skipped_duplicate_edge).toBe(1);
+    expect(second.skipped_duplicate_pending).toBe(1);
     expect(second.reconcile_superseded).toBe(0);
-    // Still exactly one reconcile log row + one live new edge (no double-apply).
-    const logAfterSecond = await db.select().from(edge_reconciliation_log);
-    expect(logAfterSecond).toHaveLength(1);
-    const liveAfterSecond = await db
+
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposals).toHaveLength(1);
+    expect(await db.select().from(edge_reconciliation_log)).toHaveLength(0);
+    const liveEdges = await db
       .select()
       .from(knowledge_edge)
       .where(isNull(knowledge_edge.archived_at));
-    expect(liveAfterSecond).toHaveLength(1);
+    expect(liveEdges).toHaveLength(1);
+    expect(liveEdges[0].id).toBe('e_old');
   });
 
   // YUK-344 (Issue 3) — the LIVE judge path (no injected judgeReconcileFn) must
