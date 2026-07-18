@@ -299,6 +299,8 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     ],
   });
 
+  const publicLookup = vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]);
+
   async function seedImageCandidateProposal(
     id: string,
     overrides: { source_url?: string; knowledge_ids?: string[] } = {},
@@ -559,7 +561,11 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     try {
       await expect(
         acceptAiProposal(db, 'img_cand_html', {
-          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+          imageCandidateDeps: {
+            runTaskFn,
+            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
         }),
       ).rejects.toMatchObject({ code: 'unsupported_media_type' });
       // The VLM was never called — no money burned on HTML bytes.
@@ -607,6 +613,35 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     }
   });
 
+  it('rejects a public hostname when DNS resolves it to a private address (YUK-688)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_dns_ssrf', {
+      source_url: 'https://images.example.edu/wenyan/scan.png',
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const lookupFn = vi.fn(async () => [{ address: '127.0.0.1', family: 4 }]);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_dns_ssrf', {
+          imageCandidateDeps: {
+            runTaskFn,
+            lookupFn: lookupFn as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+      expect(lookupFn).toHaveBeenCalledWith('images.example.edu', {
+        all: true,
+        verbatim: true,
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(runTaskFn).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   // FIX-7 — an oversized body is rejected (Content-Length pre-check) before the paid flow.
   it('rejects an oversized image via Content-Length before the VLM (FIX-7 size cap)', async () => {
     const db = testDb();
@@ -624,7 +659,11 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     try {
       await expect(
         acceptAiProposal(db, 'img_cand_big', {
-          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+          imageCandidateDeps: {
+            runTaskFn,
+            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
         }),
       ).rejects.toMatchObject({ code: 'payload_too_large' });
       expect(runTaskFn).not.toHaveBeenCalled();
@@ -737,7 +776,11 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     try {
       await expect(
         acceptAiProposal(db, 'img_cand_redirect', {
-          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+          imageCandidateDeps: {
+            runTaskFn,
+            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
         }),
       ).rejects.toMatchObject({ code: 'validation_error' });
       // The first hop fetched, but the redirect target was rejected before a second fetch.
@@ -773,6 +816,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       const result = await acceptAiProposal(db, 'img_cand_fdic', {
         imageCandidateDeps: {
           runTaskFn,
+          lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
           enqueueSourceVerify: vi.fn(async () => {}),
           r2: { put: vi.fn(async () => {}), get: vi.fn(async () => null) } as never,
         },
@@ -821,7 +865,11 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     try {
       await expect(
         acceptAiProposal(db, 'img_cand_svg', {
-          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+          imageCandidateDeps: {
+            runTaskFn,
+            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
         }),
       ).rejects.toMatchObject({ code: 'unsupported_media_type' });
       expect(runTaskFn).not.toHaveBeenCalled();

@@ -32,6 +32,9 @@
 //
 // See docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
 
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
@@ -75,6 +78,8 @@ export interface ImageCandidateAcceptResult {
 export interface ImageCandidateAcceptDeps {
   /** Download the image bytes for the candidate's source_url. */
   fetchImageBytesFn?: (url: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
+  /** DNS resolver seam for deterministic SSRF tests. Defaults to node:dns lookup. */
+  lookupFn?: LookupFn;
   /** R2 client for persisting the downloaded asset. Defaults to getR2(). */
   r2?: R2Client;
   /** VisionExtractTask runner seam (defaults to the production runner). */
@@ -119,12 +124,13 @@ const ACCEPT_FAILED_ACTION = 'experimental:image_candidate_accept_failed';
 // latency so a slow-but-alive accept is not stolen out from under itself.
 const ACCEPT_STALE_MS = 10 * 60 * 1000; // 10 minutes
 
-// FIX-7 — defaultFetchImageBytes guards (single-user self-hosted tool boundary, NOT a
-// DNS-rebinding-grade SSRF defense — the surface sits behind the internal-token gate and
-// runs on an internal network; we just reject the obvious foot-guns of feeding an
-// AI-written URL straight into fetch + the VLM).
+// FIX-7/YUK-688 — AI-written URLs are untrusted even behind the internal-token gate.
+// Validate syntax, literal hosts, DNS answers, every redirect, timeout, size and MIME
+// before bytes can reach R2 or the VLM.
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+type LookupFn = typeof lookup;
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const hash = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
@@ -133,12 +139,9 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join('');
 }
 
-// FIX-7 — reject URLs that resolve to a non-public destination before any network call.
-// Hostname-level only (no DNS resolution → no rebinding protection, by design — see the
-// boundary note above). Covers: non-http(s) schemes, localhost, loopback, RFC1918
-// private ranges, link-local incl. the 169.254.169.254 cloud metadata endpoint, and
-// .local mDNS names.
-function assertPublicHttpUrl(url: string): void {
+// FIX-7 — reject URL forms and literal destinations that can never be valid public image
+// sources. Hostnames receive a second A/AAAA answer check below.
+function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -146,6 +149,13 @@ function assertPublicHttpUrl(url: string): void {
     throw new ApiError(
       'validation_error',
       `image_candidate source_url is not a valid URL: ${url}`,
+      400,
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new ApiError(
+      'validation_error',
+      'image_candidate source_url must not contain credentials',
       400,
     );
   }
@@ -188,6 +198,63 @@ function assertPublicHttpUrl(url: string): void {
       400,
     );
   }
+  return parsed;
+}
+
+function isBlockedIpAddress(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (isIP(normalized) === 4) {
+    return (
+      normalized === '0.0.0.0' ||
+      /^127\./.test(normalized) ||
+      /^10\./.test(normalized) ||
+      /^192\.168\./.test(normalized) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
+      /^169\.254\./.test(normalized)
+    );
+  }
+  if (isIP(normalized) === 6) {
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      /^::ffff:(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.)/.test(normalized) ||
+      /^f[cd][0-9a-f]{2}:/i.test(normalized) ||
+      /^fe[89ab][0-9a-f]:/i.test(normalized)
+    );
+  }
+  return false;
+}
+
+async function assertPublicDnsAnswers(parsed: URL, lookupFn: LookupFn): Promise<void> {
+  const host = parsed.hostname;
+  const bareHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  if (isIP(bareHost)) return;
+
+  let answers: Array<{ address: string; family: number }>;
+  try {
+    answers = await lookupFn(bareHost, { all: true, verbatim: true });
+  } catch (err) {
+    throw new ApiError(
+      'extraction_failed',
+      `image_candidate source_url DNS lookup failed for ${bareHost}: ${err instanceof Error ? err.message : String(err)}`,
+      422,
+    );
+  }
+  if (answers.length === 0) {
+    throw new ApiError(
+      'extraction_failed',
+      `image_candidate source_url DNS lookup returned no addresses for ${bareHost}`,
+      422,
+    );
+  }
+  const blocked = answers.find((answer) => isBlockedIpAddress(answer.address));
+  if (blocked) {
+    throw new ApiError(
+      'validation_error',
+      `image_candidate source_url host ${bareHost} resolves to a private/loopback/link-local address (${blocked.address}); refusing to fetch`,
+      400,
+    );
+  }
 }
 
 // FIX-R2-1 — fetch follows 30x by default, which would let an AI-written URL that
@@ -199,9 +266,10 @@ const MAX_REDIRECTS = 3;
 
 async function defaultFetchImageBytes(
   url: string,
+  lookupFn: LookupFn = lookup,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
-  // FIX-7 — gate the AI-written URL before any network call.
-  assertPublicHttpUrl(url);
+  // YUK-688 — gate the AI-written URL and its current A/AAAA answers before any fetch.
+  await assertPublicDnsAnswers(assertPublicHttpUrl(url), lookupFn);
   let currentUrl = url;
   let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -231,7 +299,7 @@ async function defaultFetchImageBytes(
       // on the resolved target — a redirect to 169.254.169.254 / localhost is rejected here
       // (before the next fetch), so the redirect can never reach a private host.
       const nextUrl = new URL(location, currentUrl).toString();
-      assertPublicHttpUrl(nextUrl);
+      await assertPublicDnsAnswers(assertPublicHttpUrl(nextUrl), lookupFn);
       currentUrl = nextUrl;
       continue;
     }
@@ -493,7 +561,8 @@ export async function acceptImageCandidateProposal(
   }
 
   try {
-    const fetchImageBytes = deps.fetchImageBytesFn ?? defaultFetchImageBytes;
+    const fetchImageBytes =
+      deps.fetchImageBytesFn ?? ((sourceUrl) => defaultFetchImageBytes(sourceUrl, deps.lookupFn));
     const r2 = deps.r2 ?? getR2();
     const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
