@@ -320,4 +320,29 @@ describe('frontier_fill_nightly — empty-frontier prerequisite bootstrap', () =
     expect(events[0]).toMatchObject({ from: src, to: t1 });
     expect(await countLiveEdges()).toBe(0);
   });
+
+  it('skips prerequisite proposals that repeat a direct tree parent relationship', async () => {
+    const [parent, child] = [createId(), createId()];
+    await seedKnowledge([parent, child]);
+    await db.update(knowledge).set({ parent_id: parent }).where(eq(knowledge.id, child));
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: child,
+            to_knowledge_id: parent,
+            relation_type: 'prerequisite',
+            weight: 0.9,
+            reasoning: 'tree already expresses this pair',
+          },
+        ],
+      }),
+    }));
+
+    const result = await runFrontierFillAndWrite(db, { runTaskFn });
+    expect(result.proposed).toBe(0);
+    expect(result.skipped_tree_redundancy).toBe(1);
+    expect(await proposeEvents()).toHaveLength(0);
+    expect(await countLiveEdges()).toBe(0);
+  });
 });

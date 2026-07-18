@@ -46,6 +46,7 @@ import {
   EdgeProposalSchema,
   loadPendingEdgeProposalKeys,
 } from '@/capabilities/knowledge/server/propose_edge';
+import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 // CROSS-PACKAGE seam (YUK-349): learnableFrontier is a practice-package read.
@@ -152,6 +153,8 @@ export interface FrontierFillResult {
   skipped_duplicate_edge: number;
   /** Proposals dropped for self-loop / unknown-node / non-candidate-target reasons. */
   skipped_invalid: number;
+  /** Proposals dropped because the direct pair is already represented by tree parent_id. */
+  skipped_tree_redundancy: number;
   /** Proposals dropped by the FRONTIER_FILL_MAX_PROPOSALS clamp. */
   skipped_over_cap: number;
 }
@@ -166,6 +169,7 @@ function emptyResult(): FrontierFillResult {
     skipped_duplicate_pending: 0,
     skipped_duplicate_edge: 0,
     skipped_invalid: 0,
+    skipped_tree_redundancy: 0,
     skipped_over_cap: 0,
   };
 }
@@ -298,19 +302,27 @@ export async function runFrontierFillAndWrite(
 
     const parsed = parseFrontierProposals(taskResult.text);
 
-    // ── YUK-514 Finding 2: `from` existence is the SoT `knowledge` table, NOT the
-    //    truncated tree snapshot. One bounded batch query over the distinct proposed `from`
-    //    ids (≤ parsed proposal count) → a real KC above the snapshot cap is no longer
-    //    falsely dropped. `to` keeps its candidateSet check (real ids from
-    //    loadKcsLackingPrereq), which already implies existence + non-archived.
-    const proposedFromIds = [...new Set(parsed.proposals.map((p) => p.from_knowledge_id))];
-    const existingFromRows = proposedFromIds.length
+    // ── YUK-514 Finding 2 + YUK-674: endpoint existence / parent links come from
+    //    the SoT `knowledge` table, NOT the truncated prompt snapshot. One bounded
+    //    query over both endpoints validates `from` and exposes direct tree pairs.
+    const proposedEndpointIds = [
+      ...new Set(
+        parsed.proposals.flatMap((proposal) => [
+          proposal.from_knowledge_id,
+          proposal.to_knowledge_id,
+        ]),
+      ),
+    ];
+    const endpointRows = proposedEndpointIds.length
       ? await db
-          .select({ id: knowledge.id })
+          .select({ id: knowledge.id, parent_id: knowledge.parent_id })
           .from(knowledge)
-          .where(and(inArray(knowledge.id, proposedFromIds), isNull(knowledge.archived_at)))
+          .where(and(inArray(knowledge.id, proposedEndpointIds), isNull(knowledge.archived_at)))
       : [];
-    const validFromIds = new Set(existingFromRows.map((r) => r.id));
+    const validEndpointIds = new Set(endpointRows.map((row) => row.id));
+    const treeParentLinks = endpointRows.flatMap((row) =>
+      row.parent_id ? [{ child_id: row.id, parent_id: row.parent_id }] : [],
+    );
 
     for (const p of parsed.proposals) {
       // ⑤ COST CAP — clamp to at most FRONTIER_FILL_MAX_PROPOSALS writes per run.
@@ -326,8 +338,13 @@ export async function runFrontierFillAndWrite(
       // YUK-514 Finding 2); `to` must be a candidate (a KC actually lacking prereq coverage,
       // from loadKcsLackingPrereq, so it is real + non-archived — we never gate an
       // already-covered KC with another temp edge).
-      if (from === to || !validFromIds.has(from) || !candidateSet.has(to)) {
+      if (from === to || !validEndpointIds.has(from) || !candidateSet.has(to)) {
         result.skipped_invalid += 1;
+        continue;
+      }
+
+      if (isDirectTreePair(from, to, treeParentLinks)) {
+        result.skipped_tree_redundancy += 1;
         continue;
       }
 

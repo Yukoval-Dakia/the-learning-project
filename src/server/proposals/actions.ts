@@ -47,6 +47,7 @@ import {
   applyArchive,
   dismissProposal,
 } from '@/capabilities/knowledge/server/proposals';
+import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
   persistNoteRefineApply,
@@ -523,7 +524,11 @@ export async function decideKnowledgeEdgeProposal(
 
   const endpointIds = Array.from(new Set([fromId, toId]));
   const found = await db
-    .select({ id: knowledge.id, archived_at: knowledge.archived_at })
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
+    })
     .from(knowledge)
     .where(inArray(knowledge.id, endpointIds));
   const foundActive = new Set(found.filter((r) => r.archived_at === null).map((r) => r.id));
@@ -533,6 +538,21 @@ export async function decideKnowledgeEdgeProposal(
       'not_found',
       `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
       404,
+    );
+  }
+  if (
+    isDirectTreePair(
+      fromId,
+      toId,
+      found.flatMap((node) =>
+        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+      ),
+    )
+  ) {
+    throw new ApiError(
+      'tree_redundancy',
+      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
+      409,
     );
   }
 

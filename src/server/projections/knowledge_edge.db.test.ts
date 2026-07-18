@@ -42,14 +42,14 @@ async function seedEdgeEvent(s: EdgeEventSeed): Promise<void> {
   });
 }
 
-async function insertNode(id: string): Promise<void> {
+async function insertNode(id: string, parentId: string | null = null): Promise<void> {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
     id,
     name: id,
     domain: null,
-    parent_id: null,
+    parent_id: parentId,
     merged_from: [],
     proposed_by_ai: true,
     approval_status: 'approved',
@@ -161,6 +161,28 @@ describe('projectKnowledgeEdge', () => {
     // create fields preserved through the archive.
     expect(row?.from_knowledge_id).toBe('kn_c');
     expect(row?.to_knowledge_id).toBe('kn_d');
+  });
+
+  it('rejects a projected live edge that repeats a direct tree relationship', async () => {
+    await insertNode('kn_parent');
+    await insertNode('kn_child', 'kn_parent');
+    const edgeId = 'ke_tree_redundant';
+    await seedEdgeEvent({
+      id: 'ev_gen_tree_redundant',
+      action: 'generate',
+      subject_id: edgeId,
+      payload: {
+        edge_op: 'create',
+        from_knowledge_id: 'kn_child',
+        to_knowledge_id: 'kn_parent',
+        relation_type: 'prerequisite',
+        weight: 1,
+      },
+      created_at: T0,
+    });
+
+    await expect(projectKnowledgeEdge(testDb(), edgeId)).rejects.toThrow(/tree redundancy/i);
+    expect(await readEdge(edgeId)).toBeNull();
   });
 
   it('fold → null DELETEs an existing edge row (no matching events)', async () => {

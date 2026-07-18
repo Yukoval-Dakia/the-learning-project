@@ -56,6 +56,7 @@
     "audit:flags": "tsx scripts/audit-flags.ts",
     "audit:calibration": "tsx scripts/audit-calibration.ts",
     "audit:projection": "tsx scripts/audit-projection.ts",
+    "audit:tree-mesh": "tsx scripts/audit-tree-mesh-overlap.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "db:backfill:lost-attribution": "tsx scripts/backfill-lost-attribution.ts",
     "db:recompute:bcalib": "tsx scripts/recompute-bcalib-cap.ts",
