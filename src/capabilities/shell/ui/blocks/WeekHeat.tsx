@@ -16,21 +16,25 @@ function weekdayOf(day: string): string {
 export function WeekHeat({ heat }: { heat: WorkbenchSummary['week_heat'] }) {
   return (
     <div className="week-heat">
-      <div className="heat-row">
-        {heat.map((h, i) => (
-          <span
-            key={h.day}
-            className="heat-cell"
-            data-lvl={heatLevel(h.count)}
-            title={`${h.day} · ${h.count} 次活动`}
-            style={{ animationDelay: `${i * 12}ms` }}
-          />
-        ))}
-      </div>
-      <div className="heat-axis">
+      <ul className="heat-row" aria-label="过去 7 天活动">
+        {heat.map((h, i) => {
+          const label = `${h.day}，星期${weekdayOf(h.day)}，${h.count} 次活动`;
+          return (
+            <li
+              key={h.day}
+              className="heat-cell"
+              aria-label={label}
+              data-lvl={heatLevel(h.count)}
+              title={label}
+              style={{ animationDelay: `${i * 12}ms` }}
+            />
+          );
+        })}
+      </ul>
+      <div className="heat-axis" aria-hidden="true">
         {heat.map((h) => (
           <span key={h.day} className="meta">
-            {weekdayOf(h.day)}
+            {weekdayOf(h.day)} · {h.count}
           </span>
         ))}
       </div>
