@@ -3,7 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { setDocxConverterForTests } from '@/capabilities/ingestion/server/docx/convert';
-import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
+import {
+  AUTO_ENROLL_FLAG,
+  OBSERVE_FLAG,
+} from '@/capabilities/ingestion/server/workflow-judge-config';
 import { event, job_events, learning_session, question_block, source_asset } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,6 +33,9 @@ vi.mock('@/server/boss/client', () => ({
 
 // Import the route AFTER the mocks so it picks up memR2 + the mocked boss.
 import { POST } from './docx';
+
+const savedAutoEnrollFlag = process.env[AUTO_ENROLL_FLAG];
+const savedObserveFlag = process.env[OBSERVE_FLAG];
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCX_FIX = join(__dirname, '../../../../tests/fixtures/docx');
@@ -86,11 +92,17 @@ function injectVisualConverter() {
 
 describe('POST /api/ingestion/docx', () => {
   beforeEach(async () => {
+    delete process.env[AUTO_ENROLL_FLAG];
+    delete process.env[OBSERVE_FLAG];
     r2._store.clear();
     bossSend.mockClear();
     await resetDb();
   });
   afterEach(() => {
+    if (savedAutoEnrollFlag === undefined) delete process.env[AUTO_ENROLL_FLAG];
+    else process.env[AUTO_ENROLL_FLAG] = savedAutoEnrollFlag;
+    if (savedObserveFlag === undefined) delete process.env[OBSERVE_FLAG];
+    else process.env[OBSERVE_FLAG] = savedObserveFlag;
     setDocxConverterForTests(null);
   });
 
@@ -162,18 +174,11 @@ describe('POST /api/ingestion/docx', () => {
     expect(domainEvents[0].outcome).toBe('success');
 
     // Text line enqueues NO extraction job (blocks come from pandoc, not OCR) —
-    // but it DOES fan out two post-commit observe-only jobs:
-    //   1. auto_enroll (docx-ingestion.ts Codex-3: same AI-prefill/auto-enroll observe
-    //      path as the visual/PDF/image entrypoints), and
-    //   2. copilot_nudge_evaluate (YUK-577: the proactive-nudge evaluator).
-    // Assert exactly those two sends and that no tencent_ocr_extract sneaks in.
-    expect(bossSend).toHaveBeenCalledTimes(2);
-    // YUK-486 — the auto_enroll send carries the singleton dedup options (parity with the tencent path).
-    expect(bossSend).toHaveBeenCalledWith(
-      'auto_enroll',
-      { sessionId: body.session_id },
-      { singletonKey: body.session_id, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-    );
+    // YUK-696 — both paid auto-enroll modes default OFF, so the text line only
+    // fans out to the free proactive-nudge evaluator. Draft blocks remain ready
+    // for manual review and no paid auto_enroll job is queued implicitly.
+    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(bossSend).not.toHaveBeenCalledWith('auto_enroll', expect.anything(), expect.anything());
     // YUK-577 — the copilot_nudge_evaluate send carries only the locating ids (facts read back
     // from the event table by the handler; evidence-first, no payload drift).
     expect(bossSend).toHaveBeenCalledWith('copilot_nudge_evaluate', {

@@ -38,6 +38,7 @@ import {
 } from './auto-enroll';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
+import { AUTO_ENROLL_MAX_BLOCKS_PER_RUN } from './workflow-judge-config';
 
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
@@ -191,12 +192,10 @@ describe('runAutoEnrollForSession', () => {
   });
 
   // ===========================================================================
-  // CRITICAL SAFETY: enroll OFF + observe OFF → hard no-op. Slice B (YUK-190)
-  // INVERTED the default OFF behavior to observe-only (see the observe cases
-  // below); the legacy hard no-op now requires WORKFLOW_JUDGE_OBSERVE_ENABLED
-  // explicitly 'false'. The flag-ON enroll path below is unchanged.
+  // CRITICAL SAFETY (YUK-696): both paid modes default OFF. No env flags means
+  // a hard no-op before block assembly, tagging, judging, or enrollment.
   // ===========================================================================
-  it('enroll OFF + observe OFF: hard no-op, nothing enrolled, all blocks stay draft', async () => {
+  it('both flags absent: hard no-op, nothing enrolled, all blocks stay draft', async () => {
     const db = testDb();
     const { sessionId, blockIds } = await seed(db);
 
@@ -204,7 +203,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: { [OBSERVE_FLAG]: 'false' }, // enroll undefined → OFF; observe explicitly OFF
+      env: {},
       runTaggingFn: async () => {
         taggingCalled = true;
         return highConfidenceTagging();
@@ -213,7 +212,7 @@ describe('runAutoEnrollForSession', () => {
 
     expect(result.status).toBe('skipped:flag_off');
     expect(result.enrolled).toBe(0);
-    // The judge / tagging never even runs when both flags are off.
+    // The judge / tagging never even runs when both flags are absent.
     expect(taggingCalled).toBe(false);
 
     // Every block is untouched: still 'draft', no question, no event.
@@ -772,7 +771,7 @@ describe('runAutoEnrollForSession', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: {}, // enroll OFF, observe ON (default) — must NOT run tagKnowledge / mutate
+      env: { [OBSERVE_FLAG]: 'true' }, // enroll OFF, observe explicitly ON
       runTaggingFn: highConfidenceTagging,
       tagKnowledgeFn: async (deps, input) => {
         tagCalled = true;
@@ -898,7 +897,7 @@ describe('runAutoEnrollForSession', () => {
   // Strategy D Slice B (YUK-190): OBSERVE-ONLY semantics.
   // ===========================================================================
 
-  // (a) Headline: flag OFF + observe ON (default) ⇒ observe-only. Uses
+  // (a) Headline: flag OFF + observe explicitly ON ⇒ observe-only. Uses
   // highConfidenceTagging so the ONLY thing preventing enrollment is the mode
   // branch — proves observe writes the audit trail but changes zero domain state.
   it('(a) flag OFF + observe ON: observe-only, zero domain rows, blocks stay draft', async () => {
@@ -909,7 +908,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {}, // enroll undefined → OFF; observe undefined → ON
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: async () => {
         taggingCalled += 1;
         return highConfidenceTagging();
@@ -973,6 +972,32 @@ describe('runAutoEnrollForSession', () => {
     expect(sessionRows[0]?.ended_at).toBeNull();
   });
 
+  it('caps paid observe fan-out and leaves excess blocks for human review', async () => {
+    const db = testDb();
+    const total = AUTO_ENROLL_MAX_BLOCKS_PER_RUN + 3;
+    const { sessionId } = await seedWithStatus(db, 'extracted', total);
+    const runTaggingFn = vi.fn(highConfidenceTagging);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: { [OBSERVE_FLAG]: 'true' },
+      runTaggingFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(runTaggingFn).toHaveBeenCalledTimes(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
+    expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(
+      AUTO_ENROLL_MAX_BLOCKS_PER_RUN,
+    );
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks).toHaveLength(total);
+    expect(blocks.every((block) => block.status === 'draft')).toBe(true);
+  });
+
   // (a) contrast: low confidence ⇒ route 'review', still an observe event with
   // outcome 'skipped', still draft, still ingest-stamped.
   it('(a) observe low-confidence: route review, outcome skipped, still draft + stamped', async () => {
@@ -982,7 +1007,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: lowConfidenceTagging,
     });
 
@@ -1011,7 +1036,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
     });
 
@@ -1041,7 +1066,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: async () => {
         throw new TaggingTaskError('TaggingTask LLM call failed');
       },
@@ -1075,7 +1100,7 @@ describe('runAutoEnrollForSession', () => {
       runAutoEnrollForSession({
         db,
         sessionId,
-        env: {},
+        env: { [OBSERVE_FLAG]: 'true' },
         runTaggingFn: async () => {
           throw new Error('db connection lost');
         },
@@ -1109,8 +1134,18 @@ describe('runAutoEnrollForSession', () => {
       taggingCalled += 1;
       return highConfidenceTagging();
     };
-    await runAutoEnrollForSession({ db, sessionId, env: {}, runTaggingFn: fn });
-    await runAutoEnrollForSession({ db, sessionId, env: {}, runTaggingFn: fn });
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: { [OBSERVE_FLAG]: 'true' },
+      runTaggingFn: fn,
+    });
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: { [OBSERVE_FLAG]: 'true' },
+      runTaggingFn: fn,
+    });
 
     expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(2);
     expect(taggingCalled).toBe(4);
@@ -1132,7 +1167,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: async ({ questionMd }) => {
         if (questionMd.includes(block1)) throw new TaggingTaskError('block 1 down');
         return highConfidenceTagging();
@@ -1169,7 +1204,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
       writeEventFn,
     });
@@ -1192,7 +1227,7 @@ describe('runAutoEnrollForSession', () => {
       db: dbObserve,
       sessionId: observeSeed.sessionId,
       subjectId: 'yuwen',
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
     });
     expect(await dbObserve.select().from(question)).toHaveLength(0);
@@ -1392,7 +1427,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
       db,
       sessionId,
       subjectId: 'yuwen',
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
       runMistakeEnrollFn,
     });
@@ -1430,7 +1465,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
     await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: lowConfidenceTagging, // → route 'review'
       runMistakeEnrollFn,
     });
@@ -1451,7 +1486,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
     await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
       runMistakeEnrollFn,
     });
@@ -1476,7 +1511,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {},
+      env: { [OBSERVE_FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
       runMistakeEnrollFn,
     });
@@ -1502,7 +1537,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
       runAutoEnrollForSession({
         db,
         sessionId,
-        env: {},
+        env: { [OBSERVE_FLAG]: 'true' },
         runTaggingFn: highConfidenceTagging,
         runMistakeEnrollFn,
       }),

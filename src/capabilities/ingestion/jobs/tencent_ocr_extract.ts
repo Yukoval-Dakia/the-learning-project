@@ -30,7 +30,10 @@ import {
   type LayoutQuality,
   parseMarkAgentResponse,
 } from '@/capabilities/ingestion/server/tencent_mark_parser';
-import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
+import {
+  AUTO_ENROLL_SINGLETON_SECONDS,
+  autoEnrollJobEnabled,
+} from '@/capabilities/ingestion/server/workflow-judge-config';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -566,7 +569,8 @@ async function processOneOcrJob(
       });
     }
 
-    // Strategy D Slice B (YUK-190): fan out to the observe-only auto-enroll job.
+    // YUK-696: both paid modes are opt-in. Do not even enqueue the worker when
+    // both flags are absent/OFF; the extraction remains available for manual review.
     // Inline getStartedBoss() producer (worker process already has boss started
     // → same instance), mirroring attribution_followup → variant_gen. Swallow +
     // log: a failed enqueue must NOT fail an extraction that already succeeded.
@@ -574,23 +578,25 @@ async function processOneOcrJob(
     // auto-enroll throw never flips this session to 'failed' or re-runs OCR. The
     // applyExtractionResult assertFromState(['extracting']) guard means a
     // succeeded OCR job can never re-reach this line, so the hook fires once.
-    try {
-      const { getStartedBoss } = await import('@/server/boss/client');
-      const boss = await getStartedBoss();
-      // YUK-486 — dedup the enqueue: singletonKey=sessionId + singletonSeconds collapses two
-      // near-simultaneous sends for the same session into one job (dev double-consume:
-      // rw:api's embedded RW_WORKER + standalone worker:dev both poll this queue; or an extract
-      // retry re-sending). singletonSeconds is REQUIRED — a bare singletonKey is a no-op on a
-      // standard-policy queue in pg-boss v12 (see AUTO_ENROLL_SINGLETON_SECONDS). This only
-      // REDUCES redundant jobs; the per-block FOR UPDATE claim in runAutoEnrollForSession is the
-      // structural guarantee against double-INSERT for any job that still runs.
-      await boss.send(
-        'auto_enroll',
-        { sessionId },
-        { singletonKey: sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-      );
-    } catch (err) {
-      console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
+    if (autoEnrollJobEnabled(process.env)) {
+      try {
+        const { getStartedBoss } = await import('@/server/boss/client');
+        const boss = await getStartedBoss();
+        // YUK-486 — dedup the enqueue: singletonKey=sessionId + singletonSeconds collapses two
+        // near-simultaneous sends for the same session into one job (dev double-consume:
+        // rw:api's embedded RW_WORKER + standalone worker:dev both poll this queue; or an extract
+        // retry re-sending). singletonSeconds is REQUIRED — a bare singletonKey is a no-op on a
+        // standard-policy queue in pg-boss v12 (see AUTO_ENROLL_SINGLETON_SECONDS). This only
+        // REDUCES redundant jobs; the per-block FOR UPDATE claim in runAutoEnrollForSession is the
+        // structural guarantee against double-INSERT for any job that still runs.
+        await boss.send(
+          'auto_enroll',
+          { sessionId },
+          { singletonKey: sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
+        );
+      } catch (err) {
+        console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
+      }
     }
 
     // YUK-577 — fan out to the copilot proactive-nudge evaluator (post-commit, observe-only).

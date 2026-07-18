@@ -12,6 +12,7 @@ import {
   DEFAULT_AUTO_ENROLL_THRESHOLD,
   OBSERVE_FLAG,
   autoEnrollEnabled,
+  autoEnrollJobEnabled,
   autoEnrollThreshold,
   observeEnabled,
 } from './workflow-judge-config';
@@ -55,20 +56,28 @@ describe('autoEnrollThreshold', () => {
 });
 
 describe('observeEnabled', () => {
-  it('is ON when the env var is undefined (the OFF-flag default: observe-only)', () => {
-    expect(observeEnabled({})).toBe(true);
+  it('is OFF when the env var is undefined (paid observe is opt-in)', () => {
+    expect(observeEnabled({})).toBe(false);
   });
 
-  it('is ON for any value except explicit false (opt-OUT polarity)', () => {
-    expect(observeEnabled({ [OBSERVE_FLAG]: 'true' })).toBe(true);
-    expect(observeEnabled({ [OBSERVE_FLAG]: '' })).toBe(true);
-    expect(observeEnabled({ [OBSERVE_FLAG]: '1' })).toBe(true);
-    expect(observeEnabled({ [OBSERVE_FLAG]: 'yes' })).toBe(true);
-  });
-
-  it("is OFF only when explicitly 'false' (case-insensitive) → restores hard no-op", () => {
+  it("is OFF for '' / 'false' / arbitrary values (opt-IN polarity)", () => {
+    expect(observeEnabled({ [OBSERVE_FLAG]: '' })).toBe(false);
     expect(observeEnabled({ [OBSERVE_FLAG]: 'false' })).toBe(false);
-    expect(observeEnabled({ [OBSERVE_FLAG]: 'FALSE' })).toBe(false);
-    expect(observeEnabled({ [OBSERVE_FLAG]: 'False' })).toBe(false);
+    expect(observeEnabled({ [OBSERVE_FLAG]: '1' })).toBe(false);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'yes' })).toBe(false);
+  });
+
+  it("is ON only when explicitly 'true' (case-insensitive)", () => {
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'true' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'TRUE' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'True' })).toBe(true);
+  });
+});
+
+describe('autoEnrollJobEnabled', () => {
+  it('skips producer fan-out by default and enables it for either explicit paid mode', () => {
+    expect(autoEnrollJobEnabled({})).toBe(false);
+    expect(autoEnrollJobEnabled({ [AUTO_ENROLL_FLAG]: 'true' })).toBe(true);
+    expect(autoEnrollJobEnabled({ [OBSERVE_FLAG]: 'true' })).toBe(true);
   });
 });
