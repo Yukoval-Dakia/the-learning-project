@@ -55,14 +55,38 @@ function decodeXml(bytes: Uint8Array): string {
   if (bytes[0] === 0xfe && bytes[1] === 0xff) {
     return new TextDecoder('utf-16be').decode(bytes.subarray(2));
   }
+  // XML processors infer BOM-less UTF-16 from the leading '<' NUL pattern.
+  // Mirror that sniffing so a converter cannot see relationship tags that this
+  // preflight decoded as NUL-filled UTF-8 and consequently failed to inspect.
+  if (bytes[0] === 0x3c && bytes[1] === 0x00) {
+    return new TextDecoder('utf-16le').decode(bytes);
+  }
+  if (bytes[0] === 0x00 && bytes[1] === 0x3c) {
+    return new TextDecoder('utf-16be').decode(bytes);
+  }
   return new TextDecoder('utf-8').decode(bytes);
 }
 
 function decodeXmlEntities(value: string): string {
   return value.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (entity, token: string) => {
     const lower = token.toLowerCase();
-    if (lower.startsWith('#x')) return String.fromCodePoint(Number.parseInt(lower.slice(2), 16));
-    if (lower.startsWith('#')) return String.fromCodePoint(Number.parseInt(lower.slice(1), 10));
+    if (lower.startsWith('#')) {
+      const codePoint = Number.parseInt(
+        lower.slice(lower.startsWith('#x') ? 2 : 1),
+        lower.startsWith('#x') ? 16 : 10,
+      );
+      // XML 1.0 character references cannot name surrogate code points or values
+      // beyond Unicode. Map malformed uploads to the same deliberate 400 as a
+      // corrupt DOCX instead of leaking RangeError as a route-level 500.
+      if (
+        !Number.isInteger(codePoint) ||
+        codePoint > 0x10ffff ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 字符引用无效）', 400);
+      }
+      return String.fromCodePoint(codePoint);
+    }
     return { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' }[lower] ?? entity;
   });
 }

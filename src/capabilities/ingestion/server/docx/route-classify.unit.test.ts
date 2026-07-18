@@ -19,6 +19,16 @@ function docxBytes(name: string): Uint8Array {
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
+function encodeUtf16(value: string, littleEndian: boolean): Uint8Array {
+  const bytes = new Uint8Array(value.length * 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    bytes[index * 2 + (littleEndian ? 0 : 1)] = unit & 0xff;
+    bytes[index * 2 + (littleEndian ? 1 : 0)] = unit >>> 8;
+  }
+  return bytes;
+}
+
 describe('classifyDocx', () => {
   it('routes a MathType docx → visual', () => {
     expect(classifyDocx(docxBytes('math-mathtype.docx'))).toBe('visual');
@@ -108,6 +118,39 @@ describe('classifyDocx', () => {
 
     expect(() => classifyDocx(bytes)).toThrowError(
       expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it.each([
+    ['UTF-16LE', true],
+    ['UTF-16BE', false],
+  ] as const)('detects external relationships in BOM-less %s XML', async (_label, littleEndian) => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const relationXml =
+      '<Relationships><Relationship Type="image" TargetMode="External" Target="http://169.254.169.254/x"/></Relationships>';
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': encodeUtf16(relationXml, littleEndian),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('maps an out-of-range XML character reference to validation_error 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="image" TargetMode="&#x110000;" Target="x"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/字符引用无效/) }),
     );
   });
 
