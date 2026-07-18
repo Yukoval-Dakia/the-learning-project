@@ -70,6 +70,10 @@ const PAID_PAPER_JUDGE_ROUTES = new Set([
 ]);
 const PAPER_JUDGE_STARTED_ACTION = 'experimental:paper_slot_judge_started';
 const PAPER_JUDGE_RELEASED_ACTION = 'experimental:paper_slot_judge_released';
+// All paid paper routes are bounded by the task registry at 60s or 90s; the two
+// vision routes allow one transient retry, so even their worst case stays below
+// three minutes. Five minutes is therefore a crash-recovery lease, not a normal
+// in-flight timeout: a live invocation cannot be reclaimed under registry policy.
 const PAPER_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
 
 // F3 (PR #309 round-1, YUK-215) — order-sensitive element-wise array equality.
@@ -302,11 +306,10 @@ async function claimPaidPaperJudge(
   });
 }
 
-async function releasePaidPaperJudge(
-  db: Db,
-  input: PaperSubmitSlotInput,
-  now: Date = new Date(),
-): Promise<void> {
+async function releasePaidPaperJudge(db: Db, input: PaperSubmitSlotInput): Promise<void> {
+  // Release records operational wall time, intentionally distinct from the
+  // submission's captured `now`; it must sort after the claim it compensates.
+  const releasedAt = new Date();
   const partRef = input.partRef ?? null;
   await db.transaction(async (tx) => {
     const lockKey = `paper-judge:${input.sessionId}:${input.questionId}:${partRef ?? ''}`;
@@ -319,11 +322,31 @@ async function releasePaidPaperJudge(
       action: PAPER_JUDGE_RELEASED_ACTION,
       subject_kind: 'question',
       subject_id: input.questionId,
-      payload: { part_ref: partRef, released_at: now.toISOString() },
+      payload: { part_ref: partRef, released_at: releasedAt.toISOString() },
       caused_by_event_id: null,
-      created_at: now,
+      created_at: releasedAt,
     });
   });
+}
+
+async function bestEffortReleasePaidPaperJudge(
+  db: Db,
+  input: PaperSubmitSlotInput,
+  originalError: unknown,
+): Promise<void> {
+  try {
+    await releasePaidPaperJudge(db, input);
+  } catch (releaseError) {
+    // Compensation failure must not replace the rate-limit/provider/DB failure
+    // that caused it. The lease remains bounded, and this log keeps both causes.
+    console.error('[paper_submit] failed to release paid judge claim', {
+      originalError,
+      releaseError,
+      sessionId: input.sessionId,
+      questionId: input.questionId,
+      partRef: input.partRef ?? null,
+    });
+  }
 }
 
 /**
@@ -485,7 +508,7 @@ export async function submitPaperSlot(
       // Charge the shared budget only after this request owns the paid slot.
       checkRateLimit();
     } catch (err) {
-      await releasePaidPaperJudge(db, input);
+      await bestEffortReleasePaidPaperJudge(db, input, err);
       throw err;
     }
   }
@@ -515,7 +538,7 @@ export async function submitPaperSlot(
           part_ref: partRef,
         })
         .catch(async (err) => {
-          if (paidJudgeClaimed) await releasePaidPaperJudge(db, input);
+          if (paidJudgeClaimed) await bestEffortReleasePaidPaperJudge(db, input, err);
           throw err;
         });
   const judgeResult = invoked?.result ?? null;
@@ -980,7 +1003,7 @@ export async function submitPaperSlot(
   try {
     await persistSubmission;
   } catch (err) {
-    if (paidJudgeClaimed) await releasePaidPaperJudge(db, input);
+    if (paidJudgeClaimed) await bestEffortReleasePaidPaperJudge(db, input, err);
     throw err;
   }
 
