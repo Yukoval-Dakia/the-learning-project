@@ -10,7 +10,7 @@
 //      overwrites anything, PER requested kind. Value drift, present→fold-null, and a cyclic
 //      prerequisite (fold THROWS) all surface here.
 //   4. full rebuild of the requested kinds IN ONE TX (FK-cluster) — re-fold every id through the
-//      write-through shells. A topology reject rolls the cluster back.
+//      write-through shells. A topology/tree-redundancy invariant reject rolls the cluster back.
 //   5. rowset parity per kind — diff the live id sets BOTH ways: a row the rebuild DELETED (data
 //      loss) OR MATERIALIZED with no live counterpart (a stale-anchor resurrection the live-only
 //      audit never sees) is a divergence the flip would introduce → hard NO-GO.
@@ -85,16 +85,16 @@ export interface B3GateReport {
   // per-kind backfill counts — ONLY the gated kinds (cluster-scoped, review O3).
   backfill: Partial<Record<ProjectionKind, KindBackfillCounts>>;
   // audit runs BEFORE the rebuild — fold(events) vs the CURRENT imperative row (real value-drift
-  // teeth). driftCount = non-allowlisted drift over the requested kinds; topologyReject is set if
-  // folding a cyclic prerequisite THROWS mid-scan.
+  // teeth). driftCount = non-allowlisted drift over the requested kinds; topologyReject is the
+  // legacy report field for a cyclic topology or tree-redundancy invariant throw mid-scan.
   audit: {
     clean: boolean;
     driftCount: number;
     allowedCount: number;
     topologyReject: string | null;
   };
-  // rebuild materializes the post-flip state + independently re-confirms topology. ok=false with a
-  // topologyReject means it aborted (rolled back) on an ADR-0034 cycle/direction reject — hard NO-GO.
+  // rebuild materializes the post-flip state + independently re-confirms projection invariants.
+  // ok=false with topologyReject means it rolled back on topology/tree redundancy — hard NO-GO.
   rebuild: { ok: boolean; counts: RebuildCounts | null; topologyReject: string | null };
   // rowset parity (named `survival`) — the rebuild must reproduce the EXACT pre-existing live id set
   // per kind. deleted = rows the rebuild dropped (data LOSS on flip). created = rows the rebuild
@@ -105,6 +105,10 @@ export interface B3GateReport {
     deleted: Partial<Record<ProjectionKind, string[]>>;
     created: Partial<Record<ProjectionKind, string[]>>;
   };
+}
+
+function isProjectionInvariantReject(message: string): boolean {
+  return /topology reject|tree redundancy/i.test(message);
 }
 
 async function liveIdsByKind(
@@ -146,8 +150,8 @@ export async function runB3Gate(
   }
 
   // 3. AUDIT — the real teeth. Compare fold(events) against the CURRENT imperative row PER kind,
-  // BEFORE the rebuild. A cyclic prerequisite makes the edge fold THROW — caught here as a topology
-  // NO-GO (the rebuild re-confirms at step 4). A NON-topology error is a real failure and propagates.
+  // BEFORE the rebuild. A cyclic prerequisite or tree-redundant live edge makes projection THROW —
+  // caught here as an invariant NO-GO (the rebuild re-confirms at step 4). Any other error propagates.
   // Counts are hoisted OUTSIDE the try (review CR3/O2): a later kind's topology throw must not
   // discard the drift/allowed already accumulated from earlier kinds in the same cluster.
   let audit: B3GateReport['audit'];
@@ -162,20 +166,20 @@ export async function runB3Gate(
     audit = { clean: driftCount === 0, driftCount, allowedCount, topologyReject: null };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (!/topology reject/i.test(msg)) throw err;
+    if (!isProjectionInvariantReject(msg)) throw err;
     audit = { clean: false, driftCount, allowedCount, topologyReject: msg };
   }
 
   // 4. rebuild IN ONE TX (FK-cluster) — materialize the post-flip state + independently re-confirm
-  // topology. A topology reject rolls the cluster back and is reported as NO-GO; any OTHER error
-  // propagates.
+  // topology. A topology/tree-redundancy reject rolls the cluster back and is reported as NO-GO;
+  // any other error propagates.
   let rebuild: B3GateReport['rebuild'];
   try {
     const counts = await db.transaction((tx) => rebuildProjectionForKinds(tx, kinds));
     rebuild = { ok: true, counts, topologyReject: null };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (!/topology reject/i.test(msg)) throw err;
+    if (!isProjectionInvariantReject(msg)) throw err;
     rebuild = { ok: false, counts: null, topologyReject: msg };
   }
 
@@ -217,9 +221,7 @@ function printReport(report: B3GateReport): void {
   console.log(`backfill — ${bfEntries || '(none)'}`);
   // audit FIRST (it runs before the rebuild — the real fold-vs-imperative teeth).
   if (report.audit.topologyReject) {
-    console.log(
-      `audit    — NO-GO: ADR-0034 topology reject during fold — ${report.audit.topologyReject}`,
-    );
+    console.log(`audit    — NO-GO: projection invariant reject — ${report.audit.topologyReject}`);
   } else {
     const allowed =
       report.audit.allowedCount > 0 ? ` (${report.audit.allowedCount} allowlisted)` : '';
@@ -236,7 +238,7 @@ function printReport(report: B3GateReport): void {
       : '';
     console.log(`rebuild  — OK: re-folded (${summary})`);
   } else {
-    console.log(`rebuild  — NO-GO: ADR-0034 topology reject — ${report.rebuild.topologyReject}`);
+    console.log(`rebuild  — NO-GO: projection invariant reject — ${report.rebuild.topologyReject}`);
   }
   if (report.survival.ok) {
     console.log(

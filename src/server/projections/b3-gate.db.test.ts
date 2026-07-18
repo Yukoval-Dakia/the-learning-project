@@ -197,6 +197,21 @@ describe('runB3Gate', () => {
     expect(root).toHaveLength(1);
   });
 
+  it('NO-GO: a legacy live mesh edge that duplicates a tree link is reported instead of crashing the gate', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_parent', name: 'Parent' });
+    await insertKnowledge({ id: 'kn_child', name: 'Child', parent_id: 'kn_parent' });
+    await insertEdge({ id: 'ke_tree_duplicate', from: 'kn_parent', to: 'kn_child' });
+
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.audit.clean).toBe(true);
+    expect(report.rebuild.ok).toBe(false);
+    expect(report.rebuild.topologyReject).toMatch(/tree redundancy/i);
+    expect(report.survival.ok).toBe(true);
+  });
+
   it('NO-GO: an imperatively-created CYCLIC prerequisite pair is caught — rebuild topology-rejects', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'kn_x', name: 'X' });
