@@ -2,12 +2,15 @@ import { z } from 'zod';
 
 import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
 
+/** Bound text copied into judge prompts and immutable attempt events. */
+export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
+
 const CreateAttemptBodyBaseSchema = z.object({
   activity_ref: ActivityRef.optional(),
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
   rating: FsrsRating,
-  response_md: z.string().nullable().optional(),
+  response_md: z.string().max(MAX_REVIEW_RESPONSE_CHARS).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),

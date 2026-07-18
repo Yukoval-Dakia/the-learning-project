@@ -30,6 +30,7 @@ import {
   question,
 } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
 import * as invokerModule from '@/server/judge/invoker';
@@ -38,11 +39,11 @@ import { PREREQ_RISK_ACTION } from '@/server/mastery/prereq-propagation';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
-import { AttemptResponseSchema } from './contracts';
+import { AttemptResponseSchema, MAX_REVIEW_RESPONSE_CHARS } from './contracts';
 import { POST, createAttemptResource } from './submit';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -110,7 +111,22 @@ function submitReq(body: unknown) {
 describe('POST /api/review/submit', () => {
   beforeEach(async () => {
     await resetDb();
+    __resetRateLimitForTests();
     vi.mocked(runTask).mockReset();
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('rejects response text beyond the bounded judge/event payload size', async () => {
+    const response = await POST(
+      submitReq({
+        question_id: 'q_oversized',
+        rating: 'good',
+        response_md: 'x'.repeat(MAX_REVIEW_RESPONSE_CHARS + 1),
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 
   it('canonical attempt creation returns 201 with the review event Location', async () => {
@@ -873,7 +889,7 @@ describe('POST /api/review/submit', () => {
       expect(events).toHaveLength(0);
     });
 
-    it('manual override (auto_rate=false): user rating wins, judge still runs + embedded, no user_cause written', async () => {
+    it('manual rating (auto_rate=false): records user rating without spending a server judge call', async () => {
       await seedQuestion('q_override', {
         kind: 'fill_blank',
         reference_md: '答案',
@@ -892,14 +908,10 @@ describe('POST /api/review/submit', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         review_event: { rating: string };
-        judge: { suggested_rating: string; auto_rated: boolean; coarse_outcome: string };
+        judge: unknown;
       };
-      // User wins
       expect(body.review_event.rating).toBe('again');
-      // Judge still ran + suggested 'good' (auto_rated flag reflects request mode)
-      expect(body.judge.coarse_outcome).toBe('correct');
-      expect(body.judge.suggested_rating).toBe('good');
-      expect(body.judge.auto_rated).toBe(false);
+      expect(body.judge).toBeNull();
 
       // CC-1 invariant — rating-only override must NOT write
       // experimental:user_cause; cause overrides happen via a separate channel.
@@ -908,6 +920,24 @@ describe('POST /api/review/submit', () => {
         .from(event)
         .where(eq(event.action, 'experimental:user_cause'));
       expect(userCauseEvents).toHaveLength(0);
+    });
+
+    it('bounds explicit auto-rate judge calls with the shared AI limiter', async () => {
+      vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+      vi.stubEnv('AI_RATE_LIMIT_WINDOW_MS', '60000');
+      await seedQuestion('q_rate_1', { kind: 'fill_blank', reference_md: 'A', knowledge_ids: [] });
+      await seedQuestion('q_rate_2', { kind: 'fill_blank', reference_md: 'B', knowledge_ids: [] });
+
+      const first = await POST(
+        submitReq({ question_id: 'q_rate_1', rating: 'again', response_md: 'A', auto_rate: true }),
+      );
+      expect(first.status).toBe(200);
+
+      const blocked = await POST(
+        submitReq({ question_id: 'q_rate_2', rating: 'again', response_md: 'B', auto_rate: true }),
+      );
+      expect(blocked.status).toBe(429);
+      expect(blocked.headers.get('Retry-After')).toBeTruthy();
     });
 
     it('no response_md → no judge invoked, response.judge=null, no payload.judge', async () => {
@@ -1558,7 +1588,7 @@ describe('POST /api/review/submit', () => {
     // the route, the gate was false → `judgeAdvicePayload = {}` → judge_advice
     // never landed on the event row. The cause-aware advisor was dead code
     // for every server-judge caller. This test exercises the server-judge
-    // path: POST without judge_result_v2, server runs keyword judge, prior
+    // path: POST with auto_rate and without judge_result_v2, server runs keyword judge, prior
     // user_cause=carelessness still threads into the advisor and judge_advice
     // appears on the event payload with the lean applied.
     it('threads cause into judge_advice when SERVER runs the judge (no judge_result_v2 in body)', async () => {
@@ -1581,7 +1611,7 @@ describe('POST /api/review/submit', () => {
         primary_category: 'carelessness',
       });
 
-      // No judge_result_v2 in body — server runs keyword judge against
+      // No judge_result_v2 in body — explicit auto_rate runs keyword judge against
       // response '虚词和代词' (2/3 keywords) → partial credit ~0.67.
       // Default partial-credit bucket for score ≥ 0.5 is 'hard'; carelessness
       // lean promotes to 'good'.
@@ -1590,6 +1620,7 @@ describe('POST /api/review/submit', () => {
           mistake_id: 'q_sub_server_judge_careless',
           rating: 'hard',
           response_md: '虚词和代词',
+          auto_rate: true,
         }),
       );
       expect(res.status).toBe(200);
@@ -1613,7 +1644,7 @@ describe('POST /api/review/submit', () => {
       // with the carelessness lean from the prior user_cause attempt.
       expect(payload.judge_advice?.rating).toBe('good');
       expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
-      // CC-1 / advisor invariant: user's body.rating still wins.
+      // Partial auto-judge maps to hard; cause-aware advice remains separately visible.
       expect(payload.fsrs_rating).toBe('hard');
     });
   });
@@ -1650,6 +1681,7 @@ describe('POST /api/review/submit', () => {
             rating: 'good',
             response_md: '答案',
             answer_image_refs: ['asset_hw_1', 'asset_hw_2'],
+            auto_rate: true,
           }),
         );
         expect(res.status).toBe(200);
@@ -1697,7 +1729,7 @@ describe('POST /api/review/submit', () => {
     // graceful `unsupported` result rather than throwing — but the point of THIS
     // test is that F4 did NOT skip the judge: the invoker WAS invoked with the
     // image refs. (The text-only-route skip is covered by the F4 tests below.)
-    it('photo-only answer routed to an image-consuming judge (multimodal_direct) still invokes the judge', async () => {
+    it('photo-only auto-rate routed to multimodal_direct invokes the image judge', async () => {
       await seedQuestion('q_215_photo_only', {
         kind: 'short_answer',
         reference_md: '答案',
@@ -1724,9 +1756,12 @@ describe('POST /api/review/submit', () => {
             rating: 'good',
             // response_md omitted → photo is the only answer.
             answer_image_refs: ['asset_photo_only_1'],
+            auto_rate: true,
           }),
         );
-        expect(res.status).toBe(200);
+        // The in-test image fetch cannot resolve the fake asset, so the real
+        // multimodal judge returns unsupported and auto-rate correctly fails 422.
+        expect(res.status).toBe(422);
 
         // F4: the judge ran on the photo-only answer because the route consumes
         // images (multimodal_direct) — it was NOT skipped.
@@ -1734,15 +1769,12 @@ describe('POST /api/review/submit', () => {
         expect(captured[0].answer_md).toBe('');
         expect(captured[0].student_image_refs).toEqual(['asset_photo_only_1']);
 
-        // The image refs are frozen on the review event as the evidence trail.
+        // 422 happens before persistence.
         const events = await testDb()
           .select()
           .from(event)
           .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_photo_only')));
-        expect(events).toHaveLength(1);
-        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
-          'asset_photo_only_1',
-        ]);
+        expect(events).toHaveLength(0);
       } finally {
         vi.restoreAllMocks();
       }
