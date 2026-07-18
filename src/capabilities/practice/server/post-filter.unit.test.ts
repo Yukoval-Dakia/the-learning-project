@@ -3,6 +3,7 @@ import {
   FATIGUE_REPETITION_LIMIT,
   type LearningMixContext,
   applyL3LearningMixGuard,
+  learningMixContextFromInputs,
 } from './post-filter';
 import type { StreamPlan, StreamPlanItem } from './stream-composer';
 
@@ -84,6 +85,67 @@ describe('ADR-0042 L3 learning-mix guard (YUK-673)', () => {
     expect(
       result.diagnostics?.filter((item) => item.kind === 'fatigue_repetition_unresolved'),
     ).toEqual([]);
+  });
+
+  it('preserves first-wins identity when the same question appears in multiple sources', () => {
+    const mixContext = learningMixContextFromInputs({
+      date: '2026-07-18',
+      dueItems: [{ questionId: 'q1', knowledgeId: 'due-kc', questionKind: 'choice' }],
+      variantItems: [
+        {
+          questionId: 'q1',
+          rootQuestionId: 'root-q1',
+          knowledgeId: 'discarded-kc',
+          questionKind: 'short_answer',
+        },
+      ],
+      newCheckItems: [],
+      frontierItems: [],
+      pendingPapers: [],
+    });
+
+    expect(mixContext.repetitionByRef.get('q1')).toEqual({
+      knowledgeId: 'due-kc',
+      questionKind: 'choice',
+    });
+  });
+
+  it('does not consume the only fatigue break before a repeated suffix', () => {
+    const result = applyL3LearningMixGuard(
+      plan([question('a'), question('b1'), question('b2'), question('b3')]),
+      context({
+        a: { knowledgeId: 'kc-a', questionKind: 'short_answer' },
+        b1: { knowledgeId: 'kc-b', questionKind: 'choice' },
+        b2: { knowledgeId: 'kc-b', questionKind: 'choice' },
+        b3: { knowledgeId: 'kc-b', questionKind: 'choice' },
+      }),
+    );
+
+    expect(result.items.map((item) => item.ref_id)).toEqual(['b1', 'a', 'b2', 'b3']);
+    expect(
+      result.diagnostics?.filter((item) => item.kind === 'fatigue_repetition_unresolved'),
+    ).toEqual([]);
+  });
+
+  it('keeps the due warmup first even when moving it would be the only fatigue repair', () => {
+    const result = applyL3LearningMixGuard(
+      plan([question('due', 'decay'), question('b1'), question('b2'), question('b3')]),
+      context({
+        due: { knowledgeId: 'kc-a' },
+        b1: { knowledgeId: 'kc-b' },
+        b2: { knowledgeId: 'kc-b' },
+        b3: { knowledgeId: 'kc-b' },
+      }),
+    );
+
+    expect(result.items[0].ref_id).toBe('due');
+    expect(result.items[0].source).toBe('decay');
+    expect(result.diagnostics).toContainEqual({
+      kind: 'fatigue_repetition_unresolved',
+      refId: 'b3',
+      dimensions: ['knowledge'],
+      limit: FATIGUE_REPETITION_LIMIT,
+    });
   });
 
   it('treats an empty identity as a real repetition value instead of missing metadata', () => {

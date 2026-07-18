@@ -55,6 +55,9 @@ export function learningMixContextFromInputs(
     knowledgeId?: string;
     questionKind?: string;
   }) => {
+    // Composer membership is first-wins in this same source order. Keep the identity attached
+    // to the retained item instead of letting a later duplicate source overwrite it.
+    if (repetitionByRef.has(item.questionId)) return;
     repetitionByRef.set(item.questionId, {
       knowledgeId: item.knowledgeId,
       questionKind: item.questionKind,
@@ -128,6 +131,58 @@ function advanceRunState(
   };
 }
 
+function dimensionRemainsFeasible(
+  remaining: StreamPlanItem[],
+  currentValue: string | undefined,
+  currentCount: number,
+  identities: ReadonlyMap<string, RepetitionIdentity>,
+  dimension: keyof RepetitionIdentity,
+): boolean {
+  const values = remaining.map((item) =>
+    item.item_kind === 'question' ? identities.get(item.ref_id)?.[dimension] : undefined,
+  );
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (value === undefined) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  for (const [value, count] of counts) {
+    const separators = values.length - count;
+    const initialCapacity =
+      currentValue === value ? FATIGUE_REPETITION_LIMIT - currentCount : FATIGUE_REPETITION_LIMIT;
+    const capacity = initialCapacity + separators * FATIGUE_REPETITION_LIMIT;
+    if (count > capacity) return false;
+  }
+  return true;
+}
+
+function remainingMixIsFeasibleAfter(
+  selectedIndex: number,
+  remaining: StreamPlanItem[],
+  state: RunState,
+  identities: ReadonlyMap<string, RepetitionIdentity>,
+): boolean {
+  const nextState = advanceRunState(remaining[selectedIndex], state, identities);
+  const rest = remaining.filter((_, index) => index !== selectedIndex);
+  return (
+    dimensionRemainsFeasible(
+      rest,
+      nextState.knowledgeId,
+      nextState.knowledgeCount,
+      identities,
+      'knowledgeId',
+    ) &&
+    dimensionRemainsFeasible(
+      rest,
+      nextState.questionKind,
+      nextState.questionKindCount,
+      identities,
+      'questionKind',
+    )
+  );
+}
+
 function reorderQuestionSegment(
   segment: StreamPlanItem[],
   identities: ReadonlyMap<string, RepetitionIdentity>,
@@ -138,17 +193,29 @@ function reorderQuestionSegment(
   let state = EMPTY_RUN_STATE;
 
   while (remaining.length > 0) {
+    const keepDueWarmupFirst = items.length === 0 && remaining[0]?.source === 'decay';
     const firstDueIndex = remaining.findIndex((item) => item.source === 'decay');
     const eligibleIndices = remaining
       .map((item, index) => ({ item, index }))
       // Later due items may not overtake the earliest remaining due item. Non-due items may be
-      // interleaved around it, preserving the complete due subsequence exactly.
-      .filter(({ item, index }) => item.source !== 'decay' || index === firstDueIndex)
+      // interleaved around it, preserving the complete due subsequence exactly. The opening due
+      // item remains locked first so the composer's due-warmup invariant survives this repair.
+      .filter(
+        ({ item, index }) =>
+          (!keepDueWarmupFirst || index === 0) &&
+          (item.source !== 'decay' || index === firstDueIndex),
+      )
       .map(({ index }) => index);
-    const safeIndex = eligibleIndices.find(
+    const safeIndices = eligibleIndices.filter(
       (index) => violationsFor(remaining[index], state, identities).length === 0,
     );
-    const selectedIndex = safeIndex ?? eligibleIndices[0] ?? 0;
+    // Prefer the earliest safe item whose removal leaves enough separators for every remaining
+    // KC and question kind. This prevents consuming the only break too early (A,B,B,B), while
+    // retaining stable order whenever the suffix is still schedulable.
+    const feasibleIndex = safeIndices.find((index) =>
+      remainingMixIsFeasibleAfter(index, remaining, state, identities),
+    );
+    const selectedIndex = feasibleIndex ?? safeIndices[0] ?? eligibleIndices[0] ?? 0;
     const [selected] = remaining.splice(selectedIndex, 1);
     const violations = violationsFor(selected, state, identities);
     if (violations.length > 0) {
