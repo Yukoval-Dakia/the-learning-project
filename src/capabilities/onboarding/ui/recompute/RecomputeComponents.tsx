@@ -44,6 +44,30 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
   );
 }
 
+function RcRerunButton({
+  state,
+  label,
+  onClick,
+}: {
+  state: RcState;
+  label: string;
+  onClick: () => void;
+}) {
+  const accessibleLabel = state === 'running' ? `正在${label}` : label;
+  return (
+    <button
+      type="button"
+      className="rc-rerun"
+      disabled={state === 'running'}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
+      onClick={onClick}
+    >
+      <LoomIcon name="refresh" size={14} />
+    </button>
+  );
+}
+
 /** The recompute / verify control bar — A idle → B running → C match | D drift | preview. */
 export function RcVerify({
   state,
@@ -113,9 +137,7 @@ export function RcVerify({
           <button type="button" className="rc-detail-toggle" onClick={onToggleDetail}>
             {detailOpen ? '收起明细' : '查看核对明细'}
           </button>
-          <button type="button" className="rc-rerun" onClick={onRerun} title="再算一次">
-            <LoomIcon name="refresh" size={14} />
-          </button>
+          <RcRerunButton state={state} label="重新核对学习画像" onClick={onRerun} />
         </div>
       )}
     </div>
@@ -288,9 +310,7 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
           </>
         )}
       </div>
-      <button type="button" className="rc-rerun" onClick={run} title="再算一次">
-        <LoomIcon name="refresh" size={14} />
-      </button>
+      <RcRerunButton state={state} label="重新核对判断可靠度" onClick={run} />
     </div>
   );
 }
