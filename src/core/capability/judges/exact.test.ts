@@ -124,6 +124,14 @@ describe('exactJudgeCapability — bot-review hardening (YUK-260)', () => {
     );
   });
 
+  it('YUK-609 clean choice bodies still match a prefixed reference by index', async () => {
+    const choices_md = ['a + b', 'a − b', 'a × b'];
+    expect((await run({ reference: 'B. a − b', choices_md }, 'B')).coarse_outcome).toBe('correct');
+    expect((await run({ reference: 'B. a − b', choices_md }, 'a − b')).coarse_outcome).toBe(
+      'correct',
+    );
+  });
+
   // C3: DB / JudgeQuestionRow shape forwards choices_md: null for non-choice
   // questions. Must normalise to plain exact judging, not "unsupported".
   it('C3 choices_md: null → plain text equality (not unsupported)', async () => {

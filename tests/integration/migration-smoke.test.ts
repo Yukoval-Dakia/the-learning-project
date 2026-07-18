@@ -7,7 +7,7 @@
 // so it can start from an empty DB. Adds ~30-60s to the test run; worth it because
 // migration regressions are silent until prod.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -163,6 +163,66 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
       SELECT extname FROM pg_extension WHERE extname = 'vector'
     `);
     expect(rows.length).toBe(1);
+  });
+
+  it('YUK-609 data migration normalizes only index-matching quiz_gen labels and is idempotent', async () => {
+    const quizGenId = 'migration:yuk609:quiz-gen';
+    const manualId = 'migration:yuk609:manual';
+    const now = '2026-07-18T00:00:00Z';
+    try {
+      await db.execute(sql`
+        INSERT INTO question (
+          id, kind, prompt_md, choices_md, knowledge_ids, difficulty, source,
+          embed_content_hash, created_at, updated_at, version
+        ) VALUES
+          (
+            ${quizGenId}, 'choice', '迁移测试',
+            '["A. 举例论证", "B． 对比论证", "A. 错位标签", "D) 道理论证"]'::jsonb,
+            '[]'::jsonb, 2, 'quiz_gen', 'stale-hash', ${now}::timestamptz,
+            ${now}::timestamptz, 7
+          ),
+          (
+            ${manualId}, 'choice', '非 quiz_gen 对照',
+            '["A. 保持原样", "B. 保持原样"]'::jsonb,
+            '[]'::jsonb, 2, 'manual', 'manual-hash', ${now}::timestamptz,
+            ${now}::timestamptz, 5
+          )
+      `);
+
+      const migrationSql = readFileSync(
+        join(process.cwd(), 'drizzle/0066_yuk609_normalize_quiz_gen_choices.sql'),
+        'utf8',
+      );
+      await client.unsafe(migrationSql);
+      // Re-running must be a no-op: version only bumps for an actual choices_md change.
+      await client.unsafe(migrationSql);
+
+      const rows = await db.execute<{
+        id: string;
+        choices_md: string[];
+        embed_content_hash: string | null;
+        version: number;
+      }>(sql`
+        SELECT id, choices_md, embed_content_hash, version
+        FROM question
+        WHERE id IN (${quizGenId}, ${manualId})
+        ORDER BY id
+      `);
+      const byId = new Map(rows.map((row) => [row.id, row]));
+
+      expect(byId.get(quizGenId)).toMatchObject({
+        choices_md: ['举例论证', '对比论证', 'A. 错位标签', '道理论证'],
+        embed_content_hash: null,
+        version: 8,
+      });
+      expect(byId.get(manualId)).toMatchObject({
+        choices_md: ['A. 保持原样', 'B. 保持原样'],
+        embed_content_hash: 'manual-hash',
+        version: 5,
+      });
+    } finally {
+      await db.execute(sql`DELETE FROM question WHERE id IN (${quizGenId}, ${manualId})`);
+    }
   });
 
   it('event table has all expected columns including affected_scopes', async () => {

@@ -142,6 +142,58 @@ export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
 
 // ---------- §5 Q2 QuizGenTask LLM output ----------
 
+// YUK-609 — choices_md is the option BODY list. Renderers own A/B/C labels by
+// array index, so persisting an agent-emitted "A. ..." prefix makes every
+// consumer render "A. A. ...". Strip only a punctuation-delimited label that
+// matches the option's actual index. The schema rejects mismatched or label-only
+// entries instead of silently changing option identity or storing an empty body.
+const QUIZ_GEN_CHOICE_LABEL_PREFIX = /^\s*([A-Za-zＡ-Ｚａ-ｚ])\s*[.．。、:：)）]\s*/u;
+
+export function normalizeQuizGenChoices(choices: string[]): string[] {
+  return choices.map((choice, index) => {
+    const match = choice.match(QUIZ_GEN_CHOICE_LABEL_PREFIX);
+    const label = match?.[1];
+    if (!match || !label) return choice;
+
+    const expectedLabel = String.fromCharCode(65 + index);
+    if (label.normalize('NFKC').toUpperCase() !== expectedLabel) return choice;
+
+    const body = choice.slice(match[0].length).trimStart();
+    // Keep the original so the existing min(1) contract is not weakened into an
+    // empty choice when the model emitted only "A.".
+    return body.length > 0 ? body : choice;
+  });
+}
+
+const QuizGenChoiceBodies = z
+  .array(z.string().min(1))
+  .max(6)
+  .superRefine((choices, ctx) => {
+    choices.forEach((choice, index) => {
+      const match = choice.match(QUIZ_GEN_CHOICE_LABEL_PREFIX);
+      const label = match?.[1];
+      if (!match || !label) return;
+
+      const expectedLabel = String.fromCharCode(65 + index);
+      if (label.normalize('NFKC').toUpperCase() !== expectedLabel) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: `choice label must match array index ${expectedLabel}`,
+        });
+        return;
+      }
+      if (choice.slice(match[0].length).trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: `choice ${expectedLabel} must contain a body after its label`,
+        });
+      }
+    });
+  })
+  .transform(normalizeQuizGenChoices);
+
 // Per-question shape. Mirrors the EmbeddedCheck question contract (kind +
 // prompt_md + reference_md + optional choices/judge/rubric) plus QuizGen-only
 // fields: difficulty, knowledge_ids the question targets, and the per-question
@@ -150,7 +202,7 @@ export const QuizGenQuestion = z.object({
   kind: QuestionKind,
   prompt_md: z.string().min(1),
   reference_md: z.string().min(1),
-  choices_md: z.array(z.string().min(1)).max(6).nullable().optional(),
+  choices_md: QuizGenChoiceBodies.nullable().optional(),
   // Only judge routes a GENERATED question can actually be graded by. The judge
   // layer's RUNNABLE_ROUTES is { exact, keyword, semantic, steps, unit_dimension },
   // but 'steps' / 'unit_dimension' are first-class / profile-preferred routes

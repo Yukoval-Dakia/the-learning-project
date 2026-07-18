@@ -463,6 +463,13 @@
       "when": 1784350000000,
       "tag": "0065_yuk535_scoped_practice_session",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1784358500000,
+      "tag": "0066_yuk609_normalize_quiz_gen_choices",
+      "breakpoints": true
     }
   ]
 }

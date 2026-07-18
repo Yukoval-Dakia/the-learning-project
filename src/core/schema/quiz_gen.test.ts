@@ -227,6 +227,45 @@ describe('QuizGenOutput', () => {
     expect(parsed.questions[0].choices_md).toBeUndefined();
   });
 
+  it('normalizes index-matching option labels into clean choice bodies (YUK-609)', () => {
+    const parsed = QuizGenOutput.parse({
+      questions: [
+        {
+          ...validQuestion,
+          choices_md: ['A. 举例论证', 'Ｂ． 对比论证', 'C、比喻论证', 'D) 道理论证'],
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+
+    expect(parsed.questions[0].choices_md).toEqual([
+      '举例论证',
+      '对比论证',
+      '比喻论证',
+      '道理论证',
+    ]);
+  });
+
+  it('rejects mismatched or label-only options instead of hiding identity defects', () => {
+    for (const choices_md of [
+      ['B. 错位标签', 'B. 正常标签'],
+      ['A.', 'B. 正常标签'],
+    ]) {
+      const result = QuizGenOutput.safeParse({
+        questions: [{ ...validQuestion, choices_md }],
+        source_pack: validSourcePack,
+        generation_method: 'search_grounded',
+        self_copy_safety: validCopySafety,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes('choices_md'))).toBe(true);
+      }
+    }
+  });
+
   it('rejects an empty questions array', () => {
     expect(() =>
       QuizGenOutput.parse({
