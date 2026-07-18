@@ -25,6 +25,7 @@ import {
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
+import { getCorrectionStatus } from '@/server/events/corrections';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
@@ -39,9 +40,11 @@ import {
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
+  findExistingRateEvent,
   requiredString,
 } from '@/server/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
@@ -99,6 +102,24 @@ export interface PracticeApplierOpts {
   user_note?: string;
   // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
+}
+
+async function loadAcceptedQuestionOrThrow(
+  db: Db,
+  proposalId: string,
+  questionId: string,
+): Promise<typeof question.$inferSelect> {
+  const existing = (
+    await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+  )[0];
+  if (!existing) {
+    throw new ApiError(
+      'inconsistent_state',
+      `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; submit a new question_edit proposal or investigate the event/projection state manually`,
+      500,
+    );
+  }
+  return existing;
 }
 
 /**
@@ -639,16 +660,7 @@ export async function acceptQuestionEditProposal(
   const existingRate = await existingAcceptRate(db, proposalId);
   if (existingRate) {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const existing = (
-      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
-    )[0];
-    if (!existing) {
-      throw new ApiError(
-        'inconsistent_state',
-        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; retract + retry`,
-        500,
-      );
-    }
+    const existing = await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
     return {
       kind: 'question_edit',
       rate_event_id: existingRate.id,
@@ -695,7 +707,28 @@ export async function acceptQuestionEditProposal(
   const editEventId = newId();
   const nextVersion = row.version + 1;
 
-  await db.transaction(async (tx) => {
+  const concurrentAcceptRate = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+
     // Optimistic write guarded by the version we read; a concurrent structured
     // edit bumps the version and this update matches 0 rows → conflict.
     const updated = await tx
@@ -752,7 +785,22 @@ export async function acceptQuestionEditProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+
+    return null;
   });
+
+  if (concurrentAcceptRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    const existing = await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
+    return {
+      kind: 'question_edit',
+      rate_event_id: concurrentAcceptRate.id,
+      question_id: questionId,
+      edit_event_id: null,
+      version: existing.version,
+      idempotent: true,
+    };
+  }
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 

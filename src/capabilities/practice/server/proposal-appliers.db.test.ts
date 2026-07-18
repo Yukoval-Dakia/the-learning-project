@@ -759,6 +759,95 @@ describe('question_edit accept (ADR-0032 D6-B)', () => {
     expect(short?.prompt_text).toBe('解释「之」的用法。');
   });
 
+  it('409s when retracting an accepted edit and preserves the applied question', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_retract_accepted' });
+    await seedQuestionEditProposal('qe_retract_accepted', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '解释「之」在此句中的具体用法。',
+    });
+
+    await acceptAiProposal(db, 'qe_retract_accepted');
+    await expect(
+      retractAiProposal(db, 'qe_retract_accepted', { reason_md: '误点撤回' }),
+    ).rejects.toMatchObject({
+      code: 'question_edit_retract_conflict',
+      status: 409,
+    });
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(1);
+    const tree = row.structured as StructuredQuestionT;
+    const short = tree.sub_questions?.find((node) => node.id === 'n_short');
+    expect(short?.prompt_text).toBe('解释「之」在此句中的具体用法。');
+
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, 'qe_retract_accepted')));
+    expect(correctionRows).toHaveLength(0);
+  });
+
+  it('still allows retracting a pending edit without changing the question', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_retract_pending' });
+    await seedQuestionEditProposal('qe_retract_pending', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '不应应用的题面。',
+    });
+
+    const result = await retractAiProposal(db, 'qe_retract_pending', {
+      reason_md: '不需要这次修订',
+    });
+    expect(result.kind).toBe('retracted');
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(0);
+    const tree = row.structured as StructuredQuestionT;
+    const short = tree.sub_questions?.find((node) => node.id === 'n_short');
+    expect(short?.prompt_text).toBe('解释「之」的用法。');
+
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, 'qe_retract_pending')));
+    expect(correctionRows).toHaveLength(1);
+  });
+
+  it('serializes concurrent accept and retract so exactly one terminal decision wins', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_retract_race' });
+    await seedQuestionEditProposal('qe_retract_race', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '并发接受后应保留的题面。',
+    });
+
+    const settled = await Promise.allSettled([
+      acceptAiProposal(db, 'qe_retract_race'),
+      retractAiProposal(db, 'qe_retract_race', { reason_md: '并发撤回' }),
+    ]);
+    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = settled.filter((result) => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ status: 409 });
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qe_retract_race')));
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, 'qe_retract_race')));
+    expect(rateRows.length + correctionRows.length).toBe(1);
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(rateRows.length === 1 ? 1 : 0);
+  });
+
   // ADR-0032 D6-B optimistic-lock regression — the version-guarded UPDATE
   // (and(eq(id), eq(version, row.version)).returning() → length===0 → 409) is the
   // head write-safety guarantee of this lane. The applier READS question.version,
