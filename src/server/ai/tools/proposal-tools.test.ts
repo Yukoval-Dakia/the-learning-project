@@ -742,11 +742,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
     expect(second.status).toBe('skipped:already_has_variant');
   });
 
-  // YUK-521 (A4 强度轴) — completion 是唯一 A 档 kind：默认（裁决熔断未 tripped）write
-  // 后立即经 acceptAiProposal 自动落地，item → 'done'（auto_applied:true）。relearn 仍是
-  // B 档（propose-only，不改 item 状态）。A 档的熔断退回 B / 失败留 pending / 二次幂等的
-  // 全谱在 proposal-tools.completion-autoapply.db.test.ts。
-  it('completion auto-applies (A-tier) while relearn stays propose-only (B-tier)', async () => {
+  // YUK-525 — completion and relearn are both proposal-only. The tool may recommend a
+  // lifecycle transition, but only the canonical user decision route may materialize it.
+  it('completion and relearn both stay propose-only (B-tier)', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
     await seedLearningItem('li_active', 'in_progress');
@@ -759,25 +757,24 @@ describe('Wave 3 proposal/action DomainTools', () => {
       evidence_event_ids: ['ev_check'],
       reasoning: 'All embedded checks passed.',
     });
-    // A-tier: the proposal is written ('proposed') AND auto-applied (item → done).
+    // Completion proposal is written but the lifecycle state remains untouched.
     expect(completion.status).toBe('proposed');
-    expect(completion.auto_applied).toBe(true);
+    expect(completion.auto_applied).toBe(false);
     const active = (
       await db
         .select({ status: learning_item.status })
         .from(learning_item)
         .where(eq(learning_item.id, 'li_active'))
     )[0];
-    expect(active.status).toBe('done');
+    expect(active.status).toBe('in_progress');
 
-    // A second completion on the now-done item is skipped:invalid_state — the
-    // auto-apply moved it out of pending/in_progress before any cooldown check.
+    // A second completion is deduplicated against the pending proposal.
     const duplicate = await proposeLearningItemCompletionTool.execute(ctx(), {
       learning_item_id: 'li_active',
       triggering_signals: ['check_all_passed'],
       reasoning: 'repeat',
     });
-    expect(duplicate.status).toBe('skipped:invalid_state');
+    expect(duplicate.status).toBe('skipped:duplicate_pending');
 
     // relearn is B-tier (propose-only): a done item yields a pending proposal,
     // item status untouched.
