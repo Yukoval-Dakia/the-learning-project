@@ -169,7 +169,7 @@ describe('reconcile handler — failure mode 2: idempotent resume via loadUnappl
       SELECT payload->>'superseded_by' AS superseded_by
       FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
     `)) as Array<{ superseded_by: string | null }>;
-    expect(rows[0].superseded_by).toBe(newMemId);
+    expect(rows[0].superseded_by).toBeNull();
   });
 });
 
@@ -255,13 +255,13 @@ describe('reconcile handler — empty batch guard', () => {
   });
 });
 
-describe('reconcile handler — MERGE rewrites old payload.data with merged_text + drops new', () => {
+describe('reconcile handler — MERGE recommendation leaves both memories unchanged', () => {
   beforeEach(async () => {
     await resetDb();
     await createTestCollection();
   });
 
-  it('writes merged_text (NOT reason) to old payload.data, keeps old LIVE, hard-deletes new', async () => {
+  it('records the MERGE recommendation without rewriting or deleting', async () => {
     const db = testDb();
     const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -304,7 +304,7 @@ describe('reconcile handler — MERGE rewrites old payload.data with merged_text
              payload->>'invalid_at' AS ia, payload->>'created_ms' AS cms
       FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
     `)) as Array<{ data: string; sb: string | null; ia: string | null; cms: string | null }>;
-    expect(oldRows[0].data).toBe('MERGED: prefers dark mode and terse feedback');
+    expect(oldRows[0].data).toBe('old text');
     expect(oldRows[0].data).not.toContain('explanation'); // reason did NOT leak into data
     // PR #405 MERGE bug regression lock: the surviving merged row must stay LIVE.
     // Marking it superseded_by/invalid_at would hide the merge result from the P3
@@ -312,23 +312,23 @@ describe('reconcile handler — MERGE rewrites old payload.data with merged_text
     expect(oldRows[0].sb).toBeNull();
     expect(oldRows[0].ia).toBeNull();
     // created_ms bumped to the new memory's recency (2000).
-    expect(oldRows[0].cms).toBe('2000');
+    expect(oldRows[0].cms).toBeNull();
 
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
     )) as unknown[];
-    expect(newRows).toHaveLength(0); // new row dropped
+    expect(newRows).toHaveLength(1); // recommendation-only: new row retained
     expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
   });
 });
 
-describe('reconcile handler — RETRACT_NEW drops the duplicate new row, leaves old untouched', () => {
+describe('reconcile handler — RETRACT_NEW recommendation leaves both rows untouched', () => {
   beforeEach(async () => {
     await resetDb();
     await createTestCollection();
   });
 
-  it('hard-deletes the new memory; the existing memory is unchanged', async () => {
+  it('keeps the new and existing memory rows unchanged', async () => {
     const db = testDb();
     const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
     const oldMemId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
@@ -362,7 +362,7 @@ describe('reconcile handler — RETRACT_NEW drops the duplicate new row, leaves 
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
     )) as unknown[];
-    expect(newRows).toHaveLength(0); // new dropped
+    expect(newRows).toHaveLength(1); // recommendation-only: new row retained
     const oldRows = (await db.execute(sql`
       SELECT payload->>'superseded_by' AS sb FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
     `)) as Array<{ sb: string | null }>;
@@ -430,7 +430,7 @@ describe('reconcile handler — idempotent resume skips already-applied rows', (
     `)) as Array<{ id: string; sb: string | null }>;
     const byId = Object.fromEntries(rows.map((r) => [r.id, r.sb]));
     expect(byId[appliedOld]).toBeNull(); // already-applied row did NOT re-run
-    expect(byId[pendingOld]).toBe(newId_); // unapplied row was replayed
+    expect(byId[pendingOld]).toBeNull(); // legacy destructive row consumed without mutation
     expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
   });
 });
@@ -696,7 +696,7 @@ describe('reconcile handler — Q1 score floor passes a well-corroborated MERGE 
     await createTestCollection();
   });
 
-  it('score ≥ floor + confidence ≥ 0.6 → MERGE executes; structurally_corroborated=true', async () => {
+  it('score ≥ floor remains observable but MERGE is blocked by execution policy', async () => {
     const db = testDb();
     const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -732,17 +732,18 @@ describe('reconcile handler — Q1 score floor passes a well-corroborated MERGE 
 
     const rows = await loadLogRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].action).toBe('MERGE'); // NOT downgraded
+    expect(rows[0].action).toBe('KEEP_BOTH'); // execution policy blocks mutation
+    expect(rows[0].llm_raw.recommended_action).toBe('MERGE');
     expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
     // MERGE actually applied: old row rewritten to merged_text, new row dropped.
     const oldRows = (await db.execute(sql`
       SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
     `)) as Array<{ data: string }>;
-    expect(oldRows[0].data).toBe('MERGED: prefers dark mode and terse feedback');
+    expect(oldRows[0].data).toBe('old text');
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
     )) as unknown[];
-    expect(newRows).toHaveLength(0);
+    expect(newRows).toHaveLength(1);
   });
 });
 
@@ -752,7 +753,7 @@ describe('reconcile handler — Q1 RETRACT_NEW with no candidates skips the floo
     await createTestCollection();
   });
 
-  it('empty candidates → gate abstains, logs "floor skipped (no score)", RETRACT executes', async () => {
+  it('empty candidates log floor abstention but RETRACT remains non-destructive', async () => {
     const db = testDb();
     const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
     await db.execute(sql`
@@ -785,12 +786,13 @@ describe('reconcile handler — Q1 RETRACT_NEW with no candidates skips the floo
 
     const rows = await loadLogRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].action).toBe('RETRACT_NEW'); // abstained gate → executes
+    expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(rows[0].llm_raw.recommended_action).toBe('RETRACT_NEW');
     expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
     )) as unknown[];
-    expect(newRows).toHaveLength(0); // noise dropped
+    expect(newRows).toHaveLength(1); // noise dropped
   });
 });
 
@@ -800,7 +802,7 @@ describe('reconcile handler — F3 RETRACT_NEW keys strictly on the referenced c
     await createTestCollection();
   });
 
-  it('old_index candidate scoreless → abstains (RETRACT executes), floor skipped, referenced_score null; sibling 0.9 NOT borrowed', async () => {
+  it('scoreless referenced candidate abstains without borrowing sibling score or deleting', async () => {
     const db = testDb();
     const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
     const dupId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; // referenced candidate (old_index=0), NO score
@@ -846,13 +848,14 @@ describe('reconcile handler — F3 RETRACT_NEW keys strictly on the referenced c
 
     const rows = await loadLogRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].action).toBe('RETRACT_NEW'); // abstained (NOT downgraded)
+    expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(rows[0].llm_raw.recommended_action).toBe('RETRACT_NEW');
     expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
     expect(rows[0].llm_raw.referenced_score).toBeNull(); // did NOT borrow the sibling 0.9
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
     )) as unknown[];
-    expect(newRows).toHaveLength(0); // retracted
+    expect(newRows).toHaveLength(1); // retracted
   });
 });
 
@@ -913,7 +916,7 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     await createTestCollection();
   });
 
-  it('SUPERSEDE → prev_text=oldMem.text, prev_metadata=old payload; captured write-ahead', async () => {
+  it('SUPERSEDE recommendation is audited as KEEP_BOTH without undo snapshot', async () => {
     const db = testDb();
     const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -942,14 +945,13 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
 
     const rows = await loadLogRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].action).toBe('SUPERSEDE');
-    expect(rows[0].prev_text).toBe('old canonical');
-    // Full payload snapshot (write-ahead: before softSupersede added markers).
-    expect(rows[0].prev_metadata).toMatchObject(oldPayload);
-    expect(rows[0].prev_metadata).not.toHaveProperty('superseded_by');
+    expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(rows[0].llm_raw.recommended_action).toBe('SUPERSEDE');
+    expect(rows[0].prev_text).toBeNull();
+    expect(rows[0].prev_metadata).toBeNull();
   });
 
-  it('MERGE → prev_text=oldMem.text, prev_metadata=old payload BEFORE rewrite', async () => {
+  it('MERGE recommendation is audited as KEEP_BOTH without rewrite', async () => {
     const db = testDb();
     const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -986,18 +988,18 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
 
     const rows = await loadLogRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].action).toBe('MERGE');
-    // prev_text = the OLD row's original text (before it was rewritten to MERGED).
-    expect(rows[0].prev_text).toBe('old mergeable');
-    expect(rows[0].prev_metadata).toMatchObject({ data: 'old mergeable' });
-    // Confirm the apply DID overwrite the live row — proving the snapshot pre-dates it.
+    expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(rows[0].llm_raw.recommended_action).toBe('MERGE');
+    expect(rows[0].prev_text).toBeNull();
+    expect(rows[0].prev_metadata).toBeNull();
+    // Recommendation-only policy leaves the live row untouched.
     const oldRows = (await db.execute(sql`
       SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
     `)) as Array<{ data: string }>;
-    expect(oldRows[0].data).toBe('MERGED text');
+    expect(oldRows[0].data).toBe('old mergeable');
   });
 
-  it('RETRACT_NEW → prev_text=newMem.text, prev_metadata=null; KEEP_BOTH → both null', async () => {
+  it('all recommendations persist as KEEP_BOTH with original action in llm_raw', async () => {
     const db = testDb();
     const retractNewId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
     const keepNewId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -1027,11 +1029,11 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     );
 
     const rows = await loadLogRows();
-    const byAction = Object.fromEntries(rows.map((r) => [r.action, r]));
-    expect(byAction.RETRACT_NEW.prev_text).toBe('dup text'); // the DISCARDED new text
-    expect(byAction.RETRACT_NEW.prev_metadata).toBeNull(); // event-sourced, not captured
-    expect(byAction.KEEP_BOTH.prev_text).toBeNull();
-    expect(byAction.KEEP_BOTH.prev_metadata).toBeNull();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.action === 'KEEP_BOTH')).toBe(true);
+    expect(rows[0].llm_raw.recommended_action).toBe('RETRACT_NEW');
+    expect(rows[1].llm_raw.recommended_action).toBe('KEEP_BOTH');
+    expect(rows.every((row) => row.prev_text === null && row.prev_metadata === null)).toBe(true);
   });
 });
 
@@ -1041,7 +1043,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
     await createTestCollection();
   });
 
-  it('MERGE/RETRACT_NEW left applied_at IS NULL (old row unrewritten); SUPERSEDE still applies', async () => {
+  it('legacy destructive rows are consumed without any mem0 mutation', async () => {
     const db = testDb();
     const mergeOld = '11111111-1111-1111-1111-111111111111';
     const mergeNew = '22222222-2222-2222-2222-222222222222';
@@ -1107,7 +1109,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
 
     // MERGE + RETRACT_NEW rows remain unapplied; SUPERSEDE applied (no client needed).
     const unapplied = await loadUnappliedLog(db, 'self');
-    expect(unapplied.map((r) => r.action).sort()).toEqual(['MERGE', 'RETRACT_NEW']);
+    expect(unapplied).toHaveLength(0);
 
     // MERGE old row NOT rewritten (rewriteMemoryText was NOT run — whole branch skipped).
     const mergeOldRows = (await db.execute(
@@ -1123,7 +1125,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
     const supRows = (await db.execute(
       sql`SELECT payload->>'superseded_by' AS sb FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${supOld}::uuid`,
     )) as Array<{ sb: string | null }>;
-    expect(supRows[0].sb).toBe(supNew);
+    expect(supRows[0].sb).toBeNull();
   });
 });
 
@@ -1133,7 +1135,7 @@ describe('reconcile handler — M1: replay never overwrites the write-ahead prev
     await createTestCollection();
   });
 
-  it('MERGE crash after rewrite before markApplied → replay keeps prev_text/prev_metadata original', async () => {
+  it('legacy MERGE replay preserves both snapshot and current row without mutation', async () => {
     const db = testDb();
     const oldId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
     const newId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
@@ -1179,6 +1181,6 @@ describe('reconcile handler — M1: replay never overwrites the write-ahead prev
     const oldRows = (await db.execute(
       sql`SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldId}::uuid`,
     )) as Array<{ data: string }>;
-    expect(oldRows[0].data).toBe('MERGED FINAL');
+    expect(oldRows[0].data).toBe('rewritten pre-crash');
   });
 });
