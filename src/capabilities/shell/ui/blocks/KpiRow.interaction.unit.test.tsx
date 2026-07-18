@@ -11,7 +11,8 @@ describe('KpiRow fact values', () => {
     render(
       <KpiRow
         kpi={{ due_count: 12, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
+        proposalsHasMore={false}
         navigate={vi.fn()}
       />,
     );
@@ -27,7 +28,8 @@ describe('KpiRow fact values', () => {
     const { rerender } = render(
       <KpiRow
         kpi={{ due_count: 12, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
+        proposalsHasMore={false}
         navigate={navigate}
       />,
     );
@@ -35,12 +37,27 @@ describe('KpiRow fact values', () => {
     rerender(
       <KpiRow
         kpi={{ due_count: 7, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
+        proposalsHasMore={false}
         navigate={navigate}
       />,
     );
 
     expect(screen.getByRole('button', { name: /今日到期\s*7/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /今日到期\s*12/ })).toBeNull();
+  });
+
+  it('does not present a truncated lower bound as an exact zero', () => {
+    render(
+      <KpiRow
+        kpi={{ due_count: 0, pending_attribution_count: 0, knowledge_count: 0 }}
+        proposalsDecisionTotal={0}
+        proposalsHasMore
+        navigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /AI 提议\s*\?/ })).toBeTruthy();
+    expect(screen.getByText('扫描已达上限，可能仍有待审')).toBeTruthy();
   });
 });

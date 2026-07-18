@@ -68,7 +68,14 @@ export const LegacyProposalRetractResponseSchema = z.object({
 });
 
 export const WorkbenchSummaryResponseSchema = z.object({
-  proposals: z.record(z.unknown()),
+  proposals: z.object({
+    total: z.number().int().nonnegative(),
+    decision_total: z.number().int().nonnegative(),
+    by_kind: z.record(z.number().int().nonnegative()),
+    has_more: z.boolean(),
+    limit: z.number().int().positive(),
+    status: z.string(),
+  }),
   kpi: z.object({
     due_count: z.number().int().nonnegative(),
     pending_attribution_count: z.number().int().nonnegative(),

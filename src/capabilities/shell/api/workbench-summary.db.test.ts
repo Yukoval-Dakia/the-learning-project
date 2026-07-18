@@ -19,7 +19,12 @@ const KNOWLEDGE_BASE = {
 };
 
 interface SummaryBody {
-  proposals: { total: number; by_kind: Record<string, number>; status: string };
+  proposals: {
+    total: number;
+    decision_total: number;
+    by_kind: Record<string, number>;
+    status: string;
+  };
   kpi: {
     due_count: number;
     pending_attribution_count: number;
@@ -73,6 +78,7 @@ describe('GET /api/workbench/summary (shell)', () => {
     const body = await fetchSummary();
 
     expect(body.proposals.total).toBe(0);
+    expect(body.proposals.decision_total).toBe(0);
     expect(body.proposals.status).toBe('pending');
     expect(body.kpi).toEqual({
       due_count: 0,
@@ -145,6 +151,23 @@ describe('GET /api/workbench/summary (shell)', () => {
       },
     });
 
+    // C-strength proposals remain pending audit/observation records, but they are not
+    // decisions for the learner and must not inflate the Today "待裁决" KPI.
+    await writeAiProposal(db, {
+      id: 'defer_p1',
+      payload: {
+        kind: 'defer',
+        target: { subject_kind: 'learning_item', subject_id: 'item_1' },
+        reason_md: '低精力时段，建议稍后再看',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'item_1',
+          defer_until: '2026-07-18T00:00:00.000Z',
+          reason: 'low energy',
+        },
+      },
+    });
+
     // goal_count 数 active goal：g1（active）计入，g2（done）不计——YUK-473 Slice 1。
     for (const [id, status] of [
       ['g1', 'active'],
@@ -184,9 +207,11 @@ describe('GET /api/workbench/summary (shell)', () => {
 
     const body = await fetchSummary();
 
-    expect(body.proposals.total).toBe(1);
-    // by_kind 是全 kind 零值映射（loadTodayProposalKpi 口径），只断言命中键。
+    expect(body.proposals.total).toBe(2);
+    expect(body.proposals.decision_total).toBe(1);
+    // by_kind 保留全部 pending 事实；decision_total 只排除 C-strength 旁观记录。
     expect(body.proposals.by_kind.knowledge_edge).toBe(1);
+    expect(body.proposals.by_kind.defer).toBe(1);
     expect(body.kpi.knowledge_count).toBe(1);
     expect(body.kpi.due_count).toBe(0);
     expect(body.kpi.pending_attribution_count).toBe(0);

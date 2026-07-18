@@ -61,7 +61,7 @@ interface Thread {
 
 // 「今日之线」派生：设计稿 DATA.threads 是策展假数据；真数据从 summary 聚合
 // 派生两缕（复习/裁决），未来夜链交班缕随 M5 task_run 读模型补。
-function deriveThreads(s: WorkbenchSummary): Thread[] {
+export function deriveThreads(s: WorkbenchSummary): Thread[] {
   const threads: Thread[] = [];
   if (s.kpi.due_count > 0) {
     threads.push({
@@ -76,14 +76,22 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
       route: '/practice',
     });
   }
-  if (s.proposals.total > 0) {
+  if (s.proposals.decision_total > 0 || s.proposals.has_more) {
+    const countKnown = s.proposals.decision_total > 0;
+    const countLabel = s.proposals.has_more
+      ? countKnown
+        ? `≥${s.proposals.decision_total} 条`
+        : '待检查'
+      : `${s.proposals.decision_total} 条`;
     threads.push({
       id: 'inbox',
       label: '裁决',
-      title: `${s.proposals.total} 条 AI 提议待审`,
-      sub: '逐条查看，再决定采用或暂不采用。',
+      title: countKnown ? `${countLabel} AI 提议待审` : '提议队列需要检查',
+      sub: s.proposals.has_more
+        ? '计数已达扫描上限，可能仍有待裁决项。'
+        : '逐条查看，再决定采用或暂不采用。',
       cta: '去收件箱',
-      badge: `${s.proposals.total} 条`,
+      badge: countLabel,
       icon: 'inbox',
       tone: 'info',
       route: '/inbox',
@@ -495,7 +503,12 @@ export default function TodayPage({ navigate }: TodayPageProps) {
                 （cold_start=false）渲染，空夜态永不落 ColdStart。 */}
             <OvernightDigestBand navigate={navigate} />
 
-            <KpiRow kpi={s.kpi} proposalsTotal={s.proposals.total} navigate={navigate} />
+            <KpiRow
+              kpi={s.kpi}
+              proposalsDecisionTotal={s.proposals.decision_total}
+              proposalsHasMore={s.proposals.has_more}
+              navigate={navigate}
+            />
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}

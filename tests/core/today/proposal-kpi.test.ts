@@ -1,14 +1,10 @@
-import { type AiProposalKindT, aiProposalKinds } from '@/core/schema/proposal';
-import { summarizeTodayProposalKpi } from '@/server/today/proposal-kpi';
+import { aiProposalKinds } from '@/core/schema/proposal';
+import { TODAY_PROPOSAL_KPI_LIMIT, summarizeTodayProposalKpi } from '@/server/today/proposal-kpi';
 import { describe, expect, it } from 'vitest';
-
-function row(kind: AiProposalKindT) {
-  return { kind };
-}
 
 describe('summarizeTodayProposalKpi', () => {
   it('returns zero counts for every proposal kind when inbox is empty', () => {
-    const summary = summarizeTodayProposalKpi([]);
+    const summary = summarizeTodayProposalKpi({});
 
     expect(summary.total).toBe(0);
     expect(summary.has_more).toBe(false);
@@ -18,14 +14,13 @@ describe('summarizeTodayProposalKpi', () => {
     }
   });
 
-  it('counts pending proposal rows by AiProposalKind', () => {
-    const summary = summarizeTodayProposalKpi([
-      row('knowledge_node'),
-      row('knowledge_edge'),
-      row('knowledge_edge'),
-      row('note_update'),
-      row('variant_question'),
-    ]);
+  it('counts pending proposal aggregates by AiProposalKind', () => {
+    const summary = summarizeTodayProposalKpi({
+      knowledge_node: 1,
+      knowledge_edge: 2,
+      note_update: 1,
+      variant_question: 1,
+    });
 
     expect(summary.total).toBe(5);
     expect(summary.by_kind.knowledge_node).toBe(1);
@@ -35,35 +30,21 @@ describe('summarizeTodayProposalKpi', () => {
     expect(summary.by_kind.learning_item).toBe(0);
   });
 
-  it('preserves capped pagination metadata from the inbox reader', () => {
-    const summary = summarizeTodayProposalKpi([row('completion')], {
-      hasMore: true,
-      limit: 1,
+  it('keeps observe-only facts while excluding them from learner decisions', () => {
+    const summary = summarizeTodayProposalKpi({
+      defer: 500,
+      archive: 1,
+      knowledge_edge: 1,
+      completion: 1,
     });
 
-    expect(summary.total).toBe(1);
-    expect(summary.has_more).toBe(true);
-    expect(summary.limit).toBe(1);
-  });
-
-  it('reports has_more=false at the cap when no overflow row exists (exactly 500)', () => {
-    const rows = Array.from({ length: 500 }, () => row('knowledge_node'));
-    const summary = summarizeTodayProposalKpi(rows, { hasMore: false, limit: 500 });
-
-    expect(summary.total).toBe(500);
+    expect(summary.total).toBe(503);
+    expect(summary.decision_total).toBe(2);
     expect(summary.has_more).toBe(false);
-    expect(summary.by_kind.knowledge_node).toBe(500);
-  });
-
-  it('reports has_more=true at the cap when overflow row exists (501+ pending)', () => {
-    // listProposalInboxPage reads limit+1 rows internally and reports has_more
-    // separately from the capped row list. summarize should pass that through
-    // without inflating `total` past the cap.
-    const rows = Array.from({ length: 500 }, () => row('knowledge_edge'));
-    const summary = summarizeTodayProposalKpi(rows, { hasMore: true, limit: 500 });
-
-    expect(summary.total).toBe(500);
-    expect(summary.has_more).toBe(true);
-    expect(summary.by_kind.knowledge_edge).toBe(500);
+    expect(summary.limit).toBe(TODAY_PROPOSAL_KPI_LIMIT);
+    expect(summary.by_kind.defer).toBe(500);
+    expect(summary.by_kind.archive).toBe(1);
+    expect(summary.by_kind.knowledge_edge).toBe(1);
+    expect(summary.by_kind.completion).toBe(1);
   });
 });

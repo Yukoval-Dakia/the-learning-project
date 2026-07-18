@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  countPendingProposalInboxByKind,
   getProposalInboxRow,
   listLegacyKnowledgeProposals,
   listProposalInboxPage,
@@ -221,6 +222,32 @@ describe('proposal inbox reader', () => {
       },
       source_action: 'experimental:knowledge_reparent',
     });
+  });
+
+  it('pushes the legacy knowledge archive fallback into the observation lane', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'legacy_archive_observation',
+      actor_kind: 'agent',
+      actor_ref: 'maintenance',
+      action: 'experimental:knowledge_archive',
+      subject_kind: 'knowledge',
+      subject_id: 'k_stale',
+      outcome: 'partial',
+      payload: { node_id: 'k_stale', reasoning: 'No longer supported by evidence.' },
+      created_at: new Date(),
+    });
+
+    await expect(
+      listProposalInboxRows(db, { lane: 'decision', status: 'pending' }),
+    ).resolves.toEqual([]);
+    const observations = await listProposalInboxRows(db, {
+      lane: 'observation',
+      status: 'pending',
+    });
+    expect(observations.map((row) => [row.id, row.kind])).toEqual([
+      ['legacy_archive_observation', 'archive'],
+    ]);
   });
 
   it('skips and logs invalid proposal payloads without failing the whole inbox', async () => {
@@ -768,5 +795,425 @@ describe('proposal inbox reader', () => {
     // non-pending just like rubric_rejected was).
     const pending = await listProposalInboxRows(db, { status: 'pending' });
     expect(pending.find((r) => r.id === 'edge_folded_corrected')).toBeUndefined();
+  });
+
+  it('aggregates exact pending counts without materializing ranked inbox pages', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'count_defer',
+      payload: {
+        kind: 'defer',
+        target: { subject_kind: 'learning_item', subject_id: 'item_count' },
+        reason_md: 'observe only',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'item_count',
+          defer_until: '2026-07-18T00:00:00.000Z',
+          reason: 'low energy',
+        },
+      },
+    });
+    for (const id of ['count_pending', 'count_accepted'] as const) {
+      await writeAiProposal(db, {
+        id,
+        payload: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: id,
+          evidence_refs: [],
+          proposed_change: {
+            from_knowledge_id: `${id}_from`,
+            to_knowledge_id: `${id}_to`,
+            relation_type: 'related_to',
+            weight: 1,
+          },
+        },
+      });
+    }
+    await db.insert(event).values({
+      id: 'count_rate',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'count_accepted',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'count_accepted',
+      created_at: new Date('2026-07-17T00:00:00.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_item',
+      outcome: 'partial',
+      payload: { ai_proposal: { kind: 'completion' } },
+      created_at: new Date('2026-07-17T00:00:30.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_empty_change',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_empty_change',
+      outcome: 'partial',
+      payload: {
+        ai_proposal: {
+          kind: 'completion',
+          target: { subject_kind: 'learning_item', subject_id: 'invalid_empty_change' },
+          reason_md: 'Looks complete at the base level but violates the kind schema.',
+          evidence_refs: [],
+          proposed_change: {},
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:40.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_target_kind',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_target_kind',
+      outcome: 'partial',
+      payload: {
+        kind: 'defer',
+        target: { subject_kind: 'question', subject_id: 'invalid_target_kind' },
+        reason_md: 'The kind-specific target does not match the proposal schema.',
+        proposed_change: { defer_until: '2026-07-18T00:00:00.000Z' },
+      },
+      created_at: new Date('2026-07-17T00:00:41.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_evidence_ref',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'invalid_evidence_ref',
+      outcome: 'partial',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'invalid_evidence_ref' },
+        reason_md: 'The evidence item lacks its required kind discriminator.',
+        evidence_refs: [{ id: 'event_without_kind' }],
+        proposed_change: { learning_item_id: 'invalid_evidence_ref' },
+      },
+      created_at: new Date('2026-07-17T00:00:42.000Z'),
+    });
+    await db.insert(event).values({
+      id: 'count_invalid_question_edit',
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'question',
+      subject_id: 'question_invalid_edit',
+      outcome: 'partial',
+      payload: {
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: 'question_invalid_edit' },
+        reason_md: 'The operation discriminator is valid but its required fields are absent.',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: 'question_invalid_edit',
+          edit: { op: 'set_choice' },
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:42.500Z'),
+    });
+    await writeAiProposal(db, {
+      id: 'count_valid_reparent',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_a' },
+        reason_md: 'Move the node under its corrected parent.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'reparent',
+          node_id: 'node_a',
+          new_parent_id: null,
+          expected_version: 1,
+        },
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'count_valid_merge',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_b' },
+        reason_md: 'Merge duplicate nodes into the canonical node.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'merge',
+          from_ids: ['node_b'],
+          into_id: 'node_a',
+          expected_versions: { node_a: 2, node_b: 1 },
+        },
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'count_valid_split',
+      payload: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'node_c' },
+        reason_md: 'Split the overloaded concept into two focused nodes.',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'split',
+          from_id: 'node_c',
+          into: [
+            { name: 'Child A', parent_id: null },
+            { name: 'Child B', parent_id: 'node_a' },
+          ],
+          expected_version: 3,
+        },
+      },
+    });
+    for (const [id, proposedChange] of [
+      ['count_invalid_reparent', { mutation: 'reparent' }],
+      [
+        'count_invalid_merge',
+        {
+          mutation: 'merge',
+          from_ids: ['node_a'],
+          into_id: 'node_b',
+          expected_versions: { node_a: 1.5 },
+        },
+      ],
+      [
+        'count_invalid_split',
+        {
+          mutation: 'split',
+          from_id: 'node_a',
+          into: [{ name: 'child without required parent_id' }],
+          expected_version: 1,
+        },
+      ],
+    ] as const) {
+      await db.insert(event).values({
+        id,
+        actor_kind: 'agent',
+        actor_ref: 'bad_writer',
+        action: 'experimental:proposal',
+        subject_kind: 'knowledge',
+        subject_id: 'node_a',
+        outcome: 'partial',
+        payload: {
+          kind: 'knowledge_mutation',
+          target: { subject_kind: 'knowledge', subject_id: 'node_a' },
+          reason_md: 'The mutation discriminator is valid but its variant shape is not.',
+          evidence_refs: [],
+          proposed_change: proposedChange,
+        },
+        created_at: new Date('2026-07-17T00:00:43.000Z'),
+      });
+    }
+    await db.insert(event).values({
+      id: 'count_legacy_without_evidence_refs',
+      actor_kind: 'agent',
+      actor_ref: 'legacy_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'legacy_item',
+      outcome: 'partial',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'legacy_item' },
+        reason_md: 'Legacy schema defaulted evidence_refs to an empty array.',
+        proposed_change: { learning_item_id: 'legacy_item', completion_evidence: 'done' },
+      },
+      created_at: new Date('2026-07-17T00:00:45.000Z'),
+    });
+    await writeAiProposal(db, {
+      id: 'count_folded',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'folded',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'folded_from',
+          to_knowledge_id: 'folded_to',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'folded_from',
+          to_knowledge_id: 'folded_to',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: 'folded',
+          rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        },
+      },
+    });
+
+    await writeEvent(db, {
+      id: 'count_retract',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_pending',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'temporary retract',
+        affected_refs: [{ kind: 'open_inquiry', id: 'count_pending' }],
+      },
+      caused_by_event_id: 'count_pending',
+      created_at: new Date('2026-07-17T00:01:00.000Z'),
+    });
+    await writeEvent(db, {
+      id: 'count_restore',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_pending',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'restore pending proposal',
+        affected_refs: [{ kind: 'open_inquiry', id: 'count_pending' }],
+      },
+      caused_by_event_id: 'count_retract',
+      created_at: new Date('2026-07-17T00:02:00.000Z'),
+    });
+    // A correction-shaped row is not a correction unless it passes CorrectEvent.
+    // The Inbox skips this missing reason/affected_refs payload, so the KPI must too.
+    await db.insert(event).values({
+      id: 'count_malformed_correction',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'count_defer',
+      outcome: 'success',
+      payload: { correction_kind: 'retract' },
+      caused_by_event_id: 'count_defer',
+      created_at: new Date('2026-07-17T00:03:00.000Z'),
+    });
+
+    const result = await countPendingProposalInboxByKind(db);
+    const counts = result.byKind;
+    const projectedCounts = (await listProposalInboxRows(db, { status: 'pending' })).reduce<
+      Record<string, number>
+    >((acc, row) => {
+      acc[row.kind] = (acc[row.kind] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    expect(counts).toEqual({
+      completion: 1,
+      defer: 1,
+      knowledge_edge: 1,
+      knowledge_mutation: 3,
+    });
+    expect(counts).toEqual(projectedCounts);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('counts in bounded batches and keeps decisions reachable behind an observation backlog', async () => {
+    const db = testDb();
+    const observationRows: Array<typeof event.$inferInsert> = Array.from(
+      { length: 501 },
+      (_, index) => ({
+        id: `batched_defer_${String(index).padStart(3, '0')}`,
+        actor_kind: 'agent',
+        actor_ref: 'dreaming',
+        action: 'experimental:proposal',
+        subject_kind: 'learning_item',
+        subject_id: `item_${index}`,
+        outcome: 'partial',
+        payload: {
+          ai_proposal: {
+            kind: 'defer',
+            target: { subject_kind: 'learning_item', subject_id: `item_${index}` },
+            reason_md: 'observe only',
+            evidence_refs: [],
+            proposed_change: {
+              learning_item_id: `item_${index}`,
+              defer_until: '2026-07-18T00:00:00.000Z',
+              reason: 'low energy',
+            },
+          },
+        },
+        created_at: new Date('2026-07-17T01:00:00.000Z'),
+      }),
+    );
+    await db.insert(event).values(observationRows);
+    await writeAiProposal(db, {
+      id: 'decision_after_observations',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'This decision must remain reachable.',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'decision_from',
+          to_knowledge_id: 'decision_to',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:00.000Z'),
+    });
+
+    await expect(countPendingProposalInboxByKind(db)).resolves.toEqual({
+      byKind: { defer: 501, knowledge_edge: 1 },
+      hasMore: false,
+    });
+
+    const decisionPage = await listProposalInboxPage(db, {
+      status: 'pending',
+      lane: 'decision',
+      limit: 1,
+    });
+    expect(decisionPage.rows.map((row) => row.id)).toEqual(['decision_after_observations']);
+    expect(decisionPage.next_cursor).toBeNull();
+  });
+
+  it('returns a lower bound instead of failing Today at the candidate safety ceiling', async () => {
+    const db = testDb();
+    const rows: Array<typeof event.$inferInsert> = Array.from({ length: 501 }, (_, index) => ({
+      id: `bounded_scan_${String(index).padStart(3, '0')}`,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: `bounded_item_${index}`,
+      outcome: 'partial',
+      payload: {
+        ai_proposal: {
+          kind: 'defer',
+          target: { subject_kind: 'learning_item', subject_id: `bounded_item_${index}` },
+          reason_md: 'bounded scan fixture',
+          evidence_refs: [],
+          proposed_change: {
+            learning_item_id: `bounded_item_${index}`,
+            defer_until: '2026-07-18T00:00:00.000Z',
+            reason: 'low energy',
+          },
+        },
+      },
+      created_at: new Date(1_800_000_000_000 + index),
+    }));
+    await db.insert(event).values(rows);
+
+    await expect(
+      countPendingProposalInboxByKind(db, { batchSize: 500, maxBatches: 1 }),
+    ).resolves.toEqual({
+      byKind: { defer: 500 },
+      hasMore: true,
+    });
   });
 });

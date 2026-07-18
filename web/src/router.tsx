@@ -122,11 +122,12 @@ function RootShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 收件箱 count：复用 workbench summary proposals.total（与 TodayPage 同 query
+  // 收件箱待办 count：复用 workbench summary proposals.decision_total（与 TodayPage 同 query
   // key ['workbench-summary'] → React Query 去重，不增请求）。无数据时 undefined
   // → 侧栏不渲 count（不 fabricate 假数字）。
   const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
-  const inboxCount = summaryQ.data?.proposals.total;
+  const inboxCount = summaryQ.data?.proposals.decision_total;
+  const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;
 
   // Copilot 开启：CopilotDock 自带的 in-flow trigger（data-testid
   // copilot-drawer-trigger，调用其 explicit openDrawer）经 .shell-copilot-mount CSS
@@ -175,6 +176,7 @@ function RootShell() {
         onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
         onNavigated={closeMobileNav}
         inboxCount={inboxCount}
+        inboxCountUncertain={inboxCountUncertain}
       />
 
       <ShellMain blockedByModal={mobileNavOpen}>

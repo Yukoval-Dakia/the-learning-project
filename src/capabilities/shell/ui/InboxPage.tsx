@@ -30,7 +30,13 @@ import {
   listProposals,
   retractProposal,
 } from './inbox-api';
-import { TIER_META, autoAppliedState, bucketPendingByTier, undoRemainingMs } from './inbox-tier';
+import {
+  TIER_C_COPY,
+  TIER_META,
+  autoAppliedState,
+  bucketPendingByTier,
+  undoRemainingMs,
+} from './inbox-tier';
 import './shell.css';
 
 function tierIcon(name: string): LoomIconName {
@@ -198,12 +204,8 @@ function TierCBlock({
           <LoomIcon name="archive" size={16} />
         </span>
         <span>
-          <span className="co-t">{items.length} 项纯状态变更已自动处理</span>
-          <span className="co-s">
-            {open
-              ? 'snooze / 软归档 / 移到旁观 —— 都没占你的裁决队列'
-              : '展开看它们去哪了 · 不需要你裁决'}
-          </span>
+          <span className="co-t">{TIER_C_COPY.summary(items.length)}</span>
+          <span className="co-s">{open ? TIER_C_COPY.expanded : TIER_C_COPY.collapsed}</span>
         </span>
         <LoomIcon name="chevronDown" size={18} className="co-chev" />
       </button>
@@ -219,7 +221,7 @@ function TierCBlock({
                 <div className="co-row-body">
                   <div className="co-row-top">
                     <span className="co-row-title">{meta.label}</span>
-                    <span className="co-row-act">已自动处理</span>
+                    <span className="co-row-act">{TIER_C_COPY.itemState}</span>
                   </div>
                   <div className="co-row-text">{it.payload.reason_md}</div>
                 </div>
@@ -244,6 +246,18 @@ export interface InboxPageProps {
   navigate: (to: string) => void;
 }
 
+export function resolveInboxStatus(input: {
+  loading: boolean;
+  error: boolean;
+  hasVisibleContent: boolean;
+  hasDiagnostic: boolean;
+}): StatefulStatus {
+  if (input.loading) return 'loading';
+  if (input.error) return 'error';
+  if (!input.hasVisibleContent && !input.hasDiagnostic) return 'empty';
+  return 'ok';
+}
+
 export default function InboxPage({ navigate }: InboxPageProps) {
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [reverting, setReverting] = useState<Record<string, true>>({});
@@ -264,6 +278,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   };
 
   const rows = q.data?.rows ?? [];
+  const decisionTruncated = q.data?.decision_truncated === true;
+  const observationTruncated = q.data?.observation_truncated === true;
+  const observationUnavailable = q.data?.observation_unavailable === true;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
 
@@ -310,11 +327,15 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   // 页态综合 q（pending 裁决）+ aaQ（A 档自动应用）两路读模型（if/else 替链式三元，守 OCR
   // 红线）：A 档 loading 也算整页 loading——否则 aaQ 未就绪时三 count 暂为 0 会过早判 empty 盖掉
   // A 段；empty 仅当三 count 全 0 且 aaQ 已成功 settle（aaQ.isError 落 'ok' 让 A 段错误卡显示）。
-  let status: StatefulStatus = 'ok';
-  if (q.isLoading || aaQ.isLoading) status = 'loading';
-  else if (q.isError) status = 'error';
-  else if (decide.length === 0 && moved.length === 0 && autoApplied.length === 0 && !aaQ.isError)
-    status = 'empty';
+  const status = resolveInboxStatus({
+    loading: q.isLoading || aaQ.isLoading,
+    error: q.isError,
+    hasVisibleContent:
+      decide.length > 0 || moved.length > 0 || autoApplied.length > 0 || aaQ.isError,
+    // Partial-data diagnostics must survive the top-level empty-state decision; otherwise a
+    // failed observation preview is falsely rendered as “收件箱已清空”.
+    hasDiagnostic: decisionTruncated || observationTruncated || observationUnavailable,
+  });
 
   const clearedEmpty = (
     <EmptyState
@@ -392,6 +413,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {/* ── B 档 · 逐条人审 ── */}
         <section>
           <TierHead tier="B" count={decideRemaining} />
+          {decisionTruncated && (
+            <LoomCard pad sunk>
+              <div className="meta">
+                待裁决提议当前显示前 {decide.length}{' '}
+                条，还有更多记录未在本页展开；处理后刷新即可继续。
+              </div>
+            </LoomCard>
+          )}
           {decide.length === 0 ? (
             <LoomCard pad sunk>
               <div className="meta">没有待裁决的提议。</div>
@@ -432,10 +461,25 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         </section>
 
         {/* ── C 档 · 纯状态（折叠） ── */}
-        {moved.length > 0 && (
+        {(moved.length > 0 || observationTruncated || observationUnavailable) && (
           <section>
             <TierHead tier="C" count={moved.length} />
-            <TierCBlock items={moved} navigate={navigate} />
+            {observationUnavailable && (
+              <LoomCard pad sunk>
+                <output className="meta">
+                  AI 观察记录暂时无法加载；上方待裁决提议不受影响，可以继续处理。
+                </output>
+              </LoomCard>
+            )}
+            {observationTruncated && (
+              <LoomCard pad sunk>
+                <div className="meta">
+                  AI 观察当前显示前 {moved.length}{' '}
+                  条，还有更多记录未在本页展开；待裁决提议不受影响。
+                </div>
+              </LoomCard>
+            )}
+            {moved.length > 0 && <TierCBlock items={moved} navigate={navigate} />}
           </section>
         )}
       </Stateful>

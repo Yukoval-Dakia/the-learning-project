@@ -32,11 +32,22 @@ export const TIER_META: Record<'A' | 'B' | 'C', TierMeta> = {
     tone: 'coral',
   },
   C: {
-    label: '已自动处理',
-    sub: '提醒类信息 · 已归入 AI 观察',
+    label: '仅作观察',
+    sub: '旁观记录 · 尚未执行 · 不需要你裁决',
     tone: 'neutral',
   },
 };
+
+/**
+ * C 档只有 pending 观察记录，没有 accept applier，也没有目标 mutation。文案集中在这里，
+ * 避免 UI 把“从裁决队列移出”误写成“已经执行”。
+ */
+export const TIER_C_COPY = {
+  summary: (count: number) => `${count} 项旁观记录，未执行变更`,
+  collapsed: '展开查看提议内容 · 不需要你裁决',
+  expanded: '这些提议仍只是待定记录，没有修改任何目标数据',
+  itemState: '仅记录 · 未执行',
+} as const;
 
 // C-strength kinds（无 accept applier；从 core 强度表派生，单一真相防漂移）。
 const C_STRENGTH_KINDS: ReadonlySet<string> = new Set(

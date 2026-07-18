@@ -107,10 +107,84 @@ export interface ProposalInboxRow {
   signals: Record<string, unknown> | null;
 }
 
-export const listProposals = () =>
-  apiJson<{ rows: ProposalInboxRow[]; next_cursor: string | null }>(
-    '/api/proposals?status=pending',
-  );
+interface ProposalPageWire {
+  rows: ProposalInboxRow[];
+  next_cursor: string | null;
+  /** Present when the decision lane reached its defensive client-side page ceiling. */
+  decision_truncated?: boolean;
+  /** Present on the merged Inbox response when the bounded C-lane preview has more rows. */
+  observation_truncated?: boolean;
+  /** The non-critical C-lane preview failed; actionable decisions are still complete/usable. */
+  observation_unavailable?: boolean;
+}
+
+const DECISION_PAGE_LIMIT = 500;
+const DECISION_MAX_PAGES = 20;
+const OBSERVATION_PAGE_LIMIT = 200;
+
+function listProposalPage(
+  lane: 'decision' | 'observation',
+  limit: number,
+  cursor?: string,
+): Promise<ProposalPageWire> {
+  const query = new URLSearchParams({ lane, limit: String(limit), status: 'pending' });
+  if (cursor) query.set('cursor', cursor);
+  return apiJson<ProposalPageWire>(`/api/proposals?${query.toString()}`);
+}
+
+async function listAllDecisionProposals(): Promise<{
+  rows: ProposalInboxRow[];
+  truncated: boolean;
+}> {
+  const rows: ProposalInboxRow[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let pageCount = 0;
+
+  while (true) {
+    pageCount += 1;
+    const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
+    rows.push(...page.rows);
+    if (!page.next_cursor) return { rows, truncated: false };
+    if (seenCursors.has(page.next_cursor)) {
+      throw new Error('Duplicate decision cursor detected; unable to load all pending decisions.');
+    }
+    if (pageCount >= DECISION_MAX_PAGES) {
+      // Keep the loaded decisions actionable. Failing the whole Inbox here would
+      // prevent the learner from reducing the very backlog that hit the guard.
+      return { rows, truncated: true };
+    }
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+}
+
+/**
+ * Load every actionable proposal independently from the bounded observation preview. This prevents a
+ * large C-strength backlog from making Today advertise decisions that the Inbox cannot reach.
+ */
+export async function listProposals(): Promise<ProposalPageWire> {
+  const [decisionPage, observationResult] = await Promise.all([
+    listAllDecisionProposals(),
+    listProposalPage('observation', OBSERVATION_PAGE_LIMIT)
+      .then((page) => ({ page, unavailable: false as const }))
+      .catch(() => ({
+        page: { rows: [] as ProposalInboxRow[], next_cursor: null },
+        unavailable: true as const,
+      })),
+  ]);
+  const observationPage = observationResult.page;
+  return {
+    rows: [...decisionPage.rows, ...observationPage.rows],
+    // This response merges a fully consumed decision lane with one bounded
+    // observation preview. A cursor for only one half would imply a unified
+    // continuation that does not exist, so do not expose it.
+    next_cursor: null,
+    decision_truncated: decisionPage.truncated,
+    observation_truncated: observationPage.next_cursor !== null,
+    observation_unavailable: observationResult.unavailable,
+  };
+}
 
 export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 

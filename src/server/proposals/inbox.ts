@@ -1,4 +1,9 @@
-import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
+import {
+  type AiProposalKindT,
+  type AiProposalPayloadT,
+  aiProposalKindStrength,
+  parseAiProposalPayload,
+} from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
@@ -7,7 +12,27 @@ import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
-import { and, count, desc, eq, gte, inArray, isNotNull, like, lt, or, sql } from 'drizzle-orm';
+import {
+  type SQL,
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  lt,
+  not,
+  notExists,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -45,9 +70,14 @@ export interface ListProposalInboxOpts {
   // （之前在路由层做页内 post-filter，next_cursor 指向未过滤流——codex P2 /
   // coderabbit major）。
   kind?: AiProposalPayloadT['kind'];
+  // decision excludes C-strength observe-only records. The Inbox uses this lane to guarantee that
+  // a large observation backlog cannot hide actionable rows behind the API page boundary.
+  lane?: ProposalInboxLane;
   limit?: number;
   cursor?: string;
 }
+
+export type ProposalInboxLane = 'decision' | 'observation';
 
 export interface LegacyKnowledgeProposalRow {
   id: string;
@@ -65,21 +95,25 @@ function toRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const terminalRateStatus = {
+  accept: 'accepted',
+  reverse: 'accepted',
+  change_type: 'accepted',
+  dismiss: 'dismissed',
+  rollback: 'stale',
+} as const satisfies Record<string, ProposalStatus>;
+
+type TerminalRating = keyof typeof terminalRateStatus;
+const terminalRatings = Object.keys(terminalRateStatus) as TerminalRating[];
+
+function isTerminalRating(value: unknown): value is TerminalRating {
+  return typeof value === 'string' && Object.hasOwn(terminalRateStatus, value);
+}
+
 function rateStatus(rate: EventRow | undefined): ProposalStatus {
   if (!rate) return 'pending';
   const payload = toRecord(rate.payload);
-  switch (payload.rating) {
-    case 'accept':
-    case 'reverse':
-    case 'change_type':
-      return 'accepted';
-    case 'dismiss':
-      return 'dismissed';
-    case 'rollback':
-      return 'stale';
-    default:
-      return 'pending';
-  }
+  return isTerminalRating(payload.rating) ? terminalRateStatus[payload.rating] : 'pending';
 }
 
 // Read a verdict marker (sibling of ai_proposal on the propose event payload)
@@ -184,6 +218,163 @@ function proposalWhere() {
     // Surface them in the unified inbox so the rollback / accept UI sees them.
     eq(event.action, 'experimental:propose_learning_intent'),
   );
+}
+
+const observationProposalKinds = Object.entries(aiProposalKindStrength)
+  .filter(([, strength]) => strength === 'C')
+  .map(([kind]) => kind as AiProposalKindT);
+
+/**
+ * Push the Inbox lane split into the ranked event query without duplicating proposal schemas.
+ *
+ * Modern proposals expose a canonical kind either under `ai_proposal` or at the root of legacy
+ * `experimental:proposal` payloads, so those can be classified exactly. The older
+ * `experimental:knowledge_*` representation has no kind; its mutation mapping mirrors
+ * deriveLegacyAiProposal just far enough to identify the C-strength archive fallback. Full Zod
+ * validation remains in the projection layer, so this predicate may retain malformed candidates
+ * but can never promote one into the Inbox.
+ */
+function proposalLaneWhere(lane: ProposalInboxLane | undefined): SQL | undefined {
+  if (!lane) return undefined;
+  const payloadKind = sql<string | null>`CASE
+    WHEN jsonb_typeof(${event.payload}->'ai_proposal') = 'object'
+      THEN ${event.payload}->'ai_proposal'->>'kind'
+    WHEN ${event.action} = 'experimental:proposal'
+      THEN ${event.payload}->>'kind'
+    ELSE NULL
+  END`;
+  const observationKind = inArray(payloadKind, observationProposalKinds);
+  const legacyKnowledgeMutation = sql<string>`COALESCE(
+    NULLIF(${event.payload}->>'mutation', ''),
+    regexp_replace(${event.action}, '^experimental:knowledge_', '')
+  )`;
+  const legacyKnowledgeObservation = sql<boolean>`(
+    ${isNull(payloadKind)}
+    AND ${like(event.action, 'experimental:knowledge_%')}
+    AND ${eq(event.subject_kind, 'knowledge')}
+    AND ${notInArray(legacyKnowledgeMutation, [
+      'propose',
+      'propose_new',
+      'reparent',
+      'merge',
+      'split',
+    ])}
+  )`;
+
+  if (lane === 'decision') {
+    return or(
+      and(isNotNull(payloadKind), notInArray(payloadKind, observationProposalKinds)),
+      and(isNull(payloadKind), not(legacyKnowledgeObservation)),
+    );
+  }
+
+  return or(observationKind, legacyKnowledgeObservation);
+}
+
+/**
+ * Count the pending inbox projection by proposal kind without loading ranked pages.
+ *
+ * SQL only removes proposals whose latest rate is terminal. Payload shape, correction folding,
+ * rubric/topology verdicts, and legacy derivation stay on the same TypeScript/Zod path as the
+ * interactive inbox. This keeps the count schema-proof while avoiding signal joins, sorting, and
+ * materializing the accepted/dismissed history on every Today request. `hasMore` is true only at
+ * the accident ceiling; in that case `byKind` is an explicit lower bound rather than a reason to
+ * fail the Today hot path.
+ */
+export interface PendingProposalCountResult {
+  byKind: Partial<Record<AiProposalKindT, number>>;
+  hasMore: boolean;
+}
+
+export const PENDING_PROPOSAL_COUNT_BATCH_SIZE = 5_000;
+export const PENDING_PROPOSAL_COUNT_MAX_BATCHES = 10;
+
+export async function countPendingProposalInboxByKind(
+  db: DbLike,
+  options: { batchSize?: number; maxBatches?: number } = {},
+): Promise<PendingProposalCountResult> {
+  const latestRate = alias(event, 'pending_count_latest_rate');
+  const newerRate = alias(event, 'pending_count_newer_rate');
+  const hasTerminalLatestRate = db
+    .select({ one: sql`1` })
+    .from(latestRate)
+    .where(
+      and(
+        eq(latestRate.action, 'rate'),
+        eq(latestRate.caused_by_event_id, event.id),
+        inArray(sql<string>`${latestRate.payload}->>'rating'`, terminalRatings),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(newerRate)
+            .where(
+              and(
+                eq(newerRate.action, 'rate'),
+                eq(newerRate.caused_by_event_id, event.id),
+                or(
+                  gt(newerRate.created_at, latestRate.created_at),
+                  and(
+                    eq(newerRate.created_at, latestRate.created_at),
+                    gt(newerRate.id, latestRate.id),
+                  ),
+                ),
+              ),
+            ),
+        ),
+      ),
+    );
+
+  const counts: Partial<Record<AiProposalKindT, number>> = {};
+  const batchSize = options.batchSize ?? PENDING_PROPOSAL_COUNT_BATCH_SIZE;
+  const maxBatches = options.maxBatches ?? PENDING_PROPOSAL_COUNT_MAX_BATCHES;
+  let after: Pick<EventRow, 'created_at' | 'id'> | null = null;
+  let batchCount = 0;
+
+  while (true) {
+    const afterWhere: SQL | undefined = after
+      ? or(
+          gt(event.created_at, after.created_at),
+          and(eq(event.created_at, after.created_at), gt(event.id, after.id)),
+        )
+      : undefined;
+    const loadedRows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(and(proposalWhere(), notExists(hasTerminalLatestRate), afterWhere))
+      .orderBy(asc(event.created_at), asc(event.id))
+      .limit(batchSize + 1);
+    const hasMore = loadedRows.length > batchSize;
+    const candidateRows = loadedRows.slice(0, batchSize);
+    if (candidateRows.length === 0) break;
+    batchCount += 1;
+
+    // Counting only needs active-vs-corrected state; do not perform the second
+    // decided-at lookup used by rendered Inbox rows. With the 5k candidate batch,
+    // a full 50k safety-window costs at most 10 candidate + 10 correction queries
+    // instead of the previous ~300 sequential round-trips.
+    const correctionStatuses = await getCorrectionStatuses(
+      db,
+      candidateRows.map((row) => row.id),
+    );
+    for (const row of candidateRows) {
+      if (correctionStatuses.get(row.id)?.state !== 'active') continue;
+      if (deriveProposalStatus(row, undefined, undefined) !== 'pending') {
+        continue;
+      }
+      const payload = safeDeriveLegacyAiProposal(row);
+      if (!payload) continue;
+      counts[payload.kind] = (counts[payload.kind] ?? 0) + 1;
+    }
+
+    const last: EventRow | undefined = candidateRows.at(-1);
+    if (!last || !hasMore) break;
+    if (batchCount >= maxBatches) {
+      return { byKind: counts, hasMore: true };
+    }
+    after = { created_at: last.created_at, id: last.id };
+  }
+
+  return { byKind: counts, hasMore: false };
 }
 
 // YUK-520 (A1 夜窗 digest) — windowed proposal count for the overnight-digest read
@@ -311,15 +502,15 @@ function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
 
 async function loadProposalEvents(
   db: DbLike,
-  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor'> & { nowIso?: string } = {},
+  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor' | 'lane'> & { nowIso?: string } = {},
 ): Promise<LoadedProposalEvent[]> {
   const nowIso = opts.nowIso ?? new Date().toISOString();
   const cursor = opts.cursor ? decodeProposalCursor(opts.cursor) : null;
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
   const where = cursor
-    ? and(proposalWhere(), proposalCursorWhere(cursor, nowIso))
-    : proposalWhere();
+    ? and(proposalWhere(), proposalLaneWhere(opts.lane), proposalCursorWhere(cursor, nowIso))
+    : and(proposalWhere(), proposalLaneWhere(opts.lane));
   const query = db
     .select({
       acceptance_rate: acceptanceRate,
@@ -526,9 +717,9 @@ export async function listProposalInboxRows(
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
-  filters: Pick<ListProposalInboxOpts, 'status' | 'kind'> = {},
+  filters: Pick<ListProposalInboxOpts, 'status' | 'kind' | 'lane'> = {},
 ): Promise<ProposalInboxRow[]> {
-  const { status, kind } = filters;
+  const { status, kind, lane } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
@@ -548,6 +739,9 @@ async function projectLoadedProposalRows(
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
     if (kind && payload.kind !== kind) continue;
+    const observation = aiProposalKindStrength[payload.kind] === 'C';
+    if (lane === 'decision' && observation) continue;
+    if (lane === 'observation' && !observation) continue;
     out.push({
       id: row.id,
       kind: payload.kind,
@@ -581,6 +775,7 @@ export async function listProposalInboxPage(
   if (pageLimit === undefined) {
     const loadedProposalRows = await loadProposalEvents(db, {
       cursor: opts.cursor,
+      lane: opts.lane,
       nowIso: rankingNowIso,
     });
     return {
@@ -598,6 +793,7 @@ export async function listProposalInboxPage(
   while (out.length < targetRows) {
     const loadedProposalRows = await loadProposalEvents(db, {
       cursor,
+      lane: opts.lane,
       limit: batchLimit,
       nowIso: rankingNowIso,
     });

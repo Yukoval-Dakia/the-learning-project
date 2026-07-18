@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  TIER_C_COPY,
+  TIER_META,
   UNDO_WINDOW_MS,
   autoAppliedState,
   bucketPendingByTier,
@@ -29,6 +31,25 @@ describe('isMovedOutKind (C-strength = no accept applier)', () => {
 
   it('an unknown kind falls to the decide block, never silently hidden', () => {
     expect(isMovedOutKind('totally_new_kind')).toBe(false);
+  });
+});
+
+describe('C-tier truth copy', () => {
+  it('states that observe-only proposals remain records and do not execute mutations', () => {
+    expect(TIER_META.C.label).toBe('仅作观察');
+    expect(TIER_META.C.sub).toContain('尚未执行');
+    expect(TIER_C_COPY.summary(3)).toBe('3 项旁观记录，未执行变更');
+    expect(TIER_C_COPY.itemState).toBe('仅记录 · 未执行');
+
+    const allCopy = [
+      TIER_META.C.label,
+      TIER_META.C.sub,
+      TIER_C_COPY.summary(3),
+      TIER_C_COPY.collapsed,
+      TIER_C_COPY.expanded,
+      TIER_C_COPY.itemState,
+    ].join(' ');
+    expect(allCopy).not.toContain('已自动处理');
   });
 });
 
