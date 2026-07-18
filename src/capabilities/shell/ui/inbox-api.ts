@@ -283,8 +283,8 @@ export function evidenceReadable(ref: ProposalEvidenceRefWire): {
 }
 
 // S7 (YUK-335, audit §3.4)：block_merge 卡常带多枚同 kind 的 evidence_refs，
-// evidenceReadable 把同 kind 映成同一句白话 → 渲成 N 枚一模一样的灰 disabled
-// chip。按 readable 文案分组去重：每组保留首个 ref（route/disabled 逻辑不变）+
+// evidenceReadable 把同 kind 映成同一句白话 → 渲成 N 枚一模一样的 evidence
+// pill。按 readable 文案分组去重：每组保留首个 ref（route/display 语义不变）+
 // 组内计数，count>1 时由 EvidenceChip 把数量并进文案。
 // F5 (Codex #400)：但 navigable（knowledge/artifact，route≠null）的不同 id 是
 // 不同可达目标，按文案折叠会只留首个 ref 的 route，用户看「源自 2 个知识点」却只能

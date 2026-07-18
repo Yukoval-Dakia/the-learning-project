@@ -391,12 +391,15 @@
   font-size: var(--fs-caption);
   padding: 5px 11px;
   border-radius: var(--r-pill);
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
     var(--ease-out);
 }
-.inbox-loom .evidence-readable:hover {
+.inbox-loom button.evidence-readable {
+  cursor: pointer;
+}
+.inbox-loom button.evidence-readable:hover {
   border-color: var(--info-line, var(--info));
   background: var(--info-soft);
 }
@@ -405,7 +408,7 @@
   flex: none;
   display: flex;
 }
-.inbox-loom .evidence-readable:hover .er-ic {
+.inbox-loom button.evidence-readable:hover .er-ic {
   color: var(--info-ink);
 }
 .inbox-loom .evidence-readable .er-text {
@@ -421,23 +424,8 @@
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
-.inbox-loom .evidence-readable:hover .er-go {
+.inbox-loom button.evidence-readable:hover .er-go {
   opacity: 1;
-}
-/* 偏差④：无路由可跳的 evidence（event/record 类）渲为 disabled，原稿
-   一律可点（演示数据全有跳转目标）。 */
-.inbox-loom .evidence-readable:disabled {
-  cursor: default;
-}
-.inbox-loom .evidence-readable:disabled:hover {
-  border-color: var(--line);
-  background: var(--paper-raised);
-}
-.inbox-loom .evidence-readable:disabled:hover .er-ic {
-  color: var(--ink-4);
-}
-.inbox-loom .evidence-readable:disabled .er-go {
-  display: none;
 }
 
 /* ---- YUK-520 (A1 夜窗 digest) — 最小交班缕（计数 chips + 下钻 CTA） ---- */
