@@ -538,8 +538,6 @@ export function buildMemoryReconcileHandler(
     memoryClient?: MemoryClient;
     /** Injectable for tests — defaults to judgeReconciliation */
     judge?: typeof judgeReconciliation;
-    /** Injectable for tests — mem0 collection table name (default: from config) */
-    collectionName?: string;
     /**
      * YUK-557 (PR #699 CR-1) — injectable Mem0 client factory (default:
      * createMemoryClient). Tests inject a factory that throws so the m7 "client
@@ -552,28 +550,7 @@ export function buildMemoryReconcileHandler(
 ): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
-  const collectionName = deps.collectionName;
   const createClient = deps.createClient ?? createMemoryClient;
-  // YUK-557 (F4): lazy client init for applyPlannedRows. applyPlannedRows only
-  // calls getClient when a destructive (MERGE/RETRACT_NEW) row is actually pending,
-  // so a pure KEEP_BOTH/SUPERSEDE replay never triggers init (F-4 posture: a
-  // client-less replay must not demand a Mem0 key). On init failure the client
-  // stays undefined → applyPlannedRows emits the aggregated warn and defers the
-  // destructive rows to the next job (m7).
-  const getClientLazy = (): MemoryClient | undefined => {
-    if (!memoryClient) {
-      try {
-        memoryClient = createClient();
-      } catch (err) {
-        // OCR (PR #699, triggers.ts:544) — surface the root cause. The empty catch
-        // used to discard the createMemoryClient() failure (missing key / bad
-        // endpoint / invalid config); the only downstream signal was a vague warn in
-        // applyPlannedRows. Mirrors the inline init log below (:565-573).
-        console.warn('[memory_reconcile] Mem0 lazy client init failed', err);
-      }
-    }
-    return memoryClient;
-  };
   return async (jobs) => {
     for (const job of jobs) {
       // F-1 equivalent — per-job try/catch prevents retry storm.
@@ -582,7 +559,7 @@ export function buildMemoryReconcileHandler(
         const newMemInputs = job.data.memories ?? [];
 
         // Idempotent resume: replay any unapplied planned rows from prior runs.
-        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
+        await applyPlannedRows(db, userId);
 
         if (newMemInputs.length === 0) continue;
 
@@ -835,7 +812,7 @@ export function buildMemoryReconcileHandler(
         await insertPlannedRows(db, plannedRows);
 
         // Apply phase: consume recommendations without mutating mem0.
-        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
+        await applyPlannedRows(db, userId);
       } catch (err) {
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
@@ -874,14 +851,9 @@ export function buildMemoryReconcileHandler(
  * legacy destructive rows are marked applied without touching mem0 so deployment
  * cannot replay a pre-fix LLM decision into a mutation.
  */
-async function applyPlannedRows(
-  db: Db,
-  userId: string,
-  deps: { collectionName?: string; getClient: () => MemoryClient | undefined },
-): Promise<void> {
+async function applyPlannedRows(db: Db, userId: string): Promise<void> {
   const pending = await loadUnappliedLog(db, userId);
   if (pending.length === 0) return;
-  void deps;
 
   for (const row of pending) {
     if (row.action !== 'KEEP_BOTH') {

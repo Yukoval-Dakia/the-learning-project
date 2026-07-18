@@ -85,7 +85,6 @@ describe('reconcile handler — failure mode 1: LLM parse failure degrades to KE
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: badJudge as never,
-      collectionName: COLLECTION,
     });
 
     await handler(
@@ -152,7 +151,6 @@ describe('reconcile handler — failure mode 2: idempotent resume via loadUnappl
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
 
     await handler(makeJob({ memories: [], user_id: 'self' }) as never);
@@ -210,7 +208,6 @@ describe('reconcile handler — uses extracted memory text for search (not event
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
 
     await handler(
@@ -246,7 +243,6 @@ describe('reconcile handler — empty batch guard', () => {
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
 
     await handler(makeJob({ memories: [], user_id: 'self' }) as never);
@@ -290,7 +286,6 @@ describe('reconcile handler — MERGE recommendation leaves both memories unchan
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -353,7 +348,6 @@ describe('reconcile handler — RETRACT_NEW recommendation leaves both rows unto
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({ memories: [mem(newMemId, 'duplicate', 'event', 2000)], user_id: 'self' }) as never,
@@ -420,7 +414,6 @@ describe('reconcile handler — idempotent resume skips already-applied rows', (
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient: mockMemoryClient([]),
       judge: vi.fn() as never,
-      collectionName: COLLECTION,
     });
     await handler(makeJob({ memories: [], user_id: 'self' }) as never);
 
@@ -455,7 +448,6 @@ describe('reconcile handler — retryable failure rethrows (pg-boss retries)', (
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
 
     // The outer per-job catch must rethrow RetryableError so pg-boss retries.
@@ -487,7 +479,6 @@ describe('reconcile handler — retryable failure rethrows (pg-boss retries)', (
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
 
     await expect(
@@ -528,7 +519,6 @@ describe('reconcile handler — duplicate new_index decisions are deduped', () =
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({ memories: [mem(newMemId, 'new', 'event', 2000)], user_id: 'self' }) as never,
@@ -603,7 +593,6 @@ describe('reconcile handler — Q1 score floor downgrades a low-corroboration ME
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -667,7 +656,6 @@ describe('reconcile handler — Q1b per-kind gate forbids weakness/event MERGE',
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -721,7 +709,6 @@ describe('reconcile handler — Q1 score floor passes a well-corroborated MERGE 
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -770,7 +757,6 @@ describe('reconcile handler — Q1 RETRACT_NEW with no candidates skips the floo
       const handler = buildMemoryReconcileHandler(db, {
         memoryClient,
         judge: judge as never,
-        collectionName: COLLECTION,
       });
       await handler(
         makeJob({ memories: [mem(newMemId, 'noise', 'event', 2000)], user_id: 'self' }) as never,
@@ -833,7 +819,6 @@ describe('reconcile handler — F3 RETRACT_NEW keys strictly on the referenced c
       const handler = buildMemoryReconcileHandler(db, {
         memoryClient,
         judge: judge as never,
-        collectionName: COLLECTION,
       });
       await handler(
         makeJob({ memories: [mem(newMemId, 'dup text', 'event', 2000)], user_id: 'self' }) as never,
@@ -891,7 +876,6 @@ describe('reconcile handler — CR-4: out-of-range old_index (LLM hallucination)
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({ memories: [mem(newMemId, 'dup text', 'event', 2000)], user_id: 'self' }) as never,
@@ -934,7 +918,6 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -977,7 +960,6 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -1016,7 +998,6 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: judge as never,
-      collectionName: COLLECTION,
     });
     await handler(
       makeJob({
@@ -1087,7 +1068,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
       }),
     ]);
 
-    // Handler with NO injected memoryClient + injected collectionName. An empty
+    // Handler with NO injected memoryClient. An empty
     // batch triggers ONLY the job-start replay (applyPlannedRows). The injected
     // createClient factory throws (CR-1), so getClientLazy() catches → getClient()
     // returns undefined (the m7 path) DETERMINISTICALLY — the branch no longer
@@ -1097,7 +1078,6 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
     try {
       const handler = buildMemoryReconcileHandler(db, {
         judge: vi.fn() as never,
-        collectionName: COLLECTION,
         createClient: () => {
           throw new Error('mem0 client unavailable (test)');
         },
@@ -1165,7 +1145,6 @@ describe('reconcile handler — M1: replay never overwrites the write-ahead prev
     const handler = buildMemoryReconcileHandler(db, {
       memoryClient,
       judge: vi.fn() as never,
-      collectionName: COLLECTION,
     });
     await handler(makeJob({ memories: [], user_id: 'self' }) as never);
 
