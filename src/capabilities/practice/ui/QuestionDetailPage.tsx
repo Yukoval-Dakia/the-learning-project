@@ -429,6 +429,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const knowledgeOptionsQ = useQuery({
     queryKey: ['question-knowledge-options'],
     queryFn: getQuestionKnowledgeOptions,
+    enabled: showAddChip,
   });
 
   const pushToast = useCallback((kind: 'good' | 'warn', text: string) => {
@@ -1002,7 +1003,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     </button>
                   </span>
                 ))}
-                {showAddChip ? (
+                {showAddChip && knowledgeOptionsQ.data ? (
                   <select
                     className="qd-chip"
                     // biome-ignore lint/a11y/noAutofocus: 点「添加」展开选择，focus 是预期。
@@ -1028,14 +1029,44 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                         </option>
                       ))}
                   </select>
+                ) : showAddChip && knowledgeOptionsQ.isError ? (
+                  <>
+                    <span className="badge tone-again" role="alert">
+                      知识点列表加载失败
+                    </span>
+                    <button
+                      type="button"
+                      className="qd-chip qd-chip-add"
+                      disabled={knowledgeOptionsQ.isFetching}
+                      onClick={() => void knowledgeOptionsQ.refetch()}
+                    >
+                      {knowledgeOptionsQ.isFetching ? '重新加载…' : '重试'}
+                    </button>
+                    <button
+                      type="button"
+                      className="qd-chip qd-chip-add"
+                      onClick={() => setShowAddChip(false)}
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : showAddChip ? (
+                  <>
+                    <output className="meta" aria-live="polite">
+                      正在加载知识点…
+                    </output>
+                    <button
+                      type="button"
+                      className="qd-chip qd-chip-add"
+                      onClick={() => setShowAddChip(false)}
+                    >
+                      取消
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
                     className="qd-chip qd-chip-add"
-                    disabled={knowledgeOptionsQ.isLoading || knowledgeOptionsQ.isError}
-                    title={
-                      knowledgeOptionsQ.isError ? '知识点列表加载失败，请刷新后重试' : undefined
-                    }
                     onClick={() => setShowAddChip(true)}
                   >
                     <LoomIcon name="plus" size={11} />
