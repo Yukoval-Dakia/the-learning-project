@@ -145,6 +145,8 @@ import {
 } from './legacy-record-appliers';
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
+const SUPERSEDE_DEFAULT_REASON = 'accepted reconcile supersede';
+
 // M4-T4 (YUK-319) — actions.ts is the proposal-lifecycle DISPATCH SHELL: each
 // kind's accept case delegates to its owning capability package's applier
 // (practice / agency / ingestion / knowledge / notes). Shared accept helpers
@@ -564,10 +566,16 @@ export async function decideKnowledgeEdgeProposal(
         oldEdge.to_knowledge_id === proposePayload.from_knowledge_id ||
         oldEdge.from_knowledge_id === proposePayload.to_knowledge_id ||
         oldEdge.to_knowledge_id === proposePayload.to_knowledge_id;
-      if (!candidateTouchesOld) {
+      const candidateIsDuplicate =
+        oldEdge.from_knowledge_id === proposePayload.from_knowledge_id &&
+        oldEdge.to_knowledge_id === proposePayload.to_knowledge_id &&
+        oldEdge.relation_type === proposePayload.relation_type;
+      if (!candidateTouchesOld || candidateIsDuplicate) {
         throw new ApiError(
           'validation_error',
-          `supersede candidate does not touch target edge ${supersededEdgeId}`,
+          candidateIsDuplicate
+            ? `supersede candidate duplicates target edge ${supersededEdgeId}`
+            : `supersede candidate does not touch target edge ${supersededEdgeId}`,
           400,
         );
       }
@@ -594,8 +602,8 @@ export async function decideKnowledgeEdgeProposal(
           from_knowledge_id: proposePayload.from_knowledge_id,
           to_knowledge_id: proposePayload.to_knowledge_id,
           relation_type: proposePayload.relation_type,
-          weight: proposePayload.weight ?? 1,
-          reasoning: proposePayload.reasoning ?? 'accepted reconcile supersede',
+          weight: proposePayload.weight ?? 0.5,
+          reasoning: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
         },
         supersededEdgeId,
         supersededEdge: {
@@ -608,7 +616,7 @@ export async function decideKnowledgeEdgeProposal(
           neighbor_index: proposePayload.supersede_neighbor_index ?? null,
           superseded_edge_id: supersededEdgeId,
           confidence,
-          reason: proposePayload.reasoning ?? 'accepted reconcile supersede',
+          reason: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
         },
         affectedRefs,
         proposeEventId,

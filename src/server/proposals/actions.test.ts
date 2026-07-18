@@ -331,6 +331,49 @@ describe('proposal lifecycle owner service', () => {
     expect(await db.select().from(edge_reconciliation_log)).toHaveLength(1);
   });
 
+  it('rejects a supersede candidate identical to its still-live target edge', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_supersede_duplicate',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+    await writeAiProposal(db, {
+      id: 'edge_supersede_duplicate_p',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_supersede_duplicate' },
+        reason_md: 'duplicate candidate',
+        evidence_refs: [],
+        proposed_change: {
+          edge_op: 'supersede',
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          archive_edge_id: 'edge_supersede_duplicate',
+          supersede_confidence: 0.9,
+          supersede_neighbor_index: 0,
+          supersede_affected_refs: [{ kind: 'question', id: 'question_duplicate' }],
+        },
+        cooldown_key: 'knowledge_edge_supersede:duplicate',
+      },
+    });
+
+    await expect(acceptAiProposal(db, 'edge_supersede_duplicate_p')).rejects.toThrow(
+      /duplicates target edge/,
+    );
+    const [oldEdge] = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_supersede_duplicate'));
+    expect(oldEdge.archived_at).toBeNull();
+  });
+
   it('dismissAiProposal leaves an edge_op:supersede proposal unapplied', async () => {
     const db = testDb();
     await seedKnowledge(['k1', 'k2', 'k3']);

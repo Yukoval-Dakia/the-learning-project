@@ -203,6 +203,9 @@ export async function runEdgeProposeAndWrite(
       }));
 
     const pendingEdgeKey = await loadPendingEdgeProposalKeys(params.db);
+    // One old edge may back at most one pending SUPERSEDE recommendation in a
+    // batch. A later candidate must not produce a stale second proposal for it.
+    const pendingSupersededEdgeIds = new Set<string>();
 
     const input = {
       tree_snapshot: tree.map((n) => ({
@@ -428,6 +431,7 @@ export async function runEdgeProposeAndWrite(
       // ring (or this wiring) degrades to KEEP_BOTH — never a destructive
       // supersede on an uncertain judgment.
       const neighbors: EdgeNeighbor[] = liveNeighborEdges
+        .filter((e) => !pendingSupersededEdgeIds.has(e.edge_id))
         .filter(
           (e) =>
             e.from_knowledge_id === p.from_knowledge_id ||
@@ -546,6 +550,7 @@ export async function runEdgeProposeAndWrite(
               cooldown_key: `knowledge_edge_supersede:${supersededId}:${key}`,
             },
           });
+          pendingSupersededEdgeIds.add(supersededId);
           pendingEdgeKey.add(key);
           stats.reconcile_superseded += 1;
           continue;
