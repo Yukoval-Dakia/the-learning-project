@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-16　·　历史头部日志（2026-06-23 ~ 07-11，含 YUK-597 收伞段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
+> 更新于：2026-07-18　·　历史头部日志（2026-06-23 ~ 07-16）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-16 · 驾驶舱 re-grounding：07-12→16 五波交付上板 + 生产/在飞实况重建 + stash 孤本抢救】** 看板停在 07-11 收伞，期间 main 落 **35+ PR、两个 program 全交付**：① **产品可用性硬化 UH**（总控 YUK-619，#790 主 PR + 26 单全 Done；计划/验收矩阵 `docs/planning/2026-07-13-product-usability-hardening.md`，容器级 usability gate + runbook `docs/agents/usability-container-smoke.md`；部署面 = 非 root 运行、mem0-init chown、pdfium.wasm、`GET /api/auth/check`）② **API 资源契约收敛 YUK-641~668**（28 单，#792-797+#800-820；152/152 路由声明 + OpenAPI 143 path + `audit:api-contracts`/`audit:no-learning-styles` 双 CI 门禁进 `pnpm test`；唯一尾巴 = legacy alias 删除，evidence-gated 刻意推迟）。另三波：**YUK-617 通电+cleanup 四刀**（#776-781，删 ~1000 行孤儿 + 端点批 ground-truth 纠偏救回 C6/C10/C7 活代码；尾巴见 NEXT）· **YUK-567 备课台 slice-1/2 全链通电**（#782-784，conjecture 卡→accept→probe 文本+图片作答→confirm/refute；edit-claim path deferred）· **YUK-476+614 档案露出**（#772/773，/today ProfileBand，day-one 软缺口闭合）· **YUK-634 + 学科网获取设计草案**（#787）。今日（07-16）：**#823 YUK-506 教学法安全脊 dark-ship merge**（13:48，src/core/pedagogy 无 runtime wiring，**未部署**）；部署窗 10:01 = `287e4e2a`（main@#820 + flag-persist deploy commit → 本 session cherry-pick 回 main = **PR #825 已按政策自主 merge `e963b393`**：全 gate + 独立 opus review APPROVE 折入 + CI 绿 + threads 零）；cloudflared 仍 crash-loop（YUK-615，RestartCount 2456+，fix owner-gated）；**YUK-604 Linear=Done 悖论**（impl 只在 codex worktree 分支未合 main，已评论待 owner 裁）；**stash@{0} 孤本抢救**：1918 行设计深稿（供题控制面研究 + owner Subject Control Plane proposal 原文）本 PR 归档入 `docs/design/`，spike 代码 patch 存 `.remember/tmp/stash0-rescue/`。**同 session 续办**：① 🔴 **YUK-669 凭证泄露（Urgent）遏制**——owner 轮换全部 4 系统凭证 + `#827` 合（tip 除净）+ 仓库转 PRIVATE；剩历史清除 + 启用 secret scanning（详见 ✅）② backlog「继续三批」执行 = **立单 11（YUK-670~680）+ 卫生 15 + 关 24 PR**（详见 在飞 / ✅）。（上一条 07-11 收伞【更新】已滚存 → 归档文件）
+> **【更新 2026-07-18 · 12 小时产品推进收口：26 PR 全合并 + 性能/可用性/a11y 连续打磨】** main 从遗留票清扫推进到 `f99e5382`：12 个独立交付 PR（YUK-674/683/535/534/332/334/609/211/673/328/616 + YUK-354 C-lane；YUK-349 随子单收口）和 14 个 YUK-169 性能/体验切片全部经 1–2 轮有效 review 后自主合并。性能主线落 route code-splitting、KaTeX/Cytoscape/Markdown 按需加载、Knowledge 图谱/题目知识点选项延迟请求；体验主线落 Inbox 渐进加载与证据语义、Copilot fallback/launcher、onboarding disabled reason、Note 键盘重排、WeekHeat 非色彩通道、Vision 复核选择语义。最终权威态：GitHub 开放 PR = 0，`main == origin/main == f99e5382`；YUK-674/683/535/534/332/334/609/211/673/349/328/616 = Done，YUK-354/YUK-169 作为 umbrella 保持 In Progress。全量 gate：411 unit files / 4496 tests、338 DB files / 3400 tests、23 migration tests，API/profile/copy/style/draft/schema/partition audits 与 SPA/server/worker/migrate build 全绿。YUK-669 当前 tip containment 再验证为 private + backup 未跟踪；历史清洗仍 owner-gated。（上一条 07-16 re-grounding【更新】已滚存 → 归档文件）
 
 ## 🎯 主线方向（当前）
 
@@ -14,15 +14,17 @@
 
 ## NOW（当前 active 线）
 
-- **供给线主弧（active）**：三件套——① **YUK-604 pending-stall 收口悖论**：Linear 今日翻 Done 但 impl（2 commits）只在 codex worktree 分支 `yuk-604-learning-item-open-status` 未合 main，「激活语义 owner 判词」未见记录；已评论回填，**等 owner/该 lane 收口（开 PR 或翻回状态）**——在此之前供给脊柱断电在 main 上未修。② **学科网真题获取弧**：设计草案已入库（`docs/design/2026-07-13-question-supply-xueke-acquisition.md`），owner 已定全自动 (A)、headless 认证 linchpin 已验证 ✅；fork (b)-(d) + 4 条 follow-up 待 owner 拍角度后落 Linear（见 PARKED）。③ 供题控制面判词底稿已归档（本次抢救，见【更新】）。
-- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：flag ①批 LIVE（07-06 翻、07-16 固化进 tracked compose override，#825 已合）；**剩 gate = 冷库零题（owner 上传/生成内容）→ 首次真实 placement 会话跑通**（空池 `sourcingNeeded:true` 走 quiz_gen 是设计态）。⚠️ 生产 = 本机 OrbStack compose（`tlp-deploy`），外部 ingress 断（YUK-615）。
-- **在飞活 lane：#824**（YUK-349 B3 mem0 advisory prior，07-16 当天开的 draft，MERGEABLE）——另一 lane 活跃工作，推进/review/转正归其 lane。
+- **07-18 自主推进已收口**：26 个 PR 全合 main，开放 PR = 0；YUK-349 与 11 个独立遗留票 Done，YUK-354/YUK-169 以 umbrella 口径保持 In Progress。当前没有代码 lane 在飞。
+- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：冷库零题仍需 owner 上传/生成内容后跑首次真实 placement 会话；本轮没有部署授权，生产态未改。
+- **安全 owner/operator lane = YUK-669**：仓库 private、当前 tip 已除 `.env.local.bak`；剩历史清洗/force-update 与 secret scanning 属显式 owner 门控，禁止 agent 自行执行。
 
 ## NEXT（就绪，排队）
 
+- **YUK-221 真实 paper ordinal**：决策、迁移回填、写路径与 DB/migration 验收已完整写入 Todo；下一轮可独立 grab，避免和 12 小时收口混开未 review 的 PR。
+- **YUK-354 / YUK-169 umbrella 余项**：按已有形态轴和 redraw brief 继续 slice-by-slice；UI 仍逐刀做 design-doc pre-flight。
 - **YUK-506 教学法脑 runtime 大头**：panel-SELECT / efficacy learning / B5 verification / delivery wiring 全 deferred（#823 只落安全脊）。⚠️ **硬前置 = YUK-505 拓扑 amend**（见 BLOCKED-ON）。
 - **YUK-617 wave 尾巴**：ReviewIntentTask 退役 + 6 处现行文档叙事清理（AGENTS.md/README×2/architecture.md×3）· C6 `/api/review/sessions` sub-route verify · 端点批 OWNER-DECIDE 待决。
-- **YUK-567 尾巴**：edit-claim path（decide route thread `corrected_payload` + mem0 CORE writer 现 no-op）· YUK-616 深读面全集 weakest 待拆。
+- **YUK-567 尾巴**：edit-claim path（decide route thread `corrected_payload` + mem0 CORE writer 现 no-op）；YUK-616 深读面全集 weakest 已于 #877 完成。
 - **YUK-596 durable-by-default flip（YUK-575 PR2）**：4 条阻断前置不变（#738 终裁评论）；Linear 显 In Progress 与「排队」口径不符，需核。
 - **Wave 3 follow-up 批**：YUK-590（Todo）/594（Backlog）/394（Backlog，OCR 额度耗尽勿重跑）口径对齐；**YUK-595/589/593 七天窗外 unknown 待核**，别当已就绪。
 - **legacy alias 删除弧（YUK-641 尾巴）**：access-log 证据 + owner 批 Sunset 日期 + 跨一个发布窗 + 独立可回滚 PR。
@@ -34,7 +36,7 @@
 - **brainstorm 存活 8 条** = `docs/design/2026-07-06-agency-data-brainstorm-portfolio.md`；红线挑战组 3 条未拍板。
 - **🧠 misconception 建模调查 + MISCONCEPTION_PROMOTE flag 设计**（docs 存档 2026-07-01）。
 - **YUK-608 verify 同模型自证盲区**（owner 拍方向；选项①异源 solve/verify 推荐）。
-- **Linear 卫生（07-16 重校）**：✅ 已清 = YUK-519/531/476/560（Done 落地）。**待 owner 复核批** = ① YUK-604 Done 悖论（见 NOW）② **YUK-407 今日被反向翻 In Progress**（红线建议是翻 Done/收口）③ YUK-351（标题工作疑已随 #490 完结却 In Progress）④ YUK-354/406 epic 空翻 In Progress（#823 收口 deliberate retained-with-gates，但活跃度存疑）⑤ YUK-571 宜降 waiting-owner ⑥ YUK-405 In Progress 疑空翻。**YUK-303/306/373/375/360 七天窗外 unknown 待单独核**。
+- **Linear 卫生**：07-18 已复核本轮触及票；YUK-674/683/535/534/332/334/609/211/673/349/328/616 均 Done，YUK-354/YUK-169 deliberate retained-with-gates。其余 07-16 待 owner 复核批（YUK-604/407/351/406/571/405）仍保留，未凭旧叙事擅自改状态。
 - **学科网获取 4 follow-ups（待 owner 拍角度后落 Linear）**：阅读篇父题分组 · 数学/物理 MathType OCR-visual 保真验证 · 全自动认证工程（会话 TTL/下载流/容器化）· P1 落地三件（因果链事件总线 / content_hash 去重门 / intent 标记表）。
 - **stash@{0} 残余证据**：panel JSONs + eval 报告（~17k 行）仍 stash-only；spike 代码 patch（runner.ts +75 / task-prompts.ts 重写 / spike 脚本 +308）= `.remember/tmp/stash0-rescue/stash0-tracked.patch`，续 spike 时从 patch 恢复，**勿整包 `stash pop`**（夹带无关改动）。
 - **周期清单（07-16 执行后）**：✅ audit-drift 20 只（#544→#821）+ 4 僵尸（#590/588/465/466）**已关**；dependabot 10 只由 YUK-670（8 alerts）/671（队列 desaturate，含 #679/678/680 三 major）承接。**infra 清扫仍挂**（不在「三批」授权内，分类器挡）：`.claude/worktrees` 27 只契约残留 · 12 只 `tlp-yuk621-e2e-*` exited 容器 · cloudflared crash-loop（`docker stop` 止噪）· 17 个 stash · tlp-deploy 两空 volume——**待 owner 显式点名或加 Bash 白名单**。
@@ -50,15 +52,14 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞**：**#824**（YUK-349 draft，另一 lane 活跃；⚠️ 未解 bot threads：CodeRabbit kernel-facade Major + OCR double-serialization，merge 前须按 thread-check 纪律处理）· **#791**（dependabot batch，YUK-671 承接）· 本 plan-sync docs PR（**#826**，CI 绿待 owner 合）。**本 session 已合**：#825（`e963b393` flag persist）· **#827**（`7f17e9ed` YUK-669 安全遏制，见下）。
-- **backlog-engine 2026-07-16 已执行（owner 批「继续三批」，43-agent grooming）**：**立单 11 = YUK-670~680**（Dependabot 安全 670/671 · meta_cause 672 · ADR-0042/0011/0047/0048/0046/0041 673/674/675/678/679/680 · 学科网 follow-up 676 · matcher 标定 677；project+parent+relate 已挂）· **Linear 卫生 15 全 done**（368→444 并单 + close 143/89/173/490/208/50/210 + 重写 213/211/430 + 对齐 360 + 扩 428/618 + 431 挂 project）· **24 PR 关闭**（20 audit-drift #544→#821 + 4 僵尸 #590/465/466/588）。全文档 `.remember/tmp/backlog-engine-2026-07-16.json`；B 段 9 低优 + C 段映射未动（下轮）。draft#1（stash 抢救）已由本 PR 解决。
-- **生产 = `287e4e2a`**（= main@#820 + flag-persist）：**#823（YUK-506 安全脊）未部署**——dark-ship 零 runtime 影响；#825 已合，**下个部署窗直接从 main（`e963b393`）前滚即携 #823+#825**。**外部 ingress 断**（YUK-615，cloudflared crash-loop 2456+ 次，fix owner-gated）。
-- **未合分支悬挂**：codex worktree `yuk-604-learning-item-open-status`（2 commits，YUK-604 悖论见 NOW）。
-- **worktree 拓扑（07-16 实况）**：主工作树 + `tlp-deploy`（`287e4e2a`）+ `tlp-yuk599` / `tlp-yuk476` / `tlp-usability-hardening` / `tlp-pr787-fix` / `/private/tmp/tlp-yuk571` + codex×2（yuk-349 / yuk-604）+ cursor×2 + **`.claude/worktrees` 27 只契约波残留（可清）**。
-- **待 owner 清理分支**（squash-merge 后 guard 挡删）：yuk-249×2（+远端）· yuk-597~602 批 13 只 · `yuk-634-docx-bare-question-number` · `yuk-571-placement-go-live`（flag commit 已由 #825 收编）· `yuk-571-persist-flags-main`（#825 已合）。
+- **PR 在飞：0**（GitHub 权威查询，2026-07-18 收口）。本轮 #836/#867-891 共 26 个 PR 均已合并。
+- **main**：`f99e5382`，与 `origin/main` 精确一致；最终 full test/build/audits 全绿。
+- **外部/owner 门控**：YUK-669 历史清洗；GitHub Actions 因账户 billing/spending 零步失败，Cursor/CodeRabbit review 配额耗尽。本轮每个 PR 仍由 OCR/Codex 等 1–2 轮有效 review 覆盖。
+- **本地工作树**：仅 owner 既有 `.codex/hooks.json`、`AGENTS.md`、四个 `.codex/hooks/*` 未跟踪脚本与 `docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`；本轮未暂存、未改写。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
+- **07-18 12 小时产品推进（#836/#867-891，26 PR）**：遗留正确性/供给/投影/会话链清扫 + SPA 重分块/重依赖按需加载 + Inbox/Copilot/onboarding/notes/today/record 可用性与 a11y 连续打磨；最终 main `f99e5382`，开放 PR 0，完整验证数字与 issue 状态见头部【更新】。
 - **🔴 YUK-669 凭证泄露事故遏制（2026-07-16，Urgent）**：仓库一度 PUBLIC + tracked `.env.local.bak`（Neon/Postgres · `CLAUDE_CODE_OAUTH_TOKEN` · Tavily · Vercel OIDC 真凭证）。owner 已**轮换全部 4 系统凭证** + 仓库转 PRIVATE（0 forks）；**#827 已合**（`7f17e9ed`，`git rm --cached` + gitignore `.env*.bak`，tip 已除净）。取证：`.env.local.bak` 是唯一真泄露文件，其余 grep 命中全假阳性。**剩 owner 门控**：历史清除（`af4651d9` 在多分支，需 filter-repo + force-push）+ 启用 GitHub secret scanning（当前 DISABLED）。全程零凭证值落地。
 - **backlog-engine 全量 grooming 执行（2026-07-16，「继续三批」）**：43-agent 对抗 grooming → **立单 11（YUK-670~680）+ Linear 卫生 15 + 关 24 PR**，26 次 Linear 写零拦截零失败。产物 `.remember/tmp/backlog-engine-2026-07-16.json`（含未动的 B 段 9 低优 + C 段映射，下轮）。driver+linearscribe(opus) 分工;立单 ground-truth 全核对。
 - **驾驶舱 07-16 re-grounding + stash 孤本抢救（本 PR #826）**：PLAN.md 07-12→16 五波补板（UH/API 两 program + YUK-617/567/476/634/506）+ 生产/在飞实况重建；抢救 1918 行 stash-only 设计稿入 `docs/design/`（供题控制面研究 + Subject Control Plane proposal）。
