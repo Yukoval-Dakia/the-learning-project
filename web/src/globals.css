@@ -8923,6 +8923,9 @@ button.seg-sm {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .today-loom .heat-cell {
   aspect-ratio: 1;
