@@ -887,8 +887,9 @@ export const practiceCapability = defineCapability({
     ],
   },
   ui: { pages: uiPagesFor('practice') },
-  // M5-T3 (YUK-321) — copilot 工具归属声明（题/错题/复习读 4 + 出题组卷写 3）。
-  // ADR-0032 D6-B (YUK-203 lane L6) 追加 propose_question_edit（active 题结构编辑写）。
+  // M5-T3 / YUK-328 — 完整 DomainTool 归属声明（字段名沿用 copilotTools）。
+  // attribute_mistake / propose_variant 仅由 user-suggested mistake-action surface 授权；
+  // ADR-0032 D6-B 的 propose_question_edit 则属于 Copilot base surface。
   copilotTools: {
     tools: [
       {
@@ -908,6 +909,14 @@ export const practiceCapability = defineCapability({
       {
         name: 'query_mistakes',
         load: () => import('@/server/ai/tools/query-mistakes').then((m) => m.queryMistakesTool),
+      },
+      {
+        name: 'attribute_mistake',
+        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.attributeMistakeTool),
+      },
+      {
+        name: 'propose_variant',
+        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.proposeVariantTool),
       },
       {
         name: 'author_question',

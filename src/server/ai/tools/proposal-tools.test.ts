@@ -1,3 +1,4 @@
+import { capabilities } from '@/capabilities';
 import * as attributeModule from '@/capabilities/knowledge/server/attribute';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
 import {
@@ -17,7 +18,6 @@ import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/i
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import { buildMcpServerFromRegistry } from './mcp-bridge';
 import {
   attributeMistakeTool,
@@ -29,6 +29,7 @@ import {
   proposeRecordPromotionTool,
   proposeVariantTool,
 } from './proposal-tools';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 import type { ToolContext } from './types';
 
@@ -267,12 +268,11 @@ describe('Wave 3 proposal/action DomainTools', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
     mockRunner.runTask.mockReset();
   });
 
-  it('registerCoreTools exposes Wave 3 proposal and write tools', () => {
-    registerCoreTools();
+  it('capability manifests expose Wave 3 proposal and write tools', async () => {
+    await registerCapabilityTools(capabilities);
 
     expect(getTool('propose_knowledge_edge')).toBe(proposeKnowledgeEdgeTool);
     expect(getTool('attribute_mistake')).toBe(attributeMistakeTool);
@@ -886,7 +886,6 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
     mockRunner.runTask.mockReset();
     mockSdk.toolDefs = [];
   });
@@ -945,6 +944,7 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     // Drive the tool through the REAL bridge so we exercise the same logging
     // path Copilot/Dreaming/Coach use. The Agent SDK is mocked (see top of file)
     // so `tool()` captures the handler; we invoke it directly.
+    await registerCapabilityTools(capabilities);
     buildMcpServerFromRegistry({
       ctx: ctx(),
       serverName: 'loom_v2',
@@ -1067,7 +1067,6 @@ describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
     mockRunner.runTask.mockReset();
     mockSdk.toolDefs = [];
   });

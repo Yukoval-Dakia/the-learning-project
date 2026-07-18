@@ -13,10 +13,8 @@
 // 不新增表（run handle = run_id = checkpoint_id = user_ask event id；状态从
 // computeReplay 末事件派生，见 copilot-run-status.ts）。
 //
-// worker 零前置（grounding 2026-06-15，覆盖分支上 stale ADR §代价）：worker 每个
-// AI job 经 buildMcpServerFromRegistry，其幂等 registerCoreTools() 把 CORE_TOOLS
-// 全集填进本进程 registry，是 manifest union 的真超集 → 本 handler 走
-// buildMcpServerFromRegistry 自动有 copilot 全集工具。不碰 start-worker.ts。
+// YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
+// DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
 
 import type { Job } from 'pg-boss';
 

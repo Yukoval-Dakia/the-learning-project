@@ -117,7 +117,7 @@ Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `dri
 
 后端逻辑全在 Hono route handlers 里，经 capability manifests 贡献制登记进组合根 `server/app.ts`（`buildHonoApp(capabilities)` 循环挂载 `cap.api.routes`，`[id]` → `:id` 转换由 `toHonoPath` 完成）：
 
-- `src/capabilities/copilot/manifest.ts` — Copilot chat（SSE 4 路由，AF S4）+ D14 单人格编排者 + `copilotTools` 工具贡献制（启动期 `registerCapabilityCopilotTools` 聚合到 DomainTool registry）
+- `src/capabilities/copilot/manifest.ts` — Copilot chat（SSE 4 路由，AF S4）+ D14 单人格编排者 + `copilotTools` 工具贡献制（启动期 `registerCapabilityTools` 聚合完整 DomainTool inventory；surface 权限仍由 allowlists 控制）
 - `src/capabilities/observability/manifest.ts` — admin 四面（logs cost/jobs/jobs-by-id/tool_calls）+ subjects + today cost ribbon
 - `src/capabilities/ingestion/manifest.ts` — assets multipart upload → R2 + DB row + ingestion pipeline（`src/server/ingestion/`，`src/server/r2.ts`）
 - `src/capabilities/onboarding/manifest.ts` — cold-start welcome / upload / placement / profile pages

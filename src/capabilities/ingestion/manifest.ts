@@ -303,8 +303,9 @@ export const ingestionCapability = defineCapability({
   },
   // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
   ui: { pages: uiPagesFor('ingestion') },
-  // M5-T3 (YUK-321) — copilot 工具归属声明。D11 已裁 record 渐废（裁决 d）：
-  // 两工具等价平移不删；record 域退役时随本声明一并摘除（查 spec §1 D11 行）。
+  // M5-T3 / YUK-328 — 完整 DomainTool 归属声明（字段名沿用 copilotTools）。
+  // record 域退役时 query/get + propose 两组随声明一并摘除；draft block reader/edit
+  // 只由 ingestion_block_edit surface 的 allowlist 授权，不会因此泄漏给 Copilot。
   copilotTools: {
     tools: [
       {
@@ -314,6 +315,48 @@ export const ingestionCapability = defineCapability({
       {
         name: 'get_record_context',
         load: () => import('@/server/ai/tools/context-readers').then((m) => m.getRecordContextTool),
+      },
+      {
+        name: 'get_question_block_structure',
+        load: () =>
+          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionBlockStructureTool),
+      },
+      {
+        name: 'propose_record_links',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordLinksTool),
+      },
+      {
+        name: 'propose_record_promotion',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
+      },
+      {
+        name: 'update_prompt',
+        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.updatePromptTool),
+      },
+      {
+        name: 'add_option',
+        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.addOptionTool),
+      },
+      {
+        name: 'set_question_type',
+        load: () =>
+          import('@/server/ai/tools/question-edit-tools').then((m) => m.setQuestionTypeTool),
+      },
+      {
+        name: 'split_stem',
+        load: () => import('@/server/ai/tools/question-edit-tools').then((m) => m.splitStemTool),
+      },
+      {
+        name: 'merge_questions',
+        load: () =>
+          import('@/server/ai/tools/question-edit-tools').then((m) => m.mergeQuestionsTool),
+      },
+      {
+        name: 'reassign_figure',
+        load: () =>
+          import('@/server/ai/tools/question-edit-tools').then((m) => m.reassignFigureTool),
       },
     ],
   },

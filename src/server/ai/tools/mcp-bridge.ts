@@ -26,7 +26,6 @@ import { writeEvent } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
-import { registerCoreTools } from './bootstrap';
 import { getTool } from './registry';
 import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from './types';
 
@@ -126,11 +125,10 @@ export interface BuildMcpServerOptions {
 
 /**
  * Build a per-request in-process MCP server that exposes the given subset of
- * registered DomainTools. Idempotently invokes `registerCoreTools()` so callers
- * don't need to remember to bootstrap.
+ * registered DomainTools. Process entrypoints must complete manifest registration before they
+ * accept requests or jobs; this hot path never mutates global registry state.
  */
 export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpServer {
-  registerCoreTools();
   const { ctx, serverName, toolNames } = opts;
   const taskKind = opts.taskKind ?? ctx.callerActor.ref;
 
@@ -138,7 +136,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
     const dt = getTool(name);
     if (!dt) {
       throw new Error(
-        `buildMcpServerFromRegistry: tool '${name}' is not registered. Check src/server/ai/tools/bootstrap.ts.`,
+        `buildMcpServerFromRegistry: tool '${name}' is not registered. Check capability manifest registration.`,
       );
     }
     if (!(dt.inputSchema instanceof z.ZodObject)) {

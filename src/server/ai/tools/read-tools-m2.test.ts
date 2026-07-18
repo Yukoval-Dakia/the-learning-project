@@ -1,3 +1,4 @@
+import { capabilities } from '@/capabilities';
 import {
   artifact,
   completion_evidence,
@@ -14,7 +15,6 @@ import { writeEvent } from '@/server/events/queries';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {
   MEMORY_BRIEF_STALE_AFTER_MS,
   executeMemoryBrief,
@@ -31,6 +31,7 @@ import {
   getSubjectGraphOverviewTool,
   queryKnowledgeTool,
 } from './knowledge-readers';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 import type { ToolContext } from './types';
 
@@ -296,11 +297,10 @@ describe('Foundation D M2 read tools', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
   });
 
-  it('registerCoreTools exposes the M1 + M2 read tools (review_plan planner readers retired, YUK-349)', () => {
-    registerCoreTools();
+  it('capability manifests expose the M1 + M2 read tools (review_plan planner readers retired, YUK-349)', async () => {
+    await registerCapabilityTools(capabilities);
     expect(getTool('query_mistakes')).toBeTruthy();
     expect(getTool('get_attempt_context')).toBeTruthy();
     expect(

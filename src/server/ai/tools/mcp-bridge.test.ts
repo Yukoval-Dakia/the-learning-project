@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { __resetBootstrapForTests } from './bootstrap';
 import { __resetRegistryForTests, registerTool } from './registry';
 import type { DomainTool, ToolContext } from './types';
 
@@ -85,7 +84,6 @@ const ctx: ToolContext = {
 describe('buildMcpServerFromRegistry', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __resetBootstrapForTests();
     mockAgentSdk.capturedServerOptions = undefined;
     mockAgentSdk.toolDefs = [];
     captured.toolCallLogs = [];

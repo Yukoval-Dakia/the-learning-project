@@ -20,8 +20,8 @@
 //        (the brief's 4th core scenario — learning-item lifecycle readability)
 // So the test gates a SUPERSET of §5: the four §5 fixtures + two extra chains.
 //
-// NO production code is touched. Every tool is already registered
-// (bootstrap.ts) and every seed helper / table already exists.
+// NO production code is touched. Every tool already has capability-manifest ownership,
+// and every seed helper / table already exists.
 //
 // Partition: DB (vitest.db.config.ts) — this file imports tests/helpers/db,
 // live tool modules, and drizzle, so it MUST live in the DB partition

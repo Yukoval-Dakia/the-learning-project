@@ -11,12 +11,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { capabilities } from '@/capabilities';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, question } from '@/db/schema';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import { proposeQuestionEditTool } from './proposal-tools';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool } from './registry';
 import type { ToolContext } from './types';
 
@@ -88,11 +89,10 @@ describe('propose_question_edit tool (ADR-0032 D6-B)', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
   });
 
-  it('is registered with effect=propose and a summarizer', () => {
-    registerCoreTools();
+  it('is registered with effect=propose and a summarizer', async () => {
+    await registerCapabilityTools(capabilities);
     const tool = getTool('propose_question_edit');
     expect(tool).toBeTruthy();
     expect(tool?.effect).toBe('propose');

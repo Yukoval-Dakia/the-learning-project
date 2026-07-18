@@ -10,7 +10,7 @@
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
 | `judges/` | 判分 capability 实现 |
-| `tools/registry.ts` + `tools/bootstrap.ts` | 统一 Domain Tool Registry（源头）|
+| `tools/registry.ts` + `tools/register-capability-tools.ts` | 统一 Domain Tool Registry；完整 inventory 由 capability manifests 在进程启动期装配 |
 | `tools/mcp-bridge.ts` | 把任意 allowlist 包成 in-process MCP server + 写 `tool_call_log`/`tool_use` mirror |
 | `tools/allowlists.ts` | 生成 surface-specific `mcp__loom__*` allowlist |
 | `tools/{knowledge-readers,context-readers,query-events,query-mistakes}.ts` | read surface（返回语义化上下文）|

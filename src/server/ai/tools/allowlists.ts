@@ -51,10 +51,7 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_record_promotion',
   // ADR-0032 D8 — unified question-authoring front door. Routes by seed mode to
   // the variant (runVariantGen) / record→question propose paths and (ADR-0031
-  // lane B) the knowledge|material draft-question generation. MUST stay
-  // positioned right after propose_record_promotion to keep the CORE_TOOLS
-  // bootstrap order (and the listTools() inventory assertion in
-  // allowlists.test.ts) aligned.
+  // lane B) the knowledge|material draft-question generation.
   'author_question',
   // YUK-195 — agent-callable question structure-edit write tools. Operate on the
   // pre-import draft layer (question_block.structured + figures); only the
@@ -68,23 +65,20 @@ export const PROPOSE_WRITE_TOOLS = [
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
-  // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
-  // reassignFigureTool) — the listTools() inventory assertion depends on it.
+  // only.
   'write_quiz',
   // ADR-0033 D6 (YUK-306, lane D) — interactive artifact authoring: the copilot
   // writes the HTML itself in-conversation (Claude Artifacts pattern) and
   // persists it as a versioned type='interactive' artifact (author = create v0,
   // update = full-html replace + version bump). Granted to the copilot surfaces
-  // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
-  // writeQuizTool) — the listTools() inventory assertion depends on it.
+  // only.
   'author_artifact',
   'update_artifact',
   // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
   // ACTIVE question's structured tree (proposal-only; accept applies it behind a
   // mini verify gate, reversibly). Granted to the copilot surfaces (copilot is
   // user-driven — editing pooled questions in-conversation is a copilot
-  // capability). TAIL position mirrors the bootstrap CORE_TOOLS order (after
-  // updateArtifactTool) — the listTools() inventory assertion depends on it.
+  // capability).
   'propose_question_edit',
 ] as const;
 
@@ -114,20 +108,11 @@ const KNOWLEDGE_REVIEW_TOOLS = [
   'propose_knowledge_mutation',
 ] as const satisfies readonly DomainToolName[];
 
-// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（五包 26 工具，YUK-362 纠正：YUK-270/ADR-0032/0033 后涨到 26，旧注释 stale 写 25），
-// 本数组保持字面量是因为 src/ai/registry.ts（浏览器共享面）import 本文件，
-// 不能把 @/capabilities 拉进 web bundle（plan 裁决 h）。两面一致性由
-// src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
-//
-// CORE_TOOLS 退役时点（phase-deferred）：bootstrap.ts registerCoreTools 不在 M5
-// 退役——它注册的是全工具面（含 attribute_mistake / propose_variant /
-// propose_record_links / propose_record_promotion 与题目结构编辑工具等非
-// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 26 条。退役条件 =
-// 其余 surface（mistake_action / orchestrator / dreaming 等）也完成 manifest 化
-// （post-M5 follow-up，Linear capture 见 plan Task 10 交接清单）；届时删
-// registerCoreTools 调用，由 register-capability-tools.unit.test.ts 的幂等用例
-// 守护切换。届时独立 worker 进程需自行调用 registerCapabilityCopilotTools
-// （当前 worker 走 bootstrap 全量注册，贡献制切换后不自动覆盖）。
+// M5-T3 / YUK-328 — 完整 DomainTool 归属真相源已移至各包 manifest.copilotTools；
+// 字段名沿用，但 inventory 包含非 Copilot surface 的工具。COPILOT_TOOLS 仍保持
+// 字面量，因为 src/ai/registry.ts（浏览器共享面）import 本文件，不能把
+// @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
+// 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
   'query_memory_brief',
   'get_subject_graph_overview',

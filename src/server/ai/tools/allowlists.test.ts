@@ -1,3 +1,4 @@
+import { capabilities } from '@/capabilities';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DOMAIN_TOOL_ALLOWLISTS,
@@ -5,13 +6,12 @@ import {
   READ_TOOLS,
   resolveMcpAllowedTools,
 } from './allowlists';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, listTools } from './registry';
 
 describe('DomainTool allowlist policy', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __resetBootstrapForTests();
   });
 
   it('keeps Wave 3 propose/write inventory explicit', () => {
@@ -163,8 +163,8 @@ describe('DomainTool allowlist policy', () => {
     ]);
   });
 
-  it('keeps Maintenance broad but excludes user-suggested mistake actions', () => {
-    registerCoreTools();
+  it('keeps Maintenance broad but excludes user-suggested mistake actions', async () => {
+    await registerCapabilityTools(capabilities);
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([
       // YUK-203 U4 / D7③ — Maintenance is an operator surface and must NOT read
       // memory facts, so its read base is READ_TOOLS minus `search_memory_facts`.
@@ -189,9 +189,11 @@ describe('DomainTool allowlist policy', () => {
     ]);
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('attribute_mistake');
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_variant');
-    // YUK-349 — the ReviewPlanTask planner tools were retired with the B3 merge
-    // engine, so the bootstrap inventory is exactly READ + PROPOSE_WRITE.
-    expect(listTools().map((tool) => tool.name)).toEqual([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]);
+    // YUK-328 — manifest ownership determines registration order, so inventory equality is a
+    // set contract rather than the old CORE_TOOLS array's incidental ordering.
+    const registered = listTools().map((tool) => tool.name);
+    expect(new Set(registered)).toEqual(new Set([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]));
+    expect(registered).toHaveLength(READ_TOOLS.length + PROPOSE_WRITE_TOOLS.length);
   });
 
   it('grants search_memory_facts to coach / dreaming / copilot only (D7②/③)', () => {
