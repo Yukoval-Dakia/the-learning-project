@@ -18,7 +18,7 @@ import {
 } from '../server/stream-store';
 import {
   PracticeStreamCalendarDateSchema,
-  PracticeStreamKnowledgeIdSchema,
+  PracticeStreamQuerySchema,
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './stream-contracts';
@@ -42,20 +42,19 @@ function resolveDate(raw: string | null): string {
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const date = resolveDate(url.searchParams.get('date'));
-    const rawKnowledgeId = url.searchParams.get('kc');
-    const parsedKnowledgeId =
-      rawKnowledgeId === null ? null : PracticeStreamKnowledgeIdSchema.safeParse(rawKnowledgeId);
-    if (parsedKnowledgeId && !parsedKnowledgeId.success) {
-      throw new ApiError('validation_error', 'invalid kc', 400);
+    const parsedQuery = PracticeStreamQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!parsedQuery.success) {
+      throw new ApiError('validation_error', 'invalid query parameters', 400);
     }
-    const knowledgeId = parsedKnowledgeId?.success ? parsedKnowledgeId.data : undefined;
+    const date = resolveDate(parsedQuery.data.date ?? null);
+    const knowledgeId = parsedQuery.data.kc;
     // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。
     const isToday = date === streamLocalDate();
     // YUK-558：compose 事件种子化（仅 isToday 才可能触发 compose；历史日期不 compose，不派生 seed）。
     const view = await getStream(db, date, {
       composeIfEmpty: isToday,
       knowledgeId,
+      materializeScoped: isToday,
       composeDeps: isToday ? { rng: buildSeededSelectionRng(date, 'compose', date) } : undefined,
     });
     return Response.json(view);

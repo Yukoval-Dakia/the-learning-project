@@ -7,7 +7,7 @@ import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './practice-face.css';
 
@@ -47,6 +47,8 @@ interface StreamActionFailure {
   message: string;
   retry: () => void;
 }
+
+const SCOPE_MISMATCH_ERROR = new Error('练习范围与请求不一致，请重试。');
 
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
   if (!view) return view;
@@ -101,6 +103,19 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
+  // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
+  // location.searchStr 更新；这里同步本地交互状态，确保 kc=a → kc=b 不会继续使用旧 session。
+  useLayoutEffect(() => {
+    const value = getQuery('kc')?.trim();
+    const nextScope = value || null;
+    let nextView: 'stream' | 'shelf' = 'stream';
+    if (!nextScope && getQuery('view') === 'shelf') nextView = 'shelf';
+    setScopeKnowledgeId(nextScope);
+    setView(nextView);
+    setMode({ kind: 'list' });
+    setActionFailure(null);
+  }, [getQuery]);
+
   const streamQueryKey = useMemo(
     () => ['practice-stream', scopeKnowledgeId] as const,
     [scopeKnowledgeId],
@@ -113,6 +128,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   // 不一致时宁可展示读取态，也不能把「今日流」题目挂在专项标题下（反向亦然）。
   const visibleStream = streamForRequestedScope(streamQ.data, scopeKnowledgeId);
   const streamScopeMismatch = streamQ.data !== undefined && visibleStream === undefined;
+  let streamError: Error | null = null;
+  if (streamQ.isError) streamError = streamQ.error as Error;
+  else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -306,16 +324,16 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       />
     );
   } else {
+    let eyebrowText = '今日练习 · 按当前学习状态编排';
+    if (scopeKnowledgeId) {
+      eyebrowText = `知识点专项 · ${visibleStream?.scope?.label ?? '正在读取范围'}`;
+    } else if (view === 'shelf') {
+      eyebrowText = '练习卷 · 待做 / 在做 / 已完成';
+    }
     body = (
       <>
         <div className="page-head">
-          <span className="eyebrow">
-            {scopeKnowledgeId
-              ? `知识点专项 · ${visibleStream?.scope?.label ?? '正在读取范围'}`
-              : view === 'shelf'
-                ? '练习卷 · 待做 / 在做 / 已完成'
-                : '今日练习 · 按当前学习状态编排'}
-          </span>
+          <span className="eyebrow">{eyebrowText}</span>
           <div className="pface-head-row">
             <h1 className="page-title">{scopeKnowledgeId ? '针对性练习' : '练习'}</h1>
             {scopeKnowledgeId ? (
@@ -357,13 +375,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           <PfStream
             stream={visibleStream ?? null}
             loading={streamQ.isLoading || (streamScopeMismatch && streamQ.isFetching)}
-            error={
-              streamQ.isError
-                ? (streamQ.error as Error)
-                : streamScopeMismatch && !streamQ.isFetching
-                  ? new Error('练习范围与请求不一致，请重试。')
-                  : null
-            }
+            error={streamError}
             openItem={openItem}
             refresh={refreshStream}
             updateItem={commitStreamItem}

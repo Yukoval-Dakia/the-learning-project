@@ -367,6 +367,49 @@ describe('practice stream API', () => {
     expect(res.status).toBe(404);
   });
 
+  it('YUK-535: concurrent scoped opens share one session and concurrent last answers close it once', async () => {
+    const kc = createId();
+    await seedScopedQuestion({ knowledgeId: kc, knowledgeName: '并发专项' });
+    await seedScopedQuestion({ knowledgeId: kc, knowledgeName: '并发专项' });
+    const requestUrl = `http://t/api/practice/stream?date=today&kc=${encodeURIComponent(kc)}`;
+
+    const opened = await Promise.all([GET(new Request(requestUrl)), GET(new Request(requestUrl))]);
+    const streams = await Promise.all(
+      opened.map(async (response) => PracticeStreamResponseSchema.parse(await response.json())),
+    );
+    expect(streams[0].scope?.session_id).toBe(streams[1].scope?.session_id);
+    expect(streams[0].items.map((item) => item.id)).toEqual(
+      streams[1].items.map((item) => item.id),
+    );
+    expect(streams[0].items).toHaveLength(2);
+    const scopedSessions = (await testDb().select().from(learning_session)).filter(
+      (session) =>
+        session.type === 'review' &&
+        session.scope_knowledge_ids?.length === 1 &&
+        session.scope_knowledge_ids[0] === kc,
+    );
+    expect(scopedSessions).toHaveLength(1);
+
+    const completionResponses = await Promise.all(
+      streams[0].items.map((item) =>
+        PATCH(
+          new Request(`http://t/api/practice/stream/items/${item.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'done' }),
+          }),
+          { id: item.id },
+        ),
+      ),
+    );
+    expect(completionResponses.map((response) => response.status)).toEqual([200, 200]);
+    const sessionId = streams[0].scope?.session_id as string;
+    const [session] = await testDb()
+      .select({ status: learning_session.status })
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session?.status).toBe('completed');
+  });
+
   it('PATCH advances item status and rejects illegal transitions (done 是终态)', async () => {
     await seedDueQuestion();
     const seeded = (await (await GET(getReq())).json()) as { items: Array<{ id: string }> };

@@ -92,6 +92,15 @@ function scopedStream(status: StreamStatus = 'pending'): StreamView {
   };
 }
 
+function scopedStreamFor(knowledgeId: string, label: string, sessionId: string): StreamView {
+  const view = scopedStream();
+  return {
+    ...view,
+    scope: { kind: 'knowledge', id: knowledgeId, label, session_id: sessionId },
+    opening_line: `这里只显示${label}相关题目。`,
+  };
+}
+
 function confirmed(status: StreamStatus) {
   return { item: item(status) };
 }
@@ -105,16 +114,20 @@ function renderPage(
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   options.seedQuery?.(queryClient);
-  render(
+  const renderWith = (pageOptions: typeof options) => (
     <QueryClientProvider client={queryClient}>
       <PracticeFacePage
-        getQuery={options.getQuery ?? (() => null)}
-        setQuery={options.setQuery ?? (() => {})}
+        getQuery={pageOptions.getQuery ?? (() => null)}
+        setQuery={pageOptions.setQuery ?? (() => {})}
         navigate={() => {}}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return queryClient;
+  const rendered = render(renderWith(options));
+  return {
+    queryClient,
+    rerenderPage: (nextOptions: typeof options) => rendered.rerender(renderWith(nextOptions)),
+  };
 }
 
 beforeEach(() => {
@@ -172,6 +185,20 @@ describe('PracticeFacePage stream mutation failure handling', () => {
     expect(screen.getByText('知识点专项 · 正在读取范围')).toBeTruthy();
     expect(screen.queryByText('今天先做这一题。')).toBeNull();
     expect(screen.queryByRole('button', { name: '开始作答' })).toBeNull();
+  });
+
+  it('YUK-535: follows search-only navigation from one KC scope to another', async () => {
+    getStreamMock
+      .mockResolvedValueOnce(scopedStreamFor('kc-a', '判断句', 'review_a'))
+      .mockResolvedValueOnce(scopedStreamFor('kc-b', '被动句', 'review_b'));
+    const page = renderPage({ getQuery: (key) => (key === 'kc' ? 'kc-a' : null) });
+
+    expect(await screen.findByText('知识点专项 · 判断句')).toBeTruthy();
+    page.rerenderPage({ getQuery: (key) => (key === 'kc' ? 'kc-b' : null) });
+
+    expect(await screen.findByText('知识点专项 · 被动句')).toBeTruthy();
+    expect(getStreamMock).toHaveBeenLastCalledWith('kc-b');
+    expect(screen.queryByText('知识点专项 · 判断句')).toBeNull();
   });
 
   it('开始失败时不进入作答面，并可显式重试', async () => {

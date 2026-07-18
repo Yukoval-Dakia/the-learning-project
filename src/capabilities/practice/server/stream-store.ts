@@ -747,6 +747,9 @@ async function materializeKnowledgeScopedSession(
   knowledgeLabel: string,
 ): Promise<{ sessionId: string; rows: StreamItemRow[] }> {
   return db.transaction(async (tx) => {
+    // Scope identity lock prevents two first opens from creating duplicate sessions. Once the
+    // session is known, also take the physical partition lock shared with answer-time rerank so
+    // materialization and rerank can never assign rows in the same partition concurrently.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:scope:${date}:${knowledgeId}`}))`,
     );
@@ -759,6 +762,9 @@ async function materializeKnowledgeScopedSession(
       session = { id: created.sessionId, status: 'started' };
     }
     const sessionId = session.id;
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date, sessionId)}))`,
+    );
 
     const existing = await tx
       .select()
@@ -940,10 +946,12 @@ export async function getStream(
     refillDeps?: RefillDeps;
     /** YUK-535 — server-resolved independent on-demand review session for this KC. */
     knowledgeId?: string;
+    /** Materialize a scoped session/items. Historical scoped reads remain read-only. */
+    materializeScoped?: boolean;
   } = {},
 ): Promise<StreamView> {
   if (opts.knowledgeId) {
-    return getKnowledgeScopedStream(db, date, opts.knowledgeId, opts.composeIfEmpty ?? false);
+    return getKnowledgeScopedStream(db, date, opts.knowledgeId, opts.materializeScoped ?? false);
   }
 
   let rows = await db
@@ -1027,7 +1035,7 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
         ),
       );
     if (remaining === 0) {
-      await Review.completeReviewSession(db, row.session_id);
+      await Review.transitionReviewSession(db, row.session_id, 'completed');
     }
   } catch (err) {
     // The stream-item transition is already committed. Session-envelope closeout is important

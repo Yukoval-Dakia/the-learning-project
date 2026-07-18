@@ -134,6 +134,19 @@ export function PfStream({
   const currentItem = items.find((it) => it.status === 'in_progress') ?? pending[0] ?? null;
   const allDone = items.length > 0 && stream.progress.done === items.length;
   const etaMin = stream.progress.estimated_remaining_minutes;
+  let openingLine = stream.opening_line;
+  if (allDone)
+    openingLine = scope ? `「${scope.label}」这轮已经完成。` : '都织完了——下面是今天的线头。';
+  let progressEta = `预计还剩 ~${etaMin} 分钟`;
+  if (allDone) progressEta = scope ? '本轮完成' : '今日完成';
+  const emptyTitle = scope ? `「${scope.label}」暂无可练题目` : '今天流里还没有东西';
+  const emptyText = scope
+    ? '当前题库里没有关联到这个知识点的已发布题目；返回知识页补题或稍后再试。'
+    : '录几道题，或让我按当前信号重排一次。';
+  const closingLine = scope
+    ? `「${scope.label}」这轮题目都完成了。`
+    : '今天的线都织完了——回头看哪根还松，随时叫我补。';
+  const closingMeta = scope ? '专项练习' : '今日小结';
 
   const skip = (it: StreamItem) => {
     void updateItem(it, 'skipped', '跳过练习', async () => {
@@ -283,13 +296,7 @@ export function PfStream({
           <LoomIcon name="sparkle" size={18} />
         </span>
         <div>
-          <p className="pf-open-line">
-            {allDone
-              ? scope
-                ? `「${scope.label}」这轮已经完成。`
-                : '都织完了——下面是今天的线头。'
-              : stream.opening_line}
-          </p>
+          <p className="pf-open-line">{openingLine}</p>
           <span className="pf-open-meta">
             {scope ? `知识点专项 · ${scope.label}` : '今日练习'} · {stream.date} · 预算{' '}
             {stream.budget.minutes} 分钟
@@ -305,22 +312,12 @@ export function PfStream({
           <div className="bar thin">
             <span style={{ width: `${(stream.progress.done / stream.progress.total) * 100}%` }} />
           </div>
-          <span className="pf-prog-eta">
-            {allDone ? (scope ? '本轮完成' : '今日完成') : `预计还剩 ~${etaMin} 分钟`}
-          </span>
+          <span className="pf-prog-eta">{progressEta}</span>
         </div>
       )}
 
       {items.length === 0 ? (
-        <EmptyState
-          icon="review"
-          title={scope ? `「${scope.label}」暂无可练题目` : '今天流里还没有东西'}
-          text={
-            scope
-              ? '当前题库里没有关联到这个知识点的已发布题目；返回知识页补题或稍后再试。'
-              : '录几道题，或让我按当前信号重排一次。'
-          }
-        />
+        <EmptyState icon="review" title={emptyTitle} text={emptyText} />
       ) : (
         <div className="pf-thread">{active.map(row)}</div>
       )}
@@ -347,12 +344,8 @@ export function PfStream({
             <LoomIcon name="checkCircle" size={18} />
           </span>
           <div>
-            <p className="pf-close-line">
-              {scope
-                ? `「${scope.label}」这轮题目都完成了。`
-                : '今天的线都织完了——回头看哪根还松，随时叫我补。'}
-            </p>
-            <span className="pf-close-meta">{scope ? '专项练习' : '今日小结'} · 已完成</span>
+            <p className="pf-close-line">{closingLine}</p>
+            <span className="pf-close-meta">{closingMeta} · 已完成</span>
           </div>
         </div>
       )}
