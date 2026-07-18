@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listAutoApplied: vi.fn(),
   listDecisionProposalPage: vi.fn(),
   listObservationProposalPreview: vi.fn(),
+  retractProposal: vi.fn(),
 }));
 
 vi.mock('@/capabilities/knowledge/ui/knowledge-api', () => ({ getTree: mocks.getTree }));
@@ -23,6 +24,7 @@ vi.mock('./inbox-api', async (importOriginal) => {
     listAutoApplied: mocks.listAutoApplied,
     listDecisionProposalPage: mocks.listDecisionProposalPage,
     listObservationProposalPreview: mocks.listObservationProposalPreview,
+    retractProposal: mocks.retractProposal,
   };
 });
 
@@ -78,6 +80,7 @@ beforeEach(() => {
   });
   mocks.listDecisionProposalPage.mockReset();
   mocks.listObservationProposalPreview.mockReset().mockResolvedValue(page([], null));
+  mocks.retractProposal.mockReset().mockResolvedValue({ ok: true });
 });
 
 afterEach(cleanup);
@@ -144,5 +147,50 @@ describe('InboxPage progressive decision loading', () => {
     const acceptButtons = screen.getAllByRole('button', { name: '接受' }) as HTMLButtonElement[];
     expect(acceptButtons[0].disabled).toBe(true);
     expect(acceptButtons[1].disabled).toBe(false);
+  });
+
+  it('refreshes only the auto-applied digest after a retract', async () => {
+    const appliedAt = new Date().toISOString();
+    mocks.listDecisionProposalPage.mockResolvedValue(
+      page([proposal('decision_1', '待裁决保持原位')], null),
+    );
+    mocks.listAutoApplied
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            proposal_id: 'auto_1',
+            learning_item_id: 'li_1',
+            title: '已自动完成',
+            applied_at: appliedAt,
+            level: 'ok',
+            reverted: false,
+          },
+        ],
+        breaker: { tripped: false, level: 'ok', applied: 1, cap: 20, window: 3_600_000 },
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            proposal_id: 'auto_1',
+            learning_item_id: 'li_1',
+            title: '已自动完成',
+            applied_at: appliedAt,
+            level: 'ok',
+            reverted: true,
+          },
+        ],
+        breaker: { tripped: false, level: 'ok', applied: 1, cap: 20, window: 3_600_000 },
+      });
+    const user = userEvent.setup();
+
+    renderInbox();
+    await screen.findByText('已自动完成');
+    await user.click(screen.getByRole('button', { name: '撤销' }));
+
+    expect(await screen.findByText(/已撤销 · 恢复到应用前/)).toBeTruthy();
+    expect(mocks.retractProposal).toHaveBeenCalledWith('auto_1');
+    expect(mocks.listAutoApplied).toHaveBeenCalledTimes(2);
+    expect(mocks.listDecisionProposalPage).toHaveBeenCalledTimes(1);
+    expect(mocks.listObservationProposalPreview).toHaveBeenCalledTimes(1);
   });
 });

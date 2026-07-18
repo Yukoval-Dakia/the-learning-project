@@ -16,7 +16,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { type InfiniteData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ProposalCard } from './ProposalCard';
@@ -24,6 +24,7 @@ import {
   type AutoAppliedRowWire,
   KIND_META,
   type ProposalInboxRow,
+  type ProposalPageWire,
   type VerdictBreakerWire,
   decisionPaginationDiagnostics,
   getNextDecisionPageParam,
@@ -49,6 +50,9 @@ function tierIcon(name: string): LoomIconName {
 
 // A 档撤销窗口的重渲染节拍：每 15s 刷新 nowMs，让倒计时 + live→consumed 过渡随时间走。
 const UNDO_TICK_MS = 15_000;
+const DECISION_QUERY_KEY = ['proposals', 'pending', 'decision'] as const;
+const EMPTY_DECISION_PAGES: readonly ProposalPageWire[] = [];
+const EMPTY_DECISION_PAGE_PARAMS: readonly (string | null)[] = [];
 
 function formatWindowLabel(windowMs: number): string {
   const minutes = Math.round(windowMs / 60_000);
@@ -267,8 +271,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   const [reverting, setReverting] = useState<Record<string, true>>({});
   const [toast, setToast] = useState<string | null>(null);
 
-  const decisionQ = useInfiniteQuery({
-    queryKey: ['proposals', 'pending', 'decision'],
+  const decisionQ = useInfiniteQuery<
+    ProposalPageWire,
+    Error,
+    InfiniteData<ProposalPageWire, string | null>,
+    typeof DECISION_QUERY_KEY,
+    string | null
+  >({
+    queryKey: DECISION_QUERY_KEY,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => listDecisionProposalPage(pageParam),
     getNextPageParam: getNextDecisionPageParam,
@@ -303,16 +313,18 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     setTimeout(() => setToast(null), 5000);
   };
 
-  const decisionPages = decisionQ.data?.pages ?? [];
+  const decisionPages = decisionQ.data?.pages ?? EMPTY_DECISION_PAGES;
+  const decisionPageParams = decisionQ.data?.pageParams ?? EMPTY_DECISION_PAGE_PARAMS;
   const decisionDiagnostics = useMemo(
-    () => decisionPaginationDiagnostics(decisionPages, decisionQ.data?.pageParams ?? []),
-    [decisionPages, decisionQ.data?.pageParams],
+    () => decisionPaginationDiagnostics(decisionPages, decisionPageParams),
+    [decisionPages, decisionPageParams],
   );
   const rows = useMemo(() => {
     const pages = observationQ.data ? [...decisionPages, observationQ.data] : decisionPages;
     return mergeProposalPages(pages);
   }, [decisionPages, observationQ.data]);
-  const observationTruncated = observationQ.data?.next_cursor !== null && observationQ.data != null;
+  const observationTruncated =
+    observationQ.data !== undefined && observationQ.data.next_cursor !== null;
   const observationUnavailable = observationQ.isError;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
@@ -346,7 +358,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     setReverting((r) => ({ ...r, [proposalId]: true }));
     try {
       await retractProposal(proposalId);
-      await Promise.all([aaQ.refetch(), decisionQ.refetch(), observationQ.refetch()]);
+      // Retract turns the auto-applied proposal stale (never pending), so only its A-lane digest
+      // changes. Refetching the infinite decision query would replay every loaded backlog page.
+      await aaQ.refetch();
     } catch (err) {
       showError(err instanceof Error ? err.message : '撤销失败，请重试。');
     } finally {
@@ -499,13 +513,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
             </LoomCard>
           )}
           {decide.length === 0 &&
-          !decisionQ.isFetchingNextPage &&
-          !decisionQ.isFetchNextPageError &&
-          !decisionDiagnostics.incomplete ? (
-            <LoomCard pad sunk>
-              <div className="meta">没有待裁决的提议。</div>
-            </LoomCard>
-          ) : decide.length > 0 ? (
+            !decisionQ.isFetchingNextPage &&
+            !decisionQ.isFetchNextPageError &&
+            !decisionDiagnostics.incomplete && (
+              <LoomCard pad sunk>
+                <div className="meta">没有待裁决的提议。</div>
+              </LoomCard>
+            )}
+          {decide.length > 0 &&
             laneKinds.map((k) => {
               const laneRows = decide.filter((r) => r.kind === k);
               const live = laneRows.filter((r) => !resolved[r.id]).length;
@@ -536,8 +551,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                   </div>
                 </section>
               );
-            })
-          ) : null}
+            })}
         </section>
 
         {/* ── C 档 · 纯状态（折叠） ── */}

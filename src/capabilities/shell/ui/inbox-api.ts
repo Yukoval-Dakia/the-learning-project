@@ -155,7 +155,7 @@ export function getNextDecisionPageParam(
   lastPage: ProposalPageWire,
   allPages: readonly ProposalPageWire[],
   _lastPageParam: string | null,
-  allPageParams: readonly unknown[],
+  allPageParams: readonly (string | null)[],
 ): string | undefined {
   const next = lastPage.next_cursor;
   if (!next) return undefined;
@@ -173,7 +173,7 @@ export interface DecisionPaginationDiagnostics {
 /** Explain why a non-null continuation stopped instead of presenting the loaded subset as complete. */
 export function decisionPaginationDiagnostics(
   pages: readonly ProposalPageWire[],
-  pageParams: readonly unknown[],
+  pageParams: readonly (string | null)[],
 ): DecisionPaginationDiagnostics {
   const next = pages.at(-1)?.next_cursor ?? null;
   const cursorRepeated = next !== null && pageParams.includes(next);
