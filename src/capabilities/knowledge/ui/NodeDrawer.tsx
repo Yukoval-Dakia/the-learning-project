@@ -23,8 +23,8 @@ import {
   createEdge,
   decideEdgeProposal,
   edgeProposalOperation,
-  getNodePage,
 } from './knowledge-api';
+import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
 
 // decay → 非颜色 cue（设计稿 DECAY_META；bucket 与 server 的
 // mastery_decay_bucket 不同——树行没有 bucket，按 mastery 粗分代理，
@@ -170,8 +170,7 @@ export function NodeDrawer({
   // interactive_artifacts. Best-effort: enabled only while open; on error/empty
   // the section renders nothing (InteractiveArtifactDiscovery gates on length).
   const nodePageQ = useQuery({
-    queryKey: ['knowledge-node', node?.id],
-    queryFn: () => getNodePage(node?.id ?? ''),
+    ...knowledgeNodeDrawerQueryOptions(node?.id ?? ''),
     enabled: open && node != null,
   });
   const interactiveArtifacts = nodePageQ.data?.interactive_artifacts ?? [];

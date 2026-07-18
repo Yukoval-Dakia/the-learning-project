@@ -146,6 +146,8 @@ export default function KnowledgeDetailPage({
 }) {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const queryClient = useQueryClient();
+  // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
+  // navigating here after any cross-surface mutation still performs the existing refetch.
   const pageQ = useQuery({ queryKey: ['knowledge-node', id], queryFn: () => getNodePage(id) });
 
   // A5 S4 (YUK-531 PR-5) — 「指向此点的误区」per-KC funnel（confirmed RT1 误区 + candidate 猜想/候选）。
