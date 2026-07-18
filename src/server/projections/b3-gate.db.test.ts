@@ -167,9 +167,11 @@ describe('runB3Gate', () => {
     await insertKnowledge({ id: 'kn_a', name: 'A', parent_id: 'seed:yuwen:root' });
     await insertKnowledge({ id: 'kn_b', name: 'B', parent_id: 'kn_a' });
     await insertKnowledge({ id: 'kn_c', name: 'C', parent_id: 'kn_a' });
-    await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });
-    await insertEdge({ id: 'ke_ac_pre', from: 'kn_a', to: 'kn_c', relation_type: 'prerequisite' });
-    await insertEdge({ id: 'ke_bc_arch', from: 'kn_b', to: 'kn_c', archived_at: T0 });
+    // Live mesh edges connect siblings rather than duplicating their tree parent links. The archived
+    // edge may retain a legacy tree-redundant shape because the invariant applies only to live mesh.
+    await insertEdge({ id: 'ke_bc', from: 'kn_b', to: 'kn_c' });
+    await insertEdge({ id: 'ke_cb_pre', from: 'kn_c', to: 'kn_b', relation_type: 'prerequisite' });
+    await insertEdge({ id: 'ke_ab_arch', from: 'kn_a', to: 'kn_b', archived_at: T0 });
 
     const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
@@ -193,6 +195,21 @@ describe('runB3Gate', () => {
     // The unanchored seed root SURVIVES the rebuild (the keystone non-delete guard + its anchor).
     const root = await db.select().from(knowledge).where(eq(knowledge.id, 'seed:yuwen:root'));
     expect(root).toHaveLength(1);
+  });
+
+  it('NO-GO: a legacy live mesh edge that duplicates a tree link is reported instead of crashing the gate', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_parent', name: 'Parent' });
+    await insertKnowledge({ id: 'kn_child', name: 'Child', parent_id: 'kn_parent' });
+    await insertEdge({ id: 'ke_tree_duplicate', from: 'kn_parent', to: 'kn_child' });
+
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.audit.clean).toBe(true);
+    expect(report.rebuild.ok).toBe(false);
+    expect(report.rebuild.topologyReject).toMatch(/tree redundancy/i);
+    expect(report.survival.ok).toBe(true);
   });
 
   it('NO-GO: an imperatively-created CYCLIC prerequisite pair is caught — rebuild topology-rejects', async () => {
