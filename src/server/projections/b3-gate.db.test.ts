@@ -167,9 +167,11 @@ describe('runB3Gate', () => {
     await insertKnowledge({ id: 'kn_a', name: 'A', parent_id: 'seed:yuwen:root' });
     await insertKnowledge({ id: 'kn_b', name: 'B', parent_id: 'kn_a' });
     await insertKnowledge({ id: 'kn_c', name: 'C', parent_id: 'kn_a' });
-    await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });
-    await insertEdge({ id: 'ke_ac_pre', from: 'kn_a', to: 'kn_c', relation_type: 'prerequisite' });
-    await insertEdge({ id: 'ke_bc_arch', from: 'kn_b', to: 'kn_c', archived_at: T0 });
+    // Live mesh edges connect siblings rather than duplicating their tree parent links. The archived
+    // edge may retain a legacy tree-redundant shape because the invariant applies only to live mesh.
+    await insertEdge({ id: 'ke_bc', from: 'kn_b', to: 'kn_c' });
+    await insertEdge({ id: 'ke_cb_pre', from: 'kn_c', to: 'kn_b', relation_type: 'prerequisite' });
+    await insertEdge({ id: 'ke_ab_arch', from: 'kn_a', to: 'kn_b', archived_at: T0 });
 
     const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
