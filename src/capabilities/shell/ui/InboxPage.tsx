@@ -16,7 +16,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ProposalCard } from './ProposalCard';
@@ -25,9 +25,13 @@ import {
   KIND_META,
   type ProposalInboxRow,
   type VerdictBreakerWire,
+  decisionPaginationDiagnostics,
+  getNextDecisionPageParam,
   kindMeta,
   listAutoApplied,
-  listProposals,
+  listDecisionProposalPage,
+  listObservationProposalPreview,
+  mergeProposalPages,
   retractProposal,
 } from './inbox-api';
 import {
@@ -263,9 +267,31 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   const [reverting, setReverting] = useState<Record<string, true>>({});
   const [toast, setToast] = useState<string | null>(null);
 
-  const q = useQuery({ queryKey: ['proposals', 'pending'], queryFn: listProposals });
+  const decisionQ = useInfiniteQuery({
+    queryKey: ['proposals', 'pending', 'decision'],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => listDecisionProposalPage(pageParam),
+    getNextPageParam: getNextDecisionPageParam,
+  });
+  const observationQ = useQuery({
+    queryKey: ['proposals', 'pending', 'observation-preview'],
+    queryFn: listObservationProposalPreview,
+  });
   const aaQ = useQuery({ queryKey: ['proposals', 'auto-applied'], queryFn: listAutoApplied });
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
+
+  // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
+  // 用户，避免瞬时错误形成请求风暴。已加载卡片始终保持可操作。
+  useEffect(() => {
+    if (!decisionQ.hasNextPage) return;
+    if (decisionQ.isFetchingNextPage || decisionQ.isFetchNextPageError) return;
+    void decisionQ.fetchNextPage();
+  }, [
+    decisionQ.fetchNextPage,
+    decisionQ.hasNextPage,
+    decisionQ.isFetchNextPageError,
+    decisionQ.isFetchingNextPage,
+  ]);
 
   const nameOf = useMemo(() => {
     const map = new Map((treeQ.data?.rows ?? []).map((n) => [n.id, n.name]));
@@ -277,10 +303,17 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     setTimeout(() => setToast(null), 5000);
   };
 
-  const rows = q.data?.rows ?? [];
-  const decisionTruncated = q.data?.decision_truncated === true;
-  const observationTruncated = q.data?.observation_truncated === true;
-  const observationUnavailable = q.data?.observation_unavailable === true;
+  const decisionPages = decisionQ.data?.pages ?? [];
+  const decisionDiagnostics = useMemo(
+    () => decisionPaginationDiagnostics(decisionPages, decisionQ.data?.pageParams ?? []),
+    [decisionPages, decisionQ.data?.pageParams],
+  );
+  const rows = useMemo(() => {
+    const pages = observationQ.data ? [...decisionPages, observationQ.data] : decisionPages;
+    return mergeProposalPages(pages);
+  }, [decisionPages, observationQ.data]);
+  const observationTruncated = observationQ.data?.next_cursor !== null && observationQ.data != null;
+  const observationUnavailable = observationQ.isError;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
 
@@ -306,13 +339,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     return () => clearInterval(id);
   }, [autoApplied.length]);
   // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
-  const showTierA = autoApplied.length > 0 || breaker?.tripped === true || aaQ.isError;
+  const showTierA =
+    aaQ.isLoading || autoApplied.length > 0 || breaker?.tripped === true || aaQ.isError;
 
   const onRevert = async (proposalId: string) => {
     setReverting((r) => ({ ...r, [proposalId]: true }));
     try {
       await retractProposal(proposalId);
-      await Promise.all([aaQ.refetch(), q.refetch()]);
+      await Promise.all([aaQ.refetch(), decisionQ.refetch(), observationQ.refetch()]);
     } catch (err) {
       showError(err instanceof Error ? err.message : '撤销失败，请重试。');
     } finally {
@@ -324,17 +358,22 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     }
   };
 
-  // 页态综合 q（pending 裁决）+ aaQ（A 档自动应用）两路读模型（if/else 替链式三元，守 OCR
-  // 红线）：A 档 loading 也算整页 loading——否则 aaQ 未就绪时三 count 暂为 0 会过早判 empty 盖掉
-  // A 段；empty 仅当三 count 全 0 且 aaQ 已成功 settle（aaQ.isError 落 'ok' 让 A 段错误卡显示）。
+  // 只有裁决第一页阻塞整页；A 档与 C 档各自渐进加载。这样用户能先处理第一批待裁决项，
+  // 同时 empty 仍须等补充读模型 settle，避免把“尚未返回”误报成“已清空”。
   const status = resolveInboxStatus({
-    loading: q.isLoading || aaQ.isLoading,
-    error: q.isError,
+    loading: decisionQ.isLoading,
+    error: decisionQ.isError && decisionPages.length === 0,
     hasVisibleContent:
       decide.length > 0 || moved.length > 0 || autoApplied.length > 0 || aaQ.isError,
-    // Partial-data diagnostics must survive the top-level empty-state decision; otherwise a
-    // failed observation preview is falsely rendered as “收件箱已清空”.
-    hasDiagnostic: decisionTruncated || observationTruncated || observationUnavailable,
+    hasDiagnostic:
+      decisionQ.hasNextPage ||
+      decisionQ.isFetchingNextPage ||
+      decisionQ.isFetchNextPageError ||
+      decisionDiagnostics.incomplete ||
+      aaQ.isLoading ||
+      observationQ.isLoading ||
+      observationTruncated ||
+      observationUnavailable,
   });
 
   const clearedEmpty = (
@@ -364,7 +403,8 @@ export default function InboxPage({ navigate }: InboxPageProps) {
       <Stateful
         status={status}
         onRetry={() => {
-          void q.refetch();
+          void decisionQ.refetch();
+          void observationQ.refetch();
           void aaQ.refetch();
         }}
         errorText="提议列表暂不可用。"
@@ -375,6 +415,13 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {showTierA && (
           <section>
             <TierHead tier="A" count={autoApplied.length} />
+            {aaQ.isLoading && (
+              <LoomCard pad sunk>
+                <output className="meta" aria-live="polite">
+                  自动应用记录正在加载；待裁决提议不受影响。
+                </output>
+              </LoomCard>
+            )}
             {/* aaQ 失败显式 surface（CodeRabbit #2）：否则 A 档卡 + breaker 被当空数据静默
                 吞掉，用户以为没有自动应用项，实则 fetch 失败、撤销入口也丢了。 */}
             {aaQ.isError && (
@@ -413,19 +460,52 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {/* ── B 档 · 逐条人审 ── */}
         <section>
           <TierHead tier="B" count={decideRemaining} />
-          {decisionTruncated && (
+          {decisionQ.isFetchingNextPage && (
+            <LoomCard pad sunk>
+              <output className="meta" aria-live="polite">
+                正在继续加载待裁决提议；已显示 {decide.length} 条，可以先处理。
+              </output>
+            </LoomCard>
+          )}
+          {decisionQ.isFetchNextPageError && (
             <LoomCard pad sunk>
               <div className="meta">
-                待裁决提议当前显示前 {decide.length}{' '}
-                条，还有更多记录未在本页展开；处理后刷新即可继续。
+                后续待裁决提议暂时无法加载；已显示的 {decide.length} 条仍可处理。{' '}
+                <button
+                  type="button"
+                  className="aa-link"
+                  onClick={() => void decisionQ.fetchNextPage()}
+                >
+                  <LoomIcon name="refresh" size={13} />
+                  继续加载
+                </button>
               </div>
             </LoomCard>
           )}
-          {decide.length === 0 ? (
+          {decisionDiagnostics.cursorRepeated && (
+            <LoomCard pad sunk>
+              <output className="meta">
+                待裁决分页返回了重复游标，已停止自动加载以免重复请求；当前 {decide.length}{' '}
+                条仍可处理，刷新后可重试。
+              </output>
+            </LoomCard>
+          )}
+          {decisionDiagnostics.pageLimitReached && (
+            <LoomCard pad sunk>
+              <output className="meta">
+                待裁决积压超过本次安全加载上限；当前 {decide.length}{' '}
+                条仍可处理，处理后刷新即可继续。
+              </output>
+            </LoomCard>
+          )}
+          {decide.length === 0 &&
+          !decisionQ.isFetchingNextPage &&
+          !decisionQ.isFetchNextPageError &&
+          !decisionDiagnostics.incomplete ? (
             <LoomCard pad sunk>
               <div className="meta">没有待裁决的提议。</div>
             </LoomCard>
-          ) : (
+          ) : decide.length > 0 ? (
             laneKinds.map((k) => {
               const laneRows = decide.filter((r) => r.kind === k);
               const live = laneRows.filter((r) => !resolved[r.id]).length;
@@ -457,13 +537,23 @@ export default function InboxPage({ navigate }: InboxPageProps) {
                 </section>
               );
             })
-          )}
+          ) : null}
         </section>
 
         {/* ── C 档 · 纯状态（折叠） ── */}
-        {(moved.length > 0 || observationTruncated || observationUnavailable) && (
+        {(observationQ.isLoading ||
+          moved.length > 0 ||
+          observationTruncated ||
+          observationUnavailable) && (
           <section>
             <TierHead tier="C" count={moved.length} />
+            {observationQ.isLoading && (
+              <LoomCard pad sunk>
+                <output className="meta" aria-live="polite">
+                  AI 观察记录正在加载；上方待裁决提议不受影响。
+                </output>
+              </LoomCard>
+            )}
             {observationUnavailable && (
               <LoomCard pad sunk>
                 <output className="meta">
