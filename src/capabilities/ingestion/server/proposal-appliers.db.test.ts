@@ -824,6 +824,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       expect(result.kind).toBe('image_candidate');
       // fdic.gov passed the SSRF guard → fetch was actually called.
       expect(fetchSpy).toHaveBeenCalled();
+      expect((fetchSpy.mock.calls[0]?.[1] as { dispatcher?: unknown }).dispatcher).toBeDefined();
     } finally {
       fetchSpy.mockRestore();
     }
@@ -847,6 +848,41 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       expect(ipv6RunTaskFn).not.toHaveBeenCalled();
     } finally {
       ipv6FetchSpy.mockRestore();
+    }
+  });
+
+  it('rejects IPv4-mapped IPv6 literals and CGNAT DNS answers before socket connect', async () => {
+    const db = testDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      await seedImageCandidateProposal('img_cand_mapped_ipv6', {
+        source_url: 'http://[::ffff:7f00:1]/metadata.png',
+      });
+      await expect(
+        acceptAiProposal(db, 'img_cand_mapped_ipv6', {
+          imageCandidateDeps: {
+            runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT })),
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+
+      await seedImageCandidateProposal('img_cand_cgnat', {
+        source_url: 'https://images.example.edu/internal.png',
+      });
+      const cgnatLookup = vi.fn(async () => [{ address: '100.64.0.1', family: 4 }]);
+      await expect(
+        acceptAiProposal(db, 'img_cand_cgnat', {
+          imageCandidateDeps: {
+            runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT })),
+            lookupFn: cgnatLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 
