@@ -86,6 +86,20 @@ describe('ADR-0042 L3 learning-mix guard (YUK-673)', () => {
     ).toEqual([]);
   });
 
+  it('treats an empty identity as a real repetition value instead of missing metadata', () => {
+    const result = applyL3LearningMixGuard(
+      plan([question('q1'), question('q2'), question('q3'), question('break')]),
+      context({
+        q1: { knowledgeId: '' },
+        q2: { knowledgeId: '' },
+        q3: { knowledgeId: '' },
+        break: { knowledgeId: 'kc-b' },
+      }),
+    );
+
+    expect(result.items.map((item) => item.ref_id)).toEqual(['q1', 'q2', 'break', 'q3']);
+  });
+
   it('preserves the due subsequence while interleaving a non-due fatigue break', () => {
     const result = applyL3LearningMixGuard(
       plan([

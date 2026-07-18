@@ -74,8 +74,16 @@ export function learningMixContextFromInputs(
 }
 
 function nextCount(currentValue: string | undefined, currentCount: number, next?: string): number {
-  if (!next) return 0;
+  if (next === undefined) return 0;
   return currentValue === next ? currentCount + 1 : 1;
+}
+
+function antiComfortReason(
+  context: LearningMixContext,
+): 'no_candidate' | 'not_selected' | 'budget_truncated' {
+  if (context.frontierCandidateCount === 0) return 'no_candidate';
+  if (context.frontierSelectedCount === 0) return 'not_selected';
+  return 'budget_truncated';
 }
 
 function violationsFor(
@@ -211,12 +219,7 @@ export function applyL3LearningMixGuard(plan: StreamPlan, context: LearningMixCo
     diagnostics.push({
       kind: 'anti_comfort_floor_unmet',
       frontierCandidateCount: context.frontierCandidateCount,
-      reason:
-        context.frontierCandidateCount === 0
-          ? 'no_candidate'
-          : context.frontierSelectedCount === 0
-            ? 'not_selected'
-            : 'budget_truncated',
+      reason: antiComfortReason(context),
     });
   }
 
