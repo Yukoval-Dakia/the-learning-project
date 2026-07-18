@@ -167,6 +167,7 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 
   it('YUK-609 data migration normalizes only index-matching quiz_gen labels and is idempotent', async () => {
     const quizGenId = 'migration:yuk609:quiz-gen';
+    const mismatchId = 'migration:yuk609:mismatch';
     const manualId = 'migration:yuk609:manual';
     const now = '2026-07-18T00:00:00Z';
     try {
@@ -177,9 +178,15 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
         ) VALUES
           (
             ${quizGenId}, 'choice', '迁移测试',
-            '["A. 举例论证", "B． 对比论证", "A. 错位标签", "D) 道理论证"]'::jsonb,
+            '["A. 举例论证", "Ｂ． 对比论证", "C、比喻论证", "D) 道理论证"]'::jsonb,
             '[]'::jsonb, 2, 'quiz_gen', 'stale-hash', ${now}::timestamptz,
             ${now}::timestamptz, 7
+          ),
+          (
+            ${mismatchId}, 'choice', '错位标签对照',
+            '["A. 保持整组", "C. 错位标签"]'::jsonb,
+            '[]'::jsonb, 2, 'quiz_gen', 'mismatch-hash', ${now}::timestamptz,
+            ${now}::timestamptz, 6
           ),
           (
             ${manualId}, 'choice', '非 quiz_gen 对照',
@@ -205,15 +212,20 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
       }>(sql`
         SELECT id, choices_md, embed_content_hash, version
         FROM question
-        WHERE id IN (${quizGenId}, ${manualId})
+        WHERE id IN (${quizGenId}, ${mismatchId}, ${manualId})
         ORDER BY id
       `);
       const byId = new Map(rows.map((row) => [row.id, row]));
 
       expect(byId.get(quizGenId)).toMatchObject({
-        choices_md: ['举例论证', '对比论证', 'A. 错位标签', '道理论证'],
+        choices_md: ['举例论证', '对比论证', '比喻论证', '道理论证'],
         embed_content_hash: null,
         version: 8,
+      });
+      expect(byId.get(mismatchId)).toMatchObject({
+        choices_md: ['A. 保持整组', 'C. 错位标签'],
+        embed_content_hash: 'mismatch-hash',
+        version: 6,
       });
       expect(byId.get(manualId)).toMatchObject({
         choices_md: ['A. 保持原样', 'B. 保持原样'],
@@ -221,7 +233,9 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
         version: 5,
       });
     } finally {
-      await db.execute(sql`DELETE FROM question WHERE id IN (${quizGenId}, ${manualId})`);
+      await db.execute(
+        sql`DELETE FROM question WHERE id IN (${quizGenId}, ${mismatchId}, ${manualId})`,
+      );
     }
   });
 

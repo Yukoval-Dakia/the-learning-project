@@ -144,50 +144,50 @@ export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
 
 // YUK-609 — choices_md is the option BODY list. Renderers own A/B/C labels by
 // array index, so persisting an agent-emitted "A. ..." prefix makes every
-// consumer render "A. A. ...". Strip only a punctuation-delimited label that
-// matches the option's actual index. The schema rejects mismatched or label-only
-// entries instead of silently changing option identity or storing an empty body.
+// consumer render "A. A. ...". To avoid corrupting natural bodies such as
+// "C. elegans", normalize only when the WHOLE array forms an A/B/C... indexed
+// set. Partial/mismatched prefix-like text stays verbatim. A fully indexed set
+// with a label-only entry is rejected instead of storing an empty body.
 const QUIZ_GEN_CHOICE_LABEL_PREFIX = /^\s*([A-Za-zＡ-Ｚａ-ｚ])\s*[.．。、:：)）]\s*/u;
 
-export function normalizeQuizGenChoices(choices: string[]): string[] {
-  return choices.map((choice, index) => {
+interface IndexedChoiceSet {
+  bodies: string[];
+  labels: string[];
+}
+
+function matchIndexedChoiceSet(choices: string[]): IndexedChoiceSet | null {
+  if (choices.length === 0) return null;
+  const bodies: string[] = [];
+  const labels: string[] = [];
+  for (const [index, choice] of choices.entries()) {
     const match = choice.match(QUIZ_GEN_CHOICE_LABEL_PREFIX);
     const label = match?.[1];
-    if (!match || !label) return choice;
+    if (!match || !label) return null;
 
     const expectedLabel = String.fromCharCode(65 + index);
-    if (label.normalize('NFKC').toUpperCase() !== expectedLabel) return choice;
+    if (label.normalize('NFKC').toUpperCase() !== expectedLabel) return null;
+    labels.push(expectedLabel);
+    bodies.push(choice.slice(match[0].length).trimStart());
+  }
+  return { bodies, labels };
+}
 
-    const body = choice.slice(match[0].length).trimStart();
-    // Keep the original so the existing min(1) contract is not weakened into an
-    // empty choice when the model emitted only "A.".
-    return body.length > 0 ? body : choice;
-  });
+export function normalizeQuizGenChoices(choices: string[]): string[] {
+  return matchIndexedChoiceSet(choices)?.bodies ?? choices;
 }
 
 const QuizGenChoiceBodies = z
   .array(z.string().min(1))
   .max(6)
   .superRefine((choices, ctx) => {
-    choices.forEach((choice, index) => {
-      const match = choice.match(QUIZ_GEN_CHOICE_LABEL_PREFIX);
-      const label = match?.[1];
-      if (!match || !label) return;
-
-      const expectedLabel = String.fromCharCode(65 + index);
-      if (label.normalize('NFKC').toUpperCase() !== expectedLabel) {
+    const indexed = matchIndexedChoiceSet(choices);
+    if (!indexed) return;
+    indexed.bodies.forEach((body, index) => {
+      if (body.trim().length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [index],
-          message: `choice label must match array index ${expectedLabel}`,
-        });
-        return;
-      }
-      if (choice.slice(match[0].length).trim().length === 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [index],
-          message: `choice ${expectedLabel} must contain a body after its label`,
+          message: `choice ${indexed.labels[index]} must contain a body after its label`,
         });
       }
     });

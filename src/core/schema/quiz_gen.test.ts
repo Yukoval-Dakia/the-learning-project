@@ -248,21 +248,31 @@ describe('QuizGenOutput', () => {
     ]);
   });
 
-  it('rejects mismatched or label-only options instead of hiding identity defects', () => {
+  it('preserves partial/mismatched prefix-like bodies such as species names', () => {
     for (const choices_md of [
       ['B. 错位标签', 'B. 正常标签'],
-      ['A.', 'B. 正常标签'],
+      ['普通正文', 'B. subtilis 是细菌', 'C. elegans 是线虫'],
     ]) {
-      const result = QuizGenOutput.safeParse({
+      const parsed = QuizGenOutput.parse({
         questions: [{ ...validQuestion, choices_md }],
         source_pack: validSourcePack,
         generation_method: 'search_grounded',
         self_copy_safety: validCopySafety,
       });
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.issues.some((issue) => issue.path.includes('choices_md'))).toBe(true);
-      }
+      expect(parsed.questions[0].choices_md).toEqual(choices_md);
+    }
+  });
+
+  it('rejects a fully indexed set containing a label-only option', () => {
+    const result = QuizGenOutput.safeParse({
+      questions: [{ ...validQuestion, choices_md: ['A.', 'B. 正常标签'] }],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes('choices_md'))).toBe(true);
     }
   });
 
