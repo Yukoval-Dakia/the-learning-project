@@ -24,6 +24,7 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as invokerModule from '@/server/judge/invoker';
 import * as masteryStateModule from '@/server/mastery/state';
 import { Review } from '@/server/session';
@@ -93,6 +94,7 @@ async function seedPaper(id: string, questionIds: string[]) {
 describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', () => {
   beforeEach(async () => {
     await resetDb();
+    __resetRateLimitForTests();
   });
 
   it('full cycle: pos never double-counts, partial index constrains only live drafts', async () => {
@@ -1052,6 +1054,66 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
+  it('YUK-695: concurrent paid judge requests for one slot are single-claimed', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    let releaseJudge!: (value: unknown) => void;
+    const judgeGate = new Promise((resolve) => {
+      releaseJudge = resolve;
+    });
+    const invoke = vi.fn(() => judgeGate);
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({ invoke } as never);
+
+    try {
+      const first = submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: 'true',
+          primaryKnowledgeId: 'k1',
+        },
+        db,
+      );
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+
+      await expect(
+        submitPaperSlot(
+          {
+            sessionId,
+            paperArtifactId: 'paper1',
+            questionId: 'q1',
+            answerMd: 'true',
+            primaryKnowledgeId: 'k1',
+          },
+          db,
+        ),
+      ).rejects.toThrow(/recent judge claim/i);
+      expect(invoke).toHaveBeenCalledTimes(1);
+
+      releaseJudge({
+        route: 'semantic',
+        result: {
+          coarse_outcome: 'correct',
+          score: 1,
+          score_meaning: 'percentage',
+          confidence: 0.9,
+          feedback_md: 'ok',
+          evidence_json: {},
+          capability_ref: { id: 'semantic', version: '1' },
+        },
+        telemetry: {},
+      });
+      await expect(first).resolves.toMatchObject({ coarseOutcome: 'correct' });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   // ── round-3 fix #2 (P2): changed-content resubmit in active session → 409 ───
   it('round-3 fix #2: changed content while session is active is rejected with 409', async () => {
     const db = testDb();
@@ -1071,20 +1133,29 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       db,
     );
 
-    // Second submit with different content — session is still started (no reopen).
-    // Must be rejected 409: the slot was already answered in this attempt.
-    await expect(
-      submitPaperSlot(
-        {
-          sessionId,
-          paperArtifactId: 'paper1',
-          questionId: 'q1',
-          answerMd: 'false',
-          primaryKnowledgeId: 'k1',
-        },
-        db,
-      ),
-    ).rejects.toThrow(/already submitted in this session attempt|abandon and reopen/i);
+    const invokeSpy = vi.fn();
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
+      invoke: invokeSpy,
+    } as never);
+    try {
+      // Second submit with different content — session is still started (no reopen).
+      // It must be rejected before another judge invocation.
+      await expect(
+        submitPaperSlot(
+          {
+            sessionId,
+            paperArtifactId: 'paper1',
+            questionId: 'q1',
+            answerMd: 'false',
+            primaryKnowledgeId: 'k1',
+          },
+          db,
+        ),
+      ).rejects.toThrow(/already submitted in this session attempt|abandon and reopen/i);
+      expect(invokeSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   // ── round-4 fix #3 (P2): locked race loser returns persisted judge payload ─────
