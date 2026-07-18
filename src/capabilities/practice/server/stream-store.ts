@@ -143,6 +143,29 @@ async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, s
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
+interface QuestionMixMetadata {
+  knowledgeId?: string;
+  questionKind?: string;
+}
+
+async function questionMixMetadata(
+  db: DbLike,
+  ids: string[],
+): Promise<Map<string, QuestionMixMetadata>> {
+  const unique = [...new Set(ids)].filter(Boolean);
+  if (unique.length === 0) return new Map();
+  const rows = await db
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids, kind: question.kind })
+    .from(question)
+    .where(inArray(question.id, unique));
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      { knowledgeId: row.knowledge_ids[0], questionKind: row.kind } satisfies QuestionMixMetadata,
+    ]),
+  );
+}
+
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
   // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
   //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
@@ -269,6 +292,15 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
   }
 
+  // YUK-673 L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
+  // question in one bounded batch; the post-filter remains pure and never performs IO itself.
+  const mixMetadataByQuestion = await questionMixMetadata(db, [
+    ...dueRows.map((row) => row.question_id),
+    ...variantRows.flatMap((row) => row.variant_question_id ?? []),
+    ...newCheckPairs.map((pair) => pair.questionId),
+    ...frontierPairs.map((pair) => pair.questionId),
+  ]);
+
   // 标签批量解析（reasoning 模板用）。
   const labelMap = await knowledgeLabels(db, [
     ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
@@ -282,22 +314,29 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     dueItems: dueRows.map((r) => ({
       questionId: r.question_id,
       knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
+      ...mixMetadataByQuestion.get(r.question_id),
     })),
     variantItems: variantRows
       .filter((v): v is { variant_question_id: string; parent_question_id: string } =>
         Boolean(v.variant_question_id),
       )
-      .map((v) => ({ questionId: v.variant_question_id, rootQuestionId: v.parent_question_id })),
+      .map((v) => ({
+        questionId: v.variant_question_id,
+        rootQuestionId: v.parent_question_id,
+        ...mixMetadataByQuestion.get(v.variant_question_id),
+      })),
     newCheckItems: newCheckPairs.map((p) => ({
       questionId: p.questionId,
       knowledgeId: p.knowledgeId,
       knowledgeLabel: labelMap.get(p.knowledgeId),
+      questionKind: mixMetadataByQuestion.get(p.questionId)?.questionKind,
     })),
     pendingPapers,
     frontierItems: frontierPairs.map((p) => ({
       questionId: p.questionId,
       knowledgeId: p.knowledgeId,
       knowledgeLabel: labelMap.get(p.knowledgeId),
+      questionKind: mixMetadataByQuestion.get(p.questionId)?.questionKind,
     })),
   };
 }
@@ -351,6 +390,13 @@ export async function materializeStream(
     })
     .from(practice_stream_item)
     .where(streamPartitionPredicate(plan.date));
+
+  if (plan.diagnostics?.length) {
+    console.warn('[practice-stream] L3 learning-mix degradation', {
+      date: plan.date,
+      diagnostics: plan.diagnostics,
+    });
+  }
   const existingByRef = new Map(existing.map((r) => [r.ref_id, r]));
 
   if (plan.items.length === 0 && existing.length === 0) {

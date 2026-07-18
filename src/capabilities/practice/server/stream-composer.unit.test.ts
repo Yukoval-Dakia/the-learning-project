@@ -156,6 +156,16 @@ describe('composeDailyStream — 混排规则', () => {
     expect(plan.items.find((i) => i.ref_id === 'q_shared')?.source).toBe('decay');
   });
 
+  it('YUK-673：legacy composer 也经过 L3，缺 frontier 供给不再静默 NO-OP', () => {
+    const plan = composeDailyStream(inputs({ dueItems: due(2) }));
+
+    expect(plan.diagnostics).toContainEqual({
+      kind: 'anti_comfort_floor_unmet',
+      frontierCandidateCount: 0,
+      reason: 'no_candidate',
+    });
+  });
+
   it('paper item 携带卷自身的来源（on_demand/import 保留，不统一成 paper）', () => {
     const plan = composeDailyStream(
       inputs({
