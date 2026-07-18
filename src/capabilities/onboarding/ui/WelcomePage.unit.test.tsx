@@ -68,7 +68,10 @@ describe('WelcomePage — 通用模式 badge（YUK-602 §1.2）', () => {
       }),
     ]);
     expect(html.match(/未配置学科 · yingyu/g)).toHaveLength(2);
-    expect(html.match(/该 domain 已在知识库出现，但尚未配置为可选学科/g)).toHaveLength(2);
+    expect(html.match(/标为“未配置学科”的选项暂不可选择；请先完成学科配置。/g)).toHaveLength(2);
+    expect(html).toContain('aria-describedby="onboarding-leanings-unconfigured-help"');
+    expect(html).toContain('aria-describedby="onboarding-subjects-unconfigured-help"');
+    expect(html).not.toContain('title="该 domain 已在知识库出现');
   });
 });
 
