@@ -6,6 +6,10 @@
 // is skipped, so re-imports across Next.js HMR cycles don't trip the
 // registerTool duplicate guard.
 
+import {
+  readAgentNotesTool,
+  writeAgentNoteTool,
+} from '@/capabilities/agency/server/agent-note-tools';
 // ADR-0033 D6 / YUK-306 (lane D) — interactive artifact authoring pair.
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 import {
@@ -80,6 +84,8 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   // ADR-0032 D6-draftread (YUK-203 lane L5) — READ_TOOLS tail; order mirrors
   // allowlists.ts (the listTools() inventory assertion depends on it).
   getQuestionBlockStructureTool as DomainTool<unknown, unknown>,
+  // YUK-293 — READ_TOOLS tail; order mirrors allowlists.ts.
+  readAgentNotesTool as DomainTool<unknown, unknown>,
   proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
   proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
   attributeMistakeTool as DomainTool<unknown, unknown>,
@@ -111,6 +117,8 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   // PROPOSE_WRITE_TOOLS tail, order mirrors allowlists.ts (the listTools()
   // inventory assertion depends on it).
   proposeQuestionEditTool as DomainTool<unknown, unknown>,
+  // YUK-293 — PROPOSE_WRITE_TOOLS tail; expiring AI hint write.
+  writeAgentNoteTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;

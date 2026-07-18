@@ -176,7 +176,7 @@ export const agencyCapability = defineCapability({
     ],
   },
   ui: { pages: uiPagesFor('agency') },
-  // M5-T3 (YUK-321) — copilot 工具归属声明（learning_item 上下文读 1 + 生命周期提议 4）。
+  // M5-T3 (YUK-321) / YUK-293 — copilot 工具归属声明（learning_item 5 + agent-note 2）。
   copilotTools: {
     tools: [
       {
@@ -205,6 +205,14 @@ export const agencyCapability = defineCapability({
         name: 'propose_learning_item_archive',
         load: () =>
           import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemArchiveTool),
+      },
+      {
+        name: 'read_agent_notes',
+        load: () => import('./server/agent-note-tools').then((m) => m.readAgentNotesTool),
+      },
+      {
+        name: 'write_agent_note',
+        load: () => import('./server/agent-note-tools').then((m) => m.writeAgentNoteTool),
       },
     ],
   },

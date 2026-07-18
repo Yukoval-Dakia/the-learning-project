@@ -43,6 +43,8 @@ describe('DomainTool allowlist policy', () => {
       'update_artifact',
       // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
       'propose_question_edit',
+      // YUK-293 — expiring AI-to-AI hint write.
+      'write_agent_note',
     ]);
   });
 
@@ -150,6 +152,9 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D6-B (YUK-203 lane L6) — the copilot proposes narrow structured
       // edits to active (pooled) questions in-conversation (user-driven).
       'propose_question_edit',
+      // YUK-293 — deliberate agent-note read/write surface expansion.
+      'read_agent_notes',
+      'write_agent_note',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
     // a DomainTool — it is not in COPILOT_TOOLS (R2).
@@ -176,7 +181,8 @@ describe('DomainTool allowlist policy', () => {
         (name) =>
           name !== 'search_memory_facts' &&
           name !== 'query_questions' &&
-          name !== 'get_question_block_structure',
+          name !== 'get_question_block_structure' &&
+          name !== 'read_agent_notes',
       ),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
@@ -207,6 +213,25 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('search_memory_facts');
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('search_memory_facts');
     expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('search_memory_facts');
+  });
+
+  it('grants agent-note read/write only to the three soft-judgment surfaces (YUK-293)', () => {
+    expect(READ_TOOLS).toContain('read_agent_notes');
+    expect(PROPOSE_WRITE_TOOLS).toContain('write_agent_note');
+    for (const surface of ['copilot', 'dreaming', 'coach'] as const) {
+      expect(DOMAIN_TOOL_ALLOWLISTS[surface]).toContain('read_agent_notes');
+      expect(DOMAIN_TOOL_ALLOWLISTS[surface]).toContain('write_agent_note');
+    }
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'read_agent_notes',
+    );
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'write_agent_note',
+    );
+    for (const surface of ['knowledge_review', 'maintenance', 'ingestion_block_edit'] as const) {
+      expect(DOMAIN_TOOL_ALLOWLISTS[surface]).not.toContain('read_agent_notes');
+      expect(DOMAIN_TOOL_ALLOWLISTS[surface]).not.toContain('write_agent_note');
+    }
   });
 
   // ADR-0032 D8 — the unified author_question front door. It is granted on the

@@ -335,7 +335,7 @@ export async function runDreamingNightly(
       beforeExecute: (tool) => {
         const budgetReason = budgetTracker.beforeExecute(tool);
         if (budgetReason) return budgetReason;
-        if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
+        if (tool.effect !== 'propose') return undefined;
         if (proposalWrites >= DREAMING_MAX_PROPOSALS) {
           return `dreaming proposal cap reached (${DREAMING_MAX_PROPOSALS}); stop creating proposals in this run`;
         }

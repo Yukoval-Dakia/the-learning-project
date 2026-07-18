@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 3 条 API 路由 + 6 个 cron job + 6 proposal kinds + 5 copilot tools + 1 event action + todayBlock |
+| `manifest.ts` | 5 条 API 路由 + 6 个 cron job + 6 proposal kinds + 7 copilot tools + 1 event action + todayBlock |
 | `api/*.ts` | agent-notes、goal-create、probe-answer（conjecture 判别探针作答，#13 通电——与 attempt/FSRS 写面隔离，只写 1 个 `experimental:probe_result` 事件） |
 | `server/` | dreaming nightly、coach daily/weekly、goal scope propose、conjecture、agent-notes、proposal-appliers、`meeting/`（YUK-572 agent-led 例会 director + 写工具） |
 | `jobs/` | `dreaming_nightly`、`coach_daily`、`coach_weekly`、`goal_scope_propose_nightly`、`research_meeting_nightly`、`research_meeting_agent_nightly`（YUK-572 shadow lane，kill switch `RESEARCH_MEETING_AGENT_ENABLED` 默认 OFF） |

@@ -101,7 +101,9 @@ describe('runCoach', () => {
     expect(buildOptions.beforeExecute?.({ name: 'propose_over_cap', effect: 'propose' })).toMatch(
       /proposal cap reached/,
     );
-    expect(buildOptions.beforeExecute?.({ name: 'query_records', effect: 'read' })).toBeUndefined();
+    expect(
+      buildOptions.beforeExecute?.({ name: 'write_agent_note', effect: 'write' }),
+    ).toBeUndefined();
     for (let used = 7; used < COACH_CONTEXT_BUDGET.toolCalls.warning; used += 1) {
       expect(
         buildOptions.beforeExecute?.({ name: `query_warning_${used}`, effect: 'read' }),

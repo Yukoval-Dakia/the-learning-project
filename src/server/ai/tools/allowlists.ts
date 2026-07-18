@@ -35,6 +35,9 @@ export const READ_TOOLS = [
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
   // filters it back out (same containment as query_questions).
   'get_question_block_structure',
+  // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
+  // coach below; evaluator/operator surfaces filter it out.
+  'read_agent_notes',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -86,6 +89,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // capability). TAIL position mirrors the bootstrap CORE_TOOLS order (after
   // updateArtifactTool) — the listTools() inventory assertion depends on it.
   'propose_question_edit',
+  // YUK-293 — direct write to the expiring AI hint channel (not learner data,
+  // not an inbox proposal). Surface grants remain narrow below.
+  'write_agent_note',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -114,7 +120,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
   'propose_knowledge_mutation',
 ] as const satisfies readonly DomainToolName[];
 
-// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（五包 26 工具，YUK-362 纠正：YUK-270/ADR-0032/0033 后涨到 26，旧注释 stale 写 25），
+// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（YUK-293 后五包 28 工具），
 // 本数组保持字面量是因为 src/ai/registry.ts（浏览器共享面）import 本文件，
 // 不能把 @/capabilities 拉进 web bundle（plan 裁决 h）。两面一致性由
 // src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
@@ -122,7 +128,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // CORE_TOOLS 退役时点（phase-deferred）：bootstrap.ts registerCoreTools 不在 M5
 // 退役——它注册的是全工具面（含 attribute_mistake / propose_variant /
 // propose_record_links / propose_record_promotion 与题目结构编辑工具等非
-// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 26 条。退役条件 =
+// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 28 条。退役条件 =
 // 其余 surface（mistake_action / orchestrator / dreaming 等）也完成 manifest 化
 // （post-M5 follow-up，Linear capture 见 plan Task 10 交接清单）；届时删
 // registerCoreTools 调用，由 register-capability-tools.unit.test.ts 的幂等用例
@@ -195,6 +201,8 @@ export const COPILOT_TOOLS = [
   // surface inherits via the [...COPILOT_TOOLS, …] spread). No other surface gets
   // it — operator/planner surfaces do not edit active question structure.
   'propose_question_edit',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -210,6 +218,8 @@ const DREAMING_TOOLS = [
   'propose_record_promotion',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 // T-D6/C (YUK-120) — Coach surface allowlist.
@@ -239,6 +249,8 @@ const COACH_TOOLS = [
   'propose_knowledge_edge',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
+  'read_agent_notes',
+  'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
 // D7③ (docs/design/2026-06-04-u0-decisions.md) — deny-from-wide: the
@@ -260,11 +272,12 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name,
   ): name is Exclude<
     ReadDomainToolName,
-    'search_memory_facts' | 'query_questions' | 'get_question_block_structure'
+    'search_memory_facts' | 'query_questions' | 'get_question_block_structure' | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
-    name !== 'get_question_block_structure',
+    name !== 'get_question_block_structure' &&
+    name !== 'read_agent_notes',
 );
 
 const MAINTENANCE_TOOLS = [

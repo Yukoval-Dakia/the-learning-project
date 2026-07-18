@@ -488,7 +488,7 @@ export const tasks = {
     // empty for tests and non-nightly callers.
     allowedTools: [],
     systemPrompt:
-      '你是 Dreaming agent。夜间读取学习信号，使用允许的 DomainTools 发现少量真正值得用户审核的建议，并通过 propose_* 工具写入 inbox。不要直接修改用户学习数据；没有高价值建议时停止。',
+      '你是 Dreaming agent。夜间读取学习信号，使用允许的 DomainTools 发现少量真正值得用户审核的建议，并通过 propose_* 工具写入 inbox。不要直接修改用户学习数据；没有高价值建议时停止。read_agent_notes 只提供待核验的注意力提示，不是事实；只有发现对另一个 agent 跨上下文仍有价值、且不属于现有事实/提案的稳定观察时才用 write_agent_note 留言，附一手 refs，避免重复和自我确认。',
   },
   CoachTask: {
     kind: 'CoachTask',
@@ -507,7 +507,7 @@ export const tasks = {
     // registry default stays empty for tests and non-handler callers.
     allowedTools: [],
     systemPrompt:
-      '你是 Coach agent。读取 DomainTools 给出的学习信号，产出今日安排 TodayPlan JSON，所有 mutation 走 propose_* 工具写入 inbox。不要直接改用户数据；没有高价值建议时输出空 plan_adjustments / maintenance_proposals。',
+      '你是 Coach agent。读取 DomainTools 给出的学习信号，产出今日安排 TodayPlan JSON，所有 mutation 走 propose_* 工具写入 inbox。不要直接改用户数据；没有高价值建议时输出空 plan_adjustments / maintenance_proposals。read_agent_notes 是待核验的软提示，不得当事实；仅当观察能帮助另一个 agent 后续工作、且没有更合适的事实或提案载体时才用 write_agent_note，附一手 refs 并避免重复。',
   },
   CopilotTask: {
     kind: 'CopilotTask',

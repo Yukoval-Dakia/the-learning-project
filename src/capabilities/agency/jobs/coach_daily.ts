@@ -334,7 +334,7 @@ export async function runCoach(
       beforeExecute: (tool) => {
         const budgetReason = budgetTracker.beforeExecute(tool);
         if (budgetReason) return budgetReason;
-        if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
+        if (tool.effect !== 'propose') return undefined;
         if (proposalWrites >= COACH_MAX_PROPOSALS) {
           return `coach proposal cap reached (${COACH_MAX_PROPOSALS}); stop creating proposals in this run`;
         }
