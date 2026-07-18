@@ -17,7 +17,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { BandChip } from './BandChip';
-import { REL_CUE } from './MeshGraph';
 import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { humanizeActivity } from './humanize-activity';
@@ -28,6 +27,7 @@ import {
   vetoMisconception,
 } from './knowledge-api';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
+import { REL_CUE } from './relation-cue';
 import './knowledge.css';
 
 // S8 (YUK-335 audit §3.9)：活动时间线默认只渲前 N 条，其余折叠 —— 防 kd-side

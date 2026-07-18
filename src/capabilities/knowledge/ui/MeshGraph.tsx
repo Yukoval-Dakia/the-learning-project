@@ -11,6 +11,7 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
 import { masteryTone } from './mastery-tone';
+import { REL_CUE } from './relation-cue';
 
 // wire 的 KnowledgeTreeNode 无 kind 字段——hub 用「是否有子节点」代理判定
 // （存在别的 node.parent_id === 本 id ⇒ hub）。设计稿 kind:'hub' 节点 r=24，
@@ -18,18 +19,6 @@ import { masteryTone } from './mastery-tone';
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2.4;
 const clampZoom = (k: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k));
-
-// 5 类 typed 边的非颜色 cue（设计稿 data-2b.jsx REL_CUE）。
-export const REL_CUE: Record<
-  string,
-  { glyph: string; dash: string; label: string; arrow: boolean }
-> = {
-  prerequisite: { glyph: '→', dash: '0', label: '前置', arrow: true },
-  related_to: { glyph: '—', dash: '0', label: '相关', arrow: false },
-  contrasts_with: { glyph: '⇆', dash: '5 4', label: '对比', arrow: false },
-  applied_in: { glyph: '↦', dash: '1 5', label: '应用', arrow: true },
-  derived_from: { glyph: '↳', dash: '8 3', label: '派生', arrow: true },
-};
 
 export function MeshGraph({
   nodes,
