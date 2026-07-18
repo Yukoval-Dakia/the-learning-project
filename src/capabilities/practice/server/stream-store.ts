@@ -119,6 +119,9 @@ function streamPartitionLockKey(date: string, sessionId?: string | null): string
 // from truncation past capacity) ever saw them — an unenforced invariant (YUK-349).
 const DUE_INPUT_LIMIT = 200;
 const VARIANT_WINDOW_DAYS = 7;
+const VARIANT_FAILURE_EVENT_LIMIT = 200;
+/** Hard ceiling for mistake variants admitted to one composer/LLM input. */
+export const VARIANT_INPUT_LIMIT = 50;
 
 export async function resolveDailyPracticeBudget(
   db: DbLike,
@@ -194,7 +197,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         eq(event.subject_kind, 'question'),
         gte(event.created_at, since),
       ),
-    );
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(VARIANT_FAILURE_EVENT_LIMIT);
   const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
   const variantRows =
     failedQids.length === 0
@@ -211,7 +216,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
               isNotNull(mistake_variant.variant_question_id),
               inArray(mistake_variant.parent_question_id, failedQids),
             ),
-          );
+          )
+          .orderBy(desc(mistake_variant.created_at), desc(mistake_variant.id))
+          .limit(VARIANT_INPUT_LIMIT);
 
   // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
   const items = await db

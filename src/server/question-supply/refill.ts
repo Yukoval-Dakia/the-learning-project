@@ -70,6 +70,9 @@ import { inArray } from 'drizzle-orm';
  */
 export const REFILL_POOL_THRESHOLD = 2;
 
+/** Mirrors the nightly dispatch ceiling: one request may inspect/dispatch at most 25 KCs. */
+export const REFILL_MAX_PER_REQUEST = 25;
+
 /**
  * flag reader（运行时读 env，runtime-flippable + 测试可 set/unset；mirror resolveSelectionPolicy
  * 读 process.env.SELECTION_POLICY 的惯例）。默认 false（dark-ship）。`'true'` / `'1'` 为开。
@@ -151,7 +154,7 @@ export async function refillThinPools(
   const makeId = deps.makeId ?? newId;
 
   // open Q3 — in-request 去重：同 KC 被多个待做项引用 → 塌成一次池检查。
-  const unique = [...new Set(knowledgeIds.filter(Boolean))];
+  const unique = [...new Set(knowledgeIds.filter(Boolean))].slice(0, REFILL_MAX_PER_REQUEST);
   const outcomes: RefillOutcome[] = [];
 
   for (const kid of unique) {
