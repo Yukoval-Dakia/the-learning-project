@@ -154,7 +154,13 @@ export async function refillThinPools(
   const makeId = deps.makeId ?? newId;
 
   // open Q3 — in-request 去重：同 KC 被多个待做项引用 → 塌成一次池检查。
-  const unique = [...new Set(knowledgeIds.filter(Boolean))].slice(0, REFILL_MAX_PER_REQUEST);
+  const allUnique = [...new Set(knowledgeIds.filter(Boolean))];
+  if (allUnique.length > REFILL_MAX_PER_REQUEST) {
+    console.warn(
+      `[question_supply_refill] truncating ${allUnique.length} KCs to ${REFILL_MAX_PER_REQUEST}`,
+    );
+  }
+  const unique = allUnique.slice(0, REFILL_MAX_PER_REQUEST);
   const outcomes: RefillOutcome[] = [];
 
   for (const kid of unique) {
