@@ -92,7 +92,7 @@ const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db
   ...(params.ambient ? { ambient_context: params.ambient } : {}),
 });
 
-// 假 MCP server seam（buildMcpServerFromRegistry 默认会拉 CORE_TOOLS；测试隔离用
+// 假 MCP server seam（生产进程在 handler 注册前已完成 manifest tool 装配；测试隔离用
 // 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
 function mcpMock() {
   return vi.fn(() => ({ type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME }) as never);

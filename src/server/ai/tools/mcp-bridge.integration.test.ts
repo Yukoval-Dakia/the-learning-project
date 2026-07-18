@@ -3,12 +3,13 @@
 // (`parseEvent` inside `writeEvent`) and the resulting row + the
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
+import { capabilities } from '@/capabilities';
 import { event, memory_brief_note, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests } from './registry';
 import type { ToolContext } from './types';
 
@@ -62,9 +63,8 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    __resetBootstrapForTests();
     mockSdk.toolDefs = [];
-    registerCoreTools();
+    await registerCapabilityTools(capabilities);
   });
 
   it('agent:copilot caller writes tool_use event for query_mistakes', async () => {

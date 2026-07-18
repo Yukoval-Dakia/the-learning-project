@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { registerCapabilityCopilotTools } from '@/server/ai/tools/register-capability-tools';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool, registerTool } from '@/server/ai/tools/registry';
 import type { DomainTool } from '@/server/ai/tools/types';
 
@@ -19,33 +19,48 @@ const cap = (tools: CapabilityManifest['copilotTools']): CapabilityManifest => (
 
 afterEach(() => __resetRegistryForTests());
 
-describe('registerCapabilityCopilotTools', () => {
+describe('registerCapabilityTools', () => {
   it('懒加载 thunk 注册进 DomainTool registry', async () => {
-    await registerCapabilityCopilotTools([
+    await registerCapabilityTools([
       cap({ tools: [{ name: 't1', load: async () => fakeTool('t1') }] }),
     ]);
     expect(getTool('t1')).toBeDefined();
   });
 
-  it('已注册（CORE_TOOLS 幂等兜底先到）→ 跳过，不触发 duplicate throw', async () => {
+  it('已注册 → 幂等跳过，不触发 duplicate throw', async () => {
     registerTool(fakeTool('t1'));
     await expect(
-      registerCapabilityCopilotTools([
-        cap({ tools: [{ name: 't1', load: async () => fakeTool('t1') }] }),
-      ]),
+      registerCapabilityTools([cap({ tools: [{ name: 't1', load: async () => fakeTool('t1') }] })]),
     ).resolves.toBeUndefined();
   });
 
   it('manifest 声明名与模块导出名不一致 → throw', async () => {
     await expect(
-      registerCapabilityCopilotTools([
+      registerCapabilityTools([
         cap({ tools: [{ name: 't1', load: async () => fakeTool('OTHER') }] }),
       ]),
     ).rejects.toThrow(/t1.*OTHER/);
   });
 
   it('无 load 的 decl 是纯归属元数据，不被挂载', async () => {
-    await registerCapabilityCopilotTools([cap({ tools: [{ name: 't1' }] })]);
+    await registerCapabilityTools([cap({ tools: [{ name: 't1' }] })]);
     expect(getTool('t1')).toBeUndefined();
+  });
+
+  it('并发注册在 load await 窗口先到 → 二次检查保持幂等', async () => {
+    let releaseLoad: ((tool: DomainTool<unknown, unknown>) => void) | undefined;
+    const loaded = new Promise<DomainTool<unknown, unknown>>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const registration = registerCapabilityTools([
+      cap({ tools: [{ name: 't1', load: () => loaded }] }),
+    ]);
+
+    const winner = fakeTool('t1');
+    registerTool(winner);
+    releaseLoad?.(fakeTool('t1'));
+
+    await expect(registration).resolves.toBeUndefined();
+    expect(getTool('t1')).toBe(winner);
   });
 });

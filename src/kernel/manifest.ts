@@ -100,7 +100,7 @@ export interface JobDecl {
 }
 
 /**
- * M5-T3 (YUK-321) — Copilot 工具声明（贡献制）。
+ * M5-T3 / YUK-328 — DomainTool 归属声明（字段名沿用 copilotTools）。
  * name = DomainTool.name（全局唯一，validateComposition 第 6 循环守护）。
  * load 是懒加载 thunk（api.routes / jobs.handlers 同款先例）；缺省时为纯归属
  * 元数据，不被组合根挂载。返回类型用最小结构 { name }——kernel 不依赖
@@ -133,7 +133,7 @@ export interface CapabilityManifest {
   jobs?: { handlers: JobDecl[] };
   /** 本包拥有的 proposal kinds（M4 第一实例）：组合期查全局唯一 + 与 schema 枚举对账 */
   proposals?: { kinds: ProposalKindDecl[] };
-  /** 本包贡献的 Copilot 工具（M5-T3 第一实例）：组合期查全局唯一，挂载由组合根聚合器收集 */
+  /** 本包拥有的 DomainTools：组合期查全局唯一，启动期由组合根聚合器完整注册 */
   copilotTools?: { tools: CopilotToolDecl[] };
   /** 本包拥有的 shipped SPA 页面；路径统一来自 ui-surfaces inventory。 */
   ui?: { pages?: UiPageDecl[] };

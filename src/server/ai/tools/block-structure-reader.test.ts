@@ -6,11 +6,12 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { capabilities } from '@/capabilities';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { question_block } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import { getQuestionBlockStructureTool } from './context-readers';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool } from './registry';
 import type { ToolContext } from './types';
 
@@ -59,12 +60,11 @@ async function seedBlock(opts: {
 beforeEach(async () => {
   await resetDb();
   __resetRegistryForTests();
-  __resetBootstrapForTests();
 });
 
 describe('get_question_block_structure', () => {
-  it('registers as a read tool via registerCoreTools', () => {
-    registerCoreTools();
+  it('registers as a read tool via capability manifests', async () => {
+    await registerCapabilityTools(capabilities);
     const tool = getTool('get_question_block_structure');
     expect(tool).toBeTruthy();
     expect(tool?.effect).toBe('read');

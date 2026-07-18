@@ -59,10 +59,32 @@ if (process.env.RW_STATIC_DIR) {
   app.get('*', serveStatic({ root, path: 'index.html' }));
 }
 
-// esbuild CJS 禁 top-level await → async IIFE 形态（v2 §4 成文）；hydrate 先于
-// serve（启动日志序 = 「subjects hydrated」在「listening」之前，v2-test-8 断言）。
+async function registerToolsBeforeServe(): Promise<void> {
+  const { registerCapabilityTools } = await import('@/server/ai/tools/register-capability-tools');
+  await registerCapabilityTools(capabilities);
+  console.log('[rw:api] capability tools registered');
+}
+
+async function startInProcessWorker(): Promise<void> {
+  // db client / boss 在 loadEnv() 之后才能 import（模块顶层读 DATABASE_URL），
+  // 所以走动态 import，不进文件头 import 区。
+  const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
+    import('@/db/client'),
+    import('@/server/boss/start-worker'),
+    import('@/server/boss/shutdown'),
+  ]);
+  const boss = await startBossWorker(db);
+  installShutdownHandler(boss);
+  console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
+}
+
+// esbuild CJS 禁 top-level await → async IIFE 形态（v2 §4 成文）。YUK-328：
+// subjects hydrate + 完整 DomainTool manifest 注册都必须先于 serve；否则首个 AI
+// 请求可能观测到半空 registry。RW_WORKER 同样只在注册完成后启动。
+// 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
 void (async () => {
   await hydrateSubjectsBeforeServe();
+  await registerToolsBeforeServe();
   serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
@@ -70,36 +92,15 @@ void (async () => {
     console.log(`[rw:api] hono listening on :${info.port}`);
     console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
   });
-})();
 
-// M5-T3 (YUK-321)：copilotTools 贡献制——启动期把各包声明的工具注册进 DomainTool
-// registry。失败不拖死 API 面（mcp-bridge 的 registerCoreTools 幂等兜底仍覆盖全集，
-// 该兜底何时退役见 Task 3 的 allowlists 注记）。
-void (async () => {
-  const { registerCapabilityCopilotTools } = await import(
-    '@/server/ai/tools/register-capability-tools'
-  );
-  await registerCapabilityCopilotTools(capabilities);
-  console.log('[rw:api] capability copilot tools registered');
+  if (process.env.RW_WORKER === '1') {
+    void startInProcessWorker().catch((err) => {
+      // worker 起不来不该拖死 API 面：日志醒目 + API 继续服务（上传仍可用，
+      // 只是 job 不被消费）；dev 下看到这条就修。
+      console.error('[rw:api] in-process worker failed to start — jobs will NOT be consumed', err);
+    });
+  }
 })().catch((err) => {
-  console.error('[rw:api] copilot tool registration failed — CORE_TOOLS fallback covers', err);
+  console.error('[rw:api] startup failed before listen', err);
+  process.exit(1);
 });
-
-if (process.env.RW_WORKER === '1') {
-  // db client / boss 在 loadEnv() 之后才能 import（模块顶层读 DATABASE_URL），
-  // 所以走动态 import，不进文件头 import 区。
-  void (async () => {
-    const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
-      import('@/db/client'),
-      import('@/server/boss/start-worker'),
-      import('@/server/boss/shutdown'),
-    ]);
-    const boss = await startBossWorker(db);
-    installShutdownHandler(boss);
-    console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
-  })().catch((err) => {
-    // worker 起不来不该拖死 API 面：日志醒目 + API 继续服务（上传仍可用，
-    // 只是 job 不被消费）；dev 下看到这条就修。
-    console.error('[rw:api] in-process worker failed to start — jobs will NOT be consumed', err);
-  });
-}

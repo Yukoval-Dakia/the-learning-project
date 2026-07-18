@@ -8,6 +8,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { capabilities } from '@/capabilities';
 import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import {
   StructuredQuestion,
@@ -16,7 +17,6 @@ import {
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {
   addOptionTool,
   mergeQuestionsTool,
@@ -25,6 +25,7 @@ import {
   splitStemTool,
   updatePromptTool,
 } from './question-edit-tools';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool } from './registry';
 import type { ToolContext } from './types';
 
@@ -96,7 +97,6 @@ async function countEditEvents(blockId: string): Promise<number> {
 beforeEach(async () => {
   await resetDb();
   __resetRegistryForTests();
-  __resetBootstrapForTests();
 });
 
 // ---------------------------------------------------------------------------
@@ -104,8 +104,8 @@ beforeEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('question-edit-tools registry', () => {
-  it('registers all 6 structure-edit tools as write/local/when_causal', () => {
-    registerCoreTools();
+  it('registers all 6 structure-edit tools as write/local/when_causal', async () => {
+    await registerCapabilityTools(capabilities);
     for (const name of EDIT_TOOL_NAMES) {
       const tool = getTool(name);
       expect(tool, `tool ${name} registered`).toBeDefined();
@@ -115,7 +115,7 @@ describe('question-edit-tools registry', () => {
     }
   });
 
-  it('each tool summarize() returns a non-empty string under ~120 chars', () => {
+  it('each tool summarize() returns a non-empty string under ~120 chars', async () => {
     const samples: Array<[(typeof EDIT_TOOL_NAMES)[number], unknown, unknown]> = [
       ['update_prompt', { block_id: 'b', node_id: 'n12345678' }, { status: 'written' }],
       [
@@ -140,7 +140,7 @@ describe('question-edit-tools registry', () => {
         { status: 'written' },
       ],
     ];
-    registerCoreTools();
+    await registerCapabilityTools(capabilities);
     for (const [name, input, output] of samples) {
       const tool = getTool(name);
       // biome-ignore lint/suspicious/noExplicitAny: cross-typed summarize sample

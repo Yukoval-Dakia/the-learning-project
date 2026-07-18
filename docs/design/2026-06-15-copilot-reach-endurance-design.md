@@ -50,7 +50,7 @@ registry[Kind].copilot = {
 }
 ```
 
-原语四步: 校验意图 against intentSchema → 跑 prepare（承载专属预处理，**不可省**——naive run_task 会 bypass id 校验/profile/归一）→ dispatch task → typed 输出 → applier。加新任务进可达范围 = 声明 3 字段,**不是**今天的五处手接线（bootstrap CORE_TOOLS 顺序 + allowlists + 包 manifest + copilot-tools.unit.test.ts 计数 + 工具文件）。prepare 平凡的 ≈ identity，近零仪式；prepare 承重的就老实搬进去。
+原语四步: 校验意图 against intentSchema → 跑 prepare（承载专属预处理，**不可省**——naive run_task 会 bypass id 校验/profile/归一）→ dispatch task → typed 输出 → applier。加新任务进可达范围 = 声明 3 字段,**不是**今天的多处手接线（surface allowlists + 包 manifest + copilot-tools.unit.test.ts 计数 + 工具文件）。prepare 平凡的 ≈ identity，近零仪式；prepare 承重的就老实搬进去。
 
 ### 2.3 结构型 reach = typed apply（不 schemaless）
 
@@ -93,14 +93,14 @@ GC:     prune_job_events cron 每日 04:00                                     [
 ## 4. checkpoint 耦合
 
 - **PR 何时关**: per-utterance PR 要等「该句话派出的所有 durable job 落完事件」才关闭可审。这回答了 checkpoint 文档悬着的「异步时 PR 何时关」。
-- **`propose_*` 命名债**: 8 个直接结构化写今天叫 `propose_knowledge_edge` 等,语义是 propose-then-accept。checkpoint live+revert 下它们已是「live 写 + 可撤」,`propose_*` 成误名。**记为命名债 + follow-up rename**——不在设计阶段做这种触及五处的机械改名,实施波次统一改（连同 allowlists/manifest/bootstrap/测试计数）。
+- **`propose_*` 命名债**: 8 个直接结构化写今天叫 `propose_knowledge_edge` 等,语义是 propose-then-accept。checkpoint live+revert 下它们已是「live 写 + 可撤」,`propose_*` 成误名。**记为命名债 + follow-up rename**——不在设计阶段做这种多面机械改名,实施波次统一改（连同 allowlists/manifest/测试计数）。
 - `author_question` 今天走 `draft_status='draft'` + question_draft proposal + 人审 accept→promote。checkpoint 下题直接 live（draft→active 或直接 active）进 PR、可整撤;`draft_status`「accept 前不可见」是 checkpoint 前身,实施时复用或退役（收口项）。
 
 ## 5. 诚实标天花板（成本买不动的有效性边界）
 
 1. **mimo 长程连贯性**: copilot 跑 mimo-v2.5 非 Claude（`registry.ts:493`）。无限轮买不来连贯——endurance 基建 ≠ endurance 质量,模型本身漂移是天花板。
 2. **通用原语放大注入面**: 五防注入从锦上添花变承重墙（dispatch 范围由 prompt/意图决定）。
-3. **worker 面 copilotTools 半接线 = CORE_TOOLS 退役时的 follow-up，非 endurance 硬前置**（YUK-362 / 2026-06-15 grounding 纠正本条原标错的严重度）。worker 跑的每个 AI job 经 `buildMcpServerFromRegistry`（`mcp-bridge.ts:133-134`），其幂等 `registerCoreTools()` 把 **CORE_TOOLS 全集（41 条，是 manifest union 26 的真超集）** 填进本进程 registry——所以 durable copilot job 走 `buildMcpServerFromRegistry`（必走）就自动有全集工具，**不缺、不阻塞**。真正的接线缺口只在 CORE_TOOLS *退役*（其余 15 条非 copilot surface 也 manifest 化、删 `registerCoreTools` 调用）那天才显形，届时 worker 须自调 `registerCapabilityCopilotTools`——那是 post-M5 更大工作（见 YUK-362「不做」节），不在 endurance W1 scope。
+3. **worker 面 copilotTools 半接线已由 YUK-328 关闭（2026-07-18）**。完整 37-tool inventory 现从 capability manifests 派生；API 在 listen 前、独立 worker 在注册 handlers 前 await 同一 `registerCapabilityTools` interface。请求期 `registerCoreTools` / CORE_TOOLS bootstrap 已退役，durable copilot 与同步面共享唯一归属真相源。
 4. **sync/async 阈值**: 切错（短活误判长程）= 平白多一次 job 往返延迟;阈值要按真实 timeout 分布调,非拍脑袋。
 5. **reply_delta 体量**: token 级 delta 落 job_events = 高写入 + 表膨胀,可能盖过 ingestion。**真分叉**:批量写(每 N token/200ms)或只持久化粗 `step`、细 delta in-request best-effort(重连重放 step 不重放每 token)。prune cron 在(`handlers.ts:75`),但量级要重估。
 6. **打断要 cancellation-aware**: cancel 卡在 Agent SDK 子进程里的 job,handler 须在回合间查 abort 协作停,不白给。
