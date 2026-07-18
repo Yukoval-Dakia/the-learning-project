@@ -25,9 +25,9 @@ import {
   type KnowledgeNodePage,
   type NoteSummary,
   getMisconceptions,
-  getNodePage,
   vetoMisconception,
 } from './knowledge-api';
+import { knowledgeNodeQueryOptions } from './knowledge-node-query';
 import './knowledge.css';
 
 // S8 (YUK-335 audit §3.9)：活动时间线默认只渲前 N 条，其余折叠 —— 防 kd-side
@@ -148,7 +148,7 @@ export default function KnowledgeDetailPage({
   const queryClient = useQueryClient();
   // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
   // navigating here after any cross-surface mutation still performs the existing refetch.
-  const pageQ = useQuery({ queryKey: ['knowledge-node', id], queryFn: () => getNodePage(id) });
+  const pageQ = useQuery(knowledgeNodeQueryOptions(id));
 
   // A5 S4 (YUK-531 PR-5) — 「指向此点的误区」per-KC funnel（confirmed RT1 误区 + candidate 猜想/候选）。
   const miscQ = useQuery({

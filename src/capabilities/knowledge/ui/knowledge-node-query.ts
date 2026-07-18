@@ -6,10 +6,16 @@ import { getNodePage } from './knowledge-api';
 // a mutation still refetches even when a drawer populated the shared key moments earlier.
 export const KNOWLEDGE_NODE_DRAWER_STALE_TIME_MS = 60_000;
 
-export function knowledgeNodeDrawerQueryOptions(id: string) {
+export function knowledgeNodeQueryOptions(id: string) {
   return queryOptions({
     queryKey: ['knowledge-node', id] as const,
     queryFn: () => getNodePage(id),
+  });
+}
+
+export function knowledgeNodeDrawerQueryOptions(id: string) {
+  return queryOptions({
+    ...knowledgeNodeQueryOptions(id),
     staleTime: KNOWLEDGE_NODE_DRAWER_STALE_TIME_MS,
   });
 }
