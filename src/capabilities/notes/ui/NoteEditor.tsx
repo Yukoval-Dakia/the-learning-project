@@ -122,16 +122,15 @@ export function NoteEditor({
   const removeAt = (i: number) => {
     onChange(blocks.filter((_, j) => j !== i));
   };
+  const moveBlock = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= blocks.length || to >= blocks.length) return;
+    const next = [...blocks];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
   const onDrop = (i: number) => {
-    if (dragIdx == null || dragIdx === i) {
-      setDragIdx(null);
-      setOverIdx(null);
-      return;
-    }
-    const a = [...blocks];
-    const [m] = a.splice(dragIdx, 1);
-    a.splice(i, 0, m);
-    onChange(a);
+    if (dragIdx != null) moveBlock(dragIdx, i);
     setDragIdx(null);
     setOverIdx(null);
   };
@@ -215,6 +214,12 @@ export function NoteEditor({
           b.type === 'crossLinkBlock' ||
           b.type === 'questionRefBlock' ||
           b.attrs?.semantic_kind === 'check';
+        const reorderLabel =
+          blocks.length < 2
+            ? `第 ${i + 1} 块（共 1 块，无需重排）`
+            : `重排第 ${i + 1} 块（共 ${blocks.length} 块）；用上下方向键移动`;
+        const insertLabel = `在第 ${i + 1} 块后插入块`;
+        const deleteLabel = `删除第 ${i + 1} 块`;
         return (
           <div
             key={b.attrs?.id ?? `${b.type}-${i}`}
@@ -231,12 +236,22 @@ export function NoteEditor({
               <button
                 type="button"
                 className="nb-grip"
-                draggable
-                title="拖拽重排"
+                draggable={blocks.length > 1}
+                disabled={blocks.length < 2}
+                aria-label={reorderLabel}
+                aria-keyshortcuts={blocks.length > 1 ? 'ArrowUp ArrowDown' : undefined}
+                title={reorderLabel}
                 onDragStart={() => setDragIdx(i)}
                 onDragEnd={() => {
                   setDragIdx(null);
                   setOverIdx(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                  e.preventDefault();
+                  const to = e.key === 'ArrowUp' ? i - 1 : i + 1;
+                  if (to < 0 || to >= blocks.length) return;
+                  moveBlock(i, to);
                 }}
               >
                 <LoomIcon name="grip" size={14} />
@@ -244,7 +259,9 @@ export function NoteEditor({
               <button
                 type="button"
                 className="nb-plus"
-                title="插入块 (/)"
+                aria-label={insertLabel}
+                aria-expanded={slashAt === i}
+                title={insertLabel}
                 onClick={() => {
                   setSlashAt(slashAt === i ? null : i);
                   setPicker('none');
@@ -252,7 +269,13 @@ export function NoteEditor({
               >
                 <LoomIcon name="slash" size={13} />
               </button>
-              <button type="button" className="nb-plus" title="删除块" onClick={() => removeAt(i)}>
+              <button
+                type="button"
+                className="nb-plus"
+                aria-label={deleteLabel}
+                title={deleteLabel}
+                onClick={() => removeAt(i)}
+              >
                 <LoomIcon name="trash" size={13} />
               </button>
             </div>
