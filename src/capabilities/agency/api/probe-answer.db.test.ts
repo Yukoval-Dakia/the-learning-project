@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ProbeAnswerResponseSchema } from './contracts';
@@ -158,6 +159,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
   beforeEach(async () => {
     await resetDb();
     await seedKnowledge();
+    __resetRateLimitForTests();
     mockInvoke.mockReset();
   });
 
@@ -270,6 +272,30 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     const events = await probeResultEvents(probeId);
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({ resolution: 'confirmed', outcome: 0 });
+  });
+
+  it('persists a per-probe claim before judging so concurrent answers pay at most once', async () => {
+    const probeId = await serveProbe();
+    let releaseJudge: ((value: ReturnType<typeof invokeResult>) => void) | undefined;
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseJudge = resolve;
+        }),
+    );
+
+    const firstPromise = answer(probeId, 'cos(x^2)');
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
+
+    const concurrent = await answer(probeId, '2x·cos(x^2)');
+    expect(concurrent.status).toBe(409);
+    expect(concurrent.headers.get('Retry-After')).toBeTruthy();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+    releaseJudge?.(invokeResult('incorrect'));
+    const first = await firstPromise;
+    expect(first.status).toBe(200);
+    expect(await probeResultEvents(probeId)).toHaveLength(1);
   });
 
   it('judge unsupported → 422 fail-closed, NO probe_result written, probe stays active', async () => {

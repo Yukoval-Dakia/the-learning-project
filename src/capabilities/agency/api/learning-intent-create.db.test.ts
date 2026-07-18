@@ -1,14 +1,20 @@
 import { event } from '@/db/schema';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
 import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildCreateLearningIntentHandler } from './learning-intent-create';
 
 const db = testDb();
 
-beforeEach(() => resetDb());
+beforeEach(async () => {
+  __resetRateLimitForTests();
+  await resetDb();
+});
+
+afterEach(() => vi.unstubAllEnvs());
 
 function request(body: unknown): Request {
   return new Request('http://localhost/api/learning-intents', {
@@ -158,6 +164,39 @@ describe('POST /api/learning-intents', () => {
     // WITHOUT another paid run (runTaskFn stays at 1; old code would reach 2).
     const second = await handler(request({ topic: '组合数学' }));
     expect(second.status).toBe(200);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('rate-limits fresh paid outlines while same-topic proposal replays stay free', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    vi.stubEnv('AI_RATE_LIMIT_WINDOW_MS', '60000');
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root_limits', name: '极限', domain: 'math' },
+          children: [{ temp_id: 'limit_basics', name: '极限基础', domain: 'math' }],
+        },
+        hub: { title: '极限主线', summary_md: '极限基础。' },
+        atomics: [
+          { knowledge_id: 'limit_basics', title: '极限基础', one_line_intent: '理解极限。' },
+        ],
+        longs: [],
+      }),
+      task_run_id: 'run_limits_1',
+      cost_usd: 0.001,
+    }));
+    const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
+
+    const first = await handler(request({ topic: '极限' }));
+    expect(first.status).toBe(200);
+
+    // Existing proposal restore happens before the limiter and must remain free.
+    const replay = await handler(request({ topic: '极限' }));
+    expect(replay.status).toBe(200);
+
+    const blocked = await handler(request({ topic: '微积分' }));
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('Retry-After')).toBeTruthy();
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 });

@@ -11,8 +11,9 @@
 //     attempt / θ̂ — the FSRS write in submit.ts happens AFTER the judge call, in
 //     submit's own code, not inside the invoker (verified: `invoker.ts` has zero
 //     fsrs/attempt/event writes). The invoker is judge-only.
-//   - the only write on THIS route is `answerProbe`, which writes exactly ONE
-//     `experimental:probe_result` event (ND-5-confirmed in probe-lifecycle.ts).
+//   - this route writes a paid-judge claim marker before invoking the model, then
+//     `answerProbe` writes exactly ONE `experimental:probe_result` outcome event.
+//     Neither path writes attempt / FSRS / learner-state rows.
 //   - the earlier "isolated registry path" (`resolveJudge().run()`) was a
 //     defect (review PR #705 CRITICAL): the base registry's semantic runner is a
 //     profile-validation STUB returning coarse_outcome='unsupported' — so every
@@ -33,7 +34,7 @@
 // probe_result written, the probe stays served-but-unanswered. A partial does
 // not discriminate cleanly; injecting ambiguous evidence into an n=1
 // calibration anchor would poison the soft-track signal. The owner can re-answer
-// (the slot is still active) or resolve via the admin reader (S4).
+// after the paid-judge claim cooldown or resolve via the admin reader (S4).
 //
 // Idempotency: a cheap `peekExistingProbeResult` pre-check short-circuits a
 // re-answer to the RECORDED outcome/resolution WITHOUT invoking the judge (LLM
@@ -47,13 +48,18 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { eq } from 'drizzle-orm';
-import { answerProbe, peekExistingProbeResult } from '../server/conjecture/probe-lifecycle';
+import {
+  answerProbe,
+  claimProbeJudging,
+  peekExistingProbeResult,
+} from '../server/conjecture/probe-lifecycle';
 import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from './contracts';
 
 /**
@@ -189,6 +195,22 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           422,
         );
       }
+    }
+
+    // YUK-691 — close both amplification dimensions immediately before the paid
+    // call: the process-wide AI budget bounds bursts across probes, while the
+    // persisted per-probe claim closes concurrent read-then-judge races.
+    checkRateLimit();
+    const claimedResult = await claimProbeJudging(db, probeQuestionId);
+    if (claimedResult) {
+      return Response.json({
+        status: claimedResult.status,
+        resolution: claimedResult.status,
+        outcome: claimedResult.outcome,
+        probe_result_event_id: claimedResult.probe_result_event_id,
+        coarse_outcome: null,
+        idempotent: true,
+      });
     }
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
