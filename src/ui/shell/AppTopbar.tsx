@@ -27,6 +27,8 @@ export interface AppTopbarProps {
   onOpenPalette: () => void;
   /** 打开 Copilot dock。 */
   onOpenCopilot: () => void;
+  /** 待查看的主动提示数；显示在真正可见的 Copilot launcher 上。 */
+  copilotNudgeCount?: number;
 }
 
 export function AppTopbar({
@@ -36,6 +38,7 @@ export function AppTopbar({
   railCollapsed,
   onOpenPalette,
   onOpenCopilot,
+  copilotNudgeCount = 0,
 }: AppTopbarProps) {
   const title = titleFromPath(pathname);
   const param = breadcrumbParamFromPath(pathname);
@@ -79,13 +82,26 @@ export function AppTopbar({
         <span>{COMMAND_PALETTE_PLACEHOLDER}</span>
         <kbd>⌘K</kbd>
       </button>
-      <IconBtn
-        icon="copilot"
-        size={18}
-        title="Copilot"
-        aria-label="Copilot"
-        onClick={onOpenCopilot}
-      />
+      <span className="relative inline-flex">
+        <IconBtn
+          icon="copilot"
+          size={18}
+          title="Copilot"
+          aria-label={
+            copilotNudgeCount > 0 ? `Copilot，${copilotNudgeCount} 条主动提示` : 'Copilot'
+          }
+          onClick={onOpenCopilot}
+        />
+        {copilotNudgeCount > 0 ? (
+          <span
+            className="pointer-events-none absolute -top-[4px] -right-[4px] flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[var(--ink-2)] px-[4px] text-[10px] font-medium leading-none text-[var(--surface,#fff)]"
+            data-testid="copilot-nudge-launcher-badge"
+            aria-hidden="true"
+          >
+            {copilotNudgeCount}
+          </span>
+        ) : null}
+      </span>
     </header>
   );
 }

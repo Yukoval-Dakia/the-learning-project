@@ -52,6 +52,7 @@ function RootShell() {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [copilotNudgeCount, setCopilotNudgeCount] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileLayout, setMobileLayout] = useState(
     () =>
@@ -104,10 +105,9 @@ function RootShell() {
   const inboxCount = summaryQ.data?.proposals.decision_total;
   const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;
 
-  // Copilot 开启：CopilotDock 自带的 in-flow trigger（data-testid
-  // copilot-drawer-trigger，调用其 explicit openDrawer）经 .shell-copilot-mount CSS
-  // 隐藏（web/src/globals.css L5997-6000，原为本壳预留的 dead CSS）；侧栏 / topbar
-  // 的 Copilot 按钮以编程方式点击该隐藏 trigger 走既有 dock-open 路径，不造新机制。
+  // Copilot 开启：CopilotDock 自带的 in-flow launcher wrapper 经
+  // .shell-copilot-mount CSS 隐藏；侧栏 / topbar 的正式按钮以编程方式点击其内部
+  // trigger（data-testid=copilot-drawer-trigger）走既有 dock-open 路径，不造新机制。
   const copilotMountRef = useRef<HTMLDivElement | null>(null);
   const openCopilot = useCallback(() => {
     copilotMountRef.current
@@ -162,6 +162,7 @@ function RootShell() {
           railCollapsed={railCollapsed}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenCopilot={openCopilot}
+          copilotNudgeCount={copilotNudgeCount}
         />
         <Outlet />
       </ShellMain>
@@ -173,9 +174,14 @@ function RootShell() {
       />
 
       {/* CopilotDock 根挂（保留既有实例 + explicit-open + navigate/pathname 接线）。
-          .shell-copilot-mount 隐藏其 in-flow trigger；drawer 本身 fixed 渲到根。 */}
+          .shell-copilot-mount 隐藏其 launcher wrapper；drawer 本身 fixed 渲到根。
+          nudge 数量上提给 AppTopbar 的可见 launcher，避免重复入口。 */}
       <div ref={copilotMountRef} className="shell-copilot-mount">
-        <CopilotDock pathname={pathname} navigate={navigate} />
+        <CopilotDock
+          pathname={pathname}
+          navigate={navigate}
+          onNudgeCountChange={setCopilotNudgeCount}
+        />
       </div>
 
       {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；

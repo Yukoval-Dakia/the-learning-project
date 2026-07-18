@@ -209,9 +209,11 @@ export interface CopilotDockProps {
   pathname: string;
   /** M5-T3 (YUK-321) — route push, forwarded to CopilotHeroCard for hero href jumps. */
   navigate: (to: string) => void;
+  /** Keep the visible shell launcher in sync with pending proactive nudges. */
+  onNudgeCountChange?: (count: number) => void;
 }
 
-export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
+export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotDockProps) {
   // YUK-577 — proactive-nudge state. A pending nudge is rendered as a badge/bar; the drawer itself
   // opens only after the user clicks it. The legacy blind dwell/revisit auto-open path is gone.
   const {
@@ -220,6 +222,9 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     markOpened,
     isMutating: nudgeMutating,
   } = useCopilotNudges();
+  useEffect(() => {
+    onNudgeCountChange?.(nudges.length);
+  }, [nudges.length, onNudgeCountChange]);
   const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
   const prepareAndOpenDrawer = useCallback(() => {
     preloadMarkdownRenderer();
@@ -774,9 +779,10 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
 
   return (
     <>
-      {/* YUK-577 — ① collapsed-launcher count badge (owner-approved落点). Agent-tone (var(--ink-2),
-          NOT alert-red — invitation not error); pointer-events-none so it never blocks the button. */}
-      <span className="relative inline-flex">
+      {/* The shell drives this internal launcher programmatically and hides the
+          whole wrapper. YUK-577's visible nudge count lives on AppTopbar's real
+          launcher, fed through onNudgeCountChange. */}
+      <span className="copilot-launcher relative inline-flex">
         <Button
           variant="quiet"
           size="sm"
@@ -786,15 +792,6 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
         >
           召唤 Copilot
         </Button>
-        {nudges.length > 0 ? (
-          <span
-            className="pointer-events-none absolute -top-[4px] -right-[4px] flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[var(--ink-2)] px-[4px] text-[10px] font-medium leading-none text-[var(--surface,#fff)]"
-            data-testid="copilot-nudge-launcher-badge"
-            aria-label={`${nudges.length} 条主动提示`}
-          >
-            {nudges.length}
-          </span>
-        ) : null}
       </span>
       <CopilotDrawer
         open={open}
