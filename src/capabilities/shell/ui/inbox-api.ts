@@ -114,6 +114,8 @@ interface ProposalPageWire {
   decision_truncated?: boolean;
   /** Present on the merged Inbox response when the bounded C-lane preview has more rows. */
   observation_truncated?: boolean;
+  /** The non-critical C-lane preview failed; actionable decisions are still complete/usable. */
+  observation_unavailable?: boolean;
 }
 
 const DECISION_PAGE_LIMIT = 500;
@@ -162,10 +164,16 @@ async function listAllDecisionProposals(): Promise<{
  * large C-strength backlog from making Today advertise decisions that the Inbox cannot reach.
  */
 export async function listProposals(): Promise<ProposalPageWire> {
-  const [decisionPage, observationPage] = await Promise.all([
+  const [decisionPage, observationResult] = await Promise.all([
     listAllDecisionProposals(),
-    listProposalPage('observation', OBSERVATION_PAGE_LIMIT),
+    listProposalPage('observation', OBSERVATION_PAGE_LIMIT)
+      .then((page) => ({ page, unavailable: false as const }))
+      .catch(() => ({
+        page: { rows: [] as ProposalInboxRow[], next_cursor: null },
+        unavailable: true as const,
+      })),
   ]);
+  const observationPage = observationResult.page;
   return {
     rows: [...decisionPage.rows, ...observationPage.rows],
     // This response merges a fully consumed decision lane with one bounded
@@ -174,6 +182,7 @@ export async function listProposals(): Promise<ProposalPageWire> {
     next_cursor: null,
     decision_truncated: decisionPage.truncated,
     observation_truncated: observationPage.next_cursor !== null,
+    observation_unavailable: observationResult.unavailable,
   };
 }
 

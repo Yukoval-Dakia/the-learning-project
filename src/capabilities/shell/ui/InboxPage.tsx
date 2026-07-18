@@ -268,6 +268,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   const rows = q.data?.rows ?? [];
   const decisionTruncated = q.data?.decision_truncated === true;
   const observationTruncated = q.data?.observation_truncated === true;
+  const observationUnavailable = q.data?.observation_unavailable === true;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
 
@@ -444,9 +445,16 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         </section>
 
         {/* ── C 档 · 纯状态（折叠） ── */}
-        {(moved.length > 0 || observationTruncated) && (
+        {(moved.length > 0 || observationTruncated || observationUnavailable) && (
           <section>
             <TierHead tier="C" count={moved.length} />
+            {observationUnavailable && (
+              <LoomCard pad sunk>
+                <div className="meta" role="status">
+                  AI 观察记录暂时无法加载；上方待裁决提议不受影响，可以继续处理。
+                </div>
+              </LoomCard>
+            )}
             {observationTruncated && (
               <LoomCard pad sunk>
                 <div className="meta">

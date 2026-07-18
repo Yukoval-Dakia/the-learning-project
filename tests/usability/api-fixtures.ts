@@ -39,7 +39,14 @@ function weekHeat(): Array<{ day: string; count: number }> {
 
 function workbenchSummary(isEmpty: boolean) {
   return {
-    proposals: { total: 0, by_kind: {}, status: 'pending' },
+    proposals: {
+      total: 0,
+      decision_total: 0,
+      by_kind: {},
+      has_more: false,
+      limit: 50_000,
+      status: 'pending',
+    },
     kpi: {
       due_count: isEmpty ? 0 : 2,
       pending_attribution_count: 0,

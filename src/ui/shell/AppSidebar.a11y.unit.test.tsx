@@ -49,4 +49,18 @@ describe('AppSidebar mobile accessibility', () => {
     );
     expect(container.querySelector('aside')?.hasAttribute('inert')).toBe(false);
   });
+
+  it('keeps the Inbox badge visible without fabricating an exact truncated count', () => {
+    render(
+      <AppSidebar
+        {...baseProps}
+        inboxCount={0}
+        inboxCountUncertain
+        mobileLayout={false}
+        mobileOpen={false}
+      />,
+    );
+
+    expect(screen.getByLabelText('待审提议数量未完全统计').textContent).toBe('?');
+  });
 });

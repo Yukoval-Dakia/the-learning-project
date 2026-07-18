@@ -44,6 +44,7 @@ describe('listProposals', () => {
     expect(page.next_cursor).toBeNull();
     expect(page.decision_truncated).toBe(false);
     expect(page.observation_truncated).toBe(true);
+    expect(page.observation_unavailable).toBe(false);
     expect(apiJsonMock).toHaveBeenNthCalledWith(
       1,
       '/api/proposals?lane=decision&limit=500&status=pending',
@@ -56,6 +57,19 @@ describe('listProposals', () => {
       3,
       '/api/proposals?lane=decision&limit=500&status=pending&cursor=d2',
     );
+  });
+
+  it('keeps actionable decisions available when the observation preview fails', async () => {
+    apiJsonMock
+      .mockResolvedValueOnce({ rows: [proposal('decision_1', 'learning_item')], next_cursor: null })
+      .mockRejectedValueOnce(new Error('observation preview unavailable'));
+
+    const page = await listProposals();
+
+    expect(page.rows.map((row) => row.id)).toEqual(['decision_1']);
+    expect(page.decision_truncated).toBe(false);
+    expect(page.observation_truncated).toBe(false);
+    expect(page.observation_unavailable).toBe(true);
   });
 
   it('fails visibly instead of looping forever on a repeated decision cursor', async () => {

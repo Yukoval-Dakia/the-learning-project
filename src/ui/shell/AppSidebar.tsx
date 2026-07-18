@@ -36,8 +36,10 @@ export interface AppSidebarProps {
   onToggleTheme: () => void;
   /** 任一 nav 动作后回调，让 RootShell 关闭移动 drawer。 */
   onNavigated?: () => void;
-  /** 收件箱待审提议数（workbench summary proposals.total）；>0 才渲 count badge。 */
+  /** 收件箱待审提议数（workbench summary proposals.decision_total）。 */
   inboxCount?: number;
+  /** true 时 inboxCount 只是下界；即使为 0 也保留一个未知量入口。 */
+  inboxCountUncertain?: boolean;
 }
 
 export function AppSidebar({
@@ -50,6 +52,7 @@ export function AppSidebar({
   onToggleTheme,
   onNavigated,
   inboxCount,
+  inboxCountUncertain,
 }: AppSidebarProps) {
   const active = activeFromPath(pathname);
 
@@ -107,9 +110,16 @@ export function AppSidebar({
             >
               <LoomIcon name={entry.icon} size={19} />
               <span className="nav-label">{entry.label}</span>
-              {/* count 仅 inbox 接真值（proposals.total）；>0 才渲，无真源不 fabricate。 */}
-              {entry.id === 'inbox' && inboxCount != null && inboxCount > 0 ? (
-                <span className="nav-count tnum">{inboxCount}</span>
+              {/* 精确值 >0 才渲；截断时以 ? / N+ 明示不确定性，不 fabricate 精确零。 */}
+              {entry.id === 'inbox' &&
+              inboxCount != null &&
+              (inboxCount > 0 || inboxCountUncertain) ? (
+                <span
+                  className="nav-count tnum"
+                  aria-label={inboxCountUncertain ? '待审提议数量未完全统计' : undefined}
+                >
+                  {inboxCountUncertain ? (inboxCount > 0 ? `${inboxCount}+` : '?') : inboxCount}
+                </span>
               ) : null}
             </button>
           ),

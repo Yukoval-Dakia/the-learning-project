@@ -37,12 +37,21 @@ export function ProposalStrip({
           去收件箱
         </Btn>
       </div>
-      {proposals.decision_total === 0 ? (
+      {proposals.decision_total === 0 && !proposals.has_more ? (
         <div className="quiet-empty">没有待审提议。</div>
       ) : (
         <div className="prop-summary">
-          <div className="prop-summary-n serif tnum">{proposals.decision_total}</div>
+          <div className="prop-summary-n serif tnum">
+            {proposals.has_more
+              ? proposals.decision_total > 0
+                ? `≥${proposals.decision_total}`
+                : '?'
+              : proposals.decision_total}
+          </div>
           <div className="prop-summary-kinds">
+            {proposals.has_more && (
+              <span className="meta">计数已达扫描上限，可能还有待审提议。</span>
+            )}
             {breakdown.map(([k, n]) => {
               const meta = kindMeta(k);
               return (

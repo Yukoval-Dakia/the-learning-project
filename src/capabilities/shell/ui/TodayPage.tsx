@@ -61,7 +61,7 @@ interface Thread {
 
 // 「今日之线」派生：设计稿 DATA.threads 是策展假数据；真数据从 summary 聚合
 // 派生两缕（复习/裁决），未来夜链交班缕随 M5 task_run 读模型补。
-function deriveThreads(s: WorkbenchSummary): Thread[] {
+export function deriveThreads(s: WorkbenchSummary): Thread[] {
   const threads: Thread[] = [];
   if (s.kpi.due_count > 0) {
     threads.push({
@@ -76,14 +76,22 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
       route: '/practice',
     });
   }
-  if (s.proposals.decision_total > 0) {
+  if (s.proposals.decision_total > 0 || s.proposals.has_more) {
+    const countKnown = s.proposals.decision_total > 0;
+    const countLabel = s.proposals.has_more
+      ? countKnown
+        ? `≥${s.proposals.decision_total} 条`
+        : '待检查'
+      : `${s.proposals.decision_total} 条`;
     threads.push({
       id: 'inbox',
       label: '裁决',
-      title: `${s.proposals.decision_total} 条 AI 提议待审`,
-      sub: '逐条查看，再决定采用或暂不采用。',
+      title: countKnown ? `${countLabel} AI 提议待审` : '提议队列需要检查',
+      sub: s.proposals.has_more
+        ? '计数已达扫描上限，可能仍有待裁决项。'
+        : '逐条查看，再决定采用或暂不采用。',
       cta: '去收件箱',
-      badge: `${s.proposals.decision_total} 条`,
+      badge: countLabel,
       icon: 'inbox',
       tone: 'info',
       route: '/inbox',
@@ -498,6 +506,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
             <KpiRow
               kpi={s.kpi}
               proposalsDecisionTotal={s.proposals.decision_total}
+              proposalsHasMore={s.proposals.has_more}
               navigate={navigate}
             />
 

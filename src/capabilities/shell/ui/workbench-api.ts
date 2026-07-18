@@ -13,6 +13,8 @@ export interface WorkbenchSummary {
     total: number;
     decision_total: number;
     by_kind: Record<string, number>;
+    has_more: boolean;
+    limit: number;
     status: string;
   };
   kpi: {
