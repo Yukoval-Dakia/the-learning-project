@@ -15,7 +15,6 @@ import { useRef, useState } from 'react';
 
 import { BandChip } from './BandChip';
 import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
-import { REL_CUE } from './MeshGraph';
 import {
   type EdgeProposalInboxRow,
   type KnowledgeEdgeRow,
@@ -25,6 +24,7 @@ import {
   edgeProposalOperation,
 } from './knowledge-api';
 import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
+import { REL_CUE } from './relation-cue';
 
 // decay → 非颜色 cue（设计稿 DECAY_META；bucket 与 server 的
 // mastery_decay_bucket 不同——树行没有 bucket，按 mastery 粗分代理，
