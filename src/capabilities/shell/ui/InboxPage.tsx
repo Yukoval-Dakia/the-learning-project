@@ -450,9 +450,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
             <TierHead tier="C" count={moved.length} />
             {observationUnavailable && (
               <LoomCard pad sunk>
-                <div className="meta" role="status">
+                <output className="meta">
                   AI 观察记录暂时无法加载；上方待裁决提议不受影响，可以继续处理。
-                </div>
+                </output>
               </LoomCard>
             )}
             {observationTruncated && (
