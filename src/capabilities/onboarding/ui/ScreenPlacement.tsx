@@ -22,6 +22,7 @@ import {
   computeLatencyMs,
   getQuestion,
 } from '@/capabilities/practice/ui/practice-api';
+import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';
 import { Btn } from '@/ui/primitives/Btn';
@@ -31,7 +32,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import {
   type PlacementQuestionRef,
@@ -76,6 +77,31 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   // Captured at mount from ?goal; reused to land on /profile?goal after the probe.
   const goalIdRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionOpenRef = useRef(false);
+
+  const transitionPlacement = useCallback(
+    (status: 'completed' | 'abandoned', keepalive = false) => {
+      const sid = sessionIdRef.current;
+      if (!sid || !sessionOpenRef.current) return Promise.resolve();
+      // Claim before dispatch so explicit exit, settling, and repeated pagehide
+      // events cannot race duplicate terminal transitions.
+      sessionOpenRef.current = false;
+      return placementEnd(sid, status, { keepalive }).catch((error) => {
+        sessionOpenRef.current = true;
+        throw error;
+      });
+    },
+    [],
+  );
+
+  usePagehideTransition((event) => {
+    // A bfcache page is suspended, not discarded. Placement has no paused
+    // state, so abandoning here would restore a live UI backed by a terminal
+    // session when the user navigates forward/back.
+    if (event.persisted) return;
+    return transitionPlacement('abandoned', true);
+  });
 
   // Mount: read ?goal and start the probe. The probe's scope is the goal's
   // scope_knowledge_ids (server-side). 400 = empty scope (cold) → sourcing; 404 =
@@ -94,6 +120,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       try {
         const res = await startPlacement(goal, selfReport);
         if (cancelled) return;
+        sessionIdRef.current = res.sessionId;
+        sessionOpenRef.current = true;
         setSessionId(res.sessionId);
         if (res.sourcingNeeded || !res.question) {
           setPhase('sourcing');
@@ -138,17 +166,19 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     const t = setTimeout(() => {
       if (!cancelled) navigate(dest);
     }, 1700);
-    void placementEnd(sessionId, 'completed').catch(() => {});
+    void transitionPlacement('completed').catch(() => {});
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [phase, sessionId, navigate]);
+  }, [phase, sessionId, navigate, transitionPlacement]);
 
-  const exitProbe = () => {
-    if (sessionId) void placementEnd(sessionId, 'abandoned').catch(() => {});
-    navigate('/today');
+  const leaveProbe = (destination: string) => {
+    void transitionPlacement('abandoned').catch(() => {});
+    navigate(destination);
   };
+
+  const exitProbe = () => leaveProbe('/today');
 
   // Answer committed for the current question → submit (judge + θ̂) → /next.
   const onAnswered = async (payload: {
@@ -175,7 +205,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       // submit 422 (judge unsupported) or network — the probe can't score this answer.
       // Slice-3 review: abandon the probe so it doesn't dangle in 'started' (the orphan
       // sweep would catch it eventually, but closing it now is cleaner).
-      void placementEnd(sessionId, 'abandoned').catch(() => {});
+      void transitionPlacement('abandoned').catch(() => {});
       setErrMsg(e instanceof Error ? e.message : String(e));
       setPhase('judgefail');
     }
@@ -235,7 +265,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             title="备题中 · 子图还冷"
             text="这个目标的知识子图还没有可定位的题。先上传一份你的材料，AI 抽出的题就能拿来定位；或稍后再来。"
             action={
-              <Btn variant="primary" icon="record" onClick={() => navigate('/onboarding/upload')}>
+              <Btn variant="primary" icon="record" onClick={() => leaveProbe('/onboarding/upload')}>
                 改为上传材料
               </Btn>
             }

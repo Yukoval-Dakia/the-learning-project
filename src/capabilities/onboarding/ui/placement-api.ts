@@ -6,6 +6,10 @@
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
 
 import { apiJson } from '@/ui/lib/api';
+import {
+  type SessionTransitionRequestOptions,
+  buildSessionTransitionRequest,
+} from '@/ui/lib/session-transition';
 
 /** start/next return only the question REF (id + info score), not the full row — the
  * caller fetches the renderable question via GET /api/questions/[id] (getQuestion). */
@@ -64,11 +68,15 @@ export const placementNext = (sessionId: string) =>
     },
   );
 
-export const placementEnd = (sessionId: string, status: 'completed' | 'abandoned' = 'completed') =>
-  apiJson(`/api/placement-sessions/${encodeURIComponent(sessionId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status }),
-  });
+export const placementEnd = (
+  sessionId: string,
+  status: 'completed' | 'abandoned' = 'completed',
+  options: SessionTransitionRequestOptions = {},
+) =>
+  apiJson(
+    `/api/placement-sessions/${encodeURIComponent(sessionId)}`,
+    buildSessionTransitionRequest(status, options),
+  );
 
 export interface SubmitProbeAnswerInput {
   sessionId: string;
