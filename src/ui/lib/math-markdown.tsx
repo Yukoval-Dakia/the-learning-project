@@ -1,7 +1,7 @@
-import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
-import ReactMarkdown from 'react-markdown';
+import type { HTMLAttributes, ReactElement } from 'react';
 import rehypeKatex from 'rehype-katex';
 import remarkMath from 'remark-math';
+import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
 
 export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   /** Markdown source. Supports inline `$...$` and block `$$...$$` math. */
@@ -29,17 +29,15 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
  * helpers can be spread directly.
  */
 export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
-  const remarkPlugins: ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [];
-  const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [];
+  const remarkPlugins: MarkdownRendererProps['remarkPlugins'] = [];
+  const rehypePlugins: MarkdownRendererProps['rehypePlugins'] = [];
   if (notation === 'latex') {
     remarkPlugins.push(remarkMath);
     rehypePlugins.push(rehypeKatex);
   }
   return (
-    <div {...divProps}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
-        {children}
-      </ReactMarkdown>
-    </div>
+    <MarkdownRenderer {...divProps} remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+      {children}
+    </MarkdownRenderer>
   );
 }

@@ -31,7 +31,7 @@
 
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
-import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { MarkdownRenderer } from '@/ui/lib/markdown-renderer';
 import {
   openCopilotForNudge,
   useCopilotDwell,
@@ -833,12 +833,11 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
                 </div>
                 <div className="msg-body">
                   <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
-                  {/* MathMarkdown inherits react-markdown's built-in XSS safety
-                      (no raw HTML by default). notation=undefined → no KaTeX;
-                      GFM bold/italic/code/lists render correctly. Copilot
-                      replies have no subject-profile context so latex gating
-                      is deliberately off (matches free-form path intention). */}
-                  <MathMarkdown className="msg-text">{m.text}</MathMarkdown>
+                  {/* MarkdownRenderer inherits react-markdown's built-in XSS safety
+                      (no raw HTML by default) without importing the KaTeX plugin chain.
+                      Copilot replies have no subject-profile context, so dollar syntax
+                      deliberately stays plain text on this free-form path. */}
+                  <MarkdownRenderer className="msg-text">{m.text}</MarkdownRenderer>
                   {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
                       message. A NEW testid distinct from copilot-thinking (which
                       only covers the pre-first-byte gap). Reuses the Dock chat
@@ -859,15 +858,15 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
                       system (§5.1). */}
                   {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
                     <div className="skill-turn-check" data-testid="copilot-skill-ask-check">
-                      <MathMarkdown className="skill-turn-q-prompt">
+                      <MarkdownRenderer className="skill-turn-q-prompt">
                         {m.skill_turn.structured_question.prompt_md}
-                      </MathMarkdown>
+                      </MarkdownRenderer>
                       {m.skill_turn.structured_question.choices_md &&
                       m.skill_turn.structured_question.choices_md.length > 0 ? (
                         <ol className="skill-turn-q-choices">
                           {m.skill_turn.structured_question.choices_md.map((choice, i) => (
                             <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>
-                              <MathMarkdown>{choice}</MathMarkdown>
+                              <MarkdownRenderer>{choice}</MarkdownRenderer>
                             </li>
                           ))}
                         </ol>
