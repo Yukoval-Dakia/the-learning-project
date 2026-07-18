@@ -18,6 +18,7 @@ import { newId } from '@/core/ids';
 import { event, kc_typed_state, knowledge, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { CONJECTURE_SCORES_LIMIT } from '../server/conjecture-scores';
 import { GET } from './conjecture-scores';
 
 const KC_ID = 'kn_chain_rule';
@@ -275,6 +276,94 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(0);
+  });
+
+  it('bounds both reads in the database and returns the newest rows first', async () => {
+    const baseMs = new Date('2026-07-01T00:00:00.000Z').getTime();
+    const count = CONJECTURE_SCORES_LIMIT + 1;
+    await testDb()
+      .insert(event)
+      .values(
+        Array.from({ length: count }, (_, index) => ({
+          id: `bounded_score_${String(index).padStart(3, '0')}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `bounded_probe_${index}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `bounded_conjecture_${index}`,
+            probe_result_event_id: `bounded_probe_${index}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: new Date(baseMs + index),
+          ingest_at: new Date(baseMs + index),
+        })),
+      );
+    await testDb()
+      .insert(kc_typed_state)
+      .values(
+        Array.from({ length: count }, (_, index) => ({
+          id: `bounded_state_${String(index).padStart(3, '0')}`,
+          subject_kind: 'knowledge',
+          subject_id: `bounded_kc_${index}`,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: [`bounded_probe_${index}`],
+          updated_at: new Date(baseMs + index),
+        })),
+      );
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const scores = body.prediction_scores as Array<Record<string, unknown>>;
+    const states = body.typed_states as Array<Record<string, unknown>>;
+
+    expect(scores).toHaveLength(CONJECTURE_SCORES_LIMIT);
+    expect(scores[0].event_id).toBe(`bounded_score_${CONJECTURE_SCORES_LIMIT}`);
+    expect(scores.at(-1)?.event_id).toBe('bounded_score_001');
+    expect(states).toHaveLength(CONJECTURE_SCORES_LIMIT);
+    expect(states[0].id).toBe(`bounded_state_${CONJECTURE_SCORES_LIMIT}`);
+    expect(states.at(-1)?.id).toBe('bounded_state_001');
+  });
+
+  it('drops malformed confused-with-X typed-state rows instead of fabricating provenance', async () => {
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        {
+          id: 'typed_invalid_lifecycle',
+          subject_kind: 'knowledge',
+          subject_id: KC_ID,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'corrupt',
+          evidence_event_ids: ['probe_valid'],
+        },
+        {
+          id: 'typed_invalid_evidence',
+          subject_kind: 'knowledge',
+          subject_id: RIVAL_KC,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: KC_ID,
+          lifecycle: 'open',
+          evidence_event_ids: [42] as never,
+        },
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.typed_states).toEqual([]);
   });
 
   it('READ-ONLY — the route writes nothing (ND-5: no FSRS, no new events, no state mutation)', async () => {

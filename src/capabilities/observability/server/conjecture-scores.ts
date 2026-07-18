@@ -20,7 +20,7 @@
 
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 /** One LOG-only calibration score row (mapped from an experimental:prediction_score event). */
 export interface ConjecturePredictionScoreRow {
@@ -60,6 +60,7 @@ export interface ConjectureScoresRead {
 }
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
+export const CONJECTURE_SCORES_LIMIT = 200;
 
 function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow | null {
   const p = r.payload as Record<string, unknown> | null;
@@ -99,39 +100,64 @@ function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow 
   };
 }
 
+function rowToTypedState(r: typeof kc_typed_state.$inferSelect): ConjectureTypedStateRow | null {
+  if (r.subject_kind !== 'knowledge' || r.subject_id.length === 0 || r.id.length === 0) return null;
+  if (r.typed_state !== 'confused-with-X') return null;
+  if (r.lifecycle !== 'open' && r.lifecycle !== 'resolved') return null;
+  if (
+    !Array.isArray(r.evidence_event_ids) ||
+    r.evidence_event_ids.some((id) => typeof id !== 'string' || id.length === 0)
+  ) {
+    return null;
+  }
+  if (
+    r.confused_with_kc_id !== null &&
+    (typeof r.confused_with_kc_id !== 'string' || r.confused_with_kc_id.length === 0)
+  ) {
+    return null;
+  }
+  return {
+    id: r.id,
+    knowledge_id: r.subject_id,
+    typed_state: 'confused-with-X',
+    confused_with_kc_id: r.confused_with_kc_id,
+    lifecycle: r.lifecycle,
+    evidence_event_ids: r.evidence_event_ids,
+    last_evidence_at: r.last_evidence_at ? r.last_evidence_at.toISOString() : null,
+    updated_at: r.updated_at.toISOString(),
+  };
+}
+
 /**
  * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors) +
  * kc_typed_state confused-with-X rows (auto-minted structural soft-track state).
  * Never writes. Never flips flags. Never touches FSRS/θ̂ (ND-5).
  */
 export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {
-  const scoreRows = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
+  const scoreRows = await db
+    .select()
+    .from(event)
+    .where(eq(event.action, PREDICTION_SCORE_ACTION))
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(CONJECTURE_SCORES_LIMIT);
 
   const prediction_scores: ConjecturePredictionScoreRow[] = [];
   for (const r of scoreRows) {
     const mapped = rowToScore(r);
     if (mapped) prediction_scores.push(mapped);
   }
-  // Newest-first (the owner sees the freshest calibration evidence at the top).
-  prediction_scores.sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-
   const typedRows = await db
     .select()
     .from(kc_typed_state)
-    .where(eq(kc_typed_state.typed_state, 'confused-with-X'));
+    .where(eq(kc_typed_state.typed_state, 'confused-with-X'))
+    .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
+    .limit(CONJECTURE_SCORES_LIMIT);
 
-  const typed_states: ConjectureTypedStateRow[] = typedRows.map((r) => ({
-    id: r.id,
-    knowledge_id: r.subject_id,
-    typed_state: 'confused-with-X',
-    confused_with_kc_id: r.confused_with_kc_id,
-    lifecycle: r.lifecycle as 'open' | 'resolved',
-    evidence_event_ids: r.evidence_event_ids ?? [],
-    last_evidence_at: r.last_evidence_at ? r.last_evidence_at.toISOString() : null,
-    updated_at: r.updated_at.toISOString(),
-  }));
+  const typed_states: ConjectureTypedStateRow[] = [];
+  for (const r of typedRows) {
+    const mapped = rowToTypedState(r);
+    if (mapped) typed_states.push(mapped);
+  }
 
   return { score_basis: 'single_point', prediction_scores, typed_states };
 }
