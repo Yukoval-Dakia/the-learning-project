@@ -26,6 +26,7 @@ import {
   isNull,
   like,
   lt,
+  not,
   notExists,
   notInArray,
   or,
@@ -243,21 +244,30 @@ function proposalLaneWhere(lane: ProposalInboxLane | undefined): SQL | undefined
     ELSE NULL
   END`;
   const observationKind = inArray(payloadKind, observationProposalKinds);
-
-  if (lane === 'decision') {
-    return or(isNull(payloadKind), notInArray(payloadKind, observationProposalKinds));
-  }
-
   const legacyKnowledgeMutation = sql<string>`COALESCE(
     NULLIF(${event.payload}->>'mutation', ''),
     regexp_replace(${event.action}, '^experimental:knowledge_', '')
   )`;
-  const legacyKnowledgeObservation = and(
-    isNull(payloadKind),
-    like(event.action, 'experimental:knowledge_%'),
-    eq(event.subject_kind, 'knowledge'),
-    notInArray(legacyKnowledgeMutation, ['propose', 'propose_new', 'reparent', 'merge', 'split']),
-  );
+  const legacyKnowledgeObservation = sql<boolean>`(
+    ${isNull(payloadKind)}
+    AND ${like(event.action, 'experimental:knowledge_%')}
+    AND ${eq(event.subject_kind, 'knowledge')}
+    AND ${notInArray(legacyKnowledgeMutation, [
+      'propose',
+      'propose_new',
+      'reparent',
+      'merge',
+      'split',
+    ])}
+  )`;
+
+  if (lane === 'decision') {
+    return or(
+      and(isNotNull(payloadKind), notInArray(payloadKind, observationProposalKinds)),
+      and(isNull(payloadKind), not(legacyKnowledgeObservation)),
+    );
+  }
+
   return or(observationKind, legacyKnowledgeObservation);
 }
 
