@@ -253,9 +253,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // needs a real knowledge id to send a meaningful quiz request (ref.id is a
   // knowledge node id per the quiz-skill contract). Sourced from the active skill
   // context when it points at a knowledge entity (set by the open-with-context
-  // signal / replay restore). When null, the quiz chip is disabled rather than
-  // sending an invalid ref. State (not a ref) so the chip's disabled/tooltip
-  // re-renders when the in-scope entity changes.
+  // signal / replay restore). When null, the quiz chip falls back to the normal
+  // free-form Copilot path instead of fabricating a ref. State (not a ref) so the
+  // chip's visible scope label re-renders when the in-scope entity changes.
   const [focusedKnowledgeId, setFocusedKnowledgeId] = useState<string | null>(null);
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
@@ -517,14 +517,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     if (last) void send(last);
   }, [send]);
 
-  // YUK-272 (C3) — quiz quick-chip. Seeds a quiz skill turn for the in-scope
-  // knowledge node, then sends through the normal `send` path. The quiz ref id MUST
-  // be a real knowledge node id (quiz-skill contract), so the chip is disabled when
-  // no knowledge is in scope (focusedKnowledgeId === null) rather than fabricating
-  // an invalid ref. After the (one-shot) quiz send, `send` clears activeSkillRef
-  // via isOneShotSkill so follow-up free-form messages don't keep re-sending it.
+  // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
+  // skill turn with that real id; `send` clears the one-shot context afterwards via
+  // isOneShotSkill. ADR-0031 / YUK-304 retired the hard quiz intercept, so without a
+  // focused node the same user-readable prompt deliberately follows normal Copilot
+  // routing and lets the model clarify/orchestrate instead of becoming a dead chip.
   const sendQuiz = useCallback(() => {
-    if (!focusedKnowledgeId) return;
     // YUK-266 — single-flight guard. On the first SSE delta `send` flips `sending`
     // false (to re-open the composer for the live reply) while `sendingRef.current`
     // stays true until the turn settles. In that window the quiz chip re-enables;
@@ -533,10 +531,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // quiz turn is dropped BUT activeSkillRef is left polluted, mis-routing the
     // user's NEXT free-form message as a quiz turn. No-op while a send is in flight.
     if (sendingRef.current) return;
-    activeSkillRef.current = {
-      skill: 'quiz',
-      ref: { kind: 'knowledge', id: focusedKnowledgeId },
-    };
+    if (focusedKnowledgeId) {
+      activeSkillRef.current = {
+        skill: 'quiz',
+        ref: { kind: 'knowledge', id: focusedKnowledgeId },
+      };
+    }
     void send('出题');
   }, [focusedKnowledgeId, send]);
 
@@ -734,18 +734,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             {chip}
           </button>
         ))}
-        {/* YUK-272 (C3) — quiz quick-chip. Disabled (with a tooltip) when no
-            knowledge node is in scope, since the quiz ref MUST be a real knowledge
-            id. Reuses the .chip class — no new visual system. */}
+        {/* YUK-272 (C3) / YUK-169 — quiz quick-chip. A focused knowledge node
+            gets an explicit scope label; otherwise the prompt follows the normal
+            Copilot clarification path. Reuses .chip — no new visual system. */}
         <button
           type="button"
           className="chip"
           data-testid="copilot-quiz-chip"
-          disabled={sending || !focusedKnowledgeId}
-          title={focusedKnowledgeId ? '为当前知识点出一套练习' : '先选一个知识点'}
+          disabled={sending}
           onClick={sendQuiz}
         >
-          出题
+          {focusedKnowledgeId ? '出题 · 当前知识点' : '出题'}
         </button>
       </div>
       <div className="composer">
