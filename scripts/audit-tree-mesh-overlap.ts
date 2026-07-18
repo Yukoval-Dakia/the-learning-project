@@ -50,8 +50,9 @@ export async function findTreeMeshOverlaps(db: DbLike): Promise<TreeMeshOverlapR
 }
 
 async function main(): Promise<void> {
-  const { db } = await import('@/db/client');
+  let db: Db | undefined;
   try {
+    ({ db } = await import('@/db/client'));
     const overlaps = await findTreeMeshOverlaps(db);
     if (process.argv.includes('--json')) {
       console.log(JSON.stringify({ count: overlaps.length, overlaps }, null, 2));
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
     process.exitCode = 2;
   } finally {
     try {
-      await db.$client.end({ timeout: 5 });
+      await db?.$client.end({ timeout: 5 });
     } catch {
       // The pool may already be closed after an operational failure.
     }
