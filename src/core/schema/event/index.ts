@@ -13,6 +13,7 @@ import {
 } from './experimental';
 import { GenesisExperimental } from './genesis';
 import { GoalScopeUpdateExperimental, GoalStatusUpdateExperimental } from './goal-events';
+import { SubjectRootNameUpdateExperimental } from './knowledge-node-events';
 import { KnownEvent } from './known';
 import {
   LearningItemArchiveExperimental,
@@ -38,6 +39,7 @@ export * from './experimental';
 export * from './state-snapshot';
 export * from './genesis';
 export * from './goal-events';
+export * from './knowledge-node-events';
 export * from './learning-item-events';
 export * from './mistake-variant-events';
 export * from './artifact-events';
@@ -94,6 +96,7 @@ export const Event = z.union([
   GenesisExperimental,
   GoalStatusUpdateExperimental,
   GoalScopeUpdateExperimental,
+  SubjectRootNameUpdateExperimental,
   MistakeVariantCreateExperimental,
   LearningItemCompleteExperimental,
   LearningItemRelearnExperimental,

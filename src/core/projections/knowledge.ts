@@ -5,6 +5,7 @@ import {
   type KnowledgeRowSnapshotT,
   ProposeKnowledge,
   RateEvent,
+  SubjectRootNameUpdateExperimental,
 } from '../schema/event';
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
@@ -79,9 +80,22 @@ function toParseInput(fe: FoldEvent): unknown {
   };
 }
 
-// Stable (created_at asc, id asc) comparator — the canonical event read order
-// (identical tiebreak to corrections.ts, the fold blueprint).
+function rootNamePreviousVersion(fe: FoldEvent): number | null {
+  if (fe.action !== 'experimental:subject_root_name_update') return null;
+  const value = fe.payload.previous_version;
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+// Stable canonical order. Subject-root name updates additionally carry an explicit version chain;
+// use it between two such events for the same root so sequential control transactions that land in
+// the same millisecond cannot be reordered by random event ids. Every other event keeps the
+// established (created_at asc, id asc) order.
 function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
+  if (a.subject_id === b.subject_id) {
+    const av = rootNamePreviousVersion(a);
+    const bv = rootNamePreviousVersion(b);
+    if (av !== null && bv !== null && av !== bv) return av - bv;
+  }
   const ta = a.created_at.getTime();
   const tb = b.created_at.getTime();
   if (ta !== tb) return ta - tb;
@@ -169,6 +183,40 @@ export function foldKnowledgeNode(
       }
       // The seed IS the base state (version, timestamps and all carried verbatim).
       row = { ...knownRow.data, merged_from: [...knownRow.data.merged_from] };
+      continue;
+    }
+
+    // Subject control-plane rename/reset mirrors display_name onto the canonical knowledge root.
+    // This direct action is not proposal-gated: the owner CAS + control-plane lock authorize it at
+    // write time. The version precondition makes replay idempotent and prevents an out-of-order
+    // transition from overwriting another structural mutation. previous_name is audit evidence,
+    // not a replay precondition, so the first post-YUK-728 event also heals a legacy name-only
+    // mirror that was never represented in the event log.
+    if (
+      fe.action === 'experimental:subject_root_name_update' &&
+      fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId
+    ) {
+      const update = SubjectRootNameUpdateExperimental.safeParse(toParseInput(fe));
+      if (!update.success) {
+        warnMalformed('experimental:subject_root_name_update', fe.id, update.error);
+        continue;
+      }
+      if (row === null) continue;
+      if (row.version !== update.data.payload.previous_version) {
+        warnMalformed(
+          'experimental:subject_root_name_update',
+          fe.id,
+          `previous_version=${update.data.payload.previous_version} does not match folded version=${row.version}`,
+        );
+        continue;
+      }
+      row = {
+        ...row,
+        name: update.data.payload.next_name,
+        updated_at: fe.created_at,
+        version: update.data.payload.next_version,
+      };
       continue;
     }
 

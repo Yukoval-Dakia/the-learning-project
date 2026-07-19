@@ -30,9 +30,8 @@
  * 声明式 `SANCTIONED_WRITERS` registry（手维护，每条带 file:marker 反查证据 + role 分级）列出
  * 今天**合法**写每张 fold-owned 表的文件全集：projection shell（throat）/ core reducer /
  * gated-dual-path（命令式 applier，gate on projectionIsWriter，ON 时让位 shell）/
- * event-native-by-caller（raw write，调用者负责同事务事件）/ control-plane-sync（控制面同步，
- * 尚有显式 follow-up）/ off-path-writer（OFF 表当前唯一合法写者，翻转前）/ seed（初始数据集
- * 播种）/ maintenance（非 fold 字段旁路维护）。
+ * event-native-by-caller（raw write，调用者负责同事务事件）/ off-path-writer（OFF 表当前唯一
+ * 合法写者，翻转前）/ seed（初始数据集播种）/ maintenance（非 fold 字段旁路维护）。
  *
  * 扫描器（`findWriteSites`）在**剥注释保字符串**的源码上抓每个写点：
  *   - Drizzle 形：`.update(<table>)` / `.insert(<table>)` / `.delete(<table>)`（bare 标识符，
@@ -108,7 +107,6 @@ export type WriterRole =
   | 'reducer' // core fold reducer
   | 'gated-dual-path' // imperative applier gated on projectionIsWriter (defers to shell when ON)
   | 'event-native-by-caller' // raw row write; caller appends the matching event in the same tx
-  | 'control-plane-sync' // cross-projection control-plane sync; must remain visible for fold review
   | 'off-path-writer' // imperative writer for an OFF table (sole legit writer until its flip)
   | 'seed' // initial dataset seed
   | 'maintenance'; // rewrites a non-fold column (e.g. embedding backfill), not a fold-truth mutation
@@ -170,8 +168,8 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'knowledge',
     file: 'src/server/subjects/subject-control-write.ts',
     marker: '.update(knowledge)',
-    role: 'control-plane-sync',
-    note: 'rename/reset mirror subject display_name into root.name in the same control-plane tx, but no knowledge event currently carries the rename. Deliberately surfaced as LIVE advisory; event-native remediation = YUK-728.',
+    role: 'event-native-by-caller',
+    note: 'rename/reset mirror subject display_name into root.name and append a same-tx experimental:subject_root_name_update carrying the exact version/name transition (YUK-728).',
   },
   {
     table: 'knowledge',

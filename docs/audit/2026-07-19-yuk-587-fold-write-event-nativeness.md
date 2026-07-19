@@ -19,9 +19,9 @@
    locally-gated-dual-path / derived-maintenance，就自动进入 report。这样新增特殊 role 时默认可见，
    不再依赖容易漏项的 advisory role 白名单。
 5. 全仓 strict 扫描额外暴露两个此前未登记文件：`ensure-subject-root.ts` 已是同事务 genesis +
-   index（并把参数收紧为仅接受 `Tx`）；`subject-control-write.ts` 的 rename/reset 则会直改 root
-   name、没有 fold event。后者登记为 **control-plane-sync** 并持续 advisory，不把已知缺口伪装成
-   locally-safe；事件原生化由 YUK-728 跟踪。
+   index（并把参数收紧为仅接受 `Tx`）；`subject-control-write.ts` 的 rename/reset 缺口已由
+   YUK-728 补成同事务 `experimental:subject_root_name_update`，现归类为
+   **event-native-by-caller**。
 6. `archiveKnowledgeEdge` 以单条 guarded `UPDATE ... RETURNING` 原子认领 live→archived 转换；
    caller 只有在 `archived=true` 时才追加 archive event。并发 contender 会 fail-loud 并回滚，避免
    row 保留首个时间戳、fold 却消费末个时间戳的漂移。
@@ -47,13 +47,15 @@
 | `knowledge/server/proposals.ts` | event-native-by-caller | mixed file 按最弱约束分类；mutation event 与 row write 同 accept tx |
 | `knowledge/server/seed.ts` | seed，已修复 | 新 root 同事务 genesis + index；既有冲突行不补晚到 snapshot |
 | `subjects/ensure-subject-root.ts` | event-native-by-caller | 参数收紧为 `Tx`；genesis + index 与 INSERT 原子提交 |
-| `subjects/subject-control-write.ts` | control-plane-sync，YUK-728 | rename/reset 无 knowledge fold event，rebuild 可把 root.name 洗回旧值 |
+| `subjects/subject-control-write.ts` | event-native-by-caller | rename/reset 同事务写 typed root-name event；row/fold 版本与时间戳一致 |
 
 ## 验证契约
 
 - seed 首跑：每个 subject root 恰有一条 genesis、一个 materialized index anchor，且
   `gatherAndFoldKnowledgeNode(root) == knowledgeRowToSnapshot(liveRow)`。
 - seed 重跑：row / event / index 数量均不变。
+- subject root rename/reset：每次有效名称变更恰有一条 typed fold event，重放后
+  `gatherAndFoldKnowledgeNode(root) == live root`；noop/stale 不写事件。
 - 并发 archive：恰有一个 caller 认领转换、恰有一条 fold-visible archive event，且 event/row
   `archived_at` 相等；SUPERSEDE 新边 `gatherAndFoldKnowledgeEdge == live row`。
 - `audit:fold-writes --json` 与文本输出共享 `result.advisories`；proposals / seed / edges 都被覆盖。

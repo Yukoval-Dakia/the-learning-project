@@ -7,13 +7,13 @@
 //
 // 与 trait-write 同一并发协议：写事务开头控制面 advisory lock；CAS = 陈旧 UI
 // 提交守卫（锁内比对，'stale' 携 currentRevision）。
-// rename 的 root.name 同步遵 0062 先例：直接 UPDATE knowledge 投影行、event 表
-// 不动（append-only 红线；「re-fold 洗回旧名」与 YUK-249 同型，为合同接受的
-// 已知项——历史 payload 不回写是 §3.4 显式裁定）。
+// rename/reset 的 root.name 同步写专属 fold event；row + event 同事务、同时间戳，projection
+// rebuild 不再把控制面名称洗回 genesis 旧值（YUK-728）。
 
 import { isDeepStrictEqual } from 'node:util';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
+import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import {
   knowledge,
@@ -22,6 +22,7 @@ import {
   subject_trait,
   subject_trait_binding,
 } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { acquireControlPlaneLockSql } from '@/server/subjects/control-plane-lock';
 import { subjectRootId } from '@/server/subjects/ensure-subject-root';
 import {
@@ -68,6 +69,58 @@ async function normCollides(tx: Tx, subjectId: string, norm: string): Promise<bo
   return rows.length > 0;
 }
 
+async function updateSubjectRootName(
+  tx: Tx,
+  args: {
+    subjectId: string;
+    nextName: string;
+    controlAction: 'rename' | 'reset';
+    now: Date;
+  },
+): Promise<void> {
+  const rootId = subjectRootId(args.subjectId);
+  const [root] = await tx
+    .select({ name: knowledge.name, version: knowledge.version })
+    .from(knowledge)
+    .where(eq(knowledge.id, rootId))
+    .limit(1)
+    .for('update');
+  // Legacy/test control rows can exist without a root. There is no knowledge row mutation in that
+  // case, so no fold event is needed; a later ensureSubjectRoot writes a genesis with displayName.
+  if (!root) return;
+
+  const nextVersion = root.version + 1;
+  const updated = await tx
+    .update(knowledge)
+    .set({ name: args.nextName, updated_at: args.now, version: nextVersion })
+    .where(and(eq(knowledge.id, rootId), eq(knowledge.version, root.version)))
+    .returning({ id: knowledge.id });
+  if (updated.length === 0) {
+    throw new Error(`subject root ${rootId} changed while applying ${args.controlAction}`);
+  }
+
+  await writeEvent(tx, {
+    id: newId(),
+    actor_kind: 'user',
+    actor_ref: 'owner',
+    action: 'experimental:subject_root_name_update',
+    subject_kind: 'knowledge',
+    subject_id: rootId,
+    outcome: 'success',
+    payload: {
+      control_action: args.controlAction,
+      subject_id: args.subjectId,
+      previous_name: root.name,
+      next_name: args.nextName,
+      previous_version: root.version,
+      next_version: nextVersion,
+    },
+    created_at: args.now,
+    // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
+    ingest_at: args.now,
+  });
+}
+
 // ---------- rename ----------
 
 export async function renameSubject(
@@ -101,11 +154,12 @@ export async function renameSubject(
         updated_at: now,
       })
       .where(eq(subject.id, args.subjectId));
-    // root.name 按 id 同步（同事务；0062 先例——投影行直改，event 不回写）。
-    await tx
-      .update(knowledge)
-      .set({ name: displayName })
-      .where(eq(knowledge.id, subjectRootId(args.subjectId)));
+    await updateSubjectRootName(tx, {
+      subjectId: args.subjectId,
+      nextName: displayName,
+      controlAction: 'rename',
+      now,
+    });
     await tx.insert(subject_control_journal).values({
       subject_id: args.subjectId,
       revision: nextRevision,
@@ -271,10 +325,12 @@ export async function resetSubject(
       })
       .where(eq(subject.id, args.subjectId));
     if (nameChanges) {
-      await tx
-        .update(knowledge)
-        .set({ name: seedDisplayName })
-        .where(eq(knowledge.id, subjectRootId(args.subjectId)));
+      await updateSubjectRootName(tx, {
+        subjectId: args.subjectId,
+        nextName: seedDisplayName,
+        controlAction: 'reset',
+        now,
+      });
     }
     await tx.insert(subject_control_journal).values({
       subject_id: args.subjectId,
