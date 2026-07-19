@@ -845,13 +845,13 @@ async function loadEdgesForProjection(
  * mis-anchored outlier item skewing the KC difficulty. SOFT-track rows are
  * EXCLUDED (ADR-0035: soft track never reaches p(L)/scheduling). Items with no
  * effective b at all are skipped; a KC with no anchored hard-track item gets NO
- * entry → caller defaults β=0 (neutral difficulty origin, identical to the old
- * σ(θ̂)@b=0 projection for unanchored KCs).
+ * entry. `getMasteryProjection` defaults that absence to β=0 for its math, while
+ * read models may use map presence as the authoritative has-anchor bit (YUK-528).
  *
  * READ-ONLY — pure SELECT against question.knowledge_ids (GIN @>) ⋈ item_calibration;
  * never writes any b column (item-half locked, G4).
  */
-async function getRepresentativeKcBeta(
+export async function getRepresentativeKcBeta(
   db: Db,
   knowledgeIds: string[],
 ): Promise<Map<string, number>> {

@@ -6,7 +6,6 @@
 import type { MasteryBandInput } from '@/core/mastery-band';
 import { describe, expect, it } from 'vitest';
 import {
-  BETA_NEUTRAL_EPSILON,
   COLD_NOTE_MAX_EVIDENCE,
   DIFFICULTY_BANDS,
   DIFFICULTY_BETA_THRESHOLDS,
@@ -30,6 +29,7 @@ function input(overrides: Partial<NodeThreeDimInput> = {}): NodeThreeDimInput {
   return {
     mastery: masteryInput(),
     beta: 1,
+    difficultyAnchored: true,
     retrievability: 0.5,
     evidenceCount: 9,
     ...overrides,
@@ -83,6 +83,7 @@ describe('buildNodeThreeDim — orthogonal R / p(L) / difficulty', () => {
     const three = buildNodeThreeDim({
       mastery: null,
       beta: null,
+      difficultyAnchored: false,
       retrievability: null,
       evidenceCount: 0,
     });
@@ -100,13 +101,25 @@ describe('buildNodeThreeDim — orthogonal R / p(L) / difficulty', () => {
     expect(r?.view).toMatchObject({ source: 'soft', lowConf: true });
   });
 
-  it('difficulty axis: β neutral (≈0, no anchor) → honestly degraded to unknown + soft + low-conf', () => {
-    const three = buildNodeThreeDim(input({ beta: 0 }));
+  it('difficulty axis: unanchored β sentinel → honestly degraded to unknown + soft + low-conf', () => {
+    const three = buildNodeThreeDim(input({ beta: 0, difficultyAnchored: false }));
     const diff = three.dims.find((d) => d.key === 'diff');
     expect(diff?.view).toMatchObject({ unknown: true, source: 'soft', lowConf: true });
-    // sub-epsilon β is also treated as neutral (no fabricated absolute difficulty band).
-    const three2 = buildNodeThreeDim(input({ beta: BETA_NEUTRAL_EPSILON / 2 }));
-    expect(three2.dims.find((d) => d.key === 'diff')?.view.unknown).toBe(true);
+  });
+
+  it('difficulty axis: a real medium β=0 anchor renders 适中 as hard evidence', () => {
+    const three = buildNodeThreeDim(input({ beta: 0, difficultyAnchored: true }));
+    const diff = three.dims.find((d) => d.key === 'diff');
+    expect(diff?.view).toMatchObject({ unknown: false, band: 1, source: 'hard' });
+  });
+
+  it('difficulty axis: inconsistent/non-finite anchored values still under-claim', () => {
+    for (const beta of [null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const diff = buildNodeThreeDim(input({ beta, difficultyAnchored: true })).dims.find(
+        (d) => d.key === 'diff',
+      );
+      expect(diff?.view).toMatchObject({ unknown: true, source: 'soft', lowConf: true });
+    }
   });
 
   it('difficulty axis: point band only — never a fabricated interval (β has no CI)', () => {
