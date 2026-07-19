@@ -42,13 +42,18 @@ async function seedKnowledge(id: string) {
  *
  *  When a question carries `block_created_at`, a matching `question_block` row is
  *  also seeded (with that created_at) and linked via
- *  `metadata.question_block_id` — mirroring import/route's write so the F3
- *  block-order reverse-query can be exercised. All imported questions share one
- *  `now` (as the real import route does), so the block's created_at is the only
- *  thing that can carry the original paper order. */
+ *  `metadata.question_block_id` — mirroring import/route's write so the block-order
+ *  reverse-query can be exercised. All imported questions share one `now` (as the
+ *  real import route does); `block_ordinal` (YUK-221) carries the true 0-based paper
+ *  order the reverse-query sorts by (defaults to 0 when unspecified). */
 async function seedImportedSession(opts: {
   sessionId: string;
-  questions: Array<{ id: string; knowledge_ids: string[]; block_created_at?: Date }>;
+  questions: Array<{
+    id: string;
+    knowledge_ids: string[];
+    block_created_at?: Date;
+    block_ordinal?: number;
+  }>;
   docTitle?: string | null;
 }) {
   const db = testDb();
@@ -101,7 +106,8 @@ async function seedImportedSession(opts: {
         merged_from_block_ids: [],
         imported_question_id: q.id,
         imported_attempt_event_id: null,
-        // The block carries the original paper order via its extraction time.
+        // YUK-221 — the block carries the original paper order via `ordinal`.
+        ordinal: q.block_ordinal ?? 0,
         created_at: q.block_created_at,
         updated_at: q.block_created_at,
         version: 0,
@@ -414,33 +420,31 @@ describe('createIngestionPaper (YUK-214)', () => {
     expect(paper.tool_state?.question_ids).toEqual(requested);
   });
 
-  // F3 (PR #309 round-2) — the reverse-query fall-through path orders by the
-  // SOURCE paper's block order (question_block.created_at), NOT by question.id.
-  // All imported questions share one question.created_at, so an id-only sort
-  // (round-1) produced a deterministic-but-arbitrary order. The block's
-  // extraction-time created_at carries the real paper sequence; the reverse
-  // query joins question→question_block and orders by it, so the paper's slot
-  // order equals the original on-screen block order.
-  it('orders fall-through reverse-queried questions by the source block order (created_at), not id', async () => {
+  // YUK-221 — the reverse-query fall-through path orders by the block's true 0-based
+  // positional `ordinal`, NOT question.id and NOT created_at. A batch extracted in one
+  // shot shares ONE created_at (applyExtractionResult stamps a single `now`), so
+  // created_at cannot carry intra-batch order; `ordinal` is the real key. The reverse
+  // query joins question→question_block and orders by (ordinal, block.id, question.id),
+  // so the paper's slot order equals the original on-screen block order.
+  it('orders fall-through reverse-queried questions by block ordinal even when created_at ties (true reading order, not cuid2 id)', async () => {
     const db = testDb();
-    // Block order (paper order): qg_3 (t0) → qg_1 (t1) → qg_2 (t2). The question
-    // ids are deliberately NOT in that order, so an id-sort would scramble the
-    // paper; a block-created_at sort reconstructs the true paper sequence.
-    const t0 = new Date('2026-06-01T00:00:00.000Z');
-    const t1 = new Date('2026-06-01T00:00:01.000Z');
-    const t2 = new Date('2026-06-01T00:00:02.000Z');
+    // One shared created_at for the whole batch — so ONLY ordinal can carry the
+    // paper order. Paper order (ordinal): qg_3 (0) → qg_1 (1) → qg_2 (2). The
+    // question ids are deliberately NOT in that order, so an id-sort would scramble
+    // the paper; an ordinal sort reconstructs the true sequence.
+    const shared = new Date('2026-06-01T00:00:00.000Z');
     await seedImportedSession({
       sessionId: 'sess_g',
       questions: [
-        { id: 'qg_1', knowledge_ids: ['k1'], block_created_at: t1 },
-        { id: 'qg_2', knowledge_ids: ['k2'], block_created_at: t2 },
-        { id: 'qg_3', knowledge_ids: ['k3'], block_created_at: t0 },
+        { id: 'qg_1', knowledge_ids: ['k1'], block_created_at: shared, block_ordinal: 1 },
+        { id: 'qg_2', knowledge_ids: ['k2'], block_created_at: shared, block_ordinal: 2 },
+        { id: 'qg_3', knowledge_ids: ['k3'], block_created_at: shared, block_ordinal: 0 },
       ],
     });
     const { artifactId } = await createIngestionPaper(db, { sessionId: 'sess_g' });
     const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
     const paper = Artifact.parse(row);
-    // Block order, NOT id order (which would be qg_1, qg_2, qg_3).
+    // Ordinal order, NOT id order (which would be qg_1, qg_2, qg_3).
     expect(paper.tool_state?.question_ids).toEqual(['qg_3', 'qg_1', 'qg_2']);
   });
 

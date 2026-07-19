@@ -133,7 +133,7 @@ export async function initiateDocxTextUpload(
     //    degradation (markdown carries no coordinates), mirroring VisionTab's
     //    importMutation ensuredSpans先例.
     const insertedBlockIds: string[] = [];
-    for (const blk of params.blocks) {
+    for (const [ordinal, blk] of params.blocks.entries()) {
       const blockId = createId();
       insertedBlockIds.push(blockId);
       // Per-block source_asset_ids = evidence page images + THIS block's embedded
@@ -149,6 +149,8 @@ export async function initiateDocxTextUpload(
           source_document_id: sourceDocumentId,
           source_asset_ids: blockAssetIds,
           page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+          // YUK-221 — true positional order = the block array index (0-based).
+          ordinal,
           structured: blk.structured,
           figures: [],
           layout_quality: 'structured',

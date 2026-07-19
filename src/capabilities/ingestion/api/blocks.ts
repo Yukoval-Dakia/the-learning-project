@@ -67,7 +67,9 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       })
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId))
-      .orderBy(asc(question_block.created_at));
+      // YUK-221 — true reading order via the positional ordinal (0-based per
+      // session); id is the stable tiebreak for historical same-ordinal rows.
+      .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
     const blockIds = rows.map((r) => r.id);
     const observations =

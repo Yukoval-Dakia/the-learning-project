@@ -37,6 +37,7 @@ async function seedBlock(opts: {
   prompt?: string;
   layout?: 'structured' | 'partial' | 'text_only';
   created_at?: Date;
+  ordinal?: number;
   source_asset_ids?: string[];
   image_refs?: string[];
   // biome-ignore lint/suspicious/noExplicitAny: tests pass arbitrary figure json through jsonb
@@ -50,6 +51,7 @@ async function seedBlock(opts: {
     source_document_id: null,
     source_asset_ids: opts.source_asset_ids ?? [],
     page_spans: [],
+    ordinal: opts.ordinal ?? 0,
     extracted_prompt_md: opts.prompt ?? null,
     structured: null,
     figures: opts.figures ?? [],
@@ -91,20 +93,25 @@ describe('GET /api/ingestion/[id]/blocks', () => {
     expect(body.rows).toEqual([]);
   });
 
-  it('returns blocks for the given session ordered by created_at asc', async () => {
+  it('returns blocks ordered by ordinal asc, not created_at or cuid2 id (YUK-221)', async () => {
     await seedSession('sess1');
-    const t0 = new Date('2026-05-16T12:00:00Z');
+    // Both blocks share one created_at (a single extraction batch) and the ids are
+    // chosen so lexical id order (b_a < b_z) is the REVERSE of the intended reading
+    // order — only `ordinal` can produce [b_z, b_a].
+    const shared = new Date('2026-05-16T12:00:00Z');
     await seedBlock({
-      id: 'b2',
+      id: 'b_a',
       session_id: 'sess1',
       prompt: 'second',
-      created_at: new Date(t0.getTime() + 1000),
+      created_at: shared,
+      ordinal: 1,
     });
     await seedBlock({
-      id: 'b1',
+      id: 'b_z',
       session_id: 'sess1',
       prompt: 'first',
-      created_at: t0,
+      created_at: shared,
+      ordinal: 0,
     });
 
     const res = await getBlocks('sess1');
@@ -112,7 +119,7 @@ describe('GET /api/ingestion/[id]/blocks', () => {
     const body = (await res.json()) as {
       rows: Array<{ id: string; extracted_prompt_md: string | null; created_at: number }>;
     };
-    expect(body.rows.map((r) => r.id)).toEqual(['b1', 'b2']);
+    expect(body.rows.map((r) => r.id)).toEqual(['b_z', 'b_a']);
     expect(body.rows[0].extracted_prompt_md).toBe('first');
     expect(typeof body.rows[0].created_at).toBe('number');
   });

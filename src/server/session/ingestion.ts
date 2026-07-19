@@ -242,7 +242,7 @@ export async function applyExtractionResult(
 
   const now = new Date();
   const insertedBlockIds: string[] = [];
-  for (const blk of params.blocks) {
+  for (const [ordinal, blk] of params.blocks.entries()) {
     const blockId = createId();
     insertedBlockIds.push(blockId);
     const [insertedRow] = await tx
@@ -253,6 +253,8 @@ export async function applyExtractionResult(
         source_document_id: params.sourceDocumentId,
         source_asset_ids: blk.source_asset_ids,
         page_spans: blk.page_spans,
+        // YUK-221 — true positional order = the extraction array index (0-based).
+        ordinal,
         // new schema fields
         structured: blk.structured,
         figures: blk.figures,

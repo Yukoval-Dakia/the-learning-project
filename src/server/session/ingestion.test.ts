@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -213,6 +213,7 @@ describe('Ingestion.applyExtractionResult', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks).toHaveLength(1);
     expect(blocks[0].layout_quality).toBe('structured');
+    expect(blocks[0].ordinal).toBe(0); // YUK-221 — first block gets ordinal 0
 
     // Domain event chained to session_id (ExtractSourceDocument shape)
     const events = await db.select().from(event).where(eq(event.session_id, sessionId));
@@ -226,6 +227,46 @@ describe('Ingestion.applyExtractionResult', () => {
     const payload = ex?.payload as { structured_block_ids: string[]; layout_quality: string };
     expect(payload.structured_block_ids).toEqual([blocks[0].id]);
     expect(payload.layout_quality).toBe('structured');
+
+    await cleanup(sessionId, sourceDocId);
+  });
+
+  it('assigns 0-based ordinal per block in extraction array order (YUK-221)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracting');
+    const stem = (n: string): StructuredQuestionT => ({
+      id: `q-${n}`,
+      role: 'stem',
+      prompt_text: `passage ${n}`,
+      sub_questions: [{ id: `q-${n}-sub`, role: 'sub', question_no: '1', prompt_text: '___' }],
+    });
+    await db.transaction((tx) =>
+      applyExtractionResult(tx, {
+        sessionId,
+        sourceDocumentId: sourceDocId,
+        blocks: ['a', 'b', 'c'].map((n) => ({
+          structured: stem(n),
+          figures: [],
+          page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+          source_asset_ids: ['asset_a'],
+          image_refs: ['asset_a'],
+        })),
+        layoutQuality: 'structured',
+        warnings: [],
+      }),
+    );
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId))
+      .orderBy(asc(question_block.ordinal));
+    // Ordinal is the 0-based array index; it follows extraction order, NOT the
+    // cuid2 row id (which the shared batch created_at would otherwise degrade to).
+    expect(blocks.map((b) => b.ordinal)).toEqual([0, 1, 2]);
+    expect(blocks.map((b) => (b.structured as StructuredQuestionT).id)).toEqual([
+      'q-a',
+      'q-b',
+      'q-c',
+    ]);
 
     await cleanup(sessionId, sourceDocId);
   });

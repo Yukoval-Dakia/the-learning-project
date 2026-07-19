@@ -130,6 +130,7 @@ async function insertBlock(
     docId: string;
     status?: string;
     visual_complexity?: string;
+    ordinal?: number;
   },
 ) {
   const now = new Date();
@@ -139,6 +140,7 @@ async function insertBlock(
     source_document_id: opts.docId,
     source_asset_ids: ['asset_1'],
     page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+    ordinal: opts.ordinal ?? 0,
     extracted_prompt_md: 'Q text',
     reference_md: null,
     wrong_answer_md: null,
@@ -565,6 +567,72 @@ describe('POST /api/ingestion/[id]/import', () => {
     const blockB = allBlocks.find((b) => b.id === 'block_b');
     expect(blockA?.status).toBe('ignored');
     expect(blockB?.status).toBe('ignored');
+  });
+
+  it('YUK-221 (#919) — virtual merge card takes MIN(source ordinals), not payload index; no collision with a direct-import block', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db, { assetIds: ['asset_1', 'asset_2'] });
+    // Extraction ordinals: block_a=0 (direct-imported), block_c=2 + block_d=3 (merged).
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId, ordinal: 0 });
+    await insertBlock(db, { id: 'block_c', sessionId, docId: sourceDocId, ordinal: 2 });
+    await insertBlock(db, { id: 'block_d', sessionId, docId: sourceDocId, ordinal: 3 });
+    await insertKnowledge(db, 'k1');
+
+    // Payload order deliberately puts the merge card at index 0 and the direct import
+    // at index 1. The OLD payload-index rule gave the merge card ordinal 0 — colliding
+    // with block_a's extraction ordinal 0 and degrading the paper sort to the cuid2
+    // tiebreak. The fix pins the merge card to MIN(source ordinals) = 2.
+    const res = await post(sessionId, {
+      blocks: [
+        {
+          // index 0 — virtual merge card of block_c (2) + block_d (3)
+          source_block_ids: ['block_c', 'block_d'],
+          page_spans: [
+            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+          ],
+          image_refs: ['asset_1'],
+          final_prompt_md: 'Merged Q',
+          final_reference_md: null,
+          final_wrong_answer_md: 'WA',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        },
+        {
+          // index 1 — direct import of block_a (keeps its extraction ordinal 0)
+          block_id: 'block_a',
+          source_block_ids: ['block_a'],
+          page_spans: [
+            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+          ],
+          image_refs: ['asset_1'],
+          final_prompt_md: 'Direct Q',
+          final_reference_md: null,
+          final_wrong_answer_md: 'WA',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    const allBlocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+
+    const blockA = allBlocks.find((b) => b.id === 'block_a');
+    const virtualBlock = allBlocks.find((b) => b.merged_from_block_ids.length > 0);
+    expect(virtualBlock).toBeDefined();
+    // MIN(source ordinals) = min(2, 3) = 2, NOT the payload index (0).
+    expect(virtualBlock?.ordinal).toBe(2);
+    // Direct import leaves the extraction ordinal untouched.
+    expect(blockA?.ordinal).toBe(0);
+    // The two survivors occupy distinct ordinals — no cuid2-tiebreak collision.
+    expect(virtualBlock?.ordinal).not.toBe(blockA?.ordinal);
   });
 
   it('split: 2 virtual cards sharing source_block_id → 2 new question_blocks, source updated ignored once', async () => {

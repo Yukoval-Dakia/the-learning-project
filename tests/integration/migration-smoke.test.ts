@@ -275,6 +275,31 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(rows[0]?.indexdef).toMatch(/affected_scopes/i);
   });
 
+  it('adds question_block.ordinal (NOT NULL default 0) + session index (0068, YUK-221)', async () => {
+    const cols = await db.execute<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }>(sql`
+      SELECT column_name, data_type, is_nullable FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'question_block'
+        AND column_name = 'ordinal'
+    `);
+    expect(cols.length).toBe(1);
+    expect(cols[0]?.data_type).toBe('integer');
+    expect(cols[0]?.is_nullable).toBe('NO');
+
+    const idx = await db.execute<{ indexdef: string }>(sql`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'question_block'
+        AND indexname = 'question_block_session_ordinal_idx'
+    `);
+    expect(idx[0]?.indexdef).toMatch(/ingestion_session_id/i);
+    expect(idx[0]?.indexdef).toMatch(/ordinal/i);
+  });
+
   it('adds P5.3 long_term_freshness_score real column on memory_brief_note (YUK-183)', async () => {
     const rows = await db.execute<{ column_name: string; data_type: string }>(sql`
       SELECT column_name, data_type FROM information_schema.columns
