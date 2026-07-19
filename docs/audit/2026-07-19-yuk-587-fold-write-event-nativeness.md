@@ -22,6 +22,9 @@
    index（并把参数收紧为仅接受 `Tx`）；`subject-control-write.ts` 的 rename/reset 则会直改 root
    name、没有 fold event。后者登记为 **control-plane-sync** 并持续 advisory，不把已知缺口伪装成
    locally-safe；事件原生化由 YUK-728 跟踪。
+6. `archiveKnowledgeEdge` 以单条 guarded `UPDATE ... RETURNING` 原子认领 live→archived 转换；
+   caller 只有在 `archived=true` 时才追加 archive event。并发 contender 会 fail-loud 并回滚，避免
+   row 保留首个时间戳、fold 却消费末个时间戳的漂移。
 
 ## `edges.ts` 调用者矩阵
 
@@ -51,5 +54,7 @@
 - seed 首跑：每个 subject root 恰有一条 genesis、一个 materialized index anchor，且
   `gatherAndFoldKnowledgeNode(root) == knowledgeRowToSnapshot(liveRow)`。
 - seed 重跑：row / event / index 数量均不变。
+- 并发 archive：恰有一个 caller 认领转换、恰有一条 fold-visible archive event，且 event/row
+  `archived_at` 相等；SUPERSEDE 新边 `gatherAndFoldKnowledgeEdge == live row`。
 - `audit:fold-writes --json` 与文本输出共享 `result.advisories`；proposals / seed / edges 都被覆盖。
 - advisory 继续 report-only；真正未登记的 raw writer 仍由 `--strict` 作为 violation 阻断。

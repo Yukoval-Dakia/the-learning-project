@@ -452,27 +452,30 @@ export async function archiveKnowledgeEdge(
   // other callers that don't thread an accept-time instant.
   now: Date = new Date(),
 ): Promise<ArchiveKnowledgeEdgeResult> {
+  // One guarded UPDATE owns the NULL→timestamp transition. A preceding SELECT would leave a
+  // TOCTOU window where two transactions both observe a live row, only one UPDATE wins, but both
+  // callers append fold-visible archive events with different timestamps.
+  const updated = await db
+    .update(knowledge_edge)
+    .set({ archived_at: now })
+    .where(and(eq(knowledge_edge.id, id), isNull(knowledge_edge.archived_at)))
+    .returning({ id: knowledge_edge.id });
+
+  if (updated.length > 0) return { id, archived: true };
+
+  // The guarded UPDATE cannot distinguish an idempotent already-archived row from a missing id.
+  // Resolve that only after the atomic transition attempt; under READ COMMITTED a contender that
+  // waited on the winning UPDATE observes the committed archived row here.
   const existing = await db
-    .select({ id: knowledge_edge.id, archived_at: knowledge_edge.archived_at })
+    .select({ id: knowledge_edge.id })
     .from(knowledge_edge)
     .where(eq(knowledge_edge.id, id))
     .limit(1);
-  const row = existing[0];
-  if (!row) {
+  if (!existing[0]) {
     throw new ApiError('not_found', `knowledge_edge not found: ${id}`, 404);
   }
-  if (row.archived_at !== null) {
-    // Already archived — idempotent no-op (a re-accept of the same archive
-    // proposal lands here).
-    return { id, archived: false };
-  }
 
-  await db
-    .update(knowledge_edge)
-    .set({ archived_at: now })
-    .where(and(eq(knowledge_edge.id, id), isNull(knowledge_edge.archived_at)));
-
-  return { id, archived: true };
+  return { id, archived: false };
 }
 
 // suppress unused-import warning at module level

@@ -11,7 +11,10 @@ import {
   proposal_signals,
   question,
 } from '@/db/schema';
-import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
+import {
+  gatherAndFoldKnowledgeEdge,
+  gatherAndFoldKnowledgeNode,
+} from '@/server/projections/gather';
 import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
@@ -310,6 +313,8 @@ describe('proposal lifecycle owner service', () => {
       .where(and(eq(knowledge_edge.from_knowledge_id, 'k1'), isNull(knowledge_edge.archived_at)));
     expect(replacement).toHaveLength(1);
     expect(replacement[0].to_knowledge_id).toBe('k3');
+    const foldedReplacement = await gatherAndFoldKnowledgeEdge(db, replacement[0].id);
+    expect(foldedReplacement).toEqual(replacement[0]);
 
     const logs = await db.select().from(edge_reconciliation_log);
     expect(logs).toHaveLength(1);
@@ -329,6 +334,66 @@ describe('proposal lifecycle owner service', () => {
     expect(replay.idempotent).toBe(true);
     expect(replay.edge_id).toBe(result.edge_id);
     expect(await db.select().from(edge_reconciliation_log)).toHaveLength(1);
+  });
+
+  it('allows one of two racing archive proposals to append the sole fold-visible archive event', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_archive_race',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+    for (const suffix of ['a', 'b']) {
+      await writeAiProposal(db, {
+        id: `edge_archive_race_${suffix}`,
+        payload: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: 'edge_archive_race' },
+          reason_md: `archive contender ${suffix}`,
+          evidence_refs: [],
+          proposed_change: {
+            edge_op: 'archive',
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 1,
+            archive_edge_id: 'edge_archive_race',
+          },
+          cooldown_key: `knowledge_edge_archive:edge_archive_race:${suffix}`,
+        },
+      });
+    }
+
+    const settled = await Promise.allSettled([
+      acceptAiProposal(db, 'edge_archive_race_a'),
+      acceptAiProposal(db, 'edge_archive_race_b'),
+    ]);
+    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(settled.filter((result) => result.status === 'rejected')).toHaveLength(1);
+
+    const archiveEvents = (
+      await db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'generate'),
+            eq(event.subject_kind, 'knowledge_edge'),
+            eq(event.subject_id, 'edge_archive_race'),
+          ),
+        )
+    ).filter((row) => (row.payload as { edge_op?: string }).edge_op === 'archive');
+    expect(archiveEvents).toHaveLength(1);
+    const [row] = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_archive_race'));
+    expect(row.archived_at?.getTime()).toBe(archiveEvents[0].created_at.getTime());
   });
 
   it('rejects a supersede candidate identical to its still-live target edge', async () => {

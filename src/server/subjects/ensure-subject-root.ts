@@ -5,9 +5,9 @@
 //   domain+parent_id IS NULL 判据——3a topic-root 会撞）。
 // - **event-sourced from birth**：真插入时同事务写 genesis 事件 +
 //   materialized_id_index anchor——knowledge 侧 PROJECTION_IS_WRITER 已 LIVE，
-//   裸 INSERT 会被 projection drift 判死。事件形状逐字段对齐
-//   scripts/backfill-genesis-events.ts:219-235（builtin 根走 seedKnowledge 裸插
-//   + backfill 补账是历史路径；运行时新建必须当场落账）。ingest_at=now →
+//   裸 INSERT 会被 projection drift 判死。事件形状逐字段对齐共享
+//   knowledgeRowToSnapshot mapper（builtin 根也由 seedKnowledge 当场写 genesis + index；
+//   backfill 只补历史 event-less 行）。ingest_at=now →
 //   memory outbox opt-out（结构种子非学习活动，ADR-0021）。
 // - **幂等安全网非创建面**：ON CONFLICT DO NOTHING + returning() 空 = 根已在
 //   → 不重写 genesis（goal 防线对既有科目反复调用零副作用）。
