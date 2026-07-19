@@ -16,6 +16,7 @@
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
 
+import { scopedPracticeHref } from '@/ui/lib/routes';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -53,14 +54,6 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
   if (status === 'confirmed') return 'check';
   if (status === 'retired') return 'checkCircle';
   return 'sparkle'; // awaiting_decision / awaiting_answer
-}
-
-// KC-scoped practice deep link (YUK-535): /practice?kc=<id> opens an on-demand scoped
-// session for one knowledge component. Kept as a local one-liner (the format also lives
-// in knowledge/ui/MisconceptionList) to avoid a cross-capability UI import; the knowledge
-// id travels only inside this click handler, never into the DOM (contract §8.2).
-function scopedPracticeHref(knowledgeId: string): string {
-  return `/practice?kc=${encodeURIComponent(knowledgeId)}`;
 }
 
 // The three read surfaces whose counts move when a brief advances or retires: the brief
@@ -293,6 +286,32 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   );
 }
 
+// The append-only "知道了" ack + its fail-closed inline retry (contract §4.2/§7). Shared by
+// both outcome branches (confirmed's practice_scoped and retired's acknowledge_outcome) so
+// the dismiss affordance is defined once.
+function AckDismiss({
+  acking,
+  ackFailed,
+  onAcknowledge,
+}: {
+  acking: boolean;
+  ackFailed: boolean;
+  onAcknowledge: () => void;
+}) {
+  return (
+    <>
+      <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
+        知道了
+      </Btn>
+      {ackFailed && (
+        <span className="tb-error" role="alert">
+          操作失败，请重试
+        </span>
+      )}
+    </>
+  );
+}
+
 function PreparedBlock({
   brief,
   navigate,
@@ -405,14 +424,7 @@ function PreparedBlock({
           >
             针对这个点练一组
           </Btn>
-          <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
-            知道了
-          </Btn>
-          {ackFailed && (
-            <span className="tb-error" role="alert">
-              操作失败，请重试
-            </span>
-          )}
+          <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>
       </>
     );
@@ -431,14 +443,7 @@ function PreparedBlock({
           <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
             回到今日练习
           </Btn>
-          <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
-            知道了
-          </Btn>
-          {ackFailed && (
-            <span className="tb-error" role="alert">
-              操作失败，请重试
-            </span>
-          )}
+          <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>
       </>
     );
