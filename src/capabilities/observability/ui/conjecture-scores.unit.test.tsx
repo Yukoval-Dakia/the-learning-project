@@ -98,4 +98,17 @@ describe('AdminConjectureScoresSurface', () => {
     expect(html).not.toContain('below baseline');
     expect(html).toContain('deferred'); // window skill honestly marked deferred
   });
+
+  it('renders absent score metrics as dashes without counting them as zero in the mean', () => {
+    const html = render({
+      score_basis: 'single_point',
+      prediction_scores: [
+        score({ brier_model: null, brier_baseline: null, skill_score_point: null }),
+      ],
+      typed_states: [],
+    });
+    expect(html).toContain('mean Brier');
+    expect(html).toContain('—');
+    expect(html).not.toContain('0.000');
+  });
 });

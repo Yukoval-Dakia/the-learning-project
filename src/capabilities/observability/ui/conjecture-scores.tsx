@@ -26,10 +26,10 @@ interface PredictionScoreRow {
   baseline_p: number;
   outcome: 0 | 1;
   resolution: 'confirmed' | 'retired';
-  brier_model: number;
-  brier_baseline: number;
-  log_loss_model: number;
-  skill_score_point: number;
+  brier_model: number | null;
+  brier_baseline: number | null;
+  log_loss_model: number | null;
+  skill_score_point: number | null;
   retrievability_at_judge: number | null;
   created_at: string;
 }
@@ -37,7 +37,7 @@ interface TypedStateRow {
   id: string;
   knowledge_id: string;
   typed_state: 'confused-with-X';
-  confused_with_kc_id: string | null;
+  confused_with_kc_id: string;
   lifecycle: 'open' | 'resolved';
   evidence_event_ids: string[];
   last_evidence_at: string | null;
@@ -70,8 +70,11 @@ function formatTime(value: string | null): string {
   });
 }
 
-const fmt = (n: number) => n.toFixed(3);
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const fmt = (n: number | null) => (n === null ? '—' : n.toFixed(3));
+const mean = (xs: Array<number | null>): number | null => {
+  const present = xs.filter((n): n is number => n !== null);
+  return present.length ? present.reduce((a, b) => a + b, 0) / present.length : null;
+};
 
 export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: string) => void }) {
   const q = useQuery({
@@ -127,8 +130,8 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
           {/* 描述性 mean Brier（越低越好，reader 自比 model vs baseline）；空数据集 dash，不把 0 当真值。 */}
           <Kpi
             label="mean Brier"
-            value={scores.length === 0 ? '—' : fmt(meanBrierModel)}
-            note={scores.length === 0 ? undefined : `baseline ${fmt(meanBrierBaseline)}`}
+            value={fmt(meanBrierModel)}
+            note={meanBrierBaseline === null ? undefined : `baseline ${fmt(meanBrierBaseline)}`}
           />
           {/* window skill（真·beats-baseline 判词）DEFER 给 Rust window 聚合（ADR-0046）——本页不伪造。 */}
           <Kpi label="window skill" value="deferred" note="window BSS · ADR-0046" />
@@ -199,7 +202,13 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
                           </td>
                           <td style={tdStyle}>{fmt(s.log_loss_model)}</td>
                           <td style={tdStyle}>
-                            <span style={s.skill_score_point > 0 ? okMarkStyle : undefined}>
+                            <span
+                              style={
+                                s.skill_score_point !== null && s.skill_score_point > 0
+                                  ? okMarkStyle
+                                  : undefined
+                              }
+                            >
                               {fmt(s.skill_score_point)}
                             </span>
                           </td>
