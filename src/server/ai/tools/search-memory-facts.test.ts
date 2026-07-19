@@ -1,6 +1,5 @@
-import type { MemoryClient } from '@/server/memory/client';
+import type { MemoryReadClient } from '@/server/memory/read';
 import { describe, expect, it, vi } from 'vitest';
-import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
 import {
   SearchMemoryFactsInputSchema,
   buildSearchMemoryFactsTool,
@@ -8,15 +7,14 @@ import {
 } from './search-memory-facts';
 import type { ToolContext } from './types';
 
-// DI-pure: a stub MemoryClient stands in for the real Mem0/pgvector client, so
-// no env (XIAOMI/OPENAI keys) or live vector store is touched (plan §62 / R10).
-// YUK-557 (F7): shared MemoryClient double — only search is load-bearing for this
-// read-only tool.
-function stubClient(search: MemoryClient['search'] = vi.fn(async () => ({ results: [] }))): {
-  client: MemoryClient;
-  search: MemoryClient['search'];
+// DI-pure: the smallest read-client adapter stands in for Mem0/pgvector, so no
+// provider env or live vector store is touched. Only search is load-bearing for
+// this read-only tool.
+function stubClient(search: MemoryReadClient['search'] = vi.fn(async () => ({ results: [] }))): {
+  client: MemoryReadClient;
+  search: MemoryReadClient['search'];
 } {
-  const client = memoryClientMock({ search });
+  const client = { search };
   return { client, search };
 }
 

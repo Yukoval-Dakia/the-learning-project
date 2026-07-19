@@ -1401,7 +1401,8 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
     // This mock targets the production lazy dynamic-import seam. Deliberately do NOT inject
     // loadMemoryPrior below: defaultLoadMemoryPrior must import this module and absorb the
     // constructor failure without turning a healthy LLM orchestration into statistical fallback.
-    vi.doMock('@/server/memory/client', () => ({ createMemoryClient }));
+    const readMemoryFacts = vi.fn(() => createMemoryClient());
+    vi.doMock('@/server/memory/read', () => ({ readMemoryFacts }));
 
     try {
       const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
@@ -1425,11 +1426,12 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
       );
 
       expect(createMemoryClient).toHaveBeenCalledTimes(1);
+      expect(readMemoryFacts).toHaveBeenCalledTimes(1);
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       expect(result.fallback).toBe('none');
       expect(result.plan.items.map((item) => item.ref_id)).toContain(variantId);
     } finally {
-      vi.doUnmock('@/server/memory/client');
+      vi.doUnmock('@/server/memory/read');
     }
   });
 });
