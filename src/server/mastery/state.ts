@@ -11,7 +11,10 @@
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  batchResolveEffectiveDomains,
+  getEffectiveDomain,
+} from '@/capabilities/knowledge/server/domain';
 import {
   GRAPH_LAPLACIAN_ENABLED,
   GRAPH_LAPLACIAN_KAPPA,
@@ -231,6 +234,24 @@ export async function retireMasteryStateOnMerge(
   return 'frozen';
 }
 
+/** Project a raw `mastery_state` row to the public {@link MasteryStateRow} shape. Single source
+ *  shared by {@link getMasteryState} (single) and {@link getMasteryStates} (batch) so the two
+ *  can never drift. */
+function toMasteryStateRow(row: typeof mastery_state.$inferSelect): MasteryStateRow {
+  return {
+    subject_kind: row.subject_kind,
+    subject_id: row.subject_id,
+    theta_hat: row.theta_hat,
+    evidence_count: row.evidence_count,
+    success_count: row.success_count,
+    fail_count: row.fail_count,
+    last_outcome_at: row.last_outcome_at ?? null,
+    theta_precision: row.theta_precision,
+    last_theta_delta: row.last_theta_delta ?? null,
+    theta_grid_json: (row.theta_grid_json as ThetaGridPosterior | null) ?? null,
+  };
+}
+
 /**
  * Read the current p(L) state row for a knowledge node, or null (cold start).
  */
@@ -248,18 +269,33 @@ export async function getMasteryState(
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  return {
-    subject_kind: row.subject_kind,
-    subject_id: row.subject_id,
-    theta_hat: row.theta_hat,
-    evidence_count: row.evidence_count,
-    success_count: row.success_count,
-    fail_count: row.fail_count,
-    last_outcome_at: row.last_outcome_at ?? null,
-    theta_precision: row.theta_precision,
-    last_theta_delta: row.last_theta_delta ?? null,
-    theta_grid_json: (row.theta_grid_json as ThetaGridPosterior | null) ?? null,
-  };
+  return toMasteryStateRow(row);
+}
+
+/**
+ * YUK-716 — batch twin of {@link getMasteryState}: read the p(L) state rows for MANY knowledge
+ * nodes in ONE `inArray` query, keyed by `subject_id`. Nodes with no row (cold start) are simply
+ * ABSENT from the map — callers apply the same cold-start defaults they use for a null single
+ * read. RAW rows only (no A5/A6 KG soft-layer): this is the selection-read primitive that
+ * replaces the per-KC `getMasteryState` N+1 in `collectCandidateSignals` while preserving the
+ * `theta_grid_json` column the projection read model drops.
+ */
+export async function getMasteryStates(
+  db: DbLike,
+  knowledgeIds: string[],
+  subjectKind = 'knowledge',
+): Promise<Map<string, MasteryStateRow>> {
+  const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
+  const out = new Map<string, MasteryStateRow>();
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, subjectKind), inArray(mastery_state.subject_id, ids)),
+    );
+  for (const row of rows) out.set(row.subject_id, toMasteryStateRow(row));
+  return out;
 }
 
 /**
@@ -310,6 +346,47 @@ export async function effectiveThetaForKc(
     return thetaKc; // orphan / null-root-domain → no domain anchor → θ_global=0.
   }
   return (await globalThetaForDomain(db, domain)) + thetaKc;
+}
+
+/**
+ * YUK-716 — batch twin of {@link effectiveThetaForKc}: resolve `θ_global(domain) + θ_KC` for
+ * MANY KCs while collapsing the per-KC domain walk + per-KC θ_global read into two bulk reads
+ * (one archived-inclusive tree walk for the domains, one `inArray` for the `ability_global`
+ * rows). Reads are O(1) in KC count, not O(N×domain-depth).
+ *
+ * FLAG OFF (DEFAULT, dark-ship): θ_global ≡ 0 → returns `thetaKc` for every entry WITHOUT
+ *   touching the DB — byte-identical to the per-KC {@link effectiveThetaForKc} flag-off path.
+ * FLAG ON: {@link batchResolveEffectiveDomains} resolves each KC's effective domain
+ *   (caught-to-null exactly where the per-KC `getEffectiveDomain` throws → θ_global=0), then a
+ *   single {@link getMasteryStates} reads every distinct domain's `ability_global` row (null →
+ *   0). effective_k = θ_global(domain_k) + θ_KC_k — the same arithmetic as the single path.
+ *
+ * `entries` should carry each KC's already-read `thetaKc` (the caller's `mastery_state.theta_hat`
+ * or cold-start default) so no per-KC `mastery_state` SELECT is re-issued here.
+ */
+export async function effectiveThetaForKcBatch(
+  db: DbLike,
+  entries: Array<{ knowledgeId: string; thetaKc: number }>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!HIERARCHICAL_ELO_ENABLED) {
+    for (const e of entries) out.set(e.knowledgeId, e.thetaKc); // dark-ship: bit-identical.
+    return out;
+  }
+  const kcIds = Array.from(new Set(entries.map((e) => e.knowledgeId)));
+  const domainByKc = await batchResolveEffectiveDomains(db, kcIds);
+  const distinctDomains = Array.from(
+    new Set([...domainByKc.values()].filter((d): d is string => d !== null)),
+  );
+  const globalRows = await getMasteryStates(db, distinctDomains, ABILITY_GLOBAL_KIND);
+  const globalByDomain = new Map<string, number>();
+  for (const d of distinctDomains) globalByDomain.set(d, globalRows.get(d)?.theta_hat ?? 0);
+  for (const e of entries) {
+    const domain = domainByKc.get(e.knowledgeId) ?? null;
+    const global = domain !== null ? (globalByDomain.get(domain) ?? 0) : 0;
+    out.set(e.knowledgeId, global + e.thetaKc);
+  }
+  return out;
 }
 
 /**
