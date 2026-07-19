@@ -282,11 +282,14 @@ export function scanFlagTokens(
   return found;
 }
 
-function hasLiveFlagReference(code: string, name: string): boolean {
+function hasLiveFlagReference(code: string, name: string, allowEnvNameConstant: boolean): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // A few readers centralize the env-key string in a `<NAME>_ENV` constant. Count that whole
-  // identifier as a live reference without accepting arbitrary prefix collisions.
-  return new RegExp(`(?<![A-Z0-9_])${escaped}(?:_ENV)?(?![A-Z0-9_])`).test(code);
+  // identifier for env flags without loosening const-flag matching or accepting arbitrary
+  // prefixes. Env entries separately require a live reader_marker, so a leftover key constant
+  // alone still fails reconciliation as READER-DRIFT.
+  const suffix = allowEnvNameConstant ? '(?:_ENV)?' : '';
+  return new RegExp(`(?<![A-Z0-9_])${escaped}${suffix}(?![A-Z0-9_])`).test(code);
 }
 
 // ── reconciliation ─────────────────────────────────────────────────────────────────────────────
@@ -337,13 +340,18 @@ export function reconcileFlags(
     }
 
     const code = stripComments(src);
-    if (!hasLiveFlagReference(code, name)) {
+    if (!hasLiveFlagReference(code, name, entry.kind === 'env')) {
       stale.push({ name, file, problem: 'name-missing' });
+      continue;
     }
 
-    const marker = (entry as { reader_marker?: unknown }).reader_marker;
-    if (entry.kind === 'env' && typeof marker === 'string' && marker.trim() !== '') {
-      if (!code.includes(marker)) readerDrift.push({ name, file, marker });
+    if (entry.kind === 'env') {
+      const marker = entry.reader_marker;
+      // Keep the runtime guard because the JSON ledger is untrusted at load time even though the
+      // public TypeScript type is precise; validateLedgerEntry reports malformed shapes above.
+      if (typeof marker === 'string' && marker.trim() !== '' && !code.includes(marker)) {
+        readerDrift.push({ name, file, marker });
+      }
     }
   }
 

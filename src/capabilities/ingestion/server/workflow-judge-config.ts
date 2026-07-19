@@ -18,7 +18,7 @@
  * writes durable learning data on the user's behalf (events + records), so per
  * OC-5 evidence-first conservative rollout it DEFAULTS OFF (a clone-safety
  * guarantee — nothing auto-enrolls unless the env var is set EXPLICITLY to
- * 'true'). Both OC-5 gates are now satisfied — the "AI auto-enrolled N items"
+ * `true` or `1`). Both OC-5 gates are now satisfied — the "AI auto-enrolled N items"
  * review surface shipped (PR #328: the /record auto_enrolled review tab +
  * revert) and the owner opted in (YUK-164 #4, 2026-06-08) — so it may be enabled
  * per environment as needed. The code default stays OFF regardless.
@@ -42,7 +42,7 @@ export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
  * OFF. INDEPENDENT of `AUTO_ENROLL_FLAG`: when this is unset (the default), the
  * detect-student-work branch in `runAutoEnrollForSession` is skipped ENTIRELY →
  * byte-for-byte today's behavior (the existing text-draft outcome). When set to
- * the string 'true' (case-insensitive) AND a block carries student work
+ * `true` or `1` (case-insensitive) AND a block carries student work
  * (handwriting / a VLM `student_answer_present` signal), the whole page image is
  * graded via the existing `multimodal_direct` judge and the verdict drives a
  * real graded attempt → 错因 (attribution) + mastery (θ̂) chains.

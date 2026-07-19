@@ -119,13 +119,8 @@ describe('reconcileFlags — ledger ↔ code', () => {
     expect(recon.stale).toEqual([
       { name: 'OK_ENABLED', file: 'src/x.ts', problem: 'name-missing' },
     ]);
-    expect(recon.readerDrift).toEqual([
-      {
-        name: 'OK_ENABLED',
-        file: 'src/x.ts',
-        marker: 'parseFlag(process.env.OK_ENABLED)',
-      },
-    ]);
+    // STALE is the root cause; do not duplicate it as READER-DRIFT.
+    expect(recon.readerDrift).toHaveLength(0);
     expect(recon.ok).toBe(false);
   });
 

@@ -68,8 +68,9 @@ export function buildJudgeCalibrationSampleHandler(
   return async () => {
     // Dark-ship gate: default OFF. Zero spend / zero events when disabled.
     if (!parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])) {
+      const rawEnabled = process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV];
       console.log(
-        `[judge_calibration_sample] disabled (${JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV})`,
+        `[judge_calibration_sample] disabled (${JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV}=${JSON.stringify(rawEnabled)})`,
       );
       return;
     }
