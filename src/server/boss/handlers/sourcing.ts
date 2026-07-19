@@ -568,9 +568,6 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
           // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
           source_ref: q.source_url,
-          // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-          // source_verify passes.
-          draft_status: 'draft',
           created_by: aiAgentRef('SourcingTask', result),
           metadata: {
             web_sourced: webSourced,
@@ -584,7 +581,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         });
         let inserted = await tx
           .insert(question)
-          .values(questionRow)
+          // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
+          // source_verify passes. Keep this field explicit at every INSERT site so
+          // audit:draft-status can prove the gate.
+          .values({ ...questionRow, draft_status: 'draft' })
           // Scope the arbiter to the canonical-hash partial unique index (WHERE
           // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
           // silently swallow ANY unique conflict (e.g. the PK), making the
@@ -610,7 +610,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           if (racedDuplicate.disposition === 'released_terminal_draft') {
             inserted = await tx
               .insert(question)
-              .values(questionRow)
+              .values({ ...questionRow, draft_status: 'draft' })
               .onConflictDoNothing({
                 target: question.canonical_content_hash,
                 where: sql`${question.canonical_content_hash} is not null`,

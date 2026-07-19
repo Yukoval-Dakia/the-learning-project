@@ -783,9 +783,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           difficulty: q.difficulty,
           // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
           source_ref: resolved.refId,
-          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-          // quiz_verify passes (Q5 promotes draft→active + enrolls).
-          draft_status: 'draft',
           created_by: aiAgentRef('QuizGenTask', result),
           metadata: {
             quiz_gen: metaQuizGen,
@@ -798,7 +795,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         });
         let inserted = await tx
           .insert(question)
-          .values(questionRow)
+          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+          // quiz_verify passes (Q5 promotes draft→active + enrolls). Keep this field
+          // explicit at every INSERT site so audit:draft-status can prove the gate.
+          .values({ ...questionRow, draft_status: 'draft' })
           // Scope the arbiter to the canonical-hash partial unique index (WHERE
           // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
           // silently swallow ANY unique conflict (e.g. the PK), making the
@@ -824,7 +824,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           if (racedDuplicate.disposition === 'released_terminal_draft') {
             inserted = await tx
               .insert(question)
-              .values(questionRow)
+              .values({ ...questionRow, draft_status: 'draft' })
               .onConflictDoNothing({
                 target: question.canonical_content_hash,
                 where: sql`${question.canonical_content_hash} is not null`,
