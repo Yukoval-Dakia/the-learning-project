@@ -457,6 +457,13 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
       : [];
     const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
+    // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
+    // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
+    // Remaining live resolved ids are fallback attribution only when the model supplied none.
+    const targetKnowledgeIds =
+      resolved.knowledgeNode && fallbackKnowledgeIds.includes(resolved.knowledgeNode.id)
+        ? [resolved.knowledgeNode.id]
+        : [];
     const resolveQuestionKnowledgeIds = (q: SourcedQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
@@ -486,10 +493,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
-        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
-        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
-          questionKnowledgeIds,
-          fallbackKnowledgeIds,
+        // Prelookup only needs attribution we can already prove. Preserve the historical
+        // duplicate short-circuit for a manual run whose model emitted only invalid IDs: an
+        // existing canonical row is usable even though a brand-new unattributed row would not be.
+        const prelookupKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid)),
+          targetKnowledgeIds,
         );
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: q.prompt_md,
@@ -499,7 +508,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         });
         const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
           canonicalContentHash,
-          knowledgeIds: duplicateKnowledgeIds,
+          knowledgeIds: prelookupKnowledgeIds,
           actorRef: 'sourcing',
           taskRunId: result.task_run_id,
           now,
@@ -519,6 +528,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           continue;
         }
         await params.afterExactDuplicateLookupMiss?.();
+        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          targetKnowledgeIds,
+        );
         // Preserve the model's EXPLICIT judge_kind_override; only derive a default
         // when the agent left it absent (CR — never clobber an explicit route like
         // 'keyword' with the structural default). defaultJudgeKindForQuestion already

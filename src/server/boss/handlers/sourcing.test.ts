@@ -559,6 +559,57 @@ describe('runSourcing', () => {
     expect(rows[0].knowledge_ids).toEqual(['k1']);
   });
 
+  it('short-circuits an exact duplicate before rejecting invalid manual-run attribution', async () => {
+    const db = testDb();
+    const parsed = JSON.parse(HALLUCINATED_KNOWLEDGE_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = parsed.questions[0];
+    await db.insert(question).values({
+      id: 'q-manual-invalid-attribution-duplicate',
+      kind: content.kind,
+      prompt_md: content.prompt_md,
+      reference_md: content.reference_md,
+      choices_md: content.choices_md,
+      rubric_json: content.rubric_json as never,
+      source: 'manual',
+      draft_status: 'active',
+      knowledge_ids: ['k-existing'],
+      canonical_content_hash: canonicalQuestionContentHash({
+        promptMd: content.prompt_md,
+        referenceMd: content.reference_md,
+        choicesMd: content.choices_md,
+        rubricJson: content.rubric_json,
+      }),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const result = await runSourcing({
+      db,
+      trigger: 'manual',
+      refId: 'free-form-no-kc',
+      runAgentTaskFn: agentMock(HALLUCINATED_KNOWLEDGE_OUTPUT, 'tr-invalid-exact'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toEqual([]);
+    expect(
+      await db
+        .select()
+        .from(question)
+        .where(eq(question.id, 'q-manual-invalid-attribution-duplicate')),
+    ).toHaveLength(1);
+  });
+
   it('skips when a knowledge trigger ref does not resolve', async () => {
     const db = testDb();
     const result = await runSourcing({
@@ -587,6 +638,61 @@ describe('runSourcing', () => {
       buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
     expect(result.status).toBe('ready');
+  });
+
+  it('uses only the learning_item primary KC as the supply target when model attribution is narrow', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    await seedLearningItem({ id: 'li-multi', knowledgeId: 'k1' });
+    await db
+      .update(learning_item)
+      .set({ knowledge_ids: ['k1', 'k2'] })
+      .where(eq(learning_item.id, 'li-multi'));
+    const parsed = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = parsed.questions[0];
+    await db.insert(question).values({
+      id: 'q-learning-item-narrow-duplicate',
+      kind: 'short_answer',
+      prompt_md: content.prompt_md,
+      reference_md: content.reference_md,
+      choices_md: content.choices_md,
+      rubric_json: content.rubric_json as never,
+      source: 'manual',
+      draft_status: 'active',
+      knowledge_ids: ['k-existing'],
+      canonical_content_hash: canonicalQuestionContentHash({
+        promptMd: content.prompt_md,
+        referenceMd: content.reference_md,
+        choicesMd: content.choices_md,
+        rubricJson: content.rubric_json,
+      }),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await runSourcing({
+      db,
+      trigger: 'learning_item',
+      refId: 'li-multi',
+      runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr-li-narrow'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const [existing] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-learning-item-narrow-duplicate'));
+    expect(existing.knowledge_ids).toEqual(['k-existing', 'k1']);
   });
 
   it('passes the resolved subject profile into the SourcingTask ctx (non-default subject)', async () => {

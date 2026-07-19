@@ -614,6 +614,13 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
       : [];
     const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
+    // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
+    // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
+    // Remaining live resolved ids are fallback attribution only when the model supplied none.
+    const targetKnowledgeIds =
+      resolved.knowledgeNode && fallbackKnowledgeIds.includes(resolved.knowledgeNode.id)
+        ? [resolved.knowledgeNode.id]
+        : [];
     const resolveQuestionKnowledgeIds = (q: QuizGenQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
@@ -713,7 +720,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         });
         const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
           questionKnowledgeIds,
-          fallbackKnowledgeIds,
+          targetKnowledgeIds,
         );
         const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
           canonicalContentHash,
