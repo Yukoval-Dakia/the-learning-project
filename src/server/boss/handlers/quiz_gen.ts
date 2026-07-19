@@ -803,6 +803,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
 
+      // When every generated question resolved to an exact duplicate there is
+      // nothing new to serve — creating a generation_status='ready' tool_quiz with
+      // tool_state.question_ids: [] would surface a practicable ZERO-question paper.
+      // Skip the artifact; the post-tx event still records the duplicate outcome.
+      if (questionIds.length === 0) return;
+
       // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create from the materialized row.
       // No causing event row exists at this point (the experimental:quiz_gen event is written AFTER
       // the tx), so the create event is unchained; created_at == the row's `now`.
@@ -871,7 +877,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         trigger,
         ref_id: resolved.refId,
         question_ids: questionIds,
-        tool_quiz_artifact_id: toolQuizArtifactId,
+        // null when the whole batch resolved to exact duplicates and no artifact
+        // was created (zero-question quizzes must never reach the practice face).
+        tool_quiz_artifact_id: questionIds.length > 0 ? toolQuizArtifactId : null,
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,

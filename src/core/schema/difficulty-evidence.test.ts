@@ -85,4 +85,25 @@ describe('DifficultyEvidence', () => {
       }),
     ).toThrow();
   });
+
+  it('treats a wild calibrated logit as a calibration bug, not a hard item', () => {
+    // Schema contract: canonical rasch_logit_b is bounded.
+    expect(() =>
+      DifficultyEvidence.parse({
+        version: 1,
+        value: 1e15,
+        scale: 'rasch_logit_b',
+        basis: 'item_calibration',
+        confidence: 1,
+      }),
+    ).toThrow();
+    // Read path: a wild b falls through to the next evidence tier instead of throwing.
+    const resolved = resolveDifficultyEvidence({
+      calibratedB: 1e15,
+      stored: undefined,
+      legacyDifficulty: 3,
+    });
+    expect(resolved.basis).toBe('legacy_numeric');
+    expect(resolved.value).toBe(3);
+  });
 });

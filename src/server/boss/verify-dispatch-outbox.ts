@@ -209,6 +209,9 @@ export async function dispatchPendingVerifyIntents(
   if (input.questionIds?.length === 0) return empty;
   const recovery = input.recovery ?? false;
   const now = input.now ?? new Date();
+  // Hoisted so the catch can report how many locked intents the rolled-back
+  // transaction actually covered (the full-scan path has no questionIds count).
+  let lockedCount = 0;
   try {
     return await db.transaction(async (tx) => {
       const completion = alias(event, 'verify_dispatch_completion');
@@ -244,6 +247,7 @@ export async function dispatchPendingVerifyIntents(
         .orderBy(event.created_at, event.id)
         .limit(input.batchSize ?? 100)
         .for('update', { skipLocked: true });
+      lockedCount = locked.length;
       if (locked.length === 0) return empty;
 
       // safeParse (not parse): backstop for any row that passes the SQL version guard above yet
@@ -338,7 +342,10 @@ export async function dispatchPendingVerifyIntents(
       questionIds: input.questionIds,
       error,
     });
-    return { ...empty, failed: input.questionIds?.length ?? 1 };
+    // The whole locked batch failed as a group when the transaction rolled back;
+    // report its real size (floor 1 when the throw preceded the locking SELECT)
+    // instead of a misleading constant on the full-scan/recovery path.
+    return { ...empty, failed: input.questionIds?.length ?? Math.max(1, lockedCount) };
   }
 }
 

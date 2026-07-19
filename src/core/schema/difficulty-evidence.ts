@@ -2,6 +2,14 @@ import { z } from 'zod';
 
 export const DIFFICULTY_EVIDENCE_VERSION = 1 as const;
 
+// Calibration-assumption constants, named so the tuning surface is discoverable in
+// one place (mirrors theta.ts' named weights).
+export const PRODUCER_ESTIMATE_CONFIDENCE = 0.35;
+export const LEGACY_NUMERIC_CONFIDENCE = 0.2;
+export const CALIBRATED_CONFIDENCE = 1;
+/** |b| beyond this is a calibration bug, not a hard item — canonical-scale contract. */
+export const RASCH_LOGIT_B_SANITY_BOUND = 10;
+
 export const DifficultyEvidence = z
   .object({
     version: z.literal(DIFFICULTY_EVIDENCE_VERSION),
@@ -27,6 +35,16 @@ export const DifficultyEvidence = z
         code: z.ZodIssueCode.custom,
         path: ['scale'],
         message: 'item_calibration evidence must use rasch_logit_b',
+      });
+    }
+    if (
+      evidence.scale === 'rasch_logit_b' &&
+      Math.abs(evidence.value) > RASCH_LOGIT_B_SANITY_BOUND
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['value'],
+        message: `rasch_logit_b value must be within ±${RASCH_LOGIT_B_SANITY_BOUND}`,
       });
     }
   });
@@ -55,7 +73,7 @@ export function buildProducerDifficultyEvidence(
     value: difficulty,
     scale: 'loom_difficulty_1_5',
     basis: 'producer_estimate',
-    confidence: 0.35,
+    confidence: PRODUCER_ESTIMATE_CONFIDENCE,
     ...(observedAt ? { observed_at: observedAt.toISOString() } : {}),
     source_route: sourceRoute,
   });
@@ -93,13 +111,19 @@ export function resolveDifficultyEvidence(input: {
   stored?: unknown;
   legacyDifficulty: number;
 }): DifficultyEvidenceT {
-  if (input.calibratedB != null && Number.isFinite(input.calibratedB)) {
+  if (
+    input.calibratedB != null &&
+    Number.isFinite(input.calibratedB) &&
+    // A wild logit is a calibration bug; fall through to stored/legacy evidence
+    // instead of throwing on the read path (the schema bound below is the backstop).
+    Math.abs(input.calibratedB) <= RASCH_LOGIT_B_SANITY_BOUND
+  ) {
     return DifficultyEvidence.parse({
       version: DIFFICULTY_EVIDENCE_VERSION,
       value: input.calibratedB,
       scale: 'rasch_logit_b',
       basis: 'item_calibration',
-      confidence: 1,
+      confidence: CALIBRATED_CONFIDENCE,
     });
   }
   const stored = DifficultyEvidence.safeParse(input.stored);
@@ -109,6 +133,6 @@ export function resolveDifficultyEvidence(input: {
     value: input.legacyDifficulty,
     scale: 'loom_difficulty_1_5',
     basis: 'legacy_numeric',
-    confidence: 0.2,
+    confidence: LEGACY_NUMERIC_CONFIDENCE,
   });
 }

@@ -462,6 +462,71 @@ describe('runQuizGen', () => {
     });
   });
 
+  it('does not create a ready artifact when the whole batch is exact duplicates', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const output = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    await testDb()
+      .insert(question)
+      .values(
+        output.questions.map((content, index) => ({
+          id: `q-existing-all-dup-${index}`,
+          kind: content.kind,
+          prompt_md: content.prompt_md,
+          reference_md: content.reference_md,
+          choices_md: content.choices_md,
+          rubric_json: content.rubric_json as never,
+          source: 'manual',
+          draft_status: 'draft',
+          canonical_content_hash: canonicalQuestionContentHash({
+            promptMd: content.prompt_md,
+            referenceMd: content.reference_md,
+            choicesMd: content.choices_md,
+            rubricJson: content.rubric_json,
+          }),
+          created_at: new Date(),
+          updated_at: new Date(),
+        })),
+      );
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    // A zero-question quiz must never surface as practicable: no artifact row.
+    const artifacts = await testDb()
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.tool_kind, 'quiz_gen'));
+    expect(artifacts).toHaveLength(0);
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      count: 0,
+      tool_quiz_artifact_id: null,
+      exact_duplicate_count: 2,
+    });
+  });
+
   it('forces copy_safety.checked_by=agent_self at gen stage, ignoring an agent-forged quiz_verify claim', async () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(FORGED_CHECKED_BY_OUTPUT, 'tr_forge');
