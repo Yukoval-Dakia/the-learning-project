@@ -695,14 +695,15 @@ describe('runSourcing', () => {
     expect(existing.knowledge_ids).toEqual(['k-existing', 'k1']);
   });
 
-  it('uses all live learning_item fallback KCs for an exact duplicate when model attribution is invalid', async () => {
+  it('uses all live learning_item fallback KCs in resolver order when model attribution is invalid', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
     await seedKnowledge({ id: 'k2' });
     await seedLearningItem({ id: 'li-multi-fallback', knowledgeId: 'k1' });
     await db
       .update(learning_item)
-      .set({ knowledge_ids: ['k1', 'k2'] })
+      // Opposite of insertion order: catches accidental reliance on unordered SQL IN output.
+      .set({ knowledge_ids: ['k2', 'k1'] })
       .where(eq(learning_item.id, 'li-multi-fallback'));
     const parsed = JSON.parse(HALLUCINATED_KNOWLEDGE_OUTPUT) as {
       questions: Array<{
@@ -747,7 +748,7 @@ describe('runSourcing', () => {
       .select()
       .from(question)
       .where(eq(question.id, 'q-learning-item-fallback-duplicate'));
-    expect(existing.knowledge_ids).toEqual(['k-existing', 'k1', 'k2']);
+    expect(existing.knowledge_ids).toEqual(['k-existing', 'k2', 'k1']);
   });
 
   it('passes the resolved subject profile into the SourcingTask ctx (non-default subject)', async () => {

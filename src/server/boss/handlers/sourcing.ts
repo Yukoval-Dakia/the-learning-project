@@ -456,7 +456,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           .from(knowledge)
           .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
       : [];
-    const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
+    // SQL IN does not preserve input order. Restore the resolver's semantic order explicitly because
+    // knowledge_ids[0] is the primary attribution anchor used by verifier/family readers.
+    const liveResolvedKnowledgeIds = new Set(resolvedKnowledgeRows.map((r) => r.id));
+    const fallbackKnowledgeIds = [
+      ...new Set(resolved.knowledgeIds.filter((id) => liveResolvedKnowledgeIds.has(id))),
+    ];
     // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
     // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
     // Remaining live resolved ids are fallback attribution only when the model supplied none.
