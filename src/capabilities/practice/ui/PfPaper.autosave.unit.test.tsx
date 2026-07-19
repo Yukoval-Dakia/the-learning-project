@@ -69,6 +69,9 @@ const twoSlotDetail = {
   ],
 };
 
+// Cold open: no session on the detail → the page starts one via startPaperSession.
+const noSessionDetail = { ...textDetail, session: null };
+
 function renderPaper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -172,5 +175,38 @@ describe('PfPaper autosave failure (YUK-713)', () => {
       },
       { timeout: 2500 },
     );
+  });
+
+  it('flags the slot (not a silent drop) when the session is not ready, then retry succeeds once it lands', async () => {
+    mocks.getPaperDetail.mockResolvedValue(noSessionDetail);
+    let resolveStart: (value: { session_id: string }) => void = () => {};
+    mocks.startPaperSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    // Type before the session lands — the debounced save must NOT silently drop.
+    await user.type(screen.getByLabelText('作答'), '答');
+    const retry = await screen.findByRole('button', { name: '保存失败 · 重试' }, { timeout: 2500 });
+    expect(retry).toBeTruthy();
+    // No PUT was attempted while the session was missing.
+    expect(mocks.savePaperAnswer).not.toHaveBeenCalled();
+
+    // Session lands, then the learner retries — now the draft goes through.
+    resolveStart({ session_id: 'review_1' });
+    await user.click(retry);
+
+    expect(await screen.findByText('草稿自动保存')).toBeTruthy();
+    expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1);
+    expect(mocks.savePaperAnswer.mock.calls[0][1]).toMatchObject({
+      session_id: 'review_1',
+      question_id: 'question_1',
+    });
   });
 });

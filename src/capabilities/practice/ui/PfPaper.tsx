@@ -159,7 +159,13 @@ export function PfPaper({
   // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
   const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
     const sid = sessionRef.current;
-    if (!sid) return Promise.resolve();
+    if (!sid) {
+      // Session still opening or startPaperSession failed — do NOT drop the draft
+      // silently. Flag the slot so the honest 「保存失败·重试」chip shows; a retry once
+      // the session lands will go through.
+      setSaveFailed((f) => ({ ...f, [key]: true }));
+      return Promise.resolve();
+    }
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
     return savePaperAnswer(artifactId, {
@@ -185,7 +191,16 @@ export function PfPaper({
     // backend behaviour (setAnswer guards the same way).
     const pending = slots
       .filter((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)))
-      .map((s) => runSave(slotKey(s), s.question_id, s.part_ref, answers[slotKey(s)] ?? ''));
+      .map((s) => {
+        const k = slotKey(s);
+        // Cancel any still-pending debounce for this slot so a stale timer can't fire
+        // after the retry and overwrite it with older text.
+        if (saveTimers.current[k]) {
+          clearTimeout(saveTimers.current[k]);
+          delete saveTimers.current[k];
+        }
+        return runSave(k, s.question_id, s.part_ref, answers[k] ?? '');
+      });
     if (pending.length === 0) return;
     setRetrying(true);
     void Promise.allSettled(pending).finally(() => setRetrying(false));
