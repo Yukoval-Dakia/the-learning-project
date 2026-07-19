@@ -2,6 +2,7 @@
 # M5-T5c (YUK-321) — Hono + Vite 形态，双进程（gate 选项 b 已裁决）：
 # app 容器跑 dist/server.cjs，worker 容器同镜像跑 dist/worker.cjs（compose 层
 # command 覆盖），presence 走 PG 表（PgPresenceStore），不设 RW_WORKER。
+# Production stays on Node 24, above the project's tested minimum Node 22.19.0 (YUK-686).
 FROM node:24-slim AS base
 ENV PNPM_HOME=/pnpm PATH=$PNPM_HOME:$PATH
 RUN corepack enable

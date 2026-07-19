@@ -31,6 +31,11 @@
 
 ## 开发
 
+Prerequisites: **Node.js >=22.19.0**（`.node-version` 固定最低支持版本）与
+**pnpm 11.13.1**。生产 Docker 镜像使用 Node 24；CI 同时在 Node 24 跑完整门禁，
+并在 Node 22.19.0 跑 frozen install、typecheck 与完整 DB test lane，避免依赖的
+runtime engine 超出项目公开支持范围。
+
 Local development uses the docker-compose Postgres database as the source of truth.
 Inside compose, services use `postgres:5432`; host-side commands use the local overlay
 port `127.0.0.1:5433`.
