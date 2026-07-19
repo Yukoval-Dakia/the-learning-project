@@ -84,6 +84,13 @@ function rawAcceptRateRow(proposalId: string, createdAt: Date): typeof event.$in
   };
 }
 
+function rawDismissRateRow(proposalId: string, createdAt: Date): typeof event.$inferInsert {
+  return {
+    ...rawAcceptRateRow(proposalId, createdAt),
+    payload: { rating: 'dismiss', conjecture_id: proposalId },
+  };
+}
+
 function selectCountingDb(base: Db): { db: Db; selectCount: () => number } {
   let count = 0;
   const counting = new Proxy(base, {
@@ -643,6 +650,35 @@ describe('loadTeachingBrief', () => {
     const result = await loadTeachingBrief(testDb(), NOW);
 
     expect(result.brief).toMatchObject({ brief_id: 'p_window_49', state: 'finding' });
+  });
+
+  it('does not let a burst of decided conjectures evict an older pending finding', async () => {
+    const decidedNewer = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW }, (_, index) =>
+      rawProposalRow({
+        id: `p_decided_${String(index).padStart(2, '0')}`,
+        createdAt: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000),
+      }),
+    );
+    const dismissRates = decidedNewer.map((proposal, index) =>
+      rawDismissRateRow(
+        proposal.id,
+        new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000 + 1_000),
+      ),
+    );
+    const olderPending = rawProposalRow({
+      id: 'p_pending_behind_decided_burst',
+      createdAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
+    });
+    await testDb()
+      .insert(event)
+      .values([olderPending, ...decidedNewer, ...dismissRates]);
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result.brief).toMatchObject({
+      brief_id: 'p_pending_behind_decided_burst',
+      state: 'finding',
+    });
   });
 
   it('keeps a large accepted-without-probe quiet state bounded to constant SELECT round-trips', async () => {

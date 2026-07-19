@@ -575,6 +575,23 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
         gt(event.created_at, lowerBound),
         lte(event.created_at, now),
         sql`${event.payload}->'ai_proposal'->>'kind' = 'conjecture'`,
+        // Decided/rejected proposals must be excluded BEFORE the bounded window is applied,
+        // otherwise a burst of decided conjectures can evict an older still-pending finding
+        // from the candidate set entirely (contract §5 requires ranking over all eligible
+        // pending findings in the TTL window).
+        sql`COALESCE(${event.payload}->'rubric_verdict'->>'ok', '') <> 'false'`,
+        sql`COALESCE(${event.payload}->'topology_verdict'->>'status', '') <> 'reject'`,
+        sql`COALESCE((
+          SELECT latest_rate.payload->>'rating'
+          FROM ${event} AS latest_rate
+          WHERE latest_rate.action = 'rate'
+            AND latest_rate.caused_by_event_id = ${event.id}
+          ORDER BY latest_rate.created_at DESC, latest_rate.id DESC
+          LIMIT 1
+        ), '') NOT IN (${sql.join(
+          [...TERMINAL_PROPOSAL_RATINGS].map((rating) => sql`${rating}`),
+          sql`, `,
+        )})`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
