@@ -70,7 +70,7 @@ import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import { NotePatch } from '@/core/schema/note-patch';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   artifact,
   completion_evidence,
@@ -81,6 +81,10 @@ import {
   learning_item,
   mistake_variant,
 } from '@/db/schema';
+// YUK-546 — shared sorted advisory-lock util (same namespace/ordering the merge-side
+// rewireKnowledgeEdges uses), so the propose-accept live-edge write and the merge rewire
+// serialize on shared endpoints instead of both passing the topology gate then merging to a cycle.
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
@@ -295,6 +299,52 @@ async function reconcileExistingRateSignal(
 function assertEdgeDecisionInput(input: EdgeProposalDecisionInput): void {
   if (input.decision === 'change_type' && !input.new_relation_type) {
     throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+  }
+}
+
+/**
+ * YUK-546 — the edge-accept endpoint invariants (both endpoints live + not a direct tree pair),
+ * factored out (OCR round-2) so the pre-tx fast-fail (on `db`) and the post-lock revalidation
+ * (on `tx`, under the row + advisory locks) can never drift in what they enforce. Throws the same
+ * ApiError shapes the inline checks used.
+ */
+async function assertEdgeEndpointsValid(
+  dbOrTx: Db | Tx,
+  fromId: string,
+  toId: string,
+  endpointIds: string[],
+): Promise<void> {
+  const rows = await dbOrTx
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(inArray(knowledge.id, endpointIds));
+  const active = new Set(rows.filter((r) => r.archived_at === null).map((r) => r.id));
+  const missing = endpointIds.filter((id) => !active.has(id));
+  if (missing.length > 0) {
+    throw new ApiError(
+      'not_found',
+      `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
+      404,
+    );
+  }
+  if (
+    isDirectTreePair(
+      fromId,
+      toId,
+      rows.flatMap((node) =>
+        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+      ),
+    )
+  ) {
+    throw new ApiError(
+      'tree_redundancy',
+      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
+      409,
+    );
   }
 }
 
@@ -651,38 +701,9 @@ export async function decideKnowledgeEdgeProposal(
   const weight = proposePayload.weight ?? 1;
 
   const endpointIds = Array.from(new Set([fromId, toId]));
-  const found = await db
-    .select({
-      id: knowledge.id,
-      parent_id: knowledge.parent_id,
-      archived_at: knowledge.archived_at,
-    })
-    .from(knowledge)
-    .where(inArray(knowledge.id, endpointIds));
-  const foundActive = new Set(found.filter((r) => r.archived_at === null).map((r) => r.id));
-  const missing = endpointIds.filter((id) => !foundActive.has(id));
-  if (missing.length > 0) {
-    throw new ApiError(
-      'not_found',
-      `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
-      404,
-    );
-  }
-  if (
-    isDirectTreePair(
-      fromId,
-      toId,
-      found.flatMap((node) =>
-        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
-      ),
-    )
-  ) {
-    throw new ApiError(
-      'tree_redundancy',
-      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
-      409,
-    );
-  }
+  // Pre-tx fast-fail (no lock): reject an obviously-invalid proposal before opening a tx. The
+  // authoritative re-check runs under the locks inside the tx (assertEdgeEndpointsValid on `tx`).
+  await assertEdgeEndpointsValid(db, fromId, toId, endpointIds);
 
   const edgeId = createId();
   const generateEventId = createId();
@@ -690,99 +711,165 @@ export async function decideKnowledgeEdgeProposal(
   // writes the edge row from the generate event below.
   const flip = projectionIsWriter();
 
-  try {
-    await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: rateEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'rate',
-        subject_kind: 'knowledge_edge',
-        subject_id: proposeSubjectId,
-        outcome: 'success',
-        payload: {
-          rating: decision,
-          ...(decision === 'reverse' ? { new_direction_reversed: true } : {}),
-          ...(decision === 'change_type' ? { new_relation_type: relationType } : {}),
-          ...(user_note ? { user_note } : {}),
-        },
-        caused_by_event_id: proposeEventId,
-        created_at: now,
-      });
+  // YUK-546 (codex P1, round-3) — bounded retry around the accept tx. The endpoint row lock inside is
+  // FOR UPDATE NOWAIT; on a contended endpoint it fails fast (55P03) instead of blocking while holding
+  // another lock, so the accept can never be the hold-and-wait edge of a merge-vs-accept cycle. The
+  // structural alternative (widening lockMutationRows to pre-lock rewrite endpoints in one sorted
+  // batch with a tx-level retry-on-stale) is heavier surgery on the shared merge-accept path used by
+  // all five mutation kinds; deferred as a follow-up if a background edge writer ever makes this live.
+  const MAX_LOCK_ATTEMPTS = 6;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await db.transaction(async (tx) => {
+        // YUK-546 (codex P1) — take the endpoint knowledge rows FOR UPDATE (id-sorted, mirroring
+        // lockMutationRows' strength + order) BEFORE the advisory, so this path and the merge accept
+        // share one global order (knowledge rows → knowledge_edge advisory) and the round-2 {from,into}
+        // cross can't deadlock. FOR UPDATE (not the FK's KEY SHARE) is required so it conflicts with a
+        // concurrent archive UPDATE (FOR NO KEY UPDATE). NOWAIT (round-3): the merge's row-lock batch
+        // (lockMutationRows) covers only {into_id, from_ids}, but rewireKnowledgeEdges then FK-locks the
+        // REMOTE endpoint Z of each rewritten edge (createKnowledgeEdge(into -> Z) → KEY SHARE on Z). A
+        // blocking FOR UPDATE here could still form a three-node cycle (accept holds Z waits for into;
+        // merge holds into waits for Z). NOWAIT makes the accept fail fast (55P03) on any contended
+        // endpoint instead of waiting while holding one, so it is never the hold-and-wait edge of a
+        // cycle; the outer loop rolls back and retries.
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(inArray(knowledge.id, endpointIds))
+          .orderBy(knowledge.id)
+          .for('update', { noWait: true });
 
-      // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; the projection
-      // (projectKnowledgeEdgeGuarded below) writes the edge row from the generate event.
-      if (!flip) {
-        await tx.insert(knowledge_edge).values({
-          id: edgeId,
-          from_knowledge_id: fromId,
-          to_knowledge_id: toId,
-          relation_type: relationType,
-          weight,
-          created_by: {
-            actor_kind: 'user',
-            actor_ref: 'self',
-            propose_event_id: proposeEventId,
-          } as never,
-          reasoning: proposePayload.reasoning ?? null,
+        // YUK-546 — symmetric propose-side advisory lock (mirrors rewireKnowledgeEdges' merge-side
+        // lock: same 'knowledge_edge' namespace + sorted acquisition via acquireSortedAdvisoryLocks).
+        // Acquired before the fold's live-mesh read below (projectKnowledgeEdgeGuarded /
+        // assertKnowledgeEdgeParity → gatherAndFoldKnowledgeEdge, a fresh `archived_at IS NULL` SELECT)
+        // so a concurrent accept of A→B and B→A serializes and the second is rejected by the ADR-0034
+        // topology gate instead of silently completing the cycle.
+        await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
+
+        // YUK-546 (codex P2) — lock-then-revalidate. The pre-tx endpoint/tree checks ran on `db` before
+        // these locks; a merge holding the endpoint row + knowledge_edge advisory can archive an
+        // endpoint + rewire + commit in that window, after which a blind write would land a live edge
+        // pointing at the just-archived node (FK holds on the tombstone; the fold's topology gate does
+        // NOT check endpoint archival). Re-assert both invariants tx-scoped under the locks — a stale
+        // check rejects and rolls the accept back, the same outcome shape as the topology gate.
+        await assertEdgeEndpointsValid(tx, fromId, toId, endpointIds);
+
+        await writeEvent(tx, {
+          id: rateEventId,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'rate',
+          subject_kind: 'knowledge_edge',
+          subject_id: proposeSubjectId,
+          outcome: 'success',
+          payload: {
+            rating: decision,
+            ...(decision === 'reverse' ? { new_direction_reversed: true } : {}),
+            ...(decision === 'change_type' ? { new_relation_type: relationType } : {}),
+            ...(user_note ? { user_note } : {}),
+          },
+          caused_by_event_id: proposeEventId,
           created_at: now,
         });
-      }
 
-      await writeEvent(tx, {
-        id: generateEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'generate',
-        subject_kind: 'knowledge_edge',
-        subject_id: edgeId,
-        outcome: 'success',
-        payload: {
-          from_knowledge_id: fromId,
-          to_knowledge_id: toId,
-          relation_type: relationType,
-          weight,
-          // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
-          // ROW's `?? null` above so the edge fold is lossless (see GenerateKnowledgeEdge
-          // note). The generate-event payload now equals the row byte-for-byte.
-          reasoning: proposePayload.reasoning ?? null,
-          propose_event_id: proposeEventId,
-        },
-        caused_by_event_id: proposeEventId,
-        created_at: now,
+        // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; the projection
+        // (projectKnowledgeEdgeGuarded below) writes the edge row from the generate event.
+        if (!flip) {
+          await tx.insert(knowledge_edge).values({
+            id: edgeId,
+            from_knowledge_id: fromId,
+            to_knowledge_id: toId,
+            relation_type: relationType,
+            weight,
+            created_by: {
+              actor_kind: 'user',
+              actor_ref: 'self',
+              propose_event_id: proposeEventId,
+            } as never,
+            reasoning: proposePayload.reasoning ?? null,
+            created_at: now,
+          });
+        }
+
+        await writeEvent(tx, {
+          id: generateEventId,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'generate',
+          subject_kind: 'knowledge_edge',
+          subject_id: edgeId,
+          outcome: 'success',
+          payload: {
+            from_knowledge_id: fromId,
+            to_knowledge_id: toId,
+            relation_type: relationType,
+            weight,
+            // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
+            // ROW's `?? null` above so the edge fold is lossless (see GenerateKnowledgeEdge
+            // note). The generate-event payload now equals the row byte-for-byte.
+            reasoning: proposePayload.reasoning ?? null,
+            propose_event_id: proposeEventId,
+          },
+          caused_by_event_id: proposeEventId,
+          created_at: now,
+        });
+
+        // YUK-471 W1 PR-B — flip ON: the projection writes the edge row from the generate event
+        // (the imperative INSERT was skipped). Guarded; the fold is non-null here (the generate
+        // event creates the edge) so the delete branch is unreachable, and a topology reject still
+        // propagates to roll back the accept. A unique-tuple (from,to,relation_type) conflict
+        // surfaces 23505 from the upsert and is mapped to 409 by the catch below — same as the
+        // imperative INSERT. Flip OFF: the A2b parity assert — re-project the just-written edge and
+        // deep-compare fold == row (read the row back so the snapshot reflects DB coercion).
+        if (flip) {
+          await projectKnowledgeEdgeGuarded(tx, edgeId);
+        } else {
+          const writtenEdge = (
+            await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
+          )[0];
+          await assertKnowledgeEdgeParity(
+            tx,
+            edgeId,
+            writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
+          );
+        }
       });
-
-      // YUK-471 W1 PR-B — flip ON: the projection writes the edge row from the generate event
-      // (the imperative INSERT was skipped). Guarded; the fold is non-null here (the generate
-      // event creates the edge) so the delete branch is unreachable, and a topology reject still
-      // propagates to roll back the accept. A unique-tuple (from,to,relation_type) conflict
-      // surfaces 23505 from the upsert and is mapped to 409 by the catch below — same as the
-      // imperative INSERT. Flip OFF: the A2b parity assert — re-project the just-written edge and
-      // deep-compare fold == row (read the row back so the snapshot reflects DB coercion).
-      if (flip) {
-        await projectKnowledgeEdgeGuarded(tx, edgeId);
-      } else {
-        const writtenEdge = (
-          await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
-        )[0];
-        await assertKnowledgeEdgeParity(
-          tx,
-          edgeId,
-          writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
+      break;
+    } catch (err) {
+      const pgCode =
+        (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
+      if (pgCode === '55P03') {
+        // lock_not_available — a concurrent structural writer (e.g. a merge rewiring an edge
+        // endpoint) holds a conflicting endpoint row lock. Nothing was committed; back off and retry
+        // the whole tx. Bounded so a genuinely stuck lock surfaces as a 409 rather than looping.
+        if (attempt >= MAX_LOCK_ATTEMPTS) {
+          throw new ApiError(
+            'conflict',
+            `edge accept could not acquire endpoint locks after ${MAX_LOCK_ATTEMPTS} attempts (a concurrent structural change holds them)`,
+            409,
+          );
+        }
+        // Exponential backoff (25/50/100/200/400ms) + jitter → a ~0.6-1s total retry window across
+        // MAX_LOCK_ATTEMPTS (OCR round-4). A merge accept holding these endpoints runs its row locks +
+        // archive + edge rewrite + 9-surface attribution repair — easily 200ms+ — so the earlier flat
+        // ~150ms window would exhaust mid-merge and 409 spuriously. Jitter decorrelates concurrent
+        // retriers. Cap keeps a single sleep bounded if MAX_LOCK_ATTEMPTS is ever raised.
+        const backoffMs = Math.min(25 * 2 ** (attempt - 1), 500);
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.floor(backoffMs * (0.75 + Math.random() * 0.5))),
+        );
+        continue;
+      }
+      if (pgCode === '23505') {
+        throw new ApiError(
+          'conflict',
+          `edge already exists: ${fromId} --${relationType}--> ${toId}`,
+          409,
         );
       }
-    });
-  } catch (err) {
-    const pgCode =
-      (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
-    if (pgCode === '23505') {
-      throw new ApiError(
-        'conflict',
-        `edge already exists: ${fromId} --${relationType}--> ${toId}`,
-        409,
-      );
+      throw err;
     }
-    throw err;
   }
 
   if (proposal) {
