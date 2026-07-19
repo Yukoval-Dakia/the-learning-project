@@ -32,7 +32,7 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import './questions.css';
 
 import { type QBankQuestion, getQuestionsList } from './practice-api';
@@ -238,12 +238,27 @@ interface QRowProps {
   // QueryObserver（网络本就去重；省的是长列表的订阅开销）。
   subjectRows: readonly SubjectRowLike[];
   expanded?: boolean;
-  onToggle?: () => void;
+  // Receives the composite id so the parent can pass one stable callback for all
+  // rows (a per-row `() => toggleOpen(q.id)` closure would defeat React.memo).
+  onToggle?: (id: string) => void;
   isChild?: boolean;
   subIndex?: number;
 }
 
-export function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex }: QRowProps) {
+// YUK-715 — memoized so a search keystroke (which re-renders the whole page but
+// leaves this row's props referentially unchanged) does not re-run the row's
+// ReactMarkdown parse. Honest memo depends on stable props from the parent: `q`
+// (react-query page item), `go`/`subjectRows` (stable refs), `expanded` (bool),
+// and `onToggle` (a single useCallback'd `toggleOpen`, not a per-row closure).
+export const QRow = memo(function QRow({
+  q,
+  go,
+  subjectRows,
+  expanded,
+  onToggle,
+  isChild,
+  subIndex,
+}: QRowProps) {
   const isComposite = q.is_composite;
   const lineage = lineageOf(q);
   const glyphCls = lineage === 'variant' ? ' is-variant' : lineage === 'part' ? ' is-part' : '';
@@ -309,14 +324,14 @@ export function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex
           className={`qb-expand qb-expand-action${expanded ? ' open' : ''}`}
           aria-label={expanded ? '收起小题' : '展开小题'}
           aria-expanded={expanded}
-          onClick={() => onToggle?.()}
+          onClick={() => onToggle?.(q.id)}
         >
           <LoomIcon name="arrow" size={13} />
         </button>
       )}
     </div>
   );
-}
+});
 
 // ── 主面 ───────────────────────────────────────────────────────────────────
 
@@ -425,13 +440,18 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     setLabels((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
   const toggleDiff = (d: number) =>
     setDiffs((xs) => (xs.includes(d) ? xs.filter((x) => x !== d) : [...xs, d]));
-  const toggleOpen = (id: string) =>
-    setOpen((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+  // Stable across renders (setOpen is stable, no deps) so it can be passed as the
+  // single `onToggle` for every QRow without breaking their React.memo (YUK-715).
+  const toggleOpen = useCallback(
+    (id: string) =>
+      setOpen((s) => {
+        const n = new Set(s);
+        if (n.has(id)) n.delete(id);
+        else n.add(id);
+        return n;
+      }),
+    [],
+  );
   const reset = () => {
     setStatus('all');
     setSubject('all');
@@ -738,7 +758,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                     go={navigate}
                     subjectRows={subjectRowsForFilter}
                     expanded={open.has(q.id)}
-                    onToggle={() => toggleOpen(q.id)}
+                    onToggle={toggleOpen}
                   />
                   {q.is_composite &&
                     open.has(q.id) &&
