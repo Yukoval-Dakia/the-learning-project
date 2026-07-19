@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { composeSoftmaxStream } from './softmax-selection';
 import {
+  VARIANT_INPUT_LIMIT,
   advanceStreamItem,
   collectComposerInputs,
   composeNightly,
@@ -1064,6 +1065,21 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
       expect(r.position).toBe(snapByRef.get(r.ref_id)?.position);
       expect(r.id).toBe(snapByRef.get(r.ref_id)?.id); // 无 delete+reinsert churn。
     }
+  });
+});
+
+describe('YUK-692 — composer variant input ceiling', () => {
+  beforeEach(() => resetDb());
+
+  it('admits at most 50 active mistake variants to one composer input', async () => {
+    const sharedKc = createId();
+    for (let i = 0; i < VARIANT_INPUT_LIMIT + 3; i++) {
+      await seedVariantCandidate({ kc: sharedKc });
+    }
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+
+    expect(inputs.variantItems).toHaveLength(VARIANT_INPUT_LIMIT);
   });
 });
 

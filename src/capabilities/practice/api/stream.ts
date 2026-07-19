@@ -5,6 +5,7 @@
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { checkRateLimit } from '@/server/http/rate-limit';
 
 // YUK-558 (spec Q6-A / M2)：prod sampler 种子化——选题决策可重构（同 seed + 同输入 ⇒ 同选集）。
 // seed 走 log-only（不进 DB 列，Q-d deferred）。两抽样事件（compose / rerank）各派生独立 seed。
@@ -69,6 +70,10 @@ export async function POST(req: Request): Promise<Response> {
     const parsed = RecomposePracticeStreamBodySchema.safeParse(raw);
     if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
     const date = resolveDate(parsed.data.date ?? null);
+    // YUK-692 — manual recomposition can reach SelectionOrchestratorTask. Count
+    // the request immediately before that work so a click/retry loop cannot turn
+    // into an unbounded sequence of paid model calls.
+    checkRateLimit();
     // YUK-558（C9+C10③）：recompose 事件种子化（独立 eventKind，与 lazy compose / nightly 各派生
     // 独立 seed）。triggerId=newId() **nonce**——recompose 是手动重排入口，**无自然稳定触发 id**
     // （同日可反复按），故不用 date 当 triggerId：那会让同日多次 recompose 共享同一 seed（每次抽同一

@@ -8,7 +8,12 @@ import type { DispatchResult } from '@/server/question-supply/dispatcher';
 import type { QuestionSupplyTarget } from '@/server/question-supply/target-discovery';
 import type { Demand } from '@/server/quiz/matcher';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { REFILL_POOL_THRESHOLD, type RefillDeps, refillThinPools } from './refill';
+import {
+  REFILL_MAX_PER_REQUEST,
+  REFILL_POOL_THRESHOLD,
+  type RefillDeps,
+  refillThinPools,
+} from './refill';
 
 const db = {} as unknown as Db; // 全 seam 注入 → db 永不被触碰。
 
@@ -131,6 +136,18 @@ describe('refillThinPools (YUK-474)', () => {
     expect(out).toHaveLength(1);
     expect(count).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('单次请求最多处理 nightly 同款 25 个 KC，额外候选不触发付费 dispatch', async () => {
+    const { d, count, dispatch } = deps({ count: async () => 0 });
+    const kids = Array.from({ length: REFILL_MAX_PER_REQUEST + 7 }, (_, i) => `kc-${i}`);
+
+    const out = await refillThinPools(db, kids, d);
+
+    expect(out).toHaveLength(REFILL_MAX_PER_REQUEST);
+    expect(count).toHaveBeenCalledTimes(REFILL_MAX_PER_REQUEST);
+    expect(dispatch).toHaveBeenCalledTimes(REFILL_MAX_PER_REQUEST);
+    expect(out.some((row) => row.knowledgeId === `kc-${REFILL_MAX_PER_REQUEST}`)).toBe(false);
   });
 
   it('空/falsy KC 被过滤', async () => {

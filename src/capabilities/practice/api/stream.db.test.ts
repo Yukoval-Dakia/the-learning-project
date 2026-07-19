@@ -14,9 +14,10 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →
@@ -219,8 +220,11 @@ function getReq(date?: string): Request {
 describe('practice stream API', () => {
   beforeEach(async () => {
     await resetDb();
+    __resetRateLimitForTests();
     runTaskMock.mockClear();
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('GET today lazy-composes from due signal and persists the stream', async () => {
     const qid = await seedDueQuestion();
@@ -474,6 +478,23 @@ describe('practice stream API', () => {
     const sameRef = body.items.filter((i) => i.ref_id === qid);
     expect(sameRef).toHaveLength(1);
     expect(sameRef[0].status).toBe('done');
+  });
+
+  it('POST recompose is bounded by the shared AI request limiter', async () => {
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    vi.stubEnv('AI_RATE_LIMIT_WINDOW_MS', '60000');
+
+    const makeRequest = () =>
+      POST(
+        new Request('http://t/api/practice/stream/recompose', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }),
+      );
+    expect((await makeRequest()).status).toBe(200);
+    const blocked = await makeRequest();
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('Retry-After')).toBeTruthy();
   });
 
   it('G1 (review)：真实路由 GET /api/practice/stream 在有非到期候选时命中 LLM 软选题路径（runTask mocked）', async () => {
