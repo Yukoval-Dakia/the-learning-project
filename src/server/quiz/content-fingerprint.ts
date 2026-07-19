@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 
 // Bumping this version rewrites the canonical string, so every persisted
 // `canonical_content_hash` computed under the old version becomes stale and
@@ -80,6 +82,15 @@ export interface ExactQuestionDuplicate {
   source: string;
 }
 
+export interface ExactQuestionDuplicateKnowledgeMerge extends ExactQuestionDuplicate {
+  previousKnowledgeIds: string[];
+  knowledgeIds: string[];
+  addedKnowledgeIds: string[];
+  previousVersion: number;
+  version: number;
+  eventId: string | null;
+}
+
 /**
  * Cap on how many exact-duplicate records a producer serializes into its observability event.
  * The full count is kept separately (`exact_duplicate_count`); this only bounds the sampled detail
@@ -98,4 +109,110 @@ export async function findExactQuestionDuplicate(
     .where(eq(question.canonical_content_hash, hash))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * Reconcile a canonical duplicate with the knowledge attribution requested by the current supply
+ * run. The existing question remains the single global content identity; missing KCs are appended
+ * in request order under a row lock, with a normal question-edit audit event + version bump.
+ *
+ * Lifecycle is deliberately preserved: an active duplicate stays active (its content has already
+ * cleared its own gate), while a draft/needs-review duplicate stays in its existing verification
+ * flow. The caller must not enqueue a second route-specific verifier for a row whose provenance may
+ * belong to another producer. No-op when the duplicate already covers every requested KC.
+ *
+ * Must run inside the producer's transaction so lookup, merge, and any competing canonical-hash
+ * INSERT are serialized as one persistence decision.
+ */
+export async function mergeExactQuestionDuplicateKnowledgeIds(
+  tx: Tx,
+  params: {
+    canonicalContentHash: string;
+    knowledgeIds: string[];
+    actorRef: 'quiz_gen' | 'sourcing';
+    now: Date;
+  },
+): Promise<ExactQuestionDuplicateKnowledgeMerge | null> {
+  const rows = await tx
+    .select({
+      id: question.id,
+      draftStatus: question.draft_status,
+      source: question.source,
+      knowledgeIds: question.knowledge_ids,
+      version: question.version,
+    })
+    .from(question)
+    .where(eq(question.canonical_content_hash, params.canonicalContentHash))
+    .limit(1)
+    .for('update');
+  const row = rows[0];
+  if (!row) return null;
+
+  const seen = new Set(row.knowledgeIds);
+  const addedKnowledgeIds: string[] = [];
+  for (const id of params.knowledgeIds) {
+    if (id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    addedKnowledgeIds.push(id);
+  }
+  const knowledgeIds = [...row.knowledgeIds, ...addedKnowledgeIds];
+  if (addedKnowledgeIds.length === 0) {
+    return {
+      ...row,
+      previousKnowledgeIds: row.knowledgeIds,
+      knowledgeIds,
+      addedKnowledgeIds,
+      previousVersion: row.version,
+      eventId: null,
+    };
+  }
+
+  const nextVersion = row.version + 1;
+  const updated = await tx
+    .update(question)
+    .set({ knowledge_ids: knowledgeIds, updated_at: params.now, version: nextVersion })
+    .where(
+      and(
+        eq(question.id, row.id),
+        eq(question.canonical_content_hash, params.canonicalContentHash),
+      ),
+    )
+    .returning({ id: question.id });
+  if (updated.length === 0) {
+    throw new Error(`canonical duplicate ${row.id} changed while merging knowledge attribution`);
+  }
+
+  const eventId = createId();
+  await writeEvent(tx, {
+    id: eventId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef,
+    action: 'experimental:question_edit',
+    subject_kind: 'question',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: {
+      question_id: row.id,
+      previous_version: row.version,
+      next_version: nextVersion,
+      before: { knowledge_ids: row.knowledgeIds },
+      after: { knowledge_ids: knowledgeIds },
+      reason: 'cross_kc_exact_duplicate',
+      canonical_content_hash: params.canonicalContentHash,
+      added_knowledge_ids: addedKnowledgeIds,
+      preserved_draft_status: row.draftStatus,
+    },
+    created_at: params.now,
+  });
+
+  return {
+    ...row,
+    previousKnowledgeIds: row.knowledgeIds,
+    knowledgeIds,
+    addedKnowledgeIds,
+    previousVersion: row.version,
+    version: nextVersion,
+    eventId,
+  };
 }

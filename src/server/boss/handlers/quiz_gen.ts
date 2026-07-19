@@ -72,7 +72,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -623,6 +623,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       new_question_id: string;
       canonical_content_hash: string;
       source_route: 'quiz_gen';
+      knowledge_merge_status: 'merged' | 'already_covered';
+      added_knowledge_ids: string[];
+      resulting_knowledge_ids: string[];
+      preserved_draft_status: string | null;
     }> = [];
     const quizKnowledgeIds = new Set<string>();
     const toolQuizArtifactId = createId();
@@ -697,13 +701,29 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        const duplicateKnowledgeIds = [
+          ...new Set([
+            ...questionKnowledgeIds,
+            ...(resolved.knowledgeNode ? [resolved.knowledgeNode.id] : []),
+          ]),
+        ];
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: duplicateKnowledgeIds,
+          actorRef: 'quiz_gen',
+          now,
+        });
         if (existingDuplicate) {
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: 'quiz_gen',
+            knowledge_merge_status:
+              existingDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: existingDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: existingDuplicate.knowledgeIds,
+            preserved_draft_status: existingDuplicate.draftStatus,
           });
           continue;
         }
@@ -782,7 +802,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           })
           .returning({ id: question.id });
         if (inserted.length === 0) {
-          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+            canonicalContentHash,
+            knowledgeIds: duplicateKnowledgeIds,
+            actorRef: 'quiz_gen',
+            now,
+          });
           if (!racedDuplicate) {
             throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
           }
@@ -791,6 +816,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: 'quiz_gen',
+            knowledge_merge_status:
+              racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+            preserved_draft_status: racedDuplicate.draftStatus,
           });
           continue;
         }
@@ -862,7 +892,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // than as 'persist'.
     failureStage = 'event';
     for (const duplicate of exactDuplicates) {
-      console.info('[quiz_gen] exact duplicate skipped:', duplicate);
+      console.info('[quiz_gen] exact duplicate reconciled:', duplicate);
     }
 
     await writeEvent(db, {
@@ -887,6 +917,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
+        exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
+          (duplicate) => duplicate.knowledge_merge_status === 'merged',
+        ).length,
         // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
         // exact_duplicate_count above keeps the true total.
         exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),

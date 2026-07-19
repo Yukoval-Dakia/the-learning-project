@@ -318,7 +318,7 @@ describe('runSourcing', () => {
     });
   });
 
-  it('skips an exact active/draft duplicate and logs both identities without verify enqueue', async () => {
+  it('merges the target KC into an exact active duplicate without re-running verification', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
     const output = JSON.parse(VALID_OUTPUT) as {
@@ -345,6 +345,7 @@ describe('runSourcing', () => {
       rubric_json: content.rubric_json as never,
       source: 'manual',
       draft_status: 'active',
+      knowledge_ids: ['k-existing'],
       canonical_content_hash: hash,
       created_at: new Date(),
       updated_at: new Date(),
@@ -363,18 +364,42 @@ describe('runSourcing', () => {
 
     expect(result.question_ids).toEqual([]);
     expect(enqueueSourceVerify).not.toHaveBeenCalled();
+    const [existing] = await db.select().from(question).where(eq(question.id, 'q-existing-exact'));
+    expect(existing).toMatchObject({
+      knowledge_ids: ['k-existing', 'k1'],
+      draft_status: 'active',
+      version: 1,
+    });
+    const [mergeEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(mergeEvent).toMatchObject({
+      actor_ref: 'sourcing',
+      subject_id: 'q-existing-exact',
+      payload: {
+        before: { knowledge_ids: ['k-existing'] },
+        after: { knowledge_ids: ['k-existing', 'k1'] },
+        reason: 'cross_kc_exact_duplicate',
+      },
+    });
     const [producerEvent] = await db
       .select()
       .from(event)
       .where(eq(event.action, 'experimental:sourcing'));
     expect(producerEvent.payload).toMatchObject({
       exact_duplicate_count: 1,
+      exact_duplicate_knowledge_merge_count: 1,
       exact_duplicates: [
         {
           existing_question_id: 'q-existing-exact',
           new_question_id: expect.any(String),
           canonical_content_hash: hash,
           source_route: 'sourcing_web',
+          knowledge_merge_status: 'merged',
+          added_knowledge_ids: ['k1'],
+          resulting_knowledge_ids: ['k-existing', 'k1'],
+          preserved_draft_status: 'active',
         },
       ],
     });

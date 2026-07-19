@@ -79,7 +79,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
@@ -473,25 +473,45 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       new_question_id: string;
       canonical_content_hash: string;
       source_route: typeof SOURCING_WEB_ROUTE;
+      knowledge_merge_status: 'merged' | 'already_covered';
+      added_knowledge_ids: string[];
+      resulting_knowledge_ids: string[];
+      preserved_draft_status: string | null;
     }> = [];
     const now = new Date();
     failureStage = 'persist';
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
+        const duplicateKnowledgeIds = [
+          ...new Set([
+            ...q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid)),
+            ...fallbackKnowledgeIds,
+          ]),
+        ];
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: q.prompt_md,
           referenceMd: q.reference_md,
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: duplicateKnowledgeIds,
+          actorRef: 'sourcing',
+          now,
+        });
         if (existingDuplicate) {
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: SOURCING_WEB_ROUTE,
+            knowledge_merge_status:
+              existingDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: existingDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: existingDuplicate.knowledgeIds,
+            preserved_draft_status: existingDuplicate.draftStatus,
           });
           continue;
         }
@@ -575,7 +595,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           })
           .returning({ id: question.id });
         if (inserted.length === 0) {
-          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+            canonicalContentHash,
+            knowledgeIds: duplicateKnowledgeIds,
+            actorRef: 'sourcing',
+            now,
+          });
           if (!racedDuplicate) {
             throw new Error(`sourcing canonical hash conflict did not resolve for ${id}`);
           }
@@ -584,6 +609,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: SOURCING_WEB_ROUTE,
+            knowledge_merge_status:
+              racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+            preserved_draft_status: racedDuplicate.draftStatus,
           });
           continue;
         }
@@ -602,7 +632,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // verify intents are durably written — so report it distinctly rather than 'persist'.
     failureStage = 'event';
     for (const duplicate of exactDuplicates) {
-      console.info('[sourcing] exact duplicate skipped:', duplicate);
+      console.info('[sourcing] exact duplicate reconciled:', duplicate);
     }
 
     // YUK-227 S3 Slice C — image-type sources do NOT enter the question INSERT path.
@@ -749,6 +779,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
+        exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
+          (duplicate) => duplicate.knowledge_merge_status === 'merged',
+        ).length,
         // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
         // exact_duplicate_count above keeps the true total.
         exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),

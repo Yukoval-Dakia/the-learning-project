@@ -397,7 +397,7 @@ describe('runQuizGen', () => {
     expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
-  it('skips an exact duplicate, inserts the remaining question, and logs the identity conflict', async () => {
+  it('merges the target KC into an exact duplicate, inserts the remaining question, and audits both', async () => {
     await seedKnowledge({ id: 'k1' });
     const output = JSON.parse(VALID_OUTPUT) as {
       questions: Array<{
@@ -426,6 +426,7 @@ describe('runQuizGen', () => {
         rubric_json: content.rubric_json as never,
         source: 'manual',
         draft_status: 'draft',
+        knowledge_ids: ['k-existing'],
         canonical_content_hash: hash,
         created_at: new Date(),
         updated_at: new Date(),
@@ -445,18 +446,45 @@ describe('runQuizGen', () => {
 
     expect(result.question_ids).toHaveLength(1);
     expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+    const [existing] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-existing-quiz-exact'));
+    expect(existing).toMatchObject({
+      knowledge_ids: ['k-existing', 'k1'],
+      draft_status: 'draft',
+      version: 1,
+    });
+    const [mergeEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(mergeEvent).toMatchObject({
+      actor_ref: 'quiz_gen',
+      subject_id: 'q-existing-quiz-exact',
+      payload: {
+        before: { knowledge_ids: ['k-existing'] },
+        after: { knowledge_ids: ['k-existing', 'k1'] },
+        reason: 'cross_kc_exact_duplicate',
+      },
+    });
     const [producerEvent] = await testDb()
       .select()
       .from(event)
       .where(eq(event.action, 'experimental:quiz_gen'));
     expect(producerEvent.payload).toMatchObject({
       exact_duplicate_count: 1,
+      exact_duplicate_knowledge_merge_count: 1,
       exact_duplicates: [
         {
           existing_question_id: 'q-existing-quiz-exact',
           new_question_id: expect.any(String),
           canonical_content_hash: hash,
           source_route: 'quiz_gen',
+          knowledge_merge_status: 'merged',
+          added_knowledge_ids: ['k1'],
+          resulting_knowledge_ids: ['k-existing', 'k1'],
+          preserved_draft_status: 'draft',
         },
       ],
     });
@@ -524,6 +552,7 @@ describe('runQuizGen', () => {
       count: 0,
       tool_quiz_artifact_id: null,
       exact_duplicate_count: 2,
+      exact_duplicate_knowledge_merge_count: 2,
     });
   });
 
