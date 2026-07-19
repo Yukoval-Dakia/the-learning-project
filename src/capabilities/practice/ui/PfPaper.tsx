@@ -50,6 +50,10 @@ export function PfPaper({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Per-slot autosave-failed flags. While any is set the top chip stops claiming
+  // 「草稿自动保存」and the exit / foot copy drop their 「进度保留」promise, since the
+  // last draft PUT for that slot never landed.
+  const [saveFailed, setSaveFailed] = useState<Record<string, boolean>>({});
   const sessionRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,21 +127,37 @@ export function PfPaper({
   const answeredCount = slots.filter((s) => (answers[slotKey(s)] ?? '').trim().length > 0).length;
   const unanswered = slots.length - answeredCount;
 
+  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
+  const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
+    const sid = sessionRef.current;
+    if (!sid) return;
+    void savePaperAnswer(artifactId, {
+      session_id: sid,
+      question_id: questionId,
+      part_ref: partRef,
+      answer_md: v,
+    })
+      .then(() => setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f)))
+      .catch(() => setSaveFailed((f) => ({ ...f, [key]: true })));
+  };
+
+  const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)]);
+  const retryFailedSaves = () => {
+    for (const s of slots) {
+      const k = slotKey(s);
+      if (saveFailed[k]) runSave(k, s.question_id, s.part_ref, answers[k] ?? '');
+    }
+  };
+
   const setAnswer = (v: string) => {
     setAnswers((a) => ({ ...a, [curKey]: v }));
     // 草稿自动保存（防抖 800ms；已提交的 slot 不再写草稿）。
     if (submittedKeys.has(curKey)) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const sid = sessionRef.current;
-      if (!sid) return;
-      void savePaperAnswer(artifactId, {
-        session_id: sid,
-        question_id: cur.question_id,
-        part_ref: cur.part_ref,
-        answer_md: v,
-      }).catch(() => {});
-    }, 800);
+    const key = curKey;
+    const questionId = cur.question_id;
+    const partRef = cur.part_ref;
+    saveTimer.current = setTimeout(() => runSave(key, questionId, partRef, v), 800);
   };
 
   const goPos = (n: number) => {
@@ -180,13 +200,20 @@ export function PfPaper({
     <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`}>
       <div className="pfp-top">
         <Btn size="sm" variant="ghost" icon="arrowL" onClick={exitPaper}>
-          退出 · 进度保留
+          {anySaveFailed ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
-        <span className="pfp-saved">
-          <LoomIcon name="check" size={12} />
-          草稿自动保存
-        </span>
+        {anySaveFailed ? (
+          <button type="button" className="pfp-saved is-failed" onClick={retryFailedSaves}>
+            <LoomIcon name="alert" size={12} />
+            保存失败 · 重试
+          </button>
+        ) : (
+          <span className="pfp-saved">
+            <LoomIcon name="check" size={12} />
+            草稿自动保存
+          </span>
+        )}
       </div>
 
       <div className="pfp-buffer">
@@ -307,7 +334,9 @@ export function PfPaper({
         )}
       </div>
       <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
-        中途退出进度保留 · 交卷后到复盘看逐题判定
+        {anySaveFailed
+          ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+          : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );

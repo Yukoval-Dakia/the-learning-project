@@ -950,6 +950,14 @@
   align-items: center;
   gap: 5px;
 }
+/* autosave-failed variant — button so the chip itself is the retry affordance. */
+.pfp-saved.is-failed {
+  color: var(--again-ink);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
 
 /* ============ 结果页 / 复盘 result & retro ============ */
 .pfr {

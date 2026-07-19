@@ -25,6 +25,9 @@ export function AiChangesStrip({ now }: { now: Date }) {
       undoAiChange(artifactId, eventId),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
   });
+  // 「可回滚」是个承诺——撤销失败必须可见，否则用户以为已回滚。isError 在下次 mutate 时
+  // 自动复位，按钮 isPending 落定后重新可点即为重试入口。
+  const undoFailed = undoM.isError;
 
   const status: StatefulStatus = q.isLoading
     ? 'loading'
@@ -52,6 +55,15 @@ export function AiChangesStrip({ now }: { now: Date }) {
         skeleton={<SkLines rows={2} />}
         empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
       >
+        {undoFailed && (
+          <div
+            className="meta"
+            role="alert"
+            style={{ color: 'var(--again-ink)', marginBottom: 'var(--s-2)' }}
+          >
+            撤销失败，请重试。
+          </div>
+        )}
         <div className="strip-list">
           {rows.map((c) => (
             <div key={c.event_id} className={`strip${c.undone ? ' is-undone' : ''}`}>

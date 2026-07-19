@@ -135,6 +135,15 @@ export default function NoteReaderPage({
       void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
       say('已还原该次 AI 修订。');
     },
+    // 没有 onError 时这条「还原」promise 会静默失败——用户以为已回滚（mirror saveM.onError）。
+    onError: (e) => {
+      const msg = (e as Error).message;
+      say(
+        msg.includes('409') || msg.includes('conflict')
+          ? '版本冲突：这篇笔记在别处被改过——刷新后再试还原。'
+          : `还原失败：${msg}`,
+      );
+    },
   });
 
   // S4 (YUK-335)：空/载态从裸 .quiet-empty 一行字升级为 SkLines/EmptyState
