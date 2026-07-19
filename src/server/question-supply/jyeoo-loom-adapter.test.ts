@@ -3,7 +3,9 @@ import {
   JYEOO_EXIT,
   classifyJyeooExit,
   isImageDependentQuestion,
+  markdownImageSources,
   parseJyeooLine,
+  rewriteMarkdownImageSources,
 } from './jyeoo-loom-adapter';
 
 // A minimal valid jyeoo → loom envelope (question aligned with SourcedQuestion; jyeoo
@@ -184,5 +186,27 @@ describe('isImageDependentQuestion', () => {
         prompt_md: '如图 ![f](https://www.jyeoo.com/Foo_(bar).png) 所示',
       }),
     ).toBe(true);
+  });
+});
+
+describe('jyeoo markdown image destinations', () => {
+  it('extracts balanced-parenthesis paths in source order', () => {
+    expect(markdownImageSources('甲 ![a](/tmp/Foo_(bar).png) 乙 ![b](/tmp/b.png)')).toEqual([
+      '/tmp/Foo_(bar).png',
+      '/tmp/b.png',
+    ]);
+  });
+
+  it('rewrites destinations without changing alt text or prose', () => {
+    const replacements = new Map([
+      ['/tmp/Foo_(bar).png', '/api/assets/asset-a/content'],
+      ['/tmp/b.png', '/api/assets/asset-b/content'],
+    ]);
+    expect(
+      rewriteMarkdownImageSources(
+        '甲 ![函数图](/tmp/Foo_(bar).png) 乙 ![选项图](/tmp/b.png)',
+        replacements,
+      ),
+    ).toBe('甲 ![函数图](/api/assets/asset-a/content) 乙 ![选项图](/api/assets/asset-b/content)');
   });
 });

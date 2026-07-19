@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
 
@@ -42,7 +42,7 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 export async function persistImageAsset(
-  db: Db,
+  db: Db | Tx,
   r2: R2Client,
   input: { bytes: Uint8Array; mime: string },
 ): Promise<SourceAssetRow> {

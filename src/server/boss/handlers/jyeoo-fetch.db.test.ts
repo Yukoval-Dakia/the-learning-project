@@ -4,16 +4,20 @@
 // The jyeoo-rs subprocess is injected (spawnJyeooFn) so we drive canned NDJSON + exit
 // dispositions deterministically — no real binary, no network.
 
+import { access, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, question, source_asset } from '@/db/schema';
 import type { EnqueueSourceVerifyFn } from '@/server/boss/handlers/jyeoo-fetch';
 import { runJyeooFetch } from '@/server/boss/handlers/jyeoo-fetch';
 import type { SpawnJyeooFn, SpawnJyeooResult } from '@/server/question-supply/jyeoo-spawn';
 import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
+import type { R2Client } from '@/server/r2';
 import { resetDb } from '../../../../tests/helpers/db';
 
 async function seedKnowledge(id: string, domain = 'math', name = '函数与导数') {
@@ -138,6 +142,22 @@ function captureEnqueue(): { fn: EnqueueSourceVerifyFn; ids: string[][] } {
     ids.push(questionIds);
   };
   return { fn, ids };
+}
+
+function captureR2(): { client: R2Client; puts: Array<{ key: string; mime?: string }> } {
+  const puts: Array<{ key: string; mime?: string }> = [];
+  return {
+    puts,
+    client: {
+      async put(key, _body, mime) {
+        puts.push({ key, mime });
+      },
+      async get() {
+        return null;
+      },
+      async delete() {},
+    },
+  };
 }
 
 describe('runJyeooFetch', () => {
@@ -387,7 +407,7 @@ describe('runJyeooFetch', () => {
     expect(result.counts?.inserted).toBe(0);
   });
 
-  it('image-dependent question: filtered pre-persist, not INSERTed', async () => {
+  it('failed image localization filters only that question and keeps the text batch alive', async () => {
     const kid = createId();
     await seedKnowledge(kid);
     const imgLine = line({
@@ -400,15 +420,91 @@ describe('runJyeooFetch', () => {
       trigger: 'knowledge',
       refId: kid,
       knowledgeId: kid,
-      spawnJyeooFn: fakeSpawn(spawnResult({ lines: [imgLine, ''] })).fn,
+      spawnJyeooFn: fakeSpawn(
+        spawnResult({
+          lines: [
+            imgLine,
+            line({ prompt_md: '纯文本候选：已知 $f(x)=x^2$，则 $f(2)=$（　）' }),
+            '',
+          ],
+        }),
+      ).fn,
       enqueueSourceVerify: enqueue.fn,
     });
 
     expect(result.status).toBe('ready');
-    expect(result.counts).toMatchObject({ validated: 1, filtered_image: 1, inserted: 0 });
-    expect(await db.select().from(question)).toHaveLength(0);
-    // No drafts → no empty source_verify enqueue.
-    expect(enqueue.ids).toHaveLength(0);
+    expect(result.counts).toMatchObject({ validated: 2, filtered_image: 1, inserted: 1 });
+    expect(await db.select().from(question)).toHaveLength(1);
+    expect(enqueue.ids).toHaveLength(1);
+  });
+
+  it('localized image: uploads to R2, creates source_asset, rewrites markdown, and writes figures', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const r2 = captureR2();
+    let runImageDir = '';
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const spawn: SpawnJyeooFn = async (options) => {
+      const imagesArg = options.args.indexOf('--images');
+      expect(imagesArg).toBeGreaterThanOrEqual(0);
+      runImageDir = options.args[imagesArg + 1] ?? '';
+      const imagePath = join(runImageDir, 'figure.png');
+      await writeFile(imagePath, png);
+      return spawnResult({
+        lines: [
+          line({
+            prompt_md: `函数图象如图 ![函数图](${imagePath}) 所示，则（　）`,
+            reference_md: `【答案】B\n\n【解答】参见 ![函数图](${imagePath})`,
+            choices_md: ['A．2', `B．0 ![函数图](${imagePath})`, 'C．4', 'D．5'],
+          }),
+          '',
+        ],
+      });
+    };
+    const enqueue = captureEnqueue();
+
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: spawn,
+      enqueueSourceVerify: enqueue.fn,
+      r2: r2.client,
+    });
+
+    expect(result.counts).toMatchObject({ validated: 1, filtered_image: 0, inserted: 1 });
+    const [asset] = await db.select().from(source_asset);
+    expect(asset).toMatchObject({ kind: 'image', mime_type: 'image/png', byte_size: png.length });
+    expect(r2.puts).toEqual([{ key: asset?.storage_key, mime: 'image/png' }]);
+
+    const [row] = await db.select().from(question);
+    const internalUrl = `/api/assets/${asset?.id}/content`;
+    expect(row?.prompt_md).toContain(`![函数图](${internalUrl})`);
+    expect(row?.reference_md).toContain(`![函数图](${internalUrl})`);
+    expect(row?.choices_md?.[1]).toContain(`![函数图](${internalUrl})`);
+    expect(row?.prompt_md).not.toContain(runImageDir);
+    expect(row?.judge_kind_override).toBe('multimodal_direct');
+    expect(row?.image_refs).toEqual([asset?.id]);
+    expect(row?.figures).toEqual([
+      {
+        asset_id: asset?.id,
+        role: 'diagram',
+        source_page_index: 0,
+        source_bbox: { x: 0, y: 0, width: 1, height: 1 },
+        attached_to_index: 'stem',
+        attach_confidence: 'high',
+      },
+    ]);
+    expect((row?.metadata as { prompt_image_refs?: string[] }).prompt_image_refs).toEqual([
+      asset?.id,
+    ]);
+    expect(
+      (row?.metadata as { web_sourced?: { extraction_hash?: string } }).web_sourced
+        ?.extraction_hash,
+    ).toBe(`sha256:${row?.canonical_content_hash}`);
+    expect(enqueue.ids).toEqual([[row?.id]]);
+    await expect(access(runImageDir)).rejects.toThrow();
   });
 
   it('kill switch OFF: no-op (skipped:disabled), spawn never invoked', async () => {
