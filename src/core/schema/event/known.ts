@@ -208,6 +208,11 @@ export const ReviewOnQuestion = z
       // user rated. Optional because legacy events (pre-2026-05-17) don't
       // have it and we don't want to break the discriminated union.
       duration_ms: z.number().int().nonnegative().optional(),
+      // YUK-336 — exact correlation back to the practice stream slot that produced
+      // this review. Optional for historical/non-stream reviews. The stream read
+      // model uses this before its deliberately conservative legacy fallback, so a
+      // repeated review of the same question cannot lend its verdict to the wrong row.
+      stream_item_id: z.string().min(1).optional(),
       // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; reserved on
       // the review payload for symmetry (no live review site stamps it yet).
       reconstruction_signal: ReconstructionSignal.optional(),

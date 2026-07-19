@@ -60,6 +60,11 @@ function item(status: StreamStatus = 'pending'): StreamItem {
     reasoning: '该复习了。',
     status,
     estimated_minutes: 2,
+    knowledge_name: '判断句',
+    paper_title: null,
+    verdict: null,
+    completed_at: null,
+    total_slots: null,
   };
 }
 

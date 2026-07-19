@@ -77,18 +77,23 @@ export function PfSrcBadge({ source }: { source: string }) {
   );
 }
 
-// pf-item-kp / pf-paper-title 锚点名（设计 pface.css L52/67：「每张卡有自己的名字」）。
-// 数据真相：composer（stream-composer.ts）把 knowledgeLabel / paper title 织进 reasoning
-// 模板（`「${label}」`），但 StreamItem wire（stream-store.ts StreamView）未把它持久化为
-// 独立字段——故这里从 reasoning 提取首个 `「…」` 作锚点（真实数据派生，非 fabricate）。
-// 无 label 时 composer 回退到「这一块」(kpSuffix)，此情形不显示锚点（避免伪锚）。
-// FOLLOW-UP（phase-deferred）：理想是 stream item wire 直供 knowledge_name / paper title
-// 独立字段，去掉此处对 reasoning 文案格式的耦合——见交付报告缺失字段清单。
-function anchorFromReasoning(reasoning: string): string | null {
-  const m = reasoning.match(/「([^」]+)」/);
-  if (!m) return null;
-  const name = m[1].trim();
-  return name && name !== '这一块' ? name : null;
+const STREAM_VERDICT_META = {
+  good: { label: '对', icon: 'check' },
+  hard: { label: '部分对', icon: 'minus' },
+  again: { label: '错', icon: 'close' },
+} as const;
+
+function completedAtLabel(completedAt: string | null): string {
+  if (!completedAt) return '已完成';
+  const date = new Date(completedAt);
+  if (Number.isNaN(date.getTime())) return '已完成';
+  const time = date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  });
+  return `${time} 完成`;
 }
 
 export function PfStream({
@@ -193,34 +198,35 @@ export function PfStream({
 
     if (it.status === 'done') {
       // done 织入行（设计 pface-stream.jsx L40-52 / pface.css L72-74）：badge + 锚点名 +
-      // verdict 三色 badge + 完成时刻。锚点名优先用 reasoning 提取的知识点名/卷标题，
-      // 回退到 source label（PfSrcBadge 已显示来源，此处给可读名）。
-      // FOLLOW-UP（phase-deferred）：verdict（again/hard/good，设计 color-is-judgment）与
-      // 完成时刻（pf-done-at）在 review event 侧，StreamItem wire 未 join——故暂不渲染
-      // verdict 三色 badge，完成时刻显示静态「已完成」。补 wire 字段后接真值，见报告。
-      const doneAnchor = anchorFromReasoning(it.reasoning) ?? srcMeta(it.source).label;
+      // verdict 三色 badge + 完成时刻。锚点只读结构化读模型字段，不再解析 reasoning 文案。
+      const doneAnchor =
+        (it.item_kind === 'paper' ? it.paper_title : it.knowledge_name) ?? srcMeta(it.source).label;
+      const verdict = it.verdict ? STREAM_VERDICT_META[it.verdict] : null;
       return (
         <div key={it.id} className={cls}>
           <span className="pf-node" />
           <div className="pf-done">
             <PfSrcBadge source={it.source} />
             <span className="pf-done-kp">{doneAnchor}</span>
-            <span className="pf-done-at">已完成</span>
+            {verdict && (
+              <span className={`badge tone-${it.verdict}`}>
+                <LoomIcon name={verdict.icon} size={11} />
+                {verdict.label}
+              </span>
+            )}
+            <span className="pf-done-at">{completedAtLabel(it.completed_at)}</span>
           </div>
         </div>
       );
     }
 
     const isSkipped = it.status === 'skipped';
-    // 散题/卷卡的可读锚点名（reasoning 派生，见 anchorFromReasoning 注释）。
-    const anchor = anchorFromReasoning(it.reasoning);
+    const anchor = it.item_kind === 'paper' ? it.paper_title : it.knowledge_name;
     const inner = (
       <div className="pf-item">
         <div className="pf-item-top">
           <PfSrcBadge source={it.source} />
-          {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）——给每张卡
-              「自己的名字」。锚点名来源见 anchorFromReasoning 注释（reasoning 派生，
-              非 fabricate；无 label 时省略，不伪造锚点）。 */}
+          {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）。 */}
           {it.item_kind === 'question' && anchor && <span className="pf-item-kp">{anchor}</span>}
           <span className="pf-item-kind mono">
             <span className="src-q">{it.item_kind === 'paper' ? '整卷练习' : '单题练习'}</span>
@@ -228,12 +234,17 @@ export function PfStream({
         </div>
         {it.item_kind === 'paper' && (
           <>
-            {/* 卷卡 serif 标题 + facts 行（设计 pface.css L67-68 / pface-stream.jsx L71-77）。
-                标题取 reasoning 里的卷名（composer 真实注入的「${p.title}」）。
-                FOLLOW-UP（phase-deferred）：facts「N 题 · 约 X 分钟」需题数/估时——paper
-                stream item wire 仅 ref_id，未带 total_slots/est（getPapers 才有 total_slots，
-                但流不 join 卷读模型）；故 facts 行暂不渲染，不伪造题数。补 wire 字段后接真值。 */}
+            {/* 卷卡标题 + facts 均来自结构化读模型；估时沿用 stream budget 的同项真值。 */}
             {anchor && <div className="pf-paper-title">{anchor}</div>}
+            {it.total_slots !== null && (
+              <div className="pf-paper-facts">
+                <span>
+                  <b className="tnum">{it.total_slots}</b> 题
+                </span>
+                <span className="dot-sep">·</span>
+                <span>约 {it.estimated_minutes} 分钟</span>
+              </div>
+            )}
             <span className="pf-paper-note">
               <LoomIcon name="clock" size={12} />
               交卷后统一判分 · 卷内无即时反馈

@@ -8,7 +8,7 @@
 //      linked review session + derived pos / right-wrong / gen / source.
 
 import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
-import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import { countPaperSlots, readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
@@ -367,15 +367,7 @@ export async function getPracticeList(
   const papers: PracticePaperItem[] = paperRows.map((row) => {
     const parsed = Artifact.safeParse(row);
     const toolState = parsed.success ? parsed.data.tool_state : null;
-    const sections = readPaperSections(toolState);
-    const slotKeys = new Set<string>();
-    for (const section of sections) {
-      for (const a of section.assignments) {
-        slotKeys.add(`${a.question_id}::${a.part_ref ?? ''}`);
-      }
-    }
-    // Fall back to flat question_ids when no sections (legacy flat quiz).
-    const totalSlots = slotKeys.size > 0 ? slotKeys.size : (toolState?.question_ids?.length ?? 0);
+    const totalSlots = countPaperSlots(toolState);
 
     const session = sessionByPaper.get(row.id) ?? null;
     const kIds = row.knowledge_ids ?? [];

@@ -222,6 +222,157 @@ async function seedReadyPaper(id: string): Promise<void> {
     });
 }
 
+describe('YUK-336 StreamView structured item metadata', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('joins the question name and exact stream review verdict/completion timestamp', async () => {
+    const knowledgeId = createId();
+    await seedKnowledgeNode(knowledgeId);
+    await testDb().update(knowledge).set({ name: '判断句' }).where(eq(knowledge.id, knowledgeId));
+    const questionId = await insertQuestion({ knowledgeIds: [knowledgeId] });
+    const streamItemId = createId();
+    const createdAt = new Date(Date.now() - 60_000);
+    const legacyReviewAt = new Date(Date.now() - 20_000);
+    const exactReviewAt = new Date(Date.now() - 10_000);
+    const completedAt = new Date();
+
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: questionId,
+      source: 'new_check',
+      status: 'done',
+      reasoning: '文案可任意变化，不再承担锚点。',
+      added_by: 'composer_live',
+      signals: {},
+      created_at: createdAt,
+      updated_at: completedAt,
+    });
+    // A same-question legacy review in the row window makes fallback ambiguous;
+    // the immutable direct key must still select the exact review below.
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'review',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'success',
+          payload: { fsrs_rating: 'good' },
+          created_at: legacyReviewAt,
+        },
+        {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'review',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'success',
+          payload: { fsrs_rating: 'hard', stream_item_id: streamItemId },
+          created_at: exactReviewAt,
+        },
+      ]);
+
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        id: streamItemId,
+        knowledge_name: '判断句',
+        paper_title: null,
+        verdict: 'hard',
+        completed_at: exactReviewAt.toISOString(),
+        total_slots: null,
+      }),
+    ]);
+  });
+
+  it('joins paper title and canonical slot count', async () => {
+    const paperId = createId();
+    await seedReadyPaper(paperId);
+    await testDb()
+      .update(artifact)
+      .set({
+        title: '判断句专项卷',
+        tool_state: { question_ids: ['q-1', 'q-2', 'q-3'] } as never,
+      })
+      .where(eq(artifact.id, paperId));
+    await testDb().insert(practice_stream_item).values({
+      id: createId(),
+      date: TODAY,
+      position: 1,
+      item_kind: 'paper',
+      ref_id: paperId,
+      source: 'paper',
+      status: 'pending',
+      reasoning: '标题不再从此文案解析。',
+      added_by: 'composer_live',
+      signals: {},
+    });
+
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.items[0]).toMatchObject({
+      knowledge_name: null,
+      paper_title: '判断句专项卷',
+      verdict: null,
+      completed_at: null,
+      total_slots: 3,
+    });
+  });
+
+  it('leaves an ambiguous legacy same-session review unmatched', async () => {
+    const questionId = await insertQuestion({});
+    const streamItemId = createId();
+    const createdAt = new Date(Date.now() - 60_000);
+    const completedAt = new Date();
+    await testDb().insert(practice_stream_item).values({
+      id: streamItemId,
+      date: TODAY,
+      position: 1,
+      item_kind: 'question',
+      ref_id: questionId,
+      source: 'decay',
+      status: 'done',
+      reasoning: 'legacy',
+      added_by: 'composer_nightly',
+      signals: {},
+      created_at: createdAt,
+      updated_at: completedAt,
+    });
+    await testDb()
+      .insert(event)
+      .values(
+        [20_000, 10_000].map((offset) => ({
+          id: createId(),
+          session_id: null,
+          actor_kind: 'user' as const,
+          actor_ref: 'self',
+          action: 'review',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'success',
+          payload: { fsrs_rating: 'good' },
+          created_at: new Date(Date.now() - offset),
+        })),
+      );
+
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.items[0]).toMatchObject({ verdict: null, completed_at: null });
+  });
+});
+
 describe('streamLocalDate — 用户本地日（Asia/Shanghai）单一真相源（FINDING 4，Codex）', () => {
   it('UTC 容器边界：21:30 UTC = 次日 05:30 Asia/Shanghai → 返回**次日**（不是 UTC 当日）', () => {
     // 模拟夜间 cron `'30 5 * * *', tz: 'Asia/Shanghai'` 在 UTC 容器里触发的瞬间：
