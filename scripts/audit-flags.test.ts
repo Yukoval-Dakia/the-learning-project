@@ -15,7 +15,8 @@ import {
 //   (1) FLAG_TOKEN_RE 抓 `*_ENABLED` token，但末尾 word-boundary 排除 `DEFAULT_ENABLED_BY_KIND`。
 //   (2) scanFlagTokens 在剥注释保字符串的源码上抓 token（字符串里的 flag 名算；注释里的不算）。
 //   (3) reconcileFlags：代码有 ledger 无 → UNREGISTERED；ledger 有代码无 → STALE（per-file 反查）。
-//   (4) computeLiteralVariance 按 literals+大小写分组曝光约定不一致；polarity 不制造伪变体。
+//   (4) env ledger 的 reader_marker 必须仍在活代码中，防 shared parseFlag 回退成 ad-hoc 比较。
+//   (5) computeLiteralVariance 按 literals+大小写分组曝光约定不一致；polarity 不制造伪变体。
 
 describe('FLAG_TOKEN_RE — matches *_ENABLED tokens, excludes DEFAULT_ENABLED_BY_KIND', () => {
   function tokens(s: string): string[] {
@@ -75,6 +76,7 @@ describe('reconcileFlags — ledger ↔ code', () => {
     literals: ['1'],
     case_insensitive: false,
     polarity: 'opt-in' as const,
+    reader_marker: 'parseFlag(process.env.OK_ENABLED)',
     file: 'src/x.ts',
     notes: 'n',
   };
@@ -106,15 +108,55 @@ describe('reconcileFlags — ledger ↔ code', () => {
     expect(recon.ok).toBe(false);
   });
 
+  it('does not let a comment-only flag name satisfy the per-file STALE check', () => {
+    const ledger: Ledger = { OK_ENABLED: envEntry };
+    const recon = reconcileFlags(
+      new Set(),
+      ledger,
+      () =>
+        '// OK_ENABLED and parseFlag(process.env.OK_ENABLED) were removed\nconst replacement = true;',
+    );
+    expect(recon.stale).toEqual([
+      { name: 'OK_ENABLED', file: 'src/x.ts', problem: 'name-missing' },
+    ]);
+    expect(recon.readerDrift).toEqual([
+      {
+        name: 'OK_ENABLED',
+        file: 'src/x.ts',
+        marker: 'parseFlag(process.env.OK_ENABLED)',
+      },
+    ]);
+    expect(recon.ok).toBe(false);
+  });
+
+  it('reports READER-DRIFT when a live flag regresses to direct literal comparison', () => {
+    const ledger: Ledger = { OK_ENABLED: envEntry };
+    const recon = reconcileFlags(
+      new Set(['OK_ENABLED']),
+      ledger,
+      () => "const OK_ENABLED = process.env.OK_ENABLED === '1';",
+    );
+    expect(recon.stale).toHaveLength(0);
+    expect(recon.readerDrift).toEqual([
+      {
+        name: 'OK_ENABLED',
+        file: 'src/x.ts',
+        marker: 'parseFlag(process.env.OK_ENABLED)',
+      },
+    ]);
+    expect(recon.ok).toBe(false);
+  });
+
   it('is ok when the ledger and code agree', () => {
     const ledger: Ledger = { OK_ENABLED: { ...envEntry, file: 'src/x.ts' } };
     const recon = reconcileFlags(
       new Set(['OK_ENABLED']),
       ledger,
-      () => 'const OK_ENABLED = process.env.OK_ENABLED;',
+      () => 'const OK_ENABLED = parseFlag(process.env.OK_ENABLED);',
     );
     expect(recon.unregistered).toHaveLength(0);
     expect(recon.stale).toHaveLength(0);
+    expect(recon.readerDrift).toHaveLength(0);
     expect(recon.ok).toBe(true);
   });
 
@@ -143,6 +185,7 @@ describe('validateLedgerEntry — shape contract', () => {
         literals: ['true'],
         case_insensitive: true,
         polarity: 'opt-in',
+        reader_marker: 'parseFlag(process.env.X_ENABLED)',
         file: 'src/x.ts',
         notes: 'n',
       }),
@@ -172,10 +215,23 @@ describe('validateLedgerEntry — shape contract', () => {
       literals: [],
       case_insensitive: false,
       polarity: 'opt-in',
+      reader_marker: 'parseFlag(process.env.X_ENABLED)',
       file: 'src/x.ts',
       notes: 'n',
     });
     expect(problems.some((p) => p.detail.includes('literals'))).toBe(true);
+  });
+  it('rejects an env entry with a missing or blank reader marker', () => {
+    const problems = validateLedgerEntry('X_ENABLED', {
+      kind: 'env',
+      literals: ['true', '1'],
+      case_insensitive: true,
+      polarity: 'opt-in',
+      reader_marker: '   ',
+      file: 'src/x.ts',
+      notes: 'n',
+    });
+    expect(problems.some((p) => p.detail.includes('reader_marker'))).toBe(true);
   });
 });
 
@@ -187,6 +243,7 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         literals: ['1'],
         case_insensitive: false,
         polarity: 'opt-in',
+        reader_marker: 'parseFlag(process.env.A_ENABLED)',
         file: 'a',
         notes: 'n',
       },
@@ -195,6 +252,7 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         literals: ['1'],
         case_insensitive: false,
         polarity: 'opt-in',
+        reader_marker: 'parseFlag(process.env.B_ENABLED)',
         file: 'b',
         notes: 'n',
       },
@@ -203,6 +261,7 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         literals: ['true'],
         case_insensitive: true,
         polarity: 'opt-in',
+        reader_marker: 'parseFlag(process.env.C_ENABLED)',
         file: 'c',
         notes: 'n',
       },
@@ -223,6 +282,7 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         literals: ['true', '1'],
         case_insensitive: true,
         polarity: 'opt-in',
+        reader_marker: 'parseFlag(process.env.IN_ENABLED)',
         file: 'in',
         notes: 'n',
       },
@@ -231,6 +291,7 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         literals: ['true', '1'],
         case_insensitive: true,
         polarity: 'opt-out',
+        reader_marker: 'parseFlag(process.env.OUT_ENABLED)',
         file: 'out',
         notes: 'n',
       },
