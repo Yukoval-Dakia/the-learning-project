@@ -8,6 +8,7 @@
 import { db } from '@/db/client';
 import type { Db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import type { RunTaskFn } from '@/server/orchestrator/learning_intent';
 import { LearningIntentError, planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -67,6 +68,10 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
           if (restored.success) return Response.json(restored.data);
         }
 
+        // YUK-691 — only charge the global AI-funnel budget when this request is
+        // actually about to dispatch a paid outline run. Same-topic replays above
+        // remain free and do not consume the limiter.
+        checkRateLimit();
         const proposal = await planLearningIntent({
           db: database,
           topic: parsed.data.topic,

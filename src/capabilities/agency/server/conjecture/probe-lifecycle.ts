@@ -1,7 +1,9 @@
 // Phase 0 关系脑 (YUK-406 / YUK-440) — U3 probe one-shot lifecycle. This is the
 // A13 conjecture-engine "dark-loop producer": the surface that materializes a
 // probe question and emits the single canonical `experimental:probe_result`
-// outcome event.
+// outcome event. YUK-691 additionally writes a short-lived judge-claim marker to
+// close the concurrent HTTP read-then-paid-invoke race; it is audit metadata, not
+// an outcome or learner-state event.
 //
 // THREE LOAD-BEARING INVARIANTS (the whole point of this unit):
 //
@@ -31,7 +33,8 @@
 // brain-roadmap.md U3 + docs/design/2026-06-27-a13-ts-half-design.md §2.2) is a
 // SINGLE outcome event `experimental:probe_result`. There is NO serve event: the
 // "served" state IS the draft question row existing. serveProbeOnce writes ONLY the
-// question row. answerProbe writes exactly ONE probe_result event.
+// question row. answerProbe writes exactly ONE probe_result event; the separate
+// judge-claim marker is never folded as probe evidence.
 //
 // Escape-hatch (a13 design §2.2): `experimental:probe_result` is NOT in
 // RESERVED_EXPERIMENTAL_ACTIONS — it validates through the loose generic
@@ -48,7 +51,7 @@ import { event, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 type DbOrTx = Db | Tx;
 
@@ -60,6 +63,18 @@ export const MAX_CONCURRENT_ACTIVE_PROBES = 3;
 
 /** Canonical single outcome event — loose escape hatch, NEVER reserved (§2.2). */
 export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
+
+/** Persisted claim written before a paid probe judge invocation (YUK-691). */
+export const PROBE_JUDGE_STARTED_ACTION = 'experimental:probe_judge_started' as const;
+/** Compensating marker that releases a failed paid-judge claim immediately. */
+export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' as const;
+
+/**
+ * A failed/ambiguous judge may be retried, but not by a concurrent request burst.
+ * Keeping the claim for five minutes bounds paid retries while preserving recovery
+ * from a transient provider or non-discriminating result.
+ */
+export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
 
 // A fixed key for the transaction-scoped advisory lock that serializes serves.
 // All probe serves contend on this single key so the count-read + insert critical
@@ -203,6 +218,134 @@ export interface AnswerProbeResult {
   idempotent?: boolean;
 }
 
+function parseProbeResultEvent(
+  existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
+): AnswerProbeResult | null {
+  const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
+  const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
+  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
+  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  return {
+    status: recordedResolution,
+    outcome: recordedOutcome,
+    probe_result_event_id: existing.id,
+    idempotent: true,
+  };
+}
+
+/**
+ * Atomically claim the paid judge slot for one probe.
+ *
+ * The route's read-only result peek is deliberately only a fast path. This
+ * transaction is the race-closing boundary: it takes the same per-probe advisory
+ * lock used by `answerProbe`, re-checks for a completed result, then refuses a
+ * fresh claim until its TTL expires. Therefore concurrent HTTP requests can never
+ * all pass a read-then-invoke gap and multiply paid judge calls.
+ */
+export async function claimProbeJudging(
+  db: Db,
+  probeQuestionId: string,
+  now: Date = new Date(),
+): Promise<AnswerProbeResult | null> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+
+    const [completed] = await tx
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_RESULT_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+        ),
+      )
+      .limit(1);
+    if (completed) {
+      const parsed = parseProbeResultEvent(completed);
+      if (parsed) return parsed;
+    }
+
+    const [latestClaim] = await tx
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_JUDGE_STARTED_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+        ),
+      )
+      .orderBy(desc(event.created_at))
+      .limit(1);
+    const [latestRelease] = await tx
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_JUDGE_RELEASED_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+        ),
+      )
+      .orderBy(desc(event.created_at))
+      .limit(1);
+    const claimIsReleased =
+      latestClaim !== undefined &&
+      latestRelease !== undefined &&
+      latestRelease.created_at.getTime() >= latestClaim.created_at.getTime();
+    const claimAgeMs =
+      latestClaim && !claimIsReleased ? now.getTime() - latestClaim.created_at.getTime() : null;
+    if (claimAgeMs !== null && claimAgeMs < PROBE_JUDGE_CLAIM_TTL_MS) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((PROBE_JUDGE_CLAIM_TTL_MS - claimAgeMs) / 1000),
+      );
+      throw new ApiError(
+        'probe_judge_in_progress',
+        `probe ${probeQuestionId} already has a recent judge claim`,
+        409,
+        { 'Retry-After': String(retryAfterSeconds) },
+      );
+    }
+
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_JUDGE_STARTED_ACTION,
+      subject_kind: 'question',
+      subject_id: probeQuestionId,
+      payload: {
+        expires_at: new Date(now.getTime() + PROBE_JUDGE_CLAIM_TTL_MS).toISOString(),
+      },
+      created_at: now,
+    });
+    return null;
+  });
+}
+
+/** Release a failed judge claim without deleting append-only audit history. */
+export async function releaseProbeJudging(
+  db: Db,
+  probeQuestionId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_JUDGE_RELEASED_ACTION,
+      subject_kind: 'question',
+      subject_id: probeQuestionId,
+      payload: { released_at: now.toISOString() },
+      created_at: now,
+    });
+  });
+}
+
 /**
  * Record the probe outcome as exactly ONE canonical `experimental:probe_result`
  * event (subject_kind='question', subject_id=probeQuestionId, caused_by=the
@@ -271,31 +414,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       // written with a valid resolution; a missing/invalid one means a corrupt event
       // row (e.g. a manual DB edit), which we surface loudly rather than paper over by
       // blending in the caller's value.
-      const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
-      if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') {
+      const parsed = parseProbeResultEvent(existing);
+      if (!parsed) {
         throw new ApiError(
           'probe_result_corrupt',
-          `probe ${probeQuestionId} has a probe_result event with an invalid resolution`,
+          `probe ${probeQuestionId} has a probe_result event with an invalid resolution or outcome`,
           500,
         );
       }
-      // Faithful idempotent report: return the RECORDED outcome (not the caller's
-      // current value). A re-answer with a different outcome must never rewrite what
-      // the record says happened. Validate it lands on 0|1; a corrupt row surfaces 500.
-      const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-      if (recordedOutcome !== 0 && recordedOutcome !== 1) {
-        throw new ApiError(
-          'probe_result_corrupt',
-          `probe ${probeQuestionId} has a probe_result event with an invalid outcome`,
-          500,
-        );
-      }
-      return {
-        status: recordedResolution,
-        outcome: recordedOutcome,
-        probe_result_event_id: existing.id,
-        idempotent: true,
-      };
+      return parsed;
     }
 
     const probeResultEventId = newId();
@@ -359,14 +486,5 @@ export async function peekExistingProbeResult(
     )
     .limit(1);
   if (!existing) return null;
-  const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
-  const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
-  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
-  return {
-    status: recordedResolution,
-    outcome: recordedOutcome,
-    probe_result_event_id: existing.id,
-    idempotent: true,
-  };
+  return parseProbeResultEvent(existing);
 }
