@@ -18,7 +18,7 @@
 //     part_index。
 //   • 关联状态 ←→ timeline（attempt/review 事件）+ backlinks（卷引用 artifact）+
 //     scheduling（FSRS due）。删除约束计数 ←→ DELETE 409 的 associations（attempts/
-//     mistakes/fsrs_cards/paper_refs）。
+//     mistakes/fsrs_cards/paper_refs/children）。
 //
 // ── DEFER（注释标明）─────────────────────────────────────────────────────────
 //   • AI「生成变体」button → disabled + tooltip（需后端 quiz_gen variant trigger）。
@@ -238,7 +238,7 @@ function errMessage(err: unknown): string {
 }
 
 // ── 约束感知删除 modal ───────────────────────────────────────────────────────
-function DeleteModal({
+export function DeleteModal({
   stem,
   counts,
   pending,
@@ -257,7 +257,7 @@ function DeleteModal({
   useFocusTrap(true, onClose, panelRef);
 
   const total = counts
-    ? counts.attempts + counts.mistakes + counts.fsrs_cards + counts.paper_refs
+    ? counts.attempts + counts.mistakes + counts.fsrs_cards + counts.paper_refs + counts.children
     : 0;
   const deletable = !!counts && total === 0;
   const constraints = counts
@@ -266,6 +266,7 @@ function DeleteModal({
         counts.fsrs_cards && { n: counts.fsrs_cards, label: '张复习卡' },
         counts.paper_refs && { n: counts.paper_refs, label: '份试卷引用此题' },
         counts.mistakes && { n: counts.mistakes, label: '条错题归因记录' },
+        counts.children && { n: counts.children, label: '道小题挂在此大题下' },
       ].filter((c): c is { n: number; label: string } => !!c)
     : [];
   const canDelete = deletable || typed.trim() === '删除';
@@ -304,13 +305,13 @@ function DeleteModal({
               <p>此题没有任何关联记录，可以安全删除。</p>
               <div className="qb-modal-safe">
                 <LoomIcon name="check" size={15} />
-                无作答 / 复习卡 / 试卷引用 / 错题记录
+                无作答 / 复习卡 / 试卷引用 / 错题记录 / 挂载小题
               </div>
             </>
           ) : (
             <>
               <p>
-                此题已被其他学习记录引用。删除后它不会再出现在题库中，但既有作答和复习历史会保留。
+                此题已被学习记录引用或带有挂载小题。删除后它不会再出现在题库中，但既有作答和复习历史会保留。
               </p>
               <div className="qb-constraints">
                 {constraints.map((c) => (
@@ -1159,7 +1160,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               className="meta"
               style={{ marginBottom: 'var(--s-3)', lineHeight: 'var(--lh-prose)' }}
             >
-              删除前会先核对相关记录；如果已有作答、复习、试卷或错题记录，既有学习历史仍会保留。
+              删除前会先核对相关记录和挂载小题；既有学习历史仍会保留。
             </div>
             <Btn size="sm" variant="secondary" icon="trash" block onClick={openDelete}>
               删除题目…

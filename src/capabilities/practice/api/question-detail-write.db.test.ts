@@ -293,12 +293,20 @@ describe('DELETE /api/questions/[id]', () => {
     await seedAttempt(id, 'success');
     await seedQuestionFsrs(id);
     await seedPaperRef(id);
+    await seedQuestion({ parent_question_id: id, draft_status: 'active' });
+    await seedQuestion({ parent_question_id: id, draft_status: 'draft' });
 
     const res = await DELETE(mkDeleteReq(id, '?version=0'), { id });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
       error: string;
-      associations: { attempts: number; mistakes: number; fsrs_cards: number; paper_refs: number };
+      associations: {
+        attempts: number;
+        mistakes: number;
+        fsrs_cards: number;
+        paper_refs: number;
+        children: number;
+      };
       has_associations: boolean;
     };
     expect(body.error).toBe('confirm_required');
@@ -306,11 +314,26 @@ describe('DELETE /api/questions/[id]', () => {
     expect(body.associations.mistakes).toBe(1);
     expect(body.associations.fsrs_cards).toBe(1);
     expect(body.associations.paper_refs).toBe(1);
+    expect(body.associations.children).toBe(2);
     expect(body.has_associations).toBe(true);
 
     // Nothing was archived.
     const row = await loadRow(id);
     expect(row?.draft_status).toBe('active');
+  });
+
+  it('treats attached children as an association even without learning-history refs', async () => {
+    const parentId = await seedQuestion({ kind: 'reading' });
+    await seedQuestion({ parent_question_id: parentId });
+
+    const res = await DELETE(mkDeleteReq(parentId), { id: parentId });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      associations: { children: number };
+      has_associations: boolean;
+    };
+    expect(body.associations.children).toBe(1);
+    expect(body.has_associations).toBe(true);
   });
 
   it('soft-archives (re-drafts) on confirm=true', async () => {

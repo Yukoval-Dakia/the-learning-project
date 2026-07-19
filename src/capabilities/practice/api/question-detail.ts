@@ -151,7 +151,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
 // ── DELETE — association-count guard + soft-archive (YUK-281) ─────────────────
 // Two-step:
 //   1. no `?confirm=true`  → return association counts + 409 ('confirm_required')
-//      so the UI can show the "N 条作答 / N 张复习卡 / N 份卷引用 / N 条错题" warning.
+//      so the UI can show the "N 条作答 / N 张复习卡 / N 份卷引用 / N 条错题 / N 道小题" warning.
 //      When the question has ZERO associations we still require confirm for a
 //      uniform UI flow (cheap), but the counts are all 0.
 //   2. `?confirm=true`     → soft-archive (re-draft) + cascade parts + event.

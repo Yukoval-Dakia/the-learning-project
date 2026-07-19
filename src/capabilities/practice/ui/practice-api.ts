@@ -231,7 +231,7 @@ export const patchQuestion = (id: string, body: QuestionPatchBody) =>
 
 // DELETE 关联约束门 + 软删。两步：
 //   1. 无 confirm → 后端回 409 'confirm_required' + associations 计数（attempts/
-//      mistakes/fsrs_cards/paper_refs）。apiJson 会把 409 抛成 ApiError 丢掉 body，
+//      mistakes/fsrs_cards/paper_refs/children）。apiJson 会把 409 抛成 ApiError 丢掉 body，
 //      故这里直接走 apiFetch 读 409 体（kind:'confirm_required' 返计数）。
 //   2. confirm=true&version=N → 软删（re-draft）+ 级联小题 + event。
 export interface QuestionAssociationCounts {
@@ -239,6 +239,7 @@ export interface QuestionAssociationCounts {
   mistakes: number;
   fsrs_cards: number;
   paper_refs: number;
+  children: number;
 }
 
 export type DeleteQuestionResult =
@@ -249,6 +250,19 @@ export type DeleteQuestionResult =
       cascaded_part_ids: string[];
       associations: QuestionAssociationCounts;
     };
+
+function normalizeQuestionAssociationCounts(
+  counts: Partial<QuestionAssociationCounts> | null | undefined,
+): QuestionAssociationCounts {
+  return {
+    attempts: counts?.attempts ?? 0,
+    mistakes: counts?.mistakes ?? 0,
+    fsrs_cards: counts?.fsrs_cards ?? 0,
+    paper_refs: counts?.paper_refs ?? 0,
+    // Additive wire compatibility during a rolling web/API deploy.
+    children: counts?.children ?? 0,
+  };
+}
 
 export async function deleteQuestion(
   id: string,
@@ -278,7 +292,7 @@ export async function deleteQuestion(
     archived?: boolean;
     event_id?: string | null;
     cascaded_part_ids?: string[];
-    associations?: QuestionAssociationCounts;
+    associations?: Partial<QuestionAssociationCounts>;
     has_associations?: boolean;
   } | null;
 
@@ -286,7 +300,7 @@ export async function deleteQuestion(
   if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
     return {
       kind: 'confirm_required',
-      associations: body.associations,
+      associations: normalizeQuestionAssociationCounts(body.associations),
       has_associations: body.has_associations ?? false,
     };
   }
@@ -300,7 +314,7 @@ export async function deleteQuestion(
     kind: 'archived',
     event_id: body?.event_id ?? null,
     cascaded_part_ids: body?.cascaded_part_ids ?? [],
-    associations: body?.associations ?? { attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0 },
+    associations: normalizeQuestionAssociationCounts(body?.associations),
   };
 }
 
