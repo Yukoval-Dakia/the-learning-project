@@ -6696,19 +6696,19 @@ button.chip:disabled:hover {
   font-size: var(--fs-meta);
   color: var(--ink-4);
 }
+/* Neutral base is the catch-all colour for every outcome status; only `confirmed`
+   overrides it. A new wire status therefore falls back to a defined neutral tone instead
+   of silently losing colour — the CSS no longer couples to the status enum (the component
+   may still compose `.tb-outcome-<status>`, but no per-status rule depends on it). */
 .tb-outcome {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   line-height: 1.5;
+  color: var(--ink-3);
 }
 .tb-outcome-confirmed {
   color: var(--good-ink);
-}
-.tb-outcome-retired,
-.tb-outcome-awaiting_decision,
-.tb-outcome-awaiting_answer {
-  color: var(--ink-3);
 }
 .tb-error {
   font-size: var(--fs-meta);
