@@ -40,9 +40,16 @@ export interface VerifyDispatchResult {
   failed: number;
 }
 
+// The id is version-scoped so a synthesized valid intent never collides with a stale intent that
+// shares the same (question, verifier) but carries a different (or absent) schema version. Because
+// `writeEvent` is INSERT-only (ADR-0021 append-only: PK conflict = do-nothing), a colliding id would
+// silently no-op the replacement and leave the draft stuck. Version scoping keeps the id
+// deterministic (idempotent re-synthesis) while giving each schema version its own id space.
+const VERIFY_DISPATCH_VERSION_TAG = String(VERIFY_DISPATCH_VERSION);
+
 function stableEventId(kind: 'intent' | 'complete', questionId: string, verifier: VerifyKind) {
   const digest = createHash('sha256').update(`${verifier}\0${questionId}`).digest('hex');
-  return `verify-dispatch-${kind}-${digest}`;
+  return `verify-dispatch-${kind}-v${VERIFY_DISPATCH_VERSION_TAG}-${digest}`;
 }
 
 function intentEventId(questionId: string, verifier: VerifyKind) {
@@ -182,6 +189,12 @@ export async function dispatchPendingVerifyIntents(
       const completion = alias(event, 'verify_dispatch_completion');
       const predicates = [
         eq(event.action, VERIFY_DISPATCH_INTENT_ACTION),
+        // Only lock intents structurally valid for the CURRENT schema version. A version-mismatched
+        // or malformed intent can never be enqueued (safeParse drops it below) and never receives a
+        // completion, so without this guard it would permanently re-occupy the oldest lock page and
+        // starve valid pending intents. The version-scoped synthesis anti-join issues a fresh valid
+        // intent (distinct id) for such a draft, which flows through here normally.
+        sql`${event.payload}->>'version' = ${VERIFY_DISPATCH_VERSION_TAG}`,
         // Filter completion rows before LIMIT. Otherwise an old first page of completed intents
         // permanently starves later pending work because every drain locks the same no-op page.
         notExists(
@@ -207,9 +220,10 @@ export async function dispatchPendingVerifyIntents(
         .for('update', { skipLocked: true });
       if (locked.length === 0) return empty;
 
-      // safeParse (not parse): one corrupt or future-version intent payload must not throw and
-      // abort the whole transaction — that would starve every other pending intent in the locked
-      // page. Skip the unparseable rows, mirroring the recovery path below.
+      // safeParse (not parse): backstop for any row that passes the SQL version guard above yet
+      // still fails full schema validation. One corrupt payload must not throw and abort the whole
+      // transaction — that would starve every other pending intent in the locked page. Skip the
+      // unparseable rows, mirroring the recovery path below.
       const intents = locked
         .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
         .filter((result) => result.success)
@@ -324,6 +338,12 @@ export async function recoverOrphanVerifyDispatches(
           sql`${question.metadata}->>'archived_at' IS NULL`,
           // Filter already-owned/terminal rows before LIMIT. A persistent oldest page must not
           // prevent later legacy drafts from ever receiving an intent.
+          //
+          // Only a CURRENT-version intent counts as "already owned". A malformed or version-mismatched
+          // intent (e.g. wrong version but verifier_kind present) is not dispatchable — dispatch's
+          // safeParse drops it and never writes a completion — so if it counted here the draft would
+          // be stuck forever: never synthesized a valid intent, never enqueued. Excluding it lets a
+          // fresh valid intent be synthesized (the version-scoped id avoids colliding with the stale one).
           notExists(
             tx
               .select({ id: existingIntent.id })
@@ -332,6 +352,7 @@ export async function recoverOrphanVerifyDispatches(
                 and(
                   eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
                   eq(existingIntent.subject_id, question.id),
+                  sql`${existingIntent.payload}->>'version' = ${VERIFY_DISPATCH_VERSION_TAG}`,
                   sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
                 ),
               ),

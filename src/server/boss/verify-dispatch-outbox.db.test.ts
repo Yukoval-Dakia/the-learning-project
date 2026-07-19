@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,10 +10,18 @@ import { resetDb } from '../../../tests/helpers/db';
 import {
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
   dispatchPendingVerifyIntents,
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from './verify-dispatch-outbox';
+
+// The un-versioned id the outbox used before intent ids were version-scoped. A stale intent left by
+// a different schema version lands here — the same id the synthesizer would reuse if it were not
+// version-scoped — so seeding at this id proves the valid replacement does not collide with it.
+function legacyUnscopedIntentId(questionId: string, verifier: 'quiz_verify' | 'source_verify') {
+  return `verify-dispatch-intent-${createHash('sha256').update(`${verifier}\0${questionId}`).digest('hex')}`;
+}
 
 async function seedQuestion(
   id: string,
@@ -93,6 +102,68 @@ describe('verify dispatch outbox (YUK-700)', () => {
 
     expect(result).toMatchObject({ dispatched: 1, failed: 0 });
     expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-good'], expect.any(Object));
+  });
+
+  it('unsticks a live draft whose only intent is a version-mismatched event', async () => {
+    // Regression (review round-2 codex P2): a draft whose sole intent is malformed / from a
+    // different schema version was permanently stuck — the synthesis anti-join treated the stale
+    // intent as "already owned" (verifier_kind matched) so it never issued a valid replacement,
+    // while dispatch's safeParse dropped the payload without ever writing a completion or enqueuing.
+    await seedQuestion('q-stuck', 'quiz_gen');
+    // Matching verifier_kind but a mismatched version, seeded at the legacy un-scoped id — i.e. the
+    // exact id the synthesizer would reuse if it were not version-scoped. INSERT-only writes would
+    // otherwise no-op the replacement and keep the draft stuck.
+    await writeEvent(db, {
+      id: legacyUnscopedIntentId('q-stuck', 'quiz_verify'),
+      actor_kind: 'system',
+      actor_ref: 'verify_dispatch_outbox',
+      action: VERIFY_DISPATCH_INTENT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q-stuck',
+      outcome: null,
+      payload: {
+        version: VERIFY_DISPATCH_VERSION + 1,
+        verifier_kind: 'quiz_verify',
+        question_id: 'q-stuck',
+      },
+      ingest_at: new Date(),
+    });
+    const enqueue = vi.fn(async () => {});
+
+    const result = await recoverOrphanVerifyDispatches(db, { enqueue });
+
+    // A fresh valid intent is synthesized and the draft is actually enqueued.
+    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
+    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-stuck'], expect.any(Object));
+    const completion = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_id, 'q-stuck'),
+          eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION),
+          eq(event.outcome, 'success'),
+        ),
+      );
+    expect(completion).toHaveLength(1);
+    expect(completion[0]?.payload).toMatchObject({ recovery: true, disposition: 'enqueued' });
+
+    // The stale intent is preserved (append-only) and the synthesized replacement has a distinct id.
+    const intents = await db
+      .select({ id: event.id, payload: event.payload })
+      .from(event)
+      .where(and(eq(event.subject_id, 'q-stuck'), eq(event.action, VERIFY_DISPATCH_INTENT_ACTION)));
+    expect(intents).toHaveLength(2);
+    const valid = intents.filter(
+      (row) => (row.payload as { version?: number }).version === VERIFY_DISPATCH_VERSION,
+    );
+    expect(valid).toHaveLength(1);
+    expect(valid[0]?.id).not.toBe(legacyUnscopedIntentId('q-stuck', 'quiz_verify'));
+
+    // Idempotent: a second recovery neither re-synthesizes nor re-enqueues.
+    const again = await recoverOrphanVerifyDispatches(db, { enqueue });
+    expect(again).toMatchObject({ synthesized: 0, dispatched: 0 });
+    expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
   it('rolls back the intent when candidate persistence does not commit', async () => {
