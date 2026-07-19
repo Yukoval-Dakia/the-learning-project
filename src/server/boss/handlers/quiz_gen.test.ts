@@ -532,7 +532,7 @@ describe('runQuizGen', () => {
       }>;
     };
     // The model returns another valid KC, while k1 is the current supply target. A fresh
-    // replacement must persist their union instead of reproducing the original B-gap.
+    // replacement must persist their union without displacing k1 as the primary family anchor.
     parsed.questions[0].knowledge_ids = ['k2'];
     const replacementOutput = JSON.stringify(parsed);
     const content = parsed.questions[0];
@@ -597,13 +597,13 @@ describe('runQuizGen', () => {
     expect(replacement).toMatchObject({
       canonical_content_hash: hash,
       draft_status: 'draft',
-      knowledge_ids: ['k2', 'k1'],
+      knowledge_ids: ['k1', 'k2'],
     });
     const [quizArtifact] = await testDb()
       .select()
       .from(artifact)
       .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
-    expect(quizArtifact.knowledge_ids).toEqual(['k2', 'k1']);
+    expect(quizArtifact.knowledge_ids).toEqual(['k1', 'k2']);
     const releaseEvents = await testDb()
       .select()
       .from(event)

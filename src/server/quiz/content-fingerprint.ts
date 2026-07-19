@@ -95,12 +95,17 @@ export interface ExactQuestionDuplicateKnowledgeMerge extends ExactQuestionDupli
   eventId: string | null;
 }
 
-/** Preserve first-seen order while combining the generated question and current target KCs. */
+/**
+ * Keep the current supply target first, then retain any additional model attribution in its own
+ * order. Several review/calibration readers treat knowledge_ids[0] as the primary family anchor;
+ * a question generated to fill target K1 must therefore not become primarily K2 merely because
+ * the model returned K2 explicitly.
+ */
 export function combineExactDuplicateKnowledgeIds(
   questionKnowledgeIds: string[],
   targetKnowledgeIds: string[],
 ): string[] {
-  return [...new Set([...questionKnowledgeIds, ...targetKnowledgeIds])];
+  return [...new Set([...targetKnowledgeIds, ...questionKnowledgeIds])];
 }
 
 /**
