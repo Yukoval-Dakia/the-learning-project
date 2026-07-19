@@ -60,6 +60,11 @@ export function PfPaper({
   // request may update that slot's failed flag, or an old success would clear a
   // newer failure (and vice versa).
   const saveSeq = useRef<Record<string, number>>({});
+  // Paper generation: bumped whenever artifactId changes. Because saveSeq resets per
+  // paper, paper A's in-flight save could otherwise share a seq with paper B's first save
+  // for the same slot key and let A's late settle rewrite B's flag. The gen captured at
+  // dispatch must still match at settle, so a save outlives its paper as a no-op.
+  const saveGen = useRef(0);
   const sessionRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
@@ -75,7 +80,9 @@ export function PfPaper({
   useEffect(() => {
     setAnswers({});
     setSaveFailed({});
+    setRetrying(false);
     saveSeq.current = {};
+    saveGen.current += 1;
     for (const k of Object.keys(saveTimers.current)) {
       clearTimeout(saveTimers.current[k]);
       delete saveTimers.current[k];
@@ -169,8 +176,13 @@ export function PfPaper({
       setSaveFailed((f) => ({ ...f, [key]: true }));
       return Promise.resolve();
     }
+    const gen = saveGen.current;
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
+    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
+    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
+    // no-op — it can't rewrite the next paper's state.
+    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
     return savePaperAnswer(artifactId, {
       session_id: sid,
       question_id: questionId,
@@ -178,11 +190,11 @@ export function PfPaper({
       answer_md: v,
     })
       .then(() => {
-        if (saveSeq.current[key] !== seq) return;
+        if (!isLatest()) return;
         setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
       })
       .catch(() => {
-        if (saveSeq.current[key] !== seq) return;
+        if (!isLatest()) return;
         setSaveFailed((f) => ({ ...f, [key]: true }));
       });
   };

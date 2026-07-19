@@ -26,17 +26,20 @@ export function AiChangesStrip({ now }: { now: Date }) {
   // full set of failed event ids and render the error inline at each. Retrying a row clears
   // only its own error; every other failed row keeps its error.
   const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set());
+  const clearFailed = (eventId: string) =>
+    setFailedIds((s) => {
+      if (!s.has(eventId)) return s;
+      const next = new Set(s);
+      next.delete(eventId);
+      return next;
+    });
   const undoM = useMutation({
     mutationFn: ({ artifactId, eventId }: { artifactId: string; eventId: string }) =>
       undoAiChange(artifactId, eventId),
-    onMutate: ({ eventId }) =>
-      setFailedIds((s) => {
-        if (!s.has(eventId)) return s;
-        const next = new Set(s);
-        next.delete(eventId);
-        return next;
-      }),
+    onMutate: ({ eventId }) => clearFailed(eventId),
     onError: (_e, { eventId }) => setFailedIds((s) => new Set(s).add(eventId)),
+    // Drop the flag on success too, so a row that ended up reverted never keeps an error.
+    onSuccess: (_data, { eventId }) => clearFailed(eventId),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
   });
 
@@ -103,7 +106,7 @@ export function AiChangesStrip({ now }: { now: Date }) {
                   )}
                 </div>
               </div>
-              {failedIds.has(c.event_id) && (
+              {!c.undone && failedIds.has(c.event_id) && (
                 <div className="meta strip-undo-err" role="alert">
                   撤销失败，请重试。
                 </div>

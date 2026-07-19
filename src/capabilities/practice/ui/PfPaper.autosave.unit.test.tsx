@@ -267,4 +267,38 @@ describe('PfPaper autosave failure (YUK-713)', () => {
       expect((screen.getByLabelText('作答') as HTMLTextAreaElement).value).toBe('答案B'),
     );
   });
+
+  it('a paper-A save settling after switching to paper B does not pollute B', async () => {
+    // Both papers share slot key question_1::. Paper A's save is left in flight; paper B's
+    // save fails. When A's stale save finally succeeds it must NOT clear B's failure.
+    let resolveA: (value: unknown) => void = () => {};
+    mocks.savePaperAnswer
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveA = resolve;
+          }),
+      )
+      .mockRejectedValue(new Error('500'));
+    mocks.getPaperDetail.mockImplementation(() => Promise.resolve(draftDetail('')));
+    const user = userEvent.setup();
+    const { rerenderWith } = renderPaper('paper_A');
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), 'A');
+    // Paper A's save is dispatched and left pending.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    // Switch to paper B (bumps the generation, resets saveSeq), then fail B's save.
+    rerenderWith('paper_B');
+    await screen.findByLabelText('作答');
+    await user.type(screen.getByLabelText('作答'), 'B');
+    await screen.findByRole('button', { name: '保存失败 · 重试' }, { timeout: 2500 });
+
+    // A's stale save (older generation) now succeeds — B's failure must survive.
+    resolveA({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole('button', { name: '保存失败 · 重试' })).toBeTruthy();
+    expect(screen.queryByText('草稿自动保存')).toBeNull();
+  });
 });

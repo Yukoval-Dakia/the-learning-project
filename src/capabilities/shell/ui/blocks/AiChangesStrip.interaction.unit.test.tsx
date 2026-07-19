@@ -106,4 +106,22 @@ describe('AiChangesStrip undo failure (YUK-713)', () => {
     expect(anchors).toContain(screen.getByText('ai').closest('.strip'));
     expect(anchors).toContain(screen.getByText('zeta').closest('.strip'));
   });
+
+  it('does not show the error on a row that comes back undone (server won, client errored)', async () => {
+    // The client sees a network error (id added to failedIds), but the undo actually
+    // succeeded server-side, so the refetch returns the row undone.
+    mocks.undoAiChange.mockRejectedValue(new Error('network'));
+    mocks.getRecentAiChanges
+      .mockResolvedValueOnce({ window_hours: 24, rows: [ROW] })
+      .mockResolvedValue({ window_hours: 24, rows: [{ ...ROW, undone: true }] });
+    const user = userEvent.setup();
+    renderStrip();
+
+    await user.click(await screen.findByRole('button', { name: '撤销' }));
+
+    // The refetch flips the row to undone → 「已撤销」shows and the contradictory error
+    // line must NOT render alongside it.
+    expect(await screen.findByText('已撤销')).toBeTruthy();
+    expect(screen.queryByText('撤销失败，请重试。')).toBeNull();
+  });
 });
