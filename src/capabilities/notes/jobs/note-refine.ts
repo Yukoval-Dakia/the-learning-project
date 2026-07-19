@@ -32,6 +32,7 @@ import {
   patchTouchesVerifiedBlock,
 } from '@/capabilities/notes/server/note-refine-policy';
 import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
+import { filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
 import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
@@ -155,19 +156,26 @@ export type RunNoteRefineResult =
       new_blocks: number;
       event_id: string;
       artifact_version: number;
+      skipped_ops?: number;
     }
-  | { status: 'proposed'; ops_count: number; new_blocks: number }
+  | { status: 'proposed'; ops_count: number; new_blocks: number; skipped_ops?: number }
   // YUK-358 (ADR-0040 决定1) — A-track rate breaker tripped: a mutator-eligible
   // patch was diverted to a propose (退回人审) because auto-apply rate exceeded
   // the hard cap in the window. Distinct from plain 'proposed' so callers /
   // tests can tell a runaway-rate fallback from a routine over-threshold propose.
-  | { status: 'proposed:breaker_tripped'; ops_count: number; new_blocks: number }
-  | { status: 'deferred'; ops_count: number; new_blocks: number }
-  | { status: 'skipped:empty_patch' }
-  | { status: 'skipped:not_found' }
-  | { status: 'skipped:no_body_blocks' }
-  | { status: 'skipped:archived' }
-  | { status: 'skipped:version_conflict' };
+  | {
+      status: 'proposed:breaker_tripped';
+      ops_count: number;
+      new_blocks: number;
+      skipped_ops?: number;
+    }
+  | { status: 'deferred'; ops_count: number; new_blocks: number; skipped_ops?: number }
+  | { status: 'skipped:empty_patch'; skipped_ops?: number }
+  | { status: 'skipped:target_not_found'; skipped_ops: number }
+  | { status: 'skipped:not_found'; skipped_ops?: number }
+  | { status: 'skipped:no_body_blocks'; skipped_ops?: number }
+  | { status: 'skipped:archived'; skipped_ops?: number }
+  | { status: 'skipped:version_conflict'; skipped_ops?: number };
 
 const defaultGate: NoteRefineGate = decideNoteRefineMode;
 
@@ -230,12 +238,25 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     subjectProfile,
     skills: await resolveNoteSkill(subjectProfile.id),
   });
-  const { patch } = parseNoteRefineOutput(taskResult.text);
-  const summary = summarizeNotePatch(patch);
+  const { patch: modelPatch } = parseNoteRefineOutput(taskResult.text);
 
-  if (patch.ops.length === 0) {
+  if (modelPatch.ops.length === 0) {
     return { status: 'skipped:empty_patch' };
   }
+
+  // YUK-301 — validate target references before routing. Apply the model's ops left-to-right
+  // against the snapshot it was shown, dropping only target_not_found ops. A ghost reference must
+  // neither inflate the count gate nor poison independent ops in the same patch. The persistence
+  // layer repeats this check against the transaction's latest snapshot for deferred/concurrent edits.
+  const filtered = filterMissingNotePatchTargets(row.body_blocks, modelPatch, {
+    enforceUserVerifiedGuard: false,
+  });
+  if (filtered.patch.ops.length === 0) {
+    return { status: 'skipped:target_not_found', skipped_ops: filtered.skipped_ops };
+  }
+  const patch = filtered.patch;
+  const summary = summarizeNotePatch(patch);
+  const skipped = filtered.skipped_ops > 0 ? { skipped_ops: filtered.skipped_ops } : {};
 
   const triggerEventId = trigger.trigger_event_id ?? null;
 
@@ -272,7 +293,12 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
 
   if (decision === 'propose') {
     await dispatchPropose(false);
-    return { status: 'proposed', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
+    return {
+      status: 'proposed',
+      ops_count: summary.ops_count,
+      new_blocks: summary.new_blocks,
+      ...skipped,
+    };
   }
 
   // YUK-358 (ADR-0040 决定1) — A-track auto-apply rate breaker. Past the
@@ -295,6 +321,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
       status: 'proposed:breaker_tripped',
       ops_count: summary.ops_count,
       new_blocks: summary.new_blocks,
+      ...skipped,
     };
   }
 
@@ -346,11 +373,22 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   });
 
   if (applyResult.status === 'deferred') {
-    return { status: 'deferred', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
+    return {
+      status: 'deferred',
+      ops_count: summary.ops_count,
+      new_blocks: summary.new_blocks,
+      ...skipped,
+    };
   }
 
   if (applyResult.status !== 'applied') {
-    return { status: applyResult.status };
+    if (applyResult.status === 'skipped:target_not_found') {
+      return {
+        status: applyResult.status,
+        skipped_ops: filtered.skipped_ops + (applyResult.skipped_ops ?? 0),
+      };
+    }
+    return { status: applyResult.status, ...skipped };
   }
 
   return {
@@ -359,6 +397,9 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     new_blocks: applyResult.new_blocks ?? summary.new_blocks,
     event_id: applyResult.event_id as string,
     artifact_version: applyResult.artifact_version as number,
+    ...((applyResult.skipped_ops ?? 0) + filtered.skipped_ops > 0
+      ? { skipped_ops: (applyResult.skipped_ops ?? 0) + filtered.skipped_ops }
+      : {}),
   };
 }
 
@@ -387,7 +428,10 @@ export function buildNoteRefineHandler(
           onPropose,
           countRecentAutoApplies: countRecentAutoAppliesOverride,
         });
-        console.log(`[note_refine] ${data.artifact_id} → ${result.status}`);
+        const skippedOps = 'skipped_ops' in result ? (result.skipped_ops ?? 0) : 0;
+        console.log(
+          `[note_refine] ${data.artifact_id} → ${result.status}${skippedOps > 0 ? ` (${skippedOps} ghost op(s) skipped)` : ''}`,
+        );
       } catch (err) {
         console.error(`[note_refine] ${data.artifact_id} failed`, err);
         throw err;

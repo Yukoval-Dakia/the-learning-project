@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
+import {
+  NoteRefineApplyError,
+  applyNotePatch,
+  filterMissingNotePatchTargets,
+} from '@/core/blocks/apply-note-patch';
 import type { NotePatchT } from '@/core/schema/note-patch';
 
 function paragraph(id: string, text: string): Record<string, unknown> {
@@ -136,6 +140,68 @@ describe('applyNotePatch — pure ops', () => {
       ],
     });
     expect(before).toEqual(snapshot);
+  });
+
+  describe('filterMissingNotePatchTargets', () => {
+    it('skips a ghost op and still applies later independent ops', () => {
+      const result = filterMissingNotePatchTargets(doc(paragraph('b1', 'keep')), {
+        ops: [
+          {
+            kind: 'replace_block',
+            target_block_id: 'ghost',
+            block: paragraph('ghost', 'missing'),
+          },
+          { kind: 'append_block', block: paragraph('b2', 'survives') },
+        ],
+      });
+
+      expect(result.skipped_ops).toBe(1);
+      expect(result.patch.ops).toEqual([
+        { kind: 'append_block', block: paragraph('b2', 'survives') },
+      ]);
+      expect(result.body_blocks.content.map((node) => (node.attrs as { id: string }).id)).toEqual([
+        'b1',
+        'b2',
+      ]);
+    });
+
+    it('lets later ops target a block inserted earlier in the same patch', () => {
+      const result = filterMissingNotePatchTargets(doc(paragraph('b1', 'start')), {
+        ops: [
+          { kind: 'append_block', block: paragraph('b2', 'draft') },
+          { kind: 'replace_block', target_block_id: 'b2', block: paragraph('b2', 'final') },
+        ],
+      });
+
+      expect(result.skipped_ops).toBe(0);
+      expect(result.patch.ops).toHaveLength(2);
+      expect((result.body_blocks.content[1].content as { text: string }[])[0].text).toBe('final');
+    });
+
+    it('skips later ops that depend on an earlier skipped ghost anchor', () => {
+      const result = filterMissingNotePatchTargets(doc(paragraph('b1', 'start')), {
+        ops: [
+          {
+            kind: 'insert_after',
+            target_block_id: 'ghost',
+            block: paragraph('b2', 'never inserted'),
+          },
+          { kind: 'delete_block', target_block_id: 'b2' },
+        ],
+      });
+
+      expect(result.skipped_ops).toBe(2);
+      expect(result.patch.ops).toEqual([]);
+      expect(result.body_blocks).toEqual(doc(paragraph('b1', 'start')));
+    });
+
+    it('preserves non-target errors such as the user-verified guard', () => {
+      expect(() =>
+        filterMissingNotePatchTargets(doc(verifiedBlock('b1', 'human', 'flag')), {
+          ops: [{ kind: 'delete_block', target_block_id: 'b1' }],
+        }),
+      ).toThrow(/user-verified/);
+    });
   });
 
   // C1a (YUK-358, ADR-0040 决定1) — user_verified hard boundary. A

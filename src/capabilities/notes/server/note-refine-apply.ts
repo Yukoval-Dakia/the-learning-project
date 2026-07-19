@@ -17,7 +17,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-import { applyNotePatch } from '@/core/blocks/apply-note-patch';
+import { applyNotePatch, filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
 import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
@@ -67,6 +67,7 @@ export interface PersistNoteRefineApplyResult {
   status:
     | 'applied'
     | 'skipped:empty_patch'
+    | 'skipped:target_not_found'
     | 'skipped:not_found'
     | 'skipped:archived'
     | 'skipped:version_conflict';
@@ -75,6 +76,7 @@ export interface PersistNoteRefineApplyResult {
   ops_count?: number;
   new_blocks?: number;
   artifact_version?: number;
+  skipped_ops?: number;
 }
 
 export interface NoteRefineChangeRow {
@@ -105,8 +107,9 @@ function noteRefineReversePatch(bodyBlocks: unknown, previousArtifactVersion: nu
  * artifact diff.
  *
  * Empty patch → no-op, no event written (idempotent under "AI produced
- * nothing actionable"). Missing artifact → skip, no event written. Other
- * errors propagate.
+ * nothing actionable"). Missing artifact → skip, no event written. For automated callers, ghost
+ * target ops are skipped independently; if none remain, no event is written. Other errors
+ * propagate. Human-approved patches remain exact/all-or-nothing.
  */
 export async function persistNoteRefineApply(
   params: PersistNoteRefineApplyParams,
@@ -142,12 +145,31 @@ export async function persistNoteRefineApply(
       };
     }
 
-    // C1a (YUK-358): the accept-path is the ONLY caller exempt from the
-    // user_verified hard boundary — a human approved that patch through the
-    // inbox. All other actors keep the guard ON (cross-caller safety net).
-    const newBodyBlocks = applyNotePatch(row.body_blocks, patch, {
-      enforceUserVerifiedGuard: actorRef !== NOTE_REFINE_ACCEPT_ACTOR,
-    });
+    // YUK-301 — pre-apply each op against the latest row snapshot. A stale/ghost target skips only
+    // that op; later independent ops continue. This check lives inside the write transaction so it
+    // also covers patches that waited in editing_presence before being flushed. All non-target
+    // failures remain hard failures, including the user_verified boundary below. The human accept
+    // actor preserves all-or-nothing behavior: approval is for an exact patch, so later target drift
+    // still surfaces instead of silently applying only a subset.
+    const filtered =
+      actorRef === NOTE_REFINE_ACCEPT_ACTOR
+        ? {
+            patch,
+            body_blocks: applyNotePatch(row.body_blocks, patch, {
+              enforceUserVerifiedGuard: false,
+            }),
+            skipped_ops: 0,
+          }
+        : filterMissingNotePatchTargets(row.body_blocks, patch);
+    if (filtered.patch.ops.length === 0) {
+      return {
+        status: 'skipped:target_not_found' as const,
+        artifact_id: artifactId,
+        skipped_ops: filtered.skipped_ops,
+      };
+    }
+    const effectivePatch = filtered.patch;
+    const newBodyBlocks = filtered.body_blocks;
     const nowAt = now ?? new Date();
     const nextVersion = (row.version ?? 0) + 1;
     const id = eventId ?? createId();
@@ -172,7 +194,7 @@ export async function persistNoteRefineApply(
     // tx — an AI patch may add/remove crossLinkBlock nodes.
     await syncBlockRefsForArtifact(tx, artifactId, newBodyBlocks);
 
-    const summary = summarizeNotePatch(patch);
+    const summary = summarizeNotePatch(effectivePatch);
 
     await writeEvent(tx, {
       id,
@@ -189,7 +211,8 @@ export async function persistNoteRefineApply(
         next_artifact_version: nextVersion,
         ops_count: summary.ops_count,
         new_blocks: summary.new_blocks,
-        ops: patch.ops,
+        ops: effectivePatch.ops,
+        ...(filtered.skipped_ops > 0 ? { skipped_target_ops: filtered.skipped_ops } : {}),
         previous_body_blocks: row.body_blocks,
         reverse_patch: noteRefineReversePatch(row.body_blocks, row.version),
         ...(taskResult
@@ -209,8 +232,9 @@ export async function persistNoteRefineApply(
       artifact_id: artifactId,
       event_id: id,
       ops_count: summary.ops_count,
-      new_blocks: countNewBlocks(patch),
+      new_blocks: countNewBlocks(effectivePatch),
       artifact_version: nextVersion,
+      ...(filtered.skipped_ops > 0 ? { skipped_ops: filtered.skipped_ops } : {}),
     };
   };
 

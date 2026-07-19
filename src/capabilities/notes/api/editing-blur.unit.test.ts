@@ -26,16 +26,21 @@ describe('POST /api/editing-session/blur', () => {
   it('validates the current presence flush response', async () => {
     markArtifactIdleAndFlush.mockResolvedValue({
       artifact_id: 'note_1',
-      flushed: 1,
-      results: [{ status: 'applied', artifact_id: 'note_1', artifact_version: 2 }],
+      flushed: 2,
+      results: [
+        { status: 'skipped:target_not_found', artifact_id: 'note_1', skipped_ops: 1 },
+        { status: 'applied', artifact_id: 'note_1', artifact_version: 2 },
+      ],
     });
 
     const response = await POST(request({ artifact_id: 'note_1' }));
     expect(response.status).toBe(200);
-    expect(EditingBlurResponseSchema.parse(await response.json())).toMatchObject({
+    const parsed = EditingBlurResponseSchema.parse(await response.json());
+    expect(parsed).toMatchObject({
       artifact_id: 'note_1',
-      flushed: 1,
+      flushed: 2,
     });
+    expect(parsed.results[0]).toMatchObject({ status: 'skipped:target_not_found', skipped_ops: 1 });
   });
 
   it('rejects a missing artifact id before flushing', async () => {
