@@ -36,7 +36,7 @@ import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { getFsrsStatesByIds } from '@/server/fsrs/state';
-import { getMasteryProjection } from '@/server/mastery/state';
+import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
@@ -119,9 +119,11 @@ export interface KnowledgeNodePage {
   // 同 S1 raw-over-wire 先例：node-page 出 RAW，前端 buildNodeThreeDim 客户端 band 化。
   // 三轴正交：纯 READ，绝不写回。
   //   retrievability = FSRS R(t)∈[0,1]（null = 无 fsrs_state 行，无留存数据，非 R=0）；
-  //   beta           = 代表性 β（IRT logit；null = 无投影/冷启，0 = 无难度锚 sentinel）。
+  //   beta           = 代表性 β（IRT logit；有锚时独立于 mastery_state，可在作答前读取）；
+  //   difficulty_anchored = hard-track 难度锚是否真实存在（区分真 β=0 与无锚 sentinel）。
   retrievability: number | null;
   beta: number | null;
+  difficulty_anchored: boolean;
   last_evidence_at: string | null;
   mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
@@ -229,14 +231,17 @@ export async function loadKnowledgeNodePage(
     .where(and(eq(knowledge.parent_id, knowledgeId), isNull(knowledge.archived_at)))
     .orderBy(knowledge.name);
 
-  // Single batch read of the SoT mastery projection for the focal node + every
-  // child. Absent (never-attempted) nodes → mastery null, matching the
-  // deprecated view's NULL (no-evidence) output.
-  const masteryProjection = await getMasteryProjection(db, [
-    node.id,
-    ...childRows.map((c) => c.id),
+  // The SoT mastery projection and focal difficulty anchor are independent reads:
+  // mastery can be absent before the first attempt, while hard-track item difficulty
+  // already exists. Map presence is the authoritative has-anchor bit that β=0 alone
+  // cannot represent. Run both reads in parallel.
+  const [masteryProjection, focalBetaMap] = await Promise.all([
+    getMasteryProjection(db, [node.id, ...childRows.map((c) => c.id)]),
+    getRepresentativeKcBeta(db, [node.id]),
   ]);
   const nodeMastery = masteryProjection.get(node.id);
+  const difficultyAnchored = focalBetaMap.has(node.id);
+  const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;
   const children: NodePageChild[] = childRows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -476,11 +481,13 @@ export async function loadKnowledgeNodePage(
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
     evidence_count: nodeEvidenceCount,
-    // A5 S3 (YUK-354) — three-dim RAW: R(t) (null = no fsrs_state row) + representative
-    // β (null = no mastery_state projection / cold start). Client bands them via
-    // buildNodeThreeDim. β=0 (no difficulty anchor) is honestly degraded to 难度未知.
+    // A5 S3 + YUK-528 — three-dim RAW: R(t) + representative β. β is read
+    // independently of learner mastery so a never-attempted KC can expose a real
+    // absolute difficulty anchor. The explicit presence bit distinguishes a true
+    // medium β=0 anchor from the projection's unanchored β=0 sentinel.
     retrievability: focalRetrievability ?? null,
-    beta: nodeMastery?.beta ?? null,
+    beta: focalBeta,
+    difficulty_anchored: difficultyAnchored,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
     subject_profile: toSlimSubjectProfile(profile),

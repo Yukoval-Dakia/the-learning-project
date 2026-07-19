@@ -74,12 +74,14 @@ describe('GET /api/knowledge/[id]', () => {
       id: string;
       name: string;
       primary_atomic: unknown;
+      difficulty_anchored: boolean;
       mesh_neighbors: unknown[];
       backlinks: unknown[];
       timeline: unknown[];
     };
     expect(body.id).toBe('k1');
     expect(body.name).toBe('虚词');
+    expect(body.difficulty_anchored).toBe(false);
     expect(body.primary_atomic).toBeNull();
     expect(body.mesh_neighbors).toEqual([]);
     expect(body.backlinks).toEqual([]);

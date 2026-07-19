@@ -241,12 +241,14 @@ export default function KnowledgeDetailPage({
 
       {/* A5 S3 (YUK-354) — NodeComposite 三维折叠（R · p(L) · difficulty）插在 hero 下方,
           对齐设计源 screen-knowledge-detail.jsx:75 的 <NodeComposite> 位置。三维 RAW 由
-          node-page wire 平铺（node.retrievability / node.beta / node.mastery* ），客户端
+          node-page wire 平铺（node.retrievability / node.beta / node.difficulty_anchored /
+          node.mastery* ），客户端
           buildNodeThreeDim band 化。三轴正交：纯 READ 展示。 */}
       <NodeComposite
         input={{
           mastery: node,
           beta: node.beta,
+          difficultyAnchored: node.difficulty_anchored,
           retrievability: node.retrievability,
           evidenceCount: node.evidence_count,
         }}

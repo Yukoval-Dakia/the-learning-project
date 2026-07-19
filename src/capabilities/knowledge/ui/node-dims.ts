@@ -14,8 +14,8 @@
 //   β = getRepresentativeKcBeta 的 hard-track 题 COALESCE(b_calib,b_anchor,b) 中位数，
 //   IRT 1PL logit b 尺度。owner-fixed 锚桶（fixed-anchor.ts ANCHOR_BUCKET_LOGITS）
 //   跨 logit [-2,+2]：very_easy=-2 / easy=-1 / medium=0 / hard=1 / very_hard=2，
-//   与 difficultyToLogitB（theta.ts，每档 ~0.85 logit）同量级。β=0 = 中性难度原点
-//   （也是「无锚」的 default sentinel）。故 β 是可比的绝对题目锚难度，可映 4 档。
+//   与 difficultyToLogitB（theta.ts，每档 ~0.85 logit）同量级。β=0 = 中性难度原点；
+//   是否有锚由独立 difficultyAnchored presence bit 表达，不再与 default sentinel 混叠。
 //   NOTE: β 是绝对题目锚难度（非「相对你当前 θ̂」）——相对-θ 的 IRT 区分度展示属于
 //   DiagnosticDrill（无后端，诚实空态），不在此三维里假造。
 
@@ -48,10 +48,6 @@ export const DIFFICULTY_BETA_THRESHOLDS = {
   /** 偏难 < 1.5 ≤ 很难（涵盖 hard=1 / very_hard=2） */
   veryHard: 1.5,
 } as const;
-
-// β=0 的中性带宽：|β| < ε 视为「无可信难度锚」（default sentinel 或 全 medium 锚）→
-// 诚实降级为难度未知 + soft + 低置信（保守 under-claim，绝不伪造绝对难度档）。
-export const BETA_NEUTRAL_EPSILON = 1e-9;
 
 // evidence 低于此 → 显示慢热冷启告示（绝对值多半还是模型先验，不是练出来的）。
 // 设计源 firm 档（9 evidence）无告示、warming（4）/ blind（3）有 → 6 为干净切点。
@@ -91,8 +87,10 @@ export interface NodeThreeDim {
 export interface NodeThreeDimInput {
   /** p(L) 投影 band 输入（mastery==null 或整体 null = 焦点冷启，never-attempted）。 */
   mastery: MasteryBandInput | null;
-  /** 代表性 β（logit）。null = 无投影（冷启）；有投影但无锚 → 0（中性 sentinel）。 */
+  /** 代表性 β（logit）；真实锚可在 learner mastery 投影出现前读取。 */
   beta: number | null;
+  /** hard-track 代表性 β 的 map presence；false 时即使 beta=0 也必须 under-claim。 */
+  difficultyAnchored: boolean;
   /** R 可提取性 ∈[0,1]，null = 无 fsrs_state 行（无留存数据，非 R=0）。 */
   retrievability: number | null;
   /** evidence 计数（驱动冷启告示）。无投影 → 0。 */
@@ -141,24 +139,18 @@ function buildMasteryDim(mastery: MasteryBandInput | null): NodeDimView {
   };
 }
 
-// diff 维：β 有投影且非中性 → band=difficultyBandIdx(β)，source=hard，点 band（β 无 CI）；
-// β 中性(≈0，无锚 / default sentinel) 或无投影 → 难度未知 + soft + 低置信（诚实，不假造绝对档）。
-function buildDifficultyDim(beta: number | null): NodeDimView {
+// diff 维：有确凿 hard-track anchor + finite β → 离散 hard 点 band（β 无 CI）；
+// 无锚、缺值或非有限值 → 难度未知 + soft + 低置信（under-claim）。
+function buildDifficultyDim(beta: number | null, difficultyAnchored: boolean): NodeDimView {
   const base = {
     key: 'diff' as const,
     label: '题目难度',
     labels: DIFFICULTY_BANDS,
     unknownLabel: UNKNOWN_BAND_LABEL,
   };
-  if (beta == null || Math.abs(beta) < BETA_NEUTRAL_EPSILON) {
-    // β=0 是「无锚 default sentinel」与「真 medium 锚（b_anchor=0）」的混叠点（projection.beta
-    // 用 `?? 0` 抹掉了 has-anchor 位，reviewer MINOR）——故 note 不能断言「还没标定锚」（对真
-    // medium 锚 KC 是事实错误，违 ⑥）。措辞对两种情况都诚实：难度锚落中性区/暂未标定。
-    // 彻底区分（独立读 getRepresentativeKcBeta 的 map presence + 露 pre-attempt 难度）= follow-up。
+  if (!difficultyAnchored || beta == null || !Number.isFinite(beta)) {
     return {
       ...base,
-      // 复用 masteryBandUnknown()（同 buildRetentionDim/buildMasteryDim，OCR 一致性）——
-      // 它正是 { unknown:true, source:'soft', lowConf:true }。
       view: masteryBandUnknown(),
       note: '目前还无法稳定判断难度；再练几道后会更明确。',
     };
@@ -166,7 +158,7 @@ function buildDifficultyDim(beta: number | null): NodeDimView {
   return {
     ...base,
     view: hardPointBand(difficultyBandIdx(beta)),
-    note: '根据相关题目的作答情况判断。',
+    note: '根据相关题目的难度锚判断。',
   };
 }
 
@@ -183,7 +175,11 @@ export function buildNodeThreeDim(input: NodeThreeDimInput): NodeThreeDim {
   const masteryDim = buildMasteryDim(input.mastery);
   return {
     composite: masteryDim.view,
-    dims: [buildRetentionDim(input.retrievability), masteryDim, buildDifficultyDim(input.beta)],
+    dims: [
+      buildRetentionDim(input.retrievability),
+      masteryDim,
+      buildDifficultyDim(input.beta, input.difficultyAnchored),
+    ],
     coldNote: buildColdNote(input.evidenceCount),
   };
 }
