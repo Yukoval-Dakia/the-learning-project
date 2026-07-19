@@ -72,7 +72,8 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  combineExactDuplicateKnowledgeIds,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -331,6 +332,8 @@ export interface RunQuizGenParams {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
+  /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
+  afterExactDuplicateLookupMiss?: () => Promise<void>;
 }
 
 export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
@@ -604,10 +607,29 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
       : [];
     const existingKnowledgeIds = new Set(existingKnowledgeRows.map((r) => r.id));
+    const resolvedKnowledgeRows = resolved.knowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    // SQL IN has no ordering contract. Preserve the resolver's semantic order explicitly because
+    // knowledge_ids[0] is the primary attribution anchor used by verification/profile readers.
+    const liveResolvedKnowledgeIds = new Set(resolvedKnowledgeRows.map((r) => r.id));
+    const fallbackKnowledgeIds = [
+      ...new Set(resolved.knowledgeIds.filter((id) => liveResolvedKnowledgeIds.has(id))),
+    ];
+    // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
+    // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
+    // Remaining live resolved ids are fallback attribution only when the model supplied none.
+    const targetKnowledgeIds =
+      resolved.knowledgeNode && fallbackKnowledgeIds.includes(resolved.knowledgeNode.id)
+        ? [resolved.knowledgeNode.id]
+        : [];
     const resolveQuestionKnowledgeIds = (q: QuizGenQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
-      if (resolved.knowledgeIds.length > 0) return resolved.knowledgeIds;
+      if (fallbackKnowledgeIds.length > 0) return fallbackKnowledgeIds;
       throw new Error(
         `quiz_gen question '${q.prompt_md}' references no known knowledge_id (got [${q.knowledge_ids.join(', ')}]) and the trigger resolved none`,
       );
@@ -623,8 +645,19 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       new_question_id: string;
       canonical_content_hash: string;
       source_route: 'quiz_gen';
+      knowledge_merge_status: 'merged' | 'already_covered';
+      added_knowledge_ids: string[];
+      resulting_knowledge_ids: string[];
+      preserved_draft_status: string | null;
     }> = [];
     const quizKnowledgeIds = new Set<string>();
+    const syncOwnedDuplicateKnowledge = (duplicate: { id: string; knowledgeIds: string[] }) => {
+      // A duplicate can be a pre-existing/global question (not part of this artifact) or a question
+      // freshly inserted earlier in this same batch. Only the latter belongs to tool_state, so keep
+      // the artifact tags aligned when a later generated item expands that owned row's attribution.
+      if (!questionIds.includes(duplicate.id)) return;
+      for (const knowledgeId of duplicate.knowledgeIds) quizKnowledgeIds.add(knowledgeId);
+    };
     const toolQuizArtifactId = createId();
     const now = new Date();
     // YUK-224 (slice 3, tier 3) — material_grounded persists the fetched REAL source
@@ -672,9 +705,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         const questionSupplyTrace = params.supplyTrace
           ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
           : undefined;
-        for (const kid of questionKnowledgeIds) {
-          quizKnowledgeIds.add(kid);
-        }
         // YUK-224 F3 — material_grounded: synthesize a per-question source_ref from
         // the top-level material (url + passage snippet) so the deterministic
         // copy-safety overlap has the passage to compare against. Non-material runs
@@ -697,16 +727,33 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
-        if (existingDuplicate) {
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          targetKnowledgeIds,
+        );
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: duplicateKnowledgeIds,
+          actorRef: 'quiz_gen',
+          taskRunId: result.task_run_id,
+          now,
+        });
+        if (existingDuplicate?.disposition === 'merged') {
+          syncOwnedDuplicateKnowledge(existingDuplicate);
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: 'quiz_gen',
+            knowledge_merge_status:
+              existingDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: existingDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: existingDuplicate.knowledgeIds,
+            preserved_draft_status: existingDuplicate.draftStatus,
           });
           continue;
         }
+        await params.afterExactDuplicateLookupMiss?.();
 
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
@@ -740,36 +787,37 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           // needs_review（内容完整性留 owner /drafts 人审）。
           ...(parseRepaired ? { parse_repaired: true } : {}),
         };
-        const inserted = await tx
+        const questionRow = withAnswerClass({
+          id,
+          kind: q.kind,
+          source: 'quiz_gen',
+          prompt_md: effectivePromptMd,
+          reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
+          choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
+          // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+          // must attribute identical content the same way, including the trigger's live KCs.
+          knowledge_ids: duplicateKnowledgeIds,
+          difficulty: q.difficulty,
+          // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+          source_ref: resolved.refId,
+          created_by: aiAgentRef('QuizGenTask', result),
+          metadata: {
+            quiz_gen: metaQuizGen,
+            difficulty_evidence: difficultyEvidence,
+            ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+          },
+          created_at: now,
+          canonical_content_hash: canonicalContentHash,
+          updated_at: now,
+        });
+        let inserted = await tx
           .insert(question)
-          .values(
-            withAnswerClass({
-              id,
-              kind: q.kind,
-              source: 'quiz_gen',
-              prompt_md: effectivePromptMd,
-              reference_md: q.reference_md,
-              rubric_json: q.rubric_json ?? null,
-              choices_md: q.choices_md ?? null,
-              judge_kind_override: judgeKind,
-              knowledge_ids: questionKnowledgeIds,
-              difficulty: q.difficulty,
-              // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
-              source_ref: resolved.refId,
-              // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-              // quiz_verify passes (Q5 promotes draft→active + enrolls).
-              draft_status: 'draft',
-              created_by: aiAgentRef('QuizGenTask', result),
-              metadata: {
-                quiz_gen: metaQuizGen,
-                difficulty_evidence: difficultyEvidence,
-                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-              },
-              created_at: now,
-              canonical_content_hash: canonicalContentHash,
-              updated_at: now,
-            }),
-          )
+          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+          // quiz_verify passes (Q5 promotes draft→active + enrolls). Keep this field
+          // explicit at every INSERT site so audit:draft-status can prove the gate.
+          .values({ ...questionRow, draft_status: 'draft' })
           // Scope the arbiter to the canonical-hash partial unique index (WHERE
           // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
           // silently swallow ANY unique conflict (e.g. the PK), making the
@@ -782,17 +830,43 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           })
           .returning({ id: question.id });
         if (inserted.length === 0) {
-          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+            canonicalContentHash,
+            knowledgeIds: duplicateKnowledgeIds,
+            actorRef: 'quiz_gen',
+            taskRunId: result.task_run_id,
+            now,
+          });
           if (!racedDuplicate) {
             throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
           }
-          exactDuplicates.push({
-            existing_question_id: racedDuplicate.id,
-            new_question_id: id,
-            canonical_content_hash: canonicalContentHash,
-            source_route: 'quiz_gen',
-          });
-          continue;
+          if (racedDuplicate.disposition === 'released_terminal_draft') {
+            inserted = await tx
+              .insert(question)
+              .values({ ...questionRow, draft_status: 'draft' })
+              .onConflictDoNothing({
+                target: question.canonical_content_hash,
+                where: sql`${question.canonical_content_hash} is not null`,
+              })
+              .returning({ id: question.id });
+            if (inserted.length === 0) {
+              throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
+            }
+          } else {
+            syncOwnedDuplicateKnowledge(racedDuplicate);
+            exactDuplicates.push({
+              existing_question_id: racedDuplicate.id,
+              new_question_id: id,
+              canonical_content_hash: canonicalContentHash,
+              source_route: 'quiz_gen',
+              knowledge_merge_status:
+                racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+              added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+              resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+              preserved_draft_status: racedDuplicate.draftStatus,
+            });
+            continue;
+          }
         }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
@@ -800,6 +874,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           supplyTrace: questionSupplyTrace,
           createdAt: now,
         });
+        // Aggregate exactly the persisted question attribution (model-valid ids + supply target),
+        // not the narrower pre-union model ids. Add only after a fresh row actually landed so the
+        // artifact's tags describe its own tool_state.question_ids, not skipped duplicates.
+        for (const kid of duplicateKnowledgeIds) quizKnowledgeIds.add(kid);
         questionIds.push(id);
         difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
@@ -862,7 +940,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // than as 'persist'.
     failureStage = 'event';
     for (const duplicate of exactDuplicates) {
-      console.info('[quiz_gen] exact duplicate skipped:', duplicate);
+      console.info('[quiz_gen] exact duplicate reconciled:', duplicate);
     }
 
     await writeEvent(db, {
@@ -887,6 +965,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
+        exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
+          (duplicate) => duplicate.knowledge_merge_status === 'merged',
+        ).length,
         // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
         // exact_duplicate_count above keeps the true total.
         exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),

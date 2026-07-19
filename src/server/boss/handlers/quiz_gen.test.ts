@@ -15,7 +15,15 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
-import { artifact, event, knowledge, learning_item, question, source_document } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  learning_item,
+  material_fsrs_state,
+  question,
+  source_document,
+} from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import {
@@ -52,6 +60,19 @@ function agentMock(output: string, taskRunId?: string) {
   return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) =>
     taskRunId === undefined ? { text: output } : { text: output, task_run_id: taskRunId },
   );
+}
+
+function twoPartyBarrier() {
+  let arrivals = 0;
+  let release: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrivals += 1;
+    if (arrivals === 2) release?.();
+    await ready;
+  };
 }
 
 const VALID_OUTPUT = JSON.stringify({
@@ -397,7 +418,7 @@ describe('runQuizGen', () => {
     expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
-  it('skips an exact duplicate, inserts the remaining question, and logs the identity conflict', async () => {
+  it('merges the target KC into an exact duplicate, inserts the remaining question, and audits both', async () => {
     await seedKnowledge({ id: 'k1' });
     const output = JSON.parse(VALID_OUTPUT) as {
       questions: Array<{
@@ -426,6 +447,7 @@ describe('runQuizGen', () => {
         rubric_json: content.rubric_json as never,
         source: 'manual',
         draft_status: 'draft',
+        knowledge_ids: ['k-existing'],
         canonical_content_hash: hash,
         created_at: new Date(),
         updated_at: new Date(),
@@ -437,7 +459,7 @@ describe('runQuizGen', () => {
       trigger: 'knowledge',
       refId: 'k1',
       count: 2,
-      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr-quiz-merge'),
       enqueueQuizVerify,
       buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
       buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
@@ -445,21 +467,271 @@ describe('runQuizGen', () => {
 
     expect(result.question_ids).toHaveLength(1);
     expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+    const [existing] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-existing-quiz-exact'));
+    expect(existing).toMatchObject({
+      knowledge_ids: ['k-existing', 'k1'],
+      draft_status: 'draft',
+      version: 1,
+    });
+    const [mergeEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(mergeEvent).toMatchObject({
+      actor_ref: 'quiz_gen',
+      subject_id: 'q-existing-quiz-exact',
+      payload: {
+        before: { knowledge_ids: ['k-existing'] },
+        after: { knowledge_ids: ['k-existing', 'k1'] },
+        reason: 'cross_kc_exact_duplicate',
+        task_run_id: 'tr-quiz-merge',
+      },
+    });
+    expect(
+      await testDb()
+        .select()
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, 'k1')),
+    ).toHaveLength(0);
     const [producerEvent] = await testDb()
       .select()
       .from(event)
       .where(eq(event.action, 'experimental:quiz_gen'));
     expect(producerEvent.payload).toMatchObject({
       exact_duplicate_count: 1,
+      exact_duplicate_knowledge_merge_count: 1,
       exact_duplicates: [
         {
           existing_question_id: 'q-existing-quiz-exact',
           new_question_id: expect.any(String),
           canonical_content_hash: hash,
           source_route: 'quiz_gen',
+          knowledge_merge_status: 'merged',
+          added_knowledge_ids: ['k1'],
+          resulting_knowledge_ids: ['k-existing', 'k1'],
+          preserved_draft_status: 'draft',
         },
       ],
     });
+  });
+
+  it('replaces a terminal rejected draft instead of treating it as available supply', async () => {
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const parsed = JSON.parse(CLOSED_BOOK_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+        knowledge_ids: string[];
+      }>;
+    };
+    // The model returns another valid KC, while k1 is the current supply target. A fresh
+    // replacement must persist their union without displacing k1 as the primary family anchor.
+    parsed.questions[0].knowledge_ids = ['k2'];
+    const replacementOutput = JSON.stringify(parsed);
+    const content = parsed.questions[0];
+    const hash = canonicalQuestionContentHash({
+      promptMd: content.prompt_md,
+      referenceMd: content.reference_md,
+      choicesMd: content.choices_md,
+      rubricJson: content.rubric_json,
+    });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-terminal-quiz-draft',
+        kind: content.kind,
+        prompt_md: content.prompt_md,
+        reference_md: content.reference_md,
+        choices_md: content.choices_md,
+        rubric_json: content.rubric_json as never,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        knowledge_ids: ['k-old'],
+        canonical_content_hash: hash,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+    await testDb().insert(event).values({
+      id: 'verify-terminal-quiz-draft',
+      actor_kind: 'agent',
+      actor_ref: 'quiz_verify',
+      action: 'experimental:quiz_verify',
+      subject_kind: 'question',
+      subject_id: 'q-terminal-quiz-draft',
+      outcome: 'failure',
+      payload: {},
+      created_at: new Date(),
+    });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      generationMethod: 'closed_book',
+      runAgentTaskFn: agentMock(replacementOutput, 'tr-quiz-replacement'),
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+    const [rejected] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-terminal-quiz-draft'));
+    expect(rejected).toMatchObject({ canonical_content_hash: null, draft_status: 'draft' });
+    const [replacement] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, result.question_ids?.[0] ?? ''));
+    expect(replacement).toMatchObject({
+      canonical_content_hash: hash,
+      draft_status: 'draft',
+      knowledge_ids: ['k1', 'k2'],
+    });
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k1', 'k2']);
+    const releaseEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(releaseEvents).toHaveLength(1);
+    expect(releaseEvents[0].payload).toMatchObject({
+      reason: 'terminal_draft_superseded_for_reproduction',
+      task_run_id: 'tr-quiz-replacement',
+    });
+  });
+
+  it('keeps artifact KC tags aligned when a later item duplicates an earlier row in the same batch', async () => {
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const parsed = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+        knowledge_ids: string[];
+      }>;
+    };
+    const first = parsed.questions[0];
+    parsed.questions = [
+      { ...first, knowledge_ids: ['k1'] },
+      { ...first, knowledge_ids: ['k2'] },
+    ];
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-intra-batch-duplicate'),
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    const [row] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, result.question_ids?.[0] ?? ''));
+    expect(row.knowledge_ids).toEqual(['k1', 'k2']);
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k1', 'k2']);
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      exact_duplicate_count: 1,
+      exact_duplicate_knowledge_merge_count: 1,
+    });
+  });
+
+  it('reconciles a concurrent canonical-hash race into one draft with both target KCs', async () => {
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const outputFor = (knowledgeId: string) => {
+      const parsed = JSON.parse(CLOSED_BOOK_OUTPUT) as {
+        questions: Array<{ knowledge_ids: string[] }>;
+      };
+      parsed.questions[0].knowledge_ids = [knowledgeId];
+      return JSON.stringify(parsed);
+    };
+    const barrier = twoPartyBarrier();
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const common = {
+      db: testDb(),
+      trigger: 'knowledge' as const,
+      count: 1,
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      afterExactDuplicateLookupMiss: barrier,
+    };
+
+    const results = await Promise.all([
+      runQuizGen({ ...common, refId: 'k1', runAgentTaskFn: agentMock(outputFor('k1')) }),
+      runQuizGen({ ...common, refId: 'k2', runAgentTaskFn: agentMock(outputFor('k2')) }),
+    ]);
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+    expect([...rows[0].knowledge_ids].sort()).toEqual(['k1', 'k2']);
+    expect(rows[0]).toMatchObject({ draft_status: 'draft', version: 1 });
+    expect(results.map((result) => result.question_ids?.length).sort()).toEqual([0, 1]);
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+
+    const editEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(editEvents).toHaveLength(1);
+    expect(editEvents[0].payload).toMatchObject({
+      reason: 'cross_kc_exact_duplicate',
+      preserved_draft_status: 'draft',
+    });
+    const producerEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvents).toHaveLength(2);
+    expect(producerEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            exact_duplicate_count: 1,
+            exact_duplicate_knowledge_merge_count: 1,
+            exact_duplicates: [
+              expect.objectContaining({
+                existing_question_id: rows[0].id,
+                knowledge_merge_status: 'merged',
+                resulting_knowledge_ids: expect.arrayContaining(['k1', 'k2']),
+                preserved_draft_status: 'draft',
+              }),
+            ],
+          }),
+        }),
+      ]),
+    );
   });
 
   it('does not create a ready artifact when the whole batch is exact duplicates', async () => {
@@ -524,6 +796,7 @@ describe('runQuizGen', () => {
       count: 0,
       tool_quiz_artifact_id: null,
       exact_duplicate_count: 2,
+      exact_duplicate_knowledge_merge_count: 2,
     });
   });
 
@@ -858,6 +1131,56 @@ describe('runQuizGen', () => {
     expect(rows).toHaveLength(1);
     // Hallucinated id dropped; attribution falls back to the trigger's real node.
     expect(rows[0].knowledge_ids).toEqual(['k1']);
+  });
+
+  it('preserves learning_item KC order when filtering fallback ids', async () => {
+    // Deliberately insert in the opposite order from the learning_item attribution. An unordered
+    // SQL IN result commonly follows physical insertion order; the handler must restore semantic
+    // learning_item order so [0] remains the primary KC.
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const now = new Date();
+    await testDb()
+      .insert(learning_item)
+      .values({
+        id: 'li-ordered-fallback',
+        source: 'manual',
+        source_ref: null,
+        title: '有序 KC',
+        content: '',
+        knowledge_ids: ['k2', 'k1'],
+        status: 'pending',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    const parsed = JSON.parse(CLOSED_BOOK_OUTPUT) as {
+      questions: Array<{ knowledge_ids: string[] }>;
+    };
+    parsed.questions[0].knowledge_ids = ['ghost'];
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'learning_item',
+      refId: 'li-ordered-fallback',
+      count: 1,
+      generationMethod: 'closed_book',
+      runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-ordered-fallback'),
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const [row] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, result.question_ids?.[0] ?? ''));
+    expect(row.knowledge_ids).toEqual(['k2', 'k1']);
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k2', 'k1']);
   });
 
   // YUK-226 S2-5b F1 (PR #318 round-1) — the 找题次序 pins generation_method; the

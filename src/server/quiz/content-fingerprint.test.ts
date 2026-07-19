@@ -1,6 +1,23 @@
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { describe, expect, it } from 'vitest';
-import { canonicalQuestionContentHash } from './content-fingerprint';
+import {
+  canonicalQuestionContentHash,
+  combineExactDuplicateKnowledgeIds,
+} from './content-fingerprint';
+
+describe('combineExactDuplicateKnowledgeIds', () => {
+  it('keeps the supply target first and preserves additional model attribution order', () => {
+    expect(combineExactDuplicateKnowledgeIds(['k-model', 'k-extra'], ['k-target'])).toEqual([
+      'k-target',
+      'k-model',
+      'k-extra',
+    ]);
+    expect(combineExactDuplicateKnowledgeIds(['k-target', 'k-extra'], ['k-target'])).toEqual([
+      'k-target',
+      'k-extra',
+    ]);
+  });
+});
 
 const base = {
   promptMd: '**求解**：  2 + 2 = ?',

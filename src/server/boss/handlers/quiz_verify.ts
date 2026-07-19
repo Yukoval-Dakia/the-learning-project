@@ -586,6 +586,23 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
 
     await db.transaction(async (tx) => {
+      // Serialize the terminal verdict against cross-KC duplicate reconciliation. The model and
+      // deterministic checks above ran against `row.version`; if attribution changed meanwhile,
+      // this verdict is stale. Throwing writes a retriable outcome='error' event in the catch and
+      // lets pg-boss rerun verification against the new KC snapshot. Lock ordering also gives the
+      // opposite race a safe result: once this lock wins and promotes, reconciliation observes an
+      // active row and enrolls any newly-added KC itself.
+      const [current] = await tx
+        .select({ version: question.version, knowledgeIds: question.knowledge_ids })
+        .from(question)
+        .where(eq(question.id, questionId))
+        .limit(1)
+        .for('update');
+      if (!current || current.version !== row.version) {
+        throw new Error(
+          `quiz_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+        );
+      }
       if (promote) {
         // Promote draft→active.
         await tx
@@ -603,7 +620,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // that knowledge becomes due. Unlabeled legacy questions fall back to
         // question-level FSRS so they are not silently dropped.
         const initial = initialFsrsState(now);
-        const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
+        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
             // Codex (PR #295) — enroll-if-absent. A verified quiz binding to a

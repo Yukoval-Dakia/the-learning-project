@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 
+import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import type { Db, Tx } from '@/db/client';
-import { question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
+import { enrollFsrsStateIfAbsent } from '@/server/fsrs/state';
 
 // Bumping this version rewrites the canonical string, so every persisted
 // `canonical_content_hash` computed under the old version becomes stale and
@@ -80,6 +84,30 @@ export interface ExactQuestionDuplicate {
   source: string;
 }
 
+export interface ExactQuestionDuplicateKnowledgeMerge extends ExactQuestionDuplicate {
+  disposition: 'merged' | 'released_terminal_draft';
+  previousKnowledgeIds: string[];
+  knowledgeIds: string[];
+  addedKnowledgeIds: string[];
+  enrolledKnowledgeIds: string[];
+  previousVersion: number;
+  version: number;
+  eventId: string | null;
+}
+
+/**
+ * Keep the current supply target first, then retain any additional model attribution in its own
+ * order. Several review/calibration readers treat knowledge_ids[0] as the primary family anchor;
+ * a question generated to fill target K1 must therefore not become primarily K2 merely because
+ * the model returned K2 explicitly.
+ */
+export function combineExactDuplicateKnowledgeIds(
+  questionKnowledgeIds: string[],
+  targetKnowledgeIds: string[],
+): string[] {
+  return [...new Set([...targetKnowledgeIds, ...questionKnowledgeIds])];
+}
+
 /**
  * Cap on how many exact-duplicate records a producer serializes into its observability event.
  * The full count is kept separately (`exact_duplicate_count`); this only bounds the sampled detail
@@ -98,4 +126,229 @@ export async function findExactQuestionDuplicate(
     .where(eq(question.canonical_content_hash, hash))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * Reconcile a canonical duplicate with the knowledge attribution requested by the current supply
+ * run. The existing question remains the single global content identity; missing KCs are appended
+ * in request order under a row lock, with a normal question-edit audit event + version bump.
+ *
+ * Lifecycle is deliberately preserved. An active duplicate stays active and each newly-attributed
+ * live KC is FSRS-enrolled-if-absent in the same transaction. A pending draft stays in its original
+ * route's verification flow. A terminal rejected/needs-review draft cannot be re-dispatched because
+ * verifier events are append-only idempotency guards, so it releases the canonical hash and lets the
+ * current producer persist a fresh candidate instead of falsely closing the target KC's supply gap.
+ * No-op when the duplicate already covers every requested live KC.
+ *
+ * Must run inside the producer's transaction so lookup, merge, and any competing canonical-hash
+ * INSERT are serialized as one persistence decision.
+ */
+export async function mergeExactQuestionDuplicateKnowledgeIds(
+  tx: Tx,
+  params: {
+    canonicalContentHash: string;
+    knowledgeIds: string[];
+    actorRef: 'quiz_gen' | 'sourcing';
+    taskRunId?: string;
+    now: Date;
+  },
+): Promise<ExactQuestionDuplicateKnowledgeMerge | null> {
+  const rows = await tx
+    .select({
+      id: question.id,
+      draftStatus: question.draft_status,
+      source: question.source,
+      knowledgeIds: question.knowledge_ids,
+      metadata: question.metadata,
+      version: question.version,
+    })
+    .from(question)
+    .where(eq(question.canonical_content_hash, params.canonicalContentHash))
+    .limit(1)
+    .for('update');
+  const row = rows[0];
+  if (!row) return null;
+
+  const terminalVerifyAction =
+    row.source === 'quiz_gen'
+      ? 'experimental:quiz_verify'
+      : row.source === 'web_sourced'
+        ? 'experimental:source_verify'
+        : null;
+  if (row.draftStatus === 'draft' && terminalVerifyAction) {
+    const terminal = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, terminalVerifyAction),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, row.id),
+          or(isNull(event.outcome), ne(event.outcome, 'error')),
+        ),
+      )
+      .limit(1);
+    if (terminal.length > 0) {
+      const nextVersion = row.version + 1;
+      const eventId = createId();
+      const archivedAt = Math.floor(params.now.getTime() / 1000);
+      await tx
+        .update(question)
+        .set({
+          canonical_content_hash: null,
+          metadata: {
+            ...(row.metadata ?? {}),
+            archived_at: archivedAt,
+            archived_reason: 'terminal_draft_superseded_by_reproduction',
+            archived_previous_draft_status: row.draftStatus,
+          },
+          updated_at: params.now,
+          version: nextVersion,
+        })
+        .where(
+          and(
+            eq(question.id, row.id),
+            eq(question.canonical_content_hash, params.canonicalContentHash),
+          ),
+        );
+      await writeEvent(tx, {
+        id: eventId,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: params.actorRef,
+        action: 'experimental:question_edit',
+        subject_kind: 'question',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: {
+          question_id: row.id,
+          previous_version: row.version,
+          next_version: nextVersion,
+          before: {
+            canonical_content_hash: params.canonicalContentHash,
+            archived_at: null,
+          },
+          after: { canonical_content_hash: null, archived_at: archivedAt },
+          reason: 'terminal_draft_superseded_for_reproduction',
+          terminal_verify_event_id: terminal[0].id,
+          task_run_id: params.taskRunId ?? null,
+          preserved_draft_status: row.draftStatus,
+        },
+        created_at: params.now,
+      });
+      return {
+        ...row,
+        disposition: 'released_terminal_draft',
+        previousKnowledgeIds: row.knowledgeIds,
+        knowledgeIds: row.knowledgeIds,
+        addedKnowledgeIds: [],
+        enrolledKnowledgeIds: [],
+        previousVersion: row.version,
+        version: nextVersion,
+        eventId,
+      };
+    }
+  }
+
+  const requestedKnowledgeIds = [
+    ...new Set(params.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
+  ];
+  const liveKnowledgeRows =
+    requestedKnowledgeIds.length > 0
+      ? await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, requestedKnowledgeIds), isNull(knowledge.archived_at)))
+          .orderBy(knowledge.id)
+          .for('update')
+      : [];
+  const liveKnowledgeIds = new Set(liveKnowledgeRows.map((candidate) => candidate.id));
+
+  const seen = new Set(row.knowledgeIds);
+  const addedKnowledgeIds: string[] = [];
+  for (const id of requestedKnowledgeIds) {
+    if (!liveKnowledgeIds.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    addedKnowledgeIds.push(id);
+  }
+  const knowledgeIds = [...row.knowledgeIds, ...addedKnowledgeIds];
+  if (addedKnowledgeIds.length === 0) {
+    return {
+      ...row,
+      disposition: 'merged',
+      previousKnowledgeIds: row.knowledgeIds,
+      knowledgeIds,
+      addedKnowledgeIds,
+      enrolledKnowledgeIds: [],
+      previousVersion: row.version,
+      eventId: null,
+    };
+  }
+
+  const nextVersion = row.version + 1;
+  const updated = await tx
+    .update(question)
+    .set({ knowledge_ids: knowledgeIds, updated_at: params.now, version: nextVersion })
+    .where(
+      and(
+        eq(question.id, row.id),
+        eq(question.canonical_content_hash, params.canonicalContentHash),
+      ),
+    )
+    .returning({ id: question.id });
+  if (updated.length === 0) {
+    throw new Error(`canonical duplicate ${row.id} changed while merging knowledge attribution`);
+  }
+
+  const eventId = createId();
+  const enrolledKnowledgeIds: string[] = [];
+  if (row.draftStatus !== 'draft') {
+    const initial = initialFsrsState(params.now);
+    for (const knowledgeId of addedKnowledgeIds) {
+      const enrolled = await enrollFsrsStateIfAbsent(tx, {
+        subject_kind: 'knowledge',
+        subject_id: knowledgeId,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: eventId,
+      });
+      if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
+    }
+  }
+  await writeEvent(tx, {
+    id: eventId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef,
+    action: 'experimental:question_edit',
+    subject_kind: 'question',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: {
+      question_id: row.id,
+      previous_version: row.version,
+      next_version: nextVersion,
+      before: { knowledge_ids: row.knowledgeIds },
+      after: { knowledge_ids: knowledgeIds },
+      reason: 'cross_kc_exact_duplicate',
+      canonical_content_hash: params.canonicalContentHash,
+      added_knowledge_ids: addedKnowledgeIds,
+      enrolled_knowledge_ids: enrolledKnowledgeIds,
+      task_run_id: params.taskRunId ?? null,
+      preserved_draft_status: row.draftStatus,
+    },
+    created_at: params.now,
+  });
+
+  return {
+    ...row,
+    disposition: 'merged',
+    previousKnowledgeIds: row.knowledgeIds,
+    knowledgeIds,
+    addedKnowledgeIds,
+    enrolledKnowledgeIds,
+    previousVersion: row.version,
+    version: nextVersion,
+    eventId,
+  };
 }
