@@ -21,6 +21,7 @@
 // CORE writer is a no-op until a later task (conjecture-accept.ts). The post-accept
 // probe 作答区 is slice-2.
 
+import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -44,7 +45,6 @@ function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
 // `probe_slots_full` wire code. Per teaching-brief contract §7 (accept 交互失败 → 保留
 // 当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error) surface a calm, non-blaming
 // message that names the retry path — the accept button stays in place to retry.
-const PROBE_SLOTS_FULL_CODE = 'probe_slots_full';
 const PROBE_SLOTS_FULL_MESSAGE = '同时在答的探针题满了，先完成一道，再回来接受这条。';
 const DECIDE_FAILED_MESSAGE = '操作失败，请重试';
 

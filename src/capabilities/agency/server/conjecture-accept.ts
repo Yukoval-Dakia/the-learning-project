@@ -59,7 +59,8 @@ import {
 // SAME finding once a probe is answered and a slot frees. The felt UI keys on this
 // code to surface a non-blaming "probe slots full, retry" inline error (teaching-brief
 // contract §7: accept 交互失败 → 保留当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error).
-export const PROBE_SLOTS_FULL_CODE = 'probe_slots_full' as const;
+export { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
+import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 export interface ConjectureApplierOpts {
   decision?: string;
