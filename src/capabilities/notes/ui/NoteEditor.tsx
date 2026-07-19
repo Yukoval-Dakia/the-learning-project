@@ -9,7 +9,7 @@
 
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {
@@ -71,26 +71,41 @@ function ArtifactPicker({
   const [rows, setRows] = useState<Array<{ id: string; title: string; type: string }>>([]);
   const [searchState, setSearchState] = useState<'idle' | 'loading' | 'error'>('idle');
   const requestSeq = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      requestSeq.current += 1;
+      requestController.current?.abort();
+    },
+    [],
+  );
 
   const runSearch = (query: string) => {
+    requestController.current?.abort();
     const trimmed = query.trim();
     const requestId = ++requestSeq.current;
     if (!trimmed) {
+      requestController.current = null;
       setRows([]);
       setSearchState('idle');
       return;
     }
 
+    const controller = new AbortController();
+    requestController.current = controller;
     setRows([]);
     setSearchState('loading');
-    void searchArtifacts(trimmed, excludeId)
+    void searchArtifacts(trimmed, excludeId, controller.signal)
       .then((result) => {
         if (requestId !== requestSeq.current) return;
+        requestController.current = null;
         setRows(result.rows);
         setSearchState('idle');
       })
       .catch((error: unknown) => {
         if (requestId !== requestSeq.current) return;
+        requestController.current = null;
         if (isAbortError(error)) {
           setSearchState('idle');
           return;

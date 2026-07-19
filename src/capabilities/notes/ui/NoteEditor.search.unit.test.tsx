@@ -36,12 +36,23 @@ function openArtifactPicker() {
 }
 
 describe('NoteEditor artifact search', () => {
-  it('keeps an aborted search silent', async () => {
-    vi.mocked(searchArtifacts).mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+  it('aborts an in-flight search and keeps that cancellation silent', async () => {
+    let searchSignal: AbortSignal | undefined;
+    vi.mocked(searchArtifacts).mockImplementationOnce(
+      (_query, _exclude, signal) =>
+        new Promise((_, reject) => {
+          searchSignal = signal;
+          signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
     const input = openArtifactPicker();
 
     fireEvent.change(input, { target: { value: '二次' } });
+    fireEvent.change(input, { target: { value: '' } });
 
+    expect(searchSignal?.aborted).toBe(true);
     await waitFor(() => expect(screen.queryByText('正在搜索…')).toBeNull());
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('button', { name: '重试搜索' })).toBeNull();
@@ -56,13 +67,13 @@ describe('NoteEditor artifact search', () => {
     fireEvent.change(input, { target: { value: '二次' } });
 
     expect((await screen.findByRole('alert')).textContent).toBe('搜索失败，请重试。');
-    expect(searchArtifacts).toHaveBeenNthCalledWith(1, '二次', 'note_1');
+    expect(searchArtifacts).toHaveBeenNthCalledWith(1, '二次', 'note_1', expect.any(AbortSignal));
 
     fireEvent.click(screen.getByRole('button', { name: '重试搜索' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: /二次函数/ })).toBeTruthy());
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(searchArtifacts).toHaveBeenNthCalledWith(2, '二次', 'note_1');
+    expect(searchArtifacts).toHaveBeenNthCalledWith(2, '二次', 'note_1', expect.any(AbortSignal));
   });
 
   it('ignores a stale failure after a newer search succeeds', async () => {
