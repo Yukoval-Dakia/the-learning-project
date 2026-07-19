@@ -105,10 +105,11 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
 
   const scores = data?.prediction_scores ?? [];
   const typed = data?.typed_states ?? [];
-  const diagnosticWarnings = data
+  const diagnostics = data?.diagnostics;
+  const diagnosticWarnings = diagnostics
     ? [
-        ['prediction scores', data.diagnostics.prediction_scores] as const,
-        ['typed states', data.diagnostics.typed_states] as const,
+        ['prediction scores', diagnostics.prediction_scores] as const,
+        ['typed states', diagnostics.typed_states] as const,
       ].filter(([, d]) => d.dropped_count > 0 || d.scan_truncated)
     : [];
   // Brier 两侧只在同一批 complete-case 行上聚合，避免 nullable 字段让 model/baseline

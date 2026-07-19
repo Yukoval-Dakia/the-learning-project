@@ -146,6 +146,17 @@ describe('AdminConjectureScoresSurface', () => {
     expect(html).not.toContain('data quality');
   });
 
+  it('keeps rendering data cached before diagnostics were added to the response', () => {
+    const html = render({
+      score_basis: 'single_point',
+      prediction_scores: [score()],
+      typed_states: [],
+      diagnostics: undefined,
+    });
+    expect(html).toContain('k_xuci');
+    expect(html).not.toContain('部分诊断行未展示');
+  });
+
   it('surfaces dropped rows and bounded-window truncation without hiding valid results', () => {
     const html = render({
       score_basis: 'single_point',
