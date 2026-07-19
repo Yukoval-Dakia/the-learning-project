@@ -296,7 +296,7 @@ describe('runSourcing', () => {
     expect(name).toBe('sourced');
 
     expect(enqueueSourceVerify).toHaveBeenCalledTimes(1);
-    expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
 
     // success event written.
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
@@ -849,7 +849,7 @@ describe('runSourcing', () => {
     expect(rows[0].source_ref).toBe('https://example.edu/wenyan/lunyu');
     expect(writeImageCandidateProposalFn).toHaveBeenCalledTimes(1);
     // The text draft still chains source_verify (only the text question id).
-    expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
   // YUK-227 S3 Slice C (FIX-6) — a re-run that re-reports the SAME image URL must not

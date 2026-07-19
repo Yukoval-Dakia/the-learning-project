@@ -53,6 +53,10 @@ import {
   toMcpAllowedToolName,
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
 // YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
 // ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
@@ -122,7 +126,7 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 // Chained source_verify enqueue. Mirrors quiz_gen's EnqueueQuizVerifyFn seam so DB
 // tests inject a vi.fn().
-export type EnqueueSourceVerifyFn = (questionIds: string[]) => Promise<void>;
+export type EnqueueSourceVerifyFn = (questionIds: string[], options?: object) => Promise<void>;
 // YUK-227 S3 Slice C — image_candidate proposal writer seam. Defaults to
 // writeAiProposal; DB tests inject a vi.fn() to assert the propose path runs WITHOUT
 // any question INSERT / VLM call. Loose shape (Pick of writeAiProposal's inputs the
@@ -140,12 +144,12 @@ interface DepsOverride {
   writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
 }
 
-async function defaultEnqueueSourceVerify(questionIds: string[]): Promise<void> {
+async function defaultEnqueueSourceVerify(questionIds: string[], options?: object): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors quiz_gen → quiz_verify). source_verify creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('source_verify', { question_ids: questionIds });
+  await boss.send('source_verify', { question_ids: questionIds }, options);
 }
 
 // Read the subject profile's source whitelist. The field is added by slice 4
@@ -371,6 +375,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
   };
 
   let taskResult: TaskTextResult | null = null;
+  let failureStage: 'producer' | 'persist' = 'producer';
   try {
     const result = await run('SourcingTask', input, {
       db,
@@ -438,6 +443,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
 
     const questionIds: string[] = [];
     const now = new Date();
+    failureStage = 'persist';
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
@@ -494,6 +500,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             updated_at: now,
           }),
         );
+        await writeVerifyDispatchIntent(tx, {
+          questionId: id,
+          verifier: 'source_verify',
+          supplyTrace: params.supplyTrace,
+          createdAt: now,
+        });
         questionIds.push(id);
       }
     });
@@ -639,6 +651,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         image_candidate_count: imageCandidateProposalIds.length,
         query_plan: parsed.query_plan,
         tool_context_task_run_id: toolContextTaskRunId,
+        stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
@@ -658,13 +671,19 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // job (source_verify's gate is for text drafts — image drafts get their own
     // verify at accept time). Skip it.
     if (questionIds.length > 0) {
-      try {
-        await enqueueSourceVerify(questionIds);
-      } catch (enqueueErr) {
+      const dispatchResult = await dispatchPendingVerifyIntents(db, {
+        questionIds,
+        enqueue: async (verifier, ids, options) => {
+          if (verifier !== 'source_verify') {
+            throw new Error(`sourcing outbox received unexpected verifier '${verifier}'`);
+          }
+          await enqueueSourceVerify(ids, options);
+        },
+      });
+      if (dispatchResult.failed > 0) {
         console.error(
-          '[sourcing] source_verify enqueue failed; drafts persisted but unverified:',
+          '[sourcing] source_verify enqueue failed; durable intents left for recovery:',
           questionIds,
-          enqueueErr,
         );
       }
     }
@@ -689,6 +708,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           trigger,
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
+          failure_stage: failureStage,
           tool_context_task_run_id: toolContextTaskRunId,
           ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },

@@ -53,6 +53,10 @@ import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
 import { type SupplyTraceV1T, parseSupplyTrace } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -156,7 +160,7 @@ export type RetrieveFewShotFn = (params: {
 }) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
-export type EnqueueQuizVerifyFn = (questionIds: string[]) => Promise<void>;
+export type EnqueueQuizVerifyFn = (questionIds: string[], options?: object) => Promise<void>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -175,12 +179,12 @@ async function defaultRetrieveFewShot(params: {
   return retrieveFewShotExamples(params);
 }
 
-async function defaultEnqueueQuizVerify(questionIds: string[]): Promise<void> {
+async function defaultEnqueueQuizVerify(questionIds: string[], options?: object): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors attribution_followup). Q5 creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('quiz_verify', { question_ids: questionIds });
+  await boss.send('quiz_verify', { question_ids: questionIds }, options);
 }
 
 // §2 / §5 — output JSON parse + judge-contract assertion (shared with
@@ -524,6 +528,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   };
 
   let taskResult: TaskTextResult | null = null;
+  let failureStage: 'producer' | 'persist' = 'producer';
   try {
     const result = await run('QuizGenTask', input, {
       db,
@@ -604,6 +609,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // this new writer needs no allowlist registration. The id is shared across all
     // questions in the run (one passage → many questions probing it).
     let materialSourceDocumentId: string | null = null;
+    failureStage = 'persist';
     await db.transaction(async (tx) => {
       if (parsed.generation_method === 'material_grounded' && parsed.material) {
         materialSourceDocumentId = createId();
@@ -707,6 +713,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             updated_at: now,
           }),
         );
+        await writeVerifyDispatchIntent(tx, {
+          questionId: id,
+          verifier: 'quiz_verify',
+          supplyTrace: params.supplyTrace,
+          createdAt: now,
+        });
         questionIds.push(id);
       }
 
@@ -775,6 +787,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
+        stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
@@ -790,13 +803,19 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // DUPLICATE batch of drafts (the handler has no per-trigger idempotency key).
     // On failure we log the orphaned ids — recoverable by re-enqueueing quiz_verify,
     // which is itself idempotent per question.
-    try {
-      await enqueueQuizVerify(questionIds);
-    } catch (enqueueErr) {
+    const dispatchResult = await dispatchPendingVerifyIntents(db, {
+      questionIds,
+      enqueue: async (verifier, ids, options) => {
+        if (verifier !== 'quiz_verify') {
+          throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
+        }
+        await enqueueQuizVerify(ids, options);
+      },
+    });
+    if (dispatchResult.failed > 0) {
       console.error(
-        '[quiz_gen] quiz_verify enqueue failed; drafts persisted but unverified:',
+        '[quiz_gen] quiz_verify enqueue failed; durable intents left for recovery:',
         questionIds,
-        enqueueErr,
       );
     }
 
@@ -820,6 +839,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           trigger,
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
+          failure_stage: failureStage,
           tool_context_task_run_id: toolContextTaskRunId,
           ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },

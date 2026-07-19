@@ -378,7 +378,7 @@ describe('runQuizGen', () => {
 
     // quiz_verify enqueued with the new question ids.
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
-    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
   it('forces copy_safety.checked_by=agent_self at gen stage, ignoring an agent-forged quiz_verify claim', async () => {
@@ -461,7 +461,7 @@ describe('runQuizGen', () => {
       .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
     expect(quizArtifacts[0].attrs).toMatchObject({ generation_method: 'material_grounded' });
 
-    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
   it('material_grounded with multiple questions shares ONE source_document id', async () => {

@@ -1,5 +1,5 @@
 import { eq, inArray, isNull, sql } from 'drizzle-orm';
-import { type DrizzleTransactionLike, type Job, type PgBoss, fromDrizzle } from 'pg-boss';
+import type { Job, PgBoss } from 'pg-boss';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -7,6 +7,7 @@ import { event } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { glmChatCostCny } from '@/server/ai/pricing';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import {
   EXPIRE_LLM,
   FAST_QUEUE_OPTS,
@@ -77,32 +78,6 @@ type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
   schedule(name: string, cron: string, data: object, options: object): Promise<unknown>;
   send(name: string, data: object, options?: object): Promise<string | null>;
 };
-
-type ProjectDrizzleTx = {
-  execute(query: unknown): Promise<unknown>;
-};
-
-function hasRowsResult(value: unknown): value is { rows: unknown[] } {
-  return (
-    typeof value === 'object' && value !== null && Array.isArray((value as { rows?: unknown }).rows)
-  );
-}
-
-function fromPgBossDrizzleTx(tx: ProjectDrizzleTx) {
-  // pg-boss's Drizzle adapter expects node-postgres-style `{ rows }`, while
-  // this repo uses drizzle-orm/postgres-js where `execute()` returns the row
-  // array directly. Normalize only this driver shape before handing it to
-  // pg-boss so `send(..., { db })` stays in the caller transaction.
-  const txWithRows: DrizzleTransactionLike = {
-    async execute(query) {
-      const result = await tx.execute(query);
-      if (Array.isArray(result)) return { rows: result };
-      if (hasRowsResult(result)) return result;
-      throw new Error('pg-boss Drizzle tx adapter received an unsupported execute() result');
-    },
-  };
-  return fromDrizzle(txWithRows, sql);
-}
 
 /**
  * P2 (YUK-342): Deterministic (non-LLM) mapping of event.action → memory kind.
