@@ -112,6 +112,16 @@ export const SubjectProfileSchema = z.object({
       z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
     )
     .optional(),
+  // YUK-697 — jyeooSupply: 声明本 subject 有 jyeoo-rs 确定性题源 producer。存在 = supply
+  // dispatcher 在本 subject 的 tier-2 缺口上把 jyeoo_fetch 路由排到 sourcing_web 之前
+  // （route-planner），并按 JYEOO_FETCH_ENABLED kill switch 派发。`subject` = jyeoo-rs 的
+  // 站内 subject 词表 token（如 'math2'），NOT loom subject id。缺省 = 无 jyeoo 支持。
+  jyeooSupply: z
+    .object({
+      subject: z.string().trim().min(1),
+    })
+    .strict()
+    .optional(),
 });
 export type SubjectProfile = z.infer<typeof SubjectProfileSchema>;
 export type SlimSubjectProfile = Pick<SubjectProfile, 'id' | 'displayName' | 'renderConfig'>;

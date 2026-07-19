@@ -148,7 +148,8 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   params: {
     canonicalContentHash: string;
     knowledgeIds: string[];
-    actorRef: 'quiz_gen' | 'sourcing';
+    // YUK-697: jyeoo_fetch reuses this cross-KC dedup path via insertSourcedDraft.
+    actorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
     taskRunId?: string;
     now: Date;
   },

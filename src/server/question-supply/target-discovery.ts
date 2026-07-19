@@ -60,7 +60,11 @@ export type SupplyRoute =
   | 'sourcing_web'
   | 'ingest_existing'
   | 'image_candidate'
-  | 'quiz_gen';
+  | 'quiz_gen'
+  // YUK-697 — deterministic scraper route (jyeoo-rs). Ranked ABOVE sourcing_web on
+  // jyeoo-supported subjects (route-planner); auto-dispatched behind the JYEOO_FETCH_ENABLED
+  // kill switch, which falls back to sourcing_web when off (dispatcher chooseAutoRoute).
+  | 'jyeoo_fetch';
 
 export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
 

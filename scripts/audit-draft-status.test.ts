@@ -228,7 +228,10 @@ describe('scanQuestionInserts (classification)', () => {
 const REAL_SETTERS = [
   'src/capabilities/ingestion/server/image-candidate-accept.ts',
   'src/capabilities/practice/server/proposal-appliers.ts',
-  'src/server/boss/handlers/sourcing.ts',
+  // YUK-697 — the tier-2 web_sourced draft INSERT moved OUT of sourcing.ts into the shared
+  // insertSourcedDraft helper (reused by sourcing.ts + jyeoo-fetch.ts). The explicit
+  // draft_status='draft' setter now lives here, so this is the real site to assert.
+  'src/server/questions/sourced-draft-insert.ts',
   'src/server/ai/question-author.ts',
   'src/server/boss/handlers/quiz_gen.ts',
   'src/server/proposals/legacy-record-appliers.ts',
