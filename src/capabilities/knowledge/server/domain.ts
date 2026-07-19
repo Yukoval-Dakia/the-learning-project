@@ -42,6 +42,51 @@ export async function getEffectiveDomain(db: Db | Tx, nodeId: string): Promise<s
 }
 
 /**
+ * YUK-716 — batch twin of {@link getEffectiveDomain} for MANY node ids in ONE query.
+ *
+ * Loads the FULL knowledge tree once (single user, hundreds of nodes; NO `archived_at` filter)
+ * and climbs each id's parent chain IN MEMORY. Returns a Map id → domain (string) or `null`.
+ * `null` is returned in EXACTLY the cases {@link getEffectiveDomain} THROWS — node-not-found,
+ * root-with-null-domain, or MAX_DEPTH exceeded — so a caller that wraps the single walk in
+ * try/catch → fallback (e.g. {@link effectiveThetaForKc}, `batchResolveSubjectIds`,
+ * `batchResolveFamilyKeys`) gets a byte-identical result. The archived-INCLUSIVE load is the
+ * SAME convergence `batchResolveFamilyKeys` relies on (walking through an archived intermediate
+ * ancestor to its domain), so read-side domain resolution can never drift from the single walk.
+ *
+ * The in-memory climb is the EXACT structural mirror of {@link getEffectiveDomain}: it inspects
+ * at most MAX_DEPTH nodes (climb levels 0..MAX_DEPTH-1) in the same branch order, so a chain
+ * whose domain-bearing ancestor lies BEYOND the cap resolves to `null` here just as the single
+ * walk throws max-depth there (→ callers' θ_global=0 fallback). The bounded `depth` counter also
+ * subsumes cycle protection — a cycle exhausts the cap and yields `null`, matching the single
+ * walk's max-depth throw.
+ */
+export async function batchResolveEffectiveDomains(
+  db: Db | Tx,
+  nodeIds: string[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const ids = Array.from(new Set(nodeIds));
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({ id: knowledge.id, domain: knowledge.domain, parent_id: knowledge.parent_id })
+    .from(knowledge);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const effectiveDomain = (id: string): string | null => {
+    let curId: string = id;
+    for (let depth = 0; depth < MAX_DEPTH; depth++) {
+      const row = byId.get(curId);
+      if (!row) return null; // node not found → getEffectiveDomain throws → caught null.
+      if (row.domain !== null) return row.domain;
+      if (row.parent_id === null) return null; // root with null domain → throws → caught null.
+      curId = row.parent_id;
+    }
+    return null; // MAX_DEPTH exceeded → getEffectiveDomain throws → caught null.
+  };
+  for (const id of ids) out.set(id, effectiveDomain(id));
+  return out;
+}
+
+/**
  * Forward map: registered subject profile id OR an observed raw domain → the set of active
  * knowledge node ids whose effective domain matches that identity. This is the derived-axis primitive
  * behind `GET /api/questions?subject=` (YUK-288): a question's subject is a

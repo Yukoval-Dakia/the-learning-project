@@ -178,7 +178,12 @@ export function MeshGraph({
                   style={{ cursor: 'pointer' }}
                   onClick={() => onPick(byId.get(n.id) ?? n)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') onPick(byId.get(n.id) ?? n);
+                    // YUK-718 — role=button 图节点须同时响应 Space；preventDefault
+                    // 拦住 Space 页面滚动。沿用 QuestionsPage / DraftReviewPage 同例。
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onPick(byId.get(n.id) ?? n);
+                    }
                   }}
                 >
                   {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。

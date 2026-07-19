@@ -33,7 +33,11 @@ import {
   effectiveFamilyB,
 } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { effectiveThetaForKc, getMasteryState } from '@/server/mastery/state';
+import {
+  type MasteryStateRow,
+  effectiveThetaForKcBatch,
+  getMasteryStates,
+} from '@/server/mastery/state';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
@@ -125,10 +129,16 @@ const COLD_START_EVIDENCE = 0;
  *   evidence_count is a single-learner sufficient statistic, KLP is a selection
  *   criterion (no estimation), so one learner's count is the whole signal.
  */
-async function aggregateWeakestKc(
-  db: DbLike,
+// YUK-716 — pure over the two prefetched maps (`masteryByKc` = one `getMasteryStates` batch;
+// `effectiveThetaByKc` = one `effectiveThetaForKcBatch`). No DB reads here: the per-KC
+// `getMasteryState` + `effectiveThetaForKc` N+1 moved up into `collectCandidateSignals`'s bulk
+// prefetch. Semantics are byte-identical — the same θ̂_min pick, precision, evidence, grid, and
+// `θ_global = effective − θ_KC` restore, just read from maps instead of per-KC queries.
+function aggregateWeakestKc(
   knowledgeIds: string[],
-): Promise<{
+  masteryByKc: Map<string, MasteryStateRow>,
+  effectiveThetaByKc: Map<string, number>,
+): {
   thetaHat?: number;
   thetaPrecision?: number;
   evidenceCount: number;
@@ -137,7 +147,7 @@ async function aggregateWeakestKc(
   // (no row / shadow write never ran) → selection falls back to the Gaussian KLP / MFI path.
   gridPosterior?: ThetaGridPosterior | null;
   thetaGlobal?: number;
-}> {
+} {
   if (knowledgeIds.length === 0) {
     return { thetaHat: undefined, thetaPrecision: undefined, evidenceCount: 0 };
   }
@@ -147,10 +157,10 @@ async function aggregateWeakestKc(
   let weakestGrid: ThetaGridPosterior | null = null;
   let weakestThetaGlobal = 0;
   for (const kid of knowledgeIds) {
-    const row = await getMasteryState(db, kid, 'knowledge');
+    const row = masteryByKc.get(kid) ?? null;
     const thetaKc = row?.theta_hat ?? COLD_START_THETA;
-    // Effective theta (θ_global + θ_KC). Flag off → === thetaKc (bit-identical).
-    const theta = await effectiveThetaForKc(db, kid, thetaKc);
+    // Effective theta (θ_global + θ_KC). Flag off / absent → === thetaKc (bit-identical).
+    const theta = effectiveThetaByKc.get(kid) ?? thetaKc;
     const precision = row?.theta_precision ?? COLD_START_PRECISION;
     const evidence = row?.evidence_count ?? COLD_START_EVIDENCE;
     if (theta < weakestTheta) {
@@ -338,11 +348,13 @@ async function aggregateMisconceptionRecurrence(
 async function collectQuestionSignal(
   db: DbLike,
   cand: CandidateInput,
+  masteryByKc: Map<string, MasteryStateRow>,
+  effectiveThetaByKc: Map<string, number>,
   familyRow: FamilyCalibrationRow | null = null,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
-    await aggregateWeakestKc(db, knowledgeIds);
+    aggregateWeakestKc(knowledgeIds, masteryByKc, effectiveThetaByKc);
   const { b: columnarB, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
   // 家族 delta 叠加（G4 NO-OP-safe）。b===undefined（bSource='none'）→ 无 b 可叠，保持 undefined。
   const b = columnarB !== undefined ? effectiveFamilyB(columnarB, familyRow) : undefined;
@@ -509,6 +521,22 @@ export async function collectCandidateSignals(
     for (const r of rows) familyRowByKey.set(r.family_key, r);
   }
 
+  // YUK-716 — bulk-prefetch the per-KC mastery reads that were the aggregateWeakestKc N×M N+1.
+  // ONE getMasteryStates over the union of all question candidates' KCs + ONE
+  // effectiveThetaForKcBatch (θ_global folded in when HIERARCHICAL_ELO_ENABLED, else a no-read
+  // pass-through). The per-KC θ̂_min selection stays in aggregateWeakestKc as pure in-memory
+  // computation over these two maps (byte-identical picks). resolveBAnchor stays per-candidate:
+  // it is a per-refId (not per-KC) read outside the θ̂ aggregation's N×M hot path.
+  const unionKcIds = Array.from(new Set(questionCands.flatMap((c) => c.knowledgeIds ?? [])));
+  const masteryByKc = await getMasteryStates(db, unionKcIds, 'knowledge');
+  const effectiveThetaByKc = await effectiveThetaForKcBatch(
+    db,
+    unionKcIds.map((kid) => ({
+      knowledgeId: kid,
+      thetaKc: masteryByKc.get(kid)?.theta_hat ?? COLD_START_THETA,
+    })),
+  );
+
   const out: CollectedSignal[] = [];
   for (const cand of candidates) {
     if (cand.refKind === 'paper') {
@@ -516,7 +544,7 @@ export async function collectCandidateSignals(
     } else {
       const fk = familyKeyByRefId.get(cand.refId) ?? null;
       const familyRow = fk !== null ? (familyRowByKey.get(fk) ?? null) : null;
-      out.push(await collectQuestionSignal(db, cand, familyRow));
+      out.push(await collectQuestionSignal(db, cand, masteryByKc, effectiveThetaByKc, familyRow));
     }
   }
   return out;

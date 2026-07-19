@@ -7,11 +7,32 @@
 
 import {
   pickProbeForKnowledge,
+  prefetchProbeSelection,
   rotationClassForKind,
+  selectProbeFromPrefetch,
 } from '@/capabilities/practice/server/variant-rotation';
+import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+// YUK-716 — count-instrumenting Proxy over a drizzle db: increments `counter.n` per `.select()`
+// call (copied from src/server/projections/gather.db.test.ts). Distinguishes the batched
+// prefetch (constant selects) from the per-KC serial walk (selects × KC count).
+function countingDb(base: Db, counter: { n: number }): Db {
+  return new Proxy(base as object, {
+    get(target, prop, receiver) {
+      if (prop === 'select') {
+        return (...args: unknown[]) => {
+          counter.n += 1;
+          return (target as { select: (...a: unknown[]) => unknown }).select(...args);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  }) as Db;
+}
 
 const BASE = {
   reference_md: null as string | null,
@@ -430,5 +451,109 @@ describe('pickProbeForKnowledge', () => {
     });
     const chosen = await pick({ knowledgeId: 'k_empty', lastReviewEventId: null });
     expect(chosen).toBeNull();
+  });
+});
+
+// YUK-716 — batch prefetch + pure selection: the /api/review/due N+1 removal.
+describe('prefetchProbeSelection + selectProbeFromPrefetch (YUK-716)', () => {
+  beforeEach(async () => {
+    clock = 0;
+    await resetDb();
+  });
+
+  it('prefetch is a constant 3 selects regardless of KC count; selection is pure (0 selects)', async () => {
+    // 6 due KCs, each a reviewed recall question — every KC would drive its own event +
+    // question (+ fallback) round-trips on the serial path.
+    const inputs: Array<{ knowledgeId: string; lastReviewEventId: string | null }> = [];
+    for (let i = 0; i < 6; i += 1) {
+      const kc = `k_perf_${i}`;
+      const qid = `q_perf_${i}`;
+      await seedQuestion(qid, { kind: 'fill_blank', knowledge_ids: [kc] });
+      const evt = await seedReviewEvent(qid);
+      inputs.push({ knowledgeId: kc, lastReviewEventId: evt });
+    }
+
+    const counter = { n: 0 };
+    const cdb = countingDb(testDb(), counter);
+
+    // The batch prefetch: event-id batch + last-question batch + one containment scan = 3.
+    counter.n = 0;
+    const prefetch = await prefetchProbeSelection(cdb, inputs);
+    expect(counter.n).toBe(3);
+
+    // Pure in-memory selection over the prefetch issues ZERO selects.
+    counter.n = 0;
+    const used = new Set<string>();
+    const picked = inputs.map((inp) =>
+      selectProbeFromPrefetch(prefetch, { ...inp, usedQuestionIds: used }),
+    );
+    expect(counter.n).toBe(0);
+    // Sanity: every KC still resolves its own recall question.
+    expect(picked.map((p) => p?.question_id)).toEqual(inputs.map((_, i) => `q_perf_${i}`));
+
+    // Contrast: the single-KC entry re-runs the 3-read prefetch per KC (3 × N), the N+1 removed.
+    counter.n = 0;
+    const usedSerial = new Set<string>();
+    for (const inp of inputs) {
+      await pickProbeForKnowledge(cdb, { ...inp, usedQuestionIds: usedSerial });
+    }
+    expect(counter.n).toBe(inputs.length * 3);
+  });
+
+  it('batched selection is byte-identical to the serial pickProbeForKnowledge loop (shared used-set)', async () => {
+    // A mixed page exercising every branch + the order-dependent cross-KC dedup:
+    //   - k_a: application family (root+variant), reviewed at root.
+    //   - k_b: shares the SAME variant (multi-tagged) so the used-set from k_a changes k_b's pick.
+    //   - k_c: recall, reviewed.
+    //   - k_d: never-reviewed → application default first probe.
+    await seedQuestion('m_a_root', {
+      kind: 'short_answer',
+      knowledge_ids: ['k_a'],
+      variant_depth: 0,
+    });
+    await seedQuestion('m_a_v1', {
+      kind: 'short_answer',
+      knowledge_ids: ['k_a', 'k_b'],
+      variant_depth: 1,
+      root_question_id: 'm_a_root',
+    });
+    await seedQuestion('m_b_root', {
+      kind: 'short_answer',
+      knowledge_ids: ['k_b'],
+      variant_depth: 0,
+    });
+    await seedQuestion('m_c', { kind: 'translation', knowledge_ids: ['k_c'] });
+    await seedQuestion('m_d1', { kind: 'reading', knowledge_ids: ['k_d'] });
+    await seedQuestion('m_d2', { kind: 'reading', knowledge_ids: ['k_d'] });
+
+    const evtA = await seedReviewEvent('m_a_root'); // k_a last = root → next variant = m_a_v1
+    const evtB = await seedReviewEvent('m_b_root'); // k_b last = its root; family∩k_b = {m_b_root, m_a_v1}
+    const evtC = await seedReviewEvent('m_c'); // recall repeat
+
+    const inputs = [
+      { knowledgeId: 'k_a', lastReviewEventId: evtA },
+      { knowledgeId: 'k_b', lastReviewEventId: evtB },
+      { knowledgeId: 'k_c', lastReviewEventId: evtC },
+      { knowledgeId: 'k_d', lastReviewEventId: null },
+    ];
+
+    // Serial reference (each call re-reads; shared used-set threaded in order).
+    const serialUsed = new Set<string>();
+    const serial: Array<string | undefined> = [];
+    for (const inp of inputs) {
+      const probe = await pickProbeForKnowledge(testDb(), { ...inp, usedQuestionIds: serialUsed });
+      serial.push(probe?.question_id);
+    }
+
+    // Batched: one prefetch, pure loop, same shared used-set in the same order.
+    const prefetch = await prefetchProbeSelection(testDb(), inputs);
+    const batchUsed = new Set<string>();
+    const batched = inputs.map(
+      (inp) =>
+        selectProbeFromPrefetch(prefetch, { ...inp, usedQuestionIds: batchUsed })?.question_id,
+    );
+
+    expect(batched).toEqual(serial);
+    expect([...batchUsed].sort()).toEqual([...serialUsed].sort());
   });
 });
