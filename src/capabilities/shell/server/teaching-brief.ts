@@ -581,6 +581,55 @@ async function logAcceptedWithoutProbe(db: Db, now: Date): Promise<void> {
   }
 }
 
+// Corrupt rows are excluded from the bounded selector windows in SQL so they cannot
+// evict valid candidates; this bounded diagnostic pass preserves the contract §7
+// observable skip log for exactly those rows.
+async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
+  const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
+  const badResults = await db
+    .select({ id: event.id, subject_kind: event.subject_kind })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        gt(event.created_at, lowerBound),
+        lte(event.created_at, now),
+        sql`NOT (${event.subject_kind} = 'question'
+          AND ((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
+            OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1')))`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
+  for (const row of badResults) {
+    warnSkipped(
+      'outcome',
+      row.id,
+      row.subject_kind === 'question' ? 'outcome_resolution_mismatch' : 'result_subject_invalid',
+    );
+  }
+
+  const badProbes = await db
+    .select({ id: question.id })
+    .from(question)
+    .where(
+      and(
+        eq(question.source, PROBE_QUESTION_SOURCE),
+        sql`NOT (${question.draft_status} = 'draft'
+          AND ${question.source_ref} = ${question.metadata}->>'conjecture_proposal_id')`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${event}
+          WHERE ${event.subject_kind} = 'question'
+            AND ${event.subject_id} = ${question.id}
+            AND ${event.action} = ${PROBE_RESULT_ACTION}
+        )`,
+      ),
+    )
+    .orderBy(desc(question.created_at), desc(question.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
+  for (const row of badProbes) warnSkipped('probe', row.id, 'probe_shape_non_canonical');
+}
+
 async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_FINDING_TTL_MS);
   const rawConjectures = await db
@@ -715,6 +764,15 @@ export async function loadTeachingBrief(
   db: Db,
   now: Date = new Date(),
 ): Promise<TeachingBriefResponse> {
+  try {
+    await logNonCanonicalCandidates(db, now);
+  } catch (error) {
+    // Diagnostic-only scan; it must never break brief selection.
+    console.warn('[teaching-brief] non-canonical scan failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   const outcome = await loadOutcomeBrief(db, now);
   if (outcome) return { brief: outcome };
 
