@@ -217,6 +217,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
         <div className="record-composer">
           <textarea
             id="record-prompt-md"
+            aria-required
             value={promptMd}
             onChange={(e) => setPromptMd(e.target.value)}
             rows={4}
@@ -245,6 +246,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
           </label>
           <input
             id="record-wrong-answer-md"
+            aria-required
             type="text"
             className="field-input field-wrong"
             value={wrongAnswerMd}
@@ -278,14 +280,15 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
       <div className="form-row">
         <span className="field-label">知识点（至少 1 个，已选 {selectedKnowledge.length}）</span>
         {/* YUK-718 — the field-label names the chip GROUP, so the search box carries
-            its own per-control aria-label (htmlFor to a group is impractical). */}
+            its own per-control aria-label; it repeats the min-1 requirement + live
+            selected-count the visible label shows (htmlFor to a group is impractical). */}
         <input
           type="text"
           className="field-input"
           value={knowledgeFilter}
           onChange={(e) => setKnowledgeFilter(e.target.value)}
           placeholder="按知识点名称搜索"
-          aria-label="搜索知识点"
+          aria-label={`知识点搜索（至少 1 个，已选 ${selectedKnowledge.length}）`}
         />
         {knowledgeQ.isLoading && <p className="record-note record-muted">正在加载知识点…</p>}
         {knowledgeQ.isError && (

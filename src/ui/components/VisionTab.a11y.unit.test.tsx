@@ -60,11 +60,23 @@ function renderBlockEditor() {
 }
 
 describe('VisionTab BlockEditor field labels (YUK-718)', () => {
-  it.each(['题面', '参考答案', '错答', '难度', '搜索知识点'])(
-    'exposes the "%s" control by its accessible name',
-    (name) => {
-      renderBlockEditor();
-      expect(screen.getByLabelText(name)).toBeTruthy();
-    },
-  );
+  // Accessible names carry the same info the visible FieldLabel shows (round-1
+  // review 3610042332/3): the prompt "已识别，可修改" hint, the "可选" marker, the
+  // knowledge min-1 requirement + live count. Required (必填) is exposed via
+  // aria-required, asserted separately below.
+  it.each([
+    '题面（已识别，可修改）',
+    '参考答案（可选）',
+    '错答',
+    '难度',
+    '知识点搜索（至少 1，已选 0）',
+  ])('exposes the "%s" control by its accessible name', (name) => {
+    renderBlockEditor();
+    expect(screen.getByLabelText(name)).toBeTruthy();
+  });
+
+  it('marks the required 错答 field with aria-required', () => {
+    renderBlockEditor();
+    expect(screen.getByLabelText('错答').getAttribute('aria-required')).toBe('true');
+  });
 });

@@ -23,7 +23,15 @@ describe('RecordPage field labels (YUK-718)', () => {
     },
   );
 
-  it('names the knowledge search box (its field-label describes the chip group)', () => {
-    expect(source).toContain('aria-label="搜索知识点"');
+  it('marks both required (必填) inputs with aria-required', () => {
+    // 题面 textarea + 错答 input each carry aria-required right after their id.
+    expect(source).toMatch(/id="record-prompt-md"\s+aria-required/);
+    expect(source).toMatch(/id="record-wrong-answer-md"\s+aria-required/);
+  });
+
+  it('names the knowledge search box with its min-1 requirement + live count', () => {
+    expect(source).toContain(
+      'aria-label={`知识点搜索（至少 1 个，已选 ${selectedKnowledge.length}）`}',
+    );
   });
 });

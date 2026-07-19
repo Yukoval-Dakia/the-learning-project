@@ -151,11 +151,13 @@
   --ink: #1f1e1d;
   --ink-2: #3d3b36;
   --ink-3: #5c5b57;
-  /* YUK-718 — tertiary/quaternary text darkened to clear WCAG AA (4.5:1) on
-     --paper: --ink-4 3.37→4.84:1, --ink-5 1.99→4.52:1. ink-4 kept > ink-5 so the
-     ramp order (ink-3 6.45 > ink-4 > ink-5) survives; hue preserved (warm grey). */
-  --ink-4: #706e68;
-  --ink-5: #74736c;
+  /* YUK-718 — tertiary/quaternary text now clears WCAG AA (≥4.5:1) against EVERY
+     paper surface (--paper / -sunk / -raised / -tint), not just --paper. Worst case
+     is the darkest surface --paper-tint #f2ede0: --ink-4 4.84:1, --ink-5 4.56:1
+     (were 3.37:1 / 1.99:1 on --paper). ink-4 kept > ink-5 so the ramp order
+     (ink-3 5.82 > ink-4 4.84 > ink-5 4.56 on --paper-tint) survives; hue preserved. */
+  --ink-4: #696761;
+  --ink-5: #6d6b65;
 
   --line: #e8e4d8;
   --line-strong: #d5d0bf;
@@ -310,9 +312,11 @@
     --ink: #f0e8d8;
     --ink-2: #d4cbb8;
     --ink-3: #a89e8a;
-    /* YUK-718 — AA on dark --paper: --ink-4 3.69→4.87:1, --ink-5 1.86→4.57:1. */
-    --ink-4: #8d8475;
-    --ink-5: #848078;
+    /* YUK-718 — AA (≥4.5:1) against every dark paper surface; worst case is the
+       lightest surface --paper-tint #2a241e: --ink-4 4.92:1, --ink-5 4.52:1
+       (were 3.69:1 / 1.86:1 on --paper). ink-4 > ink-5 keeps the ramp order. */
+    --ink-4: #999183;
+    --ink-5: #8f8b84;
 
     --line: #3a3329;
     --line-strong: #4d4538;
@@ -373,9 +377,11 @@
   --ink: #f0e8d8;
   --ink-2: #d4cbb8;
   --ink-3: #a89e8a;
-  /* YUK-718 — AA on dark --paper: --ink-4 3.69→4.87:1, --ink-5 1.86→4.57:1. */
-  --ink-4: #8d8475;
-  --ink-5: #848078;
+  /* YUK-718 — AA (≥4.5:1) against every dark paper surface; worst case is the
+     lightest surface --paper-tint #2a241e: --ink-4 4.92:1, --ink-5 4.52:1
+     (were 3.69:1 / 1.86:1 on --paper). ink-4 > ink-5 keeps the ramp order. */
+  --ink-4: #999183;
+  --ink-5: #8f8b84;
 
   --line: #3a3329;
   --line-strong: #4d4538;
