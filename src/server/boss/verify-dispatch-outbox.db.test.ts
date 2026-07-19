@@ -166,6 +166,83 @@ describe('verify dispatch outbox (YUK-700)', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('unsticks a live draft whose only intent is current-version but schema-incomplete', async () => {
+    // Regression (review round-3 codex P2): the round-2 guards only checked `version`, so a
+    // current-version intent that still fails the schema — here missing the required question_id —
+    // slipped through: the anti-join counted it as "already owned" (no valid replacement synthesized)
+    // and dispatch safeParse-dropped it without a completion (never enqueued). Net: draft stuck.
+    await seedQuestion('q-incomplete', 'quiz_gen');
+    await writeEvent(db, {
+      id: legacyUnscopedIntentId('q-incomplete', 'quiz_verify'),
+      actor_kind: 'system',
+      actor_ref: 'verify_dispatch_outbox',
+      action: VERIFY_DISPATCH_INTENT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q-incomplete',
+      outcome: null,
+      // Current version + valid verifier_kind, but no question_id — passes the version guard, fails
+      // verifyDispatchIntentPayloadSchema.
+      payload: { version: VERIFY_DISPATCH_VERSION, verifier_kind: 'quiz_verify' },
+      ingest_at: new Date(),
+    });
+    const enqueue = vi.fn(async () => {});
+
+    const result = await recoverOrphanVerifyDispatches(db, { enqueue });
+
+    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
+    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-incomplete'], expect.any(Object));
+    const completion = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_id, 'q-incomplete'),
+          eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION),
+          eq(event.outcome, 'success'),
+        ),
+      );
+    expect(completion).toHaveLength(1);
+    expect(completion[0]?.payload).toMatchObject({ recovery: true, disposition: 'enqueued' });
+
+    // Idempotent: a second recovery neither re-synthesizes nor re-enqueues.
+    const again = await recoverOrphanVerifyDispatches(db, { enqueue });
+    expect(again).toMatchObject({ synthesized: 0, dispatched: 0 });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a schema-incomplete current-version intent starve valid pending intents', async () => {
+    const old = new Date('2026-07-17T00:00:00.000Z');
+    const recent = new Date('2026-07-18T00:00:00.000Z');
+    // Oldest intent: current version, valid verifier_kind, but missing question_id. Under a
+    // version-only lock predicate it would fill the batchSize=1 page on every drain and starve the
+    // valid intent created after it.
+    await seedQuestion('q-broken', 'quiz_gen', { created_at: old, updated_at: old });
+    await writeEvent(db, {
+      id: createId(),
+      actor_kind: 'system',
+      actor_ref: 'verify_dispatch_outbox',
+      action: VERIFY_DISPATCH_INTENT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q-broken',
+      outcome: null,
+      payload: { version: VERIFY_DISPATCH_VERSION, verifier_kind: 'quiz_verify' },
+      created_at: old,
+      ingest_at: old,
+    });
+    await seedQuestion('q-valid-later', 'quiz_gen', { created_at: recent, updated_at: recent });
+    await writeVerifyDispatchIntent(db, {
+      questionId: 'q-valid-later',
+      verifier: 'quiz_verify',
+      createdAt: recent,
+    });
+    const enqueue = vi.fn(async () => {});
+
+    const result = await dispatchPendingVerifyIntents(db, { enqueue, batchSize: 1 });
+
+    expect(result.dispatched).toBe(1);
+    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-valid-later'], expect.any(Object));
+  });
+
   it('rolls back the intent when candidate persistence does not commit', async () => {
     await expect(
       db.transaction(async (tx) => {
