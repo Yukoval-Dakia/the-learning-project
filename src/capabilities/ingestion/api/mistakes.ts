@@ -221,7 +221,7 @@ export async function POST(req: Request): Promise<Response> {
 // ----- Phase 1c.1 Step 6.G — GET (event-stream projection) -----
 //
 // GET /api/mistakes?limit=N&since=ISO&question_id=X
-//   → { rows: [{ id, question_id, prompt_md, wrong_answer_md, knowledge_ids,
+//   → { rows: [{ id, question_id, prompt_md, reference_md, wrong_answer_md, knowledge_ids,
 //                cause, created_at }] }
 //
 // Same projection / back-compat shape as `/api/mistakes/recent`. Filters:

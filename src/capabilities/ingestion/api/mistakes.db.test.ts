@@ -385,7 +385,12 @@ const QUESTION_BASE = {
   version: 0,
 };
 
-async function seedQuestion(id: string, prompt_md: string, created_at = new Date()): Promise<void> {
+async function seedQuestion(
+  id: string,
+  prompt_md: string,
+  created_at = new Date(),
+  reference_md: string | null = null,
+): Promise<void> {
   const db = testDb();
   await db.insert(question).values({
     id,
@@ -393,6 +398,7 @@ async function seedQuestion(id: string, prompt_md: string, created_at = new Date
     created_at,
     updated_at: created_at,
     ...QUESTION_BASE,
+    reference_md,
   });
 }
 
@@ -552,7 +558,7 @@ describe('GET /api/mistakes', () => {
   });
 
   it('returns failure attempts projected to legacy mistake-shape JSON', async () => {
-    await seedQuestion('q1', 'P'.repeat(300));
+    await seedQuestion('q1', 'P'.repeat(300), new Date(), 'R'.repeat(300));
     await seedAttempt({
       id: 'a1',
       question_id: 'q1',
@@ -572,6 +578,7 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].record_id).toBe('lr_a1');
     expect(body.rows[0].question_id).toBe('q1');
     expect(body.rows[0].prompt_md).toHaveLength(200);
+    expect(body.rows[0].reference_md).toBe('R'.repeat(200));
     expect(body.rows[0].wrong_answer_md).toHaveLength(200);
     expect(body.rows[0].knowledge_ids).toEqual(['k1', 'k2']);
     expect(body.rows[0].cause).toEqual({
@@ -584,6 +591,16 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].correction_state.state).toBe('active');
     expect(body.rows[0].correction_state.terminal_state).toBe('active');
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('preserves a missing reference answer as null', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+
+    const res = await getMistakes();
+    const body = MistakeListResponseSchema.parse(await res.json());
+
+    expect(body.rows[0].reference_md).toBeNull();
   });
 
   it('excludes attempts that have been retracted', async () => {

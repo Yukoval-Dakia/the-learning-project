@@ -128,6 +128,7 @@ export const MistakeProjectionSchema = z.object({
   record_id: z.string(),
   question_id: z.string(),
   prompt_md: z.string(),
+  reference_md: z.string().nullable(),
   wrong_answer_md: z.string(),
   knowledge_ids: z.array(z.string()),
   cause: z

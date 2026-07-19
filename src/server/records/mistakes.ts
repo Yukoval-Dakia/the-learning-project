@@ -66,16 +66,21 @@ async function projectMistakeRecords(
   const questions =
     questionIds.length > 0
       ? await db
-          .select({ id: question.id, prompt_md: question.prompt_md })
+          .select({
+            id: question.id,
+            prompt_md: question.prompt_md,
+            reference_md: question.reference_md,
+          })
           .from(question)
           .where(inArray(question.id, questionIds))
       : [];
-  const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
+  const questionById = new Map(questions.map((row) => [row.id, row]));
 
   return records.flatMap((record) => {
     if (!record.attempt_event_id || !attemptIds.has(record.attempt_event_id)) return [];
     const failure = failureByAttempt.get(record.attempt_event_id);
     if (!failure) return [];
+    const questionRow = questionById.get(failure.question_id);
     const effectiveCause = effectiveCauseForFailureAttempt(failure);
     const cause = effectiveCause
       ? {
@@ -91,7 +96,8 @@ async function projectMistakeRecords(
         id: failure.attempt_event_id,
         record_id: record.id,
         question_id: failure.question_id,
-        prompt_md: (promptByQid.get(failure.question_id) ?? '').slice(0, 200),
+        prompt_md: (questionRow?.prompt_md ?? '').slice(0, 200),
+        reference_md: questionRow?.reference_md?.slice(0, 200) ?? null,
         wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
         knowledge_ids: failure.referenced_knowledge_ids,
         cause,

@@ -2,8 +2,9 @@
 // ScreenMistakes + MistakeCard（slice-by-slice），闭合 record→see→practice 死链
 //（RecordPage onSuccess navigate('/mistakes') 此前 404）。
 //
-// 数据源：GET /api/mistakes 投影（src/server/records/mistakes.ts L61-72，read-only）：
-//   { id(=attempt_event_id), record_id, question_id, prompt_md(≤200), wrong_answer_md(≤200),
+// 数据源：GET /api/mistakes 投影（src/server/records/mistakes.ts，read-only）：
+//   { id(=attempt_event_id), record_id, question_id, prompt_md(≤200), reference_md(≤200|null),
+//     wrong_answer_md(≤200),
 //     knowledge_ids[], cause:{source:'user'|'agent', primary_category, secondary_categories,
 //     user_notes, confidence}|null, correction_state:EffectiveTruth, created_at(unix 秒) }
 //
@@ -12,17 +13,15 @@
 // 本 SPA 页是该 CSS 层首个真消费者（旧 Next.js page 随 YUK-321 M5 退场，CSS 留存）。
 //
 // 偏差（owner-ratified preflight §4 + 本任务 present-if-available 规则；no-mock）：
-// ① 正解对照行（loom .cmp-right）：投影无 reference_md → DROP，`.mistake-cmp` 退化为单
-//    「误」行（CSS 本就无 .cmp-right）。要补需扩 listMistakeProjectionRows 返 reference_md。
-// ② inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开。
+// ① inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开。
 //    事件链 footer 保留可读文案但 render 为 disabled——/events route 尚未登记 SPA，不 ship
 //    已知 404 导航（graceful defer，同 ProposalCard EvidenceChip：无 route 即 disabled +
 //    去 affordance）。YUK-325 已登记 /events/$id，事件链重新成为真实可达入口。
-// ③ 归因 badge：复用 CauseBadge primitive（user/agent/pending/conf 全覆盖，语义等价 loom
+// ② 归因 badge：复用 CauseBadge primitive（user/agent/pending/conf 全覆盖，语义等价 loom
 //    AttributionBadge），不照搬 loom 简化版——避免双套归因展示漂移。
-// ④ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
+// ③ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
 //    无 name 时降级显 id 前 8 位，不 fabricate）。
-// ⑤ 科目轴：knowledge_ids[0] → getTree effective_domain → subjMeta（科目=视角派生，非实体
+// ④ 科目轴：knowledge_ids[0] → getTree effective_domain → subjMeta（科目=视角派生，非实体
 //    列；同 QuestionsPage subjMeta 先例）。
 
 import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
@@ -59,11 +58,12 @@ interface MistakeCorrectionState {
   terminal_state: 'active' | 'retracted' | 'marked_wrong' | 'missing' | 'cycle';
 }
 
-interface MistakeRow {
+export interface MistakeRow {
   id: string;
   record_id: string;
   question_id: string;
   prompt_md: string;
+  reference_md: string | null;
   wrong_answer_md: string;
   knowledge_ids: string[];
   cause: MistakeCause | null;
@@ -201,8 +201,8 @@ const ATTR_OPTS: [string, string][] = [
   ['user', '我标注'],
 ];
 
-// ── 错题卡（loom MistakeCard，L212-262；正解/事件链展开按 §4 DROP） ──
-function MistakeCard({
+// ── 错题卡（loom MistakeCard，L212-262；事件链展开按 §4 DROP） ──
+export function MistakeCard({
   m,
   subject,
   subjectRows,
@@ -228,12 +228,18 @@ function MistakeCard({
         </span>
       </div>
 
-      {/* 误 对照（正解行按 owner-ratified preflight §4 DROP——投影无 reference_md） */}
+      {/* 误 / 正对照；历史无 reference_md 的行诚实退化为单「误」行。 */}
       <div className="mistake-cmp">
         <div className="mistake-cmp-line">
           <span className="cmp-label">误</span>
           <span className="cmp-wrong">{m.wrong_answer_md || '（无作答）'}</span>
         </div>
+        {m.reference_md?.trim() && (
+          <div className="mistake-cmp-line">
+            <span className="cmp-label">正</span>
+            <span className="cmp-right">{m.reference_md}</span>
+          </div>
+        )}
       </div>
 
       <div className="mistake-meta-row">
