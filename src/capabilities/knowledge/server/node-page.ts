@@ -291,6 +291,15 @@ export async function loadKnowledgeNodePage(
   // and the subject profile — have no data dependency on one another, so issue
   // them in one Promise.all instead of five sequential awaits. The backlink panel
   // below still depends on the resolved primary atomic, so it runs afterwards.
+  //
+  // Connection budget: the 5 concurrent reads sit inside the postgres-js pool
+  // (max=10 per process — src/db/client.ts). This is a single-user tool, so
+  // simultaneous node-page loads are rare, and postgres-js queues (never errors)
+  // when the pool is momentarily saturated — no chunking needed at this scale.
+  //
+  // Destructure order MUST match the array order below: `notes` and
+  // `interactiveArtifacts` are both NoteSummary[], so a positional swap would be
+  // invisible to the type checker.
   const [atomicRows, timelineRows, notes, interactiveArtifacts, profile] = await Promise.all([
     // 3. primary atomic — the newest non-archived note_atomic whose knowledge_ids
     // contains this node. atomic.knowledge_ids length is 1 (ADR-0020 §3), so a
