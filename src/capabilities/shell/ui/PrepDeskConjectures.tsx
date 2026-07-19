@@ -21,9 +21,11 @@
 // CORE writer is a no-op until a later task (conjecture-accept.ts). The post-accept
 // probe 作答区 is slice-2.
 
+import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -38,6 +40,20 @@ function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
 }
 
+// YUK-711 — accepting a conjecture serves its probe; when the ≤3 active-probe cap is
+// hit the accept rolls back server-side (proposal stays pending) and returns the typed
+// `probe_slots_full` wire code. Per teaching-brief contract §7 (accept 交互失败 → 保留
+// 当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error) surface a calm, non-blaming
+// message that names the retry path — the accept button stays in place to retry.
+const PROBE_SLOTS_FULL_MESSAGE = '同时在答的探针题满了，先完成一道，再回来接受这条。';
+const DECIDE_FAILED_MESSAGE = '操作失败，请重试';
+
+function decideErrorMessage(err: unknown): string {
+  return err instanceof ApiError && err.code === PROBE_SLOTS_FULL_CODE
+    ? PROBE_SLOTS_FULL_MESSAGE
+    : DECIDE_FAILED_MESSAGE;
+}
+
 export function PrepDeskConjectures() {
   const qc = useQueryClient();
   const q = useQuery({
@@ -45,7 +61,9 @@ export function PrepDeskConjectures() {
     queryFn: getPrepDeskConjectures,
   });
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
-  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  // Per-card inline error message (empty ⇒ no error). YUK-711: distinguishes the
+  // retryable `probe_slots_full` conflict from the generic failure copy.
+  const [failed, setFailed] = useState<Record<string, string>>({});
   const conjectures = q.data?.conjectures ?? [];
 
   async function decide(id: string, decision: 'accept' | 'dismiss') {
@@ -64,10 +82,11 @@ export function PrepDeskConjectures() {
       // Accepting a conjecture serves a probe → refresh the 待你试做 queue so the new
       // probe appears without a manual reload (codex review-784).
       await qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
-    } catch {
+    } catch (err) {
       // A failed decision must NOT silently vanish (CodeRabbit review-782): keep
       // the card and surface a retry affordance instead of an unhandled rejection.
-      setFailed((s) => ({ ...s, [id]: true }));
+      // YUK-711: the probe-slot-full rollback gets a specific non-blaming message.
+      setFailed((s) => ({ ...s, [id]: decideErrorMessage(err) }));
     } finally {
       setDeciding((s) => {
         const next = { ...s };
@@ -95,7 +114,7 @@ export function PrepDeskConjectures() {
                 key={c.id}
                 c={c}
                 deciding={!!deciding[c.id]}
-                failed={!!failed[c.id]}
+                failedMessage={failed[c.id]}
                 onAccept={() => void decide(c.id, 'accept')}
                 onReject={() => void decide(c.id, 'dismiss')}
               />
@@ -110,13 +129,13 @@ export function PrepDeskConjectures() {
 function PrepDeskCard({
   c,
   deciding,
-  failed,
+  failedMessage,
   onAccept,
   onReject,
 }: {
   c: PrepDeskConjectureWire;
   deciding: boolean;
-  failed: boolean;
+  failedMessage?: string;
   onAccept: () => void;
   onReject: () => void;
 }) {
@@ -176,9 +195,9 @@ function PrepDeskCard({
         <Btn size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
           不太像
         </Btn>
-        {failed && (
+        {failedMessage && (
           <span className="pd-error" role="alert">
-            操作失败，请重试
+            {failedMessage}
           </span>
         )}
       </div>
