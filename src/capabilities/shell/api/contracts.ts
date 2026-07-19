@@ -1,6 +1,7 @@
 import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
+import { BRIEF_STATES, PRIMARY_ACTION_KINDS } from '@/core/schema/conjecture';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { ProposalEvidenceRef } from '@/core/schema/proposal';
 import { z } from 'zod';
@@ -350,6 +351,38 @@ export const TeachingBriefAckResponseSchema = z
     brief_acknowledgement_event_id: z.string().min(1),
     probe_result_event_id: z.string().min(1),
     brief_id: z.string().min(1),
+    idempotent: z.boolean(),
+  })
+  .strict();
+
+// YUK-710 (P0F/6) — the append-only teaching-brief interaction ledger body. A discriminated
+// union on `type`: a `brief_seen` (opened a delivered brief, idempotent per brief × local day)
+// or a `primary_action_started` (started the prepared action). `brief_id` is the stable brief
+// id (= the conjecture proposal event id). No answer / claim text is ever accepted — only the
+// action kind and the optional confirmed-outcome `result_event_id` (scoped_practice join key).
+export const TeachingBriefInteractionBodySchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('brief_seen'),
+      brief_id: z.string().min(1),
+      brief_state: z.enum(BRIEF_STATES),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('primary_action_started'),
+      brief_id: z.string().min(1),
+      action_kind: z.enum(PRIMARY_ACTION_KINDS),
+      // Present only for scoped_practice (the confirmed outcome's probe_result event id).
+      result_event_id: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
+
+export const TeachingBriefInteractionResponseSchema = z
+  .object({
+    interaction_event_id: z.string().min(1),
+    local_day: z.string().min(1),
     idempotent: z.boolean(),
   })
   .strict();

@@ -33,6 +33,7 @@ import {
   ackTeachingBriefOutcome,
   getTeachingBrief,
 } from './teaching-brief-api';
+import { reportBriefInteraction } from './teaching-brief-interaction-api';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
 function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
@@ -113,6 +114,17 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       prevRef.current = null; // null → reset baseline; never announce.
       return;
     }
+    // YUK-710 — record the "opened a delivered brief" funnel signal once per brief appearance.
+    // Fires only when the brief_id changes (mount or swap), never on a same-brief forward state
+    // advance or a refetch that returns the same brief; the server is also idempotent per
+    // brief × local day, so this is doubly safe. Fire-and-forget: no UI, no learner-visible count.
+    if (idChanged) {
+      reportBriefInteraction({
+        type: 'brief_seen',
+        brief_id: brief.brief_id,
+        brief_state: brief.state,
+      });
+    }
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
     const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
@@ -125,6 +137,16 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
     const targetId = brief.brief_id;
+    // YUK-710 — accept starts the "verify this direction" primary action (accept_probe).
+    // dismiss ("不太像") is a proposal decision, already the canonical `rate` event, so it is
+    // NOT re-instrumented here. Fired on click (action STARTED), before the network call.
+    if (decision === 'accept') {
+      reportBriefInteraction({
+        type: 'primary_action_started',
+        brief_id: targetId,
+        action_kind: 'accept_probe',
+      });
+    }
     setDeciding(true);
     setFailed(false);
     try {
@@ -257,7 +279,17 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 failed={failed}
                 acking={acking}
                 ackFailed={ackFailed}
-                onReveal={() => setRevealed(true)}
+                onReveal={() => {
+                  // YUK-710 — revealing the answer card starts the answer_probe primary action.
+                  if (brief.prepared_action.kind === 'answer_probe') {
+                    reportBriefInteraction({
+                      type: 'primary_action_started',
+                      brief_id: brief.brief_id,
+                      action_kind: 'answer_probe',
+                    });
+                  }
+                  setRevealed(true);
+                }}
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
                 onAcknowledge={() => void acknowledge()}
@@ -411,7 +443,7 @@ function PreparedBlock({
     // "练一组" (a set), never a specific count of pre-built questions — an empty/archived KC
     // degrades honestly on the practice page itself (contract §9 / acceptance 4). The
     // append-only "知道了" ack stays as the secondary dismiss (contract §4.2).
-    const { knowledge_id } = brief.prepared_action;
+    const { knowledge_id, probe_result_event_id } = brief.prepared_action;
     return (
       <>
         <p className="tb-prepared-done">这道判别题已作答，判断得到支持。</p>
@@ -420,7 +452,18 @@ function PreparedBlock({
             size="sm"
             variant="primary"
             icon="review"
-            onClick={() => navigate(scopedPracticeHref(knowledge_id))}
+            onClick={() => {
+              // YUK-710 — starting KC-scoped practice is the confirmed outcome's primary action.
+              // result_event_id links this start back to its probe_result so the report can
+              // compute the confirmed → scoped-practice rate. Fired before navigating away.
+              reportBriefInteraction({
+                type: 'primary_action_started',
+                brief_id: brief.brief_id,
+                action_kind: 'scoped_practice',
+                result_event_id: probe_result_event_id,
+              });
+              navigate(scopedPracticeHref(knowledge_id));
+            }}
           >
             针对这个点练一组
           </Btn>

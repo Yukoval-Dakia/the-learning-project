@@ -18,6 +18,41 @@ export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
  */
 export const BRIEF_ACK_ACTION = 'experimental:brief_acknowledged' as const;
 
+/**
+ * Append-only interaction ledger events (YUK-710 / P0F/6 — teaching-brief survival
+ * telemetry). Both are minimal, opt-out-of-mem0 UI-interaction rows written by
+ * `src/capabilities/shell/server/teaching-brief-interactions.ts`. Like BRIEF_ACK_ACTION
+ * they are NOT reserved — they validate through the loose generic ExperimentalEvent path;
+ * the report reads them by action + subject (subject_kind='event', subject_id=brief_id).
+ *
+ * `brief_seen` records that the learner opened a delivered brief; it is idempotent per
+ * brief_id × learner-local day (Asia/Shanghai) so re-render / React Query refetch / reload
+ * never inflate it. `primary_action_started` records that the learner started the brief's
+ * prepared action (accept_probe / answer_probe / scoped_practice); the actual decision /
+ * probe_result / ack stay on their existing canonical events and are NOT re-instrumented.
+ */
+export const BRIEF_SEEN_ACTION = 'experimental:brief_seen' as const;
+export const PRIMARY_ACTION_STARTED_ACTION = 'experimental:primary_action_started' as const;
+
+/**
+ * The prepared-action kinds a brief can start. One per actionable brief branch:
+ * `accept_probe` (finding → accept the verification direction), `answer_probe`
+ * (probe_ready → open the discriminating probe), `scoped_practice` (outcome_confirmed →
+ * open KC-scoped practice). Retired outcomes carry only the append-only ack, which reuses
+ * the existing BRIEF_ACK_ACTION event and is not re-instrumented here.
+ */
+export const PRIMARY_ACTION_KINDS = ['accept_probe', 'answer_probe', 'scoped_practice'] as const;
+export type PrimaryActionKind = (typeof PRIMARY_ACTION_KINDS)[number];
+
+/** The four brief states carried as metadata on a `brief_seen` ledger row. */
+export const BRIEF_STATES = [
+  'finding',
+  'probe_ready',
+  'outcome_confirmed',
+  'outcome_retired',
+] as const;
+export type BriefState = (typeof BRIEF_STATES)[number];
+
 /** Reader + writer cap for concurrently served, unanswered probes. */
 export const MAX_CONCURRENT_ACTIVE_PROBES = 3;
 
