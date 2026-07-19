@@ -139,6 +139,9 @@ describe('AdminConjectureScoresSurface', () => {
 
   it('keeps the normal path quiet when no rows were dropped or truncated', () => {
     const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
+    expect(html).toContain('<output');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('aria-atomic="true"');
     expect(html).not.toContain('部分诊断行未展示');
     expect(html).not.toContain('data quality');
   });

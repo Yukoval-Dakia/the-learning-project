@@ -162,26 +162,28 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
         </div>
       )}
 
-      {diagnosticWarnings.length > 0 && (
-        <Card>
-          <div style={diagnosticAlertStyle} aria-live="polite">
-            <Badge tone="coral" dot dotStatic>
-              data quality
-            </Badge>
-            <div>
-              <strong>部分诊断行未展示</strong>
-              <ul style={diagnosticListStyle}>
-                {diagnosticWarnings.map(([label, d]) => (
-                  <li key={label}>
-                    {label}：扫描 {d.scanned_count} 行，丢弃 {d.dropped_count} 行
-                    {d.scan_truncated ? '；已触及有界窗口，结果可能不完整' : ''}。
-                  </li>
-                ))}
-              </ul>
+      <output aria-live="polite" aria-atomic="true">
+        {diagnosticWarnings.length > 0 && (
+          <Card>
+            <div style={diagnosticAlertStyle}>
+              <Badge tone="coral" dot dotStatic>
+                data quality
+              </Badge>
+              <div>
+                <strong>部分诊断行未展示</strong>
+                <ul style={diagnosticListStyle}>
+                  {diagnosticWarnings.map(([label, d]) => (
+                    <li key={label}>
+                      {label}：扫描 {d.scanned_count} 行，丢弃 {d.dropped_count} 行
+                      {d.scan_truncated ? '；已触及有界窗口，结果可能不完整' : ''}。
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-          </div>
-        </Card>
-      )}
+          </Card>
+        )}
+      </output>
 
       <Stateful
         status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}

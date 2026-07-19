@@ -477,6 +477,84 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     });
   });
 
+  it('does not report truncation at the exact 200-valid result boundary', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb().transaction(async (tx) => {
+      for (let i = 0; i < 200; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_exact_result_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_exact_result_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_exact_result_${i}`,
+            probe_result_event_id: `probe_exact_result_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+    });
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.prediction_scores).toHaveLength(200);
+    expect(body.diagnostics).toMatchObject({
+      prediction_scores: { scanned_count: 200, dropped_count: 0, scan_truncated: false },
+    });
+  });
+
+  it('does not report truncation after scanning exactly 400 rows with fewer than 200 valid', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        ...Array.from({ length: 199 }, (_, i) => ({
+          id: `ts_exact_scan_valid_${i}`,
+          subject_kind: 'knowledge',
+          subject_id: `kn_exact_scan_valid_${i}`,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: [`probe_exact_scan_valid_${i}`],
+          updated_at: new Date(base.getTime() + i),
+        })),
+        ...Array.from({ length: 201 }, (_, offset) => {
+          const i = offset + 199;
+          return {
+            id: `ts_exact_scan_corrupt_${i}`,
+            subject_kind: 'knowledge',
+            subject_id: `kn_exact_scan_corrupt_${i}`,
+            typed_state: 'confused-with-X',
+            confused_with_kc_id: RIVAL_KC,
+            lifecycle: 'corrupt',
+            evidence_event_ids: [`probe_exact_scan_corrupt_${i}`],
+            updated_at: new Date(base.getTime() + i),
+          };
+        }),
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.typed_states).toHaveLength(199);
+    expect(body.diagnostics).toMatchObject({
+      typed_states: { scanned_count: 400, dropped_count: 201, scan_truncated: false },
+    });
+  });
+
   it('hard-stops each database scan after 400 raw rows', async () => {
     const base = new Date('2026-07-01T00:00:00Z');
     await testDb().transaction(async (tx) => {
