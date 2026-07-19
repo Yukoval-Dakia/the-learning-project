@@ -2,7 +2,7 @@
 // the server discriminated union and this schema before crossing the route.
 
 import { describe, expect, it } from 'vitest';
-import { TeachingBriefResponseSchema } from './contracts';
+import { TeachingBriefInteractionBodySchema, TeachingBriefResponseSchema } from './contracts';
 
 const findingResponse = {
   brief: {
@@ -178,5 +178,83 @@ describe('TeachingBriefResponseSchema', () => {
     ],
   ])('rejects %s', (_label, brief) => {
     expect(TeachingBriefResponseSchema.safeParse({ brief }).success).toBe(false);
+  });
+});
+
+// YUK-710 (P0F/6) — the interaction ledger body. The result_event_id join key is scoped_practice-
+// only; the schema (not just a comment) enforces that.
+describe('TeachingBriefInteractionBodySchema', () => {
+  it('accepts a brief_seen', () => {
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'brief_seen',
+        brief_id: 'p_contract',
+        brief_state: 'finding',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts scoped_practice with a result_event_id, and accept/answer without one', () => {
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'scoped_practice',
+        result_event_id: 'evt_result',
+      }).success,
+    ).toBe(true);
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'accept_probe',
+      }).success,
+    ).toBe(true);
+    // scoped_practice may also omit it (optional).
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'scoped_practice',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a result_event_id on a non-scoped_practice action', () => {
+    for (const action_kind of ['accept_probe', 'answer_probe'] as const) {
+      expect(
+        TeachingBriefInteractionBodySchema.safeParse({
+          type: 'primary_action_started',
+          brief_id: 'p_contract',
+          action_kind,
+          result_event_id: 'evt_result',
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('rejects an unknown action_kind, empty brief_id, and extra keys', () => {
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'bogus',
+      }).success,
+    ).toBe(false);
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'brief_seen',
+        brief_id: '',
+        brief_state: 'finding',
+      }).success,
+    ).toBe(false);
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'brief_seen',
+        brief_id: 'p_contract',
+        brief_state: 'finding',
+        answer_md: 'leak',
+      }).success,
+    ).toBe(false);
   });
 });

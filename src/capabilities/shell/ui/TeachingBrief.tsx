@@ -280,6 +280,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 acking={acking}
                 ackFailed={ackFailed}
                 onReveal={() => {
+                  // The reveal button stays mounted after revealing (it toggles aria-expanded), so
+                  // guard on !revealed: a repeat click must not re-fire the answer_probe POST.
+                  if (revealed) return;
                   // YUK-710 — revealing the answer card starts the answer_probe primary action.
                   if (brief.prepared_action.kind === 'answer_probe') {
                     reportBriefInteraction({

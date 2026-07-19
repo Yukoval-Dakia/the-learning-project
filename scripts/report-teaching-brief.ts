@@ -18,7 +18,11 @@
 import './load-env';
 
 import { fileURLToPath } from 'node:url';
-import { learnerDayWindowUtc } from '@/core/learner-day';
+import type {
+  BriefSeenPayload,
+  PrimaryActionStartedPayload,
+} from '@/capabilities/shell/server/teaching-brief-interactions';
+import { isLearnerLocalDay, learnerDayWindowUtc } from '@/core/learner-day';
 import {
   BRIEF_SEEN_ACTION,
   PRIMARY_ACTION_STARTED_ACTION,
@@ -71,14 +75,17 @@ export async function loadTeachingBriefReportInput(
         sql`${event.payload}->>'local_day' <= ${to}`,
       ),
     );
-  const briefSeen: BriefSeenFact[] = seenRows.map((row) => {
-    const p = toRecord(row.payload);
-    return {
-      brief_id: row.brief_id,
-      local_day: String(p.local_day ?? ''),
-      seen_at: String(p.seen_at ?? ''),
-    };
-  });
+  // Validate at the boundary against the shared payload type: our writer always sets a valid
+  // local_day + seen_at, so a row missing them is a foreign / corrupt event — drop it rather than
+  // coerce to '' (which would phantom-count an empty day). No throw: one bad row never crashes the
+  // report.
+  const briefSeen: BriefSeenFact[] = [];
+  for (const row of seenRows) {
+    const p = row.payload as unknown as Partial<BriefSeenPayload>;
+    if (typeof p.local_day !== 'string' || !isLearnerLocalDay(p.local_day)) continue;
+    if (typeof p.seen_at !== 'string') continue;
+    briefSeen.push({ brief_id: row.brief_id, local_day: p.local_day, seen_at: p.seen_at });
+  }
 
   // primary_action_started — same local-day filter.
   const actionRows = await database
@@ -91,19 +98,24 @@ export async function loadTeachingBriefReportInput(
         sql`${event.payload}->>'local_day' <= ${to}`,
       ),
     );
-  const primaryActions: PrimaryActionFact[] = actionRows.map((row) => {
-    const p = toRecord(row.payload);
-    const resultEventId = p.result_event_id;
-    return {
+  const primaryActions: PrimaryActionFact[] = [];
+  for (const row of actionRows) {
+    const p = row.payload as unknown as Partial<PrimaryActionStartedPayload>;
+    // Drop rows missing a valid day / timestamp / kind (foreign or corrupt). action_kind is passed
+    // through unchecked-against-the-enum on purpose: the pure fn validates it against
+    // PRIMARY_ACTION_KINDS and counts any unrecognized value as missing data (never a NaN phantom).
+    if (typeof p.local_day !== 'string' || !isLearnerLocalDay(p.local_day)) continue;
+    if (typeof p.started_at !== 'string' || typeof p.action_kind !== 'string') continue;
+    primaryActions.push({
       brief_id: row.brief_id,
       action_kind: p.action_kind as PrimaryActionKind,
-      local_day: String(p.local_day ?? ''),
-      started_at: String(p.started_at ?? ''),
-      ...(typeof resultEventId === 'string' && resultEventId.length > 0
-        ? { result_event_id: resultEventId }
+      local_day: p.local_day,
+      started_at: p.started_at,
+      ...(typeof p.result_event_id === 'string' && p.result_event_id.length > 0
+        ? { result_event_id: p.result_event_id }
         : {}),
-    };
-  });
+    });
+  }
 
   // Conjecture proposal decisions — the canonical `rate` event, joined back to the proposal so
   // only conjecture decisions are counted. accept/edit split on the accept path's calibration
@@ -211,7 +223,8 @@ async function main(): Promise<void> {
   const asJson = process.argv.includes('--json');
   if (!from || !to) {
     console.error('usage: pnpm report:teaching-brief --from YYYY-MM-DD --to YYYY-MM-DD [--json]');
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
 
   const input = await loadTeachingBriefReportInput(db, from, to);
@@ -219,13 +232,17 @@ async function main(): Promise<void> {
   console.log(asJson ? JSON.stringify(report, null, 2) : formatTeachingBriefReport(report));
 }
 
-// CLI-gate: only run + exit as the CLI entry point so the DB test can import
-// loadTeachingBriefReportInput without the top-level run firing.
+// CLI-gate: only run as the CLI entry point so the DB test can import loadTeachingBriefReportInput
+// without the top-level run firing. NEVER process.exit() — that can terminate before a piped stdout
+// (`--json | tee`) is flushed, truncating the report. Instead set process.exitCode and close the
+// pg pool so the event loop drains and Node exits naturally AFTER stdout has flushed.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main()
-    .then(() => process.exit(0))
     .catch((err) => {
       console.error('[report-teaching-brief] failed:', err);
-      process.exit(1);
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      void db.$client.end();
     });
 }

@@ -168,5 +168,16 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     expect(
       (await post({ type: 'primary_action_started', brief_id: 'b1', action_kind: 'nope' })).status,
     ).toBe(400);
+    // result_event_id is scoped_practice-only — a non-scoped action carrying it is rejected.
+    expect(
+      (
+        await post({
+          type: 'primary_action_started',
+          brief_id: 'b1',
+          action_kind: 'accept_probe',
+          result_event_id: 'evt_x',
+        })
+      ).status,
+    ).toBe(400);
   });
 });

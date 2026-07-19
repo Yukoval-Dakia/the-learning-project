@@ -55,6 +55,25 @@ export interface RecordInteractionResult {
   idempotent: boolean;
 }
 
+// The two ledger payload shapes are the SINGLE contract between this writer and the offline
+// report reader (scripts/report-teaching-brief.ts imports them as types), so the read side is
+// connected to the write side at compile time and cannot silently drift from the fields written
+// here. All fields are always written; the reader still validates at the boundary (a foreign /
+// corrupt row is treated as missing data, never trusted blindly).
+export interface BriefSeenPayload {
+  brief_state: BriefState;
+  local_day: string;
+  seen_at: string;
+}
+
+export interface PrimaryActionStartedPayload {
+  action_kind: PrimaryActionKind;
+  local_day: string;
+  started_at: string;
+  /** Present only for scoped_practice (the confirmed outcome's probe_result event id). */
+  result_event_id?: string;
+}
+
 // `|` never appears in a cuid2 / `evt_*` event id, the fixed PrimaryActionKind enum, or a
 // `YYYY-MM-DD` day, so these composites collide iff every idempotency-key field matches.
 function briefSeenEventId(briefId: string, localDay: string): string {
@@ -82,7 +101,7 @@ async function appendInteraction(
     action: typeof BRIEF_SEEN_ACTION | typeof PRIMARY_ACTION_STARTED_ACTION;
     briefId: string;
     localDay: string;
-    payload: Record<string, unknown>;
+    payload: BriefSeenPayload | PrimaryActionStartedPayload;
     now: Date;
   },
 ): Promise<RecordInteractionResult> {
@@ -123,16 +142,17 @@ export async function recordBriefSeen(
   now: Date = new Date(),
 ): Promise<RecordInteractionResult> {
   const localDay = learnerLocalDay(now);
+  const payload: BriefSeenPayload = {
+    brief_state: input.briefState,
+    local_day: localDay,
+    seen_at: now.toISOString(),
+  };
   return appendInteraction(db, {
     id: briefSeenEventId(input.briefId, localDay),
     action: BRIEF_SEEN_ACTION,
     briefId: input.briefId,
     localDay,
-    payload: {
-      brief_state: input.briefState,
-      local_day: localDay,
-      seen_at: now.toISOString(),
-    },
+    payload,
     now,
   });
 }
@@ -149,17 +169,18 @@ export async function recordPrimaryActionStarted(
   now: Date = new Date(),
 ): Promise<RecordInteractionResult> {
   const localDay = learnerLocalDay(now);
+  const payload: PrimaryActionStartedPayload = {
+    action_kind: input.actionKind,
+    local_day: localDay,
+    started_at: now.toISOString(),
+    ...(input.resultEventId ? { result_event_id: input.resultEventId } : {}),
+  };
   return appendInteraction(db, {
     id: primaryActionEventId(input.briefId, input.actionKind, localDay),
     action: PRIMARY_ACTION_STARTED_ACTION,
     briefId: input.briefId,
     localDay,
-    payload: {
-      action_kind: input.actionKind,
-      local_day: localDay,
-      started_at: now.toISOString(),
-      ...(input.resultEventId ? { result_event_id: input.resultEventId } : {}),
-    },
+    payload,
     now,
   });
 }

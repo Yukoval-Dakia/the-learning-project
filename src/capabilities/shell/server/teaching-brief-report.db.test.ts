@@ -12,6 +12,7 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { learnerLocalDay } from '@/core/learner-day';
+import { BRIEF_SEEN_ACTION } from '@/core/schema/conjecture';
 import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
@@ -195,5 +196,34 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.probe_completion).toEqual({ numerator: 0, denominator: 1, rate: 0 });
     // The out-of-window outcome is absent too — completion and outcomes stay consistent.
     expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
+  });
+
+  it('drops a brief_seen row whose local_day is malformed (no phantom empty day)', async () => {
+    const today = learnerLocalDay(new Date());
+    // A foreign / corrupt row: a valid brief_seen action but a local_day that passes the SQL string
+    // range yet is not a real calendar date. The loader's isLearnerLocalDay guard must drop it
+    // (never coerce to '' and phantom-count a day).
+    await writeEvent(testDb(), {
+      id: 'bseen_malformed',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: BRIEF_SEEN_ACTION,
+      subject_kind: 'event',
+      subject_id: 'b_foreign',
+      payload: {
+        brief_state: 'finding',
+        local_day: `${today}-extra`,
+        seen_at: new Date().toISOString(),
+      },
+      ingest_at: new Date(),
+    });
+
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+    expect(report.days_with_briefs).toBe(0);
+    expect(report.brief_days_seen).toBe(0);
+    expect(report.total_brief_seen_events).toBe(0);
   });
 });

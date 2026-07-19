@@ -360,24 +360,43 @@ export const TeachingBriefAckResponseSchema = z
 // or a `primary_action_started` (started the prepared action). `brief_id` is the stable brief
 // id (= the conjecture proposal event id). No answer / claim text is ever accepted — only the
 // action kind and the optional confirmed-outcome `result_event_id` (scoped_practice join key).
-export const TeachingBriefInteractionBodySchema = z.discriminatedUnion('type', [
-  z
-    .object({
-      type: z.literal('brief_seen'),
-      brief_id: z.string().min(1),
-      brief_state: z.enum(BRIEF_STATES),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('primary_action_started'),
-      brief_id: z.string().min(1),
-      action_kind: z.enum(PRIMARY_ACTION_KINDS),
-      // Present only for scoped_practice (the confirmed outcome's probe_result event id).
-      result_event_id: z.string().min(1).optional(),
-    })
-    .strict(),
-]);
+export const TeachingBriefInteractionBodySchema = z
+  .discriminatedUnion('type', [
+    z
+      .object({
+        type: z.literal('brief_seen'),
+        brief_id: z.string().min(1),
+        brief_state: z.enum(BRIEF_STATES),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal('primary_action_started'),
+        brief_id: z.string().min(1),
+        action_kind: z.enum(PRIMARY_ACTION_KINDS),
+        // Present only for scoped_practice (the confirmed outcome's probe_result event id) — the
+        // "only scoped_practice may carry it" invariant is enforced by the superRefine below.
+        result_event_id: z.string().min(1).optional(),
+      })
+      .strict(),
+  ])
+  // The result_event_id join key is meaningful ONLY for scoped_practice (accept_probe / answer_probe
+  // have no probe_result yet), so reject it on any other action rather than leave the constraint in a
+  // comment. A discriminatedUnion member cannot itself carry a refine (that yields a ZodEffects the
+  // union rejects — mirrors TeachingBriefSchema's own union-level superRefine), so it lives here.
+  .superRefine((body, ctx) => {
+    if (
+      body.type === 'primary_action_started' &&
+      body.action_kind !== 'scoped_practice' &&
+      body.result_event_id !== undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'result_event_id is only allowed for the scoped_practice action',
+        path: ['result_event_id'],
+      });
+    }
+  });
 
 export const TeachingBriefInteractionResponseSchema = z
   .object({
