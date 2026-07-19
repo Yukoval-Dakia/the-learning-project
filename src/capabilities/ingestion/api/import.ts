@@ -289,14 +289,23 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
               ? 'medium'
               : 'low';
           // YUK-221 (#919 review) — extraction order is authoritative (ordinal = true
-          // reading position). A virtual card (merge/split product) inserts back at the
-          // position of its content source(s), so its ordinal = the MIN ordinal of its
-          // source blocks. This keeps virtual and direct-imported blocks in ONE ordinal
-          // namespace; a payload-index number would collide with extraction ordinals in
-          // the same session and degrade the sort to the (ordinal, id) cuid2 tiebreak.
-          // Multiple split cards off one source share that ordinal; (ordinal, id) tiebreaks
-          // them. Fallback to the payload index only when no source row resolved (defensive:
-          // a virtual card always has ≥1 validated source above).
+          // reading position). This else-branch serves TWO block kinds, so the ordinal
+          // source differs by which one we're inserting:
+          //   - Virtual merge/split card (has ≥1 source_block_id): inserts back at the
+          //     position of its content source(s), so ordinal = MIN(source ordinals). This
+          //     keeps virtual and direct-imported blocks in ONE ordinal namespace (a
+          //     payload-index number would collide with extraction ordinals in the same
+          //     session). Multiple split cards off one source share that ordinal; the
+          //     (ordinal, id) sort key tiebreaks them (no re-chaining).
+          //   - Manual block (block_id undefined + source_block_ids empty, `isManual`
+          //     above): has NO source to derive from, so blockIndex (the import payload
+          //     array index) is its PRIMARY ordinal — this is the manual path, not a
+          //     defensive fallback for virtual cards.
+          // NOTE: a manual block's payload-index ordinal CAN collide with a same-session
+          // extraction ordinal, degrading that pair back to the (ordinal, id) cuid2
+          // tiebreak. Giving manual blocks a true positional ordinal is out of YUK-221
+          // scope (this ticket persists extraction/import-array order, not manual authoring
+          // position).
           const ordinal =
             sourceRows.length > 0 ? Math.min(...sourceRows.map((r) => r.ordinal)) : blockIndex;
 
