@@ -75,9 +75,12 @@ describe('ratingFromCoarseOutcome (practice copy)', () => {
   // so drive it via run() with a stub computeNext and compare the resulting rating.
   it.each(['correct', 'partial', 'incorrect', 'unsupported'] as const)(
     'agrees with the core fsrs scheduler copy for coarse_outcome=%s',
-    (outcome) => {
+    async (outcome) => {
       const computeNext = vi.fn<ComputeNextFn>().mockReturnValue(STEP);
-      const decision = fsrsSchedulerCapability.run({
+      // run()'s interface return type is SchedulingDecision | Promise<SchedulingDecision>
+      // (the fsrs impl is sync); await narrows it to SchedulingDecision and is a no-op on
+      // the sync value, so `.rating` type-checks.
+      const decision = await fsrsSchedulerCapability.run({
         prevState: null,
         judgeResult: judge(outcome),
         now: NOW,
