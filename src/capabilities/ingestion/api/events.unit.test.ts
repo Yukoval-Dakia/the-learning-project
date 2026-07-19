@@ -133,6 +133,37 @@ describe('GET /api/ingestion/[id]/events contract', () => {
     expect(subscribe).not.toHaveBeenCalled();
   });
 
+  it('F4 abort during initial replay: aborting mid-await does not subscribe (no leak on closed stream)', async () => {
+    // Regression (PR #959 round-1): if the client disconnects while the initial
+    // `await computeReplay` is still pending, close() runs before `unsub` is
+    // assigned, so its idempotent short-circuit can never clean up. Without the
+    // `if (closed) return` guard, subscribe() still runs after the await resolves
+    // and leaks a permanent sse_router subscriber onto the already-closed stream.
+    let resolveReplay: (rows: unknown[]) => void = () => {};
+    computeReplay.mockReturnValue(
+      new Promise<unknown[]>((res) => {
+        resolveReplay = res;
+      }),
+    );
+
+    const controller = new AbortController();
+    const request = new Request('http://localhost/api/ingestion/session_midabort/events', {
+      signal: controller.signal,
+    });
+
+    const response = await GET(request, { id: 'session_midabort' });
+    // start() is now parked at `await computeReplay`. Disconnect before it resolves.
+    controller.abort();
+    // Let the replay resolve; start() resumes and hits the closed guard.
+    resolveReplay([]);
+    await flush();
+
+    // No live subscription may be registered (it could never be torn down).
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(unsubscribe).not.toHaveBeenCalled();
+    await (response.body as ReadableStream).cancel().catch(() => {});
+  });
+
   it('F4 disconnect leak: aborting after subscribe unsubscribes exactly once (idempotent close)', async () => {
     computeReplay.mockResolvedValue([]);
     const controller = new AbortController();

@@ -46,14 +46,22 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         }
       };
 
-      const emit = (id: number, data: unknown) => {
+      // 统一 SSE 帧写入：已关闭则跳过；enqueue 失败（流已 error/close）标记 closed。
+      const emitSseFrame = (frame: string) => {
         if (closed) return;
-        const payload = `id: ${id}\ndata: ${JSON.stringify(data)}\n\n`;
         try {
-          controller.enqueue(encoder.encode(payload));
+          controller.enqueue(encoder.encode(frame));
         } catch {
           closed = true;
         }
+      };
+
+      const emit = (id: number, data: unknown) => {
+        emitSseFrame(`id: ${id}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const emitError = () => {
+        emitSseFrame('event: error\ndata: {"error":"stream_failed"}\n\n');
       };
 
       // F4：abort 监听器在任何 await 之前注册 —— 客户端在初始 replay 期间断线也能
@@ -80,6 +88,12 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           });
         }
 
+        // F4 race：初始 replay await 期间客户端可能已断线 —— 那时 close() 已跑过，
+        // 但 unsub 尚未赋值，close() 的幂等短路使它永不再清。若此处不早退，await 返回后
+        // subscribe() 仍会在已关流上挂一个永不清理的 sse_router 订阅（永久泄漏）。
+        // 已关闭则不再起订阅。（replay for-loop 的 emit 已由 emitSseFrame 的 closed 前检守卫。）
+        if (closed) return;
+
         unsub = subscribe('ingestion_session', businessId, async (notification) => {
           try {
             const incoming = await computeReplay(db, {
@@ -105,16 +119,6 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         // 通知客户端并关闭流 —— 而非让 promise 静默 reject、流永不产数据永不关闭。
         emitError();
         close();
-      }
-
-      function emitError() {
-        if (closed) return;
-        const payload = 'event: error\ndata: {"error":"stream_failed"}\n\n';
-        try {
-          controller.enqueue(encoder.encode(payload));
-        } catch {
-          // already closed / errored
-        }
       }
     },
   });
