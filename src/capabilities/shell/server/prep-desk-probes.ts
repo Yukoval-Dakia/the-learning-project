@@ -16,14 +16,13 @@ import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
   PROBE_RESULT_ACTION,
-} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+} from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
-// Single-source the probe contract (source string / result action / cap) from
-// probe-lifecycle — no literal drift (CodeRabbit review-784). The 备课台 read model is
-// already agency-conjecture-coupled by concept, so this is a sanctioned dependency.
+// Single-source the persisted probe contract from core without reaching into the
+// agency capability's server implementation.
 export const ACTIVE_PROBES_MAX = MAX_CONCURRENT_ACTIVE_PROBES;
 
 export interface ActiveProbe {

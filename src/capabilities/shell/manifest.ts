@@ -17,6 +17,7 @@ import {
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
   SubjectListResponseSchema,
+  TeachingBriefResponseSchema,
   WorkbenchSummaryResponseSchema,
 } from './api/contracts';
 
@@ -149,6 +150,16 @@ export const shellCapability = defineCapability({
         responses: { 200: PrepDeskProbesResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/prep-desk-probes').then((m) => m.GET),
+      },
+      // YUK-706 (P0F/2) — unified, read-only TeachingBrief. Projects one globally
+      // preferred outcome > active probe > fresh finding; never exposes calibration.
+      {
+        method: 'GET',
+        path: '/api/prep-desk/brief',
+        operationId: 'getTeachingBrief',
+        responses: { 200: TeachingBriefResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/prep-desk-brief').then((m) => m.GET),
       },
     ],
   },
