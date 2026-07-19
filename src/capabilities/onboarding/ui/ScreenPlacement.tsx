@@ -534,11 +534,7 @@ function PlacementQuestionCard({
             )}
           </div>
           {uploadErr && (
-            <div
-              className="ob-pl-hint"
-              role="alert"
-              style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}
-            >
+            <div className="ob-pl-upload-err" role="alert">
               <LoomIcon name="alert" size={13} />
               {uploadErr}
             </div>

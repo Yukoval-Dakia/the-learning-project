@@ -130,7 +130,7 @@ function EdgeProposalRow({
         </Btn>
       </div>
       {failed && (
-        <div className="meta" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
+        <div className="meta" role="alert" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
           操作失败，请重试。
         </div>
       )}

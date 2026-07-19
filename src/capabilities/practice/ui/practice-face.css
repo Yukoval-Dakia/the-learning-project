@@ -958,6 +958,20 @@
   padding: 0;
   cursor: pointer;
 }
+.pfp-saved.is-failed:hover {
+  color: var(--ink-2);
+  text-decoration: underline;
+}
+.pfp-saved.is-failed:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
+.pfp-saved.is-failed:disabled {
+  cursor: default;
+  opacity: 0.6;
+  text-decoration: none;
+}
 
 /* ============ 结果页 / 复盘 result & retro ============ */
 .pfr {

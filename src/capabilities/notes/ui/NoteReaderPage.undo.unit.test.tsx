@@ -3,6 +3,7 @@
 // an AI revision silently did nothing while the row still offered 还原. A failure must
 // surface a toast (mirrors the sibling saveM.onError).
 
+import { ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -83,6 +84,18 @@ describe('NoteReaderPage undo failure (YUK-713)', () => {
     await user.click(await screen.findByRole('button', { name: /还原/ }));
 
     expect(await screen.findByText(/还原失败/)).toBeTruthy();
+    expect(screen.queryByText('已还原该次 AI 修订。')).toBeNull();
+  });
+
+  it('shows the version-conflict copy when undo raises a 409 (concurrent drift)', async () => {
+    // undoAiChange turns the 200 'skipped:version_conflict' into a 409 ApiError.
+    mocks.undoAiChange.mockRejectedValue(new ApiError('undo skipped: version_conflict', 409));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /还原/ }));
+
+    expect(await screen.findByText(/版本冲突/)).toBeTruthy();
     expect(screen.queryByText('已还原该次 AI 修订。')).toBeNull();
   });
 });

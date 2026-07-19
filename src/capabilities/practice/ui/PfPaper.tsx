@@ -54,13 +54,38 @@ export function PfPaper({
   // 「草稿自动保存」and the exit / foot copy drop their 「进度保留」promise, since the
   // last draft PUT for that slot never landed.
   const [saveFailed, setSaveFailed] = useState<Record<string, boolean>>({});
+  // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
+  const [retrying, setRetrying] = useState(false);
   // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
   // request may update that slot's failed flag, or an old success would clear a
   // newer failure (and vice versa).
   const saveSeq = useRef<Record<string, number>>({});
   const sessionRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
+  // pending save, silently dropping A's last keystrokes while the UI still claims saved.
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
+  // carry a stale 「保存失败」into a different paper; clear pending timers in place (keep
+  // the map identity so the unmount cleanup below always sees the live timers).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
+  useEffect(() => {
+    setSaveFailed({});
+    saveSeq.current = {};
+    for (const k of Object.keys(saveTimers.current)) {
+      clearTimeout(saveTimers.current[k]);
+      delete saveTimers.current[k];
+    }
+  }, [artifactId]);
+
+  // Clear any pending debounce timers on unmount (no setState after teardown).
+  useEffect(() => {
+    const timers = saveTimers.current;
+    return () => {
+      for (const t of Object.values(timers)) clearTimeout(t);
+    };
+  }, []);
 
   // 已有 session 复用；没有则开卷即建（answer/submit 都需要 session_id）。
   useEffect(() => {
@@ -134,10 +159,10 @@ export function PfPaper({
   // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
   const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
     const sid = sessionRef.current;
-    if (!sid) return;
+    if (!sid) return Promise.resolve();
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
-    void savePaperAnswer(artifactId, {
+    return savePaperAnswer(artifactId, {
       session_id: sid,
       question_id: questionId,
       part_ref: partRef,
@@ -155,21 +180,26 @@ export function PfPaper({
 
   const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)]);
   const retryFailedSaves = () => {
-    for (const s of slots) {
-      const k = slotKey(s);
-      if (saveFailed[k]) runSave(k, s.question_id, s.part_ref, answers[k] ?? '');
-    }
+    if (retrying) return;
+    // Skip already-submitted slots — a draft PUT to a submitted slot has undefined
+    // backend behaviour (setAnswer guards the same way).
+    const pending = slots
+      .filter((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)))
+      .map((s) => runSave(slotKey(s), s.question_id, s.part_ref, answers[slotKey(s)] ?? ''));
+    if (pending.length === 0) return;
+    setRetrying(true);
+    void Promise.allSettled(pending).finally(() => setRetrying(false));
   };
 
   const setAnswer = (v: string) => {
     setAnswers((a) => ({ ...a, [curKey]: v }));
     // 草稿自动保存（防抖 800ms；已提交的 slot 不再写草稿）。
     if (submittedKeys.has(curKey)) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
     const key = curKey;
     const questionId = cur.question_id;
     const partRef = cur.part_ref;
-    saveTimer.current = setTimeout(() => runSave(key, questionId, partRef, v), 800);
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => runSave(key, questionId, partRef, v), 800);
   };
 
   const goPos = (n: number) => {
@@ -216,9 +246,14 @@ export function PfPaper({
         </Btn>
         <span className="pfp-title">{detail.title}</span>
         {anySaveFailed ? (
-          <button type="button" className="pfp-saved is-failed" onClick={retryFailedSaves}>
+          <button
+            type="button"
+            className="pfp-saved is-failed"
+            onClick={retryFailedSaves}
+            disabled={retrying}
+          >
             <LoomIcon name="alert" size={12} />
-            保存失败 · 重试
+            {retrying ? '重试中…' : '保存失败 · 重试'}
           </button>
         ) : (
           <span className="pfp-saved">

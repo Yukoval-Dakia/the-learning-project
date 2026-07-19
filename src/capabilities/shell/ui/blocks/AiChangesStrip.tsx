@@ -56,11 +56,7 @@ export function AiChangesStrip({ now }: { now: Date }) {
         empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
       >
         {undoFailed && (
-          <div
-            className="meta"
-            role="alert"
-            style={{ color: 'var(--again-ink)', marginBottom: 'var(--s-2)' }}
-          >
+          <div className="meta strip-undo-err" role="alert">
             撤销失败，请重试。
           </div>
         )}

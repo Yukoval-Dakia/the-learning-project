@@ -40,6 +40,15 @@ function changeActorLabel(actorRef: string): string {
   return actorRef === 'user' || actorRef.startsWith('user:') ? '你' : 'AI';
 }
 
+// Optimistic-lock conflict detection shared by the save + undo error paths (undo raises a
+// synthetic 409 for the version_conflict status). Coerces non-Error rejections safely so
+// the handler itself never throws.
+function isVersionConflict(e: unknown): boolean {
+  if (e instanceof ApiError && e.status === 409) return true;
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes('409') || msg.includes('conflict');
+}
+
 export default function NoteReaderPage({
   id,
   navigate,
@@ -105,6 +114,16 @@ export default function NoteReaderPage({
     setTimeout(() => setToast(null), 5000);
   };
 
+  // One conflict-detection rule for both mutations (see isVersionConflict) — the version
+  // conflict copy, else an action-prefixed failure with the safely-coerced message.
+  const conflictToast = (e: unknown, conflictMsg: string, failPrefix: string) => {
+    say(
+      isVersionConflict(e)
+        ? conflictMsg
+        : `${failPrefix}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  };
+
   const saveM = useMutation({
     mutationFn: () =>
       saveBodyBlocks(id, {
@@ -118,14 +137,12 @@ export default function NoteReaderPage({
       setDraft(null);
       say('已保存——版本推进，refine 痕迹照常累积。');
     },
-    onError: (e) => {
-      const msg = (e as Error).message;
-      say(
-        msg.includes('409') || msg.includes('conflict')
-          ? '版本冲突：这篇笔记在别处被改过（可能是 AI refine）——刷新后再编辑。'
-          : `保存失败：${msg}`,
-      );
-    },
+    onError: (e) =>
+      conflictToast(
+        e,
+        '版本冲突：这篇笔记在别处被改过（可能是 AI refine）——刷新后再编辑。',
+        '保存失败',
+      ),
   });
 
   const undoM = useMutation({
@@ -135,15 +152,10 @@ export default function NoteReaderPage({
       void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
       say('已还原该次 AI 修订。');
     },
-    // 没有 onError 时这条「还原」promise 会静默失败——用户以为已回滚（mirror saveM.onError）。
-    onError: (e) => {
-      const msg = (e as Error).message;
-      say(
-        msg.includes('409') || msg.includes('conflict')
-          ? '版本冲突：这篇笔记在别处被改过——刷新后再试还原。'
-          : `还原失败：${msg}`,
-      );
-    },
+    // undoAiChange raises a 409 on 'skipped:version_conflict' (a 200 that did NOT restore),
+    // so this branch now catches the concurrent-drift case too (mirror saveM.onError).
+    onError: (e) =>
+      conflictToast(e, '版本冲突：这篇笔记在别处被改过——刷新后再试还原。', '还原失败'),
   });
 
   // S4 (YUK-335)：空/载态从裸 .quiet-empty 一行字升级为 SkLines/EmptyState

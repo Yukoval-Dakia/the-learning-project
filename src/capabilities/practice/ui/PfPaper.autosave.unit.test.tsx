@@ -48,6 +48,27 @@ const textDetail = {
   ],
 };
 
+function textSlot(id: string, prompt: string) {
+  return {
+    question_id: id,
+    part_ref: null,
+    section_index: 0,
+    question: { id, kind: 'short', prompt_md: prompt, choices_md: [], difficulty: 1 },
+    slot_state: { draft: { content_md: '' }, submission: null },
+  };
+}
+
+const twoSlotDetail = {
+  ...textDetail,
+  sections: [
+    {
+      section_index: 0,
+      knowledge_focus_names: [],
+      slots: [textSlot('question_1', '第一题'), textSlot('question_2', '第二题')],
+    },
+  ],
+};
+
 function renderPaper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -127,5 +148,29 @@ describe('PfPaper autosave failure (YUK-713)', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByRole('button', { name: '保存失败 · 重试' })).toBeTruthy();
     expect(screen.queryByText('草稿自动保存')).toBeNull();
+  });
+
+  it('does not drop slot A pending save when switching to slot B (per-slot debounce)', async () => {
+    mocks.getPaperDetail.mockResolvedValue(twoSlotDetail);
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    // Type in slot A, then switch to slot B within the debounce window and type there.
+    await user.type(screen.getByLabelText('作答'), 'A答');
+    await user.click(screen.getByRole('tab', { name: '2' }));
+    await user.type(screen.getByLabelText('作答'), 'B答');
+
+    // With a shared timer, slot B's keystroke cancelled slot A's pending save entirely.
+    // Per-slot timers keep both — both drafts must reach the server.
+    await waitFor(
+      () => {
+        const ids = mocks.savePaperAnswer.mock.calls.map((c) => c[1].question_id);
+        expect(ids).toContain('question_1');
+        expect(ids).toContain('question_2');
+      },
+      { timeout: 2500 },
+    );
   });
 });
