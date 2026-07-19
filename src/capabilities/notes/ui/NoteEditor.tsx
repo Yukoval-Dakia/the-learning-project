@@ -9,7 +9,7 @@
 
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {
@@ -52,6 +52,12 @@ function withText(b: BodyBlock, text: string): BodyBlock {
   };
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
+  );
+}
+
 function ArtifactPicker({
   excludeId,
   onPick,
@@ -63,6 +69,37 @@ function ArtifactPicker({
 }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Array<{ id: string; title: string; type: string }>>([]);
+  const [searchState, setSearchState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const requestSeq = useRef(0);
+
+  const runSearch = (query: string) => {
+    const trimmed = query.trim();
+    const requestId = ++requestSeq.current;
+    if (!trimmed) {
+      setRows([]);
+      setSearchState('idle');
+      return;
+    }
+
+    setRows([]);
+    setSearchState('loading');
+    void searchArtifacts(trimmed, excludeId)
+      .then((result) => {
+        if (requestId !== requestSeq.current) return;
+        setRows(result.rows);
+        setSearchState('idle');
+      })
+      .catch((error: unknown) => {
+        if (requestId !== requestSeq.current) return;
+        if (isAbortError(error)) {
+          setSearchState('idle');
+          return;
+        }
+        setRows([]);
+        setSearchState('error');
+      });
+  };
+
   return (
     <div className="slash-menu fade-key" style={{ maxHeight: 280, overflowY: 'auto' }}>
       <div className="slash-head meta">交叉链 · 搜索笔记/学习项</div>
@@ -74,13 +111,21 @@ function ArtifactPicker({
         onChange={(e) => {
           const v = e.target.value;
           setQ(v);
-          if (v.trim().length >= 1) {
-            void searchArtifacts(v.trim(), excludeId).then((r) => setRows(r.rows));
-          } else {
-            setRows([]);
-          }
+          runSearch(v);
         }}
       />
+      {searchState === 'loading' && <output className="slash-menu-empty">正在搜索…</output>}
+      {searchState === 'error' && (
+        <>
+          <div className="slash-menu-empty" role="alert">
+            搜索失败，请重试。
+          </div>
+          <button type="button" className="slash-item" onClick={() => runSearch(q)}>
+            <LoomIcon name="refresh" size={13} />
+            <span>重试搜索</span>
+          </button>
+        </>
+      )}
       {rows.map((a) => (
         <button type="button" key={a.id} className="slash-item" onClick={() => onPick(a)}>
           <LoomIcon name="link" size={14} />
