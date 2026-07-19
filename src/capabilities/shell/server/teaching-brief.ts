@@ -491,7 +491,17 @@ export async function validateAckableOutcome(
   return { value: { proposal, probe, resolution, conjectureEventId } };
 }
 
-async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
+/**
+ * The single primary outcome the reader would currently deliver (newest un-acked, in-window,
+ * fully-canonical outcome), or null. Exported so the ack writer can require its target to be
+ * exactly this — making the writer's ackable set identical to the reader's delivered set,
+ * including the SELECTION dimension (an older outcome hidden behind a newer primary is not
+ * ackable and resurfaces once the newer one is acked — YUK-708 review round-5, codex P2).
+ */
+export async function loadOutcomeBrief(
+  db: Db,
+  now: Date,
+): Promise<OutcomeConfirmedTeachingBrief | OutcomeRetiredTeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
     .select()

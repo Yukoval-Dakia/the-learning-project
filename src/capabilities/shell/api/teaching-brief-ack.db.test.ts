@@ -319,4 +319,47 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(res.status).toBe(409);
     expect(await ackEvents(resultId)).toHaveLength(0);
   });
+
+  // Round-5 (codex P2, final dimension): the ack must target the reader's CURRENT primary
+  // outcome — an older, fully-valid outcome hidden behind a newer primary is not ackable
+  // (would ack something the user never sees), and it resurfaces once the newer is acked.
+  it('rejects a non-primary outcome hidden behind a newer one; it resurfaces after the primary is acked', async () => {
+    const older = await seedOutcome('confirmed', {
+      resultAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    const newer = await seedOutcome('retired', {
+      resultAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
+
+    // The older outcome is hidden behind the newer primary → not the current primary → 409.
+    const hidden = await post({ probe_result_event_id: older });
+    expect(hidden.status).toBe(409);
+    expect(await ackEvents(older)).toHaveLength(0);
+
+    // The newer outcome IS the current primary → ackable.
+    expect((await post({ probe_result_event_id: newer })).status).toBe(200);
+
+    // With the newer acked (NOT-EXISTS-excluded), the older resurfaces as primary → ackable.
+    const resurfaced = await post({ probe_result_event_id: older });
+    expect(resurfaced.status).toBe(200);
+    expect(await ackEvents(older)).toHaveLength(1);
+  });
+
+  // Round-5 (OCR minor): a self-authored ack payload missing brief_id is a data-integrity
+  // signal (wire contract requires min(1)), surfaced as 500 rather than papered over with ''.
+  it('500 ack_payload_corrupt when an existing ack has no brief_id', async () => {
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: BRIEF_ACK_ACTION,
+      subject_kind: 'event',
+      subject_id: resultId,
+      // Corrupt: an ack event without the required brief_id.
+      payload: { acknowledged_at: new Date().toISOString() },
+    });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(500);
+  });
 });

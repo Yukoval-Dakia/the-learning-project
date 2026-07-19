@@ -15,15 +15,20 @@
 // Idempotency (acceptance items 4/5): one effective ack per outcome. The ack is keyed
 // on the probe_result event id — `(action=BRIEF_ACK_ACTION, subject_kind='event',
 // subject_id=<result id>)`. An existing ack short-circuits to idempotent:true BEFORE any
-// chain validation (so a successful retry still resolves even after the proposal was
-// retracted or the probe drifted). Only a first ack runs the full-chain gate. A per-target
-// advisory lock (hashtextextended on the result id, mirroring answerProbe) serializes the
-// first-write race so two "知道了" clicks can never both insert.
+// deliverability check (so a successful retry still resolves even after the proposal was
+// retracted or the probe drifted). A per-target advisory lock (hashtextextended on the
+// result id, mirroring answerProbe) serializes the first-write race so two "知道了" clicks
+// can never both insert.
+//
+// Deliverability (acceptance items 6/8, review rounds 1–5): a FIRST ack must target the
+// outcome the reader would currently deliver. Rather than re-derive each dimension, it
+// reuses the reader's own primary selection (loadOutcomeBrief) and requires the target to
+// BE that primary — so the writer's ackable set is identical to the reader's delivered set:
+// canonical body, TTL window, chain (probe + accepted proposal), correction folding, AND
+// selection (an older outcome hidden behind a newer primary is not ackable and resurfaces
+// once the newer one is acked — contract §4.2/§5).
 
-import {
-  isCandidateError,
-  validateAckableOutcome,
-} from '@/capabilities/shell/server/teaching-brief';
+import { loadOutcomeBrief } from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
@@ -66,10 +71,20 @@ async function findExistingAck(
     .limit(1);
   if (!existing) return null;
   const briefId = (existing.payload as Record<string, unknown> | null)?.brief_id;
+  // brief_id is our own append-only payload; a missing/empty one is a real data-integrity
+  // signal (the wire contract requires min(1)), so surface it loudly rather than papering it
+  // over with '' (which would violate the response schema). Round-5 OCR minor.
+  if (typeof briefId !== 'string' || briefId.length === 0) {
+    throw new ApiError(
+      'ack_payload_corrupt',
+      `ack event ${existing.id} for ${probeResultEventId} has no brief_id`,
+      500,
+    );
+  }
   return {
     brief_acknowledgement_event_id: existing.id,
     probe_result_event_id: probeResultEventId,
-    brief_id: typeof briefId === 'string' ? briefId : '',
+    brief_id: briefId,
     idempotent: true,
   };
 }
@@ -79,44 +94,35 @@ async function findExistingAck(
  * `experimental:brief_acknowledged` event keyed on the probe_result event, or
  * short-circuits to the existing ack when one is already recorded.
  *
- * Idempotency wins over the chain gate: an already-recorded ack returns idempotent:true
- * BEFORE any validation, so a retry after a lost response succeeds even if the proposal
- * was since retracted or the probe drifted (round-3, codex P2). Only a FIRST ack is
- * fail-closed on a bad target: the id MUST resolve to a delivered, ackable outcome —
- * a canonical result whose full chain is intact (existing canonical mind-probe + accepted
- * conjecture proposal). 404 when the result is absent, 409 when the chain is corrupt or
- * orphaned (illegal resolution/outcome pair, provenance mismatch, missing probe, or
- * non-accepted proposal). This reuses the reader's `validateAckableOutcome` gate so a
- * result the brief would never display can never be acked. We only READ provenance, never
- * write derived status back onto proposal/question/result (contract §4.2).
+ * Idempotency wins over the deliverability check: an already-recorded ack returns
+ * idempotent:true BEFORE any validation, so a retry after a lost response succeeds even if
+ * the proposal was since retracted or the probe drifted (round-3, codex P2). A FIRST ack is
+ * fail-closed: 404 when the result event is absent; 409 (`not_current_primary`) when the
+ * target is not the outcome the reader would currently deliver — corrupt/orphan/expired
+ * results, and an older outcome temporarily hidden behind a newer primary, all fail here and
+ * (for the older one) resurface once the newer is acked (contract §4.2/§5). We only READ
+ * provenance, never write derived status back onto proposal/question/result (contract §4.2).
  */
 export async function acknowledgeTeachingBriefOutcome(
   db: Db,
   probeResultEventId: string,
   now: Date = new Date(),
 ): Promise<AcknowledgeBriefResult> {
-  // Idempotent short-circuit FIRST, before any chain validation: an already-recorded ack
-  // is immutable + append-only, so returning it is always correct regardless of whether
-  // the outcome's chain is still valid now. Re-gating a successful retry through
-  // validateAckableOutcome would 409 and surface a completed ack as a failure (round-3,
-  // codex P2). Safe without the lock; the lock below closes the first-write race.
+  // Idempotent short-circuit FIRST, before any deliverability check: an already-recorded ack
+  // is immutable + append-only, so returning it is always correct regardless of whether the
+  // outcome is still deliverable now. Re-gating a successful retry would surface a completed
+  // ack as a failure (round-3, codex P2). Safe without the lock; the lock below closes the
+  // first-write race.
   const prior = await findExistingAck(db, probeResultEventId);
   if (prior) return prior;
 
-  // First ack — the target must be a delivered, ackable outcome. Load the result (404 if
-  // absent), then run the full-chain gate (single source of truth with the reader):
-  // canonical result + existing canonical mind-probe + accepted conjecture proposal.
-  // Read-only, so it runs before the append transaction; any break fails closed with 409.
+  // First ack — a 404 for a non-existent result (precise), then defer the WHOLE
+  // deliverability judgment to the reader itself: require the target to be exactly the
+  // outcome loadOutcomeBrief would currently deliver. This makes the writer's ackable set
+  // identical to the reader's delivered set — every dimension (canonical, TTL window, chain,
+  // correction folding) plus SELECTION — with zero re-derivation (round-5, codex P2).
   const [result] = await db
-    .select({
-      id: event.id,
-      action: event.action,
-      subject_kind: event.subject_kind,
-      subject_id: event.subject_id,
-      caused_by_event_id: event.caused_by_event_id,
-      created_at: event.created_at,
-      payload: event.payload,
-    })
+    .select({ id: event.id })
     .from(event)
     .where(eq(event.id, probeResultEventId))
     .limit(1);
@@ -127,15 +133,18 @@ export async function acknowledgeTeachingBriefOutcome(
       404,
     );
   }
-  const outcome = await validateAckableOutcome(db, result, now);
-  if (isCandidateError(outcome)) {
+  const primaryOutcome = await loadOutcomeBrief(db, now);
+  if (
+    primaryOutcome === null ||
+    primaryOutcome.current_outcome.probe_result_event_id !== probeResultEventId
+  ) {
     throw new ApiError(
-      'not_an_ackable_outcome',
-      `event ${probeResultEventId} is not an ackable outcome (${outcome.reason})`,
+      'not_current_primary',
+      `event ${probeResultEventId} is not the current primary outcome`,
       409,
     );
   }
-  const briefId = outcome.value.conjectureEventId;
+  const briefId = primaryOutcome.brief_id;
 
   // Append under the per-target advisory lock; re-check inside the lock so two concurrent
   // first-writes still produce exactly one anchor (the loser returns idempotent:true).

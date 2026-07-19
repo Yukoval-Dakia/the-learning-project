@@ -86,16 +86,24 @@ export function TeachingBriefBand() {
   const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const [liveMsg, setLiveMsg] = useState('');
+  // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
+  // does not land its failure on the brief the user is now looking at.
+  const latestBriefIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const prev = prevRef.current;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
+    latestBriefIdRef.current = brief?.brief_id ?? null;
     if (idChanged) {
+      // Clear ALL per-brief interaction state (loading + error, both decide and ack) so a
+      // prior candidate's spinner / error never bleeds onto the next one.
       setRevealed(false);
       setFailed(false);
       setAckFailed(false);
+      setDeciding(false);
+      setAcking(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -112,6 +120,7 @@ export function TeachingBriefBand() {
 
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
+    const targetId = brief.brief_id;
     setDeciding(true);
     setFailed(false);
     try {
@@ -126,14 +135,17 @@ export function TeachingBriefBand() {
         decision,
         error: error instanceof Error ? error.message : String(error),
       });
-      setFailed(true);
+      // Only surface the failure if THIS brief is still on screen — a swap since the click
+      // means the error belongs to a candidate the user no longer sees.
+      if (latestBriefIdRef.current === targetId) setFailed(true);
     } finally {
-      setDeciding(false);
+      if (latestBriefIdRef.current === targetId) setDeciding(false);
     }
   }
 
   async function acknowledge() {
     if (!brief || brief.prepared_action.kind !== 'acknowledge_outcome' || acking) return;
+    const targetId = brief.brief_id;
     setAcking(true);
     setAckFailed(false);
     try {
@@ -147,9 +159,10 @@ export function TeachingBriefBand() {
       console.warn('[teaching-brief] acknowledge failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      setAckFailed(true);
+      // Guard against a brief swap mid-flight (same parity as decide).
+      if (latestBriefIdRef.current === targetId) setAckFailed(true);
     } finally {
-      setAcking(false);
+      if (latestBriefIdRef.current === targetId) setAcking(false);
     }
   }
 
