@@ -27,26 +27,9 @@ import { eq, inArray, or } from 'drizzle-orm';
 
 import type { FoldEvent } from '@/core/projections/fold-event';
 import { type Db, type Tx, db } from '@/db/client';
-import {
-  artifact,
-  event,
-  goal,
-  knowledge,
-  knowledge_edge,
-  learning_item,
-  mistake_variant,
-  question_block,
-} from '@/db/schema';
-import type { ProjectionKind } from '@/server/projections/entity-registry';
-import { edgeRowToSnapshot, rowToFoldEvent } from '@/server/projections/gather';
-import {
-  artifactLiveRowToSnapshot,
-  goalLiveRowToSnapshot,
-  knowledgeLiveRowToSnapshot,
-  learningItemLiveRowToSnapshot,
-  mistakeVariantLiveRowToSnapshot,
-  questionBlockLiveRowToSnapshot,
-} from '@/server/projections/parity';
+import { event } from '@/db/schema';
+import { PROJECTION_ENTITIES, type ProjectionKind } from '@/server/projections/entity-registry';
+import { rowToFoldEvent } from '@/server/projections/gather';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 // PURE re-fold + diff (no side effects; golden-reaudit's CLI is import-gated so importing it here
 // never runs it, and its import of THIS module is type-only — no runtime cycle). Used by main() for
@@ -65,74 +48,39 @@ export interface GoldenSnapshot {
   events: FoldEvent[];
 }
 
-// Cross-entity event actions any gather pulls beyond its own subject_kind (Q2 reverse-index / Q3
-// merge / accept-rate chains). A GENEROUS superset — the pure reducers filter by id + action, so extra
-// rows are harmless, and this avoids re-implementing each gather's per-kind predicate here.
+// Cross-entity event actions any gather pulls beyond its own subject_kind (Q3 merge / accept-rate /
+// verify / edit chains). A GENEROUS superset — the pure reducers filter by id + action, so extra rows
+// are harmless, and this avoids re-implementing each gather's per-kind predicate here.
+//
+// YUK-549 (K8): bare 'propose' / 'generate' are DROPPED. Every reducer that consumes them guards on
+// subject_kind ∈ {knowledge, knowledge_edge} (foldKnowledgeNode's `action==='propose' &&
+// subject_kind==='knowledge'`; foldKnowledgeEdge's `action==='generate' && subject_kind==='knowledge_edge'`),
+// so those events are ALREADY captured by the `eq(subject_kind, kind)` leg for those two kinds, and no
+// OTHER kind's fold reads them. Keeping them here only pulled propose/generate for unrelated entities —
+// dead weight that never changed any fold result. (rate/correct stay a broad superset by design — their
+// subject is the proposal, chained on caused_by_event_id, so narrowing by entity is the fragile
+// re-implementation the independent review REFUTED as under-scope.)
 const CROSS_REF_ACTIONS = [
   'rate',
   'correct',
-  'propose',
-  'generate',
   'experimental:knowledge_merge',
   'experimental:variant_verify',
   'experimental:edit_question_block_structured',
 ] as const;
 
-// Per-kind TYPED row capture (review O8): each branch selects from its CONCRETE table so the
-// drizzle-inferred row type flows straight into the exported parity mapper — no `as never` bridge.
-// A renamed / re-typed schema column now fails HERE at compile time instead of silently producing a
-// corrupted golden baseline. The mappers are the SAME field-picks the parity assert / audit use, so
-// the golden shape matches what the fold reproduces.
+// Capture every live row → its imperative structural snapshot. YUK-549 (K10/K13): the per-kind typed
+// switch that used to live here is gone — the ONE registry read pass (gatherWithContext.liveSnapshots)
+// now owns the per-kind concrete-table read + the shared parity mapper, so the O8 compile-time
+// schema-safety (a renamed column fails at the typed read) lives in entity-registry.ts, and the golden
+// row shape can never drift from what the value/symmetric audit reproduces. `foldOne` from the same
+// read is unused here (a golden is imperative rows only) — the small prefetch it primes is negligible
+// for this manual, offline, one-shot capture.
 async function captureRowSnapshots(
   tx: Db | Tx,
   kind: ProjectionKind,
 ): Promise<Record<string, Record<string, unknown>>> {
-  const out: Record<string, Record<string, unknown>> = {};
-  switch (kind) {
-    case 'knowledge': {
-      const rows = await tx.select().from(knowledge);
-      for (const r of rows) out[r.id] = knowledgeLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'knowledge_edge': {
-      const rows = await tx.select().from(knowledge_edge);
-      for (const r of rows) out[r.id] = edgeRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'goal': {
-      const rows = await tx.select().from(goal);
-      for (const r of rows) out[r.id] = goalLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'mistake_variant': {
-      const rows = await tx.select().from(mistake_variant);
-      for (const r of rows)
-        out[r.id] = mistakeVariantLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'learning_item': {
-      const rows = await tx.select().from(learning_item);
-      for (const r of rows) out[r.id] = learningItemLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'artifact': {
-      const rows = await tx.select().from(artifact);
-      for (const r of rows) out[r.id] = artifactLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    case 'question_block': {
-      const rows = await tx.select().from(question_block);
-      for (const r of rows)
-        out[r.id] = questionBlockLiveRowToSnapshot(r) as Record<string, unknown>;
-      return out;
-    }
-    default: {
-      // Exhaustiveness backstop (review O4/O10 pattern): tsconfig lacks noImplicitReturns, so a
-      // missing case would silently return undefined for a future kind.
-      const _exhaustive: never = kind;
-      throw new Error(`captureRowSnapshots: unhandled ProjectionKind ${String(_exhaustive)}`);
-    }
-  }
+  const { liveSnapshots } = await PROJECTION_ENTITIES[kind].gatherWithContext(tx);
+  return Object.fromEntries(liveSnapshots);
 }
 
 /**

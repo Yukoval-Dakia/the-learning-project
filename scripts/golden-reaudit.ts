@@ -26,16 +26,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { foldArtifact } from '@/core/projections/artifact';
-import type { FoldEvent } from '@/core/projections/fold-event';
-import { foldGoal } from '@/core/projections/goal';
-import { foldKnowledgeNode } from '@/core/projections/knowledge';
-import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
-import { foldLearningItem } from '@/core/projections/learning_item';
-import { foldMistakeVariant } from '@/core/projections/mistake_variant';
-import { foldQuestionBlock } from '@/core/projections/question_block';
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
+// PURE reducer registry (K10/K13): its ONLY runtime imports are the seven @/core reducers — the exact
+// edges the removed per-reducer imports had — so this keeps golden-reaudit's "no DB" property (a value
+// import of the DB-heavy PROJECTION_ENTITIES would have pulled @/db/client and broken it).
+import { PROJECTION_FOLDS } from '@/server/projections/projection-folds';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import type { GoldenSnapshot } from './capture-golden';
 import { parseKindArg } from './projection-kind-arg';
@@ -60,38 +56,6 @@ export function parseGolden(text: string): GoldenSnapshot {
   return { ...parsed, capturedAt };
 }
 
-// Re-fold one golden id with the CURRENT reducer. edge folds against the golden live-edge mesh.
-function foldGoldenRow(
-  kind: ProjectionKind,
-  id: string,
-  events: FoldEvent[],
-  mesh: KnowledgeEdgeRowSnapshotT[],
-): Record<string, unknown> | null {
-  switch (kind) {
-    case 'knowledge':
-      return foldKnowledgeNode(id, events) as Record<string, unknown> | null;
-    case 'knowledge_edge':
-      return foldKnowledgeEdge(id, events, mesh) as Record<string, unknown> | null;
-    case 'goal':
-      return foldGoal(id, events) as Record<string, unknown> | null;
-    case 'mistake_variant':
-      return foldMistakeVariant(id, events) as Record<string, unknown> | null;
-    case 'learning_item':
-      return foldLearningItem(id, events) as Record<string, unknown> | null;
-    case 'artifact':
-      return foldArtifact(id, events) as Record<string, unknown> | null;
-    case 'question_block':
-      return foldQuestionBlock(id, events) as Record<string, unknown> | null;
-    default: {
-      // Exhaustiveness backstop (review O4): tsconfig lacks noImplicitReturns, so a missing case
-      // would silently return undefined — which diffSnapshots does NOT guard (only null) and would
-      // TypeError on Object.keys(undefined). Make a new ProjectionKind a compile error here.
-      const _exhaustive: never = kind;
-      throw new Error(`foldGoldenRow: unhandled ProjectionKind ${String(_exhaustive)}`);
-    }
-  }
-}
-
 export interface GoldenReauditResult {
   kind: ProjectionKind;
   checked: number;
@@ -112,9 +76,20 @@ export function reauditGolden(golden: GoldenSnapshot): GoldenReauditResult {
         ) as unknown as KnowledgeEdgeRowSnapshotT[])
       : [];
 
+  // K10/K13 — the pure per-kind reducer from the registry (was a local `foldGoldenRow` switch). edge
+  // folds against the golden live-edge mesh; every other kind ignores it.
+  const fold = PROJECTION_FOLDS[golden.kind];
+  // round-2 (OCR): golden.kind is JSON.parse + `as` cast, so a corrupted / newer-schema golden can carry
+  // an unknown kind → `PROJECTION_FOLDS[kind]` is undefined and `fold(...)` would throw an opaque
+  // "fold is not a function". Restore the old switch-default: fail loudly with the offending kind named.
+  if (!fold) {
+    throw new Error(
+      `reauditGolden: unknown ProjectionKind '${String(golden.kind)}' in golden — corrupted file or captured under a newer schema. Re-capture with pnpm capture:golden.`,
+    );
+  }
   const drifted: { id: string; diffs: string[] }[] = [];
   for (const [id, goldenRow] of Object.entries(golden.rows)) {
-    const folded = foldGoldenRow(golden.kind, id, events, mesh);
+    const folded = fold(id, events, mesh);
     const diffs = diffSnapshots(goldenRow, folded);
     if (diffs.length > 0) drifted.push({ id, diffs });
   }

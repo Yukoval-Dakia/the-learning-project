@@ -18,6 +18,7 @@
 // auditor only; no live write path imports them.
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import { foldArtifact } from '@/core/projections/artifact';
 import type { FoldEvent } from '@/core/projections/fold-event';
@@ -82,6 +83,72 @@ export function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
 }
 
 /**
+ * Prefetch the node-INDEPENDENT Q3 merge leg, PRE-GROUPED for O(1) per-node lookup. READ-ONLY.
+ * Returns a Map keyed by the ABSORBED node id (each `from_id` of every `experimental:knowledge_merge`
+ * propose event) → the merge events that archive that node. Built in ONE pass over the (rare) merge
+ * events; the equivalent SQL is `payload -> 'from_ids' @> [nodeId]`, so a node's entry is exactly the
+ * rows the per-node containment query returns.
+ *
+ * YUK-549 (K6, review round-1) — a full-table auditor folds N nodes; a FLAT array would re-scan every
+ * merge per node (O(N × merges) JS), eating the savings. The grouped Map is O(merges) once + O(1)/node.
+ */
+export async function prefetchKnowledgeMergeEvents(db: DbLike): Promise<Map<string, EventRow[]>> {
+  const merges = await db
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:knowledge_merge'));
+  // Index each merge under every from_id it archives (mirrors `payload -> 'from_ids' @> [nodeId]`:
+  // absent/non-array/non-string from_ids index under no node, as `@>` returning NULL yields no match).
+  const byFromId = new Map<string, EventRow[]>();
+  for (const m of merges) {
+    const fromIds = (m.payload as { from_ids?: unknown } | null)?.from_ids;
+    if (!Array.isArray(fromIds)) continue;
+    for (const fid of fromIds) {
+      if (typeof fid !== 'string') continue;
+      const list = byFromId.get(fid);
+      if (list) list.push(m);
+      else byFromId.set(fid, [m]);
+    }
+  }
+  return byFromId;
+}
+
+/**
+ * Prefetch the KNOWLEDGE-scoped rate leg, PRE-GROUPED for O(1) per-gathered-id lookup. READ-ONLY.
+ * Returns a Map keyed by `caused_by_event_id` → the `rate` events chained to a subject_kind='knowledge'
+ * event. Built in ONE join pass; rates with a NULL caused_by are dropped by the inner join (NULL matches
+ * no id), exactly as `WHERE caused_by IN (…)` excludes them.
+ *
+ * YUK-549 (K6):
+ *   - round-1: the caller looks up ONLY its own gathered ids (O(gatheredIds) per node), so folding N
+ *     nodes is O(rates) once + O(Σ gatheredIds), not the O(N × rates) a flat-array re-filter would cost.
+ *   - round-2 (OCR, unbounded-memory fix): every entity's proposal accept writes a `rate`
+ *     (goal / edge / artifact / learning_item …), so `WHERE action='rate'` alone loads the WHOLE
+ *     system's rates into memory. A knowledge node fold only chains rates to its gathered
+ *     subject_kind='knowledge' events, so we INNER JOIN each rate to the event it accepts and keep only
+ *     those whose accepted event is subject_kind='knowledge'. Byte-identical to the per-node
+ *     `caused_by IN (gatheredIds)` filter (a node's gathered ids are all subject_kind='knowledge'; the
+ *     Q2 accept-rate ids Q2 also gathers are never a rate's caused_by, so no rate keys under them).
+ */
+export async function prefetchKnowledgeRates(db: DbLike): Promise<Map<string, EventRow[]>> {
+  const accepted = alias(event, 'accepted_event');
+  const rows = await db
+    .select()
+    .from(event)
+    .innerJoin(accepted, eq(event.caused_by_event_id, accepted.id))
+    .where(and(eq(event.action, 'rate'), eq(accepted.subject_kind, 'knowledge')));
+  const byCausedBy = new Map<string, EventRow[]>();
+  for (const { event: r } of rows) {
+    const cb = r.caused_by_event_id;
+    if (cb === null) continue; // (join already excludes these; belt-and-suspenders for the map key)
+    const list = byCausedBy.get(cb);
+    if (list) list.push(r);
+    else byCausedBy.set(cb, [r]);
+  }
+  return byCausedBy;
+}
+
+/**
  * Gather the superset of events affecting `nodeId` and run the PURE node fold. READ-ONLY.
  *
  * The gather is the keystone of the node projection (see the long rationale on the node
@@ -89,10 +156,19 @@ export function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
  * Q3 (nodeId merged INTO another node) + the chained accept rates. Returns the projected
  * row or null (node never created / fully reverted). Writes NOTHING — the caller decides
  * (shell write-through vs auditor diff).
+ *
+ * YUK-549 (K6) — a full-table caller (the auditor) prefetches the node-INDEPENDENT Q3 merge leg and
+ * the rate leg ONCE, PRE-GROUPED by absorbed-node-id / caused-by-id (prefetchKnowledgeMergeEvents /
+ * prefetchKnowledgeRates), and threads the Maps in via `prefetchedMergeEvents` / `prefetchedRates`;
+ * this node does an O(1) merge lookup + an O(gatheredIds) rate lookup, no per-node re-scan. A
+ * single-node caller (the write-through shell, accept-time parity) passes nothing and each leg
+ * self-fetches here. Either way `byId` ends up with the identical row set.
  */
 export async function gatherAndFoldKnowledgeNode(
   db: DbLike,
   nodeId: string,
+  prefetchedMergeEvents?: Map<string, EventRow[]>,
+  prefetchedRates?: Map<string, EventRow[]>,
 ): Promise<KnowledgeRowSnapshotT | null> {
   // ── Q1: events whose subject_id IS nodeId ──────────────────────────────────────────
   // Covers genesis, auto_tag, reparent, archive, merge-as-into, split-as-from.
@@ -115,30 +191,45 @@ export async function gatherAndFoldKnowledgeNode(
 
   // ── Q3: nodeId archived because it was merged INTO another node ──────────────────────
   // The merge event's subject_id is the into_id, NOT nodeId; nodeId lives only in
-  // payload.from_ids. jsonb containment: payload -> 'from_ids' @> [nodeId].
-  const q3 = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:knowledge_merge'),
-        sql`${event.payload} -> 'from_ids' @> ${JSON.stringify([nodeId])}::jsonb`,
-      ),
-    );
+  // payload.from_ids. jsonb containment: payload -> 'from_ids' @> [nodeId]. The prefetched Map
+  // (YUK-549) is keyed by from_id, so `.get(nodeId)` returns the SAME rows the containment query does.
+  const q3 = prefetchedMergeEvents
+    ? (prefetchedMergeEvents.get(nodeId) ?? [])
+    : await db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:knowledge_merge'),
+            sql`${event.payload} -> 'from_ids' @> ${JSON.stringify([nodeId])}::jsonb`,
+          ),
+        );
 
   // Dedup the propose/mutation/genesis rows by event id (Q1/Q2/Q3 overlap).
   const byId = new Map<string, EventRow>();
   for (const r of [...q1, ...q2, ...q3]) byId.set(r.id, r);
 
   // ── Rate resolution ─────────────────────────────────────────────────────────────────
-  // The reducer needs the RATE events chained to the gathered propose/mutation events.
+  // The reducer needs the RATE events chained to the gathered propose/mutation events. The prefetched
+  // Map (YUK-549) is keyed by caused_by_event_id: look up each gathered id (O(gatheredIds)) — the same
+  // rows the `caused_by IN (gatheredIds)` query returns.
   const gatheredIds = [...byId.keys()];
   if (gatheredIds.length > 0) {
-    const rates = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, gatheredIds)));
-    for (const r of rates) byId.set(r.id, r);
+    if (prefetchedRates) {
+      for (const gid of gatheredIds) {
+        const chained = prefetchedRates.get(gid);
+        if (!chained) continue;
+        // Defensive re-check (round-2): the Map is built from action='rate' rows, but re-assert here so
+        // this leg can never absorb a non-rate event should a future, wider prefetch set be threaded in.
+        for (const r of chained) if (r.action === 'rate') byId.set(r.id, r);
+      }
+    } else {
+      const rates = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, gatheredIds)));
+      for (const r of rates) byId.set(r.id, r);
+    }
   }
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
