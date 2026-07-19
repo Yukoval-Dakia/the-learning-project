@@ -20,9 +20,11 @@
 // try/catch 兜成 'unknown'，让 subject 派生永不 crash 调用方（state.ts updateThetaForAttempt
 // 主路径绝不能因 subject 解析失败而 abort θ̂）。
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  batchResolveEffectiveDomains,
+  getEffectiveDomain,
+} from '@/capabilities/knowledge/server/domain';
 import type { Db, Tx } from '@/db/client';
-import { knowledge } from '@/db/schema';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { buildFamilyKey } from './family-key-format';
 
@@ -62,7 +64,7 @@ export async function resolveFamilyKeyForQuestion(
 }
 
 /**
- * 批量解析多题的 family_key → Map<questionId, family_key|null>。一次性加载活跃 knowledge 树做
+ * 批量解析多题的 family_key → Map<questionId, family_key|null>。一次性加载全量 knowledge 树做
  * **内存** effective-domain walk（不是 per-candidate 的 32-climb DB 往返），subject 派生单遍。
  *
  * orphan / 未知 domain → 'unknown'（同单题路径）。任一 kind/source/primaryKnowledgeId 缺失 → null。
@@ -74,30 +76,15 @@ export async function batchResolveFamilyKeys(
   const out = new Map<string, string | null>();
   if (items.length === 0) return out;
 
-  // 一次加载**全**knowledge 树（单用户，数百节点；**不**过滤 archived_at），内存里 climb
-  // effective domain。关键：与写/θ̂ 单题路径的 getEffectiveDomain（archived-INCLUSIVE，点查爬过
-  // archived 祖先）同语义——若此处沿用 resolveSubjectKnowledgeIds 的 archived-cutoff（停在
-  // archived 祖先），则「有效 domain 来自 archived 中间祖先」的 KC 在选题侧解析成 'unknown' 段、
-  // 与写侧 `<subject>:...` 键不匹配 → familyRow=null → effectiveFamilyB 静默 NO-OP（YUK-372 修复）。
-  const rows = await db
-    .select({
-      id: knowledge.id,
-      domain: knowledge.domain,
-      parent_id: knowledge.parent_id,
-    })
-    .from(knowledge);
-  const byId = new Map(rows.map((r) => [r.id, r]));
-
-  const effectiveDomain = (id: string): string | null => {
-    let current = byId.get(id);
-    const seen = new Set<string>();
-    while (current && !seen.has(current.id)) {
-      seen.add(current.id);
-      if (current.domain) return current.domain;
-      current = current.parent_id ? byId.get(current.parent_id) : undefined;
-    }
-    return null;
-  };
+  // Reuse getEffectiveDomain's canonical batch twin so archived-inclusive traversal AND the
+  // MAX_DEPTH boundary stay byte-identical to the write/θ̂ path. Re-inlining the tree climb here
+  // previously let a domain beyond 32 hops leak into selection while the single path fell back to
+  // `unknown` (YUK-722).
+  const primaryKnowledgeIds = items.flatMap((item) => {
+    const id = item.primaryKnowledgeId?.trim();
+    return id && item.kind && item.source ? [id] : [];
+  });
+  const domainByKid = await batchResolveEffectiveDomains(db, primaryKnowledgeIds);
 
   // 缓存 primaryKnowledgeId → subject（同一 KC 多题共享）。
   const subjectByKid = new Map<string, string>();
@@ -110,9 +97,7 @@ export async function batchResolveFamilyKeys(
     }
     let subject = subjectByKid.get(primaryKnowledgeId);
     if (subject === undefined) {
-      // 内存 walk（archived-inclusive：archived 祖先在 byId 内，walk 不在其处截断，与
-      // getEffectiveDomain 一致）；真 orphan（id 完全不在树里）→ null → 'unknown'。
-      const domain = effectiveDomain(primaryKnowledgeId);
+      const domain = domainByKid.get(primaryKnowledgeId) ?? null;
       subject = resolveKnownSubjectId(domain) ?? 'unknown';
       subjectByKid.set(primaryKnowledgeId, subject);
     }
