@@ -29,9 +29,9 @@
  *
  * 声明式 `SANCTIONED_WRITERS` registry（手维护，每条带 file:marker 反查证据 + role 分级）列出
  * 今天**合法**写每张 fold-owned 表的文件全集：projection shell（throat）/ core reducer /
- * gated-dual-path（命令式 applier，gate on projectionIsWriter，ON 时让位 shell）/ off-path-writer
- * （OFF 表的当前唯一合法写者，翻转前）/ edge-crud（edges.ts 规范边 CRUD，被 event-native supersede
- * 复用）/ seed（初始数据集播种）/ maintenance（非 fold 字段的旁路维护，如 embedding backfill）。
+ * gated-dual-path（命令式 applier，gate on projectionIsWriter，ON 时让位 shell）/
+ * event-native-by-caller（raw write，调用者负责同事务事件）/ off-path-writer（OFF 表当前唯一
+ * 合法写者，翻转前）/ seed（初始数据集播种）/ maintenance（非 fold 字段旁路维护）。
  *
  * 扫描器（`findWriteSites`）在**剥注释保字符串**的源码上抓每个写点：
  *   - Drizzle 形：`.update(<table>)` / `.insert(<table>)` / `.delete(<table>)`（bare 标识符，
@@ -106,8 +106,9 @@ export type WriterRole =
   | 'throat' // projection write-through shell (the fold row writer)
   | 'reducer' // core fold reducer
   | 'gated-dual-path' // imperative applier gated on projectionIsWriter (defers to shell when ON)
+  | 'event-native-by-caller' // raw row write; caller appends the matching event in the same tx
+  | 'control-plane-sync' // cross-projection control-plane sync; must remain visible for fold review
   | 'off-path-writer' // imperative writer for an OFF table (sole legit writer until its flip)
-  | 'edge-crud' // edges.ts canonical knowledge_edge CRUD (reused by event-native supersede)
   | 'seed' // initial dataset seed
   | 'maintenance'; // rewrites a non-fold column (e.g. embedding backfill), not a fold-truth mutation
 
@@ -127,7 +128,7 @@ export type SanctionedWriter = {
 // grounding (2026-07-07 实读于 origin/main worktree)：per-table write-site sweep
 // `grep -rnE '\.(update|insert|delete)\(<table>\)' src/ server/` + `projectionIsWriter` gating check.
 // Each entry's `marker` is a representative write expression that reverse-check requires to persist.
-const SANCTIONED_WRITERS: SanctionedWriter[] = [
+export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge (LIVE) ----
   {
     table: 'knowledge',
@@ -140,8 +141,8 @@ const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'knowledge',
     file: 'src/capabilities/knowledge/server/proposals.ts',
     marker: 'projectionIsWriter()',
-    role: 'gated-dual-path',
-    note: 'accept-path appliers: only propose_new gates on projectionIsWriter() (writeRow: !flip skips the INSERT when ON); reparent/archive/merge/split keep their version-guarded imperative UPDATE unconditionally + same-tx rate=accept event (event-native-by-caller) — when flip is ON the projection shell overwrites from events (proposals.ts:1158-1163).',
+    role: 'event-native-by-caller',
+    note: 'mixed accept-path file: propose_new gates its INSERT, but reparent/archive/merge/split perform unconditional imperative UPDATEs paired with the accepted mutation event in the caller-owned transaction. Classify by its least-locally-guarded writes so LIVE advisory cannot hide them.',
   },
   {
     table: 'knowledge',
@@ -155,7 +156,21 @@ const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/capabilities/knowledge/server/seed.ts',
     marker: '.insert(knowledge)',
     role: 'seed',
-    note: 'Phase-1 dataset seeder — initial knowledge nodes for a fresh subject (bootstrap, not a runtime fold mutation).',
+    note: 'migrate-time subject-root seed; each newly inserted row writes same-tx experimental:genesis + materialized_id_index anchor. Kept as seed role so LIVE advisory continuously re-verifies that bootstrap contract.',
+  },
+  {
+    table: 'knowledge',
+    file: 'src/server/subjects/ensure-subject-root.ts',
+    marker: '.insert(knowledge)',
+    role: 'event-native-by-caller',
+    note: 'runtime custom-subject root creation accepts Tx only and writes same-tx experimental:genesis + materialized_id_index anchor.',
+  },
+  {
+    table: 'knowledge',
+    file: 'src/server/subjects/subject-control-write.ts',
+    marker: '.update(knowledge)',
+    role: 'control-plane-sync',
+    note: 'rename/reset mirror subject display_name into root.name in the same control-plane tx, but no knowledge event currently carries the rename. Deliberately surfaced as LIVE advisory; event-native remediation = YUK-728.',
   },
   {
     table: 'knowledge',
@@ -177,8 +192,8 @@ const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'knowledge_edge',
     file: 'src/capabilities/knowledge/server/edges.ts',
     marker: '.insert(knowledge_edge)',
-    role: 'edge-crud',
-    note: 'canonical edge CRUD (createKnowledgeEdge / archiveKnowledgeEdge) reused by the event-native supersede path (applyEdgeSupersede, propose_edge.ts) in the SAME tx as generate events — the in-repo shape for "rewrite an edge identity" per kc-dedup spec §7.',
+    role: 'event-native-by-caller',
+    note: 'canonical create/archive/reactivate CRUD has no local projectionIsWriter/event append; every production caller owns a transaction and pairs the row write with fold-visible generate(create|archive). Caller matrix audited in docs/audit/2026-07-19-yuk-587-fold-write-event-nativeness.md.',
   },
   // NOTE: frontier_fill_nightly.ts is NOT a knowledge_edge writer — it is PROPOSE-ONLY (writes
   // `propose` events, never a live row; the file header states "There is NO .insert(knowledge_edge)
@@ -749,9 +764,34 @@ export function validateAllowlistEntry(
 export type SiteStatus = 'sanctioned' | 'allowlisted' | 'violation';
 export type SiteVerdict = WriteSite & { status: SiteStatus; role?: WriterRole };
 
+// A LIVE writer with one of these roles is locally constrained not to bypass fold truth:
+// throat/reducer IS the fold path; gated-dual-path locally defers to it when ON; maintenance only
+// touches fold-excluded derived columns. Every other role defaults to ADVISORY. This negative
+// classification means a future special role cannot silently disappear merely because someone forgot
+// to extend a hard-coded advisory allow-list (the YUK-587 gap that hid proposals.ts + seed.ts).
+const LOCALLY_CONSTRAINED_LIVE_ROLES: ReadonlySet<WriterRole> = new Set([
+  'throat',
+  'reducer',
+  'gated-dual-path',
+  'maintenance',
+]);
+
+/** LIVE sanctioned writers whose fold visibility still depends on an event-native caller contract. */
+export function collectLiveWriterAdvisories(verdicts: readonly SiteVerdict[]): SiteVerdict[] {
+  return verdicts.filter(
+    (v) =>
+      v.status === 'sanctioned' &&
+      LIVE_TABLES.has(v.table) &&
+      v.role !== undefined &&
+      !LOCALLY_CONSTRAINED_LIVE_ROLES.has(v.role),
+  );
+}
+
 export type FoldWriteAuditResult = {
   verdicts: SiteVerdict[];
   violations: SiteVerdict[];
+  /** Report-only LIVE writers whose same-tx event-native invariant needs owner review. */
+  advisories: SiteVerdict[];
   stale: StaleWriter[];
   allowlistProblems: AllowlistProblem[];
   /** allowlist keys that match no live write site (dead config → drift). */
@@ -817,6 +857,7 @@ export function computeFoldWriteAudit(
   return {
     verdicts,
     violations,
+    advisories: collectLiveWriterAdvisories(verdicts),
     stale,
     allowlistProblems,
     redundantAllowlist,
@@ -913,23 +954,12 @@ function main(): void {
     }
     console.log('');
 
-    // ADVISORY: LIVE-table row writers that are NEITHER the throat NOR a locally projectionIsWriter-
-    // gated dual-path — i.e. edge-crud / off-path-writer roles on knowledge / knowledge_edge. These
-    // must be event-native (write same-tx as generate events) for the fold to see them; surfaced for
-    // owner review since the invariant is otherwise human-enforced (challenge §横切 #2).
-    const ADVISORY_ROLES: ReadonlySet<WriterRole> = new Set(['edge-crud', 'off-path-writer']);
-    const advisory = result.verdicts.filter(
-      (v) =>
-        v.status === 'sanctioned' &&
-        LIVE_TABLES.has(v.table) &&
-        v.role !== undefined &&
-        ADVISORY_ROLES.has(v.role),
-    );
-    if (advisory.length > 0) {
+    // Negative classification is computed in the result so --json and text share exact coverage.
+    if (result.advisories.length > 0) {
       console.log(
-        `  ADVISORY — LIVE fold-table row writers not locally projectionIsWriter-gated (verify event-native; 横切 #2):  ${advisory.length}`,
+        `  ADVISORY — LIVE fold-table row writers not locally projectionIsWriter-gated (verify event-native; 横切 #2):  ${result.advisories.length}`,
       );
-      for (const v of advisory) {
+      for (const v of result.advisories) {
         console.log(`    - ${v.file}:${v.line}  .${v.op}(${v.table})  [${v.role}]`);
       }
       console.log('');

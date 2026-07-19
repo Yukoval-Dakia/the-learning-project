@@ -14,28 +14,27 @@
 // - 调用方负责事务边界与 canonical id（alias 归一在上游完成）。
 
 import { newId } from '@/core/ids';
-import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
-type DbLike = Db | Tx;
 
 export function subjectRootId(subjectId: string): string {
   return `seed:${subjectId}:root`;
 }
 
 export async function ensureSubjectRoot(
-  tx: DbLike,
+  tx: Tx,
   subjectId: string,
   displayName: string,
 ): Promise<{ created: boolean; rootId: string }> {
   const rootId = subjectRootId(subjectId);
   const now = new Date();
   // Race-safe 幂等（同 seedKnowledge 纪律）：单回合 ON CONFLICT，无 check-then-act。
-  const written = await tx
+  const [written] = await tx
     .insert(knowledge)
     .values({
       id: rootId,
@@ -53,22 +52,9 @@ export async function ensureSubjectRoot(
       version: 0,
     })
     .onConflictDoNothing({ target: knowledge.id })
-    .returning({ id: knowledge.id });
-  if (written.length === 0) return { created: false, rootId };
+    .returning();
+  if (!written) return { created: false, rootId };
 
-  const snapshot: KnowledgeRowSnapshotT = {
-    id: rootId,
-    name: displayName,
-    domain: subjectId,
-    parent_id: null,
-    merged_from: [],
-    archived_at: null,
-    proposed_by_ai: false,
-    approval_status: 'approved',
-    created_at: now,
-    updated_at: now,
-    version: 0,
-  };
   const genesisEventId = newId();
   await writeEvent(tx, {
     id: genesisEventId,
@@ -78,7 +64,7 @@ export async function ensureSubjectRoot(
     subject_kind: 'knowledge',
     subject_id: rootId,
     outcome: 'success',
-    payload: { row: snapshot },
+    payload: { row: knowledgeRowToSnapshot(written) },
     created_at: now,
     ingest_at: now, // outbox opt-out：结构种子非学习活动（ADR-0021）
   });

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   type Allowlist,
+  SANCTIONED_WRITERS,
   type SanctionedWriter,
   type StaleWriter,
   type WriteSite,
+  collectLiveWriterAdvisories,
   computeFoldWriteAudit,
   findWriteSites,
   reverseCheckWriters,
@@ -188,6 +190,74 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
     expect(result.verdicts[0].status).toBe('sanctioned');
     expect(result.verdicts[0].role).toBe('throat');
     expect(result.ok).toBe(true);
+  });
+
+  it('advises every LIVE writer not locally fold-constrained, including mixed proposals + seed', () => {
+    const files = [
+      'src/capabilities/knowledge/server/proposals.ts',
+      'src/capabilities/knowledge/server/seed.ts',
+      'src/capabilities/knowledge/server/edges.ts',
+      'src/server/subjects/ensure-subject-root.ts',
+      'src/server/subjects/subject-control-write.ts',
+    ];
+    const verdicts = files.map((file, index) => {
+      const declared = SANCTIONED_WRITERS.find((w) => w.file === file);
+      if (!declared) throw new Error(`missing registry fixture ${file}`);
+      return {
+        file,
+        table: declared.table,
+        op: index === 0 ? ('update' as const) : ('insert' as const),
+        form: 'drizzle' as const,
+        line: index + 1,
+        status: 'sanctioned' as const,
+        role: declared.role,
+      };
+    });
+
+    expect(collectLiveWriterAdvisories(verdicts).map((v) => v.file)).toEqual(files);
+  });
+
+  it('does not advise LIVE throat/gated/maintenance or any writer on an OFF table', () => {
+    expect(
+      collectLiveWriterAdvisories([
+        {
+          file: 'throat.ts',
+          table: 'knowledge',
+          op: 'insert',
+          form: 'drizzle',
+          line: 1,
+          status: 'sanctioned',
+          role: 'throat',
+        },
+        {
+          file: 'gated.ts',
+          table: 'knowledge_edge',
+          op: 'update',
+          form: 'drizzle',
+          line: 2,
+          status: 'sanctioned',
+          role: 'gated-dual-path',
+        },
+        {
+          file: 'embed.ts',
+          table: 'knowledge',
+          op: 'update',
+          form: 'drizzle',
+          line: 3,
+          status: 'sanctioned',
+          role: 'maintenance',
+        },
+        {
+          file: 'off.ts',
+          table: 'artifact',
+          op: 'update',
+          form: 'drizzle',
+          line: 4,
+          status: 'sanctioned',
+          role: 'off-path-writer',
+        },
+      ]),
+    ).toEqual([]);
   });
 
   it('a write site in an UNDECLARED file is a VIOLATION', () => {
