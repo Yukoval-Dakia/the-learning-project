@@ -110,6 +110,13 @@ export const SourcePolicyTraitSchema = z
         z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
       )
       .optional(),
+    // YUK-697 — jyeoo-rs 确定性题源声明（source_policy trait 承载，与 sourceWhitelist/
+    // sourcingRoutePreference 同族）。存在即本 subject 有 jyeoo producer；见 SubjectProfileSchema。
+    jyeooSupply: z
+      .object({
+        subject: z.string().trim().min(1),
+      })
+      .optional(),
     exampleSources: z.array(z.string().trim().min(1)),
   })
   .strict();

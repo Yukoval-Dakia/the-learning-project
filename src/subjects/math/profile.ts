@@ -121,9 +121,15 @@ export const mathProfile: SubjectProfile = {
   //                        覆盖 2010–2025 (形态: 真题多图片嵌入, OCR 抽取有难度)。
   //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
   //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
-  sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
+  //   www.jyeoo.com — 菁优网 (YUK-697): jyeoo-rs 确定性题源 producer host。加入白名单使
+  //                   jyeoo_fetch 抓取的题 whitelist_match=true (选题排序不降权)。
+  sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn', 'www.jyeoo.com'],
   // 计算题优先找现成真题, 不足凭知识闭卷出 / 变式扩展。
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },
+  // YUK-697 — 数学有 jyeoo-rs 确定性题源。'math2' = 菁优网站内 subject 词表 (高中数学)。
+  // 声明即 supply dispatcher 在数学 tier-2 缺口上优先 jyeoo_fetch (route-planner)，
+  // 派发受 JYEOO_FETCH_ENABLED kill switch 控 (默认 OFF → 回退 sourcing_web)。
+  jyeooSupply: { subject: 'math2' },
 };

@@ -219,6 +219,17 @@ export const fastTestInclude = [
   // 真 fingerprint + 真池计数 + 真 event cooldown 的集成 db 测在 refill.db.test.ts。同 target-discovery
   // 一样必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
   'src/server/question-supply/refill.test.ts',
+  // YUK-697 — jyeoo deterministic supply: pure no-DB units. jyeoo-loom-adapter
+  // (NDJSON parse + exit classification + image detection, imports only Zod +
+  // SourcedQuestion schema), jyeoo-spawn (bounded subprocess against /bin/sh + node
+  // one-liners — spawns real child processes but touches NO DB), jyeoo-supply-config
+  // (dg mapping + profile-declared support + kill-switch env read + route-planner
+  // math cases). No @/db/client / postgres / drizzle / PgBoss. The handler end-to-end
+  // (jyeoo-fetch.db.test.ts) hits live Postgres → db partition. src/server/question-supply/**
+  // has no unit glob, so these MUST be listed (target-discovery.test.ts precedent).
+  'src/server/question-supply/jyeoo-loom-adapter.test.ts',
+  'src/server/question-supply/jyeoo-spawn.test.ts',
+  'src/server/question-supply/jyeoo-supply-config.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',

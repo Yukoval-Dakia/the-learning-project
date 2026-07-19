@@ -18,6 +18,7 @@
 // 注意 minSourceTier 分支在 objectiveOnly 之前：一个既要高可信又只要客观题的目标，
 // 高可信源约束更硬（校准级证据要 grounded），故先满足 minSourceTier ≤ 2 的 web-first 顺序。
 
+import { subjectSupportsJyeooFetch } from './jyeoo-supply-config';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /**
@@ -26,16 +27,28 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  * 判据顺序见文件头。`target.routePreference` 由扫描器据 subject profile 的
  * `sourcingRoutePreference` 播种（见 target-discovery.ts seedRoutePreference）——只有在
  * 没有更硬的约束（图/高可信源/客观题）触发时才用它，否则约束优先链覆盖偏好。
+ *
+ * YUK-697 — 纯函数不变（同 target + 同静态 profile 同输出）：新增 jyeoo_fetch 只在
+ * subject profile 声明 jyeooSupply 时排到 sourcing_web 之前（确定性抓取 > agent 找题，
+ * design §2.2）。needsImage 分支不带 jyeoo（图题被持久化前过滤，jyeoo 对它无用）。
+ * jyeoo_fetch 的 kill switch（JYEOO_FETCH_ENABLED）不在这里——它是 dispatcher 的
+ * 可派性降级（chooseAutoRoute 跳过被关的 jyeoo → 落回 sourcing_web），route plan 恒记
+ * 首选偏好（可观测）。flag OFF 时 plan 仍含 jyeoo_fetch 但 dispatch 落 sourcing_web。
  */
 export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
+  const jyeoo = subjectSupportsJyeooFetch(target.subjectId);
   if (target.constraints.needsImage) {
     return ['image_candidate', 'ingest_existing', 'sourcing_web'];
   }
   if (target.minSourceTier <= 2) {
-    return ['sourcing_web', 'ingest_existing', 'author_question'];
+    return jyeoo
+      ? ['jyeoo_fetch', 'sourcing_web', 'ingest_existing', 'author_question']
+      : ['sourcing_web', 'ingest_existing', 'author_question'];
   }
   if (target.constraints.objectiveOnly) {
-    return ['sourcing_web', 'author_question'];
+    return jyeoo
+      ? ['jyeoo_fetch', 'sourcing_web', 'author_question']
+      : ['sourcing_web', 'author_question'];
   }
   return target.routePreference.length > 0
     ? target.routePreference

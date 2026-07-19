@@ -47,6 +47,9 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
       ...(profile.sourcingRoutePreference !== undefined
         ? { sourcingRoutePreference: structuredClone(profile.sourcingRoutePreference) }
         : {}),
+      ...(profile.jyeooSupply !== undefined
+        ? { jyeooSupply: structuredClone(profile.jyeooSupply) }
+        : {}),
       exampleSources: [...profile.exampleSources],
     },
     render_theme: {
@@ -102,6 +105,9 @@ export function assembleSubjectProfile(args: {
     sourceWhitelist: [...source_policy.sourceWhitelist],
     ...(source_policy.sourcingRoutePreference !== undefined
       ? { sourcingRoutePreference: structuredClone(source_policy.sourcingRoutePreference) }
+      : {}),
+    ...(source_policy.jyeooSupply !== undefined
+      ? { jyeooSupply: structuredClone(source_policy.jyeooSupply) }
       : {}),
   };
 }

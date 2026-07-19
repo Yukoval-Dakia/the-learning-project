@@ -15,6 +15,7 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
+import { buildJyeooFetchHandler } from './handlers/jyeoo-fetch';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
@@ -172,6 +173,19 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'sourcing',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildSourcingHandler(db),
+  );
+
+  // YUK-697 — jyeoo_fetch: deterministic scraper supply route (jyeoo-rs subprocess).
+  // Auto-dispatched by the supply dispatcher on jyeoo-supported subjects behind the
+  // JYEOO_FETCH_ENABLED kill switch (default OFF → dispatcher falls back to sourcing_web).
+  // Spawns jyeoo-rs, validates NDJSON against SourcedQuestion, INSERTs draft_status='draft'
+  // rows (source='web_sourced', tier 2), then chains source_verify — SAME promote gate as
+  // the sourcing line. EXPIRE_AGENT (scrape can take tens of seconds); batchSize=1.
+  await createJobQueue(boss, 'jyeoo_fetch', EXPIRE_AGENT);
+  await boss.work(
+    'jyeoo_fetch',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildJyeooFetchHandler(db),
   );
 
   // source_verify — chained behind sourcing. Runs the tier-2 check set
