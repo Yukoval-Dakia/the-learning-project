@@ -3,13 +3,17 @@
 // 换绑，共享 payload 未动，孤儿保留）15（validate 无状态零落库）16（retire/
 // restore + general retire 拒 + restore 撞名）。
 
+import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import {
+  event,
   knowledge,
   subject,
   subject_control_journal,
   subject_trait,
   subject_trait_binding,
 } from '@/db/schema';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
+import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { subjectRootId } from '@/server/subjects/ensure-subject-root';
 import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
 import { eq } from 'drizzle-orm';
@@ -70,7 +74,31 @@ describe('renameSubject（§8-7）', () => {
         .from(knowledge)
         .where(eq(knowledge.id, subjectRootId(id)))
     )[0];
-    expect(root?.name).toBe('化学基础');
+    if (!root) throw new Error('custom subject root missing');
+    expect(root.name).toBe('化学基础');
+    expect(await gatherAndFoldKnowledgeNode(db, subjectRootId(id))).toEqual(
+      knowledgeRowToSnapshot(root),
+    );
+    const [rootNameEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:subject_root_name_update'));
+    expect(rootNameEvent).toMatchObject({
+      actor_kind: 'user',
+      actor_ref: 'owner',
+      subject_kind: 'knowledge',
+      subject_id: subjectRootId(id),
+      payload: {
+        control_action: 'rename',
+        subject_id: id,
+        previous_name: '化学',
+        next_name: '化学基础',
+        previous_version: 0,
+        next_version: 1,
+      },
+    });
+    expect(rootNameEvent.created_at.getTime()).toBe(root.updated_at.getTime());
+    expect(rootNameEvent.ingest_at?.getTime()).toBe(root.updated_at.getTime());
     const journal = await db
       .select()
       .from(subject_control_journal)
@@ -87,6 +115,12 @@ describe('renameSubject（§8-7）', () => {
     expect(
       await renameSubject(db, { subjectId: id, expectedRevision: 7, displayName: '化学二' }),
     ).toMatchObject({ kind: 'stale', currentRevision: 0 });
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:subject_root_name_update')),
+    ).toHaveLength(0);
   });
 });
 
@@ -170,11 +204,18 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
   it('已在种子上的科目 reset → noop', async () => {
     const id = await createCustom();
     expect((await resetSubject(db, { subjectId: id, expectedRevision: 0 })).kind).toBe('noop');
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:subject_root_name_update')),
+    ).toHaveLength(0);
   });
 
   it('builtin reset：rename 漂移后回种子名 + root.name 同步 + 绑定回本科种子（review-765 P3）', async () => {
     // yuwen 先改名再 reset：displayName 回种子「语文」、root.name 同步、绑定仍指
     // trt_seed_yuwen_*（builtin 的种子是本科种子非 general）。
+    await seedKnowledge(db);
     await renameSubject(db, { subjectId: 'yuwen', expectedRevision: 0, displayName: '古文' });
     const result = await resetSubject(db, { subjectId: 'yuwen', expectedRevision: 1 });
     expect(result).toMatchObject({ kind: 'ok', subjectRevision: 2 });
@@ -186,8 +227,22 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
         .from(knowledge)
         .where(eq(knowledge.id, subjectRootId('yuwen')))
     )[0];
-    // root 行在测试基线可能不存在（reconcile 不建根）——存在才断言名字。
-    if (root) expect(root.name).toBe('语文');
+    if (!root) throw new Error('builtin subject root missing');
+    expect(root.name).toBe('语文');
+    expect(root.version).toBe(2);
+    expect(await gatherAndFoldKnowledgeNode(db, subjectRootId('yuwen'))).toEqual(
+      knowledgeRowToSnapshot(root),
+    );
+    const rootNameEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:subject_root_name_update'));
+    expect(
+      rootNameEvents
+        .map((entry) => entry.payload as { control_action: string; previous_version: number })
+        .sort((a, b) => a.previous_version - b.previous_version)
+        .map((payload) => payload.control_action),
+    ).toEqual(['rename', 'reset']);
     const bindings = await db
       .select()
       .from(subject_trait_binding)

@@ -143,6 +143,9 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // be rejected at the barrier, not fall through to the loose generic.
   'experimental:goal_status_update',
   'experimental:goal_scope_update',
+  // YUK-728 — load-bearing subject control-plane mirror onto the fold-owned knowledge root.
+  // Dedicated schema prevents a malformed version/name transition from falling through generic.
+  'experimental:subject_root_name_update',
   // YUK-471 Wave 2 (mistake_variant fold, critic A4) — the RUNTIME creation BASE event
   // (./mistake-variant-events.ts) carries the full initial row INCLUDING the fold-blind
   // cause_category. It is the runtime analog of the backfill-only experimental:genesis (A4:
