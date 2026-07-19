@@ -192,6 +192,55 @@ describe('runSourceVerify', () => {
     });
   });
 
+  it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedKnowledge('k2');
+    const qid = await seedQuestion({ id: 'q_source_verify_version_race', knowledgeIds: ['k1'] });
+    let mutated = false;
+    const staleRun = vi.fn(async () => {
+      if (!mutated) {
+        mutated = true;
+        await db
+          .update(question)
+          .set({ knowledge_ids: ['k1', 'k2'], version: 1 })
+          .where(eq(question.id, qid));
+      }
+      return { text: solverOutput('代词') };
+    });
+
+    await expect(runSourceVerify({ db, questionId: qid, runTaskFn: staleRun })).rejects.toThrow(
+      'changed during verification',
+    );
+
+    const [afterStale] = await db.select().from(question).where(eq(question.id, qid));
+    expect(afterStale).toMatchObject({
+      draft_status: 'draft',
+      knowledge_ids: ['k1', 'k2'],
+      version: 1,
+    });
+    const staleEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(staleEvents.map((candidate) => candidate.outcome)).toEqual(['error']);
+    expect(await getFsrsState(db, 'knowledge', 'k1')).toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k2')).toBeNull();
+
+    const retry = await runSourceVerify({
+      db,
+      questionId: qid,
+      runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
+    });
+    expect(retry.status).toBe('verified');
+    expect(await getFsrsState(db, 'knowledge', 'k1')).not.toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k2')).not.toBeNull();
+    const outcomes = (
+      await db.select().from(event).where(eq(event.action, 'experimental:source_verify'))
+    ).map((candidate) => candidate.outcome);
+    expect(outcomes.sort()).toEqual(['error', 'success']);
+  });
+
   // YUK-698 review — a JSONB `null` supply_trace (valid, distinct from absent) must NOT
   // throw before the failure-bottom try. Previously parseSupplyTrace(null) threw here, so
   // the draft was stranded with no error event and pg-boss retried identically forever. The

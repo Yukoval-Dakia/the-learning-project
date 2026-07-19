@@ -31,10 +31,64 @@ const findingResponse = {
   },
 } as const;
 
+// YUK-708 (P0F/4) — outcome states carry the executable ack action; the strict schema
+// was upgraded in lockstep with the discriminated union (contract §2.1).
+const outcomeResponse = {
+  brief: {
+    brief_id: 'p_contract',
+    state: 'outcome_confirmed',
+    updated_at: '2026-07-19T12:00:00.000Z',
+    expires_at: '2026-07-26T12:00:00.000Z',
+    finding: {
+      claim_md: '待检验判断',
+      knowledge_id: 'kn_contract',
+      cause_category: 'concept_misunderstanding',
+    },
+    basis: {
+      summary_md: '可追溯依据',
+      evidence_trace: [
+        { role: 'induction', kind: 'event', id: 'evt_evidence' },
+        { role: 'probe', kind: 'question', id: 'q_probe' },
+        { role: 'outcome', kind: 'event', id: 'evt_result' },
+      ],
+    },
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_result' },
+    current_outcome: {
+      status: 'confirmed',
+      summary_md: '这条判断得到这次探针的支持。',
+      probe_question_id: 'q_probe',
+      probe_result_event_id: 'evt_result',
+    },
+  },
+} as const;
+
 describe('TeachingBriefResponseSchema', () => {
   it('accepts the locked wire and quiet null', () => {
     expect(TeachingBriefResponseSchema.safeParse(findingResponse).success).toBe(true);
     expect(TeachingBriefResponseSchema.safeParse({ brief: null }).success).toBe(true);
+  });
+
+  it('accepts an outcome brief carrying the acknowledge_outcome action', () => {
+    expect(TeachingBriefResponseSchema.safeParse(outcomeResponse).success).toBe(true);
+  });
+
+  it('rejects the retired P0F/2 outcome shape (prepared_action {kind:none})', () => {
+    const stale = {
+      brief: { ...outcomeResponse.brief, prepared_action: { kind: 'none' } },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(stale).success).toBe(false);
+  });
+
+  it('rejects an outcome whose ack action targets a different result than current_outcome', () => {
+    const drifted = {
+      brief: {
+        ...outcomeResponse.brief,
+        // prepared_action targets a DIFFERENT result than current_outcome reports — a
+        // projection regression the cross-field refine must catch (round-7).
+        prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_other' },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(drifted).success).toBe(false);
   });
 
   it.each([

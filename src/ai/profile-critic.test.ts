@@ -16,6 +16,7 @@ const trace = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
+  logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: trace.started,
   writeAiTaskRunFinished: trace.finished,
   writeCostLedger: trace.cost,

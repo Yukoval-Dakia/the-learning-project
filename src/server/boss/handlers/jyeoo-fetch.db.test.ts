@@ -5,7 +5,7 @@
 // dispositions deterministically — no real binary, no network.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
@@ -329,14 +329,15 @@ describe('runJyeooFetch', () => {
     expect(await db.select().from(question)).toHaveLength(0);
   });
 
-  it('exact duplicate (canonical content hash, any KC): skipped, not re-INSERTed', async () => {
+  it('exact duplicate (cross-KC): merges the anchor KC into the existing row, no new INSERT', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    // Same content already exists attributed to a DIFFERENT KC (so the near-dup pool,
-    // scoped to the anchor KC, does NOT see it — this isolates the exact-hash path).
+    // Same content already exists attributed to a DIFFERENT KC. YUK-720 cross-KC merge: the
+    // anchor KC is merged INTO that existing row (no new insert), and the near-dup pool
+    // (scoped to the anchor KC) does NOT see it — this isolates the exact-hash merge path.
     const dupLine = line();
     const dupQuestion = JSON.parse(dupLine).question;
-    await seedExistingQuestion({
+    const existingId = await seedExistingQuestion({
       knowledgeIds: ['other-kc'],
       prompt: dupQuestion.prompt_md,
       reference: dupQuestion.reference_md,
@@ -356,12 +357,12 @@ describe('runJyeooFetch', () => {
 
     expect(result.counts?.deduped_exact).toBe(1);
     expect(result.counts?.inserted).toBe(0);
-    // Only the seeded row exists — no new jyeoo draft.
-    const jyeooRows = await db
-      .select()
-      .from(question)
-      .where(and(eq(question.source, 'web_sourced'), eq(question.difficulty, 3)));
-    expect(jyeooRows.filter((r) => (r.knowledge_ids as string[]).includes(kid))).toHaveLength(0);
+    // No NEW row — the single content row is the seeded one, now carrying BOTH KCs (the
+    // anchor KC merged in), proving jyeoo reuses the shared cross-KC dedup (not a plain skip).
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(existingId);
+    expect(rows[0]?.knowledge_ids).toEqual(['other-kc', kid]);
   });
 
   it('near-duplicate (same prompt shares anchor KC in the draft pool): skipped', async () => {

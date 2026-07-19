@@ -5,7 +5,8 @@
 // runs the charter-agent director (runResearchMeetingDirector) behind two guards:
 //
 //   1. Kill switch RESEARCH_MEETING_AGENT_ENABLED — default OFF (dark-ship). The cron is
-//      registered (the job exists) but the handler early-returns when the flag != '1':
+//      registered (the job exists) but the handler early-returns unless the shared
+//      runtime-flag grammar enables it:
 //      zero spend, zero events, zero proposals. Flip = set the worker container .env +
 //      restart (single-process, one env — no AI-provider three-process wiring here).
 //
@@ -78,13 +79,14 @@ import {
   runResearchMeetingDirector,
   shanghaiDateKey,
 } from '@/capabilities/agency/server/meeting/director';
+import { parseFlag } from '@/core/env-flags';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { and, eq, sql } from 'drizzle-orm';
 
-/** Opt-in dark-ship flag. Handler early-returns unless this is exactly '1'. */
+/** Opt-in dark-ship flag. Handler uses the shared runtime-flag grammar. */
 export const RESEARCH_MEETING_AGENT_ENABLED_ENV = 'RESEARCH_MEETING_AGENT_ENABLED';
 /** action for the deterministic per-day claim event (generic ExperimentalEvent hatch). */
 export const CLAIM_ACTION = 'experimental:research_meeting_agent_claim';
@@ -237,9 +239,9 @@ export function buildResearchMeetingAgentNightlyHandler(
   return async () => {
     // Dark-ship gate: default OFF. cron stays registered (the job exists); the handler
     // early-returns. Zero spend / zero events / zero proposals.
-    if (process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] !== '1') {
+    if (!parseFlag(process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV])) {
       console.log(
-        `[research_meeting_agent_nightly] disabled (${RESEARCH_MEETING_AGENT_ENABLED_ENV} != 1)`,
+        `[research_meeting_agent_nightly] disabled (${RESEARCH_MEETING_AGENT_ENABLED_ENV})`,
       );
       return;
     }

@@ -70,10 +70,16 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
   };
 }
 
+/** YUK-708 (P0F/4) — the outcome states' executable step: acknowledge (dismiss). */
+export interface OutcomeAcknowledgeAction {
+  kind: 'acknowledge_outcome';
+  probe_result_event_id: string;
+}
+
 export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   state: 'outcome_confirmed';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'confirmed';
     summary_md: string;
@@ -85,7 +91,7 @@ export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
 export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
   state: 'outcome_retired';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'retired';
     summary_md: string;
@@ -105,3 +111,24 @@ export interface TeachingBriefResponse {
 }
 
 export const getTeachingBrief = () => apiJson<TeachingBriefResponse>('/api/prep-desk/brief');
+
+/** Result of acknowledging (dismissing) a delivered outcome (YUK-708). */
+export interface TeachingBriefAckResult {
+  brief_acknowledgement_event_id: string;
+  probe_result_event_id: string;
+  brief_id: string;
+  /** true when a prior ack already existed — the retry is safe, one anchor only. */
+  idempotent: boolean;
+}
+
+/**
+ * Acknowledge a delivered outcome. Append-only + idempotent server-side: a repeated
+ * click (or a retry after a transient failure) writes no second anchor. On success the
+ * caller invalidates ['teaching-brief'] so the acked result drops and the next candidate
+ * (or the quiet null) is projected.
+ */
+export const ackTeachingBriefOutcome = (probeResultEventId: string) =>
+  apiJson<TeachingBriefAckResult>('/api/prep-desk/brief/ack', {
+    method: 'POST',
+    body: JSON.stringify({ probe_result_event_id: probeResultEventId }),
+  });

@@ -69,7 +69,8 @@ import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  combineExactDuplicateKnowledgeIds,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
@@ -231,6 +232,8 @@ export interface RunSourcingParams {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
   writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
+  /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
+  afterExactDuplicateLookupMiss?: () => Promise<void>;
 }
 
 export type RunSourcingStatus = 'ready' | 'skipped:ref_not_found';
@@ -443,7 +446,19 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           .from(knowledge)
           .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
       : [];
-    const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
+    // SQL IN does not preserve input order. Restore the resolver's semantic order explicitly because
+    // knowledge_ids[0] is the primary attribution anchor used by verifier/family readers.
+    const liveResolvedKnowledgeIds = new Set(resolvedKnowledgeRows.map((r) => r.id));
+    const fallbackKnowledgeIds = [
+      ...new Set(resolved.knowledgeIds.filter((id) => liveResolvedKnowledgeIds.has(id))),
+    ];
+    // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
+    // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
+    // Remaining live resolved ids are fallback attribution only when the model supplied none.
+    const targetKnowledgeIds =
+      resolved.knowledgeNode && fallbackKnowledgeIds.includes(resolved.knowledgeNode.id)
+        ? [resolved.knowledgeNode.id]
+        : [];
     const resolveQuestionKnowledgeIds = (q: SourcedQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
@@ -463,51 +478,90 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       new_question_id: string;
       canonical_content_hash: string;
       source_route: typeof SOURCING_WEB_ROUTE;
+      knowledge_merge_status: 'merged' | 'already_covered';
+      added_knowledge_ids: string[];
+      resulting_knowledge_ids: string[];
+      preserved_draft_status: string | null;
     }> = [];
     const now = new Date();
     failureStage = 'persist';
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
+        // Prelookup only needs attribution we can already prove. Preserve the historical
+        // duplicate short-circuit for a manual run whose model emitted only invalid IDs: an
+        // existing canonical row is usable even though a brand-new unattributed row would not be.
+        const validModelKnowledgeIds = q.knowledge_ids.filter((kid) =>
+          existingKnowledgeIds.has(kid),
+        );
+        const prelookupKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          validModelKnowledgeIds.length > 0 ? validModelKnowledgeIds : fallbackKnowledgeIds,
+          targetKnowledgeIds,
+        );
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: q.prompt_md,
           referenceMd: q.reference_md,
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
-        if (existingDuplicate) {
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: prelookupKnowledgeIds,
+          actorRef: 'sourcing',
+          taskRunId: result.task_run_id,
+          now,
+        });
+        if (existingDuplicate?.disposition === 'merged') {
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: SOURCING_WEB_ROUTE,
+            knowledge_merge_status:
+              existingDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: existingDuplicate.addedKnowledgeIds,
+            resulting_knowledge_ids: existingDuplicate.knowledgeIds,
+            preserved_draft_status: existingDuplicate.draftStatus,
           });
           continue;
         }
-        // Shared tier-2 web_sourced INSERT (source='web_sourced', provenance, difficulty
-        // evidence, draft_status='draft', canonical-hash arbiter) — the single persistence
-        // shape jyeoo_fetch reuses. Caller owns knowledge_ids resolution + the ON CONFLICT
-        // bookkeeping below; whitelist_match / fetched_at / created_by are sourcing-specific.
+        await params.afterExactDuplicateLookupMiss?.();
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+        // must attribute identical content the same way, including the trigger's live KCs.
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          targetKnowledgeIds,
+        );
+        // Shared tier-2 web_sourced INSERT + YUK-720 cross-KC dedup lifecycle (jyeoo_fetch
+        // reuses the identical insertSourcedDraft path). Caller owns knowledge_ids resolution
+        // + the merge audit bookkeeping below; whitelist_match / fetched_at / created_by are
+        // sourcing-specific.
         const inserted = await insertSourcedDraft(tx, {
           id,
           q,
-          knowledgeIds: questionKnowledgeIds,
+          knowledgeIds: duplicateKnowledgeIds,
           sourceRoute: SOURCING_WEB_ROUTE,
           createdBy: aiAgentRef('SourcingTask', result),
           whitelistMatch: matchesWhitelist(q.source_url, whitelist),
           fetchedAt: parsed.fetched_at,
           canonicalContentHash,
           supplyTrace: params.supplyTrace,
+          mergeActorRef: 'sourcing',
+          taskRunId: result.task_run_id,
           now,
         });
-        if (inserted.status === 'raced_duplicate') {
+        if (inserted.status === 'raced_merged') {
           exactDuplicates.push({
             existing_question_id: inserted.existingId,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
             source_route: SOURCING_WEB_ROUTE,
+            knowledge_merge_status:
+              inserted.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: inserted.addedKnowledgeIds,
+            resulting_knowledge_ids: inserted.resultingKnowledgeIds,
+            preserved_draft_status: inserted.draftStatus,
           });
           continue;
         }
@@ -529,7 +583,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // verify intents are durably written — so report it distinctly rather than 'persist'.
     failureStage = 'event';
     for (const duplicate of exactDuplicates) {
-      console.info('[sourcing] exact duplicate skipped:', duplicate);
+      console.info('[sourcing] exact duplicate reconciled:', duplicate);
     }
 
     // YUK-227 S3 Slice C — image-type sources do NOT enter the question INSERT path.
@@ -676,6 +730,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
+        exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
+          (duplicate) => duplicate.knowledge_merge_status === 'merged',
+        ).length,
         // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
         // exact_duplicate_count above keeps the true total.
         exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),

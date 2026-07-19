@@ -219,6 +219,9 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
     for (const b of body.blocks) {
       if (b.block_id !== undefined) directlyImportedIds.add(b.block_id);
     }
+    const hasManualBlocks = body.blocks.some(
+      (block) => block.block_id === undefined && block.source_block_ids.length === 0,
+    );
 
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
@@ -239,6 +242,19 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
       // Concurrent callers serialise here; the second to acquire the lock sees
       // status='imported' and throws 409 before any writes happen.
       await Ingestion.assertSessionAvailableForImport(tx, sessionId);
+
+      // YUK-725 — manual cards have no extraction source from which to inherit a position. Give
+      // them append semantics in the session's existing ordinal namespace instead of reusing the
+      // payload index (which can collide with extraction ordinals). The session row lock above
+      // serialises same-session imports, so this max+1 base is stable for the transaction.
+      let manualOrdinalBase = 0;
+      if (hasManualBlocks) {
+        const [ordinalRow] = await tx
+          .select({ maxOrdinal: sql<number | null>`max(${question_block.ordinal})` })
+          .from(question_block)
+          .where(eq(question_block.ingestion_session_id, sessionId));
+        manualOrdinalBase = (ordinalRow?.maxOrdinal ?? -1) + 1;
+      }
 
       // B1b (YUK-164 §2): only 'draft' blocks are importable. A block already
       // 'auto_enrolled' (WorkflowJudge) / 'imported' / 'ignored' must NOT be
@@ -298,16 +314,13 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
           //     session). Multiple split cards off one source share that ordinal; the
           //     (ordinal, id) sort key tiebreaks them (no re-chaining).
           //   - Manual block (block_id undefined + source_block_ids empty, `isManual`
-          //     above): has NO source to derive from, so blockIndex (the import payload
-          //     array index) is its PRIMARY ordinal — this is the manual path, not a
-          //     defensive fallback for virtual cards.
-          // NOTE: a manual block's payload-index ordinal CAN collide with a same-session
-          // extraction ordinal, degrading that pair back to the (ordinal, id) cuid2
-          // tiebreak. Giving manual blocks a true positional ordinal is out of YUK-221
-          // scope (this ticket persists extraction/import-array order, not manual authoring
-          // position).
+          //     above): has NO source to derive from. YUK-725 gives it append semantics:
+          //     session max ordinal + 1 + blockIndex. The index preserves request order
+          //     between manual cards while keeping them outside the extraction namespace.
           const ordinal =
-            sourceRows.length > 0 ? Math.min(...sourceRows.map((r) => r.ordinal)) : blockIndex;
+            sourceRows.length > 0
+              ? Math.min(...sourceRows.map((r) => r.ordinal))
+              : manualOrdinalBase + blockIndex;
 
           const [insertedRow] = await tx
             .insert(question_block)

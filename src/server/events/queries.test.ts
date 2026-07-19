@@ -7,7 +7,7 @@
 import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
 import { event, material_fsrs_state } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
@@ -22,6 +22,7 @@ import {
   getRecentReviewEvents,
   getUserCauseForAttempt,
   writeEvent,
+  writeEvents,
 } from './queries';
 
 async function seedAttemptEvent(opts: {
@@ -1084,6 +1085,104 @@ describe('writeEvent', () => {
 
     const rows = await db.select().from(event).where(eq(event.id, id));
     expect(rows[0].affected_scopes).toEqual(['global', 'topic:k1']);
+  });
+
+  it('validates and inserts a batch while preserving per-row outbox scope semantics', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-19T14:00:00.000Z');
+    const ids = ['evt-batch-1', 'evt-batch-2'];
+
+    const returned = await writeEvents(db, [
+      {
+        id: ids[0],
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          answer_image_refs: [],
+          referenced_knowledge_ids: ['k1'],
+        },
+        created_at: now,
+      },
+      {
+        id: ids[1],
+        actor_kind: 'system',
+        actor_ref: 'test',
+        action: 'experimental:test_batch',
+        subject_kind: 'query',
+        subject_id: 'batch',
+        outcome: 'success',
+        payload: {},
+        ingest_at: now,
+        created_at: now,
+      },
+    ]);
+
+    expect(returned).toEqual(ids);
+    const rows = await db.select().from(event).where(inArray(event.id, ids));
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === ids[0])?.affected_scopes).toEqual(['global', 'topic:k1']);
+    expect(rows.find((row) => row.id === ids[1])?.affected_scopes).toEqual([]);
+  });
+
+  it('rejects an invalid batch before inserting any valid prefix', async () => {
+    const db = testDb();
+    const ids = ['evt-batch-valid-prefix', 'evt-batch-invalid-tail'];
+    await expect(
+      writeEvents(db, [
+        {
+          id: ids[0],
+          actor_kind: 'system',
+          actor_ref: 'test',
+          action: 'experimental:test_batch',
+          subject_kind: 'query',
+          subject_id: 'batch',
+          outcome: 'success',
+          payload: {},
+        },
+        {
+          id: ids[1],
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'attempt',
+          subject_kind: 'question',
+          subject_id: 'q-invalid',
+          outcome: 'bogus',
+          payload: {
+            answer_md: 'x',
+            answer_image_refs: [],
+            referenced_knowledge_ids: [],
+          },
+        },
+      ]),
+    ).rejects.toThrow();
+    expect(await db.select().from(event).where(inArray(event.id, ids))).toHaveLength(0);
+  });
+
+  it('keeps first-write-wins when duplicate ids appear inside one batch', async () => {
+    const db = testDb();
+    const id = 'evt-batch-duplicate';
+    const base = {
+      id,
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:test_batch',
+      subject_kind: 'query',
+      subject_id: 'batch',
+      outcome: 'success',
+    } as const;
+    await writeEvents(db, [
+      { ...base, payload: { ordinal: 1 } },
+      { ...base, payload: { ordinal: 2 } },
+    ]);
+
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload).toEqual({ ordinal: 1 });
   });
 
   it('throws on invalid event payload (parseEvent guard)', async () => {

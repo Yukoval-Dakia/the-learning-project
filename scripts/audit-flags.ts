@@ -4,9 +4,9 @@
  * 决策来源：红线挑战审查（2026-07-07）§5 条目 7 + A5-darkship 簇终裁 KEEP-WITH-COST（B1）。
  * A5 dark-ship / flag 纪律红线（flag 钉在 act/消费点，OFF 期间采集面照常 live；整能力 go-live 门
  * 须当刻登记翻转单）条文健康，但全仓 `*_ENABLED` flag 是**双轨无对账**的散文登记面：env 型
- * （`process.env.X`）与 const 型（`const X = true/false`）混用，且 env 型的「开」字面量约定四散
- * （`=== '1'` / `=== 'true'` / `'true'||'1'` / 大小写不敏感 `toLowerCase()==='true'`），没有任何机制
- * 清点它们、抓「代码有 / 登记无」漂移、或曝光字面量约定不一致。本审计补这一维度。
+ * （`process.env.X`）与 const 型（`const X = true/false`）混用；env 型的「开」字面量在首跑时
+ * 曾混用 `=== '1'` / `=== 'true'` / 双字面量 / 大小写不敏感等写法。YUK-586 已把 runtime
+ * reader 收敛到 shared parseFlag；本审计继续清点它们、抓「代码有 / 登记无」和未来语法漂移。
  *
  * ── 什么是「flag」───────────────────────────────────────────────────────────
  *
@@ -25,9 +25,10 @@
  * 名集合**，与 ledger 对账：
  *   - UNREGISTERED       —— 代码里出现但 ledger 没有（新增 flag 漏登记）。
  *   - STALE              —— ledger 有，但其声明的 `file` 里 name 不再命中（flag 删/改名/挪窝 → 台账漂移）。
- *   - LITERAL-VARIANCE   —— **report-only 信息表**：把 env flag 按「开值约定签名」（literals + 大小写 +
- *                          polarity）分组，曝光跨 flag 字面量约定不一致（**不改 runtime 解析**，只呈现）。
- *   - LEDGER-PROBLEM     —— ledger 条目 schema 坏（kind/literals/file 缺失或类型错）。
+ *   - READER-DRIFT       —— env flag 的声明文件不再包含 ledger 钉住的 shared `parseFlag` reader marker。
+ *   - LITERAL-VARIANCE   —— **report-only 信息表**：把 env flag 按「开值约定签名」（literals + 大小写）
+ *                          分组，曝光跨 flag 字面量约定不一致（polarity 是独立的默认值语义）。
+ *   - LEDGER-PROBLEM     —— ledger 条目 schema 坏（kind/literals/file/reader_marker 缺失或类型错）。
  *
  * 注释里的 flag 名（如 renamed-away 的 `PREREQ_PROPAGATION_ENABLED` 只剩注释残留）被剥掉 ⇒ 不误报
  * UNREGISTERED——只有**活代码**里的 flag 才入册。
@@ -35,20 +36,20 @@
  * ── 默认 report-only（exit 0）；--strict 才非零 exit ────────────────────────────
  *
  * 与 audit:relations / audit:fold-writes 同待遇：默认只报告、**不进 `pnpm test` 硬链**（advisory）。
- * `--strict` 下 UNREGISTERED>0 / STALE>0 / LEDGER-PROBLEM>0 才非零 exit。LITERAL-VARIANCE **永不** fail
+ * `--strict` 下 UNREGISTERED>0 / STALE>0 / READER-DRIFT>0 / LEDGER-PROBLEM>0 才非零 exit。LITERAL-VARIANCE **永不** fail
  * ——它是信息呈现，字面量统一是 runtime 改动（本 lane 不改 runtime；升级由 owner 拍）。
  *
  * ── 已知限制 ────────────────────────────────────────────────────────────────
  *
- * (1) ledger 手维护：新增 flag 须补一条（否则 UNREGISTERED）。kind/literals 由**人**从实扫填，扫描器
- *     只对账 name-presence（同 audit:relations CONSUMER_REGISTRY 的 shape 限制）——不自动解析字面量
- *     （间接读/helper 太多，静态解析脆弱且易假阴）。
+ * (1) ledger 手维护：新增 flag 须补一条（否则 UNREGISTERED）。kind/literals 由**人**从实扫填；env
+ *     条目还必须钉住 reader_marker。审计不尝试解析任意 TypeScript 表达式，而是用 comment-stripped
+ *     exact marker 确认 reader 仍走 shared parseFlag，兼容直接读、computed key 和共享 kind map。
  * (2) 判据是 name-token 级：一个 flag 名在**任意** src/server/scripts 非测试文件里出现即「在册」。
  *
  * 用法：
  *   pnpm audit:flags          # 双轨对账 + 字面量变体表（report-only）
  *   pnpm audit:flags --json   # JSON 输出
- *   pnpm audit:flags --strict # UNREGISTERED / STALE / LEDGER-PROBLEM 即非零 exit（CI gate 模式）
+ *   pnpm audit:flags --strict # UNREGISTERED / STALE / READER-DRIFT / LEDGER-PROBLEM 即非零 exit
  */
 
 import { type Dirent, readFileSync, readdirSync } from 'node:fs';
@@ -78,6 +79,7 @@ export type EnvFlagEntry = {
   literals: string[];
   case_insensitive: boolean;
   polarity: FlagPolarity;
+  reader_marker: string;
   file: string;
   notes: string;
 };
@@ -118,6 +120,9 @@ export function validateLedgerEntry(name: string, entry: unknown): LedgerProblem
     }
     if (e.polarity !== 'opt-in' && e.polarity !== 'opt-out') {
       problems.push({ name, detail: "env flag polarity must be 'opt-in' or 'opt-out'" });
+    }
+    if (typeof e.reader_marker !== 'string' || e.reader_marker.trim() === '') {
+      problems.push({ name, detail: 'env flag needs a non-empty reader_marker' });
     }
   } else if (e.kind === 'const') {
     if (typeof e.value !== 'boolean') {
@@ -277,6 +282,16 @@ export function scanFlagTokens(
   return found;
 }
 
+function hasLiveFlagReference(code: string, name: string, allowEnvNameConstant: boolean): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // A few readers centralize the env-key string in a `<NAME>_ENV` constant. Count that whole
+  // identifier for env flags without loosening const-flag matching or accepting arbitrary
+  // prefixes. Env entries separately require a live reader_marker, so a leftover key constant
+  // alone still fails reconciliation as READER-DRIFT.
+  const suffix = allowEnvNameConstant ? '(?:_ENV)?' : '';
+  return new RegExp(`(?<![A-Z0-9_])${escaped}${suffix}(?![A-Z0-9_])`).test(code);
+}
+
 // ── reconciliation ─────────────────────────────────────────────────────────────────────────────
 
 export type FlagReconciliation = {
@@ -284,15 +299,18 @@ export type FlagReconciliation = {
   unregistered: string[];
   /** ledger entries whose declared `file` no longer contains the flag name (registry ↔ code drift). */
   stale: { name: string; file: string; problem: 'file-missing' | 'name-missing' }[];
+  /** env entries whose declared file no longer contains the shared-reader marker. */
+  readerDrift: { name: string; file: string; marker: string }[];
   ledgerProblems: LedgerProblem[];
-  /** true iff no unregistered, no stale, no ledger problems. (LITERAL-VARIANCE never affects ok.) */
+  /** true iff no unregistered, stale, reader drift, or ledger problems. */
   ok: boolean;
 };
 
 /**
  * Reconcile the code-found flag set against the ledger. STALE is a PER-ENTRY reverse-check: the
- * ledger entry's declared file must exist AND still contain the flag name (mirrors audit:relations
- * file:marker, with marker = the flag name). Exported pure for unit testing.
+ * ledger entry's declared file must exist AND still contain the flag as a live token. Env entries
+ * must also contain their exact reader marker in live code, catching regressions to ad-hoc parsing.
+ * Exported pure for unit testing.
  */
 export function reconcileFlags(
   found: Set<string>,
@@ -305,6 +323,7 @@ export function reconcileFlags(
 
   const ledgerProblems: LedgerProblem[] = [];
   const stale: FlagReconciliation['stale'] = [];
+  const readerDrift: FlagReconciliation['readerDrift'] = [];
   const cache = new Map<string, string | null>();
   const read = (f: string): string | null => {
     if (!cache.has(f)) cache.set(f, readFile(f));
@@ -317,31 +336,52 @@ export function reconcileFlags(
     const src = read(file);
     if (src === null) {
       stale.push({ name, file, problem: 'file-missing' });
-    } else if (!src.includes(name)) {
+      continue;
+    }
+
+    const code = stripComments(src);
+    if (!hasLiveFlagReference(code, name, entry.kind === 'env')) {
       stale.push({ name, file, problem: 'name-missing' });
+      continue;
+    }
+
+    if (entry.kind === 'env') {
+      const marker = entry.reader_marker;
+      // Keep the runtime guard because the JSON ledger is untrusted at load time even though the
+      // public TypeScript type is precise; validateLedgerEntry reports malformed shapes above.
+      if (typeof marker === 'string' && marker.trim() !== '' && !code.includes(marker)) {
+        readerDrift.push({ name, file, marker });
+      }
     }
   }
 
   return {
     unregistered,
     stale,
+    readerDrift,
     ledgerProblems,
-    ok: unregistered.length === 0 && stale.length === 0 && ledgerProblems.length === 0,
+    ok:
+      unregistered.length === 0 &&
+      stale.length === 0 &&
+      readerDrift.length === 0 &&
+      ledgerProblems.length === 0,
   };
 }
 
 // ── literal-variance (report-only observability) ─────────────────────────────────────────────
 
 export type VarianceGroup = {
-  /** canonical signature: the on/off literal grammar of this convention. */
+  /** canonical signature: the enabled-literal grammar of this convention. */
   signature: string;
   flags: string[];
 };
 
 /**
- * Group env flags by their literal-parsing convention (literals + case sensitivity + polarity) so
- * the report can surface the inconsistency (the "四变体字面量" the challenge flagged). const flags
- * have no runtime literal, so they are excluded. Pure.
+ * Group env flags by their literal-parsing convention (literals + case sensitivity) so the report
+ * can surface the inconsistency (the "四变体字面量" the challenge flagged). Polarity remains an
+ * explicit ledger property, but does not create a second literal grammar: opt-in and opt-out flags
+ * share parseFlag and differ only in their fallback default. const flags have no runtime literal,
+ * so they are excluded. Pure.
  */
 export function computeLiteralVariance(ledger: Ledger): VarianceGroup[] {
   const bySig = new Map<string, string[]>();
@@ -352,7 +392,7 @@ export function computeLiteralVariance(ledger: Ledger): VarianceGroup[] {
       .sort()
       .map((l) => `'${l}'`)
       .join('|');
-    const sig = `literals=${lits} match=${ci} polarity=${entry.polarity}`;
+    const sig = `literals=${lits} match=${ci}`;
     if (!bySig.has(sig)) bySig.set(sig, []);
     bySig.get(sig)?.push(name);
   }
@@ -434,6 +474,18 @@ function main(): void {
     }
     console.log('');
 
+    if (recon.readerDrift.length === 0) {
+      console.log('  READER-DRIFT (env flag no longer uses its shared reader marker):  (none)');
+    } else {
+      console.log(
+        `  READER-DRIFT (env flag no longer uses its shared reader marker):  ${recon.readerDrift.length}`,
+      );
+      for (const drift of recon.readerDrift) {
+        console.log(`    - ${drift.name} (${drift.file}): missing ${drift.marker}`);
+      }
+    }
+    console.log('');
+
     if (recon.ledgerProblems.length > 0) {
       console.log(`  LEDGER problems:  ${recon.ledgerProblems.length}`);
       for (const p of recon.ledgerProblems) console.log(`    - ${p.name}: ${p.detail}`);
@@ -441,19 +493,19 @@ function main(): void {
     }
 
     console.log(
-      `  LITERAL-VARIANCE — env-flag on/off literal conventions (report-only, ${variance.length} distinct):`,
+      `  LITERAL-VARIANCE — env-flag enabled-literal conventions (report-only, ${variance.length} distinct):`,
     );
     for (const g of variance) {
       console.log(`    · ${g.signature}`);
       for (const f of g.flags) console.log(`        ${f}`);
     }
     console.log(
-      `\n  ${variance.length} distinct env-flag literal conventions across the repo (challenge A5: 「flag 双轨 + 四变体字面量」). This is OBSERVABILITY ONLY — audit:flags does NOT change runtime parsing; unifying\n  the conventions (or accepting the divergence) is an owner decision.`,
+      `\n  ${variance.length} distinct env-flag literal conventions across the repo. YUK-586 established one shared grammar; more than one group indicates parsing drift. This audit remains OBSERVABILITY ONLY and never changes runtime behavior.`,
     );
 
     console.log(
       '\n  A5 dark-ship / flag 纪律：报告 flag 双轨清点 + 字面量约定盘点. report-only (exit 0); --strict opts\n' +
-        '  into a CI gate on UNREGISTERED / STALE / LEDGER problems.',
+        '  into a CI gate on UNREGISTERED / STALE / READER-DRIFT / LEDGER problems.',
     );
   }
 

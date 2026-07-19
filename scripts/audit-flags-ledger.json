@@ -1,51 +1,57 @@
 {
   "CONFUSABLE_CONTRAST_ENABLED": {
     "kind": "env",
-    "literals": ["1"],
-    "case_insensitive": false,
+    "literals": ["true", "1"],
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.CONFUSABLE_CONTRAST_ENABLED)",
     "file": "src/server/question-supply/confusable-contrast-discovery.ts",
-    "notes": "dark-ship confusable-contrast supply. Read: process.env.X === '1'. A5/A6 mastery-projection dark-ship sibling."
+    "notes": "dark-ship confusable-contrast supply. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "MISCONCEPTION_PROMOTE_ENABLED": {
     "kind": "env",
-    "literals": ["1"],
-    "case_insensitive": false,
+    "literals": ["true", "1"],
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.MISCONCEPTION_PROMOTE_ENABLED)",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
-    "notes": "gates misconception promote. Read: process.env.X === '1'."
+    "notes": "gates misconception promote. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "MISCONCEPTION_HARD_CONFIRM_ENABLED": {
     "kind": "env",
-    "literals": ["1"],
-    "case_insensitive": false,
+    "literals": ["true", "1"],
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED)",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
-    "notes": "gates misconception hard-confirm. Read: process.env.X === '1'."
+    "notes": "gates misconception hard-confirm. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "RESEARCH_MEETING_AGENT_ENABLED": {
     "kind": "env",
-    "literals": ["1"],
-    "case_insensitive": false,
+    "literals": ["true", "1"],
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV])",
     "file": "src/capabilities/agency/jobs/research_meeting_agent_nightly.ts",
-    "notes": "kill switch for the research-meeting agent nightly (dark-ship). Read via ENV const RESEARCH_MEETING_AGENT_ENABLED_ENV: process.env[X] !== '1'."
+    "notes": "kill switch for the research-meeting agent nightly. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "PLACEMENT_PROBE_ENABLED": {
     "kind": "env",
-    "literals": ["true"],
-    "case_insensitive": false,
+    "literals": ["true", "1"],
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.PLACEMENT_PROBE_ENABLED)",
     "file": "src/server/session/placement.ts",
-    "notes": "gates the placement probe. Hybrid: a module-load const that reads process.env.X === 'true'."
+    "notes": "gates the placement probe. Opt-in/default OFF; module-load read via shared parseFlag."
   },
   "QUESTION_SUPPLY_REFILL_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],
-    "case_insensitive": false,
+    "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.QUESTION_SUPPLY_REFILL_ENABLED)",
     "file": "src/server/question-supply/refill.ts",
-    "notes": "dark-ship question-supply refill. Read via refillEnabled(): raw === 'true' || raw === '1' (accepts BOTH literals — the only flag that does)."
+    "notes": "dark-ship question-supply refill. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "JYEOO_FETCH_ENABLED": {
     "kind": "env",
@@ -57,59 +63,66 @@
   },
   "WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED": {
     "kind": "env",
-    "literals": ["true"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(env[AUTO_ENROLL_FLAG])",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
-    "notes": "CRITICAL-SAFETY auto-enroll gate. Read via autoEnrollEnabled() (name = AUTO_ENROLL_FLAG const): value.toLowerCase() === 'true'."
+    "notes": "CRITICAL-SAFETY auto-enroll gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED": {
     "kind": "env",
-    "literals": ["true"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(env[STUDENT_ANSWER_GRADING_FLAG])",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
-    "notes": "student-answer grading gate (YUK-482 cut 4). Read via studentAnswerGradingEnabled() (name = STUDENT_ANSWER_GRADING_FLAG const): value.toLowerCase() === 'true'."
+    "notes": "student-answer grading gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "WORKFLOW_JUDGE_OBSERVE_ENABLED": {
     "kind": "env",
-    "literals": ["false"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
-    "polarity": "opt-out",
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(env[OBSERVE_FLAG])",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
-    "notes": "observe-only gate, DEFAULT ON (opt-out). Read via observeEnabled() (name = OBSERVE_FLAG const): !(value.toLowerCase() === 'false') — the disabling literal is 'false', not the enabling literal."
+    "notes": "paid observe-only gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "WAVE6_TRIGGER_MARK_WRONG_ENABLED": {
     "kind": "env",
-    "literals": ["true", "false"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
+    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
-    "notes": "note-refine mark_wrong trigger, DEFAULT ON (opt-out kill switch). Read via noteRefineTriggerEnabled() (name in FLAG_BY_KIND map): normalized 'true'→on / 'false'→off / else default."
+    "notes": "note-refine mark_wrong trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
   "WAVE6_TRIGGER_MASTERY_ENABLED": {
     "kind": "env",
-    "literals": ["true", "false"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
+    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
-    "notes": "note-refine mastery_change trigger, DEFAULT ON (opt-out kill switch). Same helper as the other WAVE6 triggers."
+    "notes": "note-refine mastery_change trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
   "WAVE6_TRIGGER_DREAMING_ENABLED": {
     "kind": "env",
-    "literals": ["true", "false"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
+    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
-    "notes": "note-refine dreaming trigger, DEFAULT ON (opt-out kill switch). Same helper as the other WAVE6 triggers."
+    "notes": "note-refine dreaming trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
   "WAVE6_TRIGGER_VERIFY_ENABLED": {
     "kind": "env",
-    "literals": ["true", "false"],
+    "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
+    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
-    "notes": "note-refine verify trigger, DEFAULT OFF (opt-in) — the ONE WAVE6 trigger whose default polarity differs (YUK-358 决定7, Red line 2). Same helper, same literal grammar; only the DEFAULT_ENABLED_BY_KIND default differs."
+    "notes": "note-refine verify trigger. Opt-in/default OFF; parsed via shared parseFlag with defaultValue=false."
   },
   "DAY_ONE_PRIOR_ENABLED": {
     "kind": "const",
@@ -182,5 +195,23 @@
     "value": false,
     "file": "src/core/theta-grid.ts",
     "notes": "compile-time const dark-ship. export const X = false. A3 cold-start scoped erratum deadline is tied to this flag's flip."
+  },
+  "COPILOT_NUDGE_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(env.COPILOT_NUDGE_ENABLED)",
+    "file": "src/capabilities/copilot/server/nudge-config.ts",
+    "notes": "gates user-facing proactive nudge surfacing. Opt-in/default OFF; parsed via shared parseFlag."
+  },
+  "JUDGE_CALIBRATION_SAMPLING_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])",
+    "file": "src/capabilities/practice/jobs/judge_calibration_sample.ts",
+    "notes": "kill switch for paid judge-calibration sampling. Opt-in/default OFF; parsed via shared parseFlag."
   }
 }

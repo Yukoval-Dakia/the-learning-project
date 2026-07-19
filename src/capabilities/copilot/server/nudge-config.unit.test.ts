@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { loadNudgeConfig } from './nudge-config';
 
-// YUK-577 §3.7 — SHADOW model: enabled only gates surfacing (strict '1'); numeric params fall back.
+// YUK-577 §3.7 — SHADOW model: enabled only gates surfacing; numeric params fall back.
 
 describe('loadNudgeConfig', () => {
   it('defaults: OFF, dailyMax 3, expiresHours 24', () => {
     expect(loadNudgeConfig({})).toEqual({ enabled: false, dailyMax: 3, expiresHours: 24 });
   });
 
-  it('enabled only when strictly "1"', () => {
+  it('uses the shared enabled/disabled literal grammar', () => {
     expect(loadNudgeConfig({ COPILOT_NUDGE_ENABLED: '1' }).enabled).toBe(true);
-    expect(loadNudgeConfig({ COPILOT_NUDGE_ENABLED: 'true' }).enabled).toBe(false);
+    expect(loadNudgeConfig({ COPILOT_NUDGE_ENABLED: 'TRUE' }).enabled).toBe(true);
     expect(loadNudgeConfig({ COPILOT_NUDGE_ENABLED: '0' }).enabled).toBe(false);
   });
 

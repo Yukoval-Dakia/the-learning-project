@@ -48,6 +48,7 @@
 //   θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
 //   GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
 
+import { parseFlag } from '@/core/env-flags';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -75,11 +76,10 @@ export const REFILL_MAX_PER_REQUEST = 25;
 
 /**
  * flag reader（运行时读 env，runtime-flippable + 测试可 set/unset；mirror resolveSelectionPolicy
- * 读 process.env.SELECTION_POLICY 的惯例）。默认 false（dark-ship）。`'true'` / `'1'` 为开。
+ * 读 process.env.SELECTION_POLICY 的惯例）。默认 false（dark-ship）。使用全仓统一 flag grammar。
  */
 export function refillEnabled(): boolean {
-  const raw = process.env.QUESTION_SUPPLY_REFILL_ENABLED;
-  return raw === 'true' || raw === '1';
+  return parseFlag(process.env.QUESTION_SUPPLY_REFILL_ENABLED);
 }
 
 /**

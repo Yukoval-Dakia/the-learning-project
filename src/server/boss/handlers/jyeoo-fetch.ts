@@ -64,7 +64,7 @@ import type { DifficultyBand } from '@/server/question-supply/target-discovery';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -407,15 +407,25 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
           continue;
         }
 
-        // Exact-dup (canonical content hash) — content fingerprint, never ID/URL.
+        // Exact-dup (canonical content hash) — content fingerprint, never ID/URL. YUK-720
+        // cross-KC merge: if the SAME content already exists (possibly attributed to a
+        // DIFFERENT KC), merge the anchor KC into that row instead of re-inserting; a
+        // terminal-rejected draft is released (disposition!='merged') so we fall through to
+        // a fresh INSERT. This gives jyeoo the same dedup as sourcing (shared merge helper).
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: q.prompt_md,
           referenceMd: q.reference_md,
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
-        if (existingDuplicate) {
+        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: [anchorKid],
+          actorRef: 'jyeoo_fetch',
+          taskRunId: undefined,
+          now,
+        });
+        if (existingDuplicate?.disposition === 'merged') {
           counts.deduped_exact += 1;
           continue;
         }
@@ -433,9 +443,11 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
           fetchedAt: now.toISOString(),
           canonicalContentHash,
           supplyTrace: params.supplyTrace,
+          mergeActorRef: 'jyeoo_fetch',
+          taskRunId: undefined,
           now,
         });
-        if (inserted.status === 'raced_duplicate') {
+        if (inserted.status === 'raced_merged') {
           counts.deduped_exact += 1;
           continue;
         }

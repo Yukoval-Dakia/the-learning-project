@@ -21,13 +21,17 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { ProbeAnswerCard } from './ProbeAnswers';
 import { decideProposal, evidenceReadable } from './inbox-api';
 import type { PrepDeskProbeWire } from './probe-answer-api';
-import { type TeachingBrief, getTeachingBrief } from './teaching-brief-api';
+import {
+  type TeachingBrief,
+  ackTeachingBriefOutcome,
+  getTeachingBrief,
+} from './teaching-brief-api';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
 function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
@@ -51,16 +55,33 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
   return 'sparkle'; // awaiting_decision / awaiting_answer
 }
 
+// The three read surfaces whose counts move when a brief advances or retires: the brief
+// itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
+// and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
+// set stays in one place (mirrors PrepDeskConjectures' set).
+async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
+  // A precise typed return (not the former `Promise<unknown>`); `await` collapses the
+  // three void invalidations to void. (`Promise<void[]>` would trip biome's
+  // noConfusingVoidType, whose `undefined[]` autofix doesn't typecheck.)
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
+    qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
+    qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
+  ]);
+}
+
 export function TeachingBriefBand() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
 
-  // finding accept/dismiss transient state; probe_ready reveal toggle.
+  // finding accept/dismiss transient state; probe_ready reveal toggle; outcome ack.
   const [deciding, setDeciding] = useState(false);
   const [failed, setFailed] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [acking, setAcking] = useState(false);
+  const [ackFailed, setAckFailed] = useState(false);
 
   // §6 forward-announce: track {brief_id, rank}; the two focus targets are the
   // 「已经为你备好」and 「当前结果」headings.
@@ -68,15 +89,24 @@ export function TeachingBriefBand() {
   const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const [liveMsg, setLiveMsg] = useState('');
+  // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
+  // does not land its failure on the brief the user is now looking at.
+  const latestBriefIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const prev = prevRef.current;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
+    latestBriefIdRef.current = brief?.brief_id ?? null;
     if (idChanged) {
+      // Clear ALL per-brief interaction state (loading + error, both decide and ack) so a
+      // prior candidate's spinner / error never bleeds onto the next one.
       setRevealed(false);
       setFailed(false);
+      setAckFailed(false);
+      setDeciding(false);
+      setAcking(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -93,18 +123,13 @@ export function TeachingBriefBand() {
 
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
+    const targetId = brief.brief_id;
     setDeciding(true);
     setFailed(false);
     try {
       await decideProposal(brief.prepared_action.proposal_id, decision);
-      // accept → re-project to probe_ready; dismiss → next candidate or null. Refresh the
-      // brief plus the surfaces whose counts move (mirrors PrepDeskConjectures' set); the
-      // three invalidations are independent, so fan them out together.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
-        qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
-        qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
-      ]);
+      // accept → re-project to probe_ready; dismiss → next candidate or null.
+      await invalidateBriefSurfaces(qc);
     } catch (error) {
       // Contract §7 — keep the current brief, do NOT optimistically advance; allow retry.
       // Redacted diagnostic only (decision + error, never brief/claim/answer payload),
@@ -113,9 +138,35 @@ export function TeachingBriefBand() {
         decision,
         error: error instanceof Error ? error.message : String(error),
       });
-      setFailed(true);
+      // Only surface the failure if THIS brief is still on screen — a swap since the click
+      // means the error belongs to a candidate the user no longer sees.
+      if (latestBriefIdRef.current === targetId) setFailed(true);
     } finally {
-      setDeciding(false);
+      if (latestBriefIdRef.current === targetId) setDeciding(false);
+    }
+  }
+
+  async function acknowledge() {
+    if (!brief || brief.prepared_action.kind !== 'acknowledge_outcome' || acking) return;
+    const targetId = brief.brief_id;
+    setAcking(true);
+    setAckFailed(false);
+    try {
+      await ackTeachingBriefOutcome(brief.prepared_action.probe_result_event_id);
+      // The acked result loses eligibility server-side; re-project to the next candidate
+      // or the quiet null (same surfaces as decide).
+      await invalidateBriefSurfaces(qc);
+    } catch (error) {
+      // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
+      // retry. Redacted diagnostic only (never brief/claim/answer payload).
+      console.warn('[teaching-brief] acknowledge failed', {
+        brief_id: targetId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Guard against a brief swap mid-flight (same parity as decide).
+      if (latestBriefIdRef.current === targetId) setAckFailed(true);
+    } finally {
+      if (latestBriefIdRef.current === targetId) setAcking(false);
     }
   }
 
@@ -193,9 +244,12 @@ export function TeachingBriefBand() {
                 revealed={revealed}
                 deciding={deciding}
                 failed={failed}
+                acking={acking}
+                ackFailed={ackFailed}
                 onReveal={() => setRevealed(true)}
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
+                onAcknowledge={() => void acknowledge()}
               />
             </section>
 
@@ -226,17 +280,23 @@ function PreparedBlock({
   revealed,
   deciding,
   failed,
+  acking,
+  ackFailed,
   onReveal,
   onAccept,
   onReject,
+  onAcknowledge,
 }: {
   brief: TeachingBrief;
   revealed: boolean;
   deciding: boolean;
   failed: boolean;
+  acking: boolean;
+  ackFailed: boolean;
   onReveal: () => void;
   onAccept: () => void;
   onReject: () => void;
+  onAcknowledge: () => void;
 }) {
   if (brief.prepared_action.kind === 'review_finding') {
     return (
@@ -304,10 +364,26 @@ function PreparedBlock({
     );
   }
 
-  if (brief.prepared_action.kind === 'none') {
-    // outcome_* — prepared_action.kind === 'none': no CTA, no ack (contract §4.2). The
-    // finding was checked and the probe answered; the conclusion lives in 当前结果 below.
-    return <p className="tb-prepared-done">这道判别题已作答，暂无需要你做的下一步。</p>;
+  if (brief.prepared_action.kind === 'acknowledge_outcome') {
+    // outcome_* (YUK-708 / contract §4.2) — the probe was answered and reconciled; the
+    // conclusion lives in 当前结果 below. The only step left is "知道了", an append-only
+    // idempotent ack that retires this result from the brief (never a re-grade, never a
+    // guilt/streak beat). On failure keep the outcome + offer a retry (contract §7).
+    return (
+      <>
+        <p className="tb-prepared-done">这道判别题已作答。</p>
+        <div className="tb-actions">
+          <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
+            知道了
+          </Btn>
+          {ackFailed && (
+            <span className="tb-error" role="alert">
+              操作失败，请重试
+            </span>
+          )}
+        </div>
+      </>
+    );
   }
   // Exhaustive: every prepared_action.kind is handled above; a new kind fails to compile
   // here until it gets its own branch.

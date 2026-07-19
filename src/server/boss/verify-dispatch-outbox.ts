@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { type WriteEventInput, writeEvent, writeEvents } from '@/server/events/queries';
 import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
@@ -134,12 +134,11 @@ export async function writeVerifyDispatchIntent(
   });
 }
 
-async function writeDispatchCompletion(
-  tx: Tx,
+function dispatchCompletionEvent(
   intent: VerifyDispatchIntentPayload,
   input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
-) {
-  await writeEvent(tx, {
+): WriteEventInput {
+  return {
     id: completeEventId(intent.question_id, intent.verifier_kind),
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
@@ -158,7 +157,7 @@ async function writeDispatchCompletion(
     },
     created_at: input.now,
     ingest_at: input.now,
-  });
+  };
 }
 
 async function writeDispatchFailure(
@@ -312,6 +311,7 @@ export async function dispatchPendingVerifyIntents(
         }
       }
 
+      const completionEvents: WriteEventInput[] = [];
       for (const verifier of verifyKindSchema.options) {
         const group = eligible.filter((intent) => intent.verifier_kind === verifier);
         if (group.length === 0) continue;
@@ -321,16 +321,17 @@ export async function dispatchPendingVerifyIntents(
           { db: fromPgBossDrizzleTx(tx) },
         );
         for (const intent of group) {
-          await writeDispatchCompletion(tx, intent, { recovery, disposition: 'enqueued', now });
+          completionEvents.push(
+            dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
+          );
         }
       }
       for (const intent of terminal) {
-        await writeDispatchCompletion(tx, intent, {
-          recovery,
-          disposition: 'terminal_skip',
-          now,
-        });
+        completionEvents.push(
+          dispatchCompletionEvent(intent, { recovery, disposition: 'terminal_skip', now }),
+        );
       }
+      await writeEvents(tx, completionEvents);
 
       return {
         synthesized: 0,

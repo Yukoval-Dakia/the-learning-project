@@ -194,6 +194,18 @@ const TeachingBriefBasisSectionSchema = z
     path: ['evidence_trace'],
   });
 
+// YUK-708 (P0F/4) — the outcome states' executable next step: acknowledge (dismiss)
+// the delivered result. Contract §2.1 requires the strict schema to be upgraded (not
+// left at `{kind:'none'}`) before the UI may render an ack action. `probe_result_event_id`
+// is the ack target — the same id carried in `current_outcome` — keeping the action
+// self-describing.
+const OutcomeAcknowledgeActionSchema = z
+  .object({
+    kind: z.literal('acknowledge_outcome'),
+    probe_result_event_id: z.string().min(1),
+  })
+  .strict();
+
 const teachingBriefCommon = {
   brief_id: z.string().min(1),
   updated_at: z.string().datetime(),
@@ -201,81 +213,116 @@ const teachingBriefCommon = {
   basis: TeachingBriefBasisSectionSchema,
 };
 
-export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnion('state', [
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('finding'),
-      expires_at: z.string().datetime(),
-      prepared_action: z
-        .object({
-          kind: z.literal('review_finding'),
-          proposal_id: z.string().min(1),
-          probe_preview_md: z.string().min(1),
-        })
-        .strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('awaiting_decision'),
-          summary_md: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('probe_ready'),
-      expires_at: z.null(),
-      prepared_action: z
-        .object({
-          kind: z.literal('answer_probe'),
-          probe_question_id: z.string().min(1),
-          prompt_md: z.string().min(1),
-        })
-        .strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('awaiting_answer'),
-          summary_md: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('outcome_confirmed'),
-      expires_at: z.string().datetime(),
-      prepared_action: z.object({ kind: z.literal('none') }).strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('confirmed'),
-          summary_md: z.string().min(1),
-          probe_question_id: z.string().min(1),
-          probe_result_event_id: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('outcome_retired'),
-      expires_at: z.string().datetime(),
-      prepared_action: z.object({ kind: z.literal('none') }).strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('retired'),
-          summary_md: z.string().min(1),
-          probe_question_id: z.string().min(1),
-          probe_result_event_id: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-]);
+export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
+  .discriminatedUnion('state', [
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('finding'),
+        expires_at: z.string().datetime(),
+        prepared_action: z
+          .object({
+            kind: z.literal('review_finding'),
+            proposal_id: z.string().min(1),
+            probe_preview_md: z.string().min(1),
+          })
+          .strict(),
+        current_outcome: z
+          .object({
+            status: z.literal('awaiting_decision'),
+            summary_md: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('probe_ready'),
+        expires_at: z.null(),
+        prepared_action: z
+          .object({
+            kind: z.literal('answer_probe'),
+            probe_question_id: z.string().min(1),
+            prompt_md: z.string().min(1),
+          })
+          .strict(),
+        current_outcome: z
+          .object({
+            status: z.literal('awaiting_answer'),
+            summary_md: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('outcome_confirmed'),
+        expires_at: z.string().datetime(),
+        prepared_action: OutcomeAcknowledgeActionSchema,
+        current_outcome: z
+          .object({
+            status: z.literal('confirmed'),
+            summary_md: z.string().min(1),
+            probe_question_id: z.string().min(1),
+            probe_result_event_id: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('outcome_retired'),
+        expires_at: z.string().datetime(),
+        prepared_action: OutcomeAcknowledgeActionSchema,
+        current_outcome: z
+          .object({
+            status: z.literal('retired'),
+            summary_md: z.string().min(1),
+            probe_question_id: z.string().min(1),
+            probe_result_event_id: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+  ])
+  // Cross-field invariant (mirrors TeachingBriefBasisSectionSchema's refine): on an outcome
+  // brief the ack action must target the very result the outcome reports. A discriminatedUnion
+  // member cannot itself be refined (that yields a ZodEffects, which the union rejects), so the
+  // check lives on the whole union — a future projection regression that lets the two ids drift
+  // fails the wire loudly instead of silently.
+  .superRefine((brief, ctx) => {
+    if (
+      (brief.state === 'outcome_confirmed' || brief.state === 'outcome_retired') &&
+      brief.prepared_action.probe_result_event_id !== brief.current_outcome.probe_result_event_id
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'prepared_action.probe_result_event_id must equal current_outcome.probe_result_event_id',
+        path: ['prepared_action', 'probe_result_event_id'],
+      });
+    }
+  });
 
 export const TeachingBriefResponseSchema = z
   .object({ brief: TeachingBriefSchema.nullable() })
+  .strict();
+
+// YUK-708 (P0F/4) — acknowledge a delivered outcome. The target is the probe_result
+// event id (the same one on `current_outcome.probe_result_event_id` /
+// `prepared_action.probe_result_event_id`); the ack is keyed on it server-side.
+export const TeachingBriefAckBodySchema = z
+  .object({ probe_result_event_id: z.string().min(1) })
+  .strict();
+
+export const TeachingBriefAckResponseSchema = z
+  .object({
+    brief_acknowledgement_event_id: z.string().min(1),
+    probe_result_event_id: z.string().min(1),
+    brief_id: z.string().min(1),
+    idempotent: z.boolean(),
+  })
   .strict();

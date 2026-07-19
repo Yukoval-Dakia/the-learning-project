@@ -8,25 +8,30 @@
 >
 > This is the owner-operated half of Strategy D. The headless auto-tag audit
 > trail (Slice B, YUK-190) rides on top of the same real sessions once they exist.
+>
+> Stack: Hono API + Vite SPA (post YUK-321 M5). API contracts come from
+> capability manifests; page routes come from `src/kernel/ui-surfaces.ts`.
 
 ## 1. What real ingestion needs
 
 The canonical variable list + inline docs live in [`.env.example`](../../.env.example).
-This runbook only groups them by the external account they come from. Three
-credential groups gate the real path; everything else has a working default.
+This runbook only groups them by the external account they come from. Four
+credential groups cover the default path plus its retained rollback; everything
+else has a working default.
 
 | Group | Vars | Used by | Source |
 |-------|------|---------|--------|
-| **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/server/ingestion/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
-| **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/server/ingestion/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
-| **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/server/ingestion/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
+| **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/capabilities/ingestion/server/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
+| **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/capabilities/ingestion/server/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
+| **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/capabilities/ingestion/server/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
 | **Blob (Cloudflare R2)** | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Original uploads + auto-cropped figures (`src/server/r2.ts:50`). | Cloudflare R2 |
 
-Also relevant but **not** blocking ingestion:
+Also relevant but **not** blocking the manual ingestion flow:
 
-- `OPENAI_API_KEY` — only the Mem0 fact layer (ADR-0017). Unset ⇒ the fact layer
-  degrades gracefully; upload → extract → review → import still works. The
-  pre-flight reports it as a warning, not a failure.
+- `DASHSCOPE_API_KEY` — Mem0's embedding key (ADR-0017). `ZHIPU_API_KEY` is also
+  used by Mem0's GLM fact extractor, but is already required by the default OCR
+  path. A missing `DASHSCOPE_API_KEY` degrades the fact layer while upload →
+  extract → review → import still works; the pre-flight reports it as a warning.
 - `DATABASE_URL`, `INTERNAL_TOKEN` — already set in any running stack; the
   pre-flight checks them so a half-configured env is caught early.
 
@@ -62,8 +67,9 @@ jobs in `scripts/worker.ts`.
 
 - **NAS / prod (compose):** put the values in the compose `.env` injected to the
   app + worker services, then restart the worker so it re-reads them.
-- **Local host-side dev:** `pnpm dev:local` copies `.env.example` → `.env`; edit
-  `.env` and restart `pnpm worker:dev`.
+- **Local host-side dev:** create the file once with `cp .env.example .env`, edit
+  `.env`, then start or restart `pnpm dev:local`. The command loads an existing
+  `.env` and derives its local database URL; it does not create the file.
 
 > Never put these in `.env.local` (host Neon) for seeding/testing — real OCR/R2
 > calls cost money and write to your real bucket. Provision them where you
@@ -90,9 +96,12 @@ pnpm preflight:vision
 
 `preflight:ingestion` exits `0` only when every **required** var is present
 (warnings allowed); `2` if a required var is missing or still a placeholder; `1`
-if `--live-r2` is set and the bucket probe fails. Tencent has no cheap
-non-mutating probe (a real `SubmitQuestionMarkAgentJob` costs money + needs a
-real image), so the live Tencent check is the first real upload below.
+if `--live-r2` is set and the bucket probe fails. This runbook treats rollback
+readiness as part of provisioning, so the current pre-flight intentionally
+requires both Tencent keys even while GLM is selected. Tencent has no cheap
+non-mutating probe: the first default upload below verifies GLM, not Tencent. To
+live-check the rollback, set `EXTRACT_OCR_ENGINE=tencent`, restart the worker,
+upload a disposable image, then restore GLM.
 
 ## 5. Ingest your first worksheet
 
@@ -102,19 +111,37 @@ Confirm the subject profile first:
 pnpm audit:profile   # math + physics + wenyan should all be valid
 ```
 
-**UI path:** the `/record` page (`app/(app)/record/page.tsx`) has a **拍试卷**
-tab (the `vision_paper` mode) that uploads a full worksheet image and runs it
-through the pipeline. This is the intended owner entry point.
+**UI path:** the `/record` page is implemented by
+`src/capabilities/ingestion/ui/RecordPage.tsx` and declared in
+`src/kernel/ui-surfaces.ts`. Its **拍试卷** tab (the `vision_paper` mode) uploads
+a full worksheet image and runs it through the pipeline. This is the intended
+owner entry point.
 
-**API path (authoritative, what the UI drives):**
+**API path (canonical resource flow):**
 
-1. `POST /api/ingestion` — create an ingestion session (`learning_session`
-   with `type='ingestion'`), upload the asset (`POST /api/assets`).
-2. `POST /api/ingestion/[id]/extract` — enqueue Tencent OCR extraction.
-3. Review the extracted blocks: `GET /api/ingestion/[id]/blocks`; rescue a bad
-   block with `POST /api/ingestion/[id]/rescue` (explicit, paid VLM).
-4. `POST /api/ingestion/[id]/import` — commit the reviewed blocks to question /
-   knowledge rows.
+1. `POST /api/assets` — upload the worksheet image and retain its asset id.
+2. `POST /api/ingestion-sessions` with
+   `{ "entrypoint": "vision_paper", "asset_ids": ["..."] }` — create an
+   ingestion session (`learning_session` with `type='ingestion'`). The current
+   UI still calls deprecated create alias `POST /api/ingestion`; the manifest
+   declares `/api/ingestion-sessions` as its successor.
+3. `POST /api/ingestion-sessions/[id]/operations` with `{ "kind": "extract" }`
+   — enqueue GLM-OCR by default; Tencent runs only when
+   `EXTRACT_OCR_ENGINE='tencent'`.
+4. Review blocks via `GET /api/ingestion/[id]/blocks`. Rescue a bad block by
+   creating an operation with `{ "kind": "rescue", "input": { ... } }`.
+5. Commit reviewed blocks by creating an operation with
+   `{ "kind": "import", "input": { ... } }`.
+
+Operation creation returns a resource handle and `Location` header. Poll that
+location (`GET /api/ingestion-operations/[id]`) until `succeeded` or `failed`;
+queued/running responses include `Retry-After`. The UI implements this contract
+in `src/ui/lib/ingestion-operations.ts`. The old `/extract`, `/rescue`, and
+`/import` mutation routes remain only as deprecated aliases.
+
+The bracketed `[id]` segments match `src/capabilities/ingestion/manifest.ts`;
+`server/app.ts::toHonoPath` converts them to Hono `:id` parameters when the
+composition root mounts the routes.
 
 The session state machine is guarded in a single place,
 `src/server/session/ingestion.ts`:
@@ -123,8 +150,8 @@ extracted | partial | failed`, then `commitImport()` takes the session from
 `extracted` (or `reviewed`) → `imported` (terminal, read-only).
 `markReviewed()` (`extracted | partial → reviewed`) is an optional checkpoint
 not yet wired into the flow — today import commits straight from `extracted`.
-All five write sites (`POST /api/ingestion`, `/extract`, the handler,
-`/rescue`, `/import`) go through this guard. Don't bypass it.
+The canonical session/operation handlers and their workers go through this
+guard. Don't bypass it.
 
 This is the **manual-review** friction the data the flywheel runs on today: per
 block you fill wrong-answer + ≥1 knowledge point + kind + difficulty + cause
@@ -133,17 +160,27 @@ exists to remove.
 
 ## 6. How this connects to the auto-tag path (Slice B / YUK-190)
 
-Slice B wires `runAutoEnrollForSession` to run **observe-only** (flag
-`WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` stays OFF) on every extracted session. With
-the flag OFF it does **not** auto-import or change any status — it runs the
-TaggingTask + WorkflowJudge and writes a `generated_by='workflow_judge'` event
-trail, so once your real math/physics sessions exist you can audit how good the
-AI's would-be tagging is **in the event log** before ever flipping the flag or
-building the review UI (OC-5, deferred). Provisioning + ingesting real material
-here is what gives that audit trail something real to score.
+Slice B is separately opt-in because its model calls are paid:
+
+- Both `WORKFLOW_JUDGE_OBSERVE_ENABLED` and
+  `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` unset/OFF (the default): extraction stays
+  manual-only; no auto-enroll job or observation trail is produced.
+- `WORKFLOW_JUDGE_OBSERVE_ENABLED=true` with auto-enroll OFF: every extracted
+  session runs TaggingTask + WorkflowJudge, leaves block/session status
+  unchanged, and writes `experimental:auto_enroll_observed` events generated by
+  `workflow_judge` for audit.
+- `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED=true`: high-confidence results may write
+  learning data. The `/record` auto-enrolled review/revert surface has shipped
+  and the owner opt-in was recorded in YUK-164; the code default remains OFF.
+
+To build the first-real-data audit trail, set
+`WORKFLOW_JUDGE_OBSERVE_ENABLED=true` in the worker environment and restart all
+job consumers before uploading. Locally, stop and restart the whole
+`pnpm dev:local` process: it launches both the `rw:api` in-process worker and the
+standalone worker. Keep auto-enroll OFF while collecting observe-only evidence.
 
 ## 7. Out of scope here
 
-- The OC-5 "AI auto-enrolled N items" review/revert UI (YUK-164 #2/#3 — redraw-blocked).
-- Flipping `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` ON (YUK-164 #4 — needs OC-5 first, ADR-0026).
+- Choosing per-environment rollout timing for mutating auto-enroll; its review /
+  revert UI exists, but the flag remains an explicit owner-controlled opt-in.
 - The figure page-index fix (YUK-163).

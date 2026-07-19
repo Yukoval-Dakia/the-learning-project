@@ -565,7 +565,10 @@ async function applyImperativeUndo(
   }
 
   // (1) Imperative soft-delete, stamped with the tx-wide `now`.
-  await archiveKnowledgeEdge(tx, edgeId, now);
+  const archived = await archiveKnowledgeEdge(tx, edgeId, now);
+  if (!archived.archived) {
+    throw new Error(`cascade revert: knowledge_edge ${edgeId} changed before archive`);
+  }
 
   // (2) Fold-visible archive event (mirrors actions.ts:418-439). user/self so the
   // parse barrier accepts a null reasoning (agent-actor would require non-empty).

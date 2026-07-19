@@ -6,7 +6,7 @@
 // uniformly. We mock the SDK at module boundary so unit tests don't spawn
 // the `claude` binary.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
 
@@ -46,6 +46,8 @@ function successResult(text: string, cost_usd = 0.001) {
     usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
   };
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('runTask (Claude Agent SDK adapter)', () => {
   beforeEach(async () => {
@@ -143,6 +145,46 @@ describe('runTask (Claude Agent SDK adapter)', () => {
 
     const opts = mockSdk.capturedOptions as { tools: string[] };
     expect(opts.tools).toEqual(['mcp__loom__write_proposal']);
+  });
+
+  it('warns once when an agentic task has no mcpServers', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTask(
+      'KnowledgeReviewTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2() },
+    );
+
+    expect(warn).toHaveBeenCalledWith('[runTask] missing_mcp_servers', {
+      event: 'missing_mcp_servers',
+      task_run_id: result.task_run_id,
+      kind: 'KnowledgeReviewTask',
+    });
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('does not warn when a non-agentic task has no mcpServers', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when an agentic task receives an mcpServers map', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTask(
+      'KnowledgeReviewTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), mcpServers: {} },
+    );
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('ctx.allowedTools overrides registry default', async () => {

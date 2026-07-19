@@ -745,7 +745,10 @@ export async function rewireKnowledgeEdges(
     // Self-loop after rewrite (edge already touched intoId, or a loser→loser edge): the edge
     // collapses — archive-only, no create (a self-edge is never meaningful).
     if (newFrom === newTo) {
-      await archiveKnowledgeEdge(tx, edge.id, now);
+      const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+      if (!archived.archived) {
+        throw new Error(`merge: knowledge_edge ${edge.id} changed before self-loop collapse`);
+      }
       await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
       if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
       result.push({ old_edge_id: edge.id, new_edge_id: null, outcome: 'collapsed_self_loop' });
@@ -773,7 +776,10 @@ export async function rewireKnowledgeEdges(
     }
 
     // Archive the old edge (+ fold event), then create the rewritten edge (+ fold event).
-    await archiveKnowledgeEdge(tx, edge.id, now);
+    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+    if (!archived.archived) {
+      throw new Error(`merge: knowledge_edge ${edge.id} changed before rewire`);
+    }
     await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
     if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
 

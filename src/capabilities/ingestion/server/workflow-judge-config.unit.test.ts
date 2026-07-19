@@ -11,10 +11,12 @@ import {
   AUTO_ENROLL_THRESHOLD_FLAG,
   DEFAULT_AUTO_ENROLL_THRESHOLD,
   OBSERVE_FLAG,
+  STUDENT_ANSWER_GRADING_FLAG,
   autoEnrollEnabled,
   autoEnrollJobEnabled,
   autoEnrollThreshold,
   observeEnabled,
+  studentAnswerGradingEnabled,
 } from './workflow-judge-config';
 
 describe('autoEnrollEnabled', () => {
@@ -30,10 +32,11 @@ describe('autoEnrollEnabled', () => {
     expect(autoEnrollEnabled({ [AUTO_ENROLL_FLAG]: 'on' })).toBe(false);
   });
 
-  it("is ON only when explicitly 'true' (case-insensitive)", () => {
+  it("is ON for the shared 'true' / '1' literals (case-insensitive)", () => {
     expect(autoEnrollEnabled({ [AUTO_ENROLL_FLAG]: 'true' })).toBe(true);
     expect(autoEnrollEnabled({ [AUTO_ENROLL_FLAG]: 'TRUE' })).toBe(true);
     expect(autoEnrollEnabled({ [AUTO_ENROLL_FLAG]: 'True' })).toBe(true);
+    expect(autoEnrollEnabled({ [AUTO_ENROLL_FLAG]: '1' })).toBe(true);
   });
 });
 
@@ -63,14 +66,23 @@ describe('observeEnabled', () => {
   it("is OFF for '' / 'false' / arbitrary values (opt-IN polarity)", () => {
     expect(observeEnabled({ [OBSERVE_FLAG]: '' })).toBe(false);
     expect(observeEnabled({ [OBSERVE_FLAG]: 'false' })).toBe(false);
-    expect(observeEnabled({ [OBSERVE_FLAG]: '1' })).toBe(false);
     expect(observeEnabled({ [OBSERVE_FLAG]: 'yes' })).toBe(false);
   });
 
-  it("is ON only when explicitly 'true' (case-insensitive)", () => {
+  it("is ON for the shared 'true' / '1' literals (case-insensitive)", () => {
     expect(observeEnabled({ [OBSERVE_FLAG]: 'true' })).toBe(true);
     expect(observeEnabled({ [OBSERVE_FLAG]: 'TRUE' })).toBe(true);
     expect(observeEnabled({ [OBSERVE_FLAG]: 'True' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: '1' })).toBe(true);
+  });
+});
+
+describe('studentAnswerGradingEnabled', () => {
+  it('keeps opt-in polarity while accepting both shared enabled literals', () => {
+    expect(studentAnswerGradingEnabled({})).toBe(false);
+    expect(studentAnswerGradingEnabled({ [STUDENT_ANSWER_GRADING_FLAG]: 'false' })).toBe(false);
+    expect(studentAnswerGradingEnabled({ [STUDENT_ANSWER_GRADING_FLAG]: '1' })).toBe(true);
+    expect(studentAnswerGradingEnabled({ [STUDENT_ANSWER_GRADING_FLAG]: 'TRUE' })).toBe(true);
   });
 });
 

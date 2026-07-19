@@ -1,6 +1,9 @@
-import { knowledge } from '@/db/schema';
+import { event, knowledge, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
+import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { resolveKnownSubjectId, subjectProfiles } from '@/subjects/profile';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedKnowledge } from './seed';
@@ -29,10 +32,20 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
       // name is profile-derived (displayName), not the raw subjectId — guards a
       // regression where the displayName lookup silently falls through.
       expect(row.name).toBe(subjectProfiles[subjectId].displayName);
+      // YUK-587: every fresh root has a fold source, and replay is byte-faithful to the live row.
+      expect(await gatherAndFoldKnowledgeNode(db, row.id)).toEqual(knowledgeRowToSnapshot(row));
     }
     // one node per subject, no duplicates.
     const domains = rows.map((r) => r.domain).sort();
     expect(domains).toEqual([...KNOWN_SUBJECT_IDS].sort());
+
+    const genesis = await db.select().from(event).where(eq(event.actor_ref, 'knowledge-seed'));
+    expect(genesis).toHaveLength(SUBJECT_COUNT);
+    expect(genesis.every((row) => row.action === 'experimental:genesis')).toBe(true);
+    expect(genesis.every((row) => row.ingest_at !== null && row.affected_scopes.length === 0)).toBe(
+      true,
+    );
+    expect(await db.select().from(materialized_id_index)).toHaveLength(SUBJECT_COUNT);
   });
 
   it('is idempotent — second run inserts 0, skips all', async () => {
@@ -42,6 +55,8 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
     expect(result2.inserted).toBe(0);
     expect(result2.skipped).toBe(SUBJECT_COUNT);
     expect(await db.select().from(knowledge)).toHaveLength(SUBJECT_COUNT);
+    expect(await db.select().from(event)).toHaveLength(SUBJECT_COUNT);
+    expect(await db.select().from(materialized_id_index)).toHaveLength(SUBJECT_COUNT);
   });
 
   it('uses stable id seed:<subjectId>:root', async () => {
