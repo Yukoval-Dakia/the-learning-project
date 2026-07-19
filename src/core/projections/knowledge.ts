@@ -131,19 +131,21 @@ function replayTieKey(
   return [2, 0];
 }
 
-// Stable canonical total order. Timestamp remains the primary order. Within one millisecond, a
-// node's creation precedes its explicitly versioned mutations, which are ordered by their
-// previous/expected version; remaining events follow by id. Computing one tuple per event (instead
-// of a pair-specific special case) keeps the comparator transitive. A merge into_id has no expected
-// version in the production contract, so its field-disjoint update must commute with a name update.
+// Stable canonical total order. The materialization timestamp (accept time for proposals, envelope
+// time otherwise) is primary. Within one millisecond, a node's creation precedes its explicitly
+// versioned mutations, which are ordered by their previous/expected version; remaining events
+// follow by id. Computing one tuple per event (instead of a pair-specific special case) keeps the
+// comparator transitive. A merge into_id has no expected version in the production contract, so
+// its field-disjoint update must also commute with a same-ms name update.
 function compareReplayEvents(
   a: FoldEvent,
   b: FoldEvent,
   nodeId: string,
   materializedKnowledgeByProposeId: Map<string, string[]>,
+  acceptedAtByProposeId: Map<string, Date>,
 ): number {
-  const ta = a.created_at.getTime();
-  const tb = b.created_at.getTime();
+  const ta = (acceptedAtByProposeId.get(a.id) ?? a.created_at).getTime();
+  const tb = (acceptedAtByProposeId.get(b.id) ?? b.created_at).getTime();
   if (ta !== tb) return ta - tb;
 
   const [aTier, aVersion] = replayTieKey(a, nodeId, materializedKnowledgeByProposeId);
@@ -198,12 +200,12 @@ export function foldKnowledgeNode(
   }
 
   // ---------- pass 2: apply in canonical replay order ----------
-  // Walk source events by timestamp. Events for one node that share a millisecond use a total
-  // creation/version/id tie order so causal version transitions never depend on random envelope
-  // ids or the database's unordered Q1 result. This is why the fold takes envelope-wrapped
-  // FoldEvent rows rather than bare EventT values.
+  // Walk source events by materialization timestamp (the accepting rate's time for proposals).
+  // Events for one node that share a millisecond use a total creation/version/id tie order so
+  // causal transitions never depend on random envelope ids or the database's unordered Q1 result.
+  // This is why the fold takes envelope-wrapped FoldEvent rows rather than bare EventT values.
   const ordered = [...events].sort((a, b) =>
-    compareReplayEvents(a, b, nodeId, materializedKnowledgeByProposeId),
+    compareReplayEvents(a, b, nodeId, materializedKnowledgeByProposeId, acceptedAtByProposeId),
   );
 
   let row: KnowledgeRowSnapshotT | null = null;
