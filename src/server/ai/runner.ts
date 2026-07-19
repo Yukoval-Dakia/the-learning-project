@@ -554,13 +554,6 @@ async function runTaskAttempt(args: {
     console.error('[runTask] writeAiTaskRunStarted failed', { task_run_id: taskRunId, kind, err });
   }
 
-  if (def.needsToolCall && !ctx.mcpServers) {
-    logMissingMcpServersWarning({
-      task_run_id: taskRunId,
-      task_kind: kind,
-    });
-  }
-
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
 
@@ -768,6 +761,14 @@ export async function runTask(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const taskRunId = createId();
+    // Invocation-level guard: keep the warning correlated with the first run
+    // row, but never repeat it if this task later gains transient retries.
+    if (attempt === 1 && def.needsToolCall && !ctx.mcpServers) {
+      logMissingMcpServersWarning({
+        task_run_id: taskRunId,
+        task_kind: kind,
+      });
+    }
     // Resolve exactly once per attempt (same target every time — this is a
     // retry, not a fallback) and thread the binding into buildQueryOptions.
     const resolved = resolveTaskProvider(kind, ctx.override);

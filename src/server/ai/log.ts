@@ -49,7 +49,7 @@ export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Pro
   return id;
 }
 
-/** Emit the runTask guard through the centralized application-log surface. */
+/** Warn when a tool-calling task has no MCP servers configured in its context. */
 export function logMissingMcpServersWarning(entry: {
   task_run_id: string;
   task_kind: string;
