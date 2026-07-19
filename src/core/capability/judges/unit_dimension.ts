@@ -1,10 +1,20 @@
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
-import { runAccelerator } from './unit_dimension/accelerator';
 import { type RunTaskFn, runLlmFallback } from './unit_dimension/llm-fallback';
 import { composeScore } from './unit_dimension/score';
 import type { LlmFallbackOutputT } from './unit_dimension/types';
+
+// The accelerator pulls in mathjs (~254KB / 72KB gz) at the value level. Load it
+// on demand so client route chunks that only touch validateProfile (which never
+// runs a judge) don't statically bundle mathjs. Memoize the module promise so
+// repeated judge calls don't repeat the dynamic-import overhead.
+let acceleratorModulePromise: Promise<typeof import('./unit_dimension/accelerator')> | undefined;
+
+function loadAccelerator(): Promise<typeof import('./unit_dimension/accelerator')> {
+  acceleratorModulePromise ??= import('./unit_dimension/accelerator');
+  return acceleratorModulePromise;
+}
 
 const VERSION = '1.0.0';
 
@@ -49,6 +59,7 @@ export async function runUnitDimensionJudge(
   }
 
   const reference = { value: refValue, unit: refUnit, tolerance: refTolerance };
+  const { runAccelerator } = await loadAccelerator();
   const accelerator = runAccelerator({
     student_answer: student,
     reference,
