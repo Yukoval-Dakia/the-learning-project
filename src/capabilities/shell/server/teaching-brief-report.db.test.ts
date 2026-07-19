@@ -18,6 +18,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { acknowledgeTeachingBriefOutcome } from './teaching-brief-ack';
 import { recordBriefSeen, recordPrimaryActionStarted } from './teaching-brief-interactions';
 
 const KC_ID = 'kn_chain_rule';
@@ -284,5 +285,22 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     // Retract folded away the accepted status, but the outcome is still counted, not skipped.
     expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
     expect(report.skipped_corrupt_outcomes).toBe(0);
+  });
+
+  it('counts a retired brief-day as converted via the outcome ack (its only trackable action)', async () => {
+    const chain = await seedChain('retired');
+    await recordBriefSeen(testDb(), { briefId: chain.proposalId, briefState: 'outcome_retired' });
+    // A retired outcome has no primary_action_started — the only trackable action is the "知道了" ack.
+    await acknowledgeTeachingBriefOutcome(testDb(), chain.resultId);
+
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+    expect(report.outcomes).toEqual({ confirmed: 0, retired: 1 });
+    // The ack converts the seen retired brief-day (1/1) — without counting it, retired days would be
+    // permanently non-converted (round-6 codex P2). No primary action was started.
+    expect(report.brief_to_action).toEqual({ numerator: 1, denominator: 1, rate: 1 });
+    expect(report.total_action_starts).toBe(0);
   });
 });

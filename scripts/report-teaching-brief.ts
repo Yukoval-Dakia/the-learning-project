@@ -26,8 +26,9 @@ import type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,
 } from '@/capabilities/shell/server/teaching-brief-interactions';
-import { isLearnerLocalDay, learnerDayWindowUtc } from '@/core/learner-day';
+import { isLearnerLocalDay, learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import {
+  BRIEF_ACK_ACTION,
   BRIEF_SEEN_ACTION,
   PRIMARY_ACTION_STARTED_ACTION,
   PROBE_QUESTION_SOURCE,
@@ -38,6 +39,7 @@ import { type Db, db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import {
+  type AckActionFact,
   type BriefSeenFact,
   type DecisionFact,
   type PrimaryActionFact,
@@ -222,18 +224,52 @@ export async function loadTeachingBriefReportInput(
       ),
     );
   const now = new Date();
+  // Each row's gate is independent (2 SELECTs apiece), so run them in parallel. Concurrency is
+  // naturally bounded by the postgres-js pool (max:10, see @/db/client) and the row count is small
+  // (a fortnight of one learner's probe_results), so a direct Promise.all is safe here.
+  const gated = await Promise.all(
+    resultRows.map(async (row) => ({
+      id: row.id,
+      gate: await validateAckableOutcome(database, row, now, {
+        skipTimeWindow: true,
+        skipCurrentStatusFold: true,
+      }),
+    })),
+  );
   const probeResults: ProbeResultFact[] = [];
   let skippedCorruptOutcomes = 0;
-  for (const row of resultRows) {
-    const gate = await validateAckableOutcome(database, row, now, {
-      skipTimeWindow: true,
-      skipCurrentStatusFold: true,
-    });
+  for (const { id, gate } of gated) {
     if (isCandidateError(gate)) {
       skippedCorruptOutcomes += 1;
       continue;
     }
-    probeResults.push({ result_event_id: row.id, resolution: gate.value.resolution });
+    probeResults.push({ result_event_id: id, resolution: gate.value.resolution });
+  }
+
+  // Outcome acks (BRIEF_ACK_ACTION) — the "已处理该结果" signal, reusing the existing event. Counted
+  // toward the brief→action funnel (a retired brief's only trackable action; see AckActionFact). The
+  // brief_id lives in the ack's own payload; the local day is the ack's Asia/Shanghai created day.
+  const ackRows = await database
+    .select({ payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, BRIEF_ACK_ACTION),
+        eq(event.subject_kind, 'event'),
+        gte(event.created_at, window.from),
+        lt(event.created_at, window.to),
+      ),
+    );
+  const acks: AckActionFact[] = [];
+  for (const row of ackRows) {
+    const p = toRecord(row.payload);
+    if (typeof p.brief_id !== 'string' || p.brief_id.length === 0) continue; // foreign / corrupt ack
+    acks.push({
+      brief_id: p.brief_id,
+      local_day: learnerLocalDay(row.created_at),
+      acknowledged_at:
+        typeof p.acknowledged_at === 'string' ? p.acknowledged_at : row.created_at.toISOString(),
+    });
   }
 
   return {
@@ -241,6 +277,7 @@ export async function loadTeachingBriefReportInput(
     to,
     briefSeen,
     primaryActions,
+    acks,
     decisions,
     probesServed,
     probeResults,

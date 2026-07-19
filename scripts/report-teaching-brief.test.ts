@@ -19,6 +19,7 @@ function emptyInput(from = '2026-07-06', to = '2026-07-19'): TeachingBriefReport
     to,
     briefSeen: [],
     primaryActions: [],
+    acks: [],
     decisions: [],
     probesServed: [],
     probeResults: [],
@@ -80,6 +81,7 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
         { brief_id: 'b1', local_day: '2026-07-10', seen_at: '2026-07-10T01:00:00.000Z' },
         { brief_id: 'b2', local_day: '2026-07-11', seen_at: '2026-07-11T02:00:00.000Z' },
       ],
+      acks: [],
       primaryActions: [
         // b1 accepted 90s after being seen.
         {
@@ -245,5 +247,30 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     // The dropped rows never inflate confirmed/retired (the whole point of the round-4 fix).
     expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
     expect(formatTeachingBriefReport(report)).toContain('broken chain');
+  });
+
+  it('counts an outcome ack as an action so a retired brief-day registers as converted', () => {
+    const input = emptyInput();
+    input.briefSeen = [
+      { brief_id: 'b1', local_day: '2026-07-10', seen_at: '2026-07-10T01:00:00.000Z' },
+    ];
+    // A retired outcome offers no primary_action_started — only the "知道了" ack (BRIEF_ACK_ACTION).
+    input.acks = [
+      { brief_id: 'b1', local_day: '2026-07-10', acknowledged_at: '2026-07-10T01:02:00.000Z' },
+    ];
+    const report = computeTeachingBriefReport(input);
+    // The ack makes the seen brief-day count as converted (1/1); without it a retired day would be
+    // permanently non-converted (round-6 codex P2).
+    expect(report.brief_to_action).toEqual({ numerator: 1, denominator: 1, rate: 1 });
+    // But an ack is NOT a primary action start (those are the three CTA kinds only).
+    expect(report.total_action_starts).toBe(0);
+    expect(report.action_starts_by_kind).toEqual({
+      accept_probe: 0,
+      answer_probe: 0,
+      scoped_practice: 0,
+    });
+    // Time-to-action pairs seen → ack (120s).
+    expect(report.time_to_action.count).toBe(1);
+    expect(report.time_to_action.median_ms).toBe(120_000);
   });
 });
