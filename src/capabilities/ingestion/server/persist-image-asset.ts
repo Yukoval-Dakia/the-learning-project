@@ -3,7 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 // Shared content-addressed image-asset write path. Extracted from
 // app/api/assets/route.ts (YUK-250) so both the generic asset upload route and
@@ -50,7 +50,12 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function persistImageAsset(
   db: Db,
   r2: R2Client,
-  input: { bytes: Uint8Array; mime: string; compensatePutOnInsertFailure?: boolean },
+  input: {
+    bytes: Uint8Array;
+    mime: string;
+    provenance?: typeof source_asset.$inferInsert.provenance;
+    compensatePutOnInsertFailure?: boolean;
+  },
 ): Promise<SourceAssetRow> {
   const { bytes, mime } = input;
   const sha = await sha256Hex(bytes);
@@ -82,6 +87,7 @@ export async function persistImageAsset(
           mime_type: mime,
           byte_size: bytes.byteLength,
           sha256: sha,
+          provenance: input.provenance,
           created_at: now,
         })
         .returning();
@@ -105,4 +111,42 @@ export async function persistImageAsset(
     throw new Error('persistImageAsset: INSERT ... RETURNING returned no row');
   }
   return row;
+}
+
+/**
+ * Delete one logical owner and remove the content-addressed object only after its final owner.
+ * Every `assets/<sha>` owner mutation shares the same advisory-lock protocol as writes.
+ */
+export async function deleteImageAsset(db: Db, r2: R2Client, id: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [snapshot] = await tx
+      .select({ id: source_asset.id, storageKey: source_asset.storage_key })
+      .from(source_asset)
+      .where(eq(source_asset.id, id))
+      .limit(1);
+    if (!snapshot) return false;
+
+    await lockImageStorageKey(tx, snapshot.storageKey);
+
+    // The target may have disappeared while this transaction waited for a concurrent
+    // mutation of the same storage key. Re-read it under the key lock before acting.
+    const [live] = await tx
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(eq(source_asset.id, id))
+      .limit(1);
+    if (!live) return false;
+
+    const [otherOwner] = await tx
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(and(eq(source_asset.storage_key, snapshot.storageKey), ne(source_asset.id, id)))
+      .limit(1);
+
+    if (!otherOwner) {
+      await r2.delete(snapshot.storageKey);
+    }
+    await tx.delete(source_asset).where(eq(source_asset.id, id));
+    return true;
+  });
 }

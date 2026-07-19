@@ -70,6 +70,31 @@ describe('DELETE /api/assets/[id]', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('keeps a shared content-addressed object until its final owner is deleted', async () => {
+    const first = await seedAsset({ id: 'asset_shared_1', storage_key: 'assets/shared' });
+    const second = await seedAsset({ id: 'asset_shared_2', storage_key: 'assets/shared' });
+    r2._store.set('assets/shared', new Uint8Array([1, 2, 3]));
+
+    const firstRes = await DELETE(deleteRequest(first.id), makeParams(first.id));
+    expect(firstRes.status).toBe(200);
+    expect(r2._store.has('assets/shared')).toBe(true);
+
+    const db = testDb();
+    expect(await db.select().from(source_asset).where(eq(source_asset.id, first.id))).toHaveLength(
+      0,
+    );
+    expect(await db.select().from(source_asset).where(eq(source_asset.id, second.id))).toHaveLength(
+      1,
+    );
+
+    const secondRes = await DELETE(deleteRequest(second.id), makeParams(second.id));
+    expect(secondRes.status).toBe(200);
+    expect(r2._store.has('assets/shared')).toBe(false);
+    expect(await db.select().from(source_asset).where(eq(source_asset.id, second.id))).toHaveLength(
+      0,
+    );
+  });
+
   it('round-trip: POST then DELETE — row and R2 object both gone', async () => {
     // Import POST handler lazily to share same mocked r2 module
     const { POST } = await import('./assets');
