@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   JYEOO_EXIT,
   classifyJyeooExit,
+  hasMalformedMarkdownImage,
   isImageDependentQuestion,
   markdownImageSources,
   parseJyeooLine,
@@ -168,13 +169,15 @@ describe('isImageDependentQuestion', () => {
     ).toBe(true);
   });
 
-  it('ignores an image that appears only in the worked solution (reference_md)', () => {
+  it('detects an image in the worked solution (reference_md renders to the learner)', () => {
+    // The full solution card shows reference_md to the learner (HintLadder), so a rotting
+    // image there corrupts the learner-visible page just like one in the stem.
     expect(
       isImageDependentQuestion({
         ...base,
         reference_md: '解答见 ![图](https://www.jyeoo.com/s.png)',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('detects an image whose URL contains a literal ) (over-inclusive marker match)', () => {
@@ -208,5 +211,11 @@ describe('jyeoo markdown image destinations', () => {
         replacements,
       ),
     ).toBe('甲 ![函数图](/api/assets/asset-a/content) 乙 ![选项图](/api/assets/asset-b/content)');
+  });
+
+  it('marks an unclosed destination malformed instead of treating it as text-only', () => {
+    const markdown = '题面 ![图](/tmp/run/Foo_(bar).png';
+    expect(markdownImageSources(markdown)).toEqual([]);
+    expect(hasMalformedMarkdownImage(markdown)).toBe(true);
   });
 });

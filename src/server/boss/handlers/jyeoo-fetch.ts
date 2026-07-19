@@ -25,7 +25,7 @@
 //   - Every draft is INSERTed draft_status='draft' (audit:draft-status hard gate); the
 //     chained source_verify promotes draft→active on pass.
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -33,34 +33,25 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
+import { persistImageAsset, sha256Hex } from '@/capabilities/ingestion/server/persist-image-asset';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
-import {
-  DifficultyEvidence,
-  type DifficultyEvidenceT,
-  buildProducerDifficultyEvidence,
-} from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
-import type { FigureRefT } from '@/core/schema/structured_question';
-import type { Db, Tx } from '@/db/client';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
-import {
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evidence-demand';
 import {
   type JyeooFailureClass,
   classifyJyeooExit,
+  hasMalformedMarkdownImage,
   markdownImageSources,
   parseJyeooLine,
   rewriteMarkdownImageSources,
@@ -77,7 +68,7 @@ import {
   jyeooSpawnTimeoutMs,
 } from '@/server/question-supply/jyeoo-supply-config';
 import type { DifficultyBand } from '@/server/question-supply/target-discovery';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   canonicalQuestionContentHash,
   findExactQuestionDuplicate,
@@ -146,6 +137,8 @@ export interface RunJyeooFetchParams {
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
   /** Test seam; production resolves getR2() lazily only after a localized image is present. */
   r2?: R2Client;
+  /** Test-only failure injection after blob/source_asset finalization. */
+  afterAssetsPersistedFn?: () => Promise<void>;
 }
 
 export type RunJyeooFetchStatus =
@@ -261,6 +254,7 @@ interface LocalizedImage {
   source: string;
   bytes: Uint8Array;
   mime: string;
+  sha256: string;
 }
 
 interface LoadedQuestionImages {
@@ -272,6 +266,7 @@ interface PersistedQuestionImages {
   q: SourcedQuestionT;
   figures: FigureRefT[];
   imageRefs: string[];
+  structured: StructuredQuestionT;
 }
 
 function unique(values: string[]): string[] {
@@ -308,6 +303,11 @@ async function loadLocalizedQuestionImages(
   q: SourcedQuestionT,
   imageDir: string,
 ): Promise<LoadedQuestionImages | null> {
+  const markdownFields = [q.prompt_md, ...(q.choices_md ?? []), q.reference_md ?? ''];
+  if (markdownFields.some((markdown) => hasMalformedMarkdownImage(markdown))) {
+    console.warn('[jyeoo_fetch] malformed markdown image; filtering question');
+    return null;
+  }
   const attachedSources = new Set(
     unique([
       ...markdownImageSources(q.prompt_md),
@@ -317,24 +317,49 @@ async function loadLocalizedQuestionImages(
   const allSources = unique([...attachedSources, ...markdownImageSources(q.reference_md)]);
   if (allSources.length === 0) return { images: [], attachedSources };
 
-  const root = resolve(imageDir);
+  const root = await realpath(resolve(imageDir));
   const images: LocalizedImage[] = [];
   for (const source of allSources) {
-    const path = resolve(source);
-    const pathFromRoot = relative(root, path);
-    if (!isAbsolute(source) || pathFromRoot.startsWith('..') || isAbsolute(pathFromRoot)) {
+    if (!isAbsolute(source)) {
       console.warn('[jyeoo_fetch] image was not localized under the run directory:', source);
       return null;
     }
     try {
+      // Resolve symlinks before the containment check. A lexical `/run/link.png` can point
+      // outside the per-run directory and must not become an arbitrary-file read primitive.
+      const path = await realpath(resolve(source));
+      const pathFromRoot = relative(root, path);
+      if (pathFromRoot.startsWith('..') || isAbsolute(pathFromRoot)) {
+        console.warn('[jyeoo_fetch] image realpath escaped the run directory:', source);
+        return null;
+      }
+      const info = await stat(path);
+      if (!info.isFile() || info.size === 0 || info.size > MAX_IMAGE_UPLOAD_BYTES) {
+        console.warn('[jyeoo_fetch] localized image failed file/size validation:', source);
+        return null;
+      }
       const file = await readFile(path);
       const bytes = new Uint8Array(file.buffer, file.byteOffset, file.byteLength);
       const mime = detectImageMime(bytes);
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES || mime === null) {
+      if (mime === null) {
         console.warn('[jyeoo_fetch] localized image failed size/mime validation:', source);
         return null;
       }
-      images.push({ source, bytes, mime });
+      // Magic bytes alone accept truncated files. Decode metadata so verification never
+      // receives a nominal PNG/JPEG/GIF/WebP that the model/runtime cannot actually read.
+      const { default: sharp } = await import('sharp');
+      const metadata = await sharp(bytes, { failOn: 'error' }).metadata();
+      const expectedFormat = {
+        'image/png': 'png',
+        'image/jpeg': 'jpeg',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+      }[mime];
+      if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
+        console.warn('[jyeoo_fetch] localized image failed decode validation:', source);
+        return null;
+      }
+      images.push({ source, bytes, mime, sha256: await sha256Hex(bytes) });
     } catch (err) {
       console.warn('[jyeoo_fetch] localized image unavailable; filtering question:', source, err);
       return null;
@@ -343,16 +368,51 @@ async function loadLocalizedQuestionImages(
   return { images, attachedSources };
 }
 
+async function canonicalJyeooQuestionHash(
+  q: SourcedQuestionT,
+  loaded: LoadedQuestionImages,
+): Promise<string> {
+  if (loaded.images.length === 0) {
+    return canonicalQuestionContentHash({
+      promptMd: q.prompt_md,
+      referenceMd: q.reference_md,
+      choicesMd: q.choices_md,
+      rubricJson: q.rubric_json,
+    });
+  }
+  const neutral = new Map(loaded.images.map((image) => [image.source, 'IMAGE']));
+  const canonicalTextHash = canonicalQuestionContentHash({
+    promptMd: rewriteMarkdownImageSources(q.prompt_md, neutral),
+    referenceMd: rewriteMarkdownImageSources(q.reference_md, neutral),
+    choicesMd: q.choices_md?.map((choice) => rewriteMarkdownImageSources(choice, neutral)),
+    rubricJson: q.rubric_json,
+  });
+  const digestBySource = new Map(loaded.images.map((image) => [image.source, image.sha256]));
+  // Keep slot order (prompt → choices → reference). Same alt/text with different pixels
+  // is a different question; swapping two figures is also a different question.
+  const imageSlots = [
+    ...markdownImageSources(q.prompt_md),
+    ...(q.choices_md ?? []).flatMap((choice) => markdownImageSources(choice)),
+    ...markdownImageSources(q.reference_md),
+  ].map((source) => digestBySource.get(source));
+  return sha256Hex(new TextEncoder().encode(JSON.stringify({ canonicalTextHash, imageSlots })));
+}
+
 async function persistQuestionImages(
-  tx: Tx,
+  db: Db,
   r2: R2Client,
   q: SourcedQuestionT,
   loaded: LoadedQuestionImages,
+  questionId: string,
 ): Promise<PersistedQuestionImages> {
   const replacements = new Map<string, string>();
   const assetIdsBySource = new Map<string, string>();
   for (const image of loaded.images) {
-    const asset = await persistImageAsset(tx, r2, { bytes: image.bytes, mime: image.mime });
+    // Persist source_asset outside the question transaction. If the later question INSERT /
+    // UPDATE / verify-intent transaction fails, R2 still has a committed source_asset owner
+    // instead of an object whose row vanished on rollback. Unattached source_asset rows are a
+    // supported upload state and can be reclaimed by the existing asset lifecycle.
+    const asset = await persistImageAsset(db, r2, { bytes: image.bytes, mime: image.mime });
     replacements.set(image.source, `/api/assets/${encodeURIComponent(asset.id)}/content`);
     assetIdsBySource.set(image.source, asset.id);
   }
@@ -371,10 +431,16 @@ async function persistQuestionImages(
     role: 'diagram',
     source_page_index: 0,
     source_bbox: { x: 0, y: 0, width: 1, height: 1 },
-    attached_to_index: 'stem',
+    attached_to_index: questionId,
     attach_confidence: 'high',
   }));
-  return { q: qWithInternalUrls, figures, imageRefs };
+  const structured: StructuredQuestionT = {
+    id: questionId,
+    role: 'standalone',
+    prompt_text: qWithInternalUrls.prompt_md,
+    ...(qWithInternalUrls.reference_md ? { answers: [qWithInternalUrls.reference_md] } : {}),
+  };
+  return { q: qWithInternalUrls, figures, imageRefs, structured };
 }
 
 export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJyeooFetchResult> {
@@ -554,12 +620,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
 
       // Exact-dup (canonical content hash) — its canonicalizer preserves image alt/presence while
       // excluding transport URLs, so random temp paths and internal asset ids share one identity.
-      const canonicalContentHash = canonicalQuestionContentHash({
-        promptMd: q.prompt_md,
-        referenceMd: q.reference_md,
-        choicesMd: q.choices_md,
-        rubricJson: q.rubric_json,
-      });
+      const canonicalContentHash = await canonicalJyeooQuestionHash(q, loadedImages);
       const existingDuplicate = await findExactQuestionDuplicate(db, canonicalContentHash);
       if (existingDuplicate) {
         counts.deduped_exact += 1;
@@ -568,35 +629,39 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       // jyeoo-rs computes extraction_hash after --images localization, so an image question's
       // producer hash contains this run's random temp path. Replace only that unstable provenance
       // value with Loom's URL-insensitive canonical hash; text-question provenance stays verbatim.
+      const id = createId();
+      const media =
+        loadedImages.images.length > 0
+          ? await persistQuestionImages(db, imageR2 as R2Client, q, loadedImages, id)
+          : null;
+      if (media && params.afterAssetsPersistedFn) await params.afterAssetsPersistedFn();
+      const persistedQuestion = media?.q ?? q;
       const qForInsert =
         loadedImages.images.length > 0
-          ? { ...q, extraction_hash: `sha256:${canonicalContentHash}` }
-          : q;
-
-      const id = createId();
+          ? { ...persistedQuestion, extraction_hash: `sha256:${canonicalContentHash}` }
+          : persistedQuestion;
       const persisted = await db.transaction(async (tx) => {
-        // Reserve the canonical hash before uploading assets. A concurrent winner returns
-        // raced_duplicate without creating orphan source_asset rows.
-        const inserted = await insertJyeooDraft(tx, {
+        // Reserve the canonical hash and materialize all question-owned references atomically.
+        // Image blobs/source_asset rows were finalized immediately before this transaction so a
+        // rollback cannot erase their only DB owner and strand an R2 object.
+        const inserted = await insertSourcedDraft(tx, {
           id,
           q: qForInsert,
-          anchorKid,
-          whitelist,
+          knowledgeIds: [anchorKid],
+          sourceRoute: JYEOO_FETCH_ROUTE,
+          createdBy: JYEOO_CREATED_BY,
+          whitelistMatch: matchesWhitelist(q.source_url, whitelist),
+          fetchedAt: now.toISOString(),
           canonicalContentHash,
           supplyTrace: params.supplyTrace,
           now,
         });
-        if (inserted === 'raced_duplicate') return inserted;
+        if (inserted.status === 'raced_duplicate') return inserted;
 
-        if (loadedImages.images.length > 0) {
-          if (imageR2 === undefined) throw new Error('jyeoo_fetch image R2 was not resolved');
-          const media = await persistQuestionImages(tx, imageR2, qForInsert, loadedImages);
+        if (media) {
           await tx
             .update(question)
             .set({
-              prompt_md: media.q.prompt_md,
-              reference_md: media.q.reference_md,
-              choices_md: media.q.choices_md ?? null,
               // Jyeoo image questions are holistic visual prompts. The shared route supports this
               // capability for math, but choices normally short-circuit to exact before image
               // auto-routing, so persist the explicit route rather than silently ignoring figures.
@@ -605,6 +670,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
                 : {}),
               figures: media.figures,
               image_refs: media.imageRefs,
+              structured: media.structured,
               metadata: sql`${question.metadata} || ${JSON.stringify({ prompt_image_refs: media.imageRefs })}::jsonb`,
               updated_at: now,
             })
@@ -613,12 +679,12 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'source_verify',
-          supplyTrace: inserted.questionSupplyTrace,
+          supplyTrace: inserted.supplyTrace,
           createdAt: now,
         });
         return inserted;
       });
-      if (persisted === 'raced_duplicate') {
+      if (persisted.status === 'raced_duplicate') {
         counts.deduped_exact += 1;
         continue;
       }
@@ -631,7 +697,29 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     }
     counts.inserted = questionIds.length;
 
-    // ── canary success event ───────────────────────────────────────────────────
+    // ── chain source_verify FIRST (best-effort; drafts + intents are durable) ────
+    // Dispatch before the canary event so counts.verify_enqueued records the real funnel.
+    if (questionIds.length > 0) {
+      failureStage = 'dispatch';
+      const dispatchResult = await dispatchPendingVerifyIntents(db, {
+        questionIds,
+        enqueue: async (verifier, ids, options) => {
+          if (verifier !== 'source_verify') {
+            throw new Error(`jyeoo_fetch outbox received unexpected verifier '${verifier}'`);
+          }
+          await enqueueSourceVerify(ids, options);
+        },
+      });
+      counts.verify_enqueued = questionIds.length - dispatchResult.failed;
+      if (dispatchResult.failed > 0) {
+        console.error(
+          '[jyeoo_fetch] source_verify enqueue failed; durable intents left for recovery:',
+          questionIds,
+        );
+      }
+    }
+
+    // ── canary success event (after dispatch so verify_enqueued is accurate) ────
     failureStage = 'event';
     await writeEvent(db, {
       id: createId(),
@@ -658,27 +746,6 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       cost_micro_usd: null,
       created_at: new Date(),
     });
-
-    // ── chain source_verify (best-effort; drafts + intents are durable) ─────────
-    if (questionIds.length > 0) {
-      failureStage = 'dispatch';
-      const dispatchResult = await dispatchPendingVerifyIntents(db, {
-        questionIds,
-        enqueue: async (verifier, ids, options) => {
-          if (verifier !== 'source_verify') {
-            throw new Error(`jyeoo_fetch outbox received unexpected verifier '${verifier}'`);
-          }
-          await enqueueSourceVerify(ids, options);
-        },
-      });
-      counts.verify_enqueued = questionIds.length - dispatchResult.failed;
-      if (dispatchResult.failed > 0) {
-        console.error(
-          '[jyeoo_fetch] source_verify enqueue failed; durable intents left for recovery:',
-          questionIds,
-        );
-      }
-    }
 
     return { status: 'ready', question_ids: questionIds, counts };
   } catch (err) {
@@ -770,98 +837,6 @@ async function finishFailure(args: FinishFailureArgs): Promise<RunJyeooFetchResu
     throw new Error(`jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`);
   }
   return { status: `failed:${failureClass}`, counts };
-}
-
-interface InsertJyeooDraftArgs {
-  id: string;
-  q: SourcedQuestionT;
-  anchorKid: string;
-  whitelist: string[];
-  canonicalContentHash: string;
-  supplyTrace: SupplyTraceV1T | undefined;
-  now: Date;
-}
-
-type InsertJyeooDraftResult =
-  | 'raced_duplicate'
-  | { difficultyEvidence: DifficultyEvidenceT; questionSupplyTrace: SupplyTraceV1T | undefined };
-
-/**
- * INSERT one jyeoo-sourced draft. Byte-for-byte the sourcing.ts persistence shape
- * (source='web_sourced', tier-2 provenance, source_ref_kind='url', draft_status='draft',
- * canonical_content_hash + partial-unique arbiter) — only source_route + created_by
- * differ. knowledge_ids = [anchorKid]: jyeoo emits knowledge_ids=[] (producer §non-goal),
- * so the target's anchor KC is the attribution (design §2.1 — zero embed, zero new
- * mechanism).
- */
-async function insertJyeooDraft(
-  tx: Tx,
-  args: InsertJyeooDraftArgs,
-): Promise<InsertJyeooDraftResult> {
-  const { id, q, anchorKid, whitelist, canonicalContentHash, supplyTrace, now } = args;
-  const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
-  const declaredDifficultyEvidence =
-    q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, JYEOO_FETCH_ROUTE, now);
-  const difficultyEvidence = DifficultyEvidence.parse({
-    ...declaredDifficultyEvidence,
-    observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
-    source_route: declaredDifficultyEvidence.source_route ?? JYEOO_FETCH_ROUTE,
-  });
-  const questionSupplyTrace = supplyTrace
-    ? withSupplyTraceDifficultyEvidence(supplyTrace, difficultyEvidence)
-    : undefined;
-
-  const webSourced: WebSourcedProvenanceT = {
-    url: q.source_url,
-    title: q.source_title,
-    // The producer's per-line fetched_at is inside the jyeoo block; SourcedQuestion has
-    // no fetched_at, so stamp the run time (consistent, monotonic).
-    fetched_at: now.toISOString(),
-    whitelist_match: matchesWhitelist(q.source_url, whitelist),
-    ...(q.extraction_hash ? { extraction_hash: q.extraction_hash } : {}),
-    extract: q.extract,
-  };
-
-  const inserted = await tx
-    .insert(question)
-    .values(
-      withAnswerClass({
-        id,
-        kind: q.kind,
-        source: 'web_sourced',
-        prompt_md: q.prompt_md,
-        reference_md: q.reference_md,
-        rubric_json: q.rubric_json ?? null,
-        choices_md: q.choices_md ?? null,
-        judge_kind_override: judgeKind,
-        knowledge_ids: [anchorKid],
-        difficulty: q.difficulty,
-        source_ref: q.source_url,
-        draft_status: 'draft',
-        created_by: JYEOO_CREATED_BY,
-        metadata: {
-          web_sourced: webSourced,
-          source_ref_kind: 'url',
-          difficulty_evidence: difficultyEvidence,
-          ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-        },
-        created_at: now,
-        canonical_content_hash: canonicalContentHash,
-        updated_at: now,
-      }),
-    )
-    .onConflictDoNothing({
-      target: question.canonical_content_hash,
-      where: sql`${question.canonical_content_hash} is not null`,
-    })
-    .returning({ id: question.id });
-  if (inserted.length === 0) {
-    // Lost a race to a concurrent insert of the same canonical hash → treat as exact dup.
-    const raced = await findExactQuestionDuplicate(tx, canonicalContentHash);
-    if (!raced) throw new Error(`jyeoo_fetch canonical hash conflict did not resolve for ${id}`);
-    return 'raced_duplicate';
-  }
-  return { difficultyEvidence, questionSupplyTrace };
 }
 
 export function buildJyeooFetchHandler(

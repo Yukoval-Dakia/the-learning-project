@@ -139,9 +139,8 @@ export function parseJyeooLine(line: string): JyeooParsedLine {
 //
 // A markdown image `![alt](src)` in the stem or a choice means the question's meaning
 // depends on a figure. YUK-727 now localizes and persists those figures; this predicate
-// remains the pure structural classifier for consumers that need to distinguish prompt
-// figures from reference-only images. reference_md is intentionally NOT scanned: an image
-// that appears only in the worked solution does not change the question the learner sees.
+// remains the pure structural classifier for consumers. reference_md is scanned too: the
+// worked solution is learner-visible and must not retain a temporary/external image URL.
 //
 // Deliberately OVER-INCLUSIVE: detect the
 // markdown image MARKER STRUCTURE `![...](` rather than parse a full `(...)` URL. A URL
@@ -155,7 +154,7 @@ export function isImageDependentQuestion(q: SourcedQuestionT): boolean {
   for (const choice of q.choices_md ?? []) {
     if (MARKDOWN_IMAGE.test(choice)) return true;
   }
-  return false;
+  return MARKDOWN_IMAGE.test(q.reference_md ?? '');
 }
 
 interface MarkdownImageDestination {
@@ -164,18 +163,29 @@ interface MarkdownImageDestination {
   end: number;
 }
 
+interface MarkdownImageScan {
+  images: MarkdownImageDestination[];
+  malformed: boolean;
+}
+
 /**
  * Locate markdown image destinations, including URLs with balanced parentheses. jyeoo-rs emits
  * the narrow `![alt](source)` shape (no title), so the destination body is the source verbatim.
  */
-function imageDestinations(markdown: string): MarkdownImageDestination[] {
+function scanImageDestinations(markdown: string): MarkdownImageScan {
   const found: MarkdownImageDestination[] = [];
+  let malformed = false;
   let cursor = 0;
   while (cursor < markdown.length) {
     const marker = markdown.indexOf('![', cursor);
     if (marker === -1) break;
     const destinationStart = markdown.indexOf('](', marker + 2);
-    if (destinationStart === -1) break;
+    if (destinationStart === -1) {
+      // A bare `![` is ordinary punctuation, but a completed alt + opening destination
+      // is an image marker. The latter must never fail open into persisted Markdown.
+      if (MARKDOWN_IMAGE.test(markdown.slice(marker))) malformed = true;
+      break;
+    }
 
     const start = destinationStart + 2;
     let depth = 1;
@@ -198,19 +208,28 @@ function imageDestinations(markdown: string): MarkdownImageDestination[] {
       }
     }
     if (depth !== 0) {
-      cursor = start;
-      continue;
+      malformed = true;
+      break;
     }
 
     const source = markdown.slice(start, end).trim();
     if (source.length > 0) found.push({ source, start, end });
     cursor = end + 1;
   }
-  return found;
+  return { images: found, malformed };
+}
+
+function imageDestinations(markdown: string): MarkdownImageDestination[] {
+  return scanImageDestinations(markdown).images;
 }
 
 export function markdownImageSources(markdown: string | null | undefined): string[] {
   return markdown ? imageDestinations(markdown).map((image) => image.source) : [];
+}
+
+/** True when Markdown contains an opened image destination that the balanced scanner cannot close. */
+export function hasMalformedMarkdownImage(markdown: string | null | undefined): boolean {
+  return markdown ? scanImageDestinations(markdown).malformed : false;
 }
 
 /** Replace only image destinations; alt text and surrounding markdown remain byte-identical. */

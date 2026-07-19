@@ -9,6 +9,7 @@ import { join } from 'node:path';
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
@@ -144,20 +145,38 @@ function captureEnqueue(): { fn: EnqueueSourceVerifyFn; ids: string[][] } {
   return { fn, ids };
 }
 
-function captureR2(): { client: R2Client; puts: Array<{ key: string; mime?: string }> } {
+function captureR2(): {
+  client: R2Client;
+  puts: Array<{ key: string; mime?: string }>;
+  objects: Map<string, Uint8Array>;
+} {
   const puts: Array<{ key: string; mime?: string }> = [];
+  const objects = new Map<string, Uint8Array>();
   return {
     puts,
+    objects,
     client: {
-      async put(key, _body, mime) {
+      async put(key, body, mime) {
         puts.push({ key, mime });
+        objects.set(key, body.slice());
       },
-      async get() {
-        return null;
+      async get(key) {
+        return objects.get(key) ?? null;
       },
-      async delete() {},
+      async delete(key) {
+        objects.delete(key);
+      },
     },
   };
+}
+
+async function validPng(rgb: { r: number; g: number; b: number }): Promise<Uint8Array> {
+  const bytes = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: rgb },
+  })
+    .png()
+    .toBuffer();
+  return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 describe('runJyeooFetch', () => {
@@ -234,7 +253,13 @@ describe('runJyeooFetch', () => {
       .where(eq(event.action, 'experimental:jyeoo_fetch'));
     expect(events).toHaveLength(1);
     expect(events[0]?.outcome).toBe('success');
-    expect((events[0]?.payload as { counts: { inserted: number } }).counts.inserted).toBe(2);
+    // The event is written AFTER source_verify dispatch, so verify_enqueued is the real
+    // count (2), not the frozen-at-0 value a pre-dispatch write would produce.
+    const eventCounts = (
+      events[0]?.payload as { counts: { inserted: number; verify_enqueued: number } }
+    ).counts;
+    expect(eventCounts.inserted).toBe(2);
+    expect(eventCounts.verify_enqueued).toBe(2);
   });
 
   it('malformed NDJSON: drops the bad line, ingests the valid ones', async () => {
@@ -443,7 +468,7 @@ describe('runJyeooFetch', () => {
     await seedKnowledge(kid);
     const r2 = captureR2();
     let runImageDir = '';
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const png = await validPng({ r: 20, g: 80, b: 160 });
     const spawn: SpawnJyeooFn = async (options) => {
       const imagesArg = options.args.indexOf('--images');
       expect(imagesArg).toBeGreaterThanOrEqual(0);
@@ -492,10 +517,15 @@ describe('runJyeooFetch', () => {
         role: 'diagram',
         source_page_index: 0,
         source_bbox: { x: 0, y: 0, width: 1, height: 1 },
-        attached_to_index: 'stem',
+        attached_to_index: row?.id,
         attach_confidence: 'high',
       },
     ]);
+    expect(row?.structured).toMatchObject({
+      id: row?.id,
+      role: 'standalone',
+      prompt_text: row?.prompt_md,
+    });
     expect((row?.metadata as { prompt_image_refs?: string[] }).prompt_image_refs).toEqual([
       asset?.id,
     ]);
@@ -505,6 +535,170 @@ describe('runJyeooFetch', () => {
     ).toBe(`sha256:${row?.canonical_content_hash}`);
     expect(enqueue.ids).toEqual([[row?.id]]);
     await expect(access(runImageDir)).rejects.toThrow();
+  });
+
+  it('localizes distinct prompt, reference-only, and choice-only images without field bleed', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const r2 = captureR2();
+    const images = await Promise.all([
+      validPng({ r: 220, g: 20, b: 20 }),
+      validPng({ r: 20, g: 220, b: 20 }),
+      validPng({ r: 20, g: 20, b: 220 }),
+    ]);
+    const spawn: SpawnJyeooFn = async (options) => {
+      const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+      const paths = ['prompt.png', 'reference.png', 'choice.png'].map((name) => join(dir, name));
+      await Promise.all(paths.map((path, index) => writeFile(path, images[index] as Uint8Array)));
+      return spawnResult({
+        lines: [
+          line({
+            prompt_md: `看图 ![题图](${paths[0]}) 作答`,
+            reference_md: `答案 B；解析图 ![解析图](${paths[1]})`,
+            choices_md: ['A．1', `B．2 ![选项图](${paths[2]})`],
+          }),
+          '',
+        ],
+      });
+    };
+
+    await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: spawn,
+      enqueueSourceVerify: captureEnqueue().fn,
+      r2: r2.client,
+    });
+
+    const assets = await db.select().from(source_asset);
+    const [row] = await db.select().from(question);
+    expect(assets).toHaveLength(3);
+    expect(row?.image_refs).toHaveLength(2);
+    expect(row?.figures).toHaveLength(2);
+    expect(row?.prompt_md).toMatch(/!\[题图\]\(\/api\/assets\/[^/]+\/content\)/);
+    expect(row?.reference_md).toMatch(/!\[解析图\]\(\/api\/assets\/[^/]+\/content\)/);
+    expect(row?.choices_md?.[1]).toMatch(/!\[选项图\]\(\/api\/assets\/[^/]+\/content\)/);
+  });
+
+  it('includes image bytes in exact identity when text and alt are identical', async () => {
+    const k1 = createId();
+    const k2 = createId();
+    await seedKnowledge(k1);
+    await seedKnowledge(k2);
+    const r2 = captureR2();
+    const run = async (kid: string, png: Uint8Array) =>
+      runJyeooFetch({
+        db,
+        trigger: 'knowledge',
+        refId: kid,
+        knowledgeId: kid,
+        spawnJyeooFn: async (options) => {
+          const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+          const path = join(dir, 'same-name.png');
+          await writeFile(path, png);
+          return spawnResult({
+            lines: [line({ prompt_md: `同一题文 ![图](${path})`, reference_md: '答案 B' }), ''],
+          });
+        },
+        enqueueSourceVerify: captureEnqueue().fn,
+        r2: r2.client,
+      });
+
+    await run(k1, await validPng({ r: 255, g: 0, b: 0 }));
+    await run(k2, await validPng({ r: 0, g: 0, b: 255 }));
+
+    const rows = await db.select().from(question);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.canonical_content_hash).not.toBe(rows[1]?.canonical_content_hash);
+  });
+
+  it('dedupes identical pixels across balanced temp paths before a second upload', async () => {
+    const k1 = createId();
+    const k2 = createId();
+    await seedKnowledge(k1);
+    await seedKnowledge(k2);
+    const r2 = captureR2();
+    const png = await validPng({ r: 90, g: 90, b: 90 });
+    const run = async (kid: string, filename: string) =>
+      runJyeooFetch({
+        db,
+        trigger: 'knowledge',
+        refId: kid,
+        knowledgeId: kid,
+        spawnJyeooFn: async (options) => {
+          const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+          const path = join(dir, filename);
+          await writeFile(path, png);
+          return spawnResult({
+            lines: [line({ prompt_md: `同一题文 ![图](${path})`, reference_md: '答案 B' }), ''],
+          });
+        },
+        enqueueSourceVerify: captureEnqueue().fn,
+        r2: r2.client,
+      });
+
+    await run(k1, 'Foo_(bar).png');
+    const second = await run(k2, 'another.png');
+
+    expect(second.counts).toMatchObject({ deduped_exact: 1, inserted: 0 });
+    expect(await db.select().from(question)).toHaveLength(1);
+    expect(r2.puts).toHaveLength(1);
+  });
+
+  it('filters an unclosed markdown image destination instead of persisting a temp path', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: async (options) => {
+        const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+        return spawnResult({
+          lines: [line({ prompt_md: `坏图 ![图](${join(dir, 'missing.png')}` }), ''],
+        });
+      },
+      enqueueSourceVerify: captureEnqueue().fn,
+      r2: captureR2().client,
+    });
+
+    expect(result.counts).toMatchObject({ filtered_image: 1, inserted: 0 });
+    expect(await db.select().from(question)).toHaveLength(0);
+  });
+
+  it('keeps a committed source_asset owner when the question transaction never starts', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const r2 = captureR2();
+    const png = await validPng({ r: 70, g: 80, b: 90 });
+
+    await expect(
+      runJyeooFetch({
+        db,
+        trigger: 'knowledge',
+        refId: kid,
+        knowledgeId: kid,
+        spawnJyeooFn: async (options) => {
+          const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+          const path = join(dir, 'owned.png');
+          await writeFile(path, png);
+          return spawnResult({ lines: [line({ prompt_md: `看图 ![图](${path})` }), ''] });
+        },
+        enqueueSourceVerify: captureEnqueue().fn,
+        r2: r2.client,
+        afterAssetsPersistedFn: async () => {
+          throw new Error('injected after asset finalization');
+        },
+      }),
+    ).rejects.toThrow('injected after asset finalization');
+
+    const [asset] = await db.select().from(source_asset);
+    expect(asset).toBeDefined();
+    expect(await r2.client.get(asset?.storage_key ?? '')).not.toBeNull();
+    expect(await db.select().from(question)).toHaveLength(0);
   });
 
   it('kill switch OFF: no-op (skipped:disabled), spawn never invoked', async () => {
