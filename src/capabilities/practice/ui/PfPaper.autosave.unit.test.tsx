@@ -93,14 +93,15 @@ function draftDetail(content: string) {
 }
 
 function renderPaper(artifactId = 'paper_1') {
+  const onExit = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = (id: string) => (
     <QueryClientProvider client={queryClient}>
-      <PfPaper artifactId={id} onExit={vi.fn()} onSubmitted={vi.fn()} addToast={vi.fn()} />
+      <PfPaper artifactId={id} onExit={onExit} onSubmitted={vi.fn()} addToast={vi.fn()} />
     </QueryClientProvider>
   );
   const utils = render(ui(artifactId));
-  return { ...utils, rerenderWith: (id: string) => utils.rerender(ui(id)) };
+  return { ...utils, onExit, rerenderWith: (id: string) => utils.rerender(ui(id)) };
 }
 
 beforeEach(() => {
@@ -300,5 +301,55 @@ describe('PfPaper autosave failure (YUK-713)', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByRole('button', { name: '保存失败 · 重试' })).toBeTruthy();
     expect(screen.queryByText('草稿自动保存')).toBeNull();
+  });
+
+  it('reports unsaved failures to the host on exit (no false 进度保留)', async () => {
+    mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await screen.findByRole('button', { name: '保存失败 · 重试' }, { timeout: 2500 });
+
+    // Exit while a draft is unsaved — the host must be told, so it can drop 「进度保留」.
+    await user.click(screen.getByRole('button', { name: '退出' }));
+    expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 });
+  });
+
+  it('discards a stale startPaperSession resolve after switching papers', async () => {
+    let resolveStartA: (value: { session_id: string }) => void = () => {};
+    mocks.startPaperSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStartA = resolve;
+        }),
+    );
+    // Paper A opens via startPaperSession (no session on the detail); paper B already has a
+    // session. Both share the slot key.
+    mocks.getPaperDetail.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === 'paper_B'
+          ? { ...draftDetail(''), session: { id: 'review_B', status: 'started' } }
+          : { ...draftDetail(''), session: null },
+      ),
+    );
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { rerenderWith } = renderPaper('paper_A');
+
+    await screen.findByText('自动保存测试卷');
+    await waitFor(() => expect(mocks.startPaperSession).toHaveBeenCalled());
+
+    rerenderWith('paper_B');
+    await screen.findByLabelText('作答');
+    // Paper A's open resolves AFTER the switch — the stale session id must be discarded.
+    resolveStartA({ session_id: 'review_A_stale' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await user.type(screen.getByLabelText('作答'), 'B');
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled(), { timeout: 2500 });
+    // B's autosave carries B's session, never A's stale one.
+    expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[1].session_id).toBe('review_B');
   });
 });

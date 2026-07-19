@@ -9055,8 +9055,9 @@ button.seg-sm {
 .today-loom .strip-list .strip {
   padding: var(--s-3) 0;
 }
-/* AI-changes undo failure line (YUK-713). */
-.strip-undo-err {
+/* AI-changes undo failure line (YUK-713). Scoped under .today-loom like the sibling
+   .strip-list rules — the strip only renders inside the Today loom surface. */
+.today-loom .strip-undo-err {
   color: var(--again-ink);
   margin-bottom: var(--s-2);
 }

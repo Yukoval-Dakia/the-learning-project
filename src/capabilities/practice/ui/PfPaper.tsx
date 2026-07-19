@@ -34,7 +34,9 @@ export function PfPaper({
   addToast,
 }: {
   artifactId: string;
-  onExit: () => void;
+  // unsavedFailures lets the host tell an honest exit story: 0 → 「进度已保留」, >0 → a
+  // non-blaming 「有 N 处草稿未保存」instead of a false success promise.
+  onExit: (info?: { unsavedFailures: number }) => void;
   onSubmitted: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
@@ -83,6 +85,10 @@ export function PfPaper({
     setRetrying(false);
     saveSeq.current = {};
     saveGen.current += 1;
+    // Drop the previous paper's session so a pre-session autosave on the new paper flags
+    // 「保存失败」honestly instead of PUTting a draft with the old paper's session id.
+    sessionRef.current = null;
+    sessionOpenRef.current = false;
     for (const k of Object.keys(saveTimers.current)) {
       clearTimeout(saveTimers.current[k]);
       delete saveTimers.current[k];
@@ -105,12 +111,20 @@ export function PfPaper({
       sessionOpenRef.current = ['started', 'paused'].includes(detail.session.status);
       return;
     }
+    // Guard the async open against a paper switch: capture the generation at dispatch and
+    // discard a resolve/reject that lands after the user moved to another paper, so a stale
+    // open can't write its session id (or an error toast) back onto the new paper.
+    const gen = saveGen.current;
     void startPaperSession(artifactId)
       .then((r) => {
+        if (saveGen.current !== gen) return;
         sessionRef.current = r.session_id;
         sessionOpenRef.current = true;
       })
-      .catch((e) => addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert'));
+      .catch((e) => {
+        if (saveGen.current !== gen) return;
+        addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
+      });
   }, [detail, artifactId, addToast]);
 
   // 草稿初值：服务端 draft / 已提交 answer 回填。
@@ -143,14 +157,19 @@ export function PfPaper({
 
   const exitPaper = () => {
     void pauseCurrentSession().catch(() => {});
-    onExit();
+    // Count slots whose last draft save failed and that aren't already submitted, so the
+    // host can drop the 「进度保留」promise on exit instead of lying.
+    const unsavedFailures = slots.filter(
+      (s) => saveFailed[slotKey(s)] && !s.slot_state.submission?.submitted,
+    ).length;
+    onExit({ unsavedFailures });
   };
 
   if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
   if (detailQ.isError || !detail || slots.length === 0)
     return (
       <div className="pfp">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onExit}>
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
           返回流
         </Btn>
         <p className="quiet-empty">卷加载失败或没有题。</p>
@@ -193,7 +212,8 @@ export function PfPaper({
         if (!isLatest()) return;
         setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[PfPaper] draft save failed', { key, err });
         if (!isLatest()) return;
         setSaveFailed((f) => ({ ...f, [key]: true }));
       });
