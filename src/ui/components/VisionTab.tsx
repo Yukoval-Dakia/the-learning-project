@@ -557,6 +557,14 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setErrorMessage(null);
   };
 
+  // YUK-717 — 每 block 一个稳定 setForm：ref 缓存按 blockId 记住闭包，跨父层重渲
+  // 返回同一引用。否则内联的 `(updater) => setBlockForms(...)` 每帧新建 → 全部
+  // BlockEditor 因 setForm prop 变化而重渲，memo 失效。setBlockForms 恒稳定，闭包
+  // 只额外捕获 blockId。（声明在 reset 之上，供其清空缓存。）
+  const setFormByBlockRef = useRef(
+    new Map<string, (updater: (cur: BlockFormState) => BlockFormState) => void>(),
+  );
+
   const reset = () => {
     setPhase('idle');
     setLanding(null);
@@ -568,13 +576,17 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setBlockForms({});
     setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
+    // round-1 review — 清空 per-block setForm 缓存：旧会话 blockId 不再复用，
+    // 不清则 Map 跨会话无界累积。
+    setFormByBlockRef.current.clear();
     setErrorMessage(null);
     // Bug B: drop the recovery param so a reset run doesn't re-recover the old id.
     routing.setQuery('ingest', null);
   };
 
   const blocks = blocksQ.data?.rows ?? EMPTY_BLOCK_ROWS;
-  const rowIndexById = new Map(blocks.map((b, i) => [b.id, i]));
+  // YUK-717 — 只随 blocks 变；memo 化避免每帧（含单字段编辑父层重渲）重建 Map。
+  const rowIndexById = useMemo(() => new Map(blocks.map((b, i) => [b.id, i])), [blocks]);
   // YUK-717 — memo 化 BlockEditor 的 knowledgeNodes prop 走稳定引用（数据未加载时
   // 指向共享空数组，不每帧新建 []）。
   const knowledgeNodes = knowledgeQ.data?.rows ?? EMPTY_KNOWLEDGE_NODES;
@@ -599,13 +611,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setBucketByBlockId((cur) => ({ ...cur, [blockId]: blockId }));
   }, []);
 
-  // YUK-717 — 每 block 一个稳定 setForm：ref 缓存按 blockId 记住闭包，跨父层重渲
-  // 返回同一引用。否则内联的 `(updater) => setBlockForms(...)` 每帧新建 → 全部
-  // BlockEditor 因 setForm prop 变化而重渲，memo 失效。setBlockForms 恒稳定，
-  // 闭包只额外捕获 blockId。
-  const setFormByBlockRef = useRef(
-    new Map<string, (updater: (cur: BlockFormState) => BlockFormState) => void>(),
-  );
+  // YUK-717 — 稳定 getSetForm：命中/建立上面 setFormByBlockRef 里该 blockId 的闭包。
   const getSetForm = useCallback((blockId: string) => {
     const cache = setFormByBlockRef.current;
     let fn = cache.get(blockId);
