@@ -65,11 +65,11 @@
   },
   "WORKFLOW_JUDGE_OBSERVE_ENABLED": {
     "kind": "env",
-    "literals": ["false"],
+    "literals": ["true"],
     "case_insensitive": true,
-    "polarity": "opt-out",
+    "polarity": "opt-in",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
-    "notes": "observe-only gate, DEFAULT ON (opt-out). Read via observeEnabled() (name = OBSERVE_FLAG const): !(value.toLowerCase() === 'false') — the disabling literal is 'false', not the enabling literal."
+    "notes": "paid observe-only gate, DEFAULT OFF (opt-in). Read via observeEnabled() (name = OBSERVE_FLAG const): value.toLowerCase() === 'true'."
   },
   "WAVE6_TRIGGER_MARK_WRONG_ENABLED": {
     "kind": "env",
