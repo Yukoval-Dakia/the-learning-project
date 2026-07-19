@@ -27,7 +27,15 @@ export async function POST(req: Request): Promise<Response> {
     }
     const result = await acknowledgeTeachingBriefOutcome(db, parsed.data.probe_result_event_id);
     // 201 when this call created the ack, 200 when a prior ack already existed (idempotent).
-    return Response.json(result, { status: result.idempotent ? 200 : 201 });
+    // A fresh create carries a Location to the new event (RFC 7231 §6.3.2; mirrors
+    // proposal-decisions.ts); an idempotent 200 does not create, so no Location.
+    const init: ResponseInit = { status: result.idempotent ? 200 : 201 };
+    if (!result.idempotent) {
+      init.headers = {
+        Location: `/api/events/${encodeURIComponent(result.brief_acknowledgement_event_id)}`,
+      };
+    }
+    return Response.json(result, init);
   } catch (err) {
     return errorResponse(err);
   }

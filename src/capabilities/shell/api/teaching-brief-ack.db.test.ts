@@ -123,6 +123,10 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     const body = TeachingBriefAckResponseSchema.parse(await res.json());
     expect(body).toMatchObject({ probe_result_event_id: resultId, idempotent: false });
     expect(body.brief_id.length).toBeGreaterThan(0);
+    // 201 Created carries a Location to the new event (RFC 7231 §6.3.2).
+    expect(res.headers.get('Location')).toBe(
+      `/api/events/${encodeURIComponent(body.brief_acknowledgement_event_id)}`,
+    );
 
     const events = await ackEvents(resultId);
     expect(events).toHaveLength(1);
@@ -143,6 +147,8 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
 
     const secondRes = await post({ probe_result_event_id: resultId });
     expect(secondRes.status).toBe(200); // idempotent re-ack
+    // 200 did not create anything → no Location header (RFC 7231 §6.3.2).
+    expect(secondRes.headers.get('Location')).toBeNull();
     const second = TeachingBriefAckResponseSchema.parse(await secondRes.json());
 
     expect(second.idempotent).toBe(true);

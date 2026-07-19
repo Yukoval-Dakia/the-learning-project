@@ -59,8 +59,11 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
 // itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
 // and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
 // set stays in one place (mirrors PrepDeskConjectures' set).
-function invalidateBriefSurfaces(qc: QueryClient): Promise<unknown> {
-  return Promise.all([
+async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
+  // A precise typed return (not the former `Promise<unknown>`); `await` collapses the
+  // three void invalidations to void. (`Promise<void[]>` would trip biome's
+  // noConfusingVoidType, whose `undefined[]` autofix doesn't typecheck.)
+  await Promise.all([
     qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
     qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
     qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),

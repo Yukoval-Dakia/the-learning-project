@@ -79,6 +79,18 @@ describe('TeachingBriefResponseSchema', () => {
     expect(TeachingBriefResponseSchema.safeParse(stale).success).toBe(false);
   });
 
+  it('rejects an outcome whose ack action targets a different result than current_outcome', () => {
+    const drifted = {
+      brief: {
+        ...outcomeResponse.brief,
+        // prepared_action targets a DIFFERENT result than current_outcome reports — a
+        // projection regression the cross-field refine must catch (round-7).
+        prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_other' },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(drifted).success).toBe(false);
+  });
+
   it.each([
     ['top-level future section', { ...findingResponse.brief, plan_impact: null }],
     ['future action', { ...findingResponse.brief, prepared_action: { kind: 'continue_plan' } }],

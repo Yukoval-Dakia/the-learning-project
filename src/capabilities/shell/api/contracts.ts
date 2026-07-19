@@ -213,80 +213,99 @@ const teachingBriefCommon = {
   basis: TeachingBriefBasisSectionSchema,
 };
 
-export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnion('state', [
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('finding'),
-      expires_at: z.string().datetime(),
-      prepared_action: z
-        .object({
-          kind: z.literal('review_finding'),
-          proposal_id: z.string().min(1),
-          probe_preview_md: z.string().min(1),
-        })
-        .strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('awaiting_decision'),
-          summary_md: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('probe_ready'),
-      expires_at: z.null(),
-      prepared_action: z
-        .object({
-          kind: z.literal('answer_probe'),
-          probe_question_id: z.string().min(1),
-          prompt_md: z.string().min(1),
-        })
-        .strict(),
-      current_outcome: z
-        .object({
-          status: z.literal('awaiting_answer'),
-          summary_md: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('outcome_confirmed'),
-      expires_at: z.string().datetime(),
-      prepared_action: OutcomeAcknowledgeActionSchema,
-      current_outcome: z
-        .object({
-          status: z.literal('confirmed'),
-          summary_md: z.string().min(1),
-          probe_question_id: z.string().min(1),
-          probe_result_event_id: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...teachingBriefCommon,
-      state: z.literal('outcome_retired'),
-      expires_at: z.string().datetime(),
-      prepared_action: OutcomeAcknowledgeActionSchema,
-      current_outcome: z
-        .object({
-          status: z.literal('retired'),
-          summary_md: z.string().min(1),
-          probe_question_id: z.string().min(1),
-          probe_result_event_id: z.string().min(1),
-        })
-        .strict(),
-    })
-    .strict(),
-]);
+export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
+  .discriminatedUnion('state', [
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('finding'),
+        expires_at: z.string().datetime(),
+        prepared_action: z
+          .object({
+            kind: z.literal('review_finding'),
+            proposal_id: z.string().min(1),
+            probe_preview_md: z.string().min(1),
+          })
+          .strict(),
+        current_outcome: z
+          .object({
+            status: z.literal('awaiting_decision'),
+            summary_md: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('probe_ready'),
+        expires_at: z.null(),
+        prepared_action: z
+          .object({
+            kind: z.literal('answer_probe'),
+            probe_question_id: z.string().min(1),
+            prompt_md: z.string().min(1),
+          })
+          .strict(),
+        current_outcome: z
+          .object({
+            status: z.literal('awaiting_answer'),
+            summary_md: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('outcome_confirmed'),
+        expires_at: z.string().datetime(),
+        prepared_action: OutcomeAcknowledgeActionSchema,
+        current_outcome: z
+          .object({
+            status: z.literal('confirmed'),
+            summary_md: z.string().min(1),
+            probe_question_id: z.string().min(1),
+            probe_result_event_id: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
+        state: z.literal('outcome_retired'),
+        expires_at: z.string().datetime(),
+        prepared_action: OutcomeAcknowledgeActionSchema,
+        current_outcome: z
+          .object({
+            status: z.literal('retired'),
+            summary_md: z.string().min(1),
+            probe_question_id: z.string().min(1),
+            probe_result_event_id: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+  ])
+  // Cross-field invariant (mirrors TeachingBriefBasisSectionSchema's refine): on an outcome
+  // brief the ack action must target the very result the outcome reports. A discriminatedUnion
+  // member cannot itself be refined (that yields a ZodEffects, which the union rejects), so the
+  // check lives on the whole union — a future projection regression that lets the two ids drift
+  // fails the wire loudly instead of silently.
+  .superRefine((brief, ctx) => {
+    if (
+      (brief.state === 'outcome_confirmed' || brief.state === 'outcome_retired') &&
+      brief.prepared_action.probe_result_event_id !== brief.current_outcome.probe_result_event_id
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'prepared_action.probe_result_event_id must equal current_outcome.probe_result_event_id',
+        path: ['prepared_action', 'probe_result_event_id'],
+      });
+    }
+  });
 
 export const TeachingBriefResponseSchema = z
   .object({ brief: TeachingBriefSchema.nullable() })
