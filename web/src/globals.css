@@ -151,8 +151,15 @@
   --ink: #1f1e1d;
   --ink-2: #3d3b36;
   --ink-3: #5c5b57;
-  --ink-4: #8a8880;
-  --ink-5: #b6b3a8;
+  /* YUK-718 — tertiary/quaternary text clears WCAG AA (≥4.5:1) against EVERY paper
+     surface (--paper / -sunk / -raised / -tint), worst case the darkest --paper-tint
+     #f2ede0: --ink-4 5.23:1, --ink-5 4.56:1 (were 3.37:1 / 1.99:1 on --paper). --ink-4
+     sits darker, into ink-3's headroom (5.82 on --paper-tint), so the meta ↔
+     placeholder/disabled tier step stays perceptible: ink-4↔ink-5 ≈Δ9-10/channel
+     (was Δ4, flat), ink-3↔ink-4 ≈Δ7. Ordering ink-3 > ink-4 > ink-5 on all surfaces;
+     hue preserved (warm grey). */
+  --ink-4: #63625c;
+  --ink-5: #6d6b65;
 
   --line: #e8e4d8;
   --line-strong: #d5d0bf;
@@ -307,8 +314,13 @@
     --ink: #f0e8d8;
     --ink-2: #d4cbb8;
     --ink-3: #a89e8a;
-    --ink-4: #7a705e;
-    --ink-5: #4a4438;
+    /* YUK-718 — AA (≥4.5:1) against every dark paper surface, worst case the lightest
+       --paper-tint #2a241e: --ink-4 5.18:1, --ink-5 4.52:1 (were 3.69:1 / 1.86:1 on
+       --paper). --ink-4 nudged lighter into ink-3's headroom (5.78) so the tier step
+       stays perceptible (ink-4↔ink-5 ≈Δ14/10/4, ink-3↔ink-4 ≈Δ11/9/2); ordering
+       ink-3 > ink-4 > ink-5. */
+    --ink-4: #9d9588;
+    --ink-5: #8f8b84;
 
     --line: #3a3329;
     --line-strong: #4d4538;
@@ -369,8 +381,13 @@
   --ink: #f0e8d8;
   --ink-2: #d4cbb8;
   --ink-3: #a89e8a;
-  --ink-4: #7a705e;
-  --ink-5: #4a4438;
+  /* YUK-718 — AA (≥4.5:1) against every dark paper surface, worst case the lightest
+     --paper-tint #2a241e: --ink-4 5.18:1, --ink-5 4.52:1 (were 3.69:1 / 1.86:1 on
+     --paper). --ink-4 nudged lighter into ink-3's headroom (5.78) so the tier step
+     stays perceptible (ink-4↔ink-5 ≈Δ14/10/4, ink-3↔ink-4 ≈Δ11/9/2); ordering
+     ink-3 > ink-4 > ink-5. */
+  --ink-4: #9d9588;
+  --ink-5: #8f8b84;
 
   --line: #3a3329;
   --line-strong: #4d4538;

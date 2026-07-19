@@ -758,6 +758,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           rows={1}
           value={input}
           placeholder="问 Loom 任何事…"
+          aria-label="问 Loom 任何事"
           data-testid="copilot-composer-input"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {

@@ -30,6 +30,12 @@ import { embedText } from '@/server/ai/embed';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import {
+  type EvidenceDemandV1T,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+  parseEvidenceDemand,
+} from '@/server/question-supply/evidence-demand';
+import {
   type DifficultyBand,
   type QuestionSupplyTarget,
   type SupplyGapKind,
@@ -44,6 +50,13 @@ import { kindsMatch } from '@/subjects/question-kind';
 import { and, eq, isNull } from 'drizzle-orm';
 import { MATCHER_ANSWER_CLASS_FILTER } from './matcher-flags';
 import { type PoolRow, poolFetch } from './pool-fetch';
+import {
+  DEFAULT_SELECTION_POLICY_VERSION,
+  type EvaluatedSelectionConstraints,
+  type SelectionMissV1,
+  classifySelectionMiss,
+  writeSelectionMissEvent,
+} from './selection-miss';
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
 import { verifyAndPromote } from './verify-and-promote';
 
@@ -53,6 +66,13 @@ import { verifyAndPromote } from './verify-and-promote';
 // 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
 // TODO 实测调参 — YUK-396 关联 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
 const MATCHER_COSINE_MAX_DISTANCE = 0.35;
+
+// Observe-only diagnostic broad read (candidate_count) is bounded so a large KC cannot force
+// an unbounded full-pool scan on the serving miss path. candidate_count is only consumed as a
+// `=== 0` distinguisher (true-empty vs difficulty-band miss) and as an experimental event
+// number, so a count saturated at this cap is diagnostically sufficient (overflow reads as
+// ">= cap"). Bounding here reuses poolFetch unchanged (single-truth WHERE), no inline COUNT.
+const MATCHER_DIAGNOSTIC_POOL_CAP = 1000;
 
 // ── §3.1.5 三层 Demand (v1 子集) ──────────────────────────────────────────────
 export interface Demand {
@@ -87,6 +107,8 @@ export interface Demand {
   /** R1-R4：steer 残余路由 (映射 SupplyGapKind，Task 3). */
   gapType?: string;
   priority?: number;
+  /** Optional full Supply-v2 demand. Legacy callers omit it and receive a compatibility demand. */
+  evidenceDemand?: EvidenceDemandV1T;
   /** 必填. */
   limit: number;
 }
@@ -109,6 +131,8 @@ export interface MatcherResult {
   residual: SourcingNeed[];
   /** 全部 limit 由池满足、无残余. */
   satisfiedFromPool: boolean;
+  /** Observe-only structured explanation for an unmet demand. */
+  selectionMiss?: SelectionMissV1;
 }
 
 // promote 决策 seam 返回值 (Task 5). verifyAndPromote 返 superset
@@ -141,6 +165,8 @@ export interface MatcherDeps {
   /** 透传给 verify → 被转调 run 函数的 task runner seam. 默认 lazy-import runTask (与
    *  quiz_verify/source_verify 的 defaultRunTaskFn 同款). db 测试注 vi.fn() (不应被调，因 verify 也被 fake). */
   runTaskFn?: RunTaskFn;
+  /** Observe-only event seam. It must not enqueue supply work or alter selection. */
+  emitSelectionMiss?: (db: Db, miss: SelectionMissV1) => Promise<unknown>;
 }
 
 // 默认 runTaskFn — lazy-import runTask (mirror quiz_verify/source_verify defaultRunTaskFn).
@@ -199,6 +225,37 @@ async function resolveKnowledgeNodeLive(db: Db, knowledgeId: string): Promise<bo
     .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
     .limit(1);
   return rows.length > 0;
+}
+
+async function subjectIdForKnowledge(db: Db, knowledgeId: string): Promise<string> {
+  try {
+    return resolveSubjectProfile(await getEffectiveDomain(db, knowledgeId)).id;
+  } catch (error) {
+    // getEffectiveDomain throws (node missing / root-domain invariant); it never returns a
+    // sentinel, so this fallback fires only on a genuine resolution failure (e.g. a
+    // free/zero-library caller). Log it so a persistent domain-walk failure is diagnosable
+    // rather than silently collapsing every KC onto the default subject.
+    console.warn('[matcher] subjectIdForKnowledge fell back to default subject:', error);
+    return resolveSubjectProfile(null).id;
+  }
+}
+
+async function observeSelectionMissBestEffort(
+  db: Db,
+  deps: MatcherDeps,
+  build: () => Promise<SelectionMissV1> | SelectionMissV1,
+): Promise<SelectionMissV1 | undefined> {
+  try {
+    const miss = await build();
+    await (deps.emitSelectionMiss ?? writeSelectionMissEvent)(db, miss);
+    return miss;
+  } catch (error) {
+    // The entire diagnostic path—not only its event write—is observe-only. A broad diagnostic
+    // read or classification failure after dispatch must not turn a successful fallback into a
+    // matcher rejection that upstream may retry.
+    console.warn('[matcher] failed to build/record observe-only SelectionMiss:', error);
+    return undefined;
+  }
 }
 
 /**
@@ -337,6 +394,25 @@ export async function demandToSupplyTarget(
   const gapKind = supplyGapKindFor(demand);
   const minSourceTier: 1 | 2 | 3 = (demand.minSourceTier ?? 2) as 1 | 2 | 3;
   const knowledgeIds = [demand.knowledgeId];
+  const evidenceDemand = demand.evidenceDemand
+    ? parseEvidenceDemand(demand.evidenceDemand)
+    : buildCoverageEvidenceDemand({
+        subjectId,
+        knowledgeIds,
+        statement: `matcher needs ${gap} additional item(s) for ${demand.knowledgeId}`,
+        kinds: [kind],
+        difficultyBand,
+        eligibleCount: demand.limit,
+        cause: { kind: 'selection_miss' },
+      });
+  if (
+    evidenceDemand.subject_id !== subjectId ||
+    !evidenceDemand.claim.knowledge_ids.includes(demand.knowledgeId)
+  ) {
+    throw new Error(
+      `EvidenceDemand ${evidenceDemand.demand_id} does not match target subject/KC boundary`,
+    );
+  }
 
   // fingerprint: import targetFingerprint，与 target-discovery 同算法 → 同 demand 产同 fingerprint
   // (7 天 cooldown 前提，plan §218). 绝不复刻算法.
@@ -376,6 +452,7 @@ export async function demandToSupplyTarget(
     // JobData（QuizGenJobData/SourcingJobData payload）见 YUK-400（同 cause→JobData 同类，本 PR
     // 不扩 dispatcher/JobData 契约）。
     constraints: demand.compositeParentOnly ? { compositeParentOnly: true } : {},
+    context: evidenceDemandToTargetContext(evidenceDemand),
   };
 }
 
@@ -424,7 +501,28 @@ export async function matcher(
   // a distinguishable「dead KC, gap unfillable」signal (cf. satisfiedFromPool semantics below).
   // This is the matcher's own pre-fetch guard (getEffectiveDomain does NOT check archived_at).
   if (!(await resolveKnowledgeNodeLive(db, demand.knowledgeId))) {
-    return { used: [], residual: [], satisfiedFromPool: false };
+    const selectionMiss = await observeSelectionMissBestEffort(db, deps, async () =>
+      classifySelectionMiss(
+        {
+          subject_id: await subjectIdForKnowledge(db, demand.knowledgeId),
+          knowledge_id: demand.knowledgeId,
+          selection_policy_version: DEFAULT_SELECTION_POLICY_VERSION,
+        },
+        {
+          live_knowledge: false,
+          candidate_count: 0,
+          near_difficulty_count: 0,
+          required_kind_count: 0,
+          trusted_source_count: 0,
+          accessible_count: 0,
+          scorable_count: 0,
+          independent_family_count: null,
+          exposed_family_count: null,
+          quarantined_count: 0,
+        },
+      ),
+    );
+    return { used: [], residual: [], satisfiedFromPool: false, selectionMiss };
   }
 
   // 解析查询向量 (路 A queryEmbedding 优先于路 B queryText)；都无 → null → 标量序.
@@ -574,5 +672,64 @@ export async function matcher(
   // false}，根本走不到这里 (YUK-401 Fix 3)。
   const satisfiedFromPool = gap <= 0;
 
-  return { used, residual, satisfiedFromPool };
+  let selectionMiss: SelectionMissV1 | undefined;
+  if (!satisfiedFromPool) {
+    selectionMiss = await observeSelectionMissBestEffort(db, deps, async () => {
+      // Diagnostic broad read happens only after selection/fallback is settled. It never feeds
+      // ranking, serving, verification, or dispatch; it exists solely to distinguish a true
+      // empty pool from a difficulty-band miss.
+      const broadRows =
+        demand.difficultyMin != null || demand.difficultyMax != null
+          ? await poolFetch(db, {
+              knowledgeId: demand.knowledgeId,
+              activeOnly: false,
+              compositeParentOnly: demand.compositeParentOnly,
+              queryEmbedding: null,
+              answerClass,
+              limit: MATCHER_DIAGNOSTIC_POOL_CAP,
+            })
+          : rows;
+      const requiredKindRows = thresholded.filter(
+        (row) => demand.kind === undefined || kindsMatch(row.kind, demand.kind),
+      );
+      const trustedRows = requiredKindRows.filter((row) => {
+        if (demand.minSourceTier == null) return true;
+        return (
+          acquisitionTierForQuestion({
+            id: row.id,
+            source: row.source,
+            metadata: row.metadata ?? null,
+            kind: row.kind as QuestionKindT,
+            difficulty: row.difficulty,
+            calibrationB: null,
+            knowledgeIds: [],
+          }) <= demand.minSourceTier
+        );
+      });
+      const constraints: EvaluatedSelectionConstraints = {
+        live_knowledge: true,
+        candidate_count: broadRows.length,
+        near_difficulty_count: thresholded.length,
+        required_kind_count: requiredKindRows.length,
+        trusted_source_count: trustedRows.length,
+        accessible_count: used.length,
+        scorable_count: used.length,
+        // Phase A has no family/exposure projection in the serving matcher. Null is deliberate:
+        // absence is not evidence that there are zero independent or unexposed families.
+        independent_family_count: null,
+        exposed_family_count: null,
+        quarantined_count: trustedRows.filter((row) => !isPoolVisible(row)).length,
+      };
+      return classifySelectionMiss(
+        {
+          subject_id: await subjectIdForKnowledge(db, demand.knowledgeId),
+          knowledge_id: demand.knowledgeId,
+          selection_policy_version: DEFAULT_SELECTION_POLICY_VERSION,
+        },
+        constraints,
+      );
+    });
+  }
+
+  return { used, residual, satisfiedFromPool, selectionMiss };
 }

@@ -27,6 +27,7 @@ import { event } from '@/db/schema';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, gte, sql } from 'drizzle-orm';
+import { buildSupplyTrace } from './evidence-demand';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
@@ -217,6 +218,20 @@ export async function dispatchSupplyTarget(
   const routePlan = planSupplyRoutes(target);
   const anchorKid = target.knowledgeIds[0] ?? null;
 
+  // Single-source the supply_trace input; both call sites (dispatch data + observability event)
+  // build the identical trace envelope and differ only by producer route.
+  const traceFor = (route: SupplyRoute | null) =>
+    target.context
+      ? buildSupplyTrace(
+          {
+            targetId: target.id,
+            targetFingerprint: target.fingerprint,
+            context: target.context,
+          },
+          route,
+        )
+      : null;
+
   let result: DispatchResult;
 
   if (!anchorKid) {
@@ -272,6 +287,7 @@ export async function dispatchSupplyTarget(
     } else {
       // 自动派：sourcing_web → 'sourcing'，quiz_gen → 'quiz_gen'。
       const queue: 'sourcing' | 'quiz_gen' = autoRoute === 'sourcing_web' ? 'sourcing' : 'quiz_gen';
+      const dispatchTrace = traceFor(autoRoute);
       const data: Record<string, unknown> = {
         trigger: 'knowledge',
         ref_id: anchorKid,
@@ -290,6 +306,7 @@ export async function dispatchSupplyTarget(
         // G-COST bypass) so the seam is data-complete. Context: QuizGenJobData.knowledge_ids
         // in src/server/boss/handlers/quiz_gen.ts.
         ...(target.knowledgeIds.length > 1 ? { knowledge_ids: target.knowledgeIds } : {}),
+        ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
       };
       try {
         const jobId = await enqueue(queue, data);
@@ -335,6 +352,7 @@ export async function dispatchSupplyTarget(
   // 派一次又写一次事件即恢复 cooldown），故保留此权衡；收紧需把 cooldown 凭证写进专用持久表
   // （架构 doc 规划的后续 phase）或对 dispatched 路径的 writeEvent 做有限重试。
   try {
+    const supplyTrace = traceFor(result.chosenRoute);
     await writeEvent(db, {
       id: newId(),
       actor_kind: 'agent',
@@ -367,6 +385,7 @@ export async function dispatchSupplyTarget(
         stop_condition: result.stopCondition,
         reason: result.reason,
         constraints: target.constraints,
+        ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
       },
     });
   } catch (eventErr) {

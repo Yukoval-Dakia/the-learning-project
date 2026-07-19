@@ -10,3 +10,9 @@ export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
 /** Reader + writer cap for concurrently served, unanswered probes. */
 export const MAX_CONCURRENT_ACTIVE_PROBES = 3;
+
+/**
+ * Retryable wire code returned when an accept cannot serve its probe because the
+ * active-probe cap is hit; the accept rolls back and the proposal stays pending.
+ */
+export const PROBE_SLOTS_FULL_CODE = 'probe_slots_full' as const;

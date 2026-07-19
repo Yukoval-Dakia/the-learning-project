@@ -30,6 +30,7 @@ import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { loadConfusablePairs } from '@/capabilities/knowledge/server/misconception-confusable-read';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { buildCoverageEvidenceDemand, evidenceDemandToTargetContext } from './evidence-demand';
 import {
   type DifficultyBand,
   type QuestionSupplyTarget,
@@ -118,6 +119,18 @@ export async function discoverConfusableContrastTargets(
       priority: computePriority(GAP_KIND, 0),
       reason: `confusable pair [${knowledgeIds.join(' ↔ ')}] (conf=${pair.conf}) lacks a contrast/discrimination item`,
       constraints: {},
+      context: evidenceDemandToTargetContext(
+        buildCoverageEvidenceDemand({
+          subjectId,
+          knowledgeIds,
+          statement: `distinguish confusable knowledge pair ${knowledgeIds.join(' and ')}`,
+          kinds: [CONFUSABLE_CONTRAST_KIND],
+          allowedUses: ['practice', 'diagnostic'],
+          difficultyBand: DIFFICULTY_BAND,
+          eligibleCount: 1,
+          cause: { kind: 'confusable_pair' },
+        }),
+      ),
     });
   }
 

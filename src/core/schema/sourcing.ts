@@ -22,6 +22,7 @@
 // reachability.md §2 Slice C + §4 cost gate.
 import { z } from 'zod';
 import { QuestionKind, Rubric } from './business';
+import { ProducerDifficultyEvidence } from './difficulty-evidence';
 
 // ---------- per-question LLM output shape ----------
 //
@@ -41,6 +42,7 @@ export const SourcedQuestion = z.object({
   judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
   rubric_json: Rubric.nullable().optional(),
   difficulty: z.number().int().min(1).max(5),
+  difficulty_evidence: ProducerDifficultyEvidence.optional(),
   knowledge_ids: z.array(z.string().min(1)),
   // The page this question was sourced from. URL + title are REQUIRED (a sourced
   // question with no origin URL has no tier-2 provenance — it would be

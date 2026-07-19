@@ -27,9 +27,14 @@
 // questions — demotion only affects selection priority.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Job, SendOptions } from 'pg-boss';
 
+import {
+  DifficultyEvidence,
+  type DifficultyEvidenceT,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import {
@@ -53,6 +58,10 @@ import {
   toMcpAllowedToolName,
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
 // YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
 // ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
@@ -61,7 +70,17 @@ import { writeEvent } from '@/server/events/queries';
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
+import {
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  canonicalQuestionContentHash,
+  findExactQuestionDuplicate,
+} from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -85,10 +104,16 @@ export interface SourcingJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Forwarded
   // into the SourcingTask input's existing `kinds?` field so the agent can target the题型.
   kind?: string;
+  supply_trace?: SupplyTraceV1T;
 }
 
 // Default question count when the trigger doesn't specify one.
 export const SOURCING_DEFAULT_COUNT = 3;
+
+// The producer route this handler stamps on every draft it persists. Extracted so the value is
+// written once — a typo in any inline literal would silently produce a wrong source_route with no
+// compile-time check (the array type only constrains the shape, not the call-site strings).
+const SOURCING_WEB_ROUTE = 'sourcing_web' as const;
 
 // Read-only domain-tool surface SourcingTask mounts — enough to confirm the
 // knowledge graph so sourced questions attach to real knowledge_ids. Deliberately
@@ -120,7 +145,7 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 // Chained source_verify enqueue. Mirrors quiz_gen's EnqueueQuizVerifyFn seam so DB
 // tests inject a vi.fn().
-export type EnqueueSourceVerifyFn = (questionIds: string[]) => Promise<void>;
+export type EnqueueSourceVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
 // YUK-227 S3 Slice C — image_candidate proposal writer seam. Defaults to
 // writeAiProposal; DB tests inject a vi.fn() to assert the propose path runs WITHOUT
 // any question INSERT / VLM call. Loose shape (Pick of writeAiProposal's inputs the
@@ -138,12 +163,15 @@ interface DepsOverride {
   writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
 }
 
-async function defaultEnqueueSourceVerify(questionIds: string[]): Promise<void> {
+async function defaultEnqueueSourceVerify(
+  questionIds: string[],
+  options?: SendOptions,
+): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors quiz_gen → quiz_verify). source_verify creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('source_verify', { question_ids: questionIds });
+  await boss.send('source_verify', { question_ids: questionIds }, options);
 }
 
 // Read the subject profile's source whitelist. The field is added by slice 4
@@ -207,6 +235,7 @@ export interface RunSourcingParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the SourcingTask input (existing `kinds?`).
   kind?: string;
+  supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -368,6 +397,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
   };
 
   let taskResult: TaskTextResult | null = null;
+  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
     const result = await run('SourcingTask', input, {
       db,
@@ -434,10 +464,37 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     };
 
     const questionIds: string[] = [];
+    const difficultyEvidenceByQuestion: Array<{
+      question_id: string;
+      evidence: DifficultyEvidenceT;
+    }> = [];
+    const exactDuplicates: Array<{
+      existing_question_id: string;
+      new_question_id: string;
+      canonical_content_hash: string;
+      source_route: typeof SOURCING_WEB_ROUTE;
+    }> = [];
     const now = new Date();
+    failureStage = 'persist';
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
+        const canonicalContentHash = canonicalQuestionContentHash({
+          promptMd: q.prompt_md,
+          referenceMd: q.reference_md,
+          choicesMd: q.choices_md,
+          rubricJson: q.rubric_json,
+        });
+        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        if (existingDuplicate) {
+          exactDuplicates.push({
+            existing_question_id: existingDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: SOURCING_WEB_ROUTE,
+          });
+          continue;
+        }
         // Preserve the model's EXPLICIT judge_kind_override; only derive a default
         // when the agent left it absent (CR — never clobber an explicit route like
         // 'keyword' with the structural default). defaultJudgeKindForQuestion already
@@ -445,6 +502,17 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         // explicit and robust to future helper changes.
         const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const declaredDifficultyEvidence =
+          q.difficulty_evidence ??
+          buildProducerDifficultyEvidence(q.difficulty, SOURCING_WEB_ROUTE, now);
+        const difficultyEvidence = DifficultyEvidence.parse({
+          ...declaredDifficultyEvidence,
+          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
+          source_route: declaredDifficultyEvidence.source_route ?? SOURCING_WEB_ROUTE,
+        });
+        const questionSupplyTrace = params.supplyTrace
+          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
+          : undefined;
 
         // §2.1 web_sourced provenance contract. OF-2: whitelist_match flags
         // off-whitelist sources for selection-time demotion (slice 5a) — it never
@@ -463,33 +531,79 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           extract: q.extract,
         };
 
-        await tx.insert(question).values(
-          withAnswerClass({
-            id,
-            kind: q.kind,
-            source: 'web_sourced',
-            prompt_md: q.prompt_md,
-            reference_md: q.reference_md,
-            rubric_json: q.rubric_json ?? null,
-            choices_md: q.choices_md ?? null,
-            judge_kind_override: judgeKind,
-            knowledge_ids: questionKnowledgeIds,
-            difficulty: q.difficulty,
-            // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
-            // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
-            source_ref: q.source_url,
-            // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-            // source_verify passes.
-            draft_status: 'draft',
-            created_by: aiAgentRef('SourcingTask', result),
-            metadata: { web_sourced: webSourced, source_ref_kind: 'url' },
-            created_at: now,
-            updated_at: now,
-          }),
-        );
+        const inserted = await tx
+          .insert(question)
+          .values(
+            withAnswerClass({
+              id,
+              kind: q.kind,
+              source: 'web_sourced',
+              prompt_md: q.prompt_md,
+              reference_md: q.reference_md,
+              rubric_json: q.rubric_json ?? null,
+              choices_md: q.choices_md ?? null,
+              judge_kind_override: judgeKind,
+              knowledge_ids: questionKnowledgeIds,
+              difficulty: q.difficulty,
+              // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
+              // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
+              source_ref: q.source_url,
+              // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
+              // source_verify passes.
+              draft_status: 'draft',
+              created_by: aiAgentRef('SourcingTask', result),
+              metadata: {
+                web_sourced: webSourced,
+                source_ref_kind: 'url',
+                difficulty_evidence: difficultyEvidence,
+                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+              },
+              created_at: now,
+              canonical_content_hash: canonicalContentHash,
+              updated_at: now,
+            }),
+          )
+          // Scope the arbiter to the canonical-hash partial unique index (WHERE
+          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
+          // silently swallow ANY unique conflict (e.g. the PK), making the
+          // `inserted.length === 0` fallback below misread an unrelated conflict as a
+          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
+          // partial unique index as the arbiter.
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
+          .returning({ id: question.id });
+        if (inserted.length === 0) {
+          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          if (!racedDuplicate) {
+            throw new Error(`sourcing canonical hash conflict did not resolve for ${id}`);
+          }
+          exactDuplicates.push({
+            existing_question_id: racedDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: SOURCING_WEB_ROUTE,
+          });
+          continue;
+        }
+        await writeVerifyDispatchIntent(tx, {
+          questionId: id,
+          verifier: 'source_verify',
+          supplyTrace: questionSupplyTrace,
+          createdAt: now,
+        });
         questionIds.push(id);
+        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
     });
+    // Past the commit: any throw from here on (image-candidate proposals, the success
+    // event write, verify dispatch) is a post-persistence failure — the text drafts +
+    // verify intents are durably written — so report it distinctly rather than 'persist'.
+    failureStage = 'event';
+    for (const duplicate of exactDuplicates) {
+      console.info('[sourcing] exact duplicate skipped:', duplicate);
+    }
 
     // YUK-227 S3 Slice C — image-type sources do NOT enter the question INSERT path.
     // Each is written as an `image_candidate` proposal; the page's image is downloaded
@@ -632,6 +746,14 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         image_candidate_count: imageCandidateProposalIds.length,
         query_plan: parsed.query_plan,
         tool_context_task_run_id: toolContextTaskRunId,
+        stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
+        difficulty_evidence: difficultyEvidenceByQuestion,
+        exact_duplicate_count: exactDuplicates.length,
+        // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
+        // exact_duplicate_count above keeps the true total.
+        exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
+        exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
       task_run_id: result.task_run_id ?? null,
@@ -650,13 +772,20 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // job (source_verify's gate is for text drafts — image drafts get their own
     // verify at accept time). Skip it.
     if (questionIds.length > 0) {
-      try {
-        await enqueueSourceVerify(questionIds);
-      } catch (enqueueErr) {
+      failureStage = 'dispatch';
+      const dispatchResult = await dispatchPendingVerifyIntents(db, {
+        questionIds,
+        enqueue: async (verifier, ids, options) => {
+          if (verifier !== 'source_verify') {
+            throw new Error(`sourcing outbox received unexpected verifier '${verifier}'`);
+          }
+          await enqueueSourceVerify(ids, options);
+        },
+      });
+      if (dispatchResult.failed > 0) {
         console.error(
-          '[sourcing] source_verify enqueue failed; drafts persisted but unverified:',
+          '[sourcing] source_verify enqueue failed; durable intents left for recovery:',
           questionIds,
-          enqueueErr,
         );
       }
     }
@@ -681,7 +810,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           trigger,
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
+          failure_stage: failureStage,
           tool_context_task_run_id: toolContextTaskRunId,
+          ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,
@@ -706,6 +837,20 @@ export function buildSourcingHandler(
         console.warn('[sourcing] job missing trigger/ref_id', job.id);
         continue;
       }
+      // supply_trace is best-effort provenance from the dispatcher. Parse it here
+      // (the trust boundary) with safeParse so a malformed job payload drops the trace
+      // rather than throwing BEFORE runSourcing's failure-bottom can emit a structured
+      // event — an uncaught throw here would surface as a bare pg-boss job failure and
+      // retry identically forever.
+      let supplyTrace: SupplyTraceV1T | undefined;
+      if (data.supply_trace) {
+        const parsed = SupplyTraceV1.safeParse(data.supply_trace);
+        if (parsed.success) {
+          supplyTrace = parsed.data;
+        } else {
+          console.warn('[sourcing] ignoring malformed supply_trace in job data', job.id);
+        }
+      }
       const result = await runSourcing({
         db,
         trigger: data.trigger,
@@ -714,6 +859,7 @@ export function buildSourcingHandler(
         // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

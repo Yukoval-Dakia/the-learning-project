@@ -13,6 +13,7 @@
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
 import { AgentRef, QuestionKind, Rubric } from './business';
+import { ProducerDifficultyEvidence } from './difficulty-evidence';
 
 // ---------- §2 persisted metadata.quiz_gen ----------
 
@@ -213,6 +214,7 @@ export const QuizGenQuestion = z.object({
   judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
   rubric_json: Rubric.nullable().optional(),
   difficulty: z.number().int().min(1).max(5),
+  difficulty_evidence: ProducerDifficultyEvidence.optional(),
   knowledge_ids: z.array(z.string().min(1)),
   // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
   // or inspired THIS question.
