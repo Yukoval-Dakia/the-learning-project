@@ -143,11 +143,14 @@ export async function insertSourcedDraft(
     updated_at: now,
   });
 
+  // Option B — sourced drafts do NOT enter the pool / FSRS until source_verify passes.
+  // draft_status is kept explicit at each .values() site so audit:draft-status can prove the
+  // gate statically. NOTE: its INSERT_HEAD_RE tolerates only whitespace/chained calls between
+  // `.insert(question)` and `.values(` — a comment there hides the site from the scanner, so
+  // keep those two adjacent (these notes live above the chain, not inside it).
   const insertOnce = () =>
     tx
       .insert(question)
-      // Option B — sourced drafts do NOT enter the pool / FSRS until source_verify passes.
-      // Keep draft_status explicit at every INSERT site so audit:draft-status can prove it.
       .values({ ...questionRow, draft_status: 'draft' })
       // Scope the arbiter to the canonical-hash partial unique index (WHERE ... IS NOT NULL)
       // so a bare conflict (e.g. the PK) can't be misread as a hash collision. The `where`
