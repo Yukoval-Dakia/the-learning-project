@@ -184,4 +184,35 @@ describe('GET /api/ingestion/[id]/events contract', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
     await (response.body as ReadableStream).cancel().catch(() => {});
   });
+
+  it('F4 enqueue failure on live emit: a throw from enqueue routes through close() and unsubscribes', async () => {
+    // Regression (PR #959 round-2): when enqueue throws (stream already
+    // errored/closed) while a live subscription exists, the catch must run the
+    // unified close() — not just set `closed` — or the idempotent gate short-
+    // circuits the later close() and unsub() never fires (sse_router leak).
+    computeReplay.mockResolvedValueOnce([{ id: 1, event_type: 'ingest', payload: {} }]);
+    const controller = new AbortController();
+    const request = new Request('http://localhost/api/ingestion/session_enqfail/events', {
+      signal: controller.signal,
+    });
+
+    const response = await GET(request, { id: 'session_enqfail' });
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read(); // consume the replay frame; subscribe() has now registered
+    expect(subscribe).toHaveBeenCalledOnce();
+
+    // The live handler the route registered (subscribe(table, id, handler)).
+    const liveHandler = subscribe.mock.calls[0][2] as (n: { event_id: number }) => Promise<void>;
+
+    // Close the stream from the consumer side so the controller's enqueue throws.
+    await reader.cancel();
+
+    // A live notification arrives: the handler re-queries then tries to emit, but
+    // enqueue now throws on the closed stream. That throw must tear down the
+    // subscription via close(), not silently set `closed` and leak the subscriber.
+    computeReplay.mockResolvedValueOnce([{ id: 2, event_type: 'ingest', payload: {} }]);
+    await liveHandler({ event_id: 2 });
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
 });

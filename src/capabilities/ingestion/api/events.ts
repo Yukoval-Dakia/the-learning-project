@@ -46,13 +46,16 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         }
       };
 
-      // 统一 SSE 帧写入：已关闭则跳过；enqueue 失败（流已 error/close）标记 closed。
+      // 统一 SSE 帧写入：已关闭则跳过；enqueue 抛错（流已 error/close）时走统一
+      // close() 完整清理（含 unsub），而非只置 closed —— 否则若此刻 live 订阅已建立，
+      // 后续 close() 会被幂等闸短路，unsub 永不执行 → sse_router 订阅永久泄漏。
+      // close() 只调 unsub + controller.close，不回调 emitSseFrame，无递归。
       const emitSseFrame = (frame: string) => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(frame));
         } catch {
-          closed = true;
+          close();
         }
       };
 
