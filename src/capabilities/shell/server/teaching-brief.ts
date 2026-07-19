@@ -5,10 +5,11 @@ import type { CauseCategoryT } from '@/core/schema/cause';
 import { PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/server/proposals/inbox';
-import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -615,8 +616,13 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
     .where(
       and(
         eq(question.source, PROBE_QUESTION_SOURCE),
-        sql`NOT (${question.draft_status} = 'draft'
-          AND ${question.source_ref} = ${question.metadata}->>'conjecture_proposal_id')`,
+        // Non-canonical probe shape = pool-visible (canonical probes are always
+        // 'draft' — shared predicate keeps NULL≡active semantics, so a NULL
+        // draft_status probe is correctly logged) OR incoherent provenance.
+        or(
+          notDraftPredicate(question.draft_status),
+          sql`${question.source_ref} IS DISTINCT FROM ${question.metadata}->>'conjecture_proposal_id'`,
+        ),
         sql`NOT EXISTS (
           SELECT 1 FROM ${event}
           WHERE ${event.subject_kind} = 'question'
