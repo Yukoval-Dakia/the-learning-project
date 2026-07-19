@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-19）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 37 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-19）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 42 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
