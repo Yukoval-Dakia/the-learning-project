@@ -260,6 +260,8 @@ export async function runResearchMeetingDirector(
       day_key: dayKey,
     },
     cost_micro_usd: null,
+    // Internal run anchor; preserve provenance while opting out of learner memory.
+    ingest_at: now,
     created_at: now,
   });
 
@@ -427,6 +429,7 @@ export async function runResearchMeetingDirector(
   // Spawn 留痕 (evidence-first): the granted spawns → one scout_spawned event.
   if (scoutSpawns > 0) {
     try {
+      const scoutEventAt = deps.now?.() ?? new Date();
       await writeEventFn(db, {
         id: `research_meeting_agent_scout_${newId()}`,
         actor_kind: 'agent',
@@ -438,6 +441,8 @@ export async function runResearchMeetingDirector(
         payload: { subagent_type: 'evidence-scout', spawns: scoutSpawns, day_key: dayKey },
         caused_by_event_id: triggerEventId,
         cost_micro_usd: null,
+        // Execution trace only; do not feed Mem0 or regenerate learner briefs.
+        ingest_at: scoutEventAt,
         // round-2 review MINOR #8 — WRITE-TIME timestamp (mirrors dreaming_nightly.ts:390
         // `deps.now?.() ?? new Date()`), not the function-entry `now` snapshot: this write
         // happens AFTER the (up to 300s) LLM run, so entry-time `now` would understate how
@@ -445,7 +450,7 @@ export async function runResearchMeetingDirector(
         // the nightly job's hasScanEventForDayFn queries `payload.day_key` (an explicit,
         // entry-time-computed string field, NOT created_at) — so this timestamp change
         // introduces ZERO coupling risk with the claim/scan idempotency check.
-        created_at: deps.now?.() ?? new Date(),
+        created_at: scoutEventAt,
       });
     } catch (err) {
       postRunError = appendPostRunError(postRunError, err);
@@ -504,6 +509,7 @@ export async function runResearchMeetingDirector(
   }
 
   try {
+    const scanEventAt = deps.now?.() ?? new Date();
     await writeEventFn(db, {
       id: `research_meeting_agent_scan_${newId()}`,
       actor_kind: 'agent',
@@ -523,9 +529,11 @@ export async function runResearchMeetingDirector(
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: costMicroUsd,
+      // Aggregate run telemetry is retained for admin/cost views, not learner memory.
+      ingest_at: scanEventAt,
       // round-2 review MINOR #8 — write-time timestamp (see the scout_spawned write
       // above for the full rationale + the day_key/created_at decoupling conclusion).
-      created_at: deps.now?.() ?? new Date(),
+      created_at: scanEventAt,
     });
   } catch (err) {
     // Best-effort — see the file-header degrade comment: if THIS write itself fails, the

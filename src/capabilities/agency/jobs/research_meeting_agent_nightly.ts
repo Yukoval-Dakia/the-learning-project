@@ -183,6 +183,8 @@ async function claimDay(
     outcome: null,
     payload: { claim_nonce: claimNonce, day_key: opts.dayKey },
     cost_micro_usd: null,
+    // Scheduler claim/audit metadata is not learner evidence.
+    ingest_at: opts.now,
     created_at: opts.now,
   });
 

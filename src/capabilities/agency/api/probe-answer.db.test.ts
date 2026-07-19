@@ -19,7 +19,11 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import {
+  PROBE_JUDGE_RELEASED_ACTION,
+  PROBE_JUDGE_STARTED_ACTION,
+  serveProbeOnce,
+} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
@@ -144,6 +148,19 @@ async function probeResultEvents(probeQuestionId: string) {
     .where(
       and(
         eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, probeQuestionId),
+      ),
+    );
+}
+
+async function probeLifecycleEvents(probeQuestionId: string, action: string) {
+  return testDb()
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, action),
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, probeQuestionId),
       ),
@@ -291,6 +308,9 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(concurrent.status).toBe(409);
     expect(concurrent.headers.get('Retry-After')).toBeTruthy();
     expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const claims = await probeLifecycleEvents(probeId, PROBE_JUDGE_STARTED_ACTION);
+    expect(claims).toHaveLength(1);
+    expect(claims[0].ingest_at).not.toBeNull();
 
     releaseJudge?.(invokeResult('incorrect'));
     const first = await firstPromise;
@@ -304,6 +324,10 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     const res = await answer(probeId, 'something');
     expect(res.status).toBe(422);
+
+    const releases = await probeLifecycleEvents(probeId, PROBE_JUDGE_RELEASED_ACTION);
+    expect(releases).toHaveLength(1);
+    expect(releases[0].ingest_at).not.toBeNull();
 
     // No probe_result → the probe slot is NOT consumed (still served-but-unanswered).
     expect(await probeResultEvents(probeId)).toHaveLength(0);

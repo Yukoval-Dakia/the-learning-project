@@ -319,6 +319,9 @@ export async function claimProbeJudging(
       payload: {
         expires_at: new Date(now.getTime() + PROBE_JUDGE_CLAIM_TTL_MS).toISOString(),
       },
+      // Internal concurrency ledger: retain the append-only row, but never turn it
+      // into learner memory or trigger a brief regeneration (ADR-0021 / YUK-515).
+      ingest_at: now,
       created_at: now,
     });
     return null;
@@ -341,6 +344,8 @@ export async function releaseProbeJudging(
       subject_kind: 'question',
       subject_id: probeQuestionId,
       payload: { released_at: now.toISOString() },
+      // Compensating audit metadata has no learner-memory meaning.
+      ingest_at: now,
       created_at: now,
     });
   });
@@ -446,6 +451,10 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         answer_image_refs: answerImageRefs,
       },
       caused_by_event_id: conjectureEventId,
+      // The outcome remains available to A13's event readers/reconcile loop, but is
+      // an internal mechanism result rather than a learner-authored memory. A
+      // non-NULL stamp opts it out of the Mem0 outbox without deleting the event.
+      ingest_at: now,
       created_at: now,
     });
 

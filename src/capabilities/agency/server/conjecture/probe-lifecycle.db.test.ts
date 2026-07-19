@@ -204,6 +204,15 @@ describe('probe one-shot lifecycle (U3)', () => {
       answer_md: 'multiplies derivatives',
     });
     expect(results[0].caused_by_event_id).toBe(proposalId);
+    // YUK-515: the internal probe outcome remains queryable by A13, but is born
+    // opted out of the Mem0 outbox.
+    expect(results[0].ingest_at).not.toBeNull();
+    expect(results[0].affected_scopes).toEqual([]);
+
+    // Deliberate contrast: a conjecture is an evidence-backed belief about the
+    // learner, so its proposal remains eligible for memory ingestion.
+    const [conjecture] = await testDb().select().from(event).where(eq(event.id, proposalId));
+    expect(conjecture.ingest_at).toBeNull();
 
     // ND-5 red line: no attempt event on the probe, no FSRS row anywhere.
     expect(await attemptEvents(served.probe_question_id)).toHaveLength(0);
