@@ -162,7 +162,8 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
         </div>
       )}
 
-      <output aria-live="polite" aria-atomic="true">
+      {/* biome-ignore lint/a11y/useSemanticElements: output only permits phrasing content, but this status contains a Card/list. */}
+      <div role="status" aria-live="polite" aria-atomic="true">
         {diagnosticWarnings.length > 0 && (
           <Card>
             <div style={diagnosticAlertStyle}>
@@ -183,7 +184,7 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
             </div>
           </Card>
         )}
-      </output>
+      </div>
 
       <Stateful
         status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
