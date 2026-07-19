@@ -18,7 +18,7 @@
 
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
-import { useSubjects } from '@/ui/hooks/useSubjects';
+import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
@@ -36,7 +36,7 @@ import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { Icon } from '@/ui/primitives/Icon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * M1-T6 (YUK-314)：路由耦合从组件里抽出 —— VisionTab 不再 import 路由库，
@@ -134,6 +134,11 @@ const SSE_TERMINAL: Record<string, true> = {
   'ingestion.imported': true,
 };
 
+// YUK-717 — 稳定空数组：喂给 memo 化 BlockEditor 的 knowledgeNodes / 计算 blocks 的
+// `?? []` 回退不能每帧新建 []（新引用会击穿 memo）。数据未加载时统一指向同一常量。
+const EMPTY_BLOCK_ROWS: BlockRow[] = [];
+const EMPTY_KNOWLEDGE_NODES: KnowledgeNode[] = [];
+
 /**
  * Bug A (fix-docx-ingestion): determinate extraction progress for the visual line.
  * Reads the latest `ingestion.extraction_progress` SSE event (via latestProgress).
@@ -181,6 +186,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maxFiles = mode === 'vision_single' ? 1 : 5;
+
+  // YUK-717 — 单次 useSubjects 下传给每个 BlockEditor（错因下拉行驱动）。旧版每个
+  // BlockEditor 内各跑一个 useSubjects()→QueryObserver，20-40 块即 20-40 个订阅；
+  // hoist 到父级后只剩 1 个（镜像 QuestionsPage YUK-598）。subjects 引用稳定
+  // （React Query data，initialData 恒有值 → 不走 `?? []` 新引用），可安全喂 memo。
+  const { subjects: subjectRows } = useSubjects();
 
   const [phase, setPhase] = useState<Phase>('idle');
   // Bug B (fix-docx-ingestion): true while recovering an in-flight run from the URL.
@@ -546,6 +557,14 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setErrorMessage(null);
   };
 
+  // YUK-717 — 每 block 一个稳定 setForm：ref 缓存按 blockId 记住闭包，跨父层重渲
+  // 返回同一引用。否则内联的 `(updater) => setBlockForms(...)` 每帧新建 → 全部
+  // BlockEditor 因 setForm prop 变化而重渲，memo 失效。setBlockForms 恒稳定，闭包
+  // 只额外捕获 blockId。（声明在 reset 之上，供其清空缓存。）
+  const setFormByBlockRef = useRef(
+    new Map<string, (updater: (cur: BlockFormState) => BlockFormState) => void>(),
+  );
+
   const reset = () => {
     setPhase('idle');
     setLanding(null);
@@ -557,24 +576,63 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setBlockForms({});
     setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
+    // round-1 review — 清空 per-block setForm 缓存：旧会话 blockId 不再复用，
+    // 不清则 Map 跨会话无界累积。
+    setFormByBlockRef.current.clear();
     setErrorMessage(null);
     // Bug B: drop the recovery param so a reset run doesn't re-recover the old id.
     routing.setQuery('ingest', null);
   };
 
-  const blocks = blocksQ.data?.rows ?? [];
-  const rowIndexById = new Map(blocks.map((b, i) => [b.id, i]));
+  const blocks = blocksQ.data?.rows ?? EMPTY_BLOCK_ROWS;
+  // YUK-717 — 只随 blocks 变；memo 化避免每帧（含单字段编辑父层重渲）重建 Map。
+  const rowIndexById = useMemo(() => new Map(blocks.map((b, i) => [b.id, i])), [blocks]);
+  // YUK-717 — memo 化 BlockEditor 的 knowledgeNodes prop 走稳定引用（数据未加载时
+  // 指向共享空数组，不每帧新建 []）。
+  const knowledgeNodes = knowledgeQ.data?.rows ?? EMPTY_KNOWLEDGE_NODES;
 
-  const mergeIntoPrev = (blockId: string) => {
-    const idx = rowIndexById.get(blockId);
-    if (idx === undefined || idx === 0) return;
-    const prevId = blocks[idx - 1].id;
-    const prevBucket = bucketByBlockId[prevId] ?? prevId;
-    setBucketByBlockId((cur) => ({ ...cur, [blockId]: prevBucket }));
-  };
-  const splitMerge = (blockId: string) => {
+  // YUK-717 — 以下回调全部 useCallback 稳定：BlockEditor 已 memo 化，父层单字段
+  // 编辑（setBlockForms）重渲时，未编辑 block 收到的这些 prop 引用必须不变，
+  // 否则 memo 击穿、整列重渲。setState updater 一律从 `cur` 读，闭包只捕获稳定的
+  // setState 分发器（+ mergeIntoPrev 额外捕获 blocks，仅 refetch 时变）。
+  const mergeIntoPrev = useCallback(
+    (blockId: string) => {
+      setBucketByBlockId((cur) => {
+        const idx = blocks.findIndex((b) => b.id === blockId);
+        if (idx <= 0) return cur;
+        const prevId = blocks[idx - 1].id;
+        const prevBucket = cur[prevId] ?? prevId;
+        return { ...cur, [blockId]: prevBucket };
+      });
+    },
+    [blocks],
+  );
+  const splitMerge = useCallback((blockId: string) => {
     setBucketByBlockId((cur) => ({ ...cur, [blockId]: blockId }));
-  };
+  }, []);
+
+  // YUK-717 — 稳定 getSetForm：命中/建立上面 setFormByBlockRef 里该 blockId 的闭包。
+  const getSetForm = useCallback((blockId: string) => {
+    const cache = setFormByBlockRef.current;
+    let fn = cache.get(blockId);
+    if (!fn) {
+      fn = (updater) =>
+        setBlockForms((prev) => {
+          const cur = prev[blockId];
+          if (!cur) return prev;
+          return { ...prev, [blockId]: updater(cur) };
+        });
+      cache.set(blockId, fn);
+    }
+    return fn;
+  }, []);
+
+  // YUK-717 — 稳定 rescue 回调（React Query 的 mutate 引用恒稳定）。
+  const rescueMutate = rescueMutation.mutate;
+  const handleRescue = useCallback(
+    (block: BlockRow, tier: 2 | 3) => rescueMutate({ block, tier }),
+    [rescueMutate],
+  );
 
   if (landing) {
     // A8 (YUK-354): 批量着陆。知识点来自刚刚提交的表单快照，因此不依赖 import
@@ -742,17 +800,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
                 (rowIndexById.get(g.primary.id) ?? 0) > 0 && mode === 'vision_paper'
               }
               form={blockForms[g.primary.id]}
-              setForm={(updater) =>
-                setBlockForms((prev) => {
-                  const cur = prev[g.primary.id];
-                  if (!cur) return prev;
-                  return { ...prev, [g.primary.id]: updater(cur) };
-                })
-              }
-              knowledgeNodes={knowledgeQ.data?.rows ?? []}
-              onMergeIntoPrev={() => mergeIntoPrev(g.primary.id)}
+              setForm={getSetForm(g.primary.id)}
+              knowledgeNodes={knowledgeNodes}
+              subjectRows={subjectRows}
+              onMergeIntoPrev={mergeIntoPrev}
               onSplitMerge={splitMerge}
-              onRescue={(block, tier) => rescueMutation.mutate({ block, tier })}
+              onRescue={handleRescue}
               rescuing={rescueMutation.isPending}
             />
           ))}
@@ -811,13 +864,20 @@ export interface BlockEditorProps {
   form: BlockFormState | undefined;
   setForm: (updater: (cur: BlockFormState) => BlockFormState) => void;
   knowledgeNodes: KnowledgeNode[];
-  onMergeIntoPrev: () => void;
+  // YUK-717 — subjectRows 由父层 hoist 单次 useSubjects 下传（每 block 一个
+  // QueryObserver → 一次）。ApiSubject 结构上满足 cause-options 的 SubjectRowWithCauses。
+  subjectRows: readonly ApiSubject[];
+  onMergeIntoPrev: (blockId: string) => void;
   onSplitMerge: (followerId: string) => void;
   onRescue: (block: BlockRow, tier: 2 | 3) => void;
   rescuing: boolean;
 }
 
-export function BlockEditor({
+// YUK-717 — memo 化：一次字段编辑替换共享 blockForms record 时，父层重渲但只有被
+// 编辑 block 的 form prop 变了新引用（setBlockForms 只替换该 key，其余保持原引用）；
+// 其它 block 的全部 prop（primary/followers/knowledgeNodes/subjectRows/稳定回调）
+// 引用不变 → memo 跳过重渲。这是本票核心，props 稳定性由父层保证（见上）。
+export const BlockEditor = memo(function BlockEditor({
   primary,
   followers,
   primaryIndex,
@@ -825,6 +885,7 @@ export function BlockEditor({
   form,
   setForm,
   knowledgeNodes,
+  subjectRows,
   onMergeIntoPrev,
   onSplitMerge,
   onRescue,
@@ -842,8 +903,7 @@ export function BlockEditor({
       .slice(0, 30);
   }, [knowledgeNodes, kFilter]);
   const selectedKnowledgeIds = form?.knowledge_ids;
-  // YUK-598 — 错因下拉行驱动（同 RecordPage）。
-  const { subjects: subjectRows } = useSubjects();
+  // YUK-598 — 错因下拉行驱动（同 RecordPage）。subjectRows 现由父层 hoist 传入。
   const causeOptions = useMemo(
     () => causeOptionsForSelectedKnowledge(knowledgeNodes, selectedKnowledgeIds ?? [], subjectRows),
     [knowledgeNodes, selectedKnowledgeIds, subjectRows],
@@ -893,7 +953,7 @@ export function BlockEditor({
           <Button
             variant="ghost"
             size="sm"
-            onClick={onMergeIntoPrev}
+            onClick={() => onMergeIntoPrev(primary.id)}
             disabled={form.ignored}
             title="把本块作为上一块的延续"
           >
@@ -1089,7 +1149,7 @@ export function BlockEditor({
       )}
     </div>
   );
-}
+});
 
 // One image preview per (assetId, page_index) combination across all merged
 // blocks. Each preview overlays the bbox(es) that landed on that page.

@@ -4,7 +4,7 @@
 // data-2b.jsx）。布局 = 移植的 cytoscape+fcose headless（layout.ts，#363 形态
 // 裁决产物）；渲染层按设计稿重写为轻量 SVG。
 
-import { useMemo, useRef, useState } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -19,6 +19,127 @@ import { REL_CUE } from './relation-cue';
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2.4;
 const clampZoom = (k: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k));
+
+// YUK-717 — pan/zoom 每帧 setView(~60/s)，但边/节点元素只依赖 pos/nodes/edges/
+// activeId（与 view 无关）。把边/节点抽成 memo 化子组件，父层 useMemo 元素数组
+// （见 MeshGraph）：pan/zoom 帧内元素数组引用不变 → React 跳过整棵子树，只改父
+// <g> 的 transform 字符串。props 全为原始值或稳定引用（node/onPick 引用稳定），
+// memo 判等诚实。
+const MeshEdge = memo(function MeshEdge({
+  ax,
+  ay,
+  bx,
+  by,
+  relationType,
+}: {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  relationType: string;
+}) {
+  // F2 (Codex #400)：未知/experimental:* 关系类型 cue 回退 related_to，
+  // class 必须同源折回——否则 className 拼出无 CSS 匹配的 rel-experimental:*，
+  // 而 .mesh-edge2 无默认 stroke → 边描边 none 不可见（cue 已折回但颜色没折，
+  // 用户看到悬空「— 相关」标签却没连线）。relKey 让 cue 与 class 共用一个键。
+  const relKey = REL_CUE[relationType] ? relationType : 'related_to';
+  const cue = REL_CUE[relKey];
+  const mx = (ax + bx) / 2;
+  const my = (ay + by) / 2 - 18;
+  return (
+    <g className="mesh-edge-g">
+      {/* 颜色由 .rel-{type} 类驱动（screens-2b.css L20-26）；dash + 箭头
+          仍是非颜色 cue，typed 边即便色盲也能解码。 */}
+      <path
+        d={`M ${ax} ${ay} Q ${mx} ${my} ${bx} ${by}`}
+        className={`mesh-edge2 rel-${relKey}`}
+        strokeDasharray={cue.dash === '0' ? undefined : cue.dash}
+        markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
+      />
+      <text x={mx} y={my + 6} textAnchor="middle" className="mesh-edge-label mono">
+        {cue.glyph} {cue.label}
+      </text>
+    </g>
+  );
+});
+
+const MeshNode = memo(function MeshNode({
+  node,
+  x,
+  y,
+  isActive,
+  isHub,
+  onPick,
+}: {
+  node: KnowledgeTreeNode;
+  x: number;
+  y: number;
+  isActive: boolean;
+  isHub: boolean;
+  onPick: (node: KnowledgeTreeNode) => void;
+}) {
+  const m = node.mastery;
+  const pct = m == null ? null : Math.round(m * 100);
+  const tone = masteryTone(m ?? undefined);
+  const r = isHub ? 24 : 18;
+  const circ = 2 * Math.PI * r;
+  return (
+    <g
+      className={`mesh-node${isActive ? ' is-active' : ''}`}
+      transform={`translate(${x} ${y})`}
+      // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
+      role="button"
+      tabIndex={0}
+      style={{ cursor: 'pointer' }}
+      onClick={() => onPick(node)}
+      onKeyDown={(e) => {
+        // YUK-718 — role=button 图节点须同时响应 Space；preventDefault
+        // 拦住 Space 页面滚动。沿用 QuestionsPage / DraftReviewPage 同例。
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPick(node);
+        }
+      }}
+    >
+      {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。
+          S5 (YUK-335): stroke/选中态全交给 CSS——.mesh-node.is-active
+          .mesh-disc 的 coral stroke 胜过 .mesh-disc.tone-* 规则。 */}
+      <circle
+        className={`mesh-disc tone-${pct == null ? 'none' : tone}`}
+        r={r}
+        filter="url(#nodeShadow)"
+      />
+      <circle r={r} fill="none" className="mesh-track" />
+      {/* mastery=null（从未练）只渲 track，不渲 arc——无掌握度可绘。 */}
+      {m != null && (
+        <circle
+          r={r}
+          fill="none"
+          className="mesh-arc"
+          stroke={`var(--${tone})`}
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - m)}
+          transform="rotate(-90)"
+        />
+      )}
+      <text y={4} textAnchor="middle" className="mesh-node-pct mono">
+        {pct == null ? '—' : pct}
+      </text>
+      {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
+      <text
+        y={r + 18}
+        textAnchor="middle"
+        {...subjectContentPropsForDomain(node.effective_domain, {
+          className: 'mesh-node-label',
+        })}
+      >
+        {node.name.length > 8 ? `${node.name.slice(0, 8)}…` : node.name}
+      </text>
+    </g>
+  );
+});
 
 export function MeshGraph({
   nodes,
@@ -37,14 +158,49 @@ export function MeshGraph({
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-
   // hub 代理判定：有任意子节点的 node 视为 hub（r=24），否则叶（r=18）。
   const hasChildren = useMemo(() => {
     const set = new Set<string>();
     for (const n of nodes) if (n.parent_id != null) set.add(n.parent_id);
     return set;
   }, [nodes]);
+
+  // YUK-717 — 边/节点元素数组只依赖真实输入（pos/edges/nodes/activeId/hasChildren/
+  // onPick），与 view 无关。useMemo 后 pan/zoom 帧内引用不变 → 只有父 <g> 的
+  // transform 字符串重算，未变元素零重建。activeId 变时数组重建，但 MeshNode 的
+  // memo 让仅新旧 active 两节点重渲，其余仍跳过。
+  const edgeEls = useMemo(
+    () =>
+      edges.map((e) => {
+        const a = pos.get(e.from_knowledge_id);
+        const b = pos.get(e.to_knowledge_id);
+        if (!a || !b) return null;
+        return (
+          <MeshEdge key={e.id} ax={a.x} ay={a.y} bx={b.x} by={b.y} relationType={e.relation_type} />
+        );
+      }),
+    [edges, pos],
+  );
+
+  const nodeEls = useMemo(
+    () =>
+      nodes.map((n) => {
+        const p = pos.get(n.id);
+        if (!p) return null;
+        return (
+          <MeshNode
+            key={n.id}
+            node={n}
+            x={p.x}
+            y={p.y}
+            isActive={activeId === n.id}
+            isHub={hasChildren.has(n.id)}
+            onPick={onPick}
+          />
+        );
+      }),
+    [nodes, pos, activeId, hasChildren, onPick],
+  );
 
   return (
     <div className="mesh-wrap" aria-label="知识关系图">
@@ -131,100 +287,8 @@ export function MeshGraph({
             </filter>
           </defs>
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-            {edges.map((e) => {
-              const a = pos.get(e.from_knowledge_id);
-              const b = pos.get(e.to_knowledge_id);
-              if (!a || !b) return null;
-              // F2 (Codex #400)：未知/experimental:* 关系类型 cue 回退 related_to，
-              // class 必须同源折回——否则 className 拼出无 CSS 匹配的 rel-experimental:*，
-              // 而 .mesh-edge2 无默认 stroke → 边描边 none 不可见（cue 已折回但颜色没折，
-              // 用户看到悬空「— 相关」标签却没连线）。relKey 让 cue 与 class 共用一个键。
-              const relKey = REL_CUE[e.relation_type] ? e.relation_type : 'related_to';
-              const cue = REL_CUE[relKey];
-              const mx = (a.x + b.x) / 2;
-              const my = (a.y + b.y) / 2 - 18;
-              return (
-                <g key={e.id} className="mesh-edge-g">
-                  {/* 颜色由 .rel-{type} 类驱动（screens-2b.css L20-26）；dash + 箭头
-                      仍是非颜色 cue，typed 边即便色盲也能解码。 */}
-                  <path
-                    d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`}
-                    className={`mesh-edge2 rel-${relKey}`}
-                    strokeDasharray={cue.dash === '0' ? undefined : cue.dash}
-                    markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
-                  />
-                  <text x={mx} y={my + 6} textAnchor="middle" className="mesh-edge-label mono">
-                    {cue.glyph} {cue.label}
-                  </text>
-                </g>
-              );
-            })}
-            {nodes.map((n) => {
-              const p = pos.get(n.id);
-              if (!p) return null;
-              const m = n.mastery;
-              const pct = m == null ? null : Math.round(m * 100);
-              const tone = masteryTone(m ?? undefined);
-              const r = hasChildren.has(n.id) ? 24 : 18;
-              const circ = 2 * Math.PI * r;
-              return (
-                <g
-                  key={n.id}
-                  className={`mesh-node${activeId === n.id ? ' is-active' : ''}`}
-                  transform={`translate(${p.x} ${p.y})`}
-                  // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => onPick(byId.get(n.id) ?? n)}
-                  onKeyDown={(e) => {
-                    // YUK-718 — role=button 图节点须同时响应 Space；preventDefault
-                    // 拦住 Space 页面滚动。沿用 QuestionsPage / DraftReviewPage 同例。
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onPick(byId.get(n.id) ?? n);
-                    }
-                  }}
-                >
-                  {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。
-                      S5 (YUK-335): stroke/选中态全交给 CSS——.mesh-node.is-active
-                      .mesh-disc 的 coral stroke 胜过 .mesh-disc.tone-* 规则。 */}
-                  <circle
-                    className={`mesh-disc tone-${pct == null ? 'none' : tone}`}
-                    r={r}
-                    filter="url(#nodeShadow)"
-                  />
-                  <circle r={r} fill="none" className="mesh-track" />
-                  {/* mastery=null（从未练）只渲 track，不渲 arc——无掌握度可绘。 */}
-                  {m != null && (
-                    <circle
-                      r={r}
-                      fill="none"
-                      className="mesh-arc"
-                      stroke={`var(--${tone})`}
-                      strokeWidth="3.5"
-                      strokeLinecap="round"
-                      strokeDasharray={circ}
-                      strokeDashoffset={circ * (1 - m)}
-                      transform="rotate(-90)"
-                    />
-                  )}
-                  <text y={4} textAnchor="middle" className="mesh-node-pct mono">
-                    {pct == null ? '—' : pct}
-                  </text>
-                  {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
-                  <text
-                    y={r + 18}
-                    textAnchor="middle"
-                    {...subjectContentPropsForDomain(n.effective_domain, {
-                      className: 'mesh-node-label',
-                    })}
-                  >
-                    {n.name.length > 8 ? `${n.name.slice(0, 8)}…` : n.name}
-                  </text>
-                </g>
-              );
-            })}
+            {edgeEls}
+            {nodeEls}
           </g>
         </svg>
       </div>
