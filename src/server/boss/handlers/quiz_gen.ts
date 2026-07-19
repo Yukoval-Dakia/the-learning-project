@@ -613,7 +613,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           .from(knowledge)
           .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
       : [];
-    const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
+    // SQL IN has no ordering contract. Preserve the resolver's semantic order explicitly because
+    // knowledge_ids[0] is the primary attribution anchor used by verification/profile readers.
+    const liveResolvedKnowledgeIds = new Set(resolvedKnowledgeRows.map((r) => r.id));
+    const fallbackKnowledgeIds = [
+      ...new Set(resolved.knowledgeIds.filter((id) => liveResolvedKnowledgeIds.has(id))),
+    ];
     // The supply target is the resolved attribution anchor (explicit knowledgeId, knowledge
     // trigger, or a learning_item's primary KC), not every KC carried by a broad learning item.
     // Remaining live resolved ids are fallback attribution only when the model supplied none.
@@ -693,9 +698,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         const questionSupplyTrace = params.supplyTrace
           ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
           : undefined;
-        for (const kid of questionKnowledgeIds) {
-          quizKnowledgeIds.add(kid);
-        }
         // YUK-224 F3 — material_grounded: synthesize a per-question source_ref from
         // the top-level material (url + passage snippet) so the deterministic
         // copy-safety overlap has the passage to compare against. Non-material runs
@@ -863,6 +865,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           supplyTrace: questionSupplyTrace,
           createdAt: now,
         });
+        // Aggregate exactly the persisted question attribution (model-valid ids + supply target),
+        // not the narrower pre-union model ids. Add only after a fresh row actually landed so the
+        // artifact's tags describe its own tool_state.question_ids, not skipped duplicates.
+        for (const kid of duplicateKnowledgeIds) quizKnowledgeIds.add(kid);
         questionIds.push(id);
         difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }

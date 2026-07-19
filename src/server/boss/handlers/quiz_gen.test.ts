@@ -599,6 +599,11 @@ describe('runQuizGen', () => {
       draft_status: 'draft',
       knowledge_ids: ['k2', 'k1'],
     });
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k2', 'k1']);
     const releaseEvents = await testDb()
       .select()
       .from(event)
@@ -1075,6 +1080,56 @@ describe('runQuizGen', () => {
     expect(rows).toHaveLength(1);
     // Hallucinated id dropped; attribution falls back to the trigger's real node.
     expect(rows[0].knowledge_ids).toEqual(['k1']);
+  });
+
+  it('preserves learning_item KC order when filtering fallback ids', async () => {
+    // Deliberately insert in the opposite order from the learning_item attribution. An unordered
+    // SQL IN result commonly follows physical insertion order; the handler must restore semantic
+    // learning_item order so [0] remains the primary KC.
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const now = new Date();
+    await testDb()
+      .insert(learning_item)
+      .values({
+        id: 'li-ordered-fallback',
+        source: 'manual',
+        source_ref: null,
+        title: '有序 KC',
+        content: '',
+        knowledge_ids: ['k2', 'k1'],
+        status: 'pending',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    const parsed = JSON.parse(CLOSED_BOOK_OUTPUT) as {
+      questions: Array<{ knowledge_ids: string[] }>;
+    };
+    parsed.questions[0].knowledge_ids = ['ghost'];
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'learning_item',
+      refId: 'li-ordered-fallback',
+      count: 1,
+      generationMethod: 'closed_book',
+      runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-ordered-fallback'),
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const [row] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, result.question_ids?.[0] ?? ''));
+    expect(row.knowledge_ids).toEqual(['k2', 'k1']);
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k2', 'k1']);
   });
 
   // YUK-226 S2-5b F1 (PR #318 round-1) — the 找题次序 pins generation_method; the
