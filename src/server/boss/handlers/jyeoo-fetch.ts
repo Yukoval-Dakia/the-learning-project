@@ -26,9 +26,10 @@
 //     chained source_verify promotes draft→active on pass.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { AgentRef } from '@/core/schema/business';
 import {
   DifficultyEvidence,
@@ -60,12 +61,12 @@ import { type SpawnJyeooFn, spawnJyeooFetch } from '@/server/question-supply/jye
 import {
   JYEOO_DEFAULT_PAGES,
   JYEOO_FETCH_ROUTE,
-  JYEOO_SPAWN_MAX_STDERR_BYTES,
-  JYEOO_SPAWN_MAX_STDOUT_BYTES,
-  JYEOO_SPAWN_TIMEOUT_MS,
   jyeooBinaryPath,
   jyeooDgTokenForBand,
   jyeooFetchEnabled,
+  jyeooSpawnMaxStderrBytes,
+  jyeooSpawnMaxStdoutBytes,
+  jyeooSpawnTimeoutMs,
 } from '@/server/question-supply/jyeoo-supply-config';
 import type { DifficultyBand } from '@/server/question-supply/target-discovery';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -74,6 +75,7 @@ import {
   findExactQuestionDuplicate,
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { kindsMatch } from '@/subjects/question-kind';
 import { maxNgramOverlap } from './quiz_verify';
 import { DEDUP_OVERLAP_THRESHOLD } from './source_verify';
 import { matchesWhitelist } from './sourcing';
@@ -159,6 +161,7 @@ interface JyeooFetchCounts {
   validated: number; // lines that passed the SourcedQuestion contract.
   invalid: number; // non-blank lines that failed JSON/Zod (dropped, batch still ok on exit 0).
   filtered_image: number; // valid questions dropped as image-dependent (pre-persist).
+  filtered_kind: number; // valid questions dropped for not matching the pinned kind (pre-persist).
   deduped_exact: number; // dropped by canonical_content_hash exact match.
   deduped_near: number; // dropped by n-gram near-dup prefilter (active+draft pool).
   inserted: number; // drafts written (draft_status='draft').
@@ -166,7 +169,14 @@ interface JyeooFetchCounts {
 }
 
 interface ResolvedJyeooTrigger {
-  knowledgeNode: { id: string; name: string; domain: string | null };
+  knowledgeNode: { id: string; name: string };
+  /**
+   * The EFFECTIVE subject domain (walks the parent chain for a child KC whose own
+   * `domain` is null — the normal knowledge-tree shape). Used to resolve the subject
+   * profile; a raw-row read would collapse child KCs onto `general` and falsely skip
+   * jyeoo support (mirrors subjectIdForKnowledge / getEffectiveDomain canonical usage).
+   */
+  effectiveDomain: string | null;
 }
 
 /**
@@ -190,7 +200,16 @@ async function resolveAnchor(
     .limit(1);
   const k = rows[0];
   if (!k) return null;
-  return { knowledgeNode: k };
+  // Effective domain climbs the parent chain (child KCs carry domain=null). getEffectiveDomain
+  // THROWS on a resolution failure (node missing / root-domain invariant) — fall back to the
+  // raw row domain so an edge case degrades to general rather than crashing the job.
+  let effectiveDomain: string | null = k.domain;
+  try {
+    effectiveDomain = await getEffectiveDomain(db, k.id);
+  } catch (err) {
+    console.warn('[jyeoo_fetch] effective-domain walk failed; using raw row domain:', err);
+  }
+  return { knowledgeNode: { id: k.id, name: k.name }, effectiveDomain };
 }
 
 /** Pull existing active+draft prompts sharing the anchor KC for the near-dup prefilter. */
@@ -206,6 +225,10 @@ async function fetchNearDupPool(
       // duplicate we (or a prior run) already staged as a draft, which source_verify's
       // active-only dedup would miss (design §5).
       .where(sql`${question.knowledge_ids} @> ${JSON.stringify([anchorKid])}::jsonb`)
+      // Newest-first so a bounded LIMIT samples the most recently written rows (the most
+      // likely near-dup comparison set) deterministically — a LIMIT with no ORDER BY is an
+      // arbitrary sample that could miss a near-duplicate when a KC has >LIMIT questions.
+      .orderBy(desc(question.created_at))
       .limit(NEAR_DUP_POOL_LIMIT)
   );
 }
@@ -216,6 +239,7 @@ const emptyCounts = (requested: number): JyeooFetchCounts => ({
   validated: 0,
   invalid: 0,
   filtered_image: 0,
+  filtered_kind: 0,
   deduped_exact: 0,
   deduped_near: 0,
   inserted: 0,
@@ -235,7 +259,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
   const resolved = await resolveAnchor(db, trigger, refId, params.knowledgeId);
   if (!resolved) return { status: 'skipped:ref_not_found' };
 
-  const subjectProfile = resolveSubjectProfile(resolved.knowledgeNode.domain ?? null);
+  const subjectProfile = resolveSubjectProfile(resolved.effectiveDomain);
   const jyeooSubject = subjectProfile.jyeooSupply?.subject ?? null;
   if (!jyeooSubject) return { status: 'skipped:subject_unsupported' };
 
@@ -269,9 +293,9 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       spawnResult = await spawnJyeoo({
         binaryPath: jyeooBinaryPath(),
         args,
-        timeoutMs: JYEOO_SPAWN_TIMEOUT_MS,
-        maxStdoutBytes: JYEOO_SPAWN_MAX_STDOUT_BYTES,
-        maxStderrBytes: JYEOO_SPAWN_MAX_STDERR_BYTES,
+        timeoutMs: jyeooSpawnTimeoutMs(),
+        maxStdoutBytes: jyeooSpawnMaxStdoutBytes(),
+        maxStderrBytes: jyeooSpawnMaxStderrBytes(),
       });
     } catch (spawnErr) {
       // OS-level spawn failure (ENOENT etc.) — terminal 'spawn' class, no INSERT.
@@ -299,7 +323,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
         counts,
         failureClass,
         detail: truncated
-          ? `stdout exceeded ${JYEOO_SPAWN_MAX_STDOUT_BYTES} bytes; batch discarded (possible mid-stream truncation)`
+          ? `stdout exceeded ${jyeooSpawnMaxStdoutBytes()} bytes; batch discarded (possible mid-stream truncation)`
           : `jyeoo-rs exit ${spawnResult.exitCode}${spawnResult.signal ? ` signal ${spawnResult.signal}` : ''}: ${stderrTail(spawnResult.stderr)}`,
         retryable,
       });
@@ -311,8 +335,12 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     for (const line of spawnResult.lines) {
       const parsed = parseJyeooLine(line);
       if (!parsed.ok) {
-        if (parsed.reason !== 'blank') counts.invalid += 1;
-        if (parsed.reason !== 'blank') counts.fetched += 1;
+        // A blank line is a skip (trailing newline); a non-blank invalid line counts as
+        // both fetched and invalid but is dropped (one bad line must not sink the batch).
+        if (parsed.reason !== 'blank') {
+          counts.invalid += 1;
+          counts.fetched += 1;
+        }
         continue;
       }
       counts.fetched += 1;
@@ -336,11 +364,20 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       });
     }
 
-    // ── image filter (pre-persist) ─────────────────────────────────────────────
+    // ── pre-persist filters: image-dependent + pinned-kind mismatch ─────────────
+    // The dispatcher may pin a kind (diagnostic / format-diversity / calibration targets,
+    // e.g. `choice`). The producer only INFERS kind, so — mirroring the sourcing path's
+    // params.kind enforcement — drop any question whose kind does not match the pin BEFORE
+    // INSERT (kindsMatch normalizes both to canonical, so `single_choice` matches `choice`).
+    // Otherwise a wrong-kind draft would pass source_verify while leaving the gap unfilled.
     const textQuestions: SourcedQuestionT[] = [];
     for (const q of validQuestions) {
       if (isImageDependentQuestion(q)) {
         counts.filtered_image += 1;
+        continue;
+      }
+      if (params.kind && !kindsMatch(q.kind, params.kind)) {
+        counts.filtered_kind += 1;
         continue;
       }
       textQuestions.push(q);

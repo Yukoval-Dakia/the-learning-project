@@ -145,7 +145,14 @@ export function parseJyeooLine(line: string): JyeooParsedLine {
 // (design §5.3). We therefore FILTER such questions pre-persist rather than ingest a
 // judge-corrupting draft. reference_md is intentionally NOT scanned: an image that
 // appears only in the worked solution does not change the question the learner sees.
-const MARKDOWN_IMAGE = /!\[[^\]]*\]\([^)]*\)/;
+//
+// This is the ONLY pre-INSERT image gate, so it is deliberately OVER-INCLUSIVE: detect the
+// markdown image MARKER STRUCTURE `![...](` rather than parse a full `(...)` URL. A URL
+// containing a literal `)` (e.g. `![x](https://h/Foo_(bar).png)`) would defeat a
+// balanced-paren/`[^)]*` regex and let the figure question slip through — better to
+// over-filter (a rare false positive costs at most one dropped candidate) than to
+// under-filter and ingest a broken-image question into the judge path.
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\(/;
 
 export function isImageDependentQuestion(q: SourcedQuestionT): boolean {
   if (MARKDOWN_IMAGE.test(q.prompt_md)) return true;

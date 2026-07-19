@@ -38,71 +38,103 @@ export interface SpawnJyeooResult {
 /** The injectable spawn seam (handler default = real subprocess). */
 export type SpawnJyeooFn = (opts: SpawnJyeooOptions) => Promise<SpawnJyeooResult>;
 
+// A bounded byte accumulator: collects raw Buffer chunks up to `cap` bytes WITHOUT any
+// mid-stream decode, so a multibyte UTF-8 char that spans two chunks is never split (the
+// full byte sequence is decoded ONCE at the end). At the cap we slice the overflowing
+// chunk back to a UTF-8 char boundary so truncation can't emit a replacement char.
+class BoundedByteSink {
+  private readonly chunks: Buffer[] = [];
+  private used = 0;
+  truncated = false;
+  constructor(private readonly cap: number) {}
+
+  push(chunk: Buffer): void {
+    if (this.truncated) return;
+    if (this.used + chunk.length <= this.cap) {
+      this.chunks.push(chunk);
+      this.used += chunk.length;
+      return;
+    }
+    const room = this.cap - this.used;
+    if (room > 0) this.chunks.push(sliceToCharBoundary(chunk, room));
+    this.used = this.cap;
+    this.truncated = true;
+  }
+
+  decode(): string {
+    return Buffer.concat(this.chunks).toString('utf8');
+  }
+}
+
+// Truncate a Buffer to at most `maxBytes`, rolling the cut point back so it never lands
+// inside a multibyte UTF-8 sequence (a continuation byte is 0b10xxxxxx = 0x80..0xBF). This
+// is the real fix the bot's suggested `subarray(0, n).toString()` does NOT provide — that
+// re-decode still yields U+FFFD when the cut splits a char.
+export function sliceToCharBoundary(buf: Buffer, maxBytes: number): Buffer {
+  let end = Math.min(maxBytes, buf.length);
+  // Roll back while the byte AT the cut is a UTF-8 continuation byte (0b10xxxxxx), i.e.
+  // the cut lands inside a multibyte sequence; stop at the first lead/ASCII byte.
+  while (end > 0) {
+    const byte = buf[end];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+    end--;
+  }
+  return buf.subarray(0, end);
+}
+
 /**
  * Spawn jyeoo-rs with bounded stdout/stderr + a hard timeout. Never rejects on a
  * non-zero exit — the disposition (exitCode/signal/timedOut) is returned for the
- * adapter to classify. Rejects ONLY on a spawn-level OS error (ENOENT etc.), which the
- * handler treats as a terminal 'spawn' failure.
+ * adapter to classify. Rejects ONLY on a spawn-level OS error (ENOENT etc.) or invalid
+ * bounds, which the handler treats as a terminal 'spawn' failure.
  */
 export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResult> {
+  // Defensive bounds validation — a non-positive cap/timeout is a caller bug (a 0-byte
+  // cap would truncate everything; a 0ms timeout would kill instantly), so fail loudly
+  // rather than silently produce an empty/misclassified batch.
+  for (const [name, value] of [
+    ['timeoutMs', opts.timeoutMs],
+    ['maxStdoutBytes', opts.maxStdoutBytes],
+    ['maxStderrBytes', opts.maxStderrBytes],
+  ] as const) {
+    if (!Number.isFinite(value) || value <= 0) {
+      return Promise.reject(
+        new Error(`spawnJyeooFetch: ${name} must be a positive finite number (got ${value})`),
+      );
+    }
+  }
+
   return new Promise<SpawnJyeooResult>((resolve, reject) => {
+    // Merge env over process.env, DROPPING undefined values — an undefined entry in
+    // opts.env would otherwise unset (or stringify to "undefined") an inherited var.
+    const childEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...process.env, ...opts.env })) {
+      if (v !== undefined) childEnv[k] = v;
+    }
     // Default stdio (all piped) → ChildProcessWithoutNullStreams, so stdout/stderr are
     // non-null for capture. stdin is piped but unused (we never write to it).
-    const spawnOpts: SpawnOptionsWithoutStdio = {
-      cwd: opts.cwd,
-      env: { ...process.env, ...opts.env },
-    };
+    const spawnOpts: SpawnOptionsWithoutStdio = { cwd: opts.cwd, env: childEnv };
     const child = spawn(opts.binaryPath, opts.args, spawnOpts);
 
-    // stdout — accumulate bounded bytes, split into lines at the end. We keep a rolling
-    // byte budget; once exceeded we stop appending and flag truncation.
-    let stdoutBuf = '';
-    let stdoutBytes = 0;
-    let stdoutTruncated = false;
-    let stderr = '';
-    let stderrBytes = 0;
-    let stderrTruncated = false;
+    // Raw-byte sinks (no mid-stream decode → no cross-chunk boundary splits).
+    const stdoutSink = new BoundedByteSink(opts.maxStdoutBytes);
+    const stderrSink = new BoundedByteSink(opts.maxStderrBytes);
     let timedOut = false;
     let settled = false;
 
     const timer = setTimeout(() => {
+      // Timeout race guard: if the child has ALREADY produced an exit disposition, the
+      // 'close' handler is merely queued behind this timer — flagging a timeout + SIGKILL
+      // here would misclassify a clean exit as a timeout and trigger a false retry. Only
+      // kill a process that is genuinely still running.
+      if (child.exitCode !== null || child.signalCode !== null) return;
       timedOut = true;
       // SIGKILL: a wedged scraper may ignore SIGTERM; we want a hard stop.
       child.kill('SIGKILL');
     }, opts.timeoutMs);
 
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      if (stdoutTruncated) return;
-      const chunkBytes = Buffer.byteLength(chunk, 'utf8');
-      if (stdoutBytes + chunkBytes > opts.maxStdoutBytes) {
-        // Append the portion that fits, then stop + flag truncation.
-        const remaining = opts.maxStdoutBytes - stdoutBytes;
-        if (remaining > 0)
-          stdoutBuf += Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
-        stdoutBytes = opts.maxStdoutBytes;
-        stdoutTruncated = true;
-        return;
-      }
-      stdoutBuf += chunk;
-      stdoutBytes += chunkBytes;
-    });
-
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      if (stderrTruncated) return;
-      const chunkBytes = Buffer.byteLength(chunk, 'utf8');
-      if (stderrBytes + chunkBytes > opts.maxStderrBytes) {
-        const remaining = opts.maxStderrBytes - stderrBytes;
-        if (remaining > 0)
-          stderr += Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
-        stderrBytes = opts.maxStderrBytes;
-        stderrTruncated = true;
-        return;
-      }
-      stderr += chunk;
-      stderrBytes += chunkBytes;
-    });
+    child.stdout.on('data', (chunk: Buffer) => stdoutSink.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderrSink.push(chunk));
 
     child.on('error', (err) => {
       // OS-level spawn failure (e.g. ENOENT — binary not on PATH). Terminal.
@@ -120,10 +152,10 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
         exitCode: code,
         signal: signal ?? null,
         timedOut,
-        lines: stdoutBuf.split('\n'),
-        stdoutTruncated,
-        stderr,
-        stderrTruncated,
+        lines: stdoutSink.decode().split('\n'),
+        stdoutTruncated: stdoutSink.truncated,
+        stderr: stderrSink.decode(),
+        stderrTruncated: stderrSink.truncated,
       });
     });
   });

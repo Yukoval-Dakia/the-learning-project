@@ -24,6 +24,24 @@ async function seedKnowledge(id: string, domain = 'math', name = '函数与导�
     .onConflictDoNothing();
 }
 
+// A child KC whose OWN domain is null — its subject is inherited from `parentId` (the
+// normal knowledge-tree shape). Exercises the effective-domain walk.
+async function seedChildKnowledge(id: string, parentId: string, name = '导数应用') {
+  const now = new Date();
+  await db
+    .insert(knowledge)
+    .values({
+      id,
+      name,
+      domain: null,
+      parent_id: parentId,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })
+    .onConflictDoNothing();
+}
+
 interface SeedQuestionOpts {
   knowledgeIds: string[];
   prompt: string;
@@ -442,5 +460,66 @@ describe('runJyeooFetch', () => {
       enqueueSourceVerify: captureEnqueue().fn,
     });
     expect(result.status).toBe('skipped:ref_not_found');
+  });
+
+  it('child KC inheriting parent domain is NOT skipped as unsupported (effective domain)', async () => {
+    // Child's own domain is null; the effective domain walk resolves it to the parent's
+    // 'math' → jyeooSupply present → ingests instead of a false skipped:subject_unsupported.
+    const parent = createId();
+    const child = createId();
+    await seedKnowledge(parent, 'math');
+    await seedChildKnowledge(child, parent);
+
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: child,
+      knowledgeId: child,
+      spawnJyeooFn: fakeSpawn(spawnResult({ lines: [line(), ''] })).fn,
+      enqueueSourceVerify: captureEnqueue().fn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.counts?.inserted).toBe(1);
+    const rows = await db.select().from(question);
+    expect(rows[0]?.knowledge_ids).toEqual([child]);
+  });
+
+  it('drops a producer question whose kind does not match the pinned kind', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    // Target pinned `choice` (e.g. calibration); producer inferred `short_answer` → filtered
+    // pre-persist so a wrong-kind draft can't pass source_verify with the gap still open.
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      kind: 'choice',
+      spawnJyeooFn: fakeSpawn(
+        spawnResult({ lines: [line({ kind: 'short_answer', choices_md: null }), ''] }),
+      ).fn,
+      enqueueSourceVerify: captureEnqueue().fn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.counts).toMatchObject({ validated: 1, filtered_kind: 1, inserted: 0 });
+    expect(await db.select().from(question)).toHaveLength(0);
+  });
+
+  it('keeps a producer question whose kind matches the pinned kind', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    // Pin `choice`; producer returns `choice` → not filtered (kindsMatch canonicalizes both).
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      kind: 'choice',
+      spawnJyeooFn: fakeSpawn(spawnResult({ lines: [line(), ''] })).fn,
+      enqueueSourceVerify: captureEnqueue().fn,
+    });
+    expect(result.counts).toMatchObject({ filtered_kind: 0, inserted: 1 });
   });
 });

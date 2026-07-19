@@ -174,4 +174,15 @@ describe('isImageDependentQuestion', () => {
       }),
     ).toBe(false);
   });
+
+  it('detects an image whose URL contains a literal ) (over-inclusive marker match)', () => {
+    // A balanced-paren / [^)]* regex would stop at the first ) inside Foo_(bar) and miss
+    // the image; the marker-structure match (`![...](`) catches it. Over-filter > under-filter.
+    expect(
+      isImageDependentQuestion({
+        ...base,
+        prompt_md: '如图 ![f](https://www.jyeoo.com/Foo_(bar).png) 所示',
+      }),
+    ).toBe(true);
+  });
 });

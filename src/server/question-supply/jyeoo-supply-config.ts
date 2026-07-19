@@ -9,6 +9,7 @@
 // (dg mapping, CLI args, kill switch) is deterministic config. Pure — no IO, no DB.
 
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
 import type { DifficultyBand } from './target-discovery';
 
 // The producer route stamped on every jyeoo-sourced draft (difficulty_evidence
@@ -33,16 +34,18 @@ export function jyeooBinaryPath(): string {
 
 // Bounded-subprocess guardrails (jyeoo-spawn). Deterministic caps so a runaway/wedged
 // producer can never exhaust the worker: wall-clock timeout kills the process; the byte
-// caps bound memory. Tunable via env for prod, with conservative defaults.
-export const JYEOO_SPAWN_TIMEOUT_MS = readPositiveIntEnv('JYEOO_RS_TIMEOUT_MS', 120_000);
-export const JYEOO_SPAWN_MAX_STDOUT_BYTES = readPositiveIntEnv(
-  'JYEOO_RS_MAX_STDOUT_BYTES',
-  8 * 1024 * 1024,
-);
-export const JYEOO_SPAWN_MAX_STDERR_BYTES = readPositiveIntEnv(
-  'JYEOO_RS_MAX_STDERR_BYTES',
-  256 * 1024,
-);
+// caps bound memory. Tunable via env for prod, with conservative defaults. Lazy readers
+// (not module-load consts) so they mirror jyeooFetchEnabled/jyeooBinaryPath — runtime-
+// flippable and test-overridable via process.env.
+export function jyeooSpawnTimeoutMs(): number {
+  return readPositiveIntEnv('JYEOO_RS_TIMEOUT_MS', 120_000);
+}
+export function jyeooSpawnMaxStdoutBytes(): number {
+  return readPositiveIntEnv('JYEOO_RS_MAX_STDOUT_BYTES', 8 * 1024 * 1024);
+}
+export function jyeooSpawnMaxStderrBytes(): number {
+  return readPositiveIntEnv('JYEOO_RS_MAX_STDERR_BYTES', 256 * 1024);
+}
 
 // Default pages to request per search (DESIGN §6 草案 uses 2). One page ~= a handful of
 // questions; 2 keeps the fetch bounded and polite (producer enforces its own ≥300ms
@@ -56,23 +59,22 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/** The producer's per-subject config a loom subject profile declares. */
-export interface JyeooSupplyConfig {
-  /** jyeoo-rs subject vocabulary token, e.g. 'math2' (NOT the loom subject id). */
-  subject: string;
-}
+/**
+ * The producer's per-subject config a loom subject profile declares. Single-sourced from
+ * SubjectProfileSchema.jyeooSupply so the shape can never drift from the schema/write gate.
+ */
+export type JyeooSupplyConfig = NonNullable<SubjectProfile['jyeooSupply']>;
 
 /**
  * The jyeoo producer subject for a loom subject id, or null when the subject has no
  * declared jyeoo support. Reads the STATIC subject profile registry (deterministic,
  * in-memory — no IO), so route-planner can consult it while staying a pure function of
  * (target, static profiles). resolveSubjectProfile handles aliases + unknown→general
- * (general has no jyeooSupply → null).
+ * (general has no jyeooSupply → null). `subject` is schema-guaranteed non-empty
+ * (z.string().trim().min(1)), so no manual emptiness check is needed.
  */
 export function jyeooSupplySubjectFor(subjectId: string): string | null {
-  const profile = resolveSubjectProfile(subjectId) as { jyeooSupply?: JyeooSupplyConfig };
-  const cfg = profile.jyeooSupply;
-  return cfg && typeof cfg.subject === 'string' && cfg.subject.length > 0 ? cfg.subject : null;
+  return resolveSubjectProfile(subjectId).jyeooSupply?.subject ?? null;
 }
 
 /** Does this loom subject have a declared jyeoo producer? Pure (static profile read). */
@@ -98,7 +100,9 @@ export function jyeooDgTokenForBand(band: DifficultyBand): string {
       return 'hard';
     case 'stretch':
       return 'difficult';
-    default:
-      return 'medium';
   }
+  // Exhaustiveness guard: DifficultyBand is a closed union, so a new member added there
+  // fails to compile here (never assignment) rather than silently defaulting to 'medium'.
+  const _exhaustive: never = band;
+  return _exhaustive;
 }

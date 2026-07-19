@@ -38,6 +38,17 @@ type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
 /** 能自动派到后台队列的路由（pg-boss）。其余路由 emit + manual。 */
 const AUTO_DISPATCHABLE = new Set<SupplyRoute>(['sourcing_web', 'quiz_gen', 'jyeoo_fetch']);
 
+/**
+ * Auto-dispatchable SupplyRoute → pg-boss queue. Single-source map (no nested ternary):
+ * every AUTO_DISPATCHABLE member has an entry, so chooseAutoRoute's return always resolves;
+ * the `?? 'quiz_gen'` is a defensive fallback for an unmapped route.
+ */
+const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
+  sourcing_web: 'sourcing',
+  jyeoo_fetch: 'jyeoo_fetch',
+  quiz_gen: 'quiz_gen',
+};
+
 // ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
 //
 // 问题：无 TAVILY_API_KEY 的安装里，SourcingTask 的 web 找题线退化（sourcing.ts 的
@@ -309,13 +320,8 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else {
-      // 自动派：sourcing_web → 'sourcing'，quiz_gen → 'quiz_gen'，jyeoo_fetch → 'jyeoo_fetch'。
-      const queue: DispatchQueue =
-        autoRoute === 'sourcing_web'
-          ? 'sourcing'
-          : autoRoute === 'jyeoo_fetch'
-            ? 'jyeoo_fetch'
-            : 'quiz_gen';
+      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
+      const queue: DispatchQueue = AUTO_ROUTE_TO_QUEUE[autoRoute] ?? 'quiz_gen';
       const dispatchTrace = traceFor(autoRoute);
       const data: Record<string, unknown> = {
         trigger: 'knowledge',
