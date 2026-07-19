@@ -35,6 +35,7 @@ import type { Job, SendOptions } from 'pg-boss';
 
 import {
   type SourceAssetRow,
+  lockImageStorageKey,
   persistImageAsset,
   sha256Hex,
 } from '@/capabilities/ingestion/server/persist-image-asset';
@@ -466,17 +467,22 @@ async function cleanupQuestionAssets(
 ): Promise<void> {
   if (assets.length === 0) return;
   const ownedIds = new Set(assets.map((asset) => asset.id));
-  for (const storageKey of new Set(assets.map((asset) => asset.storage_key))) {
-    const owners = await db
-      .select({ id: source_asset.id })
-      .from(source_asset)
-      .where(eq(source_asset.storage_key, storageKey));
-    // Delete the blob before its last rows. If R2 deletion fails, the source_asset rows
-    // remain as durable owners and the failure is visible/retriable rather than becoming a
-    // naked object. Shared content-addressed blobs stay in place for their other owners.
-    if (owners.every((owner) => ownedIds.has(owner.id))) await r2.delete(storageKey);
-  }
-  await db.delete(source_asset).where(inArray(source_asset.id, [...ownedIds]));
+  const storageKeys = [...new Set(assets.map((asset) => asset.storage_key))].sort();
+  await db.transaction(async (tx) => {
+    // Lock in lexical order to avoid multi-image deadlocks. persistImageAsset takes the same
+    // lock before R2 put, so cleanup cannot race a writer whose owner row is not visible yet.
+    for (const storageKey of storageKeys) await lockImageStorageKey(tx, storageKey);
+    for (const storageKey of storageKeys) {
+      const owners = await tx
+        .select({ id: source_asset.id })
+        .from(source_asset)
+        .where(eq(source_asset.storage_key, storageKey));
+      // If deletion fails, the transaction rolls back and durable owner rows remain. Other
+      // committed owners keep a shared content-addressed blob in place.
+      if (owners.every((owner) => ownedIds.has(owner.id))) await r2.delete(storageKey);
+    }
+    await tx.delete(source_asset).where(inArray(source_asset.id, [...ownedIds]));
+  });
 }
 
 export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJyeooFetchResult> {
@@ -658,7 +664,12 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       }
 
       // Near-dup (content n-gram) against active+draft pool + already-staged batch.
-      const nearOverlap = maxNgramOverlap(q.prompt_md, [...poolPrompts, ...batchPrompts]);
+      // Text-only near-dedup is unsafe for visual prompts: identical wording with different
+      // pixels is a different question. Image questions rely on the image-aware exact hash below.
+      const nearOverlap =
+        loadedImages.images.length === 0
+          ? maxNgramOverlap(q.prompt_md, [...poolPrompts, ...batchPrompts])
+          : 0;
       if (nearOverlap >= JYEOO_NEAR_DUP_THRESHOLD) {
         counts.deduped_near += 1;
         continue;

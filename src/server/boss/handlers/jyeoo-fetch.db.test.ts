@@ -615,6 +615,42 @@ describe('runJyeooFetch', () => {
     expect(rows[0]?.canonical_content_hash).not.toBe(rows[1]?.canonical_content_hash);
   });
 
+  it('keeps same-batch visual questions with identical wording but different pixels', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const r2 = captureR2();
+    const red = await validPng({ r: 255, g: 0, b: 0 });
+    const blue = await validPng({ r: 0, g: 0, b: 255 });
+
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: async (options) => {
+        const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+        const redPath = join(dir, 'red.png');
+        const bluePath = join(dir, 'blue.png');
+        await Promise.all([writeFile(redPath, red), writeFile(bluePath, blue)]);
+        return spawnResult({
+          lines: [
+            line({ prompt_md: `同一题文 ![图](${redPath})`, reference_md: '答案 B' }),
+            line({ prompt_md: `同一题文 ![图](${bluePath})`, reference_md: '答案 B' }),
+            '',
+          ],
+        });
+      },
+      enqueueSourceVerify: captureEnqueue().fn,
+      r2: r2.client,
+    });
+
+    expect(result.counts).toMatchObject({ deduped_near: 0, deduped_exact: 0, inserted: 2 });
+    const rows = await db.select().from(question);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.canonical_content_hash).not.toBe(rows[1]?.canonical_content_hash);
+    expect(r2.puts).toHaveLength(2);
+  });
+
   it('dedupes identical pixels across balanced temp paths before a second upload', async () => {
     const k1 = createId();
     const k2 = createId();

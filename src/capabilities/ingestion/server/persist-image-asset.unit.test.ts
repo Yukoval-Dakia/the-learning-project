@@ -55,7 +55,8 @@ describe('sha256Hex', () => {
 
 describe('persistImageAsset compensation', () => {
   function failingDb(existingOwners: Array<{ id: string }>): Db {
-    return {
+    const tx = {
+      execute: vi.fn(async () => undefined),
       insert: () => ({
         values: () => ({
           returning: async () => {
@@ -68,6 +69,10 @@ describe('persistImageAsset compensation', () => {
           where: () => ({ limit: async () => existingOwners }),
         }),
       }),
+    };
+    return {
+      ...tx,
+      transaction: async (callback: (candidate: unknown) => Promise<unknown>) => callback(tx),
     } as unknown as Db;
   }
 
@@ -79,7 +84,7 @@ describe('persistImageAsset compensation', () => {
     };
   }
 
-  it('deletes a just-written R2 object when source_asset INSERT fails with no owner', async () => {
+  it('locks the storage key and deletes a failed put only when no owner exists', async () => {
     const r2 = r2Spy();
     await expect(
       persistImageAsset(failingDb([]), r2, {
