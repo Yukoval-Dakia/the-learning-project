@@ -210,6 +210,7 @@ export const fastTestInclude = [
   // YUK-699 — EvidenceDemand/trace contracts + pure scanner correlation. No DB access;
   // the sibling end-to-end propagation assertions live in handler DB tests.
   'src/server/question-supply/evidence-demand.test.ts',
+  'src/server/quiz/selection-miss.test.ts',
   // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
   // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
   // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
