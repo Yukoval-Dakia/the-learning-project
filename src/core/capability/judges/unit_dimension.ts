@@ -64,7 +64,17 @@ export async function runUnitDimensionJudge(
   }
 
   const reference = { value: refValue, unit: refUnit, tolerance: refTolerance };
-  const { runAccelerator } = await loadAccelerator();
+  let runAccelerator: typeof import('./unit_dimension/accelerator')['runAccelerator'];
+  try {
+    ({ runAccelerator } = await loadAccelerator());
+  } catch (err) {
+    // Keep the judge's always-return-a-result contract: a failed module load
+    // degrades in-band instead of escaping as a rejection.
+    return unsupported('accelerator 模块加载失败', {
+      question: input.question,
+      load_error: err instanceof Error ? err.message : String(err),
+    });
+  }
   const accelerator = runAccelerator({
     student_answer: student,
     reference,
