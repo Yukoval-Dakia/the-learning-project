@@ -102,7 +102,12 @@ function outcomeConfirmedBrief(
         { role: 'outcome', kind: 'event', id: 'evt_probe_result_01' },
       ],
     },
-    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    // YUK-709 — confirmed's action is now KC-scoped practice (knowledge_id === finding KC).
+    prepared_action: {
+      kind: 'practice_scoped',
+      knowledge_id: 'kn_chain_rule',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
     current_outcome: {
       status: 'confirmed',
       summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
@@ -119,6 +124,8 @@ function outcomeRetiredBrief(
   return {
     ...outcomeConfirmedBrief(),
     state: 'outcome_retired',
+    // retired keeps the ack action (no practice), overriding confirmed's practice_scoped.
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
     current_outcome: {
       status: 'retired',
       summary_md: '这条判断被这次探针排除；原计划可以继续。',
@@ -134,7 +141,7 @@ function render(brief: TeachingBrief | null): string {
   qc.setQueryData(['teaching-brief'], { brief });
   return renderToString(
     <QueryClientProvider client={qc}>
-      <TeachingBriefBand />
+      <TeachingBriefBand navigate={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -216,7 +223,7 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expectClean(html);
   });
 
-  it('outcome_confirmed: conclusion in 当前结果 region, status icon, ONLY the ack CTA', () => {
+  it('outcome_confirmed: conclusion in 当前结果, the scoped-practice primary CTA + ack, no id leak', () => {
     const brief = outcomeConfirmedBrief();
     const html = render(brief);
     // Structural: the server-owned summary renders (assert the fixture value, not a
@@ -224,20 +231,29 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expect(html).toContain(brief.current_outcome.summary_md);
     expect(html).toContain('当前结果');
     expect(html).toContain('tb-outcome-confirmed');
-    // YUK-708 — the only action on an outcome is the append-only "知道了" ack; no
-    // accept/answer CTA leaks in, and the ack target id never reaches the DOM.
+    // YUK-709 — the single primary CTA is KC-scoped practice; the append-only "知道了" ack
+    // stays as the secondary dismiss. No finding/probe CTA leaks in, the practice copy
+    // promises a set (not a specific question count), and the knowledge_id (in expectClean's
+    // INTERNAL_IDS) never reaches the DOM — navigation travels only in the click handler.
+    expect(html).toContain('针对这个点练一组');
     expect(html).toContain('知道了');
+    expect(html).not.toContain('已经备好三道题');
     expect(html).not.toContain('就按这个方向验证');
     expect(html).not.toContain('现在就试做这道题');
     expectClean(html);
   });
 
-  it('outcome_retired: conclusion + retired styling, ONLY the ack CTA', () => {
+  it('outcome_retired: conclusion + retired styling, continue-the-plan CTA + ack, no practice scope', () => {
     const brief = outcomeRetiredBrief();
     const html = render(brief);
     expect(html).toContain(brief.current_outcome.summary_md);
     expect(html).toContain('tb-outcome-retired');
+    // YUK-709 — a retired judgement creates NO extra practice; its main CTA returns to the
+    // planned daily practice, with the "知道了" ack to dismiss. The confirmed scoped-practice
+    // CTA must NOT appear.
+    expect(html).toContain('回到今日练习');
     expect(html).toContain('知道了');
+    expect(html).not.toContain('针对这个点练一组');
     expect(html).not.toContain('就按这个方向验证');
     expect(html).not.toContain('现在就试做这道题');
     expectClean(html);

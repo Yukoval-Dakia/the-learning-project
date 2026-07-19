@@ -326,13 +326,22 @@ describe('loadTeachingBrief', () => {
 
     const response = await loadTeachingBrief(testDb(), NOW);
     expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();
+    // YUK-708/709 — confirmed offers KC-scoped practice (knowledge_id === proposal KC);
+    // retired offers only the acknowledge (dismiss). Both target this result for the ack.
+    const expectedPreparedAction =
+      state === 'outcome_confirmed'
+        ? {
+            kind: 'practice_scoped',
+            knowledge_id: `kn_p_${resolution}`,
+            probe_result_event_id: resultId,
+          }
+        : { kind: 'acknowledge_outcome', probe_result_event_id: resultId };
     expect(response.brief).toMatchObject({
       brief_id: `p_${resolution}`,
       state,
       updated_at: resultAt.toISOString(),
       expires_at: new Date(resultAt.getTime() + TEACHING_BRIEF_OUTCOME_TTL_MS).toISOString(),
-      // YUK-708 — outcome states carry the executable ack action (targets this result).
-      prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: resultId },
+      prepared_action: expectedPreparedAction,
       current_outcome: {
         status: resolution,
         summary_md: summary,

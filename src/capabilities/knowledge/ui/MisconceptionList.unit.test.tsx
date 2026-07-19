@@ -6,14 +6,10 @@
 // trace toggle), the optimistic「已纠偏」verdict card, and the three action onClicks (navigate /
 // trace toggle / 判错了 veto). ⑥ red line: no bare probability / % leaks through any card.
 
+import { scopedPracticeHref } from '@/ui/lib/routes';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  MisconceptionCardView,
-  MisconceptionList,
-  applyVeto,
-  misconceptionPracticeHref,
-} from './MisconceptionList';
+import { MisconceptionCardView, MisconceptionList, applyVeto } from './MisconceptionList';
 import type { MisconceptionRow } from './knowledge-api';
 
 const KNOWLEDGE_ID = 'kc/判断句';
@@ -260,8 +256,8 @@ describe('MisconceptionList', () => {
     // 针对性练习 (Btn) + 追溯 + 判错了 = three clickable actions.
     expect(clicks).toHaveLength(3);
     for (const click of clicks) click();
-    expect(navigate).toHaveBeenCalledWith(misconceptionPracticeHref(KNOWLEDGE_ID));
-    expect(misconceptionPracticeHref(KNOWLEDGE_ID)).toContain('kc%2F');
+    expect(navigate).toHaveBeenCalledWith(scopedPracticeHref(KNOWLEDGE_ID));
+    expect(scopedPracticeHref(KNOWLEDGE_ID)).toContain('kc%2F');
     expect(onToggleTrace).toHaveBeenCalled();
     expect(onVerdictWrong).toHaveBeenCalled();
   });

@@ -14,6 +14,7 @@ import { TeachingBriefBand } from './TeachingBrief';
 import type {
   FindingTeachingBrief,
   OutcomeConfirmedTeachingBrief,
+  OutcomeRetiredTeachingBrief,
   ProbeReadyTeachingBrief,
 } from './teaching-brief-api';
 
@@ -107,10 +108,29 @@ function outcomeBrief(): OutcomeConfirmedTeachingBrief {
         { role: 'outcome', kind: 'event', id: 'evt_probe_result_01' },
       ],
     },
-    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    // YUK-709 — confirmed's action is KC-scoped practice (knowledge_id === finding KC).
+    prepared_action: {
+      kind: 'practice_scoped',
+      knowledge_id: 'kn_chain_rule',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
     current_outcome: {
       status: 'confirmed',
       summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
+      probe_question_id: 'q_probe_01',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
+  };
+}
+
+function retiredBrief(): OutcomeRetiredTeachingBrief {
+  return {
+    ...outcomeBrief(),
+    state: 'outcome_retired',
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    current_outcome: {
+      status: 'retired',
+      summary_md: '这条判断被这次探针排除；原计划可以继续。',
       probe_question_id: 'q_probe_01',
       probe_result_event_id: 'evt_probe_result_01',
     },
@@ -137,10 +157,12 @@ function mkClient(): QueryClient {
   });
 }
 
+const navigateMock = vi.fn();
+
 function renderWith(qc: QueryClient) {
   return render(
     <QueryClientProvider client={qc}>
-      <TeachingBriefBand />
+      <TeachingBriefBand navigate={navigateMock} />
     </QueryClientProvider>,
   );
 }
@@ -156,6 +178,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   decideProposalMock.mockReset();
   ackOutcomeMock.mockReset();
+  navigateMock.mockReset();
 });
 
 describe('TeachingBriefBand — loading / error (jsdom)', () => {
@@ -313,6 +336,68 @@ describe('TeachingBriefBand — outcome ack (jsdom, YUK-708)', () => {
     expect(screen.getByText(brief.current_outcome.summary_md)).toBeTruthy();
     const ack = screen.getByRole('button', { name: '知道了' }) as HTMLButtonElement;
     expect(ack.disabled).toBe(false);
+  });
+});
+
+describe('TeachingBriefBand — outcome practice CTA (jsdom, YUK-709)', () => {
+  it('confirmed: 针对这个点练一组 navigates to the KC-scoped practice and writes nothing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: outcomeBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    await user.click(await screen.findByRole('button', { name: '针对这个点练一组' }));
+
+    // Uses the finding's canonical KC, url-encoded; reuses YUK-535 /practice?kc scoped session.
+    expect(navigateMock).toHaveBeenCalledWith('/practice?kc=kn_chain_rule');
+    // Pure navigation — the scoped practice CTA never acks (no probe/practice state write).
+    expect(ackOutcomeMock).not.toHaveBeenCalled();
+  });
+
+  it('confirmed still offers the secondary 知道了 ack alongside the practice CTA', async () => {
+    ackOutcomeMock.mockResolvedValue({
+      brief_acknowledgement_event_id: 'ack_1',
+      probe_result_event_id: 'evt_probe_result_01',
+      brief_id: 'evt_conj_01',
+      idempotent: false,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: outcomeBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    // The practice CTA is present, and the ack still targets the outcome's result event.
+    expect(await screen.findByRole('button', { name: '针对这个点练一组' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '知道了' }));
+    expect(ackOutcomeMock).toHaveBeenCalledWith('evt_probe_result_01');
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('retired: 回到今日练习 continues the plan (no KC scope) and creates no practice', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: retiredBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    // No confirmed scoped-practice CTA on a retired outcome.
+    expect(screen.queryByRole('button', { name: '针对这个点练一组' })).toBeNull();
+    await user.click(await screen.findByRole('button', { name: '回到今日练习' }));
+
+    // Back to the planned daily stream — general practice, never a KC-scoped session.
+    expect(navigateMock).toHaveBeenCalledWith('/practice');
+    expect(ackOutcomeMock).not.toHaveBeenCalled();
   });
 });
 

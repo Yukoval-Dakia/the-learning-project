@@ -31,8 +31,9 @@ const findingResponse = {
   },
 } as const;
 
-// YUK-708 (P0F/4) — outcome states carry the executable ack action; the strict schema
-// was upgraded in lockstep with the discriminated union (contract §2.1).
+// YUK-708/709 (P0F/4-5) — outcome states carry an executable action; the strict schema was
+// upgraded in lockstep with the discriminated union (contract §2.1). A confirmed outcome's
+// action is KC-scoped practice; a retired one's is the acknowledge (dismiss).
 const outcomeResponse = {
   brief: {
     brief_id: 'p_contract',
@@ -52,10 +53,28 @@ const outcomeResponse = {
         { role: 'outcome', kind: 'event', id: 'evt_result' },
       ],
     },
-    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_result' },
+    prepared_action: {
+      kind: 'practice_scoped',
+      knowledge_id: 'kn_contract',
+      probe_result_event_id: 'evt_result',
+    },
     current_outcome: {
       status: 'confirmed',
       summary_md: '这条判断得到这次探针的支持。',
+      probe_question_id: 'q_probe',
+      probe_result_event_id: 'evt_result',
+    },
+  },
+} as const;
+
+const retiredResponse = {
+  brief: {
+    ...outcomeResponse.brief,
+    state: 'outcome_retired',
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_result' },
+    current_outcome: {
+      status: 'retired',
+      summary_md: '这条判断被这次探针排除。',
       probe_question_id: 'q_probe',
       probe_result_event_id: 'evt_result',
     },
@@ -68,8 +87,12 @@ describe('TeachingBriefResponseSchema', () => {
     expect(TeachingBriefResponseSchema.safeParse({ brief: null }).success).toBe(true);
   });
 
-  it('accepts an outcome brief carrying the acknowledge_outcome action', () => {
+  it('accepts a confirmed outcome carrying the practice_scoped action', () => {
     expect(TeachingBriefResponseSchema.safeParse(outcomeResponse).success).toBe(true);
+  });
+
+  it('accepts a retired outcome carrying the acknowledge_outcome action', () => {
+    expect(TeachingBriefResponseSchema.safeParse(retiredResponse).success).toBe(true);
   });
 
   it('rejects the retired P0F/2 outcome shape (prepared_action {kind:none})', () => {
@@ -79,13 +102,45 @@ describe('TeachingBriefResponseSchema', () => {
     expect(TeachingBriefResponseSchema.safeParse(stale).success).toBe(false);
   });
 
-  it('rejects an outcome whose ack action targets a different result than current_outcome', () => {
+  it('rejects a confirmed outcome still carrying the retired acknowledge_outcome action', () => {
+    // A confirmed outcome MUST offer the practice action (contract §9); the acknowledge-only
+    // shape is now retired-exclusive, so the confirmed branch rejects it.
+    const stale = {
+      brief: {
+        ...outcomeResponse.brief,
+        prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_result' },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(stale).success).toBe(false);
+  });
+
+  it('rejects a confirmed outcome whose practice action targets a different result than current_outcome', () => {
     const drifted = {
       brief: {
         ...outcomeResponse.brief,
-        // prepared_action targets a DIFFERENT result than current_outcome reports — a
-        // projection regression the cross-field refine must catch (round-7).
-        prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_other' },
+        // probe_result_event_id drifts from current_outcome — a projection regression the
+        // cross-field refine must catch (round-7, extended to practice_scoped).
+        prepared_action: {
+          kind: 'practice_scoped',
+          knowledge_id: 'kn_contract',
+          probe_result_event_id: 'evt_other',
+        },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(drifted).success).toBe(false);
+  });
+
+  it('rejects a confirmed outcome whose practice KC drifts from the finding KC', () => {
+    const drifted = {
+      brief: {
+        ...outcomeResponse.brief,
+        // knowledge_id must equal finding.knowledge_id (YUK-709) so the CTA can only open
+        // practice for the point the brief is about.
+        prepared_action: {
+          kind: 'practice_scoped',
+          knowledge_id: 'kn_other',
+          probe_result_event_id: 'evt_result',
+        },
       },
     };
     expect(TeachingBriefResponseSchema.safeParse(drifted).success).toBe(false);
