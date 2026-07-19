@@ -75,7 +75,6 @@ async function updateSubjectRootName(
     subjectId: string;
     nextName: string;
     controlAction: 'rename' | 'reset';
-    now: Date;
   },
 ): Promise<void> {
   const rootId = subjectRootId(args.subjectId);
@@ -89,10 +88,15 @@ async function updateSubjectRootName(
   // case, so no fold event is needed; a later ensureSubjectRoot writes a genesis with displayName.
   if (!root) return;
 
+  // Stamp the materialization only after the root row lock is acquired. A knowledge
+  // proposal can mutate this root without taking the subject control-plane lock; reusing
+  // the caller's earlier transaction timestamp would let replay order this rename before
+  // the mutation whose post-version we just observed.
+  const materializedAt = new Date();
   const nextVersion = root.version + 1;
   const updated = await tx
     .update(knowledge)
-    .set({ name: args.nextName, updated_at: args.now, version: nextVersion })
+    .set({ name: args.nextName, updated_at: materializedAt, version: nextVersion })
     .where(and(eq(knowledge.id, rootId), eq(knowledge.version, root.version)))
     .returning({ id: knowledge.id });
   if (updated.length === 0) {
@@ -115,9 +119,9 @@ async function updateSubjectRootName(
       previous_version: root.version,
       next_version: nextVersion,
     },
-    created_at: args.now,
+    created_at: materializedAt,
     // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
-    ingest_at: args.now,
+    ingest_at: materializedAt,
   });
 }
 
@@ -158,7 +162,6 @@ export async function renameSubject(
       subjectId: args.subjectId,
       nextName: displayName,
       controlAction: 'rename',
-      now,
     });
     await tx.insert(subject_control_journal).values({
       subject_id: args.subjectId,
@@ -329,7 +332,6 @@ export async function resetSubject(
         subjectId: args.subjectId,
         nextName: seedDisplayName,
         controlAction: 'reset',
-        now,
       });
     }
     await tx.insert(subject_control_journal).values({
