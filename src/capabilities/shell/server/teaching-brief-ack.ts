@@ -21,7 +21,7 @@
 
 import {
   isCandidateError,
-  validateCanonicalProbeResult,
+  validateAckableOutcome,
 } from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
@@ -47,55 +47,58 @@ export interface AcknowledgeBriefResult {
  * `experimental:brief_acknowledged` event keyed on the probe_result event, or
  * short-circuits to the existing ack when one is already recorded.
  *
- * Fail-closed on a bad target: the id MUST resolve to a CANONICAL
- * `experimental:probe_result` outcome (404 when absent, 409 when it is not a canonical
- * result — wrong action, illegal resolution/outcome pair, or provenance mismatch). This
- * reuses the reader's `validateCanonicalProbeResult` gate so a result the brief would
- * never display can never be acked. We only READ the result's provenance
- * (`conjecture_event_id`), never write derived status back onto it (contract §4.2).
+ * Fail-closed on a bad target: the id MUST resolve to a delivered, ACKABLE outcome —
+ * a canonical result event whose full chain is intact (existing canonical mind-probe +
+ * accepted conjecture proposal). 404 when the result is absent, 409 when the chain is
+ * corrupt or orphaned (illegal resolution/outcome pair, provenance mismatch, missing
+ * probe, or non-accepted proposal). This reuses the reader's `validateAckableOutcome`
+ * gate so a result the brief would never display can never be acked. We only READ the
+ * result's provenance (`conjecture_event_id`), never write derived status (contract §4.2).
  */
 export async function acknowledgeTeachingBriefOutcome(
   db: Db,
   probeResultEventId: string,
   now: Date = new Date(),
 ): Promise<AcknowledgeBriefResult> {
+  // Load the target result event (404 if absent), then run the FULL ackable-outcome chain
+  // gate (single source of truth with the reader): canonical result + existing canonical
+  // mind-probe + accepted conjecture proposal. This is read-only, so it runs BEFORE the
+  // append transaction; any break fails closed with 409 and writes nothing
+  // (YUK-708 review round-2, codex P2). The advisory lock below is only needed to make the
+  // check-existing + append atomic, not this validation.
+  const [result] = await db
+    .select({
+      id: event.id,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      caused_by_event_id: event.caused_by_event_id,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(eq(event.id, probeResultEventId))
+    .limit(1);
+  if (!result) {
+    throw new ApiError(
+      'brief_result_not_found',
+      `no probe_result event ${probeResultEventId}`,
+      404,
+    );
+  }
+  const outcome = await validateAckableOutcome(db, result, now);
+  if (isCandidateError(outcome)) {
+    throw new ApiError(
+      'not_an_ackable_outcome',
+      `event ${probeResultEventId} is not an ackable outcome (${outcome.reason})`,
+      409,
+    );
+  }
+  const briefId = outcome.value.conjectureEventId;
+
   return db.transaction(async (tx) => {
     // Serialize concurrent acks on the SAME outcome so check-existing + append is
     // atomic (per-target key via hashtextextended — different outcomes don't contend).
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeResultEventId}, 0))`);
-
-    const [result] = await tx
-      .select({
-        action: event.action,
-        subject_kind: event.subject_kind,
-        subject_id: event.subject_id,
-        caused_by_event_id: event.caused_by_event_id,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(eq(event.id, probeResultEventId))
-      .limit(1);
-    if (!result) {
-      throw new ApiError(
-        'brief_result_not_found',
-        `no probe_result event ${probeResultEventId}`,
-        404,
-      );
-    }
-    // Reuse the reader's canonical-result gate (single source of truth): a corrupt or
-    // incoherent result — wrong action/subject, illegal resolution/outcome pair, or
-    // provenance mismatch (payload.conjecture_event_id ≠ caused_by) — is NOT
-    // acknowledgeable. The reader would never display it, so acking it would mark an
-    // untraceable outcome as handled. Fail-closed 409 (YUK-708 review round-1, codex P2).
-    const canonical = validateCanonicalProbeResult(result);
-    if (isCandidateError(canonical)) {
-      throw new ApiError(
-        'not_a_canonical_probe_result',
-        `event ${probeResultEventId} is not a canonical probe_result outcome (${canonical.reason})`,
-        409,
-      );
-    }
-    const briefId = canonical.value.conjectureEventId;
 
     // One effective ack per outcome: a prior ack short-circuits — NO second event
     // (append-only, first ack wins). The advisory lock above makes this atomic.

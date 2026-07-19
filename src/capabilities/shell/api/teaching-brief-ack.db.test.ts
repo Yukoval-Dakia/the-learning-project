@@ -22,7 +22,11 @@ import { POST } from './teaching-brief-ack';
 
 const KC_ID = 'kn_chain_rule';
 
-async function seedOutcome(resolution: 'confirmed' | 'retired'): Promise<string> {
+async function seedOutcome(
+  resolution: 'confirmed' | 'retired',
+  opts: { accept?: boolean } = {},
+): Promise<string> {
+  const accept = opts.accept ?? true;
   const proposalId = await writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
     payload: {
@@ -48,17 +52,21 @@ async function seedOutcome(resolution: 'confirmed' | 'retired'): Promise<string>
   // The teaching-brief read model projects an outcome only for an ACCEPTED proposal
   // (loadProposalFacts requires status='accepted'), so record the accept rate before
   // serving the probe (mirrors the acceptConjectureProposal → serveProbeOnce flow).
-  await writeEvent(testDb(), {
-    id: `rate_${proposalId}`,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'rate',
-    subject_kind: 'event',
-    subject_id: proposalId,
-    outcome: 'success',
-    payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
-    caused_by_event_id: proposalId,
-  });
+  // `accept: false` leaves the proposal pending to exercise the ack chain's
+  // proposal_not_accepted gate.
+  if (accept) {
+    await writeEvent(testDb(), {
+      id: `rate_${proposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
+      caused_by_event_id: proposalId,
+    });
+  }
   const served = await serveProbeOnce({
     db: testDb(),
     conjectureProposalId: proposalId,
@@ -224,6 +232,36 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
       payload: { conjecture_event_id: 'p_ref', outcome: 0, resolution: 'confirmed' },
       caused_by_event_id: 'p_different',
     });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
+
+  // Round-2 (codex P2): the ack chain must mirror the reader's FULL gate, not just the
+  // result body — an orphan-chain result (missing probe, or non-accepted proposal) is
+  // never displayed by the brief, so it must not be ackable either.
+  it('409 on a canonical result whose probe question is missing, zero append', async () => {
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      // canonical result body, but subject points at a question that does not exist.
+      subject_id: newId(),
+      payload: { conjecture_event_id: 'p_orphan', outcome: 0, resolution: 'confirmed' },
+      caused_by_event_id: 'p_orphan',
+    });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
+
+  it('409 on a result whose conjecture proposal is not accepted, zero append', async () => {
+    // Full canonical chain (probe exists + canonical) but the proposal was never accepted
+    // → the reader skips it as proposal_not_accepted, so the ack must 409.
+    const resultId = await seedOutcome('confirmed', { accept: false });
     const res = await post({ probe_result_event_id: resultId });
     expect(res.status).toBe(409);
     expect(await ackEvents(resultId)).toHaveLength(0);

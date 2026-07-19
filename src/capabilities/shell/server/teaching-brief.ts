@@ -414,6 +414,51 @@ function appendProbeEvidence(
   return dedupeEvidence([...proposal.evidence, { role: 'probe', kind: 'question', id: probeId }]);
 }
 
+/** The full chain facts needed to project OR acknowledge a delivered outcome. */
+export interface AckableOutcomeFacts {
+  proposal: ConjectureFacts;
+  probe: QuestionRow;
+  resolution: 'confirmed' | 'retired';
+  /** = the conjecture proposal id (brief_id). */
+  conjectureEventId: string;
+}
+
+/**
+ * Single source of truth for "is this result a delivered, ackable outcome". Runs the FULL
+ * reader chain on a result row: canonical result event (validateCanonicalProbeResult) →
+ * the mind-probe question exists → its conjecture proposal is accepted → the probe is
+ * canonical for that proposal (validateProbeQuestion). loadOutcomeBrief projects only what
+ * passes; the ack writer (teaching-brief-ack.ts) 409s on anything that does not — so an
+ * orphan-chain result the brief would never display can never be acknowledged, and the two
+ * paths' notion of a deliverable outcome cannot drift (YUK-708 review round-2, codex P2).
+ * Reason codes stay stable (the canonical-result reasons, plus probe_not_found /
+ * proposal_not_accepted / probe_*) for both the reader's skip log and the writer's 409.
+ */
+export async function validateAckableOutcome(
+  db: Db,
+  result: Pick<
+    EventRow,
+    'id' | 'action' | 'subject_kind' | 'subject_id' | 'caused_by_event_id' | 'payload'
+  >,
+  now: Date,
+): Promise<CandidateResult<AckableOutcomeFacts>> {
+  const canonical = validateCanonicalProbeResult(result);
+  if (isCandidateError(canonical)) return canonical;
+  const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
+
+  const [probe] = await db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+  if (!probe) return { reason: 'probe_not_found' };
+
+  const proposalResult = await loadProposalFacts(db, conjectureEventId, 'accepted');
+  if (isCandidateError(proposalResult)) return proposalResult;
+  const proposal = proposalResult.value;
+
+  const probeError = validateProbeQuestion(probe, proposal, now);
+  if (probeError) return { reason: probeError };
+
+  return { value: { proposal, probe, resolution, conjectureEventId } };
+}
+
 async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
@@ -446,35 +491,14 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
   for (const result of results) {
-    // Shared canonical-result gate (single source of truth with the ack writer): legal
-    // resolution/outcome pair + question subject + self-consistent conjecture provenance.
-    const canonical = validateCanonicalProbeResult(result);
-    if (isCandidateError(canonical)) {
-      warnSkipped('outcome', result.id, canonical.reason);
+    // Shared full-chain gate (single source of truth with the ack writer): canonical
+    // result + existing canonical mind-probe + accepted conjecture proposal.
+    const outcome = await validateAckableOutcome(db, result, now);
+    if (isCandidateError(outcome)) {
+      warnSkipped('outcome', result.id, outcome.reason);
       continue;
     }
-    const { resolution, conjectureEventId: proposalId, probeQuestionId } = canonical.value;
-
-    const [probe] = await db
-      .select()
-      .from(question)
-      .where(eq(question.id, probeQuestionId))
-      .limit(1);
-    if (!probe) {
-      warnSkipped('outcome', result.id, 'probe_not_found');
-      continue;
-    }
-    const proposalResult = await loadProposalFacts(db, proposalId, 'accepted');
-    if (isCandidateError(proposalResult)) {
-      warnSkipped('outcome', result.id, proposalResult.reason);
-      continue;
-    }
-    const proposal = proposalResult.value;
-    const probeError = validateProbeQuestion(probe, proposal, now);
-    if (probeError) {
-      warnSkipped('outcome', result.id, probeError);
-      continue;
-    }
+    const { proposal, probe, resolution } = outcome.value;
 
     const claimMd = await loadAcceptedClaim(db, proposal.id, proposal.claimMd);
     const evidence = dedupeEvidence([
