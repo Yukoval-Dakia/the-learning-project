@@ -544,8 +544,9 @@ export default function TodayPage({ navigate }: TodayPageProps) {
             <DegradedKindsFlags />
 
             {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
-                ([裁决 主]，contract §0/§5）。 */}
-            <TeachingBriefBand />
+                ([裁决 主]，contract §0/§5）。navigate 供 YUK-709 confirmed → KC-scoped
+                practice 的 CTA 跳转。 */}
+            <TeachingBriefBand navigate={navigate} />
 
             {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
                 （cold_start=false）渲染，空夜态永不落 ColdStart。YUK-707 起降级为 brief 之下

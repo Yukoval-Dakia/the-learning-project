@@ -194,7 +194,7 @@ const TeachingBriefBasisSectionSchema = z
     path: ['evidence_trace'],
   });
 
-// YUK-708 (P0F/4) — the outcome states' executable next step: acknowledge (dismiss)
+// YUK-708 (P0F/4) — the retired outcome's executable next step: acknowledge (dismiss)
 // the delivered result. Contract §2.1 requires the strict schema to be upgraded (not
 // left at `{kind:'none'}`) before the UI may render an ack action. `probe_result_event_id`
 // is the ack target — the same id carried in `current_outcome` — keeping the action
@@ -202,6 +202,20 @@ const TeachingBriefBasisSectionSchema = z
 const OutcomeAcknowledgeActionSchema = z
   .object({
     kind: z.literal('acknowledge_outcome'),
+    probe_result_event_id: z.string().min(1),
+  })
+  .strict();
+
+// YUK-709 (P0F/5) — a confirmed outcome's executable next step: KC-scoped practice
+// (contract §9). Contract §2.1 requires the discriminated union + strict schema to be
+// upgraded in lockstep before the UI may render this action. `knowledge_id` mirrors
+// `finding.knowledge_id` (the /practice?kc target); `probe_result_event_id` mirrors
+// `current_outcome` so the same ack still retires the brief. Both invariants are enforced
+// by the cross-field superRefine below.
+const OutcomePracticeActionSchema = z
+  .object({
+    kind: z.literal('practice_scoped'),
+    knowledge_id: z.string().min(1),
     probe_result_event_id: z.string().min(1),
   })
   .strict();
@@ -260,7 +274,7 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
         ...teachingBriefCommon,
         state: z.literal('outcome_confirmed'),
         expires_at: z.string().datetime(),
-        prepared_action: OutcomeAcknowledgeActionSchema,
+        prepared_action: OutcomePracticeActionSchema,
         current_outcome: z
           .object({
             status: z.literal('confirmed'),
@@ -288,11 +302,12 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
       })
       .strict(),
   ])
-  // Cross-field invariant (mirrors TeachingBriefBasisSectionSchema's refine): on an outcome
-  // brief the ack action must target the very result the outcome reports. A discriminatedUnion
+  // Cross-field invariants (mirror TeachingBriefBasisSectionSchema's refine): on an outcome
+  // brief the ack action must target the very result the outcome reports, and a confirmed
+  // outcome's practice action must target the same KC the finding names. A discriminatedUnion
   // member cannot itself be refined (that yields a ZodEffects, which the union rejects), so the
-  // check lives on the whole union — a future projection regression that lets the two ids drift
-  // fails the wire loudly instead of silently.
+  // checks live on the whole union — a future projection regression that lets these drift fails
+  // the wire loudly instead of silently.
   .superRefine((brief, ctx) => {
     if (
       (brief.state === 'outcome_confirmed' || brief.state === 'outcome_retired') &&
@@ -303,6 +318,18 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
         message:
           'prepared_action.probe_result_event_id must equal current_outcome.probe_result_event_id',
         path: ['prepared_action', 'probe_result_event_id'],
+      });
+    }
+    // YUK-709 — the /practice?kc target must be the finding's canonical KC, never a drifted
+    // one, so the CTA can only ever open practice for the point the brief is about.
+    if (
+      brief.state === 'outcome_confirmed' &&
+      brief.prepared_action.knowledge_id !== brief.finding.knowledge_id
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'prepared_action.knowledge_id must equal finding.knowledge_id',
+        path: ['prepared_action', 'knowledge_id'],
       });
     }
   });

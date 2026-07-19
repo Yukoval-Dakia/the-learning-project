@@ -82,16 +82,33 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
  * The outcome states' executable next step (YUK-708 / contract §2.1): acknowledge the
  * delivered result. P0F/2 shipped `{kind:'none'}`; P0F/4 upgrades the discriminated
  * union + strict Zod in lockstep so the UI may render a "知道了" that appends an ack.
+ * `retired` outcomes keep this as their sole action (nothing more to prepare).
  */
 export interface OutcomeAcknowledgeAction {
   kind: 'acknowledge_outcome';
   probe_result_event_id: string;
 }
 
+/**
+ * A `confirmed` outcome's executable next step (YUK-709 / contract §2.1 + §9): practise
+ * the confirmed knowledge component on demand, reusing the existing KC-scoped practice
+ * (YUK-535) via `/practice?kc=<knowledge_id>`. Contract §9: this is a user click-through,
+ * NOT an auto-reordered daily stream and NOT YUK-505/506 — no practice state is written
+ * until the user acts. `knowledge_id` mirrors `finding.knowledge_id` (the canonical
+ * proposal KC) and `probe_result_event_id` mirrors `current_outcome` so the same "知道了"
+ * ack still retires the brief. Contract §2.1 required the discriminated union + strict
+ * Zod to be upgraded in lockstep before the UI may render this action.
+ */
+export interface OutcomePracticeAction {
+  kind: 'practice_scoped';
+  knowledge_id: string;
+  probe_result_event_id: string;
+}
+
 export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   state: 'outcome_confirmed';
   expires_at: string;
-  prepared_action: OutcomeAcknowledgeAction;
+  prepared_action: OutcomePracticeAction;
   current_outcome: {
     status: 'confirmed';
     summary_md: string;
@@ -587,17 +604,20 @@ export async function loadOutcomeBrief(
         cause_category: proposal.causeCategory,
       },
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
-      // YUK-708 — the outcome's executable next step is acknowledgement; the ack targets
-      // this very result event (also mirrored in current_outcome for the wire).
-      prepared_action: {
-        kind: 'acknowledge_outcome' as const,
-        probe_result_event_id: result.id,
-      },
     };
     if (resolution === 'confirmed') {
       return {
         ...common,
         state: 'outcome_confirmed',
+        // YUK-709 — a confirmed judgement's executable next step is KC-scoped practice
+        // (contract §9). knowledge_id is the canonical proposal KC (= finding.knowledge_id)
+        // for the /practice?kc navigation; probe_result_event_id keeps the "知道了" ack
+        // targeting this very result (mirrored in current_outcome for the wire).
+        prepared_action: {
+          kind: 'practice_scoped' as const,
+          knowledge_id: proposal.knowledgeId,
+          probe_result_event_id: result.id,
+        },
         current_outcome: {
           status: 'confirmed',
           summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
@@ -609,6 +629,13 @@ export async function loadOutcomeBrief(
     return {
       ...common,
       state: 'outcome_retired',
+      // YUK-708 — a retired judgement rules the finding out; its only step is to
+      // acknowledge and continue the original plan (contract §2.2). No extra practice
+      // is prepared (contract §9 scopes practice to confirmed outcomes only).
+      prepared_action: {
+        kind: 'acknowledge_outcome' as const,
+        probe_result_event_id: result.id,
+      },
       current_outcome: {
         status: 'retired',
         summary_md: '这条判断被这次探针排除；原计划可以继续。',

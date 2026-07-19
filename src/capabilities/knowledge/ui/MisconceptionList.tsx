@@ -20,6 +20,7 @@
 // 态（card 自管 verdict），onVeto(id,'confirmed') 在页面侧是 no-op（confirmed-archive 是延后
 // soft-track 后端 slice + PR-3 promote flag OFF → confirmed 段 day-one 空）。
 
+import { scopedPracticeHref } from '@/ui/lib/routes';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useState } from 'react';
@@ -78,10 +79,6 @@ const SOURCE_LABEL: Record<MisconceptionRow['source'], string> = {
   hard: '作答中反复出现',
   soft: 'AI 初步判断',
 };
-
-export function misconceptionPracticeHref(knowledgeId: string): string {
-  return `/practice?kc=${encodeURIComponent(knowledgeId)}`;
-}
 
 /**
  * 纯渲染体（trace / verdict 由父注入）。抽出来让 renderToString 单测能钉 trace 开态的
@@ -170,7 +167,7 @@ export function MisconceptionCardView({
           size="sm"
           variant="secondary"
           icon="review"
-          onClick={() => navigate(misconceptionPracticeHref(knowledgeId))}
+          onClick={() => navigate(scopedPracticeHref(knowledgeId))}
         >
           针对性练习
         </Btn>

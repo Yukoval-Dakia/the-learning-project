@@ -305,6 +305,9 @@ const SUPPLY_ROUTE_TO_SOURCING_STEP: Record<
   SourcingSequenceStep
 > = {
   sourcing_web: 'external_sourcing',
+  // YUK-697 — jyeoo_fetch is a tier-2 web-existing-question line like sourcing_web
+  // (deterministic scraper vs agent), so its residual step is the same external_sourcing.
+  jyeoo_fetch: 'external_sourcing',
   author_question: 'closed_book',
   image_candidate: 'closed_book',
   ingest_existing: 'closed_book',

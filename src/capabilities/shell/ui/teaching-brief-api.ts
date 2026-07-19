@@ -70,16 +70,28 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
   };
 }
 
-/** YUK-708 (P0F/4) — the outcome states' executable step: acknowledge (dismiss). */
+/** YUK-708 (P0F/4) — the retired outcome's executable step: acknowledge (dismiss). */
 export interface OutcomeAcknowledgeAction {
   kind: 'acknowledge_outcome';
+  probe_result_event_id: string;
+}
+
+/**
+ * YUK-709 (P0F/5) — a confirmed outcome's executable step: practise the confirmed KC on
+ * demand via the existing KC-scoped practice (`/practice?kc=<knowledge_id>`). The UI
+ * navigates on click; no practice state is written until the user acts.
+ * `probe_result_event_id` lets the same "知道了" ack retire the brief.
+ */
+export interface OutcomePracticeAction {
+  kind: 'practice_scoped';
+  knowledge_id: string;
   probe_result_event_id: string;
 }
 
 export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   state: 'outcome_confirmed';
   expires_at: string;
-  prepared_action: OutcomeAcknowledgeAction;
+  prepared_action: OutcomePracticeAction;
   current_outcome: {
     status: 'confirmed';
     summary_md: string;

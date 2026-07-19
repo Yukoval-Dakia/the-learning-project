@@ -53,6 +53,14 @@
     "file": "src/server/question-supply/refill.ts",
     "notes": "dark-ship question-supply refill. Opt-in/default OFF; parsed via shared parseFlag."
   },
+  "JYEOO_FETCH_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/server/question-supply/jyeoo-supply-config.ts",
+    "notes": "YUK-697 kill switch for the jyeoo_fetch deterministic supply route. Dark-ship OPT-IN, default OFF. Read via jyeooFetchEnabled(): raw === 'true' || raw === '1'. OFF ⇒ dispatcher chooseAutoRoute skips jyeoo_fetch and falls back to sourcing_web; handler no-ops (skipped:disabled) if a job still reaches it."
+  },
   "WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],

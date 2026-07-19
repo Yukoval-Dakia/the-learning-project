@@ -30,13 +30,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
-import {
-  DifficultyEvidence,
-  type DifficultyEvidenceT,
-  buildProducerDifficultyEvidence,
-} from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import {
   type SourcedQuestionT,
   SourcingTaskOutput,
@@ -70,12 +64,8 @@ import { writeEvent } from '@/server/events/queries';
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
-import {
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evidence-demand';
+import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
@@ -537,135 +527,55 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         }
         await params.afterExactDuplicateLookupMiss?.();
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+        // must attribute identical content the same way, including the trigger's live KCs.
         const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
           questionKnowledgeIds,
           targetKnowledgeIds,
         );
-        // Preserve the model's EXPLICIT judge_kind_override; only derive a default
-        // when the agent left it absent (CR — never clobber an explicit route like
-        // 'keyword' with the structural default). defaultJudgeKindForQuestion already
-        // returns q.judge_kind_override first, but pinning it here keeps the contract
-        // explicit and robust to future helper changes.
-        const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
-        const declaredDifficultyEvidence =
-          q.difficulty_evidence ??
-          buildProducerDifficultyEvidence(q.difficulty, SOURCING_WEB_ROUTE, now);
-        const difficultyEvidence = DifficultyEvidence.parse({
-          ...declaredDifficultyEvidence,
-          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
-          source_route: declaredDifficultyEvidence.source_route ?? SOURCING_WEB_ROUTE,
-        });
-        const questionSupplyTrace = params.supplyTrace
-          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
-          : undefined;
-
-        // §2.1 web_sourced provenance contract. OF-2: whitelist_match flags
-        // off-whitelist sources for selection-time demotion (slice 5a) — it never
-        // blocks ingestion or relaxes the verify gate.
-        const webSourced: WebSourcedProvenanceT = {
-          url: q.source_url,
-          title: q.source_title,
-          fetched_at: parsed.fetched_at,
-          whitelist_match: matchesWhitelist(q.source_url, whitelist),
-          ...(q.extraction_hash ? { extraction_hash: q.extraction_hash } : {}),
-          // Persist the agent's extracted source passage so source_verify can run a
-          // DETERMINISTIC prompt↔source overlap without refetching the network (§2.1
-          // contract; mirrors quiz_gen source_pack snippet → quiz_verify overlap).
-          // REQUIRED (F2): SourcedQuestion.extract is non-optional, so this is always
-          // present — source_verify fails any web_sourced row missing it.
-          extract: q.extract,
-        };
-
-        const questionRow = withAnswerClass({
+        // Shared tier-2 web_sourced INSERT + YUK-720 cross-KC dedup lifecycle (jyeoo_fetch
+        // reuses the identical insertSourcedDraft path). Caller owns knowledge_ids resolution
+        // + the merge audit bookkeeping below; whitelist_match / fetched_at / created_by are
+        // sourcing-specific.
+        const inserted = await insertSourcedDraft(tx, {
           id,
-          kind: q.kind,
-          source: 'web_sourced',
-          prompt_md: q.prompt_md,
-          reference_md: q.reference_md,
-          rubric_json: q.rubric_json ?? null,
-          choices_md: q.choices_md ?? null,
-          judge_kind_override: judgeKind,
-          // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
-          // must attribute identical content the same way, including the trigger's live KCs.
-          knowledge_ids: duplicateKnowledgeIds,
-          difficulty: q.difficulty,
-          // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
-          // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
-          source_ref: q.source_url,
-          created_by: aiAgentRef('SourcingTask', result),
-          metadata: {
-            web_sourced: webSourced,
-            source_ref_kind: 'url',
-            difficulty_evidence: difficultyEvidence,
-            ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-          },
-          created_at: now,
-          canonical_content_hash: canonicalContentHash,
-          updated_at: now,
+          q,
+          knowledgeIds: duplicateKnowledgeIds,
+          sourceRoute: SOURCING_WEB_ROUTE,
+          createdBy: aiAgentRef('SourcingTask', result),
+          whitelistMatch: matchesWhitelist(q.source_url, whitelist),
+          fetchedAt: parsed.fetched_at,
+          canonicalContentHash,
+          supplyTrace: params.supplyTrace,
+          mergeActorRef: 'sourcing',
+          taskRunId: result.task_run_id,
+          now,
         });
-        let inserted = await tx
-          .insert(question)
-          // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-          // source_verify passes. Keep this field explicit at every INSERT site so
-          // audit:draft-status can prove the gate.
-          .values({ ...questionRow, draft_status: 'draft' })
-          // Scope the arbiter to the canonical-hash partial unique index (WHERE
-          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
-          // silently swallow ANY unique conflict (e.g. the PK), making the
-          // `inserted.length === 0` fallback below misread an unrelated conflict as a
-          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
-          // partial unique index as the arbiter.
-          .onConflictDoNothing({
-            target: question.canonical_content_hash,
-            where: sql`${question.canonical_content_hash} is not null`,
-          })
-          .returning({ id: question.id });
-        if (inserted.length === 0) {
-          const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
-            canonicalContentHash,
-            knowledgeIds: duplicateKnowledgeIds,
-            actorRef: 'sourcing',
-            taskRunId: result.task_run_id,
-            now,
+        if (inserted.status === 'raced_merged') {
+          exactDuplicates.push({
+            existing_question_id: inserted.existingId,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: SOURCING_WEB_ROUTE,
+            knowledge_merge_status:
+              inserted.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+            added_knowledge_ids: inserted.addedKnowledgeIds,
+            resulting_knowledge_ids: inserted.resultingKnowledgeIds,
+            preserved_draft_status: inserted.draftStatus,
           });
-          if (!racedDuplicate) {
-            throw new Error(`sourcing canonical hash conflict did not resolve for ${id}`);
-          }
-          if (racedDuplicate.disposition === 'released_terminal_draft') {
-            inserted = await tx
-              .insert(question)
-              .values({ ...questionRow, draft_status: 'draft' })
-              .onConflictDoNothing({
-                target: question.canonical_content_hash,
-                where: sql`${question.canonical_content_hash} is not null`,
-              })
-              .returning({ id: question.id });
-            if (inserted.length === 0) {
-              throw new Error(`sourcing canonical hash retry still conflicted for ${id}`);
-            }
-          } else {
-            exactDuplicates.push({
-              existing_question_id: racedDuplicate.id,
-              new_question_id: id,
-              canonical_content_hash: canonicalContentHash,
-              source_route: SOURCING_WEB_ROUTE,
-              knowledge_merge_status:
-                racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
-              added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
-              resulting_knowledge_ids: racedDuplicate.knowledgeIds,
-              preserved_draft_status: racedDuplicate.draftStatus,
-            });
-            continue;
-          }
+          continue;
         }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'source_verify',
-          supplyTrace: questionSupplyTrace,
+          supplyTrace: inserted.supplyTrace,
           createdAt: now,
         });
         questionIds.push(id);
-        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
+        difficultyEvidenceByQuestion.push({
+          question_id: id,
+          evidence: inserted.difficultyEvidence,
+        });
       }
     });
     // Past the commit: any throw from here on (image-candidate proposals, the success
