@@ -191,29 +191,42 @@ export function PfPaper({
     // (gen) and this must be its newest request (seq). A save that outlives its paper is a
     // no-op — it can't rewrite the next paper's state.
     const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
-    const done = savePaperAnswer(
-      artifactId,
-      {
-        session_id: sid,
-        question_id: questionId,
-        part_ref: partRef,
-        answer_md: v,
-      },
-      { keepalive },
-    )
-      .then(() => {
-        if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-        return true;
-      })
-      .catch((err) => {
-        console.error('[PfPaper] draft save failed', { key, err });
-        if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
-        return false;
-      })
-      .finally(() => {
-        // Deregister only if a newer save for this slot hasn't already replaced this entry.
-        if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
-      });
+    // Deregister this entry when it settles, unless a newer save has already replaced it.
+    const deregister = (ok: boolean) => {
+      if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
+      return ok;
+    };
+    let done: Promise<boolean>;
+    try {
+      done = savePaperAnswer(
+        artifactId,
+        {
+          session_id: sid,
+          question_id: questionId,
+          part_ref: partRef,
+          answer_md: v,
+        },
+        { keepalive },
+      )
+        .then(() => {
+          if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+          return true;
+        })
+        .catch((err) => {
+          console.error('[PfPaper] draft save failed', { key, err });
+          if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+          return false;
+        })
+        .then(deregister);
+    } catch (err) {
+      // savePaperAnswer threw synchronously (e.g. a 401 cleared the token → ApiAuthError
+      // before the fetch even starts). Convert it to a resolved failure so no caller — the
+      // exit/pagehide flush included — can be stranded on an unhandled throw, and flag the
+      // slot so the exit count still records it as unsaved.
+      console.error('[PfPaper] draft save threw', { key, err });
+      if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+      done = Promise.resolve(false).then(deregister);
+    }
     // Track as in-flight so an exit/pagehide during the POST window can await or re-send it.
     inFlightSaves.current.set(key, done);
     return done;
@@ -287,8 +300,16 @@ export function PfPaper({
     // AND any POST already open from a debounce that fired moments ago (its timer key is
     // gone, so only in-flight tracking catches it). The host's 「进度保留」story then reflects
     // what actually persisted, not an optimistic timer or an unsettled POST.
-    firePendingTimers();
-    const outcome = await settleInFlightSaves();
+    let outcome = new Map<string, boolean>();
+    try {
+      firePendingTimers();
+      outcome = await settleInFlightSaves();
+    } catch (err) {
+      // Exit must never be blockable by a save error: on any flush failure fall back to an
+      // empty outcome (the count below then leans on the standing 保存失败 flags — a
+      // conservative estimate) and still exit, rather than strand the learner on the page.
+      console.error('[PfPaper] exit flush failed', err);
+    }
     void pauseCurrentSession().catch(() => {});
     // Count slots left genuinely unsaved: a slot that just settled uses its real outcome; an
     // untouched slot keeps whatever standing 保存失败 flag it had. Submitted slots never count

@@ -474,4 +474,22 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     // The in-flight save failed → the host is told the truth instead of a false 「进度保留」.
     await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
   });
+
+  it('still exits (never strands the learner) when the flush throws synchronously', async () => {
+    // A synchronous throw — e.g. a 401 clears the token and savePaperAnswer raises
+    // ApiAuthError before the fetch — must not leave the page stuck: onExit still fires, and
+    // the thrown slot is conservatively counted as unsaved rather than claimed 「进度保留」.
+    mocks.savePaperAnswer.mockImplementation(() => {
+      throw new Error('token cleared');
+    });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Exit within the debounce window so the flush dispatches the throwing save.
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
 });
