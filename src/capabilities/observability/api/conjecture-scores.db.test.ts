@@ -172,6 +172,10 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       lifecycle: 'open',
       evidence_event_ids: ['probe_result_1', 'conjecture_1'],
     });
+    expect(body.diagnostics).toEqual({
+      prediction_scores: { scanned_count: 1, dropped_count: 0, scan_truncated: false },
+      typed_states: { scanned_count: 1, dropped_count: 0, scan_truncated: false },
+    });
   });
 
   it('HONEST render — no «accuracy» field; canonical score names only', async () => {
@@ -275,6 +279,9 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(0);
+    expect(body.diagnostics).toMatchObject({
+      prediction_scores: { scanned_count: 1, dropped_count: 1, scan_truncated: false },
+    });
   });
 
   it('renders missing score metrics as null but drops corrupt numeric metrics', async () => {
@@ -464,6 +471,10 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(typed[0]?.id).toBe('ts_bound_200');
     expect(typed.at(-1)?.id).toBe('ts_bound_1');
     expect(typed.some((row) => row.id === 'ts_bound_0')).toBe(false);
+    expect(body.diagnostics).toEqual({
+      prediction_scores: { scanned_count: 201, dropped_count: 1, scan_truncated: true },
+      typed_states: { scanned_count: 201, dropped_count: 1, scan_truncated: true },
+    });
   });
 
   it('hard-stops each database scan after 400 raw rows', async () => {
@@ -563,6 +574,10 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(scores.some((row) => row.event_id === 'score_scan_valid_0')).toBe(false);
     expect(typed).toHaveLength(199);
     expect(typed.some((row) => row.id === 'ts_scan_valid_0')).toBe(false);
+    expect(body.diagnostics).toEqual({
+      prediction_scores: { scanned_count: 400, dropped_count: 201, scan_truncated: true },
+      typed_states: { scanned_count: 400, dropped_count: 201, scan_truncated: true },
+    });
   });
 
   it('filters unrelated subject kinds before applying the typed-state scan budget', async () => {
@@ -600,6 +615,9 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     const typed = body.typed_states as Array<Record<string, unknown>>;
     expect(typed).toHaveLength(1);
     expect(typed[0]?.id).toBe('ts_kind_valid');
+    expect(body.diagnostics).toMatchObject({
+      typed_states: { scanned_count: 1, dropped_count: 0, scan_truncated: false },
+    });
   });
 
   it('READ-ONLY — the route writes nothing (ND-5: no FSRS, no new events, no state mutation)', async () => {
@@ -621,5 +639,9 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(body.prediction_scores).toEqual([]);
     expect(body.typed_states).toEqual([]);
     expect(body.score_basis).toBe('single_point');
+    expect(body.diagnostics).toEqual({
+      prediction_scores: { scanned_count: 0, dropped_count: 0, scan_truncated: false },
+      typed_states: { scanned_count: 0, dropped_count: 0, scan_truncated: false },
+    });
   });
 });

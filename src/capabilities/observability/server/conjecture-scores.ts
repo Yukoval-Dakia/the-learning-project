@@ -57,6 +57,19 @@ export interface ConjectureScoresRead {
   score_basis: 'single_point';
   prediction_scores: ConjecturePredictionScoreRow[];
   typed_states: ConjectureTypedStateRow[];
+  diagnostics: {
+    prediction_scores: ConjectureScanDiagnostics;
+    typed_states: ConjectureScanDiagnostics;
+  };
+}
+
+export interface ConjectureScanDiagnostics {
+  /** Raw matching rows actually passed through the fail-closed mapper. */
+  scanned_count: number;
+  /** Scanned rows rejected by the mapper. Unscanned older rows are not counted. */
+  dropped_count: number;
+  /** True when older matching rows exist but the result/scan bound stopped inspection. */
+  scan_truncated: boolean;
 }
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
@@ -153,6 +166,34 @@ function rowToTypedState(r: typeof kc_typed_state.$inferSelect): ConjectureTyped
   };
 }
 
+function collectBoundedRows<Raw, Mapped>(
+  rowsWithSentinel: readonly Raw[],
+  map: (row: Raw) => Mapped | null,
+): { rows: Mapped[]; diagnostics: ConjectureScanDiagnostics } {
+  // The query fetches one sentinel beyond the hard scan window solely to distinguish exactly-N rows
+  // from a genuinely truncated backlog. The sentinel is never mapped and is not counted as scanned.
+  const scanWindow = rowsWithSentinel.slice(0, ADMIN_SCAN_LIMIT);
+  const rows: Mapped[] = [];
+  let scanned_count = 0;
+  let dropped_count = 0;
+  for (const raw of scanWindow) {
+    scanned_count += 1;
+    const mapped = map(raw);
+    if (mapped === null) dropped_count += 1;
+    else rows.push(mapped);
+    if (rows.length === ADMIN_RESULT_LIMIT) break;
+  }
+  return {
+    rows,
+    diagnostics: {
+      scanned_count,
+      dropped_count,
+      scan_truncated:
+        rowsWithSentinel.length > ADMIN_SCAN_LIMIT || scanned_count < scanWindow.length,
+    },
+  };
+}
+
 /**
  * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors) +
  * kc_typed_state confused-with-X rows (auto-minted structural soft-track state).
@@ -164,14 +205,8 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
     .from(event)
     .where(eq(event.action, PREDICTION_SCORE_ACTION))
     .orderBy(desc(event.created_at), desc(event.id))
-    .limit(ADMIN_SCAN_LIMIT);
-
-  const prediction_scores: ConjecturePredictionScoreRow[] = [];
-  for (const r of scoreRows) {
-    const mapped = rowToScore(r);
-    if (mapped) prediction_scores.push(mapped);
-    if (prediction_scores.length === ADMIN_RESULT_LIMIT) break;
-  }
+    .limit(ADMIN_SCAN_LIMIT + 1);
+  const scores = collectBoundedRows(scoreRows, rowToScore);
   const typedRows = await db
     .select()
     .from(kc_typed_state)
@@ -182,14 +217,16 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
       ),
     )
     .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
-    .limit(ADMIN_SCAN_LIMIT);
+    .limit(ADMIN_SCAN_LIMIT + 1);
+  const typed = collectBoundedRows(typedRows, rowToTypedState);
 
-  const typed_states: ConjectureTypedStateRow[] = [];
-  for (const r of typedRows) {
-    const mapped = rowToTypedState(r);
-    if (mapped) typed_states.push(mapped);
-    if (typed_states.length === ADMIN_RESULT_LIMIT) break;
-  }
-
-  return { score_basis: 'single_point', prediction_scores, typed_states };
+  return {
+    score_basis: 'single_point',
+    prediction_scores: scores.rows,
+    typed_states: typed.rows,
+    diagnostics: {
+      prediction_scores: scores.diagnostics,
+      typed_states: typed.diagnostics,
+    },
+  };
 }
