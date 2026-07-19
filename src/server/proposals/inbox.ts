@@ -595,7 +595,10 @@ async function loadCorrectionDecisionByProposal(
   const correctionRows =
     correctionIds.length === 0
       ? []
-      : await db.select().from(event).where(inArray(event.id, correctionIds));
+      : await db
+          .select({ id: event.id, created_at: event.created_at })
+          .from(event)
+          .where(inArray(event.id, correctionIds));
   const correctionCreatedById = new Map(correctionRows.map((row) => [row.id, row.created_at]));
 
   const out = new Map<string, ProposalCorrectionDecision>();
