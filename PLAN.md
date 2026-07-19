@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-18　·　历史头部日志（2026-06-23 ~ 07-16）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
+> 更新于：2026-07-19　·　历史头部日志（2026-06-23 ~ 07-18）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-18 · 12 小时产品推进收口：26 PR 全合并 + 性能/可用性/a11y 连续打磨】** main 从遗留票清扫推进到产品 commit `f99e5382`，随后合入 cockpit closeout：12 个独立交付 PR（YUK-674/683/535/534/332/334/609/211/673/328/616 + YUK-354 C-lane；YUK-349 随子单收口）和 14 个 YUK-169 性能/体验切片全部经 1–2 轮有效 review 后自主合并。性能主线落 route code-splitting、KaTeX/Cytoscape/Markdown 按需加载、Knowledge 图谱/题目知识点选项延迟请求；体验主线落 Inbox 渐进加载与证据语义、Copilot fallback/launcher、onboarding disabled reason、Note 键盘重排、WeekHeat 非色彩通道、Vision 复核选择语义。最终权威态：GitHub 开放 PR = 0，main 与 `origin/main` 已同步；YUK-674/683/535/534/332/334/609/211/673/349/328/616 = Done，YUK-354/YUK-169 作为 umbrella 保持 In Progress。全量 gate：411 unit files / 4496 tests、338 DB files / 3400 tests、23 migration tests，API/profile/copy/style/draft/schema/partition audits 与 SPA/server/worker/migrate build 全绿。YUK-669 当前 tip containment 再验证为 private + backup 未跟踪；历史清洗仍 owner-gated。（上一条 07-16 re-grounding【更新】已滚存 → 归档文件）
+> **【更新 2026-07-19 · 12 小时双线推进：P0F 教研简报闭环 1-5 + jyeoo 供给接入 + 优化七票，agent 17 PR 自主合并】** agent 主线 17 PR 合入（#907-912/915-920/922-923/934/939），owner 并行合入 ~12 个（#921/#929-931/#935-938/#940-947，含消化 agent 当日立的 YUK-720/723/725/726）。三大块：① **P0F 教研简报闭环 P0F/1-5 全落**——契约（YUK-705）→read model（706）→/today 简报 band（707，#918）→幂等 ack 写端（708，#934：9 轮 codex 逐层收紧至「writer 接受集 ≡ reader 交付集」+ 事务内权威判词 + 幂等前置；1 条全局 selection lock 诉求 owner-WONT_FIX 注释化）→confirmed→KC-scoped 练习 CTA（709，#946 已合）；② **jyeoo-rs 确定性供给链 dark-ship**（697，#939：NDJSON adapter + spawn 安全壳 + jyeoo_fetch 一等路由 + 图题/异 host 闸 + canary/kill switch；jyeoo-rs 非 git 只读，producer 加固以 patch 提案 doc 交 owner；与 owner 并行 #938 的 sourcing.ts 完成双边语义调和，jyeoo 顺势接入 cross-KC 合并）；③ **优化扫描七票全清**（YUK-713 诚实失败链 9 轮 + 714/715/716/717/718/719）+ YUK-221 paper ordinal。纪律面：全程分段 gate grep 真实 EXIT 行；Docker IO 退化时 S2 按目录四分片；flake YUK-724 第 3/4 次发生已记录并建议并发隔离。Linear 当日 Done：YUK-697/705-708/711/713-719/721/221；（YUK-709 亦于收尾时随 #946 合入转 Done）；新立 YUK-720/722-727。生产未动（无部署授权）。
 
 ## 🎯 主线方向（当前）
 
@@ -14,13 +14,15 @@
 
 ## NOW（当前 active 线）
 
-- **07-18 自主推进已收口**：26 个 PR 全合 main，开放 PR = 0；YUK-349 与 11 个独立遗留票 Done，YUK-354/YUK-169 以 umbrella 口径保持 In Progress。当前没有代码 lane 在飞。
-- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：冷库零题仍需 owner 上传/生成内容后跑首次真实 placement 会话；本轮没有部署授权，生产态未改。
-- **安全 owner/operator lane = YUK-669**：仓库 private、当前 tip 已除 `.env.local.bak`；剩历史清洗/force-update 与 secret scanning 属显式 owner 门控，禁止 agent 自行执行。
+- **P0F/1-5 全部落地（#946 已于收尾窗合入,4cd490f8）**：教研简报闭环只剩 YUK-710 telemetry,已列 NEXT 首位。
+- **jyeoo 供给链已 dark-ship（#939 merged）**：`JYEOO_FETCH_ENABLED` 默认 OFF；开闸前 owner 需过目 `docs/design/2026-07-19-yuk697-producer-patch-proposal.md`（cache TTL + VIP 硬闸 + exit-1 文档化,jyeoo-rs 非 git 未被改动）并自行落 producer patch。
+- **方向 B「可开始用」milestone gate 不变**：冷库零题仍需 owner 上传/生成内容跑首次真实 placement；本轮无部署授权，生产态未改。
+- **安全 owner/operator lane = YUK-669**：历史清洗/force-update 与 secret scanning 仍 owner 门控,禁止 agent 自行执行。
 
 ## NEXT（就绪，排队）
 
-- **YUK-221 真实 paper ordinal**：决策、迁移回填、写路径与 DB/migration 验收已完整写入 Todo；下一轮可独立 grab，避免和 12 小时收口混开未 review 的 PR。
+- **YUK-710（P0F/6 简报 telemetry + 两周存活报告）**：P0F 链最后一片,等 #946 合入后独立 grab（brief_seen/primary_action_started append-only + report 脚本）。
+- **YUK-727 jyeoo 图题 figures/R2 glue**：#939 走了「持久化前过滤」路径,完整 asset 管道拆此票;开 JYEOO_FETCH_ENABLED 前非必需。
 - **YUK-354 / YUK-169 umbrella 余项**：按已有形态轴和 redraw brief 继续 slice-by-slice；UI 仍逐刀做 design-doc pre-flight。
 - **YUK-506 教学法脑 runtime 大头**：panel-SELECT / efficacy learning / B5 verification / delivery wiring 全 deferred（#823 只落安全脊）。⚠️ **硬前置 = YUK-505 拓扑 amend**（见 BLOCKED-ON）。
 - **YUK-617 wave 尾巴**：ReviewIntentTask 退役 + 6 处现行文档叙事清理（AGENTS.md/README×2/architecture.md×3）· C6 `/api/review/sessions` sub-route verify · 端点批 OWNER-DECIDE 待决。
@@ -52,13 +54,15 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞：0**（GitHub 权威查询，2026-07-18 收口）。本轮 #836/#867-891 共 26 个 PR 均已合并。
-- **main**：与 `origin/main` 精确一致；最终 full test/build/audits 全绿。这里刻意不嵌自身 closeout PR 的 SHA，避免文档合并后立刻自制造漂移。
-- **外部/owner 门控**：YUK-669 历史清洗；GitHub Actions 因账户 billing/spending 零步失败，Cursor/CodeRabbit review 配额耗尽。本轮每个 PR 仍由 OCR/Codex 等 1–2 轮有效 review 覆盖。
-- **本地工作树**：仅 owner 既有 `.codex/hooks.json`、`AGENTS.md`、四个 `.codex/hooks/*` 未跟踪脚本与 `docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`；本轮未暂存、未改写。
+- **PR 在飞：仅本 closeout docs PR #949**(看板,owner 授权后合)。agent 主线 18 PR 已全部合并(2026-07-19,含收尾窗合入的 #946)。
+- **worktree 在飞**:仅 `tlp-wt-closeout`(本看板 PR);其余当日 lane worktree 已全清。**遗留本地分支**(squash-merge 后 `-d` 拒删,按 git-guard 不 `-D`,owner 可批量清理):yuk-718-a11y-semantics-wave / yuk-718-theme-token-sync / yuk-719-server-read-cleanups / yuk-713-silent-mutation-failures / yuk-221-block-ordinal / yuk-715-render-memo / yuk-717-graph-vision-render / yuk-708-brief-probe-outcome / yuk-697-jyeoo-supply / yuk-709-confirmed-practice-cta。
+- **外部/owner 门控**:YUK-669 历史清洗;GitHub Actions billing 零步失败(YUK-712),Cursor/CodeRabbit 配额耗尽——本轮每 PR 由 OCR/codex 1-9 轮有效 review 覆盖,merge 证据=本地分段 gate 真实 EXIT 行。
+- **本地工作树**:owner 既有未跟踪文件(`.codex/*`、`AGENTS.md`、jyeoo 设计 doc)未暂存未改写;jyeoo-rs 仓库只读未动。
+- **基建注意**:今日 ~20 轮全量 DB suite 后 Docker fsync IO 明显退化(TRUNCATE 等 DataFileImmediateSync),S2 曾三次超 10 分钟窗;已用按目录四分片方案绕过。owner 空闲时重启 Docker/OrbStack 可复原(compose 栈在跑,agent 未动)。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
+- **07-19 12 小时双线推进（agent 17 PR + owner 并行 ~12 PR）**：P0F 教研简报闭环 P0F/1-5（契约/read model/简报 band/幂等 ack 写端/练习 CTA 在飞）+ jyeoo-rs 确定性供给 dark-ship（#939,kill switch OFF,producer patch 提案待 owner）+ 优化七票（诚实失败链/两处 render-memo/a11y wave/server 读路径/mathjs async/批量读)+ YUK-221 ordinal。ack 写端沉淀模式:**writer 接受集 ≡ reader 交付集**(单源判词 loadOutcomeBrief 进事务+锁)。gate 纪律新增:S2 超 10 分钟窗时按目录四分片,每片独立 testcontainer。详情见头部【更新】。
 - **07-18 12 小时产品推进（#836/#867-891，26 PR）**：遗留正确性/供给/投影/会话链清扫 + SPA 重分块/重依赖按需加载 + Inbox/Copilot/onboarding/notes/today/record 可用性与 a11y 连续打磨；最终 main `f99e5382`，开放 PR 0，完整验证数字与 issue 状态见头部【更新】。
 - **🔴 YUK-669 凭证泄露事故遏制（2026-07-16，Urgent）**：仓库一度 PUBLIC + tracked `.env.local.bak`（Neon/Postgres · `CLAUDE_CODE_OAUTH_TOKEN` · Tavily · Vercel OIDC 真凭证）。owner 已**轮换全部 4 系统凭证** + 仓库转 PRIVATE（0 forks）；**#827 已合**（`7f17e9ed`，`git rm --cached` + gitignore `.env*.bak`，tip 已除净）。取证：`.env.local.bak` 是唯一真泄露文件，其余 grep 命中全假阳性。**剩 owner 门控**：历史清除（`af4651d9` 在多分支，需 filter-repo + force-push）+ 启用 GitHub secret scanning（当前 DISABLED）。全程零凭证值落地。
 - **backlog-engine 全量 grooming 执行（2026-07-16，「继续三批」）**：43-agent 对抗 grooming → **立单 11（YUK-670~680）+ Linear 卫生 15 + 关 24 PR**，26 次 Linear 写零拦截零失败。产物 `.remember/tmp/backlog-engine-2026-07-16.json`（含未动的 B 段 9 低优 + C 段映射，下轮）。driver+linearscribe(opus) 分工;立单 ground-truth 全核对。
