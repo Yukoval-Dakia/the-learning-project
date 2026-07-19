@@ -34,7 +34,9 @@ export function PfPaper({
   addToast,
 }: {
   artifactId: string;
-  onExit: () => void;
+  // unsavedFailures lets the host tell an honest exit story: 0 → 「进度已保留」, >0 → a
+  // non-blaming 「有 N 处草稿未保存」instead of a false success promise.
+  onExit: (info?: { unsavedFailures: number }) => void;
   onSubmitted: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
@@ -50,9 +52,56 @@ export function PfPaper({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Per-slot autosave-failed flags. While any is set the top chip stops claiming
+  // 「草稿自动保存」and the exit / foot copy drop their 「进度保留」promise, since the
+  // last draft PUT for that slot never landed.
+  const [saveFailed, setSaveFailed] = useState<Record<string, boolean>>({});
+  // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
+  const [retrying, setRetrying] = useState(false);
+  // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
+  // request may update that slot's failed flag, or an old success would clear a
+  // newer failure (and vice versa).
+  const saveSeq = useRef<Record<string, number>>({});
+  // Paper generation: bumped whenever artifactId changes. Because saveSeq resets per
+  // paper, paper A's in-flight save could otherwise share a seq with paper B's first save
+  // for the same slot key and let A's late settle rewrite B's flag. The gen captured at
+  // dispatch must still match at settle, so a save outlives its paper as a no-op.
+  const saveGen = useRef(0);
   const sessionRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
+  // pending save, silently dropping A's last keystrokes while the UI still claims saved.
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
+  // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
+  // in place (keep the map identity so the unmount cleanup below always sees live timers).
+  // answers must reset too: the backfill effect only fills undefined keys, so without this
+  // a shared slot key would keep paper A's answer and skip paper B's server draft.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
+  useEffect(() => {
+    setAnswers({});
+    setSaveFailed({});
+    setRetrying(false);
+    saveSeq.current = {};
+    saveGen.current += 1;
+    // Drop the previous paper's session so a pre-session autosave on the new paper flags
+    // 「保存失败」honestly instead of PUTting a draft with the old paper's session id.
+    sessionRef.current = null;
+    sessionOpenRef.current = false;
+    for (const k of Object.keys(saveTimers.current)) {
+      clearTimeout(saveTimers.current[k]);
+      delete saveTimers.current[k];
+    }
+  }, [artifactId]);
+
+  // Clear any pending debounce timers on unmount (no setState after teardown).
+  useEffect(() => {
+    const timers = saveTimers.current;
+    return () => {
+      for (const t of Object.values(timers)) clearTimeout(t);
+    };
+  }, []);
 
   // 已有 session 复用；没有则开卷即建（answer/submit 都需要 session_id）。
   useEffect(() => {
@@ -62,12 +111,20 @@ export function PfPaper({
       sessionOpenRef.current = ['started', 'paused'].includes(detail.session.status);
       return;
     }
+    // Guard the async open against a paper switch: capture the generation at dispatch and
+    // discard a resolve/reject that lands after the user moved to another paper, so a stale
+    // open can't write its session id (or an error toast) back onto the new paper.
+    const gen = saveGen.current;
     void startPaperSession(artifactId)
       .then((r) => {
+        if (saveGen.current !== gen) return;
         sessionRef.current = r.session_id;
         sessionOpenRef.current = true;
       })
-      .catch((e) => addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert'));
+      .catch((e) => {
+        if (saveGen.current !== gen) return;
+        addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
+      });
   }, [detail, artifactId, addToast]);
 
   // 草稿初值：服务端 draft / 已提交 answer 回填。
@@ -100,14 +157,19 @@ export function PfPaper({
 
   const exitPaper = () => {
     void pauseCurrentSession().catch(() => {});
-    onExit();
+    // Count slots whose last draft save failed and that aren't already submitted, so the
+    // host can drop the 「进度保留」promise on exit instead of lying.
+    const unsavedFailures = slots.filter(
+      (s) => saveFailed[slotKey(s)] && !s.slot_state.submission?.submitted,
+    ).length;
+    onExit({ unsavedFailures });
   };
 
   if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
   if (detailQ.isError || !detail || slots.length === 0)
     return (
       <div className="pfp">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onExit}>
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
           返回流
         </Btn>
         <p className="quiet-empty">卷加载失败或没有题。</p>
@@ -123,21 +185,88 @@ export function PfPaper({
   const answeredCount = slots.filter((s) => (answers[slotKey(s)] ?? '').trim().length > 0).length;
   const unanswered = slots.length - answeredCount;
 
+  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
+  const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
+    const sid = sessionRef.current;
+    if (!sid) {
+      // Session still opening or startPaperSession failed — do NOT drop the draft
+      // silently. Flag the slot so the honest 「保存失败·重试」chip shows; a retry once
+      // the session lands will go through.
+      setSaveFailed((f) => ({ ...f, [key]: true }));
+      return Promise.resolve();
+    }
+    const gen = saveGen.current;
+    const seq = (saveSeq.current[key] ?? 0) + 1;
+    saveSeq.current[key] = seq;
+    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
+    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
+    // no-op — it can't rewrite the next paper's state.
+    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
+    return savePaperAnswer(artifactId, {
+      session_id: sid,
+      question_id: questionId,
+      part_ref: partRef,
+      answer_md: v,
+    })
+      .then(() => {
+        if (!isLatest()) return;
+        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+      })
+      .catch((err) => {
+        console.error('[PfPaper] draft save failed', { key, err });
+        if (!isLatest()) return;
+        setSaveFailed((f) => ({ ...f, [key]: true }));
+      });
+  };
+
+  // A submitted slot's draft no longer needs saving, so a lingering failure flag on it
+  // must NOT keep the retry chip lit (submitAll captures the latest answer regardless of
+  // whether the draft PUT landed).
+  const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)));
+  const retryFailedSaves = () => {
+    if (retrying) return;
+    // Drop failure flags on any slot submitted since it failed, so the chip can't stay
+    // lit with nothing left to retry.
+    setSaveFailed((f) => {
+      const next = { ...f };
+      let changed = false;
+      for (const s of slots) {
+        const k = slotKey(s);
+        if (f[k] && submittedKeys.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : f;
+    });
+    // Skip already-submitted slots — a draft PUT to a submitted slot has undefined
+    // backend behaviour (setAnswer guards the same way).
+    const pending = slots
+      .filter((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)))
+      .map((s) => {
+        const k = slotKey(s);
+        // Cancel any still-pending debounce for this slot so a stale timer can't fire
+        // after the retry and overwrite it with older text.
+        if (saveTimers.current[k]) {
+          clearTimeout(saveTimers.current[k]);
+          delete saveTimers.current[k];
+        }
+        return runSave(k, s.question_id, s.part_ref, answers[k] ?? '');
+      });
+    if (pending.length === 0) return;
+    setRetrying(true);
+    void Promise.allSettled(pending).finally(() => setRetrying(false));
+  };
+
   const setAnswer = (v: string) => {
     setAnswers((a) => ({ ...a, [curKey]: v }));
     // 草稿自动保存（防抖 800ms；已提交的 slot 不再写草稿）。
     if (submittedKeys.has(curKey)) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const sid = sessionRef.current;
-      if (!sid) return;
-      void savePaperAnswer(artifactId, {
-        session_id: sid,
-        question_id: cur.question_id,
-        part_ref: cur.part_ref,
-        answer_md: v,
-      }).catch(() => {});
-    }, 800);
+    const key = curKey;
+    const questionId = cur.question_id;
+    const partRef = cur.part_ref;
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => runSave(key, questionId, partRef, v), 800);
   };
 
   const goPos = (n: number) => {
@@ -165,6 +294,13 @@ export function PfPaper({
       }
       await endPaperSession(sid);
       completionCommitted = true;
+      // Every slot is now submitted — no draft can still be unsaved, so drop any lingering
+      // failure flags (and pending debounces) rather than leave the retry chip stuck.
+      setSaveFailed({});
+      for (const k of Object.keys(saveTimers.current)) {
+        clearTimeout(saveTimers.current[k]);
+        delete saveTimers.current[k];
+      }
       await qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       onSubmitted();
     } catch (e) {
@@ -180,13 +316,25 @@ export function PfPaper({
     <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`}>
       <div className="pfp-top">
         <Btn size="sm" variant="ghost" icon="arrowL" onClick={exitPaper}>
-          退出 · 进度保留
+          {anySaveFailed ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
-        <span className="pfp-saved">
-          <LoomIcon name="check" size={12} />
-          草稿自动保存
-        </span>
+        {anySaveFailed ? (
+          <button
+            type="button"
+            className="pfp-saved is-failed"
+            onClick={retryFailedSaves}
+            disabled={retrying}
+          >
+            <LoomIcon name="alert" size={12} />
+            {retrying ? '重试中…' : '保存失败 · 重试'}
+          </button>
+        ) : (
+          <span className="pfp-saved">
+            <LoomIcon name="check" size={12} />
+            草稿自动保存
+          </span>
+        )}
       </div>
 
       <div className="pfp-buffer">
@@ -307,7 +455,9 @@ export function PfPaper({
         )}
       </div>
       <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
-        中途退出进度保留 · 交卷后到复盘看逐题判定
+        {anySaveFailed
+          ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+          : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );

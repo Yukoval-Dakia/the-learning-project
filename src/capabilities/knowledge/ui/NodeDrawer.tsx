@@ -52,6 +52,7 @@ function EdgeProposalRow({
 }) {
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const operation = edgeProposalOperation(e);
   const isArchive = operation === 'archive';
   const archiveTargetMissing = isArchive && !e.payload.proposed_change.archive_edge_id;
@@ -61,8 +62,15 @@ function EdgeProposalRow({
   const cue = REL_CUE[rel] ?? REL_CUE.related_to;
   const act = (decision: 'accept' | 'reverse' | 'change_type' | 'dismiss', label: string) => {
     setBusy(true);
+    setFailed(false);
     onDecide(decision)
       .then(() => setDone(label))
+      // 409/500 → 不再让 promise 静默 reject（未捕获），点亮失败提示；.finally 复位
+      // busy 后按钮重新可点即为重试入口（mirror createM.isError 先例）。记 console 便于诊断。
+      .catch((err) => {
+        console.error('[EdgeProposalRow] decide failed:', err);
+        setFailed(true);
+      })
       .finally(() => setBusy(false));
   };
   if (done)
@@ -124,6 +132,11 @@ function EdgeProposalRow({
           {isArchive ? '保留关系' : '忽略'}
         </Btn>
       </div>
+      {failed && (
+        <div className="meta" role="alert" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
+          操作失败，请重试。
+        </div>
+      )}
     </div>
   );
 }

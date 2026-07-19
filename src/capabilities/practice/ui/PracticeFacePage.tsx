@@ -301,10 +301,15 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     body = (
       <PfPaper
         artifactId={mode.artifactId}
-        onExit={() => {
+        onExit={(info) => {
           setMode({ kind: 'list' });
           void refreshStream();
-          addToast('进度已保留——卷在流里等你回来。', 'info', 'clock');
+          const n = info?.unsavedFailures ?? 0;
+          addToast(
+            n > 0 ? `已退出——有 ${n} 处草稿未保存` : '进度已保留——卷在流里等你回来。',
+            'info',
+            n > 0 ? 'alert' : 'clock',
+          );
         }}
         onSubmitted={() => {
           void refreshStream();

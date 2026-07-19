@@ -397,6 +397,7 @@ function PlacementQuestionCard({
   const [text, setText] = useState('');
   const [imgRefs, setImgRefs] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const shownAtRef = useRef<number | null>(null);
@@ -434,11 +435,17 @@ function PlacementQuestionCard({
   const pickImage = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
+    setUploadErr(null);
     try {
       const asset = await uploadAsset(file);
       setImgRefs((refs) => [...refs, asset.id]);
     } catch {
-      // swallow — the user can retry; a failed upload just leaves no image ref.
+      // A silent swallow let learners submit the probe without the handwriting they
+      // thought they attached — surface it so they can retry (ProbeAnswers precedent).
+      setUploadErr('图片上传失败，请重试');
+      // Clear the input so re-picking the SAME file still fires onChange (a file input
+      // emits no change event when the selection is unchanged).
+      if (fileRef.current) fileRef.current.value = '';
     } finally {
       setUploading(false);
     }
@@ -529,6 +536,12 @@ function PlacementQuestionCard({
               </Btn>
             )}
           </div>
+          {uploadErr && (
+            <div className="ob-pl-upload-err" role="alert">
+              <LoomIcon name="alert" size={13} />
+              {uploadErr}
+            </div>
+          )}
         </div>
       )}
 
