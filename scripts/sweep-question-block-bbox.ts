@@ -49,20 +49,13 @@
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
 
+import { type BBoxLike, clampBBox } from '@/core/schema/bbox-utils';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { type Db, type Tx, db } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { asc, eq, gt } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
-
-// The numeric bbox quad as persisted in jsonb. Pre-clamp it may be out of [0,1] / sum-unsafe.
-interface BBoxLike {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 export interface SweepCounts {
   scanned: number; // total question_block rows read
@@ -77,12 +70,6 @@ export interface SweepCounts {
 // prod-scale block count. Page by the text primary key to bound peak memory.
 const SWEEP_BATCH_SIZE = 500;
 
-// clamp01 — mirror tencent_mark_parser.ts:72 EXACTLY (non-finite -> 0). KEEP IN SYNC with flat8ToBBox.
-function clamp01(v: number): number {
-  if (!Number.isFinite(v)) return 0;
-  return Math.max(0, Math.min(1, v));
-}
-
 // A bbox is a clamp candidate only when it is a well-formed FINITE numeric quad. §P3 scope is the
 // OVERFLOW case (finite-but-out-of-range); a non-finite / missing-component bbox is a SEPARATE
 // corruption this sweep does not fabricate-repair — return false and leave it untouched.
@@ -95,21 +82,6 @@ function isFiniteBBox(b: unknown): b is BBoxLike {
     Number.isFinite(o.width) &&
     Number.isFinite(o.height)
   );
-}
-
-// clampBBox — the SAME rule C1-δ's flat8ToBBox (tencent_mark_parser.ts:64-69) applies to NEW
-// extractions: x/y clamped to [0,1]; width/height clamped to [0,1] THEN capped at 1-x / 1-y so the
-// result satisfies the canonical BBox refine (x+width<=1, y+height<=1). Sum-safe + idempotent.
-// KEEP IN SYNC with flat8ToBBox.
-function clampBBox(b: BBoxLike): BBoxLike {
-  const x = clamp01(b.x);
-  const y = clamp01(b.y);
-  return {
-    x,
-    y,
-    width: Math.min(clamp01(b.width), 1 - x),
-    height: Math.min(clamp01(b.height), 1 - y),
-  };
 }
 
 function bboxChanged(a: BBoxLike, c: BBoxLike): boolean {
