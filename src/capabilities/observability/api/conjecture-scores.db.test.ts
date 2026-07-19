@@ -565,6 +565,43 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(typed.some((row) => row.id === 'ts_scan_valid_0')).toBe(false);
   });
 
+  it('filters unrelated subject kinds before applying the typed-state scan budget', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        {
+          id: 'ts_kind_valid',
+          subject_kind: 'knowledge',
+          subject_id: 'kn_kind_valid',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: ['probe_kind_valid'],
+          updated_at: base,
+        },
+        ...Array.from({ length: 400 }, (_, offset) => {
+          const i = offset + 1;
+          return {
+            id: `ts_kind_unrelated_${i}`,
+            subject_kind: 'artifact',
+            subject_id: `art_kind_unrelated_${i}`,
+            typed_state: 'confused-with-X',
+            confused_with_kc_id: RIVAL_KC,
+            lifecycle: 'open',
+            evidence_event_ids: [`probe_kind_unrelated_${i}`],
+            updated_at: new Date(base.getTime() + i),
+          };
+        }),
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    expect(typed).toHaveLength(1);
+    expect(typed[0]?.id).toBe('ts_kind_valid');
+  });
+
   it('READ-ONLY — the route writes nothing (ND-5: no FSRS, no new events, no state mutation)', async () => {
     const beforeScores = await predictionScoreCount();
     const beforeFsrs = await fsrsRowCount();

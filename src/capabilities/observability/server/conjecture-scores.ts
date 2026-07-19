@@ -20,7 +20,7 @@
 
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 /** One LOG-only calibration score row (mapped from an experimental:prediction_score event). */
 export interface ConjecturePredictionScoreRow {
@@ -175,7 +175,12 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
   const typedRows = await db
     .select()
     .from(kc_typed_state)
-    .where(eq(kc_typed_state.typed_state, 'confused-with-X'))
+    .where(
+      and(
+        eq(kc_typed_state.subject_kind, 'knowledge'),
+        eq(kc_typed_state.typed_state, 'confused-with-X'),
+      ),
+    )
     .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
     .limit(ADMIN_SCAN_LIMIT);
 
