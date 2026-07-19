@@ -94,14 +94,15 @@ export function ProbeAnswerCard({
     if (!hasAnswer || submitting) return;
     setSubmitting(true);
     setError(null);
+    let resolution: ProbeAnswerVerdict['resolution'] | null = null;
     try {
       const res = await submitProbeAnswer(probe.probe_question_id, answerMd.trim(), imageRefs);
+      resolution = res.resolution;
       setVerdict(res.resolution);
       // YUK-707 · [裁决 2] — a recorded verdict re-projects the teaching brief to its
       // outcome state. Invalidate it so a mounted brief advances in place; no-op when the
       // brief isn't on screen. (['prep-desk-probes'] stays on onDismiss, unchanged.)
       void qc.invalidateQueries({ queryKey: ['teaching-brief'] });
-      onAnswered?.(res.resolution);
     } catch {
       // 422 (judge couldn't grade cleanly) or network — fail-closed: the probe stays
       // served and re-answerable, so surface a retry, not a lost answer.
@@ -109,6 +110,9 @@ export function ProbeAnswerCard({
     } finally {
       setSubmitting(false);
     }
+    // Fire the consumer callback OUTSIDE the try — a throwing onAnswered must not be
+    // caught and mis-surfaced as a submit failure (the verdict is already recorded).
+    if (resolution !== null) onAnswered?.(resolution);
   }
 
   function onDismiss() {

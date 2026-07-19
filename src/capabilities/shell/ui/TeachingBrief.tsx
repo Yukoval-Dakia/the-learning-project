@@ -98,12 +98,21 @@ export function TeachingBriefBand() {
     try {
       await decideProposal(brief.prepared_action.proposal_id, decision);
       // accept → re-project to probe_ready; dismiss → next candidate or null. Refresh the
-      // brief plus the surfaces whose counts move (mirrors PrepDeskConjectures' set).
-      await qc.invalidateQueries({ queryKey: ['teaching-brief'] });
-      await qc.invalidateQueries({ queryKey: ['overnight-digest'] });
-      await qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
-    } catch {
+      // brief plus the surfaces whose counts move (mirrors PrepDeskConjectures' set); the
+      // three invalidations are independent, so fan them out together.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
+        qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
+        qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
+      ]);
+    } catch (error) {
       // Contract §7 — keep the current brief, do NOT optimistically advance; allow retry.
+      // Redacted diagnostic only (decision + error, never brief/claim/answer payload),
+      // mirroring the loader's warn idiom in teaching-brief.ts.
+      console.warn('[teaching-brief] decide failed', {
+        decision,
+        error: error instanceof Error ? error.message : String(error),
+      });
       setFailed(true);
     } finally {
       setDeciding(false);
@@ -130,7 +139,7 @@ export function TeachingBriefBand() {
           // Quiet null (contract §6.5): a calm night, NOT "全部完成" / streak / achievement.
           <div className="tb-quiet quiet-empty">教研团暂无需要交付的新判断。</div>
         ) : (
-          <LoomCard pad className="prep-desk-card tb-card">
+          <LoomCard pad className="prep-desk-card">
             <div className="card-head">
               <span className="card-icon accent">
                 <LoomIcon name="teach" size={18} />

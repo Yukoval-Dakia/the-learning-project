@@ -383,7 +383,7 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
             </div>
           )}
           {d && hasAnything && (
-            <div className="digest-activity">
+            <>
               <button
                 type="button"
                 className={`chip chip-toggle${activityOpen ? ' is-open' : ''}`}
@@ -463,7 +463,7 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
                   )}
                 </div>
               )}
-            </div>
+            </>
           )}
         </Stateful>
       </LoomCard>

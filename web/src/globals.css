@@ -6627,9 +6627,7 @@ button.chip:disabled:hover {
 .tb-degraded-flags {
   margin-bottom: var(--s-3);
 }
-.tb-card {
-  /* .prep-desk-card supplies the coral left spine; nothing extra needed today. */
-}
+/* The brief card reuses .prep-desk-card (coral left spine) directly — no .tb-card needed. */
 .tb-block {
   display: grid;
   gap: var(--s-2);
@@ -6698,18 +6696,6 @@ button.chip:disabled:hover {
 .tb-error {
   font-size: var(--fs-meta);
   color: var(--again-ink);
-}
-/* Visually hidden aria-live region (mirrors the .pa-file-input idiom). */
-.tb-live {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 /* ── YUK-567 slice-2 · 待你试做 probe 作答区 ── */
@@ -6824,8 +6810,10 @@ button.chip:disabled:hover {
   outline: 2px solid var(--ink-5);
   outline-offset: 1px;
 }
-/* Visually hidden but focusable + in the a11y tree (keyboard file-picker access). */
-.pa-file-input {
+/* Visually hidden but kept in the a11y tree: the keyboard file-picker (focusable) and
+   the teaching-brief aria-live region (YUK-707) share this one off-screen idiom. */
+.pa-file-input,
+.tb-live {
   position: absolute;
   width: 1px;
   height: 1px;
