@@ -277,8 +277,22 @@ export function buildMemoryEventIngestHandler(
       // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
       // enqueue reconcile for the new memory ids.
       const memResult = admitToExtraction ? await client.addEventMemory(row) : null;
-      for (const scopeKey of row.affected_scopes) {
-        await enqueueBriefRegen(boss, scopeKey);
+      // YUK-729 — swallow + log a transient enqueue failure, mirroring the
+      // subject-bridge precedent below. addEventMemory above is PAID and
+      // non-idempotent; if a boss.send hiccup rethrew out of the handler, pg-boss
+      // would redeliver (retryLimit) and re-run the extraction — duplicate cost
+      // plus a persistent duplicate mem0 row (reconcile is human-gated to
+      // KEEP_BOTH). A dropped brief regen is exactly what the hourly/03:00 brief
+      // sweep backstops.
+      try {
+        for (const scopeKey of row.affected_scopes) {
+          await enqueueBriefRegen(boss, scopeKey);
+        }
+      } catch (err) {
+        console.warn(
+          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id}; nightly sweep will backstop`,
+          err,
+        );
       }
 
       // YUK-581 — subject brief bridge. The core learning events never tag a
@@ -338,7 +352,22 @@ export function buildMemoryEventIngestHandler(
           kind: row.kind,
         }));
       if (newMemories.length > 0) {
-        await enqueueMemoryReconcile(boss, newMemories, 'self');
+        // YUK-729 — same rationale as the brief-regen swallow above: a transient
+        // reconcile-enqueue failure must NOT rethrow and force a whole-job retry
+        // that re-pays for the addEventMemory extraction + spawns a duplicate mem0
+        // row. Unlike brief regen, the reconcile queue is event-driven with no
+        // cron sweep (see MEMORY_RECONCILE_QUEUE note above), so the only cost of
+        // swallowing is that THIS batch stays un-reconciled (its memories persist
+        // as raw rows) — still strictly better than a re-paid, duplicate-spawning
+        // retry.
+        try {
+          await enqueueMemoryReconcile(boss, newMemories, 'self');
+        } catch (err) {
+          console.warn(
+            `[memory_reconcile] reconcile enqueue failed for event ${row.id}; batch left un-reconciled`,
+            err,
+          );
+        }
       }
     }
   };

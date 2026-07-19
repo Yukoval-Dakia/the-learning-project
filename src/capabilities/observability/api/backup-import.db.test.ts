@@ -162,6 +162,25 @@ describe('POST /api/_/import — guards', () => {
     expect(body.error).toBe('invalid_zip');
     expect(body.message).toContain('manifest.json');
   });
+
+  // YUK-729 — an oversized backup upload must be rejected by its declared
+  // Content-Length BEFORE the whole ZIP is buffered into memory and the
+  // destructive wipe-and-reload runs. 100 MB is comfortably over the ~64 MB cap.
+  it('returns 413 when the declared Content-Length exceeds the backup cap, with zero side effects', async () => {
+    const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+      method: 'POST',
+      // Tiny actual body; the oversized Content-Length header is what gates.
+      body: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+      headers: { 'content-type': 'application/zip', 'content-length': '100000000' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('payload_too_large');
+    // Destructive restore never started: no DELETE and no INSERT issued.
+    expect(deleteCalls.length).toBe(0);
+    expect(insertCalls.length).toBe(0);
+  });
 });
 
 describe('POST /api/_/import — wipe + reinsert', () => {

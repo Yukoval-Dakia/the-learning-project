@@ -246,6 +246,85 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.anything(),
     );
   });
+
+  // YUK-729 — the PAID, non-idempotent addEventMemory runs before the
+  // affected_scopes brief-regen fan-out and the reconcile enqueue. If either
+  // enqueue rethrew out of the handler, pg-boss would redeliver and re-run the
+  // extraction (duplicate cost + a persistent duplicate mem0 row). Both enqueues
+  // must swallow+log a transient failure, degrading to the sweep backstop.
+  it('YUK-729 — swallows an affected_scopes brief-regen enqueue failure (ingest resolves, extraction not retried)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // boss.send throws only for the brief-regen fan-out; reconcile still succeeds.
+    const send = vi.fn(async (name: string) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE) throw new Error('regen send boom');
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    // The throw must NOT reject the ingest job — a resolved handler is what
+    // prevents redelivery and the re-paid extraction.
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[memory_brief_bridge] affected_scopes brief regen enqueue failed'),
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('YUK-729 — swallows a reconcile enqueue failure (ingest resolves, extraction not retried)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // boss.send throws only for the reconcile enqueue; brief-regen still succeeds.
+    const send = vi.fn(async (name: string) => {
+      if (name === MEMORY_RECONCILE_QUEUE) throw new Error('reconcile send boom');
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[memory_reconcile] reconcile enqueue failed'),
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
 });
 
 // YUK-581 — subject brief bridge inside the ingest handler. A qualifying learning
