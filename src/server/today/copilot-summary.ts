@@ -18,6 +18,7 @@
 //   • executeGetReviewDue({ limit })                 → review_due_count
 //   • executeMemoryBrief({ scopeKey: 'global' })     → brief_global_md
 //   • countPendingProposalInboxByKind()              → pending_proposals_total
+//       (exact projection fallback when the counter hits its scan cap)
 //   • listProposalInboxPage(pending, dreaming, N)    → dreaming_preview rows
 //
 // Output is a typed `CopilotSummary` (parallel-build mock target — see
@@ -75,6 +76,12 @@ export interface CopilotSummaryOpts {
    * exercise the actual count.
    */
   reviewDueLimit?: number;
+  /**
+   * Batch/cap knobs forwarded to countPendingProposalInboxByKind. Defaults
+   * (5,000 × 10 = 50k) bound the /today hot path; tests shrink them to force the
+   * cap-exceeded (hasMore) fallback without seeding 50k rows.
+   */
+  pendingCountOptions?: { batchSize?: number; maxBatches?: number };
 }
 
 export async function loadCopilotSummary(
@@ -114,8 +121,9 @@ export async function loadCopilotSummary(
       // sorting, and accepted/dismissed history a full inbox projection pays on
       // every /today load. Summing the per-kind counts gives the same total as
       // the old `listProposalInboxPage({ status: 'pending' }).rows.length`
-      // (same pending-derivation universe, no lane filter).
-      countPendingProposalInboxByKind(db),
+      // (same pending-derivation universe, no lane filter) UNLESS the counter
+      // hits its scan cap — see the hasMore fallback below.
+      countPendingProposalInboxByKind(db, opts.pendingCountOptions),
       // Dreaming preview: the top `previewLimit` pending proposals authored by
       // Dreaming, in the inbox ranking order. Bounded via the actorRef filter +
       // limit so the ranked pagination loop stops after `previewLimit` matching
@@ -177,10 +185,17 @@ export async function loadCopilotSummary(
 
   // Sum the by-kind pending counts for the drawer's pending total. Matches the
   // old `pendingPage.rows.length` on the bounded single-user proposal set.
-  const pendingProposalsTotal = Object.values(pendingCounts.byKind).reduce(
+  // When the counter hit its scan cap (`hasMore`), byKind is only a LOWER BOUND;
+  // the wire contract is a bare number with no room for an "approximate" flag, so
+  // fall back to the exact (unbounded) projection count in that rare case rather
+  // than silently undercounting a large backlog. hasMore=false → no extra query.
+  let pendingProposalsTotal = Object.values(pendingCounts.byKind).reduce(
     (sum, kindCount) => sum + (kindCount ?? 0),
     0,
   );
+  if (pendingCounts.hasMore) {
+    pendingProposalsTotal = (await listProposalInboxPage(db, { status: 'pending' })).rows.length;
+  }
 
   // `total_returned` matches the rows array length — capped at
   // `reviewDueLimit` (max 50 per GetReviewDueInputSchema). For queue sizes
