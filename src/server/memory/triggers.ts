@@ -13,7 +13,6 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
-import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import {
   QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
@@ -42,14 +41,10 @@ import {
 } from './reconcile-llm';
 import {
   type PlannedRow,
-  capturePrevState,
-  hardDeleteMemory,
   insertPlannedRows,
   loadUnappliedLog,
   makePlannedRow,
   markApplied,
-  rewriteMemoryText,
-  softSupersede,
 } from './reconcile-store';
 import { searchMemories } from './search-memories';
 
@@ -524,27 +519,11 @@ function topCandidateScore(cands: CandidateEntry[]): number | undefined {
 }
 
 /**
- * YUK-557 (PR #699 CR-3) — resolve the mem0 pgvector collection (table) name
- * WITHOUT triggering createMem0Config()'s Mem0 API-key validation. createMem0Config()
- * calls requireEnv on DATABASE_URL / ZHIPU_API_KEY / DASHSCOPE_API_KEY (client.ts:138-140)
- * and throws if any is missing — but a SUPERSEDE-only or injected-client replay needs
- * only the collection NAME, never a client (F-4 posture). Derive it straight from
- * MEM0_PGVECTOR_COLLECTION (the same env optionalEnv reads in createMem0Config) so the
- * client-less path stays key-free. SoT default = MEM0_COLLECTION_DEFAULT (the live
- * client and the backup path both resolve to it).
- */
-function resolveMem0CollectionName(injected?: string): string {
-  return (
-    injected?.trim() || process.env.MEM0_PGVECTOR_COLLECTION?.trim() || MEM0_COLLECTION_DEFAULT
-  );
-}
-
-/**
  * P2 (YUK-342): memory reconcile handler.
  *
  * Consumes a batch of new memory ids, searches for existing candidates per new
  * memory, asks GLM to judge KEEP_BOTH/SUPERSEDE/MERGE/RETRACT_NEW, writes
- * write-ahead planned rows, then applies them.
+ * write-ahead audit rows, then consumes them without destructive mutation.
  *
  * Failure modes:
  *   1. LLM parse failure → catch ReconcileParseError → entire batch degrades to
@@ -559,8 +538,6 @@ export function buildMemoryReconcileHandler(
     memoryClient?: MemoryClient;
     /** Injectable for tests — defaults to judgeReconciliation */
     judge?: typeof judgeReconciliation;
-    /** Injectable for tests — mem0 collection table name (default: from config) */
-    collectionName?: string;
     /**
      * YUK-557 (PR #699 CR-1) — injectable Mem0 client factory (default:
      * createMemoryClient). Tests inject a factory that throws so the m7 "client
@@ -573,28 +550,7 @@ export function buildMemoryReconcileHandler(
 ): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
-  const collectionName = deps.collectionName;
   const createClient = deps.createClient ?? createMemoryClient;
-  // YUK-557 (F4): lazy client init for applyPlannedRows. applyPlannedRows only
-  // calls getClient when a destructive (MERGE/RETRACT_NEW) row is actually pending,
-  // so a pure KEEP_BOTH/SUPERSEDE replay never triggers init (F-4 posture: a
-  // client-less replay must not demand a Mem0 key). On init failure the client
-  // stays undefined → applyPlannedRows emits the aggregated warn and defers the
-  // destructive rows to the next job (m7).
-  const getClientLazy = (): MemoryClient | undefined => {
-    if (!memoryClient) {
-      try {
-        memoryClient = createClient();
-      } catch (err) {
-        // OCR (PR #699, triggers.ts:544) — surface the root cause. The empty catch
-        // used to discard the createMemoryClient() failure (missing key / bad
-        // endpoint / invalid config); the only downstream signal was a vague warn in
-        // applyPlannedRows. Mirrors the inline init log below (:565-573).
-        console.warn('[memory_reconcile] Mem0 lazy client init failed', err);
-      }
-    }
-    return memoryClient;
-  };
   return async (jobs) => {
     for (const job of jobs) {
       // F-1 equivalent — per-job try/catch prevents retry storm.
@@ -603,7 +559,7 @@ export function buildMemoryReconcileHandler(
         const newMemInputs = job.data.memories ?? [];
 
         // Idempotent resume: replay any unapplied planned rows from prior runs.
-        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
+        await applyPlannedRows(db, userId);
 
         if (newMemInputs.length === 0) continue;
 
@@ -735,10 +691,6 @@ export function buildMemoryReconcileHandler(
         // every downgrade rewrites `reason` symmetrically so action↔reason never
         // diverges in the WAL (spec M1 / Lens A A5-1/A5-2). Out-of-range indices
         // (LLM hallucination) degrade to KEEP_BOTH (existing semantics).
-        // capturePrevState is async → for...of so the write-ahead snapshot is
-        // captured (before apply mutates anything) prior to insert; NEVER capture
-        // at apply-time (a crash-replay would read the already-rewritten payload).
-        const resolvedCollectionName = resolveMem0CollectionName(collectionName);
         const plannedRows: PlannedRow[] = [];
         for (const d of uniqueDecisions) {
           const newMem = newMems[d.new_index];
@@ -818,32 +770,21 @@ export function buildMemoryReconcileHandler(
             ); // m8
           }
 
-          // 4) write-ahead prev snapshot (Q2b). Captured NOW so a crash-replay can't
-          // overwrite it with post-merge state (spec M1). YUK-557 (PR #699 CR-5):
-          // SUPERSEDE/MERGE (needsOldTarget) prefer the OLD row's authoritative DB
-          // snapshot text (snap.text) for verbatim undo — the search candidate's text
-          // can drift from the pgvector payload — falling back to the candidate text
-          // (oldMem.text) only when the snapshot is absent (defensive: LLM-referenced
-          // id already gone), which keeps prevText's non-null floor (F2 guard).
-          // RETRACT_NEW → the new (discarded) row's text (payload=NULL, its metadata is
-          // event-sourced); KEEP_BOTH → NULL. If/else chain: repo bans nested ternaries
-          // (OCR PR #699 triggers.ts:771).
-          let prevMetadata: Record<string, unknown> | null = null;
-          let oldTextForUndo: string | null = null;
-          if (needsOldTarget(action)) {
-            const snap = oldMem
-              ? await capturePrevState(db, resolvedCollectionName, oldMem.memory_id)
-              : null;
-            oldTextForUndo = snap?.text ?? oldMem?.text ?? null;
-            prevMetadata = snap?.metadata ?? null; // missing/absent → NULL; prev_text is the floor
-          }
-          let prevText: string | null;
-          if (action === 'KEEP_BOTH') {
-            prevText = null;
-          } else if (action === 'RETRACT_NEW') {
-            prevText = newMem?.text ?? null;
-          } else {
-            prevText = oldTextForUndo;
+          // 4) YUK-690 execution policy: model output is advisory only. Memory
+          // events are user-authored text and therefore an untrusted prompt
+          // boundary; no LLM recommendation may supersede, rewrite or delete a
+          // stored memory without a separate human-approval surface. Preserve the
+          // original decision in llm_raw below, but deterministically make the WAL
+          // action non-destructive.
+          if (action !== 'KEEP_BOTH') {
+            const recommendedAction = action;
+            ({ action, reason } = downgradeToKeepBoth(
+              `Human approval required; blocked model-recommended ${recommendedAction}`,
+              reason,
+            ));
+            console.warn(
+              `[memory_reconcile] destructive recommendation blocked action=${recommendedAction} new_index=${d.new_index}`,
+            );
           }
 
           plannedRows.push(
@@ -857,19 +798,21 @@ export function buildMemoryReconcileHandler(
               // Q1 gate observability (for future data-driven floor calibration).
               llm_raw: {
                 ...d,
+                execution_policy: 'human_approval_required',
+                recommended_action: d.action,
                 new_created_ms: newMem?.created_ms ?? null,
                 referenced_score: referencedScore ?? null,
                 structurally_corroborated: corroborated,
               },
-              prev_text: prevText,
-              prev_metadata: prevMetadata,
+              prev_text: null,
+              prev_metadata: null,
             }),
           );
         }
         await insertPlannedRows(db, plannedRows);
 
-        // Apply phase: execute actions, then mark applied.
-        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
+        // Apply phase: consume recommendations without mutating mem0.
+        await applyPlannedRows(db, userId);
       } catch (err) {
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
@@ -902,112 +845,21 @@ export function buildMemoryReconcileHandler(
 }
 
 /**
- * Apply write-ahead planned rows (applied_at IS NULL) for a user.
- * Idempotent: hardDelete 'not found' swallowed, already-applied rows skipped.
+ * Consume write-ahead planned rows (applied_at IS NULL) for a user.
+ *
+ * YUK-690: reconciliation is recommendation-only. New synthesis stores KEEP_BOTH;
+ * legacy destructive rows are marked applied without touching mem0 so deployment
+ * cannot replay a pre-fix LLM decision into a mutation.
  */
-async function applyPlannedRows(
-  db: Db,
-  userId: string,
-  deps: { collectionName?: string; getClient: () => MemoryClient | undefined },
-): Promise<void> {
+async function applyPlannedRows(db: Db, userId: string): Promise<void> {
   const pending = await loadUnappliedLog(db, userId);
   if (pending.length === 0) return;
 
-  const collectionName = resolveMem0CollectionName(deps.collectionName);
-
-  // YUK-557 (Q2a/m7): MERGE/RETRACT_NEW now hard-delete via mem0's official
-  // delete() (client.hardDelete), so those branches need a MemoryClient. Resolve
-  // it lazily and ONLY when a destructive row is actually pending — a pure
-  // KEEP_BOTH/SUPERSEDE replay must never demand a Mem0 key (F-4 posture). When a
-  // destructive row is pending but no client is available (e.g. the job-start
-  // replay before lazy init), leave those rows unapplied for the next job.
-  const needsClient = pending.some((r) => isHardDelete(r.action));
-  const client = needsClient ? deps.getClient() : undefined;
-  if (needsClient && !client) {
-    console.warn(
-      '[memory_reconcile] Mem0 client unavailable; MERGE/RETRACT_NEW rows left unapplied for resume',
-    );
-  }
-
   for (const row of pending) {
-    // m7: a destructive row with no client → skip the WHOLE branch (do NOT run
-    // rewriteMemoryText, do NOT markApplied) so the row replays intact next job.
-    // markApplied after a half-run (rewrite done, delete skipped) would orphan the
-    // new row permanently. KEEP_BOTH/SUPERSEDE need no client and proceed. This
-    // blanket-skips ALL MERGE rows including a hypothetical blank-merged_text MERGE
-    // (whose apply branch below falls back to softSupersede, needing no client) —
-    // harmless, because a blank-merged_text MERGE is unreachable: the parse barrier
-    // rejects it upstream (reconcile-llm.ts:263-266) (V5 子1 REFUTED, 留档).
-    if (isHardDelete(row.action) && !client) continue;
-
-    const now = Date.now();
-    const llmRaw = row.llm_raw as {
-      new_created_ms?: number | null;
-      merged_text?: string | null;
-    } | null;
-    // created_ms stamped onto the superseded row = the NEW memory's created_ms
-    // (recency of the superseding fact), threaded via llm_raw; fall back to now.
-    const newCreatedMs = typeof llmRaw?.new_created_ms === 'number' ? llmRaw.new_created_ms : now;
-    switch (row.action) {
-      case 'KEEP_BOTH':
-        // No side effects — just mark applied.
-        break;
-      case 'SUPERSEDE':
-        if (row.old_memory_id && row.new_memory_id) {
-          await softSupersede(db, collectionName, {
-            oldMemoryId: row.old_memory_id,
-            supersededByNewId: row.new_memory_id,
-            invalidAtMs: now,
-            createdMs: newCreatedMs,
-          });
-        }
-        break;
-      case 'MERGE':
-        if (row.old_memory_id && row.new_memory_id) {
-          const mergedText =
-            typeof llmRaw?.merged_text === 'string' ? llmRaw.merged_text.trim() : '';
-          if (mergedText.length > 0) {
-            // Rewrite the OLD (surviving) memory's text to absorb the new one,
-            // then delete new. The survivor stays LIVE — rewriteMemoryText writes
-            // only payload.data + created_ms, NOT superseded_by/invalid_at — so
-            // the merged memory is NOT filtered out by the P3 read path (the
-            // YUK-342 PR #405 bug: softSupersedeWithText marked the survivor
-            // superseded, hiding the merge result from reads).
-            await rewriteMemoryText(db, collectionName, {
-              memoryId: row.old_memory_id,
-              mergedText,
-              createdMs: newCreatedMs,
-            });
-            // client! — the m7 guard above continued past any client-less
-            // MERGE/RETRACT_NEW, so client is guaranteed present in this branch.
-            // biome-ignore lint/style/noNonNullAssertion: guaranteed by the m7 skip above.
-            await hardDeleteMemory(client!, row.new_memory_id);
-            // Q3 detection: one grep-able line per destructive apply (undo trigger).
-            console.warn(
-              `[memory_reconcile] destructive apply MERGE new_memory_id=${row.new_memory_id} old_memory_id=${row.old_memory_id} log_id=${row.id}`,
-            );
-          } else {
-            // Defensive (parse should require merged_text for MERGE): no merged
-            // text → mark old superseded WITHOUT rewriting/dropping new (no data loss).
-            await softSupersede(db, collectionName, {
-              oldMemoryId: row.old_memory_id,
-              supersededByNewId: row.new_memory_id,
-              invalidAtMs: now,
-              createdMs: newCreatedMs,
-            });
-          }
-        }
-        break;
-      case 'RETRACT_NEW':
-        if (row.new_memory_id) {
-          // biome-ignore lint/style/noNonNullAssertion: guaranteed by the m7 skip above.
-          await hardDeleteMemory(client!, row.new_memory_id);
-          // Q3 detection: one grep-able line per destructive apply (undo trigger).
-          console.warn(
-            `[memory_reconcile] destructive apply RETRACT_NEW new_memory_id=${row.new_memory_id} log_id=${row.id}`,
-          );
-        }
-        break;
+    if (row.action !== 'KEEP_BOTH') {
+      console.warn(
+        `[memory_reconcile] legacy destructive WAL row blocked action=${row.action} log_id=${row.id}`,
+      );
     }
     await markApplied(db, row.id);
   }
