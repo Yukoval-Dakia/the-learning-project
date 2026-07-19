@@ -96,13 +96,21 @@ export function masteryBandUnknown(): MasteryBandView {
  * - source = evidence_count>0 ? 'hard'(有校准证据) : 'soft'(先验)。绝不碰
  *   item_calibration.track。
  * - lowConf = 真实 low_confidence 透传。
- * - mastery==null（冷启）→ masteryBandUnknown()。
+ * - mastery==null 或非有限数（上游数值污染）→ masteryBandUnknown()；绝不把 NaN
+ *   反向落进最高档「精熟」。
+ * - 非有限 lo/hi 与缺失区间同样退回点 band，避免坏区间扩大误导。
  */
 export function masteryBandView(input: MasteryBandInput): MasteryBandView {
-  if (input.mastery == null) return masteryBandUnknown();
+  if (input.mastery == null || !Number.isFinite(input.mastery)) return masteryBandUnknown();
   const band = masteryBandIdx(input.mastery);
-  const loBand = input.mastery_lo == null ? band : masteryBandIdx(input.mastery_lo);
-  const hiBand = input.mastery_hi == null ? band : masteryBandIdx(input.mastery_hi);
+  const loBand =
+    input.mastery_lo == null || !Number.isFinite(input.mastery_lo)
+      ? band
+      : masteryBandIdx(input.mastery_lo);
+  const hiBand =
+    input.mastery_hi == null || !Number.isFinite(input.mastery_hi)
+      ? band
+      : masteryBandIdx(input.mastery_hi);
   const source: MasterySource = input.evidence_count > 0 ? 'hard' : 'soft';
   return { unknown: false, band, loBand, hiBand, source, lowConf: input.low_confidence };
 }

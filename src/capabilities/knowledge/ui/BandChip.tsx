@@ -31,6 +31,7 @@ export function BandChipView({
   const sourceLabel = view.source === 'soft' ? '初步判断' : '作答校准';
   const lowSuffix = view.lowConf ? ' · 低置信' : '';
   const bandLabel = view.unknown ? unknownLabel : labels[view.band];
+  const rangeLabel = view.unknown ? null : `${labels[view.loBand]}–${labels[view.hiBand]}`;
 
   // 冷启未知态：title 显式「未知 · 来源 · 低置信」，不报区间也不报 0%（一等态）。
   let title: string;
@@ -45,6 +46,14 @@ export function BandChipView({
     <span className={className} title={title}>
       <span className="bc-dot" />
       {bandLabel}
+      {!view.unknown && (
+        <span
+          className="bc-range"
+          aria-label={`区间 ${labels[view.loBand]} 至 ${labels[view.hiBand]}`}
+        >
+          {rangeLabel}
+        </span>
+      )}
       {view.lowConf && <span className="bc-low">低置信</span>}
     </span>
   );
