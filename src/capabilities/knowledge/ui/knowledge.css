@@ -263,6 +263,11 @@
   font-weight: 600;
   color: var(--hard-ink);
 }
+.band-chip .bc-range {
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  color: var(--ink-3);
+}
 
 /* A5 S2 (YUK-354) — FrontierRail:「下一步，你学得动这些」learnable_frontier 横幅.
    PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L17-39（只搬 .frontier*
