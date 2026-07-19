@@ -2,9 +2,10 @@
 //
 // POST /api/prep-desk/brief/ack — the "知道了" that retires a delivered outcome. The
 // heavy lifting (target validation, idempotency, single append) lives in the writer
-// (server/teaching-brief-ack.ts). Honest failures: an unparseable/missing body → 400;
-// an unknown or non-outcome target → 404/409; a corrupt result → 409. The UI keeps the
-// current brief and offers a retry (contract §7) — it never optimistically advances.
+// (server/teaching-brief-ack.ts). REST status (mirrors proposal-decisions.ts): a fresh
+// ack → 201 Created; an idempotent re-ack → 200 OK. Honest failures: an unparseable/missing
+// body → 400; a non-result target → 404; not the current primary outcome → 409; a corrupt
+// ack payload → 500. The UI keeps the current brief and offers a retry (contract §7).
 
 import { acknowledgeTeachingBriefOutcome } from '@/capabilities/shell/server/teaching-brief-ack';
 import { db } from '@/db/client';
@@ -25,7 +26,8 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const result = await acknowledgeTeachingBriefOutcome(db, parsed.data.probe_result_event_id);
-    return Response.json(result);
+    // 201 when this call created the ack, 200 when a prior ack already existed (idempotent).
+    return Response.json(result, { status: result.idempotent ? 200 : 201 });
   } catch (err) {
     return errorResponse(err);
   }

@@ -14,11 +14,14 @@
 //
 // Idempotency (acceptance items 4/5): one effective ack per outcome. The ack is keyed
 // on the probe_result event id — `(action=BRIEF_ACK_ACTION, subject_kind='event',
-// subject_id=<result id>)`. An existing ack short-circuits to idempotent:true BEFORE any
-// deliverability check (so a successful retry still resolves even after the proposal was
-// retracted or the probe drifted). A per-target advisory lock (hashtextextended on the
-// result id, mirroring answerProbe) serializes the first-write race so two "知道了" clicks
-// can never both insert.
+// subject_id=<result id>)`. CHECK-SEQUENCE INVARIANT: idempotency ALWAYS precedes the
+// deliverability verdict — a lock-free existing-ack short-circuit runs first, and the
+// deliverability verdict itself runs INSIDE the per-target advisory lock AFTER a second
+// existing-ack re-check. So a retry after a lost response, AND a concurrent "知道了" whose
+// sibling committed first, both resolve to idempotent:true instead of a misleading 409 —
+// even after the proposal was retracted or the probe drifted. The advisory lock
+// (hashtextextended on the result id, mirroring answerProbe) serializes the first-write
+// race so two clicks can never both insert.
 //
 // Deliverability (acceptance items 6/8, review rounds 1–5): a FIRST ack must target the
 // outcome the reader would currently deliver. Rather than re-derive each dimension, it
@@ -30,7 +33,7 @@
 
 import { loadOutcomeBrief } from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
-import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
+import { BRIEF_ACK_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -116,15 +119,16 @@ export async function acknowledgeTeachingBriefOutcome(
   const prior = await findExistingAck(db, probeResultEventId);
   if (prior) return prior;
 
-  // First ack — a 404 for a non-existent result (precise), then defer the WHOLE
-  // deliverability judgment to the reader itself: require the target to be exactly the
-  // outcome loadOutcomeBrief would currently deliver. This makes the writer's ackable set
-  // identical to the reader's delivered set — every dimension (canonical, TTL window, chain,
-  // correction folding) plus SELECTION — with zero re-derivation (round-5, codex P2).
+  // First ack — a precise 404 when the id is not a probe_result outcome at all (the action
+  // filter makes a non-result id 404 rather than a misleading 409). Then defer the WHOLE
+  // deliverability judgment to the reader: require the target to be exactly the outcome
+  // loadOutcomeBrief would currently deliver. This makes the writer's ackable set identical
+  // to the reader's delivered set — every dimension (canonical, TTL window, chain, correction
+  // folding) plus SELECTION — with zero re-derivation (round-5, codex P2).
   const [result] = await db
     .select({ id: event.id })
     .from(event)
-    .where(eq(event.id, probeResultEventId))
+    .where(and(eq(event.id, probeResultEventId), eq(event.action, PROBE_RESULT_ACTION)))
     .limit(1);
   if (!result) {
     throw new ApiError(
@@ -133,26 +137,34 @@ export async function acknowledgeTeachingBriefOutcome(
       404,
     );
   }
+  // Read the reader's current primary with the pooled db (validateAckableOutcome's Promise.all
+  // needs separate connections, so this cannot run on the single tx connection). The verdict
+  // on it is deferred INTO the lock below, after the idempotency re-check.
   const primaryOutcome = await loadOutcomeBrief(db, now);
-  if (
-    primaryOutcome === null ||
-    primaryOutcome.current_outcome.probe_result_event_id !== probeResultEventId
-  ) {
-    throw new ApiError(
-      'not_current_primary',
-      `event ${probeResultEventId} is not the current primary outcome`,
-      409,
-    );
-  }
-  const briefId = primaryOutcome.brief_id;
 
-  // Append under the per-target advisory lock; re-check inside the lock so two concurrent
-  // first-writes still produce exactly one anchor (the loser returns idempotent:true).
+  // Append under the per-target advisory lock. Check sequence invariant: idempotency ALWAYS
+  // precedes the deliverability verdict, including the concurrent path. A racer that committed
+  // its ack after our lock-free findExistingAck made the reader exclude our target from
+  // `primaryOutcome` above — but that is a completed ack, not a failure. Re-checking existing
+  // ack INSIDE the lock before ruling on primary-ness turns that concurrent loss into an
+  // idempotent success instead of a misleading not_current_primary 409 (round-6, codex P2).
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeResultEventId}, 0))`);
 
     const racing = await findExistingAck(tx, probeResultEventId);
     if (racing) return racing;
+
+    if (
+      primaryOutcome === null ||
+      primaryOutcome.current_outcome.probe_result_event_id !== probeResultEventId
+    ) {
+      throw new ApiError(
+        'not_current_primary',
+        `event ${probeResultEventId} is not the current primary outcome`,
+        409,
+      );
+    }
+    const briefId = primaryOutcome.brief_id;
 
     const ackEventId = newId();
     await writeEvent(tx, {

@@ -119,7 +119,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     const resultId = await seedOutcome('confirmed');
 
     const res = await post({ probe_result_event_id: resultId });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201); // fresh create (REST convention, mirrors proposal-decisions)
     const body = TeachingBriefAckResponseSchema.parse(await res.json());
     expect(body).toMatchObject({ probe_result_event_id: resultId, idempotent: false });
     expect(body.brief_id.length).toBeGreaterThan(0);
@@ -133,15 +133,17 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
   });
 
-  it('is idempotent — a repeated ack returns the same anchor and writes no second event', async () => {
+  it('is idempotent — a repeated ack returns the same anchor, 201 then 200, no second event', async () => {
     const resultId = await seedOutcome('retired');
 
-    const first = TeachingBriefAckResponseSchema.parse(
-      await (await post({ probe_result_event_id: resultId })).json(),
-    );
-    const second = TeachingBriefAckResponseSchema.parse(
-      await (await post({ probe_result_event_id: resultId })).json(),
-    );
+    const firstRes = await post({ probe_result_event_id: resultId });
+    expect(firstRes.status).toBe(201);
+    const first = TeachingBriefAckResponseSchema.parse(await firstRes.json());
+    expect(first.idempotent).toBe(false);
+
+    const secondRes = await post({ probe_result_event_id: resultId });
+    expect(secondRes.status).toBe(200); // idempotent re-ack
+    const second = TeachingBriefAckResponseSchema.parse(await secondRes.json());
 
     expect(second.idempotent).toBe(true);
     expect(second.brief_acknowledgement_event_id).toBe(first.brief_acknowledgement_event_id);
@@ -191,13 +193,38 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(await ackEvents(resultId)).toHaveLength(1);
   });
 
+  // Round-6 (codex P2): the concurrency window. Two concurrent route acks on the same target
+  // must resolve to one create + one idempotent — NEVER a not_current_primary 409. The loser's
+  // pre-lock loadOutcomeBrief may see the target already excluded (the winner committed its
+  // ack), but the in-lock existing-ack re-check runs BEFORE the primary verdict, so the loser
+  // gets idempotent success. (Deterministic regardless of interleaving: the advisory lock
+  // serializes the append and the loser always finds the winner's ack inside the lock.)
+  it('concurrent route acks resolve to one 201 + one 200, never 409, single anchor', async () => {
+    const resultId = await seedOutcome('confirmed');
+
+    const [a, b] = await Promise.all([
+      post({ probe_result_event_id: resultId }),
+      post({ probe_result_event_id: resultId }),
+    ]);
+
+    // One create (201), one idempotent (200) — never a 409.
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    const bodies = [
+      TeachingBriefAckResponseSchema.parse(await a.json()),
+      TeachingBriefAckResponseSchema.parse(await b.json()),
+    ];
+    expect(bodies.map((x) => x.idempotent).sort()).toEqual([false, true]);
+    expect(bodies[0].brief_acknowledgement_event_id).toBe(bodies[1].brief_acknowledgement_event_id);
+    expect(await ackEvents(resultId)).toHaveLength(1);
+  });
+
   it('drops the acknowledged outcome from brief eligibility end-to-end', async () => {
     const resultId = await seedOutcome('confirmed');
     const before = await loadTeachingBrief(testDb());
     expect(before.brief).toMatchObject({ state: 'outcome_confirmed' });
 
     const res = await post({ probe_result_event_id: resultId });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
 
     // Only the acked outcome existed → quiet null after ack.
     await expect(loadTeachingBrief(testDb())).resolves.toEqual({ brief: null });
@@ -213,7 +240,9 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(res.status).toBe(404);
   });
 
-  it('409 when the target is a real event but not a probe_result outcome', async () => {
+  // Round-6 (OCR minor): a real event id that is NOT a probe_result gets a precise 404
+  // (the existence check filters on action=probe_result), not a misleading 409.
+  it('404 when the target is a real event but not a probe_result', async () => {
     const notResultId = newId();
     await writeEvent(testDb(), {
       id: notResultId,
@@ -225,7 +254,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
       payload: { note: 'some other event' },
     });
     const res = await post({ probe_result_event_id: notResultId });
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(404);
     expect(await ackEvents(notResultId)).toHaveLength(0);
   });
 
@@ -336,12 +365,12 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(hidden.status).toBe(409);
     expect(await ackEvents(older)).toHaveLength(0);
 
-    // The newer outcome IS the current primary → ackable.
-    expect((await post({ probe_result_event_id: newer })).status).toBe(200);
+    // The newer outcome IS the current primary → ackable (fresh create → 201).
+    expect((await post({ probe_result_event_id: newer })).status).toBe(201);
 
     // With the newer acked (NOT-EXISTS-excluded), the older resurfaces as primary → ackable.
     const resurfaced = await post({ probe_result_event_id: older });
-    expect(resurfaced.status).toBe(200);
+    expect(resurfaced.status).toBe(201);
     expect(await ackEvents(older)).toHaveLength(1);
   });
 
