@@ -332,6 +332,13 @@ describe('runJyeooFetch', () => {
       }),
     ).rejects.toThrow(/network/);
     expect(await db.select().from(question)).toHaveLength(0);
+    const failures = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:jyeoo_fetch'));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.outcome).toBe('failure');
+    expect((failures[0]?.payload as { failure_class: string }).failure_class).toBe('network');
   });
 
   it('VIP expiry (per-line vip:false): whole batch discarded, no INSERT', async () => {

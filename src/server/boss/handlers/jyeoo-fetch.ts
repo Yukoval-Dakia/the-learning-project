@@ -279,6 +279,12 @@ interface PersistedQuestionImages {
   assets: SourceAssetRow[];
 }
 
+// `return promise` from inside an async try/finally leaves the returned promise temporarily
+// unobserved while the finally block awaits temp-dir cleanup. A fast retryable rejection can then
+// surface as an unhandledRejection even though the caller awaits runJyeooFetch. Await classified
+// failures in-place and use this marker so the outer unexpected-failure catch does not double-log.
+class RetryableJyeooProducerError extends Error {}
+
 function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -541,7 +547,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       });
     } catch (spawnErr) {
       // OS-level spawn failure (ENOENT etc.) — terminal 'spawn' class, no INSERT.
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -558,7 +564,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     if (classification.failure !== null || truncated) {
       const failureClass: JyeooFailureClass = classification.failure ?? 'unknown';
       const retryable = classification.failure !== null ? classification.retryable : false;
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -594,7 +600,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     }
 
     if (vipViolation) {
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -827,6 +833,9 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
 
     return { status: 'ready', question_ids: questionIds, counts };
   } catch (err) {
+    // finishFailure already wrote the classified producer event. Do not add a second generic
+    // persist-stage failure event; only preserve the rejection so pg-boss redelivers the job.
+    if (err instanceof RetryableJyeooProducerError) throw err;
     // Unexpected (persist/event/dispatch) failure — write a failure event + re-throw so
     // pg-boss retries (transient DB errors). Producer-classified failures never reach
     // here (they return via finishFailure above).
@@ -924,7 +933,9 @@ async function finishFailure(args: FinishFailureArgs): Promise<RunJyeooFetchResu
     );
   }
   if (retryable) {
-    throw new Error(`jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`);
+    throw new RetryableJyeooProducerError(
+      `jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`,
+    );
   }
   return { status: `failed:${failureClass}`, counts };
 }
