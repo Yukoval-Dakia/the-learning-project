@@ -277,21 +277,29 @@ export function buildMemoryEventIngestHandler(
       // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
       // enqueue reconcile for the new memory ids.
       const memResult = admitToExtraction ? await client.addEventMemory(row) : null;
-      // YUK-729 — swallow + log a transient enqueue failure, mirroring the
-      // subject-bridge precedent below. addEventMemory above is PAID and
-      // non-idempotent; if a boss.send hiccup rethrew out of the handler, pg-boss
-      // would redeliver (retryLimit) and re-run the extraction — duplicate cost
-      // plus a persistent duplicate mem0 row (reconcile is human-gated to
-      // KEEP_BOTH). A dropped brief regen is exactly what the hourly/03:00 brief
-      // sweep backstops.
-      try {
-        for (const scopeKey of row.affected_scopes) {
-          await enqueueBriefRegen(boss, scopeKey);
-        }
-      } catch (err) {
+      // YUK-729 — enqueue each affected scope INDEPENDENTLY and swallow+log the
+      // failures. Two properties matter: (1) allSettled per scope, so one scope's
+      // transient boss.send hiccup does not skip the remaining scopes (a plain
+      // sequential for-loop under one try/catch would abort the rest); (2) no
+      // rethrow, so the handler never triggers pg-boss redelivery of the PAID,
+      // non-idempotent addEventMemory above (redelivery = duplicate cost + a
+      // persistent duplicate mem0 row, reconcile being human-gated to KEEP_BOTH).
+      // Backstop is PARTIAL, not total: listStaleBriefScopes (the hourly/03:00
+      // sweep) re-scans only scopes that ALREADY have a memory_brief_note row, so a
+      // scope whose FIRST brief never got written loses just THIS batch's regen;
+      // scopes with an existing brief row are still swept.
+      const regenResults = await Promise.allSettled(
+        row.affected_scopes.map((scopeKey) => enqueueBriefRegen(boss, scopeKey)),
+      );
+      const regenFailures = regenResults.flatMap((result, i) =>
+        result.status === 'rejected'
+          ? [{ scope: row.affected_scopes[i], reason: result.reason }]
+          : [],
+      );
+      if (regenFailures.length > 0) {
         console.warn(
-          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id}; nightly sweep will backstop`,
-          err,
+          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id} (${regenFailures.length}/${row.affected_scopes.length} scopes: ${regenFailures.map((f) => f.scope).join(', ')}); scopes with an existing brief are still swept, a first-appearance scope loses only this batch`,
+          regenFailures.map((f) => f.reason),
         );
       }
 

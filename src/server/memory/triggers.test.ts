@@ -285,7 +285,58 @@ describe('buildMemoryEventIngestHandler', () => {
     expect(addEventMemory).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('[memory_brief_bridge] affected_scopes brief regen enqueue failed'),
-      expect.any(Error),
+      // The warn now aggregates the per-scope rejection reasons into an array.
+      expect.arrayContaining([expect.any(Error)]),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('YUK-729 — a first-scope brief-regen failure does not skip the remaining scopes (per-scope allSettled)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The FIRST affected scope's enqueue throws; the later scopes must still enqueue
+    // (a sequential for-loop under one try/catch would have aborted after 'global').
+    const send = vi.fn(async (name: string, data: { scope_key?: string }) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE && data.scope_key === 'global') {
+        throw new Error('first scope boom');
+      }
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global', 'topic:k1', 'topic:k2'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    // Both later scopes were still enqueued despite the first throwing.
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'topic:k1' },
+      expect.anything(),
+    );
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'topic:k2' },
+      expect.anything(),
+    );
+    // Failure is still surfaced, naming the failed scope.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('global'),
+      expect.arrayContaining([expect.any(Error)]),
     );
     warnSpy.mockRestore();
   });

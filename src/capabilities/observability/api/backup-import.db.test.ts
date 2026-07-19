@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { BackupImportResponseSchema } from './backup-contracts';
-import { POST } from './backup-import';
+import { MAX_BACKUP_UPLOAD_BYTES, POST } from './backup-import';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
@@ -165,13 +165,17 @@ describe('POST /api/_/import — guards', () => {
 
   // YUK-729 — an oversized backup upload must be rejected by its declared
   // Content-Length BEFORE the whole ZIP is buffered into memory and the
-  // destructive wipe-and-reload runs. 100 MB is comfortably over the ~64 MB cap.
+  // destructive wipe-and-reload runs. Uses the exported cap + 1 so it stays correct
+  // if the export-side derivation (MAX_INLINE_ASSETS / MAX_IMAGE_UPLOAD_BYTES) moves.
   it('returns 413 when the declared Content-Length exceeds the backup cap, with zero side effects', async () => {
     const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
       method: 'POST',
       // Tiny actual body; the oversized Content-Length header is what gates.
       body: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
-      headers: { 'content-type': 'application/zip', 'content-length': '100000000' },
+      headers: {
+        'content-type': 'application/zip',
+        'content-length': String(MAX_BACKUP_UPLOAD_BYTES + 1),
+      },
     });
     const res = await POST(req);
     expect(res.status).toBe(413);
