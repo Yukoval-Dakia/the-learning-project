@@ -246,7 +246,14 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
             : null;
       return compact([
         summaryItem('修改', opCount === null ? '更新笔记内容' : `${opCount} 处内容调整`),
-        summaryItem('说明', noteUpdateSummary(change)),
+        typeof summary?.ops_count === 'number'
+          ? summaryItem(
+              '新增',
+              typeof summary.new_blocks === 'number' && summary.new_blocks > 0
+                ? `${summary.new_blocks} 个内容块`
+                : null,
+            )
+          : summaryItem('说明', noteUpdateSummary(change)),
       ]);
     }
     case 'variant_question':
@@ -358,7 +365,28 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
 
 function technicalDetails(payload: AiProposalPayloadT): string | null {
   if (payload.kind === 'conjecture') return null;
-  return JSON.stringify(payload.proposed_change, null, 2);
+  const details = recordOf(payload.proposed_change);
+  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
+  if (payload.kind === 'variant_question' || payload.kind === 'question_draft') {
+    const { difficulty, ...learnerSafe } = details;
+    return JSON.stringify(
+      { ...learnerSafe, difficulty_estimate: estimatedDifficulty(difficulty) },
+      null,
+      2,
+    );
+  }
+  if (payload.kind === 'relearn') {
+    const { current_mastery, peak_mastery, ...learnerSafe } = details;
+    return JSON.stringify(
+      {
+        ...learnerSafe,
+        mastery_trend_estimate: estimatedMasteryTrend(current_mastery, peak_mastery),
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(details, null, 2);
 }
 
 /**

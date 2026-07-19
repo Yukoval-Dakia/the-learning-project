@@ -106,6 +106,16 @@ describe('proposal producer helpers', () => {
     expect(variant?.presentation?.evidence_labels['question:q1']).toBe(
       '题目 · 解释「之」在句中的作用。',
     );
+    expect(variant?.presentation?.technical_details).not.toContain('"difficulty"');
+    expect(variant?.presentation?.technical_details).toContain(
+      '"difficulty_estimate": "中等（AI 估计，仅供参考）"',
+    );
+    const relearn = rows.find((row) => row.kind === 'relearn');
+    expect(relearn?.presentation?.technical_details).not.toContain('current_mastery');
+    expect(relearn?.presentation?.technical_details).not.toContain('peak_mastery');
+    expect(relearn?.presentation?.technical_details).toContain(
+      '"mastery_trend_estimate": "较历史高点明显回落（AI 估计，仅供参考）"',
+    );
   });
 
   it('rejects judge_retraction evidence refs that do not point to judge events', async () => {
@@ -414,7 +424,7 @@ describe('proposal producer helpers', () => {
       proposalChangeSummary(payload('note_update', { summary: { ops_count: 2, new_blocks: 1 } })),
     ).toEqual([
       { label: '修改', value: '2 处内容调整' },
-      { label: '说明', value: '2 处内容调整，其中新增 1 块' },
+      { label: '新增', value: '1 个内容块' },
     ]);
   });
 
