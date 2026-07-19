@@ -2,6 +2,7 @@
 
 **Status**: Accepted (2026-06-03)
 **Supersedes**: the question-only scheduling assumption in Phase 1c.1 comments and review-read paths.
+**Superseded by**: [ADR-0030](0030-variant-rotation-probe-by-kind-selection.md) — §决定③的选题 seam 换为 by-kind 路由；调度单元、存储与 event 形状不变。
 **Part of**: YUK-203（领域模型重构）·P3。**Decision source**: `docs/design/2026-06-03-target-domain-model.md` §5/§7.1。
 
 ---

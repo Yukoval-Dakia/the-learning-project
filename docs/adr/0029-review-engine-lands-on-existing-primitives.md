@@ -4,6 +4,7 @@
 **Part of**: YUK-203（领域模型重构）· YUK-205（U0 决策 gate）。
 **Decision source**: `docs/audit/2026-06-04-design-feasibility-audit.md`（29-agent 可行性审计，30 条高严重度发现全部经对抗验证）+ 2026-06-04 grill 会话逐条拍板（决议全文 `docs/superpowers/specs/` 三份 spec 的同日修订）。
 **Related**: ADR-0006 v2（event 核）/ ADR-0008（session envelope）/ ADR-0012（mastery 派生 view）/ ADR-0014（capability registry；其 part 调度 facet 已被本簇 D2 注记 supersede）/ ADR-0017（memory 双层）/ ADR-0020（artifact）/ ADR-0025 ND-5（proposal-only 正主）/ ADR-0028（知识级 FSRS，随 P3 分支合入）。
+**Amended by**: [ADR-0037](0037-unified-scheduling-merge-engine.md) — 决定 4（Coach → brief → ReviewPlanTask 两级流水线）被合并引擎取代，`review_plan` 退役。
 
 ---
 
