@@ -1,5 +1,5 @@
 import { resolveSuggestionKind } from '@/core/schema/proposal';
-import { event } from '@/db/schema';
+import { event, question_block } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -156,6 +156,51 @@ describe('proposal producer helpers', () => {
   // user accept).
   it('writeBlockMergeProposal lands a block_merge proposal in the inbox with the typed change read back', async () => {
     const db = testDb();
+    const now = new Date('2026-07-19T08:00:00.000Z');
+    await db.insert(question_block).values([
+      {
+        id: 'block_a',
+        ingestion_session_id: 'sess_1',
+        ordinal: 0,
+        page_spans: [{ page_index: 0, bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.2 } }],
+        structured: {
+          id: 'sq_a',
+          role: 'standalone',
+          question_no: '12',
+          prompt_text: '已知函数 f(x) 在区间上连续，',
+        },
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'block_b',
+        ingestion_session_id: 'sess_1',
+        ordinal: 1,
+        page_spans: [{ page_index: 0, bbox: { x: 0.1, y: 0.35, width: 0.8, height: 0.2 } }],
+        structured: {
+          id: 'sq_b',
+          role: 'standalone',
+          question_no: '12',
+          prompt_text: '并满足 f(0)=1，求函数的最小值。',
+        },
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'block_c',
+        ingestion_session_id: 'sess_1',
+        ordinal: 2,
+        page_spans: [{ page_index: 1, bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.2 } }],
+        structured: {
+          id: 'sq_c',
+          role: 'standalone',
+          question_no: '12',
+          prompt_text: '请写出完整推导过程。',
+        },
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
     const id = await writeBlockMergeProposal(db, {
       ingestion_session_id: 'sess_1',
       primary_block_id: 'block_a',
@@ -199,6 +244,29 @@ describe('proposal producer helpers', () => {
     // proposal. Guard the resolved kind, not just the absent field.
     expect(row.payload.suggestion_kind).toBeUndefined();
     expect(resolveSuggestionKind(row.payload)).toBe('proactive');
+    expect(row.presentation).toEqual({
+      title: '合并 3 个被切断的题块',
+      block_merge: {
+        primary: {
+          id: 'block_a',
+          label: '第 1 块 · 题号 12 · 第 1 页',
+          excerpt: '已知函数 f(x) 在区间上连续，',
+        },
+        merged: [
+          {
+            id: 'block_b',
+            label: '第 2 块 · 题号 12 · 第 1 页',
+            excerpt: '并满足 f(0)=1，求函数的最小值。',
+          },
+          {
+            id: 'block_c',
+            label: '第 3 块 · 题号 12 · 第 2 页',
+            excerpt: '请写出完整推导过程。',
+          },
+        ],
+        continuity_label: '题号连续',
+      },
+    });
   });
 
   // §5 dedup (1) — the cooldown_key is derived from the SORTED merge ids, so a

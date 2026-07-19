@@ -94,6 +94,21 @@ export interface ProposalPayloadWire {
   [key: string]: unknown;
 }
 
+export interface ProposalBlockPreviewWire {
+  id: string;
+  label: string;
+  excerpt: string;
+}
+
+export interface ProposalPresentationWire {
+  title: string;
+  block_merge: {
+    primary: ProposalBlockPreviewWire | null;
+    merged: ProposalBlockPreviewWire[];
+    continuity_label: string | null;
+  } | null;
+}
+
 export interface ProposalInboxRow {
   id: string;
   kind: string;
@@ -108,6 +123,8 @@ export interface ProposalInboxRow {
   source_action: string;
   source_subject_kind: string;
   signals: Record<string, unknown> | null;
+  /** Server-curated learner copy. Optional keeps older cached pages forward-compatible. */
+  presentation?: ProposalPresentationWire | null;
 }
 
 export interface ProposalPageWire {
