@@ -49,10 +49,10 @@ import {
   isTransientAgentFailure,
 } from './agent-run-error';
 import {
+  logMissingMcpServersWarning,
   writeAiTaskRunFinished,
   writeAiTaskRunStarted,
   writeCostLedger,
-  writeMissingMcpServersWarning,
   writeToolCallLog,
 } from './log';
 import { populateIsolatedSkills } from './populate-skills';
@@ -555,23 +555,10 @@ async function runTaskAttempt(args: {
   }
 
   if (def.needsToolCall && !ctx.mcpServers) {
-    console.warn('[runTask] missing_mcp_servers', {
-      event: 'missing_mcp_servers',
+    logMissingMcpServersWarning({
       task_run_id: taskRunId,
-      kind,
+      task_kind: kind,
     });
-    try {
-      await writeMissingMcpServersWarning(ctx.db, {
-        task_run_id: taskRunId,
-        task_kind: kind,
-      });
-    } catch (err) {
-      console.error('[runTask] writeMissingMcpServersWarning failed', {
-        task_run_id: taskRunId,
-        kind,
-        err,
-      });
-    }
   }
 
   const abortController = new AbortController();

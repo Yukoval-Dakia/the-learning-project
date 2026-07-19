@@ -6,7 +6,7 @@
 // uniformly. We mock the SDK at module boundary so unit tests don't spawn
 // the `claude` binary.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
 
@@ -34,7 +34,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { MISSING_MCP_SERVERS_GUARD } from './log';
 import { runAgentTask, runTask, streamTask } from './runner';
 
 function successResult(text: string, cost_usd = 0.001) {
@@ -47,6 +46,8 @@ function successResult(text: string, cost_usd = 0.001) {
     usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
   };
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('runTask (Claude Agent SDK adapter)', () => {
   beforeEach(async () => {
@@ -146,7 +147,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(opts.tools).toEqual(['mcp__loom__write_proposal']);
   });
 
-  it('warns and records a guard row when an agentic task has no mcpServers', async () => {
+  it('warns once when an agentic task has no mcpServers', async () => {
     mockSdk.messages = [successResult('ok')];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -161,22 +162,29 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       task_run_id: result.task_run_id,
       kind: 'KnowledgeReviewTask',
     });
-    warn.mockRestore();
+    expect(warn).toHaveBeenCalledOnce();
+  });
 
-    const { tool_call_log } = await import('@/db/schema');
-    const { and, eq } = await import('drizzle-orm');
-    const rows = await testDb()
-      .select()
-      .from(tool_call_log)
-      .where(
-        and(
-          eq(tool_call_log.task_run_id, result.task_run_id),
-          eq(tool_call_log.tool_name, MISSING_MCP_SERVERS_GUARD),
-        ),
-      );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.output_json).toEqual({ event: 'missing_mcp_servers' });
-    expect(rows[0]?.iteration).toBe(0);
+  it('does not warn when a non-agentic task has no mcpServers', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when an agentic task receives an mcpServers map', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runTask(
+      'KnowledgeReviewTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), mcpServers: {} },
+    );
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('ctx.allowedTools overrides registry default', async () => {

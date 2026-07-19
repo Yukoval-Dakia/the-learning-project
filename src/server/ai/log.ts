@@ -49,22 +49,15 @@ export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Pro
   return id;
 }
 
-export const MISSING_MCP_SERVERS_GUARD = '__runner_guard_missing_mcp_servers__';
-
-/** Persist the runTask guard that detects an agentic task without an MCP server map. */
-export async function writeMissingMcpServersWarning(
-  db: DbLike,
-  entry: { task_run_id: string; task_kind: string },
-): Promise<string> {
-  return writeToolCallLog(db, {
+/** Emit the runTask guard through the centralized application-log surface. */
+export function logMissingMcpServersWarning(entry: {
+  task_run_id: string;
+  task_kind: string;
+}): void {
+  console.warn('[runTask] missing_mcp_servers', {
+    event: 'missing_mcp_servers',
     task_run_id: entry.task_run_id,
-    task_kind: entry.task_kind,
-    tool_name: MISSING_MCP_SERVERS_GUARD,
-    input_json: { needsToolCall: true, mcpServers: false },
-    output_json: { event: 'missing_mcp_servers' },
-    iteration: 0,
-    latency_ms: 0,
-    cost: 0,
+    kind: entry.task_kind,
   });
 }
 
