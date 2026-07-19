@@ -304,7 +304,7 @@ export async function loadKnowledgeNodePage(
   // simultaneous node-page loads are rare, and postgres-js queues (never errors)
   // when the pool is momentarily saturated — no chunking needed at this scale.
   //
-  // 3. primary atomic — the newest non-archived note_atomic whose knowledge_ids
+  // primary atomic — the newest non-archived note_atomic whose knowledge_ids
   // contains this node. atomic.knowledge_ids length is 1 (ADR-0020 §3), so a node
   // has at most one "节点简介" atomic; we still pick newest if multiple.
   const atomicPromise = db
@@ -327,7 +327,7 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(artifact.created_at))
     .limit(1)
     .execute();
-  // 5. timeline — events whose payload.referenced_knowledge_ids contains this
+  // timeline — events whose payload.referenced_knowledge_ids contains this
   // node, newest first (ADR-0020 GIN index `event_referenced_knowledge_gin`).
   const timelinePromise = db
     .select({
@@ -345,10 +345,10 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(event.created_at))
     .limit(TIMELINE_LIMIT)
     .execute();
-  // 3b. all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
+  // all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
   // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
   const notesPromise = notesForKnowledge(db, knowledgeId);
-  // 3c. interactive artifacts labeled with this node (ADR-0033 D5) — kept out of
+  // interactive artifacts labeled with this node (ADR-0033 D5) — kept out of
   // `notes` (note contract) on purpose.
   const interactivePromise = interactiveForKnowledge(db, knowledgeId);
   // subject profile for the focal node (slimmed at the return site).

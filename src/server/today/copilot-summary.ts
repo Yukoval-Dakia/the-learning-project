@@ -131,8 +131,11 @@ export async function loadCopilotSummary(
       // every /today load. Summing the per-kind counts gives the same total as
       // the old `listProposalInboxPage({ status: 'pending' }).rows.length`
       // (same pending-derivation universe, no lane filter) UNLESS the counter
-      // hits its scan cap — see the hasMore fallback below.
-      countPendingProposalInboxByKind(db, opts.pendingCountOptions),
+      // hits its scan cap — see the hasMore lower-bound handling below. The
+      // `?? undefined` guards a caller passing `pendingCountOptions: null`: JS
+      // default-param substitution fires on undefined, not null, so null would
+      // otherwise reach the helper body and throw on `options.batchSize`.
+      countPendingProposalInboxByKind(db, opts.pendingCountOptions ?? undefined),
       // Dreaming preview: the top `previewLimit` pending proposals authored by
       // Dreaming, in the inbox ranking order. Bounded via the actorRef filter +
       // limit so the ranked pagination loop stops after `previewLimit` matching
