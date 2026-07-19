@@ -81,6 +81,10 @@ import {
   learning_item,
   mistake_variant,
 } from '@/db/schema';
+// YUK-546 — shared sorted advisory-lock util (same namespace/ordering the merge-side
+// rewireKnowledgeEdges uses), so the propose-accept live-edge write and the merge rewire
+// serialize on shared endpoints instead of both passing the topology gate then merging to a cycle.
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
@@ -692,6 +696,21 @@ export async function decideKnowledgeEdgeProposal(
 
   try {
     await db.transaction(async (tx) => {
+      // YUK-546 — symmetric propose-side advisory lock. rewireKnowledgeEdges (the merge-side edge
+      // rewrite) already takes `pg_advisory_xact_lock(hashtext('knowledge_edge:<id>'))` on its two
+      // merge endpoints (YUK-543 review L1); this accept path — the OTHER writer that reads the live
+      // mesh, passes the ADR-0034 topology gate, then writes a live edge — took no such lock, leaving
+      // the "two READ COMMITTED txs each pass the gate then merge into a cycle" window open (that
+      // exact follow-up the merge-side comment flagged). Acquire the SAME namespace, SAME sorted
+      // acquisition on THIS edge's [fromId, toId] BEFORE the fold's live-mesh read below
+      // (projectKnowledgeEdgeGuarded / assertKnowledgeEdgeParity → gatherAndFoldKnowledgeEdge, a fresh
+      // `archived_at IS NULL` SELECT): a concurrent accept of A→B and B→A now serializes — the second
+      // blocks here until the first commits, then its fold sees the committed edge and the topology
+      // gate rejects the reverse edge instead of silently completing the cycle. Sorted string order
+      // shares one global lock ordering with the merge path, so accept-vs-merge on the same nodes
+      // never deadlocks.
+      await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
+
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',
