@@ -49,6 +49,8 @@ describe('deleteQuestion rolling compatibility (YUK-298)', () => {
     const result = await deleteQuestion('parent', { fallbackChildren: 2 });
 
     expect(result.kind).toBe('confirm_required');
+    if (result.kind !== 'confirm_required') throw new Error('expected confirmation gate');
     expect(result.associations.children).toBe(2);
+    expect(result.has_associations).toBe(true);
   });
 });

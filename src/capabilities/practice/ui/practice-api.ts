@@ -268,6 +268,16 @@ function normalizeQuestionAssociationCounts(
   };
 }
 
+function hasQuestionAssociations(counts: QuestionAssociationCounts): boolean {
+  return (
+    counts.attempts > 0 ||
+    counts.mistakes > 0 ||
+    counts.fsrs_cards > 0 ||
+    counts.paper_refs > 0 ||
+    counts.children > 0
+  );
+}
+
 export async function deleteQuestion(
   id: string,
   opts: {
@@ -308,13 +318,17 @@ export async function deleteQuestion(
 
   // 409 confirm_required：约束门（version 校验之前，无写库副作用）→ 回计数给 UI 展示。
   if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
+    const associations = normalizeQuestionAssociationCounts(
+      body.associations,
+      opts.fallbackChildren ?? 0,
+    );
     return {
       kind: 'confirm_required',
-      associations: normalizeQuestionAssociationCounts(
-        body.associations,
-        opts.fallbackChildren ?? 0,
-      ),
-      has_associations: body.has_associations ?? false,
+      associations,
+      // Old APIs can truthfully report false only because they do not know about
+      // the additive child dimension. Never let that stale aggregate override the
+      // conservative detail fallback.
+      has_associations: body.has_associations === true || hasQuestionAssociations(associations),
     };
   }
 
