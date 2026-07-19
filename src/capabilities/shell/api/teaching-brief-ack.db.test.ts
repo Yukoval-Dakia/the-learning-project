@@ -15,7 +15,7 @@ import { event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { loadTeachingBrief } from '../server/teaching-brief';
+import { TEACHING_BRIEF_OUTCOME_TTL_MS, loadTeachingBrief } from '../server/teaching-brief';
 import { acknowledgeTeachingBriefOutcome } from '../server/teaching-brief-ack';
 import { TeachingBriefAckResponseSchema } from './contracts';
 import { POST } from './teaching-brief-ack';
@@ -24,7 +24,7 @@ const KC_ID = 'kn_chain_rule';
 
 async function seedOutcome(
   resolution: 'confirmed' | 'retired',
-  opts: { accept?: boolean } = {},
+  opts: { accept?: boolean; resultAt?: Date } = {},
 ): Promise<string> {
   const accept = opts.accept ?? true;
   const proposalId = await writeAiProposal(testDb(), {
@@ -80,6 +80,9 @@ async function seedOutcome(
     probeQuestionId: served.probe_question_id,
     outcome: resolution === 'confirmed' ? 0 : 1,
     resolution,
+    // `resultAt` stamps the outcome event's created_at to exercise the deliverability
+    // time window (future / expired); defaults to real now for the happy path.
+    ...(opts.resultAt ? { now: opts.resultAt } : {}),
   });
   return result.probe_result_event_id;
 }
@@ -291,6 +294,27 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     // Full canonical chain (probe exists + canonical) but the proposal was never accepted
     // → the reader skips it as proposal_not_accepted, so the ack must 409.
     const resultId = await seedOutcome('confirmed', { accept: false });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
+
+  // Round-4 (codex P2): the ack gate mirrors the reader's created_at deliverability window
+  // too. An out-of-window outcome the brief would never deliver must not be ackable — and a
+  // future result acked now would be NOT-EXISTS-excluded forever, never delivered later.
+  it('409 on a future-dated result (not yet deliverable), zero append', async () => {
+    const resultId = await seedOutcome('confirmed', {
+      resultAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
+
+  it('409 on an expired result (past the outcome TTL), zero append', async () => {
+    const resultId = await seedOutcome('confirmed', {
+      resultAt: new Date(Date.now() - TEACHING_BRIEF_OUTCOME_TTL_MS - 60 * 1000),
+    });
     const res = await post({ probe_result_event_id: resultId });
     expect(res.status).toBe(409);
     expect(await ackEvents(resultId)).toHaveLength(0);

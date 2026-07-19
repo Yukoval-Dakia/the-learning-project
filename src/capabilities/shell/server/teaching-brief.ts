@@ -424,27 +424,53 @@ export interface AckableOutcomeFacts {
 }
 
 /**
- * Single source of truth for "is this result a delivered, ackable outcome". Runs the FULL
- * reader chain on a result row: canonical result event (validateCanonicalProbeResult) →
- * the mind-probe question exists → its conjecture proposal is accepted → the probe is
- * canonical for that proposal (validateProbeQuestion). loadOutcomeBrief projects only what
- * passes; the ack writer (teaching-brief-ack.ts) 409s on anything that does not — so an
- * orphan-chain result the brief would never display can never be acknowledged, and the two
- * paths' notion of a deliverable outcome cannot drift (YUK-708 review round-2, codex P2).
- * Reason codes stay stable (the canonical-result reasons, plus probe_not_found /
+ * Single source of truth for "is this result a delivered, ackable outcome" — the COMPLETE
+ * set of deliverability dimensions loadOutcomeBrief uses, so the reader and the ack writer
+ * (teaching-brief-ack.ts) can never diverge (YUK-708 review rounds 2–4, codex P2):
+ *   1. canonical result event — action, question subject, legal resolution/outcome pair,
+ *      self-consistent provenance (validateCanonicalProbeResult);
+ *   2. time window — half-open (now − OUTCOME_TTL, now]; a future-dated result is not yet
+ *      deliverable and an expired one no longer is. Uses the reader's TTL constant, not a
+ *      copied literal, and mirrors loadOutcomeBrief's SQL prefilter exactly;
+ *   3. the mind-probe question exists;
+ *   4. its conjecture proposal is accepted — loadProposalFacts → getProposalInboxRow →
+ *      deriveProposalStatus, which FOLDS corrections (retract/mark_wrong/supersede flip the
+ *      status off 'accepted'), so proposal-correction exclusion is covered by this shared
+ *      path with no extra predicate;
+ *   5. the probe is canonical for that proposal (validateProbeQuestion — source/draft/
+ *      provenance/KC/prompt/created-in-future).
+ * The ONE reader dimension deliberately NOT re-gated here is the `NOT EXISTS ack` filter:
+ * for the writer that is the idempotency check, so an already-acked result returns
+ * idempotent:true (see acknowledgeTeachingBriefOutcome), not a 409. Reason codes stay stable
+ * (canonical-result reasons + result_created_in_future / result_expired / probe_not_found /
  * proposal_not_accepted / probe_*) for both the reader's skip log and the writer's 409.
  */
 export async function validateAckableOutcome(
   db: Db,
   result: Pick<
     EventRow,
-    'id' | 'action' | 'subject_kind' | 'subject_id' | 'caused_by_event_id' | 'payload'
+    | 'id'
+    | 'action'
+    | 'subject_kind'
+    | 'subject_id'
+    | 'caused_by_event_id'
+    | 'created_at'
+    | 'payload'
   >,
   now: Date,
 ): Promise<CandidateResult<AckableOutcomeFacts>> {
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
   const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
+
+  // Time window — identical to loadOutcomeBrief's SQL prefilter (shared TTL constant, no
+  // literal duplication). Half-open, eligible iff (now − OUTCOME_TTL) < created_at <= now:
+  // a future-dated result is not yet deliverable; an expired one is no longer. Runs before
+  // the DB chain queries so an out-of-window result short-circuits cheaply.
+  const createdMs = result.created_at.getTime();
+  if (createdMs > now.getTime()) return { reason: 'result_created_in_future' };
+  if (createdMs <= now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS)
+    return { reason: 'result_expired' };
 
   // The probe lookup and the proposal-facts load depend only on the canonical products,
   // not on each other, so run them together. (Called with the top-level `db`, so these are

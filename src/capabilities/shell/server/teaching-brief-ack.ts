@@ -114,6 +114,7 @@ export async function acknowledgeTeachingBriefOutcome(
       subject_kind: event.subject_kind,
       subject_id: event.subject_id,
       caused_by_event_id: event.caused_by_event_id,
+      created_at: event.created_at,
       payload: event.payload,
     })
     .from(event)
