@@ -54,6 +54,10 @@ export function PfPaper({
   // 「草稿自动保存」and the exit / foot copy drop their 「进度保留」promise, since the
   // last draft PUT for that slot never landed.
   const [saveFailed, setSaveFailed] = useState<Record<string, boolean>>({});
+  // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
+  // request may update that slot's failed flag, or an old success would clear a
+  // newer failure (and vice versa).
+  const saveSeq = useRef<Record<string, number>>({});
   const sessionRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,14 +135,22 @@ export function PfPaper({
   const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
     const sid = sessionRef.current;
     if (!sid) return;
+    const seq = (saveSeq.current[key] ?? 0) + 1;
+    saveSeq.current[key] = seq;
     void savePaperAnswer(artifactId, {
       session_id: sid,
       question_id: questionId,
       part_ref: partRef,
       answer_md: v,
     })
-      .then(() => setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f)))
-      .catch(() => setSaveFailed((f) => ({ ...f, [key]: true })));
+      .then(() => {
+        if (saveSeq.current[key] !== seq) return;
+        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+      })
+      .catch(() => {
+        if (saveSeq.current[key] !== seq) return;
+        setSaveFailed((f) => ({ ...f, [key]: true }));
+      });
   };
 
   const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)]);

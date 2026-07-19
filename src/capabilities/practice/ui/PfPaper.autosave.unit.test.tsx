@@ -3,7 +3,7 @@
 // 「进度保留」and offer a retry, instead of the old silent `.catch(() => {})`.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PfPaper } from './PfPaper';
@@ -98,5 +98,34 @@ describe('PfPaper autosave failure (YUK-713)', () => {
     expect(await screen.findByText('草稿自动保存')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '保存失败 · 重试' })).toBeNull();
     expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(2);
+  });
+
+  it('an older save settling later cannot clear a newer failed save', async () => {
+    let resolveOld: (value: unknown) => void = () => {};
+    mocks.savePaperAnswer
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error('500'));
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '一');
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), {
+      timeout: 2500,
+    });
+    await user.type(screen.getByLabelText('作答'), '二');
+
+    await screen.findByRole('button', { name: '保存失败 · 重试' }, { timeout: 2500 });
+
+    // The stale first PUT resolving now must not clear the newer failure.
+    resolveOld({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole('button', { name: '保存失败 · 重试' })).toBeTruthy();
+    expect(screen.queryByText('草稿自动保存')).toBeNull();
   });
 });
