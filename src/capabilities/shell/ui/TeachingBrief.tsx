@@ -21,7 +21,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { ProbeAnswerCard } from './ProbeAnswers';
@@ -53,6 +53,18 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
   if (status === 'confirmed') return 'check';
   if (status === 'retired') return 'checkCircle';
   return 'sparkle'; // awaiting_decision / awaiting_answer
+}
+
+// The three read surfaces whose counts move when a brief advances or retires: the brief
+// itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
+// and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
+// set stays in one place (mirrors PrepDeskConjectures' set).
+function invalidateBriefSurfaces(qc: QueryClient): Promise<unknown> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
+    qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
+    qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
+  ]);
 }
 
 export function TeachingBriefBand() {
@@ -104,14 +116,8 @@ export function TeachingBriefBand() {
     setFailed(false);
     try {
       await decideProposal(brief.prepared_action.proposal_id, decision);
-      // accept → re-project to probe_ready; dismiss → next candidate or null. Refresh the
-      // brief plus the surfaces whose counts move (mirrors PrepDeskConjectures' set); the
-      // three invalidations are independent, so fan them out together.
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
-        qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
-        qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
-      ]);
+      // accept → re-project to probe_ready; dismiss → next candidate or null.
+      await invalidateBriefSurfaces(qc);
     } catch (error) {
       // Contract §7 — keep the current brief, do NOT optimistically advance; allow retry.
       // Redacted diagnostic only (decision + error, never brief/claim/answer payload),
@@ -133,12 +139,8 @@ export function TeachingBriefBand() {
     try {
       await ackTeachingBriefOutcome(brief.prepared_action.probe_result_event_id);
       // The acked result loses eligibility server-side; re-project to the next candidate
-      // or the quiet null. Same invalidation surface as decide (probe/digest counts move).
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
-        qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
-        qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
-      ]);
+      // or the quiet null (same surfaces as decide).
+      await invalidateBriefSurfaces(qc);
     } catch (error) {
       // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
       // retry. Redacted diagnostic only (never brief/claim/answer payload).

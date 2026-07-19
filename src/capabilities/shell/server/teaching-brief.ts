@@ -446,10 +446,16 @@ export async function validateAckableOutcome(
   if (isCandidateError(canonical)) return canonical;
   const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
 
-  const [probe] = await db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+  // The probe lookup and the proposal-facts load depend only on the canonical products,
+  // not on each other, so run them together. (Called with the top-level `db`, so these are
+  // separate pooled connections — never two concurrent queries on one tx connection.)
+  const [probeRows, proposalResult] = await Promise.all([
+    db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1),
+    loadProposalFacts(db, conjectureEventId, 'accepted'),
+  ]);
+  const probe = probeRows[0];
+  // probe_not_found stays the first-checked break so its reason code precedence is stable.
   if (!probe) return { reason: 'probe_not_found' };
-
-  const proposalResult = await loadProposalFacts(db, conjectureEventId, 'accepted');
   if (isCandidateError(proposalResult)) return proposalResult;
   const proposal = proposalResult.value;
 

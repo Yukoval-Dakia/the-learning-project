@@ -11,7 +11,7 @@ import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-li
 import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
-import { event, material_fsrs_state } from '@/db/schema';
+import { event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -142,6 +142,35 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
 
     expect(second.idempotent).toBe(true);
     expect(second.brief_acknowledgement_event_id).toBe(first.brief_acknowledgement_event_id);
+    expect(await ackEvents(resultId)).toHaveLength(1);
+  });
+
+  // Round-3 (codex P2): idempotency must win over the chain gate. A first ack succeeds but
+  // its response is lost; before the retry the chain breaks (probe removed / proposal
+  // retracted). The retry must still return 200/idempotent, NOT 409 — the existing ack is
+  // the record of truth, and re-gating it would surface a completed ack as a failure.
+  it('idempotent retry succeeds even after the outcome chain breaks (no 409, no new append)', async () => {
+    const resultId = await seedOutcome('confirmed');
+    const first = TeachingBriefAckResponseSchema.parse(
+      await (await post({ probe_result_event_id: resultId })).json(),
+    );
+    expect(first.idempotent).toBe(false);
+
+    // Break the chain the way the reader's gate would catch (probe removed → probe_not_found).
+    const [row] = await testDb()
+      .select({ subject_id: event.subject_id })
+      .from(event)
+      .where(eq(event.id, resultId));
+    await testDb().delete(question).where(eq(question.id, row.subject_id));
+
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(200);
+    const retry = TeachingBriefAckResponseSchema.parse(await res.json());
+    expect(retry.idempotent).toBe(true);
+    expect(retry.brief_acknowledgement_event_id).toBe(first.brief_acknowledgement_event_id);
+    // brief_id is recovered from the ack's own payload, not from the (now-broken) chain.
+    expect(retry.brief_id).toBe(first.brief_id);
+    // Zero NEW append — still exactly one anchor.
     expect(await ackEvents(resultId)).toHaveLength(1);
   });
 
