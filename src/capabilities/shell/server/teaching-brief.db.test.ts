@@ -719,6 +719,36 @@ describe('loadTeachingBrief', () => {
     });
   });
 
+  it('logs a NULL-draft_status probe as non-canonical (NULL≡active leaves the pool shape)', async () => {
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q_null_status_probe',
+        kind: 'short_answer',
+        prompt_md: 'probe for p_null',
+        source: 'mind_probe',
+        source_ref: 'p_null',
+        draft_status: null,
+        metadata: { conjecture_proposal_id: 'p_null' },
+        knowledge_ids: ['kn_p_null'],
+        created_at: new Date(NOW.getTime() - 60 * 60 * 1000),
+        updated_at: new Date(NOW.getTime() - 60 * 60 * 1000),
+      });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await loadTeachingBrief(testDb(), NOW);
+
+    expect(warn).toHaveBeenCalledWith(
+      '[teaching-brief] skipped candidate',
+      expect.objectContaining({
+        stage: 'probe',
+        candidate_id: 'q_null_status_probe',
+        reason: 'probe_shape_non_canonical',
+      }),
+    );
+    warn.mockRestore();
+  });
+
   it('does not let a flood of corrupt results evict an older valid outcome', async () => {
     await seedOutcome({
       proposalId: 'p_valid_outcome',
