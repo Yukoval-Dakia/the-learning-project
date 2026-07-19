@@ -16,6 +16,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
+import {
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+} from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { teachingQualityOutput } from '../../../../tests/helpers/teaching-quality-fixtures';
@@ -125,6 +130,7 @@ async function seedDraftQuestion(opts: {
   choicesMd?: string[] | null;
   judge?: string | null;
   rubricJson?: unknown;
+  supplyTrace?: unknown;
 }) {
   const db = testDb();
   const now = new Date();
@@ -144,7 +150,10 @@ async function seedDraftQuestion(opts: {
     source_ref: opts.knowledgeId,
     draft_status: 'draft',
     created_by: { by: 'ai', task_kind: 'QuizGenTask', task_run_id: 'tr_gen' } as never,
-    metadata: { quiz_gen: opts.meta ?? BASE_META } as never,
+    metadata: {
+      quiz_gen: opts.meta ?? BASE_META,
+      ...(opts.supplyTrace ? { supply_trace: opts.supplyTrace } : {}),
+    } as never,
     created_at: now,
     updated_at: now,
   });
@@ -267,7 +276,21 @@ describe('runQuizVerify', () => {
 
   it('pass: promotes draft→active and FSRS-enrolls the question', async () => {
     await seedKnowledge('k1');
-    await seedDraftQuestion({ id: 'q1', knowledgeId: 'k1' });
+    const supplyTrace = buildSupplyTrace(
+      {
+        targetId: 'target-quiz-verify',
+        targetFingerprint: 'fp-quiz-verify',
+        context: evidenceDemandToTargetContext(
+          buildCoverageEvidenceDemand({
+            subjectId: 'yuwen',
+            knowledgeIds: ['k1'],
+            statement: 'verify generated evidence',
+          }),
+        ),
+      },
+      'quiz_gen',
+    );
+    await seedDraftQuestion({ id: 'q1', knowledgeId: 'k1', supplyTrace });
     const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_pass');
 
     const result = await runQuizVerify({ db: testDb(), questionId: 'q1', runTaskFn });
@@ -308,6 +331,7 @@ describe('runQuizVerify', () => {
 
     // one verify event, outcome success.
     expect(await countVerifyEvents('q1')).toBe(1);
+    expect((await verifyEventsFor('q1'))[0].payload).toMatchObject({ supply_trace: supplyTrace });
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);

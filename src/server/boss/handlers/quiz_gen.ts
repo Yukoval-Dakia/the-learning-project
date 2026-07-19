@@ -54,6 +54,7 @@ import {
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
 import { writeEvent } from '@/server/events/queries';
+import { type SupplyTraceV1T, parseSupplyTrace } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -93,6 +94,7 @@ export interface QuizGenJobData {
   // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
   // it. Context: src/server/question-supply/confusable-contrast-discovery.ts.
   knowledge_ids?: string[];
+  supply_trace?: SupplyTraceV1T;
 }
 
 // §4 — default question count when the trigger doesn't specify one.
@@ -302,6 +304,7 @@ export interface RunQuizGenParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
   kind?: string;
+  supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -696,7 +699,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             // quiz_verify passes (Q5 promotes draft→active + enrolls).
             draft_status: 'draft',
             created_by: aiAgentRef('QuizGenTask', result),
-            metadata: { quiz_gen: metaQuizGen },
+            metadata: {
+              quiz_gen: metaQuizGen,
+              ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+            },
             created_at: now,
             updated_at: now,
           }),
@@ -769,6 +775,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
       task_run_id: result.task_run_id ?? null,
@@ -814,6 +821,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
           tool_context_task_run_id: toolContextTaskRunId,
+          ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,
@@ -847,6 +855,7 @@ export function buildQuizGenHandler(
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.supply_trace ? { supplyTrace: parseSupplyTrace(data.supply_trace) } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

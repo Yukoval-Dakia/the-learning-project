@@ -207,6 +207,9 @@ export const fastTestInclude = [
   // src/server/question-supply/** 无 unit glob，故必须显式列出，否则 db config 的
   // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
   'src/server/question-supply/target-discovery.test.ts',
+  // YUK-699 — EvidenceDemand/trace contracts + pure scanner correlation. No DB access;
+  // the sibling end-to-end propagation assertions live in handler DB tests.
+  'src/server/question-supply/evidence-demand.test.ts',
   // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
   // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
   // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。

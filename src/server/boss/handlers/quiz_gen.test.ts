@@ -18,6 +18,11 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import { artifact, event, knowledge, learning_item, question, source_document } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
+import {
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+} from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   QUIZ_GEN_READ_TOOLS,
@@ -259,6 +264,20 @@ describe('runQuizGen', () => {
     const enqueueQuizVerify = vi.fn(async () => {});
     const buildTavilyMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const supplyTrace = buildSupplyTrace(
+      {
+        targetId: 'target-quiz-1',
+        targetFingerprint: 'fp-quiz-1',
+        context: evidenceDemandToTargetContext(
+          buildCoverageEvidenceDemand({
+            subjectId: 'yuwen',
+            knowledgeIds: ['k1'],
+            statement: 'collect application evidence',
+          }),
+        ),
+      },
+      'quiz_gen',
+    );
 
     const result = await runQuizGen({
       db: testDb(),
@@ -269,6 +288,7 @@ describe('runQuizGen', () => {
       enqueueQuizVerify,
       buildTavilyMcpServerFn,
       buildMcpServerFn,
+      supplyTrace,
     });
 
     expect(result.status).toBe('ready');
@@ -309,6 +329,7 @@ describe('runQuizGen', () => {
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
     expect((meta?.source_refs as unknown[]).length).toBe(1);
+    expect((q1?.metadata as Record<string, unknown>).supply_trace).toEqual(supplyTrace);
 
     // YUK-203 P2 — generated quizzes become a first-class question-set artifact.
     const quizArtifacts = await testDb()
@@ -352,6 +373,7 @@ describe('runQuizGen', () => {
     expect(quizEvents[0].payload).toMatchObject({
       question_ids: result.question_ids,
       tool_quiz_artifact_id: result.tool_quiz_artifact_id,
+      supply_trace: supplyTrace,
     });
 
     // quiz_verify enqueued with the new question ids.

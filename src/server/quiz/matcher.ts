@@ -30,6 +30,12 @@ import { embedText } from '@/server/ai/embed';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import {
+  type EvidenceDemandV1T,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+  parseEvidenceDemand,
+} from '@/server/question-supply/evidence-demand';
+import {
   type DifficultyBand,
   type QuestionSupplyTarget,
   type SupplyGapKind,
@@ -87,6 +93,8 @@ export interface Demand {
   /** R1-R4：steer 残余路由 (映射 SupplyGapKind，Task 3). */
   gapType?: string;
   priority?: number;
+  /** Optional full Supply-v2 demand. Legacy callers omit it and receive a compatibility demand. */
+  evidenceDemand?: EvidenceDemandV1T;
   /** 必填. */
   limit: number;
 }
@@ -337,6 +345,25 @@ export async function demandToSupplyTarget(
   const gapKind = supplyGapKindFor(demand);
   const minSourceTier: 1 | 2 | 3 = (demand.minSourceTier ?? 2) as 1 | 2 | 3;
   const knowledgeIds = [demand.knowledgeId];
+  const evidenceDemand = demand.evidenceDemand
+    ? parseEvidenceDemand(demand.evidenceDemand)
+    : buildCoverageEvidenceDemand({
+        subjectId,
+        knowledgeIds,
+        statement: `matcher needs ${gap} additional item(s) for ${demand.knowledgeId}`,
+        kinds: [kind],
+        difficultyBand,
+        eligibleCount: demand.limit,
+        cause: { kind: 'selection_miss' },
+      });
+  if (
+    evidenceDemand.subject_id !== subjectId ||
+    !evidenceDemand.claim.knowledge_ids.includes(demand.knowledgeId)
+  ) {
+    throw new Error(
+      `EvidenceDemand ${evidenceDemand.demand_id} does not match target subject/KC boundary`,
+    );
+  }
 
   // fingerprint: import targetFingerprint，与 target-discovery 同算法 → 同 demand 产同 fingerprint
   // (7 天 cooldown 前提，plan §218). 绝不复刻算法.
@@ -376,6 +403,7 @@ export async function demandToSupplyTarget(
     // JobData（QuizGenJobData/SourcingJobData payload）见 YUK-400（同 cause→JobData 同类，本 PR
     // 不扩 dispatcher/JobData 契约）。
     constraints: demand.compositeParentOnly ? { compositeParentOnly: true } : {},
+    context: evidenceDemandToTargetContext(evidenceDemand),
   };
 }
 

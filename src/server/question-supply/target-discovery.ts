@@ -39,6 +39,11 @@ import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import {
+  type SupplyTargetContextV1T,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+} from './evidence-demand';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 
@@ -93,6 +98,12 @@ export interface QuestionSupplyTarget {
      */
     compositeParentOnly?: boolean;
   };
+  /**
+   * Supply-v2 Phase A compatibility envelope. Optional on the interface so legacy/manual
+   * callers can keep constructing QuestionSupplyTarget unchanged; every repository-owned
+   * target factory populates it.
+   */
+  context?: SupplyTargetContextV1T;
 }
 
 export type SupplyGapKind =
@@ -161,6 +172,12 @@ export interface ScanInput {
    * 据 sourcingRoutePreference token 推导。key=subjectId。无 quiz_gen 偏好 → 该 subject 缺省不设。
    */
   generationMethodBySubject?: Record<string, 'material_grounded' | 'closed_book'>;
+  /** Optional clock/budget envelope supplied by the IO assembler; pure callers may omit it. */
+  evidenceDemandControl?: {
+    neededBy: string | null;
+    maxBudgetMicroUsd: number;
+    maxAttempts: number;
+  };
   /**
    * 「MFI/诊断选题反复缺近-θ̂ 题」的信号：本扫描器据现有题的 b 锚是否落在 |b−θ̂|≤窗口内判定
    * （无需历史选题日志——「池里根本没有近-θ̂ 题」就是「诊断反复缺」的结构性根因）。
@@ -359,6 +376,15 @@ export function scanCoverageGaps(
       minSourceTier: fields.minSourceTier,
     });
     const routePreference = input.routePreferenceBySubject[f.subjectId] ?? [];
+    const demand = buildCoverageEvidenceDemand({
+      subjectId: f.subjectId,
+      knowledgeIds: [f.knowledgeId],
+      statement: `collect observable evidence for knowledge ${f.knowledgeId}`,
+      eligibleCount: COVERAGE_DEPTH_THRESHOLD,
+      neededBy: input.evidenceDemandControl?.neededBy ?? null,
+      maxBudgetMicroUsd: input.evidenceDemandControl?.maxBudgetMicroUsd,
+      maxAttempts: input.evidenceDemandControl?.maxAttempts,
+    });
     targets.push({
       id: makeId(),
       fingerprint,
@@ -378,6 +404,7 @@ export function scanCoverageGaps(
       priority: computePriority(gapKind, f.evidenceCount),
       reason: fields.reason,
       constraints: fields.constraints,
+      context: evidenceDemandToTargetContext(demand),
     });
   };
 
@@ -687,7 +714,18 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
     }
   }
 
-  return { frontier, questions, routePreferenceBySubject, generationMethodBySubject };
+  return {
+    frontier,
+    questions,
+    routePreferenceBySubject,
+    generationMethodBySubject,
+    // IO layer owns the clock; scanCoverageGaps itself remains deterministic over its input.
+    evidenceDemandControl: {
+      neededBy: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      maxBudgetMicroUsd: 1_000_000,
+      maxAttempts: 3,
+    },
+  };
 }
 
 /**

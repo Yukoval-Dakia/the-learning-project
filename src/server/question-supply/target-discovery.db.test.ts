@@ -347,6 +347,14 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
       ref_id: kid,
       knowledge_id: kid,
       count: 2,
+      supply_trace: {
+        demand_id: frontierTarget.context?.demand_id,
+        demand_version: 1,
+        policy_version: 'supply-v2-phase-a',
+        target_id: frontierTarget.id,
+        target_fingerprint: frontierTarget.fingerprint,
+        producer_route: 'sourcing_web',
+      },
     });
 
     // Observability: an experimental:question_supply event was written for this target.
@@ -360,6 +368,11 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     expect(payload.status).toBe('dispatched');
     expect(payload.route_plan).toEqual(['sourcing_web', 'ingest_existing', 'author_question']);
     expect(payload.chosen_route).toBe('sourcing_web');
+    expect(payload.supply_trace).toMatchObject({
+      demand_id: frontierTarget.context?.demand_id,
+      target_id: frontierTarget.id,
+      producer_route: 'sourcing_web',
+    });
     expect(typeof payload.stop_condition).toBe('string');
   });
 

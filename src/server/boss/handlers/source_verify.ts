@@ -38,6 +38,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { parseSupplyTrace } from '@/server/question-supply/evidence-demand';
 import {
   type SolveCheckQuestion,
   type SolveCheckResult,
@@ -294,6 +295,12 @@ export async function runSourceVerify(
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'web_sourced') return { status: 'skipped:not_web_sourced' };
+  const metadataRaw =
+    row.metadata && typeof row.metadata === 'object'
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const supplyTrace =
+    metadataRaw.supply_trace === undefined ? undefined : parseSupplyTrace(metadataRaw.supply_trace);
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
@@ -532,6 +539,7 @@ export async function runSourceVerify(
                 },
               }),
           verified_by: verifiedBy,
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -573,6 +581,7 @@ export async function runSourceVerify(
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         // solve_check owns its own AI run inside runSolveCheck; this handler holds no

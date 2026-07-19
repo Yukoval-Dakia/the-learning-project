@@ -61,6 +61,7 @@ import { writeEvent } from '@/server/events/queries';
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { type SupplyTraceV1T, parseSupplyTrace } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
@@ -85,6 +86,7 @@ export interface SourcingJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Forwarded
   // into the SourcingTask input's existing `kinds?` field so the agent can target the题型.
   kind?: string;
+  supply_trace?: SupplyTraceV1T;
 }
 
 // Default question count when the trigger doesn't specify one.
@@ -207,6 +209,7 @@ export interface RunSourcingParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the SourcingTask input (existing `kinds?`).
   kind?: string;
+  supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -482,7 +485,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             // source_verify passes.
             draft_status: 'draft',
             created_by: aiAgentRef('SourcingTask', result),
-            metadata: { web_sourced: webSourced, source_ref_kind: 'url' },
+            metadata: {
+              web_sourced: webSourced,
+              source_ref_kind: 'url',
+              ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+            },
             created_at: now,
             updated_at: now,
           }),
@@ -632,6 +639,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         image_candidate_count: imageCandidateProposalIds.length,
         query_plan: parsed.query_plan,
         tool_context_task_run_id: toolContextTaskRunId,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
       task_run_id: result.task_run_id ?? null,
@@ -682,6 +690,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
           tool_context_task_run_id: toolContextTaskRunId,
+          ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,
@@ -714,6 +723,7 @@ export function buildSourcingHandler(
         // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.supply_trace ? { supplyTrace: parseSupplyTrace(data.supply_trace) } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

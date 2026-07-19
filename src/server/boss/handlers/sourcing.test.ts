@@ -22,6 +22,11 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import { event, knowledge, learning_item, question } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
+import {
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+} from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   SOURCING_READ_TOOLS,
@@ -235,6 +240,20 @@ describe('runSourcing', () => {
     const enqueueSourceVerify = vi.fn(async () => {});
     const buildTavilyMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const supplyTrace = buildSupplyTrace(
+      {
+        targetId: 'target-source-1',
+        targetFingerprint: 'fp-source-1',
+        context: evidenceDemandToTargetContext(
+          buildCoverageEvidenceDemand({
+            subjectId: 'yuwen',
+            knowledgeIds: ['k1'],
+            statement: 'collect translation evidence',
+          }),
+        ),
+      },
+      'sourcing_web',
+    );
 
     const result = await runSourcing({
       db,
@@ -244,6 +263,7 @@ describe('runSourcing', () => {
       enqueueSourceVerify,
       buildTavilyMcpServerFn,
       buildMcpServerFn,
+      supplyTrace,
     });
 
     expect(result.status).toBe('ready');
@@ -260,6 +280,7 @@ describe('runSourcing', () => {
 
     const meta = row.metadata as Record<string, unknown>;
     expect(meta.source_ref_kind).toBe('url');
+    expect(meta.supply_trace).toEqual(supplyTrace);
     const web = meta.web_sourced as Record<string, unknown>;
     expect(web.url).toBe('https://example.edu/wenyan/lunyu');
     expect(web.title).toBe('论语·学而 注疏');
@@ -281,6 +302,7 @@ describe('runSourcing', () => {
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('success');
+    expect(events[0].payload).toMatchObject({ supply_trace: supplyTrace });
   });
 
   it('mounts the Tavily + domain MCP and folds Tavily allowedTools only when configured', async () => {

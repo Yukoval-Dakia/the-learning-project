@@ -55,6 +55,7 @@ import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { parseSupplyTrace } from '@/server/question-supply/evidence-demand';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
@@ -244,6 +245,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
       : {};
+  const supplyTrace =
+    metadataRaw.supply_trace === undefined ? undefined : parseSupplyTrace(metadataRaw.supply_trace);
   const parsedMeta = QuizGenMetadata.safeParse(metadataRaw.quiz_gen);
   // YUK-607（PR #750 review round）— 生成输出经 jsonrepair 级修复救回的批：语法救回但
   // 内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过非 strict Zod 门）。
@@ -742,6 +745,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // `...unified` above (the unified verify contract shape). failure_class is keyed
           // there only when !promote (validation_failure), identical to the prior inline.
           verified_by: verifiedBy,
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: result.task_run_id ?? null,
@@ -839,6 +843,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,
