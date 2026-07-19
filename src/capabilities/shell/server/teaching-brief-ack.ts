@@ -137,23 +137,22 @@ export async function acknowledgeTeachingBriefOutcome(
       404,
     );
   }
-  // Read the reader's current primary with the pooled db (validateAckableOutcome's Promise.all
-  // needs separate connections, so this cannot run on the single tx connection). The verdict
-  // on it is deferred INTO the lock below, after the idempotency re-check.
-  const primaryOutcome = await loadOutcomeBrief(db, now);
 
-  // Append under the per-target advisory lock. Check sequence invariant: idempotency ALWAYS
-  // precedes the deliverability verdict, including the concurrent path. A racer that committed
-  // its ack after our lock-free findExistingAck made the reader exclude our target from
-  // `primaryOutcome` above — but that is a completed ack, not a failure. Re-checking existing
-  // ack INSIDE the lock before ruling on primary-ness turns that concurrent loss into an
-  // idempotent success instead of a misleading not_current_primary 409 (round-6, codex P2).
+  // Everything below runs under the per-target advisory lock in ONE transaction. Check
+  // sequence invariant: idempotency ALWAYS precedes the deliverability verdict. The primary
+  // selection is read INSIDE the tx (loadOutcomeBrief on `tx`, serial reads — one connection
+  // can't run its Promise.all) so the verdict and the append share a single snapshot+lock:
+  // the primary cannot change between the check and the write (a judge inserting a newer
+  // result, a proposal retract, or TTL rolling), closing the TOCTOU window structurally
+  // (round-8, mirrors answerProbe's all-reads-in-tx precedent). A racer that committed its ack
+  // first is caught by the in-lock findExistingAck and returns idempotent, not a 409 (round-6).
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeResultEventId}, 0))`);
 
     const racing = await findExistingAck(tx, probeResultEventId);
     if (racing) return racing;
 
+    const primaryOutcome = await loadOutcomeBrief(tx, now, { serial: true });
     if (
       primaryOutcome === null ||
       primaryOutcome.current_outcome.probe_result_event_id !== probeResultEventId

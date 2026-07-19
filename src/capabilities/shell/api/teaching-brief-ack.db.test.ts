@@ -397,4 +397,22 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     const res = await post({ probe_result_event_id: resultId });
     expect(res.status).toBe(500);
   });
+
+  // Round-8 (codex P2): the primary verdict is read INSIDE the ack's advisory-locked tx, so it
+  // reflects the latest committed state (verdict + append share one snapshot+lock). A newer
+  // valid outcome that lands before the ack makes an older target non-primary → 409. This is
+  // the deterministic surrogate for the snapshot↔append TOCTOU window (which cannot be
+  // constructed deterministically); the in-tx read plus the full regression cover the rest.
+  it('409 acking a target once a newer outcome has become the primary (in-tx verdict)', async () => {
+    // The target is the sole, ackable primary at this instant.
+    const target = await seedOutcome('confirmed', {
+      resultAt: new Date(Date.now() - 30 * 60 * 1000),
+    });
+    // A newer valid outcome lands and takes over as the primary.
+    await seedOutcome('retired', { resultAt: new Date(Date.now() - 5 * 60 * 1000) });
+
+    const res = await post({ probe_result_event_id: target });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(target)).toHaveLength(0);
+  });
 });

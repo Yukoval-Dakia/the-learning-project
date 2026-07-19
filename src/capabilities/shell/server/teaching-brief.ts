@@ -8,7 +8,7 @@ import {
   PROBE_RESULT_ACTION,
 } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
@@ -125,6 +125,9 @@ export interface TeachingBriefResponse {
 type QuestionRow = typeof question.$inferSelect;
 type EventRow = typeof event.$inferSelect;
 type BriefStage = 'outcome' | 'probe' | 'finding';
+// A pooled connection OR an open transaction. The ack writer runs the outcome selection
+// inside its advisory-locked transaction (YUK-708 round-8), so these readers accept a Tx.
+type DbLike = Db | Tx;
 
 interface ConjectureFacts {
   id: string;
@@ -350,7 +353,7 @@ function hasProposalRejectMarker(row: EventRow): boolean {
 }
 
 async function loadProposalFacts(
-  db: Db,
+  db: DbLike,
   proposalId: string,
   requiredStatus: 'pending' | 'accepted',
 ): Promise<CandidateResult<ConjectureFacts>> {
@@ -366,7 +369,11 @@ async function loadProposalFacts(
   return factsFromProposalRow(row, requiredStatus);
 }
 
-async function loadAcceptedClaim(db: Db, proposalId: string, fallback: string): Promise<string> {
+async function loadAcceptedClaim(
+  db: DbLike,
+  proposalId: string,
+  fallback: string,
+): Promise<string> {
   const rates = await db
     .select({ payload: event.payload })
     .from(event)
@@ -446,7 +453,7 @@ export interface AckableOutcomeFacts {
  * proposal_not_accepted / probe_*) for both the reader's skip log and the writer's 409.
  */
 export async function validateAckableOutcome(
-  db: Db,
+  db: DbLike,
   result: Pick<
     EventRow,
     | 'id'
@@ -458,6 +465,10 @@ export async function validateAckableOutcome(
     | 'payload'
   >,
   now: Date,
+  // The write path (ack) runs this inside its advisory-locked transaction, whose single
+  // connection cannot serve the two reads concurrently — it passes serial:true. The GET
+  // read path keeps the round-3 Promise.all micro-optimization (default).
+  { serial = false }: { serial?: boolean } = {},
 ): Promise<CandidateResult<AckableOutcomeFacts>> {
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
@@ -472,13 +483,23 @@ export async function validateAckableOutcome(
   if (createdMs <= now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS)
     return { reason: 'result_expired' };
 
-  // The probe lookup and the proposal-facts load depend only on the canonical products,
-  // not on each other, so run them together. (Called with the top-level `db`, so these are
-  // separate pooled connections — never two concurrent queries on one tx connection.)
-  const [probeRows, proposalResult] = await Promise.all([
-    db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1),
-    loadProposalFacts(db, conjectureEventId, 'accepted'),
-  ]);
+  // The probe lookup and the proposal-facts load depend only on the canonical products, not
+  // on each other. On the pooled read path they run together (Promise.all, separate
+  // connections); on a single-connection transaction (serial:true) they must run one at a
+  // time. Both orderings check probe_not_found first, so the reason precedence is stable.
+  const loadProbe = () =>
+    db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+  let probeRows: QuestionRow[];
+  let proposalResult: CandidateResult<ConjectureFacts>;
+  if (serial) {
+    probeRows = await loadProbe();
+    proposalResult = await loadProposalFacts(db, conjectureEventId, 'accepted');
+  } else {
+    [probeRows, proposalResult] = await Promise.all([
+      loadProbe(),
+      loadProposalFacts(db, conjectureEventId, 'accepted'),
+    ]);
+  }
   const probe = probeRows[0];
   // probe_not_found stays the first-checked break so its reason code precedence is stable.
   if (!probe) return { reason: 'probe_not_found' };
@@ -497,10 +518,17 @@ export async function validateAckableOutcome(
  * exactly this — making the writer's ackable set identical to the reader's delivered set,
  * including the SELECTION dimension (an older outcome hidden behind a newer primary is not
  * ackable and resurfaces once the newer one is acked — YUK-708 review round-5, codex P2).
+ *
+ * The ack writer runs this INSIDE its advisory-locked transaction so the primary verdict and
+ * the ack append share one snapshot+lock — the TOCTOU window between an out-of-tx snapshot and
+ * the in-lock append (a judge inserting a newer result, a proposal retract, TTL rolling) is
+ * structurally closed (round-8, mirrors answerProbe's all-reads-in-tx precedent). Pass
+ * serial:true on that single-connection tx path; the GET read path keeps the Promise.all.
  */
 export async function loadOutcomeBrief(
-  db: Db,
+  db: DbLike,
   now: Date,
+  { serial = false }: { serial?: boolean } = {},
 ): Promise<OutcomeConfirmedTeachingBrief | OutcomeRetiredTeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
@@ -535,7 +563,7 @@ export async function loadOutcomeBrief(
   for (const result of results) {
     // Shared full-chain gate (single source of truth with the ack writer): canonical
     // result + existing canonical mind-probe + accepted conjecture proposal.
-    const outcome = await validateAckableOutcome(db, result, now);
+    const outcome = await validateAckableOutcome(db, result, now, { serial });
     if (isCandidateError(outcome)) {
       warnSkipped('outcome', result.id, outcome.reason);
       continue;
