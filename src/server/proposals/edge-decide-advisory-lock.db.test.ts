@@ -206,4 +206,40 @@ describe('decideKnowledgeEdgeProposal — YUK-546 symmetric advisory lock', () =
     expect(live[0].from_knowledge_id).toBe('B');
     expect(live[0].to_knowledge_id).toBe('A');
   });
+
+  it('lock-then-revalidate: a merge that archives an endpoint under the lock makes the accept reject; zero live edge lands (codex P2 TOCTOU)', async () => {
+    const db = testDb();
+    await seedKnowledge(['A', 'B']);
+    const proposeAB = await seedProposeEdgeEvent({ from: 'A', to: 'B' });
+
+    // Stand in for rewireKnowledgeEdges: hold knowledge_edge:{A,B} and archive endpoint A mid-tx
+    // (the merge side flips absorbed from_ids' archived_at under this exact lock), then commit on
+    // release. The accept's PRE-lock endpoint check runs against the still-committed (live) A —
+    // A's archive is uncommitted while the barrier holds — so it passes; the accept then blocks on
+    // the lock. Without lock-then-revalidate the accept would resume and land a live A->B edge
+    // pointing at the just-archived A (FK holds on the tombstone).
+    let releaseMerge: () => void = () => {};
+    const mergeBarrier = new Promise<void>((resolve) => {
+      releaseMerge = resolve;
+    });
+    const mergeHold = db.transaction(async (tx) => {
+      await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', ['A', 'B']);
+      await tx.update(knowledge).set({ archived_at: new Date() }).where(eq(knowledge.id, 'A'));
+      await mergeBarrier;
+    });
+
+    const acceptAB = decideKnowledgeEdgeProposal(db, proposeAB, { decision: 'accept' });
+
+    await waitForBlockedDatabaseSession();
+    releaseMerge();
+    await mergeHold;
+
+    // Accept re-reads endpoints UNDER the lock, sees A now archived, and rejects (the endpoint
+    // revalidation, not the topology gate).
+    await expect(acceptAB).rejects.toThrow(/archived|unknown|not.?found/i);
+
+    // No edge landed at all — the accept tx rolled back its rate/generate events and any insert.
+    const all = await db.select().from(knowledge_edge);
+    expect(all).toHaveLength(0);
+  });
 });

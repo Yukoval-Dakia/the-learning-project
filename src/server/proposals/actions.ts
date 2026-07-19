@@ -711,6 +711,48 @@ export async function decideKnowledgeEdgeProposal(
       // never deadlocks.
       await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
 
+      // YUK-546 (codex P2) — lock-then-revalidate. The active-endpoint + tree-pair checks above ran
+      // on `db` BEFORE this advisory lock. A merge holding knowledge_edge:<fromId> can, inside that
+      // window, archive an endpoint + rewire + commit; the accept then resumes with a STALE
+      // "both endpoints live" result and a blind write would land a live edge pointing at a
+      // just-archived node — the FK still holds on the archived tombstone, and no rewire will ever
+      // revisit it. The fold's topology gate does NOT check endpoint archival, so it would not catch
+      // this either. Re-read the endpoints UNDER the lock (tx-scoped → sees the merge's committed
+      // archive) and re-assert both invariants; a now-stale check rejects the accept and rolls the
+      // tx back, the same outcome shape as the topology gate.
+      const revalRows = await tx
+        .select({
+          id: knowledge.id,
+          parent_id: knowledge.parent_id,
+          archived_at: knowledge.archived_at,
+        })
+        .from(knowledge)
+        .where(inArray(knowledge.id, endpointIds));
+      const revalActive = new Set(revalRows.filter((r) => r.archived_at === null).map((r) => r.id));
+      const revalMissing = endpointIds.filter((id) => !revalActive.has(id));
+      if (revalMissing.length > 0) {
+        throw new ApiError(
+          'not_found',
+          `unknown or archived knowledge_id(s): ${revalMissing.join(', ')}`,
+          404,
+        );
+      }
+      if (
+        isDirectTreePair(
+          fromId,
+          toId,
+          revalRows.flatMap((node) =>
+            node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+          ),
+        )
+      ) {
+        throw new ApiError(
+          'tree_redundancy',
+          `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
+          409,
+        );
+      }
+
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',
