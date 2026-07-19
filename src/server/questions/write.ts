@@ -357,6 +357,10 @@ export async function archiveQuestion(
       .update(question)
       .set({
         draft_status: 'draft',
+        // YUK-704 — archived rows release their exact-identity hash: the partial
+        // unique index only covers non-NULL, so deleted content can be produced
+        // again instead of duplicate-matching a soft-archived row forever.
+        canonical_content_hash: null,
         metadata: {
           ...(row.metadata ?? {}),
           archived_at: archivedAtSec,
@@ -384,6 +388,9 @@ export async function archiveQuestion(
       .update(question)
       .set({
         draft_status: 'draft',
+        // Same hash release as the parent — archived parts must not keep blocking
+        // re-production of identical content via the partial unique index.
+        canonical_content_hash: null,
         metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
           archived_at: archivedAtSec,
           archived_reason: `cascade:${reason}`,

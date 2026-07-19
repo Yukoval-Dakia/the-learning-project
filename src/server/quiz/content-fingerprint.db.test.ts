@@ -1,5 +1,6 @@
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { archiveQuestion } from '@/server/questions/write';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
@@ -37,6 +38,21 @@ describe('findExactQuestionDuplicate', () => {
       id: `q-${_label}`,
       draftStatus: status,
     });
+  });
+
+  it('archiving releases the canonical hash so identical content can be produced again', async () => {
+    const hash = await seed('q-archived', null);
+    const [before] = await db.select().from(question).where(eq(question.id, 'q-archived'));
+    const result = await archiveQuestion(db, 'q-archived', before.version, 'owner');
+    expect(result.status).toBe('archived');
+
+    const [after] = await db.select().from(question).where(eq(question.id, 'q-archived'));
+    expect(after.canonical_content_hash).toBeNull();
+    // The freed hash no longer duplicate-matches, and the partial unique index
+    // accepts a fresh row carrying the same content identity.
+    expect(await findExactQuestionDuplicate(db, hash)).toBeNull();
+    await seed('q-reborn', 'draft');
+    expect(await findExactQuestionDuplicate(db, hash)).toMatchObject({ id: 'q-reborn' });
   });
 
   it('keeps legacy NULL-hash rows readable and outside exact identity lookup', async () => {
