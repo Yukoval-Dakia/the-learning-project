@@ -65,6 +65,7 @@ export function useIngestionSSE(sessionId: string | null): UseIngestionSSEResult
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let streamError: Error | null = null;
 
         while (!cancelledRef.current) {
           const { done, value } = await reader.read();
@@ -74,12 +75,29 @@ export function useIngestionSSE(sessionId: string | null): UseIngestionSSEResult
           while (sep !== -1) {
             const chunk = buffer.slice(0, sep);
             buffer = buffer.slice(sep + 2);
-            const ev = parseSSEChunk(chunk);
-            if (ev) setEvents((prev) => [...prev, ev]);
+            if (isSseErrorFrame(chunk)) {
+              // Server-side stream failure: the route emits a named `event: error`
+              // frame then closes. parseSSEChunk drops it (no numeric event_id), so
+              // without this branch EOF lands on 'closed' and the consumer can't
+              // tell a healthy finish from a mid-stream DB/connection error —
+              // recovery branches (e.g. VisionTab) would then hang on 'extracting'.
+              streamError = new Error('录入进度连接中断');
+            } else {
+              const ev = parseSSEChunk(chunk);
+              if (ev) setEvents((prev) => [...prev, ev]);
+            }
             sep = buffer.indexOf('\n\n');
           }
+          if (streamError) break;
         }
-        if (!cancelledRef.current) setStatus('closed');
+        if (!cancelledRef.current) {
+          if (streamError) {
+            setError(streamError);
+            setStatus('error');
+          } else {
+            setStatus('closed');
+          }
+        }
       } catch (err) {
         if (cancelledRef.current) return;
         if (err instanceof Error && err.name === 'AbortError') return;
@@ -95,6 +113,26 @@ export function useIngestionSSE(sessionId: string | null): UseIngestionSSEResult
   }, [sessionId]);
 
   return { events, status, error };
+}
+
+/**
+ * Recognize the server's named error frame: `event: error\ndata: {...}`.
+ *
+ * Both SSE routes (ingestion/api/events.ts and observability/api/job-events.ts)
+ * emit this exact shape when the stream fails mid-flight (DB/connection error),
+ * then close. parseSSEChunk ignores it (no numeric event_id), so consumers must
+ * detect it explicitly to distinguish a failure from a healthy EOF. Exported so
+ * a future job-events client consumer can reuse it and keep both SSE paths'
+ * error handling consistent.
+ */
+export function isSseErrorFrame(chunk: string): boolean {
+  for (const line of chunk.split('\n')) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('event:')) {
+      return trimmed.slice('event:'.length).trim() === 'error';
+    }
+  }
+  return false;
 }
 
 function parseSSEChunk(chunk: string): SSEEvent | null {
