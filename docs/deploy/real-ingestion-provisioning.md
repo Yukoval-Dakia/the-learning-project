@@ -120,7 +120,8 @@ owner entry point.
 **API path (canonical resource flow):**
 
 1. `POST /api/assets` — upload the worksheet image and retain its asset id.
-2. `POST /api/ingestion-sessions` with the uploaded `asset_ids` — create an
+2. `POST /api/ingestion-sessions` with
+   `{ "entrypoint": "vision_paper", "asset_ids": ["..."] }` — create an
    ingestion session (`learning_session` with `type='ingestion'`). The current
    UI still calls deprecated create alias `POST /api/ingestion`; the manifest
    declares `/api/ingestion-sessions` as its successor.
