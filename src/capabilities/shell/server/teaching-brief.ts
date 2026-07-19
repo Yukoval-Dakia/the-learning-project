@@ -357,8 +357,14 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
     .where(
       and(
         eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.subject_kind, 'question'),
         gt(event.created_at, lowerBound),
         lte(event.created_at, now),
+        // Only canonical resolution/outcome pairs may occupy the bounded window,
+        // otherwise a flood of corrupt results could evict an older valid outcome.
+        // The in-loop validation below stays authoritative for provenance.
+        sql`((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
+          OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -468,6 +474,11 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
     .where(
       and(
         eq(question.source, PROBE_QUESTION_SOURCE),
+        // Cheap canonical-shape checks run pre-window so drifted probes cannot
+        // crowd out an older valid served probe; validateProbeQuestion below
+        // stays authoritative (and keeps the observable skip log) for the rest.
+        eq(question.draft_status, 'draft'),
+        sql`${question.source_ref} = ${question.metadata}->>'conjecture_proposal_id'`,
         sql`NOT EXISTS (
           SELECT 1 FROM ${event}
           WHERE ${event.subject_kind} = 'question'
@@ -617,7 +628,20 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
         ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
       ),
     )
-    .orderBy(desc(event.created_at), desc(event.id))
+    .orderBy(
+      // Salience ranks BEFORE the window truncates (contract §5: highest-salience
+      // fresh finding across ALL eligible candidates). Non-numeric payloads rank
+      // as zero — they are skipped later anyway.
+      sql`CASE
+        WHEN jsonb_typeof(${event.payload}->'ai_proposal'->'proposed_change'->'confidence') = 'number'
+         AND jsonb_typeof(${event.payload}->'ai_proposal'->'proposed_change'->'recurrence_count') = 'number'
+        THEN (${event.payload}->'ai_proposal'->'proposed_change'->>'confidence')::numeric
+           * (${event.payload}->'ai_proposal'->'proposed_change'->>'recurrence_count')::numeric
+        ELSE 0
+      END DESC`,
+      desc(event.created_at),
+      desc(event.id),
+    )
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
   const proposalIds = rawConjectures.map((row) => row.id);
   const [latestRates, correctionStatuses] = await Promise.all([

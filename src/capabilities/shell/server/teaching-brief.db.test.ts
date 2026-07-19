@@ -630,7 +630,7 @@ describe('loadTeachingBrief', () => {
     warn.mockRestore();
   });
 
-  it('bounds the finding selector to the 50 newest raw conjecture candidates', async () => {
+  it('ranks pending findings by salience before the bounded window truncates', async () => {
     const newestWindow = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW }, (_, index) =>
       rawProposalRow({
         id: `p_window_${String(index).padStart(2, '0')}`,
@@ -638,7 +638,7 @@ describe('loadTeachingBrief', () => {
       }),
     );
     const olderHighSalience = rawProposalRow({
-      id: 'p_outside_window_high_salience',
+      id: 'p_older_high_salience',
       createdAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       confidence: 1,
       recurrenceCount: 100,
@@ -649,7 +649,9 @@ describe('loadTeachingBrief', () => {
 
     const result = await loadTeachingBrief(testDb(), NOW);
 
-    expect(result.brief).toMatchObject({ brief_id: 'p_window_49', state: 'finding' });
+    // Contract §5: highest-salience fresh finding wins across ALL eligible
+    // candidates — recency only breaks ties, and the window cannot evict it.
+    expect(result.brief).toMatchObject({ brief_id: 'p_older_high_salience', state: 'finding' });
   });
 
   it('does not let a burst of decided conjectures evict an older pending finding', async () => {
@@ -688,21 +690,19 @@ describe('loadTeachingBrief', () => {
         createdAt: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000),
       }),
     );
-    const corrections = correctedNewer.map(
-      (proposal, index): typeof event.$inferInsert => ({
-        id: `correct_${proposal.id}`,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'correct',
-        subject_kind: 'event',
-        subject_id: proposal.id,
-        outcome: 'success',
-        payload: { correction_kind: 'retract', reason_md: 'retracted in test' },
-        created_at: new Date(
-          NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000 + 1_000,
-        ),
-      }),
-    );
+    const corrections = correctedNewer.map((proposal, index): typeof event.$inferInsert => ({
+      id: `correct_${proposal.id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposal.id,
+      outcome: 'success',
+      payload: { correction_kind: 'retract', reason_md: 'retracted in test' },
+      created_at: new Date(
+        NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000 + 1_000,
+      ),
+    }));
     const olderPending = rawProposalRow({
       id: 'p_pending_behind_corrected_burst',
       createdAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
@@ -717,6 +717,37 @@ describe('loadTeachingBrief', () => {
       brief_id: 'p_pending_behind_corrected_burst',
       state: 'finding',
     });
+  });
+
+  it('does not let a flood of corrupt results evict an older valid outcome', async () => {
+    await seedOutcome({
+      proposalId: 'p_valid_outcome',
+      proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
+      probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
+      resultAt: new Date(NOW.getTime() - DAY_MS),
+      resolution: 'confirmed',
+    });
+    // Newer results with non-canonical resolution/outcome pairs — these must be
+    // filtered before the bounded window, not occupy it.
+    const corrupt = Array.from(
+      { length: TEACHING_BRIEF_CANDIDATE_WINDOW },
+      (_, index): typeof event.$inferInsert => ({
+        id: `res_corrupt_${String(index).padStart(2, '0')}`,
+        actor_kind: 'system',
+        actor_ref: 'judge',
+        action: 'experimental:probe_result',
+        subject_kind: 'question',
+        subject_id: `q_missing_${index}`,
+        outcome: 'success',
+        payload: { resolution: 'confirmed', outcome: 1, conjecture_event_id: 'evt_nowhere' },
+        created_at: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000),
+      }),
+    );
+    await testDb().insert(event).values(corrupt);
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result.brief).toMatchObject({ brief_id: 'p_valid_outcome', state: 'outcome_confirmed' });
   });
 
   it('keeps a corrected-then-restored finding eligible (latest correction wins)', async () => {
