@@ -253,23 +253,33 @@ export type DeleteQuestionResult =
 
 function normalizeQuestionAssociationCounts(
   counts: Partial<QuestionAssociationCounts> | null | undefined,
+  fallbackChildren: number,
 ): QuestionAssociationCounts {
   return {
     attempts: counts?.attempts ?? 0,
     mistakes: counts?.mistakes ?? 0,
     fsrs_cards: counts?.fsrs_cards ?? 0,
     paper_refs: counts?.paper_refs ?? 0,
-    // Additive wire compatibility during a rolling web/API deploy.
-    children: counts?.children ?? 0,
+    // Additive wire compatibility during a rolling web/API deploy. An older API
+    // omits `children`; falling back to the already-loaded detail projection is
+    // deliberately conservative so a children-only parent never enters the
+    // "safe delete" path while the API and web bundles are on different versions.
+    children: counts?.children ?? fallbackChildren,
   };
 }
 
 export async function deleteQuestion(
   id: string,
-  opts: { confirm?: boolean; version?: number } = {},
+  opts: {
+    confirm?: boolean;
+    confirmChildren?: boolean;
+    version?: number;
+    fallbackChildren?: number;
+  } = {},
 ): Promise<DeleteQuestionResult> {
   const sp = new URLSearchParams();
   if (opts.confirm) sp.set('confirm', 'true');
+  if (opts.confirmChildren) sp.set('confirm_children', 'true');
   if (opts.version != null) sp.set('version', String(opts.version));
   const url = `/api/questions/${encodeURIComponent(id)}${sp.toString() ? `?${sp.toString()}` : ''}`;
 
@@ -300,7 +310,10 @@ export async function deleteQuestion(
   if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
     return {
       kind: 'confirm_required',
-      associations: normalizeQuestionAssociationCounts(body.associations),
+      associations: normalizeQuestionAssociationCounts(
+        body.associations,
+        opts.fallbackChildren ?? 0,
+      ),
       has_associations: body.has_associations ?? false,
     };
   }
@@ -314,7 +327,10 @@ export async function deleteQuestion(
     kind: 'archived',
     event_id: body?.event_id ?? null,
     cascaded_part_ids: body?.cascaded_part_ids ?? [],
-    associations: normalizeQuestionAssociationCounts(body?.associations),
+    associations: normalizeQuestionAssociationCounts(
+      body?.associations,
+      opts.fallbackChildren ?? 0,
+    ),
   };
 }
 

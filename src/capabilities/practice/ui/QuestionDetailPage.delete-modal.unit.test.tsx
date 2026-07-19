@@ -22,6 +22,7 @@ describe('QuestionDetailPage delete association modal (YUK-298)', () => {
     );
 
     expect(screen.getByText(/道小题挂在此大题下/).textContent).toContain('2');
+    expect(screen.getByText(/母题及 2 道挂载小题将一并从题库和练习池移除并转为草稿/)).toBeTruthy();
     const deleteButton = screen.getByRole('button', { name: '从题库移除' });
     expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
 

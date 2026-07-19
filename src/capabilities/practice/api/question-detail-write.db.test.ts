@@ -354,6 +354,23 @@ describe('DELETE /api/questions/[id]', () => {
     expect(typeof meta?.archived_at).toBe('number');
   });
 
+  it('fails closed when a legacy client confirms a parent without acknowledging children', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const partId = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+
+    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; associations: { children: number } };
+    expect(body.error).toBe('children_confirmation_required');
+    expect(body.associations.children).toBe(1);
+    expect((await loadRow(parentId))?.draft_status).toBe('active');
+    expect((await loadRow(partId))?.draft_status).toBe('active');
+  });
+
   it('writes an experimental:question_archive event', async () => {
     const id = await seedQuestion({ draft_status: 'active' });
     await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
@@ -387,7 +404,10 @@ describe('DELETE /api/questions/[id]', () => {
       parent_question_id: otherParent,
     });
 
-    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { cascaded_part_ids: string[] };
     expect(new Set(body.cascaded_part_ids)).toEqual(new Set([partA, partB]));
@@ -420,7 +440,10 @@ describe('DELETE /api/questions/[id]', () => {
       parent_question_id: null,
     });
 
-    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { cascaded_part_ids: string[] };
     // FK part is cascaded despite its non-sentinel kind.
@@ -449,7 +472,10 @@ describe('DELETE /api/questions/[id]', () => {
       .where(eq(material_fsrs_state.subject_id, part));
     expect(before).toHaveLength(1);
 
-    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
     expect(res.status).toBe(200);
 
     // Part row was re-drafted (out of the pool) ...

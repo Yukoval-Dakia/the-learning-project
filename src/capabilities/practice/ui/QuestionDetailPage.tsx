@@ -311,7 +311,9 @@ export function DeleteModal({
           ) : (
             <>
               <p>
-                此题已被学习记录引用或带有挂载小题。删除后它不会再出现在题库中，但既有作答和复习历史会保留。
+                {counts.children > 0
+                  ? `母题及 ${counts.children} 道挂载小题将一并从题库和练习池移除并转为草稿；既有作答和复习历史会保留。`
+                  : '此题将从题库和练习池移除并转为草稿；既有作答和复习历史会保留。'}
               </p>
               <div className="qb-constraints">
                 {constraints.map((c) => (
@@ -492,7 +494,12 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   });
 
   const deleteMut = useMutation({
-    mutationFn: (opts: { confirm?: boolean; version?: number }) => deleteQuestion(id, opts),
+    mutationFn: (opts: {
+      confirm?: boolean;
+      confirmChildren?: boolean;
+      version?: number;
+      fallbackChildren?: number;
+    }) => deleteQuestion(id, opts),
     // M1：DELETE 失败（含 confirm 后又 409 冲突）→ 提示，不静默。409 刷新最新 version。
     onError: (err: unknown) => {
       if (err instanceof ApiError && err.status === 409) {
@@ -578,7 +585,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     setDel(true);
     setDelCounts(null);
     deleteMut.mutate(
-      { confirm: false },
+      { confirm: false, fallbackChildren: data.parts.length },
       {
         onSuccess: (res: DeleteQuestionResult) => {
           // 无 confirm 必返 confirm_required（含约束计数）；理论上不会 archived。
@@ -591,7 +598,12 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
 
   const confirmDelete = () => {
     deleteMut.mutate(
-      { confirm: true, version: data.version },
+      {
+        confirm: true,
+        confirmChildren: (delCounts?.children ?? data.parts.length) > 0,
+        version: data.version,
+        fallbackChildren: data.parts.length,
+      },
       {
         onSuccess: (res: DeleteQuestionResult) => {
           if (res.kind === 'archived') {
