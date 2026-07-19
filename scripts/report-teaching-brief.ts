@@ -18,6 +18,10 @@
 import './load-env';
 
 import { fileURLToPath } from 'node:url';
+import {
+  isCandidateError,
+  validateAckableOutcome,
+} from '@/capabilities/shell/server/teaching-brief';
 import type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,
@@ -187,9 +191,26 @@ export async function loadTeachingBriefReportInput(
     has_result: answeredIds.has(row.probe_question_id),
   }));
 
-  // Probe outcomes — canonical probe_result events in-window; only legal resolution/outcome pairs.
+  // Probe outcomes — every probe_result event in-window, then gated by the reader's OWN
+  // structural deliverability check (validateAckableOutcome) so the report counts exactly the
+  // outcomes a learner could have received: canonical body (action / question subject / legal
+  // resolution+outcome pair / self-consistent conjecture provenance) AND a complete accepted
+  // chain (the mind-probe exists + is canonical for its proposal + the proposal is accepted).
+  // skipTimeWindow=true drops ONLY the live-reader dimensions that don't belong in a historical
+  // window aggregate — the 7-day OUTCOME_TTL and the ack-exclusion — so an expired-by-now or
+  // later-acked outcome still counts. A chain-broken result (ref mismatch / missing probe /
+  // un-accepted proposal), which the reader/ack would skip, is counted as MISSING DATA here
+  // instead of silently inflating the confirmed/retired denominator.
   const resultRows = await database
-    .select({ result_event_id: event.id, payload: event.payload })
+    .select({
+      id: event.id,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      caused_by_event_id: event.caused_by_event_id,
+      created_at: event.created_at,
+      payload: event.payload,
+    })
     .from(event)
     .where(
       and(
@@ -197,16 +218,30 @@ export async function loadTeachingBriefReportInput(
         eq(event.subject_kind, 'question'),
         gte(event.created_at, window.from),
         lt(event.created_at, window.to),
-        sql`((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
-          OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
       ),
     );
-  const probeResults: ProbeResultFact[] = resultRows.map((row) => ({
-    result_event_id: row.result_event_id,
-    resolution: toRecord(row.payload).resolution === 'confirmed' ? 'confirmed' : 'retired',
-  }));
+  const now = new Date();
+  const probeResults: ProbeResultFact[] = [];
+  let skippedCorruptOutcomes = 0;
+  for (const row of resultRows) {
+    const gate = await validateAckableOutcome(database, row, now, { skipTimeWindow: true });
+    if (isCandidateError(gate)) {
+      skippedCorruptOutcomes += 1;
+      continue;
+    }
+    probeResults.push({ result_event_id: row.id, resolution: gate.value.resolution });
+  }
 
-  return { from, to, briefSeen, primaryActions, decisions, probesServed, probeResults };
+  return {
+    from,
+    to,
+    briefSeen,
+    primaryActions,
+    decisions,
+    probesServed,
+    probeResults,
+    skippedCorruptOutcomes,
+  };
 }
 
 function parseArg(name: string): string | undefined {

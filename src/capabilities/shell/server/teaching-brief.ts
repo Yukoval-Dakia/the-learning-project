@@ -485,7 +485,14 @@ export async function validateAckableOutcome(
   // The write path (ack) runs this inside its advisory-locked transaction, whose single
   // connection cannot serve the two reads concurrently — it passes serial:true. The GET
   // read path keeps the round-3 Promise.all micro-optimization (default).
-  { serial = false }: { serial?: boolean } = {},
+  //
+  // skipTimeWindow (YUK-710): the offline survival report reuses the STRUCTURAL deliverability
+  // dimensions (canonical body + complete accepted chain) but is a HISTORICAL WINDOW aggregate,
+  // so it deliberately does NOT apply the live-reader dimensions — the 7-day OUTCOME_TTL (a
+  // report over a past fortnight must still count outcomes that are now expired) nor the
+  // ack-exclusion (loadOutcomeBrief's SQL NOT-EXISTS, which the reader owns; a later-acked
+  // outcome still happened and must be counted). Default false keeps the reader/ack path exact.
+  { serial = false, skipTimeWindow = false }: { serial?: boolean; skipTimeWindow?: boolean } = {},
 ): Promise<CandidateResult<AckableOutcomeFacts>> {
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
@@ -494,11 +501,14 @@ export async function validateAckableOutcome(
   // Time window — identical to loadOutcomeBrief's SQL prefilter (shared TTL constant, no
   // literal duplication). Half-open, eligible iff (now − OUTCOME_TTL) < created_at <= now:
   // a future-dated result is not yet deliverable; an expired one is no longer. Runs before
-  // the DB chain queries so an out-of-window result short-circuits cheaply.
-  const createdMs = result.created_at.getTime();
-  if (createdMs > now.getTime()) return { reason: 'result_created_in_future' };
-  if (createdMs <= now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS)
-    return { reason: 'result_expired' };
+  // the DB chain queries so an out-of-window result short-circuits cheaply. Skipped for the
+  // historical report (see skipTimeWindow above), which bounds created_at by its own window.
+  if (!skipTimeWindow) {
+    const createdMs = result.created_at.getTime();
+    if (createdMs > now.getTime()) return { reason: 'result_created_in_future' };
+    if (createdMs <= now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS)
+      return { reason: 'result_expired' };
+  }
 
   // The probe lookup and the proposal-facts load depend only on the canonical products, not
   // on each other. On the pooled read path they run together (Promise.all, separate

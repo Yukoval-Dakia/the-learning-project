@@ -22,6 +22,7 @@ function emptyInput(from = '2026-07-06', to = '2026-07-19'): TeachingBriefReport
     decisions: [],
     probesServed: [],
     probeResults: [],
+    skippedCorruptOutcomes: 0,
   };
 }
 
@@ -105,6 +106,7 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
         { result_event_id: 'res_confirmed', resolution: 'confirmed' },
         { result_event_id: 'res_retired', resolution: 'retired' },
       ],
+      skippedCorruptOutcomes: 0,
     };
     const report = computeTeachingBriefReport(input);
 
@@ -231,5 +233,17 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     ]);
     // The skipped count is surfaced as missing data in the text report.
     expect(formatTeachingBriefReport(report)).toContain('unrecognized action_kind');
+  });
+
+  it('surfaces skipped_corrupt_outcomes as missing data, excluded from the outcome counts', () => {
+    const input = emptyInput();
+    // The loader dropped 3 chain-broken probe_results; only 1 deliverable confirmed outcome remains.
+    input.skippedCorruptOutcomes = 3;
+    input.probeResults = [{ result_event_id: 'res_c', resolution: 'confirmed' }];
+    const report = computeTeachingBriefReport(input);
+    expect(report.skipped_corrupt_outcomes).toBe(3);
+    // The dropped rows never inflate confirmed/retired (the whole point of the round-4 fix).
+    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(formatTeachingBriefReport(report)).toContain('broken chain');
   });
 });

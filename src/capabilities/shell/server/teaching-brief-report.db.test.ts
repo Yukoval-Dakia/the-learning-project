@@ -12,7 +12,7 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { learnerLocalDay } from '@/core/learner-day';
-import { BRIEF_SEEN_ACTION } from '@/core/schema/conjecture';
+import { BRIEF_SEEN_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
@@ -225,5 +225,32 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.days_with_briefs).toBe(0);
     expect(report.brief_days_seen).toBe(0);
     expect(report.total_brief_seen_events).toBe(0);
+  });
+
+  it('excludes a chain-broken probe_result from confirmed/retired and counts it as missing data', async () => {
+    // A structurally deliverable-LOOKING result (canonical body: legal confirmed/0 pair,
+    // self-consistent provenance) but a BROKEN chain — its probe question does not exist. The
+    // reader/ack would skip it, so the report must too: it is NOT a confirmed outcome, and it is
+    // surfaced as missing data rather than silently inflating the denominator (round-4 codex P2).
+    await writeEvent(testDb(), {
+      id: 'res_broken',
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q_missing_probe',
+      payload: { conjecture_event_id: 'p_orphan', outcome: 0, resolution: 'confirmed' },
+      caused_by_event_id: 'p_orphan',
+      ingest_at: new Date(),
+    });
+    // Plus one fully-canonical confirmed chain, so we prove the good one still counts.
+    await seedChain('confirmed');
+
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(report.skipped_corrupt_outcomes).toBe(1);
   });
 });
