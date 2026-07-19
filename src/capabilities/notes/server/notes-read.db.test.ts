@@ -71,6 +71,15 @@ describe('notesForKnowledge', () => {
     expect(notes.map((n) => n.type)).toEqual(['note_atomic', 'note_hub', 'note_long']);
   });
 
+  it('supports a bounded read for paid fan-out target discovery', async () => {
+    await seedKnowledge('k1');
+    await seedNote('atomic1', 'note_atomic', ['k1']);
+    await seedNote('atomic2', 'note_atomic', ['k1']);
+    await seedNote('atomic3', 'note_atomic', ['k1']);
+
+    expect(await notesForKnowledge(testDb(), 'k1', { limit: 2 })).toHaveLength(2);
+  });
+
   it('excludes tool_quiz, interactive, archived notes, and notes not labeled with the node', async () => {
     await seedKnowledge('k1');
     await seedNote('atomic1', 'note_atomic', ['k1']);

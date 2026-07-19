@@ -75,8 +75,12 @@ const NOTE_SUMMARY_COLUMNS = {
  * first, then topic-entry, then long synthesis), newest within each type.
  * Returns [] when the node has no labeled notes (the page renders an empty state).
  */
-export async function notesForKnowledge(db: DbLike, knowledgeId: string): Promise<NoteSummary[]> {
-  const rows = await db
+export async function notesForKnowledge(
+  db: DbLike,
+  knowledgeId: string,
+  options: { limit?: number } = {},
+): Promise<NoteSummary[]> {
+  const query = db
     .select(NOTE_SUMMARY_COLUMNS)
     .from(artifact)
     .where(
@@ -87,6 +91,7 @@ export async function notesForKnowledge(db: DbLike, knowledgeId: string): Promis
       ),
     )
     .orderBy(NOTE_TYPE_ORDER, desc(artifact.created_at));
+  const rows = options.limit === undefined ? await query : await query.limit(options.limit);
   return rows.map(toNoteSummary);
 }
 

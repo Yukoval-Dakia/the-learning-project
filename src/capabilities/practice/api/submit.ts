@@ -14,9 +14,10 @@
 //      Step 9.A new module).
 //
 // YUK-56 (2026-05-24): wire `JudgeInvoker` (CC-3) for auto-rating. When the
-// caller submits `response_md`, run the judge and embed the result in the
-// review event's `payload.judge` (mirrors embedded-check pattern). When
-// `auto_rate: true`, the suggested rating wins over body.rating. CC-1: this
+// caller explicitly requests `auto_rate`, run the judge and embed the result in
+// the review event's `payload.judge` (mirrors embedded-check pattern). A supplied
+// `judge_result_v2` may also be embedded without another call. When `auto_rate:
+// true`, the suggested rating wins over body.rating. CC-1: this
 // route never writes `experimental:user_cause` — rating-only overrides do not
 // signal cause disagreement.
 //
@@ -33,7 +34,6 @@
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
-import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
@@ -49,6 +49,7 @@ import {
 } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
@@ -68,6 +69,7 @@ import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
 import { scheduleReview } from '../server/fsrs';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
+import { collectMasteryRefineTargets } from '../server/note-refine-targets';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
@@ -136,8 +138,9 @@ interface JudgedSubmit {
 async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<JudgedSubmit> {
   // YUK-56/YUK-98 — Resolve the judge result BEFORE the FSRS transaction.
   // If the UI already generated advice, reuse its `judge_result_v2` so final
-  // submit doesn't call the judge twice. Otherwise, run the read-only judge
-  // outside the txn (no events written). We need the result up-front to:
+  // submit doesn't call the judge twice. Otherwise, only explicit auto_rate
+  // requests run the read-only judge outside the txn (no events written). We
+  // need the result up-front to:
   //   1. Decide final rating when auto_rate=true (suggested wins).
   //   2. Reject 422 when auto_rate=true but judge returned 'unsupported'.
   //   3. Embed result in review event's payload.judge.
@@ -197,7 +200,10 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeRoute = suppliedJudgeResult.capability_ref.id;
   }
   let judgeTelemetry: JudgedSubmit['judgeTelemetry'] = null;
-  if (judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
+  if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
+    // YUK-694 — only explicit auto-rate requests may spend a server-side judge
+    // call, and those calls share the process-wide paid-AI request budget.
+    checkRateLimit();
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,
@@ -748,12 +754,7 @@ async function persistSubmit(
       now,
     });
 
-    const targetArtifactIds = new Set<string>();
-    if (q.source_ref) targetArtifactIds.add(q.source_ref);
-    for (const kid of q.knowledge_ids) {
-      const labeled = await notesForKnowledge(db, kid);
-      for (const note of labeled) targetArtifactIds.add(note.id);
-    }
+    const targetArtifactIds = await collectMasteryRefineTargets(db, q.source_ref, q.knowledge_ids);
     for (const artifactId of targetArtifactIds) {
       await enqueueMasteryNoteRefine({
         db,
