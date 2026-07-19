@@ -2,6 +2,7 @@
 
 **状态**：accepted
 **日期**：2026-05-15
+**Superseded by**: [ADR-0035](0035-mastery-diagnosis-three-dim-full-engine-instantiation.md)（占位计算公式） · **Amended by**: [ADR-0037](0037-unified-scheduling-merge-engine.md)（mastery 被 B1 `mastery_state` 重写；view 派生原则保留）
 
 > 起源：2026-05-15 data-assumptions audit 揭露 `knowledge.base_mastery` / `ai_delta_mastery` / `last_active_at` 三个 stub 字段——schema 定义、零 write path。多份 plan / spec 假设它们活着（sub-0d Step 2.1 `update_ai_delta_mastery` tool / MaintenanceProposeTask "60d 无访问归档" / architecture.md Knowledge 表）。本 ADR 给 mastery / 活跃度数据一个统一决策：**不存为字段，从 events 派生**。
 
