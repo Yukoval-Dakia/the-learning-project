@@ -952,10 +952,12 @@
 }
 /* autosave-failed variant — button so the chip itself is the retry affordance.
    background/border/cursor + the :disabled cursor/opacity come from the global button
-   reset (globals.css), so only the chip-specific color/padding live here. */
+   reset (globals.css), so only the chip-specific color/padding live here. Vertical padding
+   + min-height give a ≥24px hit target (WCAG 2.5.8 AA) while keeping the chip compact. */
 .pfp-saved.is-failed {
   color: var(--again-ink);
-  padding: 0;
+  padding: var(--s-1) 0;
+  min-height: 24px;
 }
 .pfp-saved.is-failed:not(:disabled):hover {
   color: var(--ink-2);

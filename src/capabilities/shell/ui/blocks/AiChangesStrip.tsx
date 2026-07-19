@@ -21,16 +21,22 @@ export function AiChangesStrip({ now }: { now: Date }) {
   const q = useQuery({ queryKey: ['workbench-ai-changes'], queryFn: getRecentAiChanges });
   const rows = q.data?.rows ?? [];
 
-  // Which row's undo failed. A single shared mutation's isError can't say WHICH row and
-  // gets silently reset when another row is undone — so track the failed event id and
-  // render the error inline at that row. Cleared when that row is retried; a different
-  // row's undo leaves it intact.
-  const [failedId, setFailedId] = useState<string | null>(null);
+  // Which rows' undo failed. A single shared mutation's isError can't say WHICH row; a
+  // single failed-id would let a second row's failure swallow the first's error. Track the
+  // full set of failed event ids and render the error inline at each. Retrying a row clears
+  // only its own error; every other failed row keeps its error.
+  const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set());
   const undoM = useMutation({
     mutationFn: ({ artifactId, eventId }: { artifactId: string; eventId: string }) =>
       undoAiChange(artifactId, eventId),
-    onMutate: ({ eventId }) => setFailedId((id) => (id === eventId ? null : id)),
-    onError: (_e, { eventId }) => setFailedId(eventId),
+    onMutate: ({ eventId }) =>
+      setFailedIds((s) => {
+        if (!s.has(eventId)) return s;
+        const next = new Set(s);
+        next.delete(eventId);
+        return next;
+      }),
+    onError: (_e, { eventId }) => setFailedIds((s) => new Set(s).add(eventId)),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
   });
 
@@ -97,7 +103,7 @@ export function AiChangesStrip({ now }: { now: Date }) {
                   )}
                 </div>
               </div>
-              {failedId === c.event_id && (
+              {failedIds.has(c.event_id) && (
                 <div className="meta strip-undo-err" role="alert">
                   撤销失败，请重试。
                 </div>

@@ -85,4 +85,25 @@ describe('AiChangesStrip undo failure (YUK-713)', () => {
       screen.getByText('ai').closest('.strip'),
     );
   });
+
+  it('keeps a per-row error for every failed row when multiple rows fail', async () => {
+    const ROW2 = { ...ROW, event_id: 'ev_2', artifact_id: 'art_2', actor_ref: 'zeta' };
+    mocks.getRecentAiChanges.mockResolvedValue({ window_hours: 24, rows: [ROW, ROW2] });
+    mocks.undoAiChange.mockRejectedValue(new Error('500')); // both rows fail
+    const user = userEvent.setup();
+    renderStrip();
+
+    const buttons = await screen.findAllByRole('button', { name: '撤销' });
+    await user.click(buttons[0]); // fail the ai row
+    await screen.findByText('撤销失败，请重试。');
+    await user.click(screen.getAllByRole('button', { name: '撤销' })[1]); // fail the zeta row
+    await waitFor(() => expect(mocks.undoAiChange).toHaveBeenCalledTimes(2));
+
+    // Both rows keep their own inline error — the second failure did not swallow the first.
+    const errs = await screen.findAllByText('撤销失败，请重试。');
+    expect(errs).toHaveLength(2);
+    const anchors = errs.map((e) => e.previousElementSibling);
+    expect(anchors).toContain(screen.getByText('ai').closest('.strip'));
+    expect(anchors).toContain(screen.getByText('zeta').closest('.strip'));
+  });
 });

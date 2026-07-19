@@ -40,12 +40,17 @@ function changeActorLabel(actorRef: string): string {
   return actorRef === 'user' || actorRef.startsWith('user:') ? '你' : 'AI';
 }
 
+// Safely coerce any rejection to a string (a non-Error value must not make the handler
+// itself throw).
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 // Optimistic-lock conflict detection shared by the save + undo error paths (undo raises a
-// synthetic 409 for the version_conflict status). Coerces non-Error rejections safely so
-// the handler itself never throws.
+// synthetic 409 for the version_conflict status).
 function isVersionConflict(e: unknown): boolean {
   if (e instanceof ApiError && e.status === 409) return true;
-  const msg = e instanceof Error ? e.message : String(e);
+  const msg = errMessage(e);
   return msg.includes('409') || msg.includes('conflict');
 }
 
@@ -117,11 +122,7 @@ export default function NoteReaderPage({
   // One conflict-detection rule for both mutations (see isVersionConflict) — the version
   // conflict copy, else an action-prefixed failure with the safely-coerced message.
   const conflictToast = (e: unknown, conflictMsg: string, failPrefix: string) => {
-    say(
-      isVersionConflict(e)
-        ? conflictMsg
-        : `${failPrefix}：${e instanceof Error ? e.message : String(e)}`,
-    );
+    say(isVersionConflict(e) ? conflictMsg : `${failPrefix}：${errMessage(e)}`);
   };
 
   const saveM = useMutation({
