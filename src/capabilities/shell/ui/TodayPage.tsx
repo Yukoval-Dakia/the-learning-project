@@ -27,6 +27,7 @@ import { useEffect, useState } from 'react';
 
 import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { ProbeAnswers } from './ProbeAnswers';
+import { TeachingBriefBand } from './TeachingBrief';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
@@ -298,6 +299,33 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
   return chips;
 }
 
+// YUK-707 · [裁决 1] — degraded_kinds silent-failure red flags, HOISTED out of the
+// overnight band to workbench position 1 (above the teaching brief), so they stay
+// directly visible and are never hidden behind the narrative card. Same ['overnight-
+// digest'] query key as OvernightDigestBand → react-query dedupes it (zero extra
+// network). Silent degrade: it renders null — no skeleton, no error surface — until real
+// degraded facts exist; the red strip is a cross-cutting flag, not a primary surface.
+// Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged) and the exact
+// original degraded-row JSX (LoomBadge tone="again" + alert icon), just relocated.
+function DegradedKindsFlags() {
+  const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  const d = q.data;
+  if (!d || d.degraded_kinds.length === 0) return null;
+  return (
+    <div className="digest-chips tb-degraded-flags">
+      {d.degraded_kinds.map((dk) => (
+        <LoomBadge
+          key={dk.task_kind}
+          tone="again"
+          title={learnerFailureSummary(dk.recent_error_messages)}
+        >
+          <LoomIcon name="alert" size={12} /> {aiTaskLabel(dk.task_kind)}失败 {dk.error_count} 次
+        </LoomBadge>
+      ))}
+    </div>
+  );
+}
+
 function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   // YUK-567 — the 备课猜想 chip toggles an inline 备课台 conjecture panel (pull, not
   // push): the team's prepared conjectures surface only when the owner opens them.
@@ -306,6 +334,11 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   // key with ProbeAnswers → react-query dedupes), independent of overnight activity so a
   // served probe is always reachable.
   const [probeOpen, setProbeOpen] = useState(false);
+  // YUK-707 · [裁决 5] — the whole night-activity surface (activity chips + 待你试做
+  // queue) is DEMOTED into one default-collapsed disclosure now that the teaching brief is
+  // the primary "为你而备" delivery. demote-not-delete: both surfaces stay reachable (the
+  // 备课猜想 / 待你试做 二级 toggles are preserved), only the hierarchy drops a level.
+  const [activityOpen, setActivityOpen] = useState(false);
   const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
   const probesQ = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
   const activeProbes = probesQ.data?.probes ?? [];
@@ -323,6 +356,9 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   }, [activeProbes.length, probeOpen]);
   const chips = d ? buildDigestChips(d) : [];
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
+  const hasActivity = !!d?.has_overnight_activity;
+  const hasProbes = activeProbes.length > 0;
+  const hasAnything = hasActivity || hasProbes;
   return (
     <>
       <SectionLabel>夜链 · 交班</SectionLabel>
@@ -339,103 +375,98 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           errorText="夜链交班暂不可用。"
           skeleton={<SkLines rows={2} />}
         >
-          {/* YUK-580：静默失败标红。degraded_kinds 非空时 activity 必为 true（error runs
-              计入 runs_total，非独立信号）；这里的「独立渲染」只是指标红 badge 不挂在
-              has_overnight_activity 的条件分支下（既有 LoomBadge tone="again" + LoomIcon
-              "alert" primitives，同 observability 面 <Badge tone="again">error</Badge>
-              口径，无新组件）。marginBottom 仅在下方 activity chips 行也会渲染时补一档
-              纵向间距（既有 inline style 约定，见 L437 marginLeft），避免两行 .digest-chips
-              贴在一起。 */}
-          {d && d.degraded_kinds.length > 0 && (
-            <div
-              className="digest-chips"
-              style={d.has_overnight_activity ? { marginBottom: 'var(--s-2)' } : undefined}
-            >
-              {d.degraded_kinds.map((dk) => (
-                <LoomBadge
-                  key={dk.task_kind}
-                  tone="again"
-                  title={learnerFailureSummary(dk.recent_error_messages)}
-                >
-                  <LoomIcon name="alert" size={12} /> {aiTaskLabel(dk.task_kind)}失败{' '}
-                  {dk.error_count} 次
-                </LoomBadge>
-              ))}
-            </div>
-          )}
-          {d && !d.has_overnight_activity && (
+          {/* degraded_kinds red flags moved to <DegradedKindsFlags/> (position 1, [裁决 1]);
+              this band keeps ALL observable facts, just demoted a level. */}
+          {d && !hasAnything && (
             <div className="quiet-empty">
               昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。
             </div>
           )}
-          {d?.has_overnight_activity && (
-            <>
-              <div className="digest-chips">
-                {chips.map((c) =>
-                  c.key === 'conjectures' ? (
-                    // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
-                    <button
-                      key={c.key}
-                      type="button"
-                      className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
-                      onClick={() => setConjOpen((o) => !o)}
-                      aria-expanded={conjOpen}
-                    >
-                      <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                      <b className="mono">{c.count}</b>
-                      <LoomIcon name="chevronDown" size={13} className="pd-chev" />
-                    </button>
-                  ) : (
-                    <span key={c.key} className="chip">
-                      <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                      <b className="mono">{c.count}</b>
-                    </span>
-                  ),
-                )}
-              </div>
-              {conjOpen && (
+          {d && hasAnything && (
+            <div className="digest-activity">
+              <button
+                type="button"
+                className={`chip chip-toggle${activityOpen ? ' is-open' : ''}`}
+                onClick={() => setActivityOpen((o) => !o)}
+                aria-expanded={activityOpen}
+              >
+                <LoomIcon name="moon" size={14} /> 昨夜 AI 还替你做了这些
+                <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+              </button>
+              {activityOpen && (
                 <div className="prep-desk-expand">
-                  <PrepDeskConjectures />
+                  {hasActivity && (
+                    <>
+                      <div className="digest-chips">
+                        {chips.map((c) =>
+                          c.key === 'conjectures' ? (
+                            // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
+                            <button
+                              key={c.key}
+                              type="button"
+                              className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
+                              onClick={() => setConjOpen((o) => !o)}
+                              aria-expanded={conjOpen}
+                            >
+                              <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                              <b className="mono">{c.count}</b>
+                              <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                            </button>
+                          ) : (
+                            <span key={c.key} className="chip">
+                              <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                              <b className="mono">{c.count}</b>
+                            </span>
+                          ),
+                        )}
+                      </div>
+                      {conjOpen && (
+                        <div className="prep-desk-expand">
+                          <PrepDeskConjectures />
+                        </div>
+                      )}
+                      {canDecide && (
+                        <div className="digest-foot">
+                          <Btn
+                            size="sm"
+                            variant="secondary"
+                            iconEnd="arrow"
+                            onClick={() => navigate('/inbox')}
+                          >
+                            去裁决
+                          </Btn>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {hasProbes && (
+                    <div className="probe-queue">
+                      {/* 待你试做 —— served probes to answer. Driven by the probes query
+                          (not the overnight digest), so it's reachable even after the 备课
+                          猜想 panel auto-collapses. Answering the last one auto-collapses. */}
+                      <button
+                        type="button"
+                        className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
+                        onClick={() => setProbeOpen((o) => !o)}
+                        aria-expanded={probeOpen}
+                      >
+                        <LoomIcon name="quiz" size={14} /> 待你试做{' '}
+                        <b className="mono">{activeProbes.length}</b>
+                        <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                      </button>
+                      {probeOpen && (
+                        <div className="prep-desk-expand">
+                          <ProbeAnswers />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
-              {canDecide && (
-                <div className="digest-foot">
-                  <Btn
-                    size="sm"
-                    variant="secondary"
-                    iconEnd="arrow"
-                    onClick={() => navigate('/inbox')}
-                  >
-                    去裁决
-                  </Btn>
-                </div>
-              )}
-            </>
+            </div>
           )}
         </Stateful>
       </LoomCard>
-      {activeProbes.length > 0 && (
-        <div className="probe-queue">
-          {/* 待你试做 —— served probes to answer. Chip driven by the probes query
-              (not the overnight digest), so it's reachable even after the 备课猜想 panel
-              auto-collapses. Answering the last one auto-collapses this too. */}
-          <button
-            type="button"
-            className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
-            onClick={() => setProbeOpen((o) => !o)}
-            aria-expanded={probeOpen}
-          >
-            <LoomIcon name="quiz" size={14} /> 待你试做{' '}
-            <b className="mono">{activeProbes.length}</b>
-            <LoomIcon name="chevronDown" size={13} className="pd-chev" />
-          </button>
-          {probeOpen && (
-            <div className="prep-desk-expand">
-              <ProbeAnswers />
-            </div>
-          )}
-        </div>
-      )}
     </>
   );
 }
@@ -499,8 +530,17 @@ export default function TodayPage({ navigate }: TodayPageProps) {
       >
         {s && (
           <>
-            {/* YUK-520 (A1) — 最小交班缕：workbench 块首位（今日之线 layer ①）。仅在非冷启
-                （cold_start=false）渲染，空夜态永不落 ColdStart。 */}
+            {/* YUK-707 · workbench 位置 1 — degraded_kinds 红旗上提，永在 brief 之前直显
+                ([裁决 1])；无 degraded 事实时渲 null。 */}
+            <DegradedKindsFlags />
+
+            {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
+                ([裁决 主]，contract §0/§5）。 */}
+            <TeachingBriefBand />
+
+            {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
+                （cold_start=false）渲染，空夜态永不落 ColdStart。YUK-707 起降级为 brief 之下
+                的二级折叠盘（[裁决 5]），保留全部夜间活动事实。 */}
             <OvernightDigestBand navigate={navigate} />
 
             <KpiRow

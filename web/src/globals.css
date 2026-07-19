@@ -6621,6 +6621,97 @@ button.chip:disabled:hover {
   color: var(--again-ink);
 }
 
+/* ── YUK-707 · 教研简报 teaching brief band ──
+   Same "为你而备" felt family as .prep-desk-* — thin classes, all var(--*) tokens,
+   no new colour / spacing scale / font. */
+.tb-degraded-flags {
+  margin-bottom: var(--s-3);
+}
+.tb-card {
+  /* .prep-desk-card supplies the coral left spine; nothing extra needed today. */
+}
+.tb-block {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) 0;
+  border-top: 1px dashed var(--line);
+}
+.tb-block:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.tb-block-title {
+  /* real <h3>, compressed to eyebrow density (visual only; still a heading). */
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  letter-spacing: var(--ls-wide);
+  font-weight: 500;
+}
+.tb-block-title:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
+.tb-claim {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink);
+  min-width: 0;
+}
+.tb-basis {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.tb-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+.tb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.tb-prepared-done {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.tb-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.5;
+}
+.tb-outcome-confirmed {
+  color: var(--good-ink);
+}
+.tb-outcome-retired,
+.tb-outcome-awaiting_decision,
+.tb-outcome-awaiting_answer {
+  color: var(--ink-3);
+}
+.tb-error {
+  font-size: var(--fs-meta);
+  color: var(--again-ink);
+}
+/* Visually hidden aria-live region (mirrors the .pa-file-input idiom). */
+.tb-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── YUK-567 slice-2 · 待你试做 probe 作答区 ── */
 .probe-queue,
 .probe-answers {

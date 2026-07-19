@@ -55,7 +55,17 @@ export function ProbeAnswers() {
   );
 }
 
-function ProbeAnswerCard({ probe }: { probe: PrepDeskProbeWire }) {
+// Exported (YUK-707 · [裁决 3]) so the teaching brief can reveal ONE scoped answer card
+// in place, reusing the exact same answer flow the queue uses. `onAnswered` fires after a
+// verdict is recorded — a symmetry hook for reuse; the brief drives its own in-place
+// outcome advance off the ['teaching-brief'] invalidation below, not off this callback.
+export function ProbeAnswerCard({
+  probe,
+  onAnswered,
+}: {
+  probe: PrepDeskProbeWire;
+  onAnswered?: (resolution: ProbeAnswerVerdict['resolution']) => void;
+}) {
   const qc = useQueryClient();
   const [answerMd, setAnswerMd] = useState('');
   const [imageRefs, setImageRefs] = useState<string[]>([]);
@@ -87,6 +97,11 @@ function ProbeAnswerCard({ probe }: { probe: PrepDeskProbeWire }) {
     try {
       const res = await submitProbeAnswer(probe.probe_question_id, answerMd.trim(), imageRefs);
       setVerdict(res.resolution);
+      // YUK-707 · [裁决 2] — a recorded verdict re-projects the teaching brief to its
+      // outcome state. Invalidate it so a mounted brief advances in place; no-op when the
+      // brief isn't on screen. (['prep-desk-probes'] stays on onDismiss, unchanged.)
+      void qc.invalidateQueries({ queryKey: ['teaching-brief'] });
+      onAnswered?.(res.resolution);
     } catch {
       // 422 (judge couldn't grade cleanly) or network — fail-closed: the probe stays
       // served and re-answerable, so surface a retry, not a lost answer.

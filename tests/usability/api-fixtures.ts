@@ -178,6 +178,9 @@ export async function installApiFixtures(
       });
     }
     if (key === 'GET /api/prep-desk/probes') return fulfill(route, { probes: [] });
+    // YUK-707 — the teaching brief band queries this on /today; a quiet {brief:null}
+    // covers both existing-evidence and mobile scenarios (mobile reuses this fixture).
+    if (key === 'GET /api/prep-desk/brief') return fulfill(route, { brief: null });
     if (key === 'GET /api/agents/notes') return fulfill(route, { rows: [] });
     if (key === 'GET /api/artifacts/ai-changes/recent') {
       return fulfill(route, { window_hours: 24, rows: [] });
