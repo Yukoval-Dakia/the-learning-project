@@ -23,6 +23,7 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
 } from '@/server/question-supply/evidence-demand';
+import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   QUIZ_GEN_READ_TOOLS,
@@ -394,6 +395,71 @@ describe('runQuizGen', () => {
     // quiz_verify enqueued with the new question ids.
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
     expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+  });
+
+  it('skips an exact duplicate, inserts the remaining question, and logs the identity conflict', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const output = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = output.questions[0];
+    const hash = canonicalQuestionContentHash({
+      promptMd: content.prompt_md,
+      referenceMd: content.reference_md,
+      choicesMd: content.choices_md,
+      rubricJson: content.rubric_json,
+    });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-existing-quiz-exact',
+        kind: content.kind,
+        prompt_md: content.prompt_md,
+        reference_md: content.reference_md,
+        choices_md: content.choices_md,
+        rubric_json: content.rubric_json as never,
+        source: 'manual',
+        draft_status: 'draft',
+        canonical_content_hash: hash,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      exact_duplicate_count: 1,
+      exact_duplicates: [
+        {
+          existing_question_id: 'q-existing-quiz-exact',
+          new_question_id: expect.any(String),
+          canonical_content_hash: hash,
+          source_route: 'quiz_gen',
+        },
+      ],
+    });
   });
 
   it('forces copy_safety.checked_by=agent_self at gen stage, ignoring an agent-forged quiz_verify claim', async () => {
@@ -1172,9 +1238,10 @@ describe('buildQuizGenHandler', () => {
 
     expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
-    // 2 questions per job * 2 jobs.
-    expect(rows).toHaveLength(4);
-    expect(enqueueQuizVerify).toHaveBeenCalledTimes(2);
+    // The second job returned byte-identical content, so canonical identity keeps
+    // the first batch and skips the duplicate batch without another verify enqueue.
+    expect(rows).toHaveLength(2);
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
   });
 });
 

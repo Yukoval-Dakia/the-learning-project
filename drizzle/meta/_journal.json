@@ -470,6 +470,13 @@
       "when": 1784358500000,
       "tag": "0066_yuk609_normalize_quiz_gen_choices",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1784430000000,
+      "tag": "0067_yuk704_question_canonical_content_hash",
+      "breakpoints": true
     }
   ]
 }

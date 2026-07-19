@@ -69,6 +69,10 @@ import {
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  canonicalQuestionContentHash,
+  findExactQuestionDuplicate,
+} from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -610,6 +614,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       question_id: string;
       evidence: DifficultyEvidenceT;
     }> = [];
+    const exactDuplicates: Array<{
+      existing_question_id: string;
+      new_question_id: string;
+      canonical_content_hash: string;
+      source_route: 'quiz_gen';
+    }> = [];
     const quizKnowledgeIds = new Set<string>();
     const toolQuizArtifactId = createId();
     const now = new Date();
@@ -677,6 +687,22 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           parsed.generation_method === 'material_grounded' && parsed.material
             ? embedMaterialInPrompt(q.prompt_md, parsed.material.body_md)
             : q.prompt_md;
+        const canonicalContentHash = canonicalQuestionContentHash({
+          promptMd: effectivePromptMd,
+          referenceMd: q.reference_md,
+          choicesMd: q.choices_md,
+          rubricJson: q.rubric_json,
+        });
+        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        if (existingDuplicate) {
+          exactDuplicates.push({
+            existing_question_id: existingDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'quiz_gen',
+          });
+          continue;
+        }
 
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
@@ -710,33 +736,51 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           // needs_review（内容完整性留 owner /drafts 人审）。
           ...(parseRepaired ? { parse_repaired: true } : {}),
         };
-        await tx.insert(question).values(
-          withAnswerClass({
-            id,
-            kind: q.kind,
-            source: 'quiz_gen',
-            prompt_md: effectivePromptMd,
-            reference_md: q.reference_md,
-            rubric_json: q.rubric_json ?? null,
-            choices_md: q.choices_md ?? null,
-            judge_kind_override: judgeKind,
-            knowledge_ids: questionKnowledgeIds,
-            difficulty: q.difficulty,
-            // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
-            source_ref: resolved.refId,
-            // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-            // quiz_verify passes (Q5 promotes draft→active + enrolls).
-            draft_status: 'draft',
-            created_by: aiAgentRef('QuizGenTask', result),
-            metadata: {
-              quiz_gen: metaQuizGen,
-              difficulty_evidence: difficultyEvidence,
-              ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-            },
-            created_at: now,
-            updated_at: now,
-          }),
-        );
+        const inserted = await tx
+          .insert(question)
+          .values(
+            withAnswerClass({
+              id,
+              kind: q.kind,
+              source: 'quiz_gen',
+              prompt_md: effectivePromptMd,
+              reference_md: q.reference_md,
+              rubric_json: q.rubric_json ?? null,
+              choices_md: q.choices_md ?? null,
+              judge_kind_override: judgeKind,
+              knowledge_ids: questionKnowledgeIds,
+              difficulty: q.difficulty,
+              // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+              source_ref: resolved.refId,
+              // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+              // quiz_verify passes (Q5 promotes draft→active + enrolls).
+              draft_status: 'draft',
+              created_by: aiAgentRef('QuizGenTask', result),
+              metadata: {
+                quiz_gen: metaQuizGen,
+                difficulty_evidence: difficultyEvidence,
+                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+              },
+              created_at: now,
+              canonical_content_hash: canonicalContentHash,
+              updated_at: now,
+            }),
+          )
+          .onConflictDoNothing()
+          .returning({ id: question.id });
+        if (inserted.length === 0) {
+          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          if (!racedDuplicate) {
+            throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
+          }
+          exactDuplicates.push({
+            existing_question_id: racedDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'quiz_gen',
+          });
+          continue;
+        }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'quiz_verify',
@@ -794,6 +838,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         createdAt: now,
       });
     });
+    for (const duplicate of exactDuplicates) {
+      console.info('[quiz_gen] exact duplicate skipped:', duplicate);
+    }
 
     await writeEvent(db, {
       id: createId(),
@@ -814,6 +861,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         tool_context_task_run_id: toolContextTaskRunId,
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
+        exact_duplicate_count: exactDuplicates.length,
+        exact_duplicates: exactDuplicates,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

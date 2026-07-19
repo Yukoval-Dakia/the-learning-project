@@ -76,6 +76,10 @@ import {
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  canonicalQuestionContentHash,
+  findExactQuestionDuplicate,
+} from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -455,11 +459,33 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       question_id: string;
       evidence: DifficultyEvidenceT;
     }> = [];
+    const exactDuplicates: Array<{
+      existing_question_id: string;
+      new_question_id: string;
+      canonical_content_hash: string;
+      source_route: 'sourcing_web';
+    }> = [];
     const now = new Date();
     failureStage = 'persist';
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
+        const canonicalContentHash = canonicalQuestionContentHash({
+          promptMd: q.prompt_md,
+          referenceMd: q.reference_md,
+          choicesMd: q.choices_md,
+          rubricJson: q.rubric_json,
+        });
+        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        if (existingDuplicate) {
+          exactDuplicates.push({
+            existing_question_id: existingDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'sourcing_web',
+          });
+          continue;
+        }
         // Preserve the model's EXPLICIT judge_kind_override; only derive a default
         // when the agent left it absent (CR — never clobber an explicit route like
         // 'keyword' with the structural default). defaultJudgeKindForQuestion already
@@ -496,35 +522,53 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           extract: q.extract,
         };
 
-        await tx.insert(question).values(
-          withAnswerClass({
-            id,
-            kind: q.kind,
-            source: 'web_sourced',
-            prompt_md: q.prompt_md,
-            reference_md: q.reference_md,
-            rubric_json: q.rubric_json ?? null,
-            choices_md: q.choices_md ?? null,
-            judge_kind_override: judgeKind,
-            knowledge_ids: questionKnowledgeIds,
-            difficulty: q.difficulty,
-            // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
-            // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
-            source_ref: q.source_url,
-            // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-            // source_verify passes.
-            draft_status: 'draft',
-            created_by: aiAgentRef('SourcingTask', result),
-            metadata: {
-              web_sourced: webSourced,
-              source_ref_kind: 'url',
-              difficulty_evidence: difficultyEvidence,
-              ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-            },
-            created_at: now,
-            updated_at: now,
-          }),
-        );
+        const inserted = await tx
+          .insert(question)
+          .values(
+            withAnswerClass({
+              id,
+              kind: q.kind,
+              source: 'web_sourced',
+              prompt_md: q.prompt_md,
+              reference_md: q.reference_md,
+              rubric_json: q.rubric_json ?? null,
+              choices_md: q.choices_md ?? null,
+              judge_kind_override: judgeKind,
+              knowledge_ids: questionKnowledgeIds,
+              difficulty: q.difficulty,
+              // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
+              // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
+              source_ref: q.source_url,
+              // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
+              // source_verify passes.
+              draft_status: 'draft',
+              created_by: aiAgentRef('SourcingTask', result),
+              metadata: {
+                web_sourced: webSourced,
+                source_ref_kind: 'url',
+                difficulty_evidence: difficultyEvidence,
+                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+              },
+              created_at: now,
+              canonical_content_hash: canonicalContentHash,
+              updated_at: now,
+            }),
+          )
+          .onConflictDoNothing()
+          .returning({ id: question.id });
+        if (inserted.length === 0) {
+          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          if (!racedDuplicate) {
+            throw new Error(`sourcing canonical hash conflict did not resolve for ${id}`);
+          }
+          exactDuplicates.push({
+            existing_question_id: racedDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'sourcing_web',
+          });
+          continue;
+        }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'source_verify',
@@ -535,6 +579,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
     });
+    for (const duplicate of exactDuplicates) {
+      console.info('[sourcing] exact duplicate skipped:', duplicate);
+    }
 
     // YUK-227 S3 Slice C — image-type sources do NOT enter the question INSERT path.
     // Each is written as an `image_candidate` proposal; the page's image is downloaded
@@ -679,6 +726,8 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         tool_context_task_run_id: toolContextTaskRunId,
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
+        exact_duplicate_count: exactDuplicates.length,
+        exact_duplicates: exactDuplicates,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

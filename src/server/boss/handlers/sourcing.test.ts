@@ -27,6 +27,7 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
 } from '@/server/question-supply/evidence-demand';
+import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   SOURCING_READ_TOOLS,
@@ -314,6 +315,68 @@ describe('runSourcing', () => {
     expect(events[0].payload).toMatchObject({
       supply_trace: supplyTrace,
       difficulty_evidence: [{ question_id: qid, evidence: meta.difficulty_evidence }],
+    });
+  });
+
+  it('skips an exact active/draft duplicate and logs both identities without verify enqueue', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const output = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = output.questions[0];
+    const hash = canonicalQuestionContentHash({
+      promptMd: content.prompt_md,
+      referenceMd: content.reference_md,
+      choicesMd: content.choices_md,
+      rubricJson: content.rubric_json,
+    });
+    await db.insert(question).values({
+      id: 'q-existing-exact',
+      kind: 'short_answer',
+      prompt_md: content.prompt_md,
+      reference_md: content.reference_md,
+      choices_md: content.choices_md,
+      rubric_json: content.rubric_json as never,
+      source: 'manual',
+      draft_status: 'active',
+      canonical_content_hash: hash,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const enqueueSourceVerify = vi.fn(async () => {});
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueSourceVerify,
+      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toEqual([]);
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
+    const [producerEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:sourcing'));
+    expect(producerEvent.payload).toMatchObject({
+      exact_duplicate_count: 1,
+      exact_duplicates: [
+        {
+          existing_question_id: 'q-existing-exact',
+          new_question_id: expect.any(String),
+          canonical_content_hash: hash,
+          source_route: 'sourcing_web',
+        },
+      ],
     });
   });
 
