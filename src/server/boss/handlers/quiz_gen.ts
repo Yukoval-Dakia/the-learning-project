@@ -18,8 +18,8 @@
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Job, SendOptions } from 'pg-boss';
 
 import {
   DifficultyEvidence,
@@ -64,8 +64,8 @@ import {
 } from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
 import {
+  SupplyTraceV1,
   type SupplyTraceV1T,
-  parseSupplyTrace,
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -173,7 +173,7 @@ export type RetrieveFewShotFn = (params: {
 }) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
-export type EnqueueQuizVerifyFn = (questionIds: string[], options?: object) => Promise<void>;
+export type EnqueueQuizVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -192,7 +192,10 @@ async function defaultRetrieveFewShot(params: {
   return retrieveFewShotExamples(params);
 }
 
-async function defaultEnqueueQuizVerify(questionIds: string[], options?: object): Promise<void> {
+async function defaultEnqueueQuizVerify(
+  questionIds: string[],
+  options?: SendOptions,
+): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors attribution_followup). Q5 creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
@@ -541,7 +544,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   };
 
   let taskResult: TaskTextResult | null = null;
-  let failureStage: 'producer' | 'persist' = 'producer';
+  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
     const result = await run('QuizGenTask', input, {
       db,
@@ -766,7 +769,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               updated_at: now,
             }),
           )
-          .onConflictDoNothing()
+          // Scope the arbiter to the canonical-hash partial unique index (WHERE
+          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
+          // silently swallow ANY unique conflict (e.g. the PK), making the
+          // `inserted.length === 0` fallback below misread an unrelated conflict as a
+          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
+          // partial unique index as the arbiter.
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
           .returning({ id: question.id });
         if (inserted.length === 0) {
           const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
@@ -838,6 +850,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         createdAt: now,
       });
     });
+    // Past the commit: any throw from here on is a post-persistence failure (the
+    // drafts + verify intents are durably written), so report it distinctly rather
+    // than as 'persist'.
+    failureStage = 'event';
     for (const duplicate of exactDuplicates) {
       console.info('[quiz_gen] exact duplicate skipped:', duplicate);
     }
@@ -878,6 +894,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // DUPLICATE batch of drafts (the handler has no per-trigger idempotency key).
     // On failure we log the orphaned ids — recoverable by re-enqueueing quiz_verify,
     // which is itself idempotent per question.
+    failureStage = 'dispatch';
     const dispatchResult = await dispatchPendingVerifyIntents(db, {
       questionIds,
       enqueue: async (verifier, ids, options) => {
@@ -941,6 +958,20 @@ export function buildQuizGenHandler(
         console.warn('[quiz_gen] job missing trigger/ref_id', job.id);
         continue;
       }
+      // supply_trace is best-effort provenance from the dispatcher. Parse it here
+      // (the trust boundary) with safeParse so a malformed job payload drops the trace
+      // rather than throwing BEFORE runQuizGen's failure-bottom can emit a structured
+      // event — an uncaught throw here would surface as a bare pg-boss job failure and
+      // retry identically forever.
+      let supplyTrace: SupplyTraceV1T | undefined;
+      if (data.supply_trace) {
+        const parsed = SupplyTraceV1.safeParse(data.supply_trace);
+        if (parsed.success) {
+          supplyTrace = parsed.data;
+        } else {
+          console.warn('[quiz_gen] ignoring malformed supply_trace in job data', job.id);
+        }
+      }
       const result = await runQuizGen({
         db,
         trigger: data.trigger,
@@ -950,7 +981,7 @@ export function buildQuizGenHandler(
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
-        ...(data.supply_trace ? { supplyTrace: parseSupplyTrace(data.supply_trace) } : {}),
+        ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

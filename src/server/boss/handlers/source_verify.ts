@@ -39,7 +39,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { parseSupplyTrace } from '@/server/question-supply/evidence-demand';
+import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
   type SolveCheckQuestion,
   type SolveCheckResult,
@@ -300,8 +300,13 @@ export async function runSourceVerify(
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
       : {};
-  const supplyTrace =
-    metadataRaw.supply_trace === undefined ? undefined : parseSupplyTrace(metadataRaw.supply_trace);
+  // supply_trace is best-effort provenance carried onto the verify event, not a
+  // promotion input. A JSONB `null` (valid, distinct from absent) or a malformed
+  // value must NOT throw here — this runs BEFORE the failure-bottom try, so a throw
+  // would strand the draft with no error event and retry identically forever. Mirror
+  // readDifficultyEvidenceFromMetadata: safeParse and drop on any failure.
+  const supplyTraceResult = SupplyTraceV1.safeParse(metadataRaw.supply_trace);
+  const supplyTrace = supplyTraceResult.success ? supplyTraceResult.data : undefined;
   const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=

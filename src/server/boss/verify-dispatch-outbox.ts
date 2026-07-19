@@ -207,7 +207,13 @@ export async function dispatchPendingVerifyIntents(
         .for('update', { skipLocked: true });
       if (locked.length === 0) return empty;
 
-      const intents = locked.map((row) => verifyDispatchIntentPayloadSchema.parse(row.payload));
+      // safeParse (not parse): one corrupt or future-version intent payload must not throw and
+      // abort the whole transaction — that would starve every other pending intent in the locked
+      // page. Skip the unparseable rows, mirroring the recovery path below.
+      const intents = locked
+        .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
+        .filter((result) => result.success)
+        .map((result) => result.data);
       if (input.questionIds) {
         const requestedOrder = new Map(input.questionIds.map((id, index) => [id, index]));
         intents.sort(

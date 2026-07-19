@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EVIDENCE_DEMAND_VERSION,
   EvidenceDemandV1,
+  buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
   parseSupplyTrace,
@@ -32,7 +33,7 @@ function demand() {
     },
     difficulty: {
       band: 'near',
-      scale: 'loom_difficulty_v1',
+      scale: 'loom_difficulty_1_5',
       target_value: 3,
     },
     inventory_goal: {
@@ -122,6 +123,17 @@ describe('EvidenceDemand v1', () => {
       new Set(['demand:v1:math:kc-1']),
     );
     expect(contexts.every((context) => context?.demand_version === 1)).toBe(true);
+  });
+
+  it('defaults the coverage demand to the canonical loom difficulty scale', () => {
+    const demand = buildCoverageEvidenceDemand({
+      subjectId: 'math',
+      knowledgeIds: ['kc-1'],
+      statement: 'learner can apply kc-1',
+    });
+    // Must match the scale name emitted by the difficulty-evidence producers so a
+    // scale-aware matcher can compare demand targets against produced evidence.
+    expect(demand.difficulty.scale).toBe('loom_difficulty_1_5');
   });
 
   it('additively preserves production difficulty evidence on a supply trace', () => {

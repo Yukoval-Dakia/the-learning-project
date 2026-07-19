@@ -12,6 +12,11 @@ import {
 
 export const EVIDENCE_INVENTORY_VERSION = 1 as const;
 export const PIPELINE_COMMITMENT_TTL_DAYS = 7;
+// Dispatch events are fetched over a wider window than the commitment TTL so the projection can
+// still surface recently-expired commitments (expiredPipelineCommitments) for diagnostics. Events
+// older than the TTL yield commitments whose expiresAt is already past `now`, so they only feed the
+// expired count and are never eligible as live pipeline commitments (see projectEvidenceInventory).
+export const PIPELINE_COMMITMENT_LOOKBACK_DAYS = PIPELINE_COMMITMENT_TTL_DAYS * 4;
 export const INVENTORY_FAMILY_PROXY_LABEL =
   'distinct_question_count_upper_bound_not_family_truth' as const;
 
@@ -237,7 +242,7 @@ export async function loadInventoryProjectionInput(
       .map((row) => commitmentFingerprint(row.metadata))
       .filter((value): value is string => !!value),
   );
-  const horizon = new Date(now.getTime() - PIPELINE_COMMITMENT_TTL_DAYS * 4 * 24 * 60 * 60 * 1000);
+  const horizon = new Date(now.getTime() - PIPELINE_COMMITMENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
   const dispatches = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
     .from(event)
@@ -286,20 +291,23 @@ export async function writeInventoryShadowComparisonEvents(
   comparisons: InventoryShadowComparison[],
   now = new Date(),
 ): Promise<void> {
-  for (const comparison of comparisons) {
-    await writeEvent(db, {
-      id: newId(),
-      actor_kind: 'system',
-      actor_ref: 'question_supply_inventory_shadow',
-      action: 'experimental:supply_inventory_shadow',
-      subject_kind: 'knowledge',
-      subject_id: comparison.knowledgeId,
-      outcome: comparison.agrees ? 'success' : 'partial',
-      payload: comparison,
-      ingest_at: now,
-      created_at: now,
-    });
-  }
+  // Independent observe-only inserts (each with its own newId); write them concurrently.
+  await Promise.all(
+    comparisons.map((comparison) =>
+      writeEvent(db, {
+        id: newId(),
+        actor_kind: 'system',
+        actor_ref: 'question_supply_inventory_shadow',
+        action: 'experimental:supply_inventory_shadow',
+        subject_kind: 'knowledge',
+        subject_id: comparison.knowledgeId,
+        outcome: comparison.agrees ? 'success' : 'partial',
+        payload: comparison,
+        ingest_at: now,
+        created_at: now,
+      }),
+    ),
+  );
 }
 
 /**

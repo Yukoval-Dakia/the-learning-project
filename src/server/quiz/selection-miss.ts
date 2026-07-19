@@ -53,6 +53,10 @@ export function parseSelectionMiss(value: unknown): SelectionMissV1 {
 }
 
 function reasonFor(c: EvaluatedSelectionConstraints): SelectionMissV1['reason'] {
+  // A non-live (archived/missing) KC collapses into NO_ACCESSIBLE_ITEM: the reason vocabulary
+  // has no dedicated NO_LIVE_KNOWLEDGE axis, and a dead KC yields zero accessible items by
+  // definition. This is a deliberate conflation of the lifecycle axis with the availability
+  // axis — a dashboard filtering on NO_ACCESSIBLE_ITEM mixes archived-KC and item-scarcity misses.
   if (!c.live_knowledge) return 'NO_ACCESSIBLE_ITEM';
   if (c.candidate_count === 0) return 'NO_ALLOWED_USE_ITEM';
   if (c.near_difficulty_count === 0) return 'NO_NEAR_DIFFICULTY';

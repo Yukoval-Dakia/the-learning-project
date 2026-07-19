@@ -42,6 +42,51 @@ describe('canonical question content fingerprint', () => {
     );
   });
 
+  it('pins the canonical hash for a fixture (locale-independent key ordering)', () => {
+    // Regression guard for hash determinism: this constant must not drift with the
+    // host locale/ICU collation. Bump only alongside CANONICAL_QUESTION_CONTENT_VERSION.
+    const fixture = {
+      promptMd: '__求解__：\r\n2   +  2 = ?  ',
+      referenceMd: '4',
+      choicesMd: ['3', '4', '5'],
+      rubricJson: {
+        keywords: ['a_b_c'],
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }],
+        reference_solution: {
+          final_answer: '1_000_000',
+          expected_signals: ['x_1'],
+          answer_equivalents: [],
+        },
+      },
+    };
+    expect(canonicalQuestionContentHash(fixture)).toBe(
+      '9bedaa3c23781e74f04ee9e8526832a753612545c4dd863abac8b4af3eb3e229',
+    );
+  });
+
+  it('canonicalizes rubric object key order without regard to insertion order', () => {
+    const a = canonicalQuestionContentHash({
+      ...base,
+      rubricJson: { keywords: ['甲'], criteria: [{ name: 'c', weight: 1, descriptor: 'd' }] },
+    });
+    const b = canonicalQuestionContentHash({
+      ...base,
+      rubricJson: { criteria: [{ descriptor: 'd', weight: 1, name: 'c' }], keywords: ['甲'] },
+    });
+    expect(a).toBe(b);
+  });
+
+  it('does not run the Markdown pipeline over rubric string values (NFKC only)', () => {
+    // Rubric carries exact-match tokens; underscores must survive as literals rather
+    // than being rewritten to Markdown emphasis or having whitespace collapsed.
+    expect(
+      canonicalQuestionContentHash({ ...base, rubricJson: { final_answer: 'a_b_c' } }),
+    ).not.toBe(canonicalQuestionContentHash({ ...base, rubricJson: { final_answer: 'a*b*c' } }));
+    expect(canonicalQuestionContentHash({ ...base, rubricJson: { note: 'x    y' } })).not.toBe(
+      canonicalQuestionContentHash({ ...base, rubricJson: { note: 'x y' } }),
+    );
+  });
+
   it('does not fold source URLs/timestamps and is explicitly distinct from embed_content_hash', () => {
     const withUnstableEnvelope = {
       ...base,

@@ -193,7 +193,7 @@ export function buildCoverageEvidenceDemand(input: {
     },
     difficulty: {
       band: input.difficultyBand ?? 'near',
-      scale: 'loom_difficulty_v1',
+      scale: 'loom_difficulty_1_5',
       target_value: input.targetValue ?? null,
     },
     inventory_goal: {

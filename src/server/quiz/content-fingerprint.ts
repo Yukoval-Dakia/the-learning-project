@@ -4,6 +4,10 @@ import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 
+// Bumping this version rewrites the canonical string, so every persisted
+// `canonical_content_hash` computed under the old version becomes stale and
+// old-vs-new duplicate detection silently stops matching. Migration 0067 does no
+// backfill, so a version bump MUST be paired with a recompute/backfill plan.
 export const CANONICAL_QUESTION_CONTENT_VERSION = 1 as const;
 
 export interface CanonicalQuestionContentInput {
@@ -36,12 +40,19 @@ function stableJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableJson);
   if (value && typeof value === 'object') {
     return Object.fromEntries(
+      // Code-unit ordering, NOT localeCompare: locale/ICU-dependent collation would
+      // make the canonical hash (a UNIQUE partial index key) non-deterministic across
+      // runtimes, breaking dedup and risking spurious unique-constraint violations.
       Object.entries(value as Record<string, unknown>)
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([key, child]) => [key, stableJson(child)]),
     );
   }
-  return typeof value === 'string' ? normalizeMarkdown(value) : value;
+  // Rubric JSON carries exact-match tokens (keywords, acceptable_answers,
+  // final_answer, answer_equivalents, expected_signals). The Markdown pipeline
+  // (emphasis rewrite, image stripping, whitespace collapse) would corrupt those,
+  // so canonicalize arbitrary JSON strings with Unicode NFKC only.
+  return typeof value === 'string' ? value.normalize('NFKC') : value;
 }
 
 export function canonicalQuestionContent(input: CanonicalQuestionContentInput): string {

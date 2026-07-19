@@ -192,6 +192,40 @@ describe('runSourceVerify', () => {
     });
   });
 
+  // YUK-698 review — a JSONB `null` supply_trace (valid, distinct from absent) must NOT
+  // throw before the failure-bottom try. Previously parseSupplyTrace(null) threw here, so
+  // the draft was stranded with no error event and pg-boss retried identically forever. The
+  // trace is now dropped best-effort (safeParse) and verify proceeds normally.
+  it('drops a null metadata.supply_trace best-effort instead of throwing', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      metadataOverride: {
+        web_sourced: {
+          url: 'https://example.edu/wenyan/lunyu',
+          title: '论语 注疏',
+          fetched_at: '2026-06-06T00:00:00.000Z',
+          whitelist_match: false,
+          extract: '「之」在「学而时习之」中作代词，指代所学的内容。',
+        },
+        source_ref_kind: 'url',
+        supply_trace: null,
+      },
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(events).toHaveLength(1);
+    // The unparseable trace is simply absent from the event payload (not a crash).
+    expect((events[0].payload as Record<string, unknown>).supply_trace).toBeUndefined();
+  });
+
   it('promotes an exact text mismatch when SemanticJudge establishes equivalence', async () => {
     const db = testDb();
     await seedKnowledge('k1');

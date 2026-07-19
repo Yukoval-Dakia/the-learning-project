@@ -48,7 +48,9 @@ export function buildProducerDifficultyEvidence(
   sourceRoute: string,
   observedAt?: Date,
 ): DifficultyEvidenceT {
-  return DifficultyEvidence.parse({
+  // Parse through the producer schema so the item_calibration boundary is enforced
+  // by construction, even if a future edit parameterizes basis/value here.
+  return ProducerDifficultyEvidence.parse({
     version: DIFFICULTY_EVIDENCE_VERSION,
     value: difficulty,
     scale: 'loom_difficulty_1_5',

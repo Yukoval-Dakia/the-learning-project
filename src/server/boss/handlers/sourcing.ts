@@ -27,8 +27,8 @@
 // questions — demotion only affects selection priority.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Job, SendOptions } from 'pg-boss';
 
 import {
   DifficultyEvidence,
@@ -71,8 +71,8 @@ import { writeEvent } from '@/server/events/queries';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import {
+  SupplyTraceV1,
   type SupplyTraceV1T,
-  parseSupplyTrace,
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -139,7 +139,7 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 // Chained source_verify enqueue. Mirrors quiz_gen's EnqueueQuizVerifyFn seam so DB
 // tests inject a vi.fn().
-export type EnqueueSourceVerifyFn = (questionIds: string[], options?: object) => Promise<void>;
+export type EnqueueSourceVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
 // YUK-227 S3 Slice C — image_candidate proposal writer seam. Defaults to
 // writeAiProposal; DB tests inject a vi.fn() to assert the propose path runs WITHOUT
 // any question INSERT / VLM call. Loose shape (Pick of writeAiProposal's inputs the
@@ -157,7 +157,10 @@ interface DepsOverride {
   writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
 }
 
-async function defaultEnqueueSourceVerify(questionIds: string[], options?: object): Promise<void> {
+async function defaultEnqueueSourceVerify(
+  questionIds: string[],
+  options?: SendOptions,
+): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors quiz_gen → quiz_verify). source_verify creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
@@ -388,7 +391,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
   };
 
   let taskResult: TaskTextResult | null = null;
-  let failureStage: 'producer' | 'persist' = 'producer';
+  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
     const result = await run('SourcingTask', input, {
       db,
@@ -554,7 +557,16 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
               updated_at: now,
             }),
           )
-          .onConflictDoNothing()
+          // Scope the arbiter to the canonical-hash partial unique index (WHERE
+          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
+          // silently swallow ANY unique conflict (e.g. the PK), making the
+          // `inserted.length === 0` fallback below misread an unrelated conflict as a
+          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
+          // partial unique index as the arbiter.
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
           .returning({ id: question.id });
         if (inserted.length === 0) {
           const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
@@ -579,6 +591,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
     });
+    // Past the commit: any throw from here on (image-candidate proposals, the success
+    // event write, verify dispatch) is a post-persistence failure — the text drafts +
+    // verify intents are durably written — so report it distinctly rather than 'persist'.
+    failureStage = 'event';
     for (const duplicate of exactDuplicates) {
       console.info('[sourcing] exact duplicate skipped:', duplicate);
     }
@@ -747,6 +763,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // job (source_verify's gate is for text drafts — image drafts get their own
     // verify at accept time). Skip it.
     if (questionIds.length > 0) {
+      failureStage = 'dispatch';
       const dispatchResult = await dispatchPendingVerifyIntents(db, {
         questionIds,
         enqueue: async (verifier, ids, options) => {
@@ -811,6 +828,20 @@ export function buildSourcingHandler(
         console.warn('[sourcing] job missing trigger/ref_id', job.id);
         continue;
       }
+      // supply_trace is best-effort provenance from the dispatcher. Parse it here
+      // (the trust boundary) with safeParse so a malformed job payload drops the trace
+      // rather than throwing BEFORE runSourcing's failure-bottom can emit a structured
+      // event — an uncaught throw here would surface as a bare pg-boss job failure and
+      // retry identically forever.
+      let supplyTrace: SupplyTraceV1T | undefined;
+      if (data.supply_trace) {
+        const parsed = SupplyTraceV1.safeParse(data.supply_trace);
+        if (parsed.success) {
+          supplyTrace = parsed.data;
+        } else {
+          console.warn('[sourcing] ignoring malformed supply_trace in job data', job.id);
+        }
+      }
       const result = await runSourcing({
         db,
         trigger: data.trigger,
@@ -819,7 +850,7 @@ export function buildSourcingHandler(
         // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
-        ...(data.supply_trace ? { supplyTrace: parseSupplyTrace(data.supply_trace) } : {}),
+        ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

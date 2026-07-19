@@ -67,6 +67,13 @@ import { verifyAndPromote } from './verify-and-promote';
 // TODO 实测调参 — YUK-396 关联 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
 const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 
+// Observe-only diagnostic broad read (candidate_count) is bounded so a large KC cannot force
+// an unbounded full-pool scan on the serving miss path. candidate_count is only consumed as a
+// `=== 0` distinguisher (true-empty vs difficulty-band miss) and as an experimental event
+// number, so a count saturated at this cap is diagnostically sufficient (overflow reads as
+// ">= cap"). Bounding here reuses poolFetch unchanged (single-truth WHERE), no inline COUNT.
+const MATCHER_DIAGNOSTIC_POOL_CAP = 1000;
+
 // ── §3.1.5 三层 Demand (v1 子集) ──────────────────────────────────────────────
 export interface Demand {
   // ① 硬过滤 → poolFetch WHERE
@@ -223,7 +230,12 @@ async function resolveKnowledgeNodeLive(db: Db, knowledgeId: string): Promise<bo
 async function subjectIdForKnowledge(db: Db, knowledgeId: string): Promise<string> {
   try {
     return resolveSubjectProfile(await getEffectiveDomain(db, knowledgeId)).id;
-  } catch {
+  } catch (error) {
+    // getEffectiveDomain throws (node missing / root-domain invariant); it never returns a
+    // sentinel, so this fallback fires only on a genuine resolution failure (e.g. a
+    // free/zero-library caller). Log it so a persistent domain-walk failure is diagnosable
+    // rather than silently collapsing every KC onto the default subject.
+    console.warn('[matcher] subjectIdForKnowledge fell back to default subject:', error);
     return resolveSubjectProfile(null).id;
   }
 }
@@ -674,6 +686,7 @@ export async function matcher(
               compositeParentOnly: demand.compositeParentOnly,
               queryEmbedding: null,
               answerClass,
+              limit: MATCHER_DIAGNOSTIC_POOL_CAP,
             })
           : rows;
       const requiredKindRows = thresholded.filter(

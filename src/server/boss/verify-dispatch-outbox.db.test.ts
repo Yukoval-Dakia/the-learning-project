@@ -70,6 +70,31 @@ describe('verify dispatch outbox (YUK-700)', () => {
     );
   });
 
+  it('skips a malformed intent payload instead of failing the whole locked batch', async () => {
+    await seedQuestion('q-good', 'quiz_gen');
+    await seedIntent('q-good', 'quiz_verify');
+    // A corrupt / future-version intent payload: it passes the generic experimental envelope but
+    // fails verifyDispatchIntentPayloadSchema. It must be skipped, not abort the transaction and
+    // starve the good intent locked alongside it.
+    await writeEvent(db, {
+      id: createId(),
+      actor_kind: 'system',
+      actor_ref: 'verify_dispatch_outbox',
+      action: VERIFY_DISPATCH_INTENT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'q-bad',
+      outcome: null,
+      payload: { version: 999, verifier_kind: 'quiz_verify', question_id: 'q-bad' },
+      ingest_at: new Date(),
+    });
+    const enqueue = vi.fn(async () => {});
+
+    const result = await dispatchPendingVerifyIntents(db, { enqueue });
+
+    expect(result).toMatchObject({ dispatched: 1, failed: 0 });
+    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-good'], expect.any(Object));
+  });
+
   it('rolls back the intent when candidate persistence does not commit', async () => {
     await expect(
       db.transaction(async (tx) => {
