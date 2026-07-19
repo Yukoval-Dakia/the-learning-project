@@ -116,6 +116,12 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
     const spawnOpts: SpawnOptionsWithoutStdio = { cwd: opts.cwd, env: childEnv };
     const child = spawn(opts.binaryPath, opts.args, spawnOpts);
 
+    // We never write to the child's stdin. Close it immediately so a producer that blocks
+    // on a stdin read can't wedge and burn the whole timeout window; swallow EPIPE so an
+    // early-exiting child doesn't surface an unhandled 'error' on the stdin stream.
+    child.stdin.on('error', () => {});
+    child.stdin.end();
+
     // Raw-byte sinks (no mid-stream decode → no cross-chunk boundary splits).
     const stdoutSink = new BoundedByteSink(opts.maxStdoutBytes);
     const stderrSink = new BoundedByteSink(opts.maxStderrBytes);
@@ -132,6 +138,8 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
       // SIGKILL: a wedged scraper may ignore SIGTERM; we want a hard stop.
       child.kill('SIGKILL');
     }, opts.timeoutMs);
+    // Don't let this timer keep the event loop (worker process) alive on its own.
+    timer.unref();
 
     child.stdout.on('data', (chunk: Buffer) => stdoutSink.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrSink.push(chunk));

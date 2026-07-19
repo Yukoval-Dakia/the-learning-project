@@ -40,14 +40,28 @@ const AUTO_DISPATCHABLE = new Set<SupplyRoute>(['sourcing_web', 'quiz_gen', 'jye
 
 /**
  * Auto-dispatchable SupplyRoute → pg-boss queue. Single-source map (no nested ternary):
- * every AUTO_DISPATCHABLE member has an entry, so chooseAutoRoute's return always resolves;
- * the `?? 'quiz_gen'` is a defensive fallback for an unmapped route.
+ * every AUTO_DISPATCHABLE member has an entry. An unmapped route is a programming error
+ * (chooseAutoRoute returned something not in AUTO_DISPATCHABLE) and THROWS rather than
+ * silently mis-routing to quiz_gen — see resolveDispatchQueue.
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
   sourcing_web: 'sourcing',
   jyeoo_fetch: 'jyeoo_fetch',
   quiz_gen: 'quiz_gen',
 };
+
+function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
+  const queue = AUTO_ROUTE_TO_QUEUE[route];
+  if (!queue) {
+    // Invariant: chooseAutoRoute only ever returns an AUTO_DISPATCHABLE route, all of
+    // which are mapped above. Reaching here means the two fell out of sync — fail loud
+    // instead of silently mis-routing an unknown route to quiz_gen.
+    throw new Error(
+      `dispatchSupplyTarget: no queue mapping for auto route '${route}' (programming error)`,
+    );
+  }
+  return queue;
+}
 
 // ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
 //
@@ -321,7 +335,7 @@ export async function dispatchSupplyTarget(
       };
     } else {
       // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
-      const queue: DispatchQueue = AUTO_ROUTE_TO_QUEUE[autoRoute] ?? 'quiz_gen';
+      const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
       const data: Record<string, unknown> = {
         trigger: 'knowledge',

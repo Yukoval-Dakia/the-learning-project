@@ -31,26 +31,16 @@ import type { Job, SendOptions } from 'pg-boss';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { AgentRef } from '@/core/schema/business';
-import {
-  DifficultyEvidence,
-  type DifficultyEvidenceT,
-  buildProducerDifficultyEvidence,
-} from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
-import type { Db, Tx } from '@/db/client';
+import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
-import {
-  SupplyTraceV1,
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '@/server/question-supply/evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evidence-demand';
 import {
   type JyeooFailureClass,
   classifyJyeooExit,
@@ -69,7 +59,7 @@ import {
   jyeooSpawnTimeoutMs,
 } from '@/server/question-supply/jyeoo-supply-config';
 import type { DifficultyBand } from '@/server/question-supply/target-discovery';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   canonicalQuestionContentHash,
   findExactQuestionDuplicate,
@@ -419,23 +409,28 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
         }
 
         const id = createId();
-        const inserted = await insertJyeooDraft(tx, {
+        // jyeoo emits knowledge_ids=[] (producer non-goal), so the anchor KC is the
+        // attribution (design §2.1). fetched_at = run time (SourcedQuestion has none).
+        const inserted = await insertSourcedDraft(tx, {
           id,
           q,
-          anchorKid,
-          whitelist,
+          knowledgeIds: [anchorKid],
+          sourceRoute: JYEOO_FETCH_ROUTE,
+          createdBy: JYEOO_CREATED_BY,
+          whitelistMatch: matchesWhitelist(q.source_url, whitelist),
+          fetchedAt: now.toISOString(),
           canonicalContentHash,
           supplyTrace: params.supplyTrace,
           now,
         });
-        if (inserted === 'raced_duplicate') {
+        if (inserted.status === 'raced_duplicate') {
           counts.deduped_exact += 1;
           continue;
         }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'source_verify',
-          supplyTrace: inserted.questionSupplyTrace,
+          supplyTrace: inserted.supplyTrace,
           createdAt: now,
         });
         questionIds.push(id);
@@ -448,7 +443,31 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     });
     counts.inserted = questionIds.length;
 
-    // ── canary success event ───────────────────────────────────────────────────
+    // ── chain source_verify FIRST (best-effort; drafts + intents are durable) ────
+    // Dispatch BEFORE the canary event so counts.verify_enqueued reflects the real number
+    // of drafts handed to the chain — writing the event first would freeze verify_enqueued
+    // at 0 and make the funnel metric permanently wrong.
+    if (questionIds.length > 0) {
+      failureStage = 'dispatch';
+      const dispatchResult = await dispatchPendingVerifyIntents(db, {
+        questionIds,
+        enqueue: async (verifier, ids, options) => {
+          if (verifier !== 'source_verify') {
+            throw new Error(`jyeoo_fetch outbox received unexpected verifier '${verifier}'`);
+          }
+          await enqueueSourceVerify(ids, options);
+        },
+      });
+      counts.verify_enqueued = questionIds.length - dispatchResult.failed;
+      if (dispatchResult.failed > 0) {
+        console.error(
+          '[jyeoo_fetch] source_verify enqueue failed; durable intents left for recovery:',
+          questionIds,
+        );
+      }
+    }
+
+    // ── canary success event (AFTER dispatch so counts.verify_enqueued is accurate) ─
     failureStage = 'event';
     await writeEvent(db, {
       id: createId(),
@@ -475,27 +494,6 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       cost_micro_usd: null,
       created_at: new Date(),
     });
-
-    // ── chain source_verify (best-effort; drafts + intents are durable) ─────────
-    if (questionIds.length > 0) {
-      failureStage = 'dispatch';
-      const dispatchResult = await dispatchPendingVerifyIntents(db, {
-        questionIds,
-        enqueue: async (verifier, ids, options) => {
-          if (verifier !== 'source_verify') {
-            throw new Error(`jyeoo_fetch outbox received unexpected verifier '${verifier}'`);
-          }
-          await enqueueSourceVerify(ids, options);
-        },
-      });
-      counts.verify_enqueued = questionIds.length - dispatchResult.failed;
-      if (dispatchResult.failed > 0) {
-        console.error(
-          '[jyeoo_fetch] source_verify enqueue failed; durable intents left for recovery:',
-          questionIds,
-        );
-      }
-    }
 
     return { status: 'ready', question_ids: questionIds, counts };
   } catch (err) {
@@ -583,98 +581,6 @@ async function finishFailure(args: FinishFailureArgs): Promise<RunJyeooFetchResu
     throw new Error(`jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`);
   }
   return { status: `failed:${failureClass}`, counts };
-}
-
-interface InsertJyeooDraftArgs {
-  id: string;
-  q: SourcedQuestionT;
-  anchorKid: string;
-  whitelist: string[];
-  canonicalContentHash: string;
-  supplyTrace: SupplyTraceV1T | undefined;
-  now: Date;
-}
-
-type InsertJyeooDraftResult =
-  | 'raced_duplicate'
-  | { difficultyEvidence: DifficultyEvidenceT; questionSupplyTrace: SupplyTraceV1T | undefined };
-
-/**
- * INSERT one jyeoo-sourced draft. Byte-for-byte the sourcing.ts persistence shape
- * (source='web_sourced', tier-2 provenance, source_ref_kind='url', draft_status='draft',
- * canonical_content_hash + partial-unique arbiter) — only source_route + created_by
- * differ. knowledge_ids = [anchorKid]: jyeoo emits knowledge_ids=[] (producer §non-goal),
- * so the target's anchor KC is the attribution (design §2.1 — zero embed, zero new
- * mechanism).
- */
-async function insertJyeooDraft(
-  tx: Tx,
-  args: InsertJyeooDraftArgs,
-): Promise<InsertJyeooDraftResult> {
-  const { id, q, anchorKid, whitelist, canonicalContentHash, supplyTrace, now } = args;
-  const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
-  const declaredDifficultyEvidence =
-    q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, JYEOO_FETCH_ROUTE, now);
-  const difficultyEvidence = DifficultyEvidence.parse({
-    ...declaredDifficultyEvidence,
-    observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
-    source_route: declaredDifficultyEvidence.source_route ?? JYEOO_FETCH_ROUTE,
-  });
-  const questionSupplyTrace = supplyTrace
-    ? withSupplyTraceDifficultyEvidence(supplyTrace, difficultyEvidence)
-    : undefined;
-
-  const webSourced: WebSourcedProvenanceT = {
-    url: q.source_url,
-    title: q.source_title,
-    // The producer's per-line fetched_at is inside the jyeoo block; SourcedQuestion has
-    // no fetched_at, so stamp the run time (consistent, monotonic).
-    fetched_at: now.toISOString(),
-    whitelist_match: matchesWhitelist(q.source_url, whitelist),
-    ...(q.extraction_hash ? { extraction_hash: q.extraction_hash } : {}),
-    extract: q.extract,
-  };
-
-  const inserted = await tx
-    .insert(question)
-    .values(
-      withAnswerClass({
-        id,
-        kind: q.kind,
-        source: 'web_sourced',
-        prompt_md: q.prompt_md,
-        reference_md: q.reference_md,
-        rubric_json: q.rubric_json ?? null,
-        choices_md: q.choices_md ?? null,
-        judge_kind_override: judgeKind,
-        knowledge_ids: [anchorKid],
-        difficulty: q.difficulty,
-        source_ref: q.source_url,
-        draft_status: 'draft',
-        created_by: JYEOO_CREATED_BY,
-        metadata: {
-          web_sourced: webSourced,
-          source_ref_kind: 'url',
-          difficulty_evidence: difficultyEvidence,
-          ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-        },
-        created_at: now,
-        canonical_content_hash: canonicalContentHash,
-        updated_at: now,
-      }),
-    )
-    .onConflictDoNothing({
-      target: question.canonical_content_hash,
-      where: sql`${question.canonical_content_hash} is not null`,
-    })
-    .returning({ id: question.id });
-  if (inserted.length === 0) {
-    // Lost a race to a concurrent insert of the same canonical hash → treat as exact dup.
-    const raced = await findExactQuestionDuplicate(tx, canonicalContentHash);
-    if (!raced) throw new Error(`jyeoo_fetch canonical hash conflict did not resolve for ${id}`);
-    return 'raced_duplicate';
-  }
-  return { difficultyEvidence, questionSupplyTrace };
 }
 
 export function buildJyeooFetchHandler(

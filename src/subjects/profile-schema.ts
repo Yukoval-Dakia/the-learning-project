@@ -120,6 +120,7 @@ export const SubjectProfileSchema = z.object({
     .object({
       subject: z.string().trim().min(1),
     })
+    .strict()
     .optional(),
 });
 export type SubjectProfile = z.infer<typeof SubjectProfileSchema>;

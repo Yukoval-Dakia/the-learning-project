@@ -166,13 +166,15 @@ describe('isImageDependentQuestion', () => {
     ).toBe(true);
   });
 
-  it('ignores an image that appears only in the worked solution (reference_md)', () => {
+  it('detects an image in the worked solution (reference_md renders to the learner)', () => {
+    // The full solution card shows reference_md to the learner (HintLadder), so a rotting
+    // image there corrupts the learner-visible page just like one in the stem.
     expect(
       isImageDependentQuestion({
         ...base,
         reference_md: '解答见 ![图](https://www.jyeoo.com/s.png)',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('detects an image whose URL contains a literal ) (over-inclusive marker match)', () => {

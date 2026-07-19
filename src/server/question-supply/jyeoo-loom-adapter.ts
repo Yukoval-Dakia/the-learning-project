@@ -141,21 +141,23 @@ export function parseJyeooLine(line: string): JyeooParsedLine {
 // depends on a figure whose URL points at the (ID-drifting, VIP-gated) jyeoo host.
 // This PR does NOT download/persist figures (the --images → R2 → source_asset →
 // question.figures glue is a declared follow-up), so an image-dependent question would
-// be judged with a rotting external URL and NO figure content — semantic corruption
+// be judged/shown with a rotting external URL and NO figure content — semantic corruption
 // (design §5.3). We therefore FILTER such questions pre-persist rather than ingest a
-// judge-corrupting draft. reference_md is intentionally NOT scanned: an image that
-// appears only in the worked solution does not change the question the learner sees.
+// judge-corrupting draft. prompt_md, choices AND reference_md are all scanned: the full
+// solution card renders reference_md TO THE LEARNER (HintLadder), so a rotting image in
+// the answer/analysis surfaces on the learner-visible page just like one in the stem.
 //
 // This is the ONLY pre-INSERT image gate, so it is deliberately OVER-INCLUSIVE: detect the
 // markdown image MARKER STRUCTURE `![...](` rather than parse a full `(...)` URL. A URL
 // containing a literal `)` (e.g. `![x](https://h/Foo_(bar).png)`) would defeat a
 // balanced-paren/`[^)]*` regex and let the figure question slip through — better to
 // over-filter (a rare false positive costs at most one dropped candidate) than to
-// under-filter and ingest a broken-image question into the judge path.
+// under-filter and ingest a broken-image question into the judge/learner path.
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(/;
 
 export function isImageDependentQuestion(q: SourcedQuestionT): boolean {
   if (MARKDOWN_IMAGE.test(q.prompt_md)) return true;
+  if (q.reference_md && MARKDOWN_IMAGE.test(q.reference_md)) return true;
   for (const choice of q.choices_md ?? []) {
     if (MARKDOWN_IMAGE.test(choice)) return true;
   }

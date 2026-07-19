@@ -116,6 +116,7 @@ export const SourcePolicyTraitSchema = z
       .object({
         subject: z.string().trim().min(1),
       })
+      .strict()
       .optional(),
     exampleSources: z.array(z.string().trim().min(1)),
   })

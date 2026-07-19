@@ -170,6 +170,22 @@ producer 落 Patch 3 后，非 VIP 永不产行（exit 6）。为给 loom handle
 
 ---
 
+## Patch 6（文档级）— exit 1 未使用，应显式声明为 reserved
+
+**loom-side 裁决（PR #939 round-2 #5）**：exit 1 **不映射为 retryable**，保持 `unknown`（terminal，不重试）。
+
+源码依据（jyeoo-rs 只读快照 2026-07-18）：
+
+- `src/error.rs::exit_code()` 只产 `3`（Auth/Cookie）/ `4`（Http/Io）/ `5`（Parse）——**无 1**。
+- `src/main.rs` 仅一处 `std::process::exit(code)`，`code` = `0`（Ok）或 `e.exit_code()`（∈ {3,4,5}）；`Cli::parse()` 失败由 clap 自身退 `2`。**无任何路径显式退 1**。
+- 未映射的进程终止只剩 Rust panic（→ 退码 `101`，非 1）或外部信号（loom 侧 `classifyJyeooExit` 已按 `signal !== null` 归 `spawn`/terminal）。
+
+因此 exit 1 在当前契约下**不会出现**；若真出现，它是一个**未定义的 generic 崩溃**，不是有语义的 transient——盲目映射成 `network`(retryable) 会让一个确定性崩溃进入 pg-boss 重试风暴。loom 侧 `classifyJyeooExit` 的 `default → 'unknown'`（retryable=false）是正确的保守处理。
+
+**producer 侧建议（文档化，非代码）**：在 `docs/DESIGN.md` §5 exit-code 表显式加一行 `1 保留/未使用（generic failure；接入方按 terminal 处理，不重试）`，把「exit 1 无语义」变成契约的一部分，防止未来有人无意间用 exit 1 返回一个 transient 错误却被下游当 terminal 丢弃。
+
+---
+
 ## loom 侧已实现的对接闸（本 PR，与上述提案对齐）
 
 这些在 loom 仓本 PR 已落地，与 producer 提案严丝合缝——**Patch 未落时 loom 侧仍安全**（兜底）：

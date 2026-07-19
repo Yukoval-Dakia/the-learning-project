@@ -214,7 +214,13 @@ describe('runJyeooFetch', () => {
       .where(eq(event.action, 'experimental:jyeoo_fetch'));
     expect(events).toHaveLength(1);
     expect(events[0]?.outcome).toBe('success');
-    expect((events[0]?.payload as { counts: { inserted: number } }).counts.inserted).toBe(2);
+    // The event is written AFTER source_verify dispatch, so verify_enqueued is the real
+    // count (2), not the frozen-at-0 value a pre-dispatch write would produce.
+    const eventCounts = (
+      events[0]?.payload as { counts: { inserted: number; verify_enqueued: number } }
+    ).counts;
+    expect(eventCounts.inserted).toBe(2);
+    expect(eventCounts.verify_enqueued).toBe(2);
   });
 
   it('malformed NDJSON: drops the bad line, ingests the valid ones', async () => {
