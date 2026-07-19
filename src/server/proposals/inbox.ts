@@ -674,7 +674,8 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
     // through the derive so an ARCHIVE proposal renders as archive (not create) in
     // the inbox. Absent edge_op (legacy events written before D4-E1) defaults to
     // 'create' in the schema parse, so the create-branch derive is unchanged.
-    const edgeOp = payload.edge_op === 'archive' ? 'archive' : 'create';
+    const edgeOp =
+      payload.edge_op === 'archive' || payload.edge_op === 'supersede' ? payload.edge_op : 'create';
     return parseAiProposalPayload({
       kind: 'knowledge_edge',
       target: { subject_kind: 'knowledge_edge', subject_id: row.subject_id },
@@ -689,8 +690,17 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
           typeof payload.weight === 'number' && Number.isFinite(payload.weight)
             ? payload.weight
             : undefined,
-        ...(edgeOp === 'archive' && typeof payload.archive_edge_id === 'string'
+        ...(edgeOp !== 'create' && typeof payload.archive_edge_id === 'string'
           ? { archive_edge_id: payload.archive_edge_id }
+          : {}),
+        ...(edgeOp === 'supersede' && typeof payload.supersede_confidence === 'number'
+          ? { supersede_confidence: payload.supersede_confidence }
+          : {}),
+        ...(edgeOp === 'supersede' && 'supersede_neighbor_index' in payload
+          ? { supersede_neighbor_index: payload.supersede_neighbor_index }
+          : {}),
+        ...(edgeOp === 'supersede' && Array.isArray(payload.supersede_affected_refs)
+          ? { supersede_affected_refs: payload.supersede_affected_refs }
           : {}),
       },
     });
@@ -857,13 +867,25 @@ function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; re
     return {
       payload: {
         mutation: 'propose_knowledge_edge',
-        edge_op: payload.edge_op === 'archive' ? 'archive' : 'create',
+        edge_op:
+          payload.edge_op === 'archive' || payload.edge_op === 'supersede'
+            ? payload.edge_op
+            : 'create',
         from_knowledge_id: payload.from_knowledge_id,
         to_knowledge_id: payload.to_knowledge_id,
         relation_type: payload.relation_type,
         weight: payload.weight,
         ...(typeof payload.archive_edge_id === 'string'
           ? { archive_edge_id: payload.archive_edge_id }
+          : {}),
+        ...(typeof payload.supersede_confidence === 'number'
+          ? { supersede_confidence: payload.supersede_confidence }
+          : {}),
+        ...('supersede_neighbor_index' in payload
+          ? { supersede_neighbor_index: payload.supersede_neighbor_index }
+          : {}),
+        ...(Array.isArray(payload.supersede_affected_refs)
+          ? { supersede_affected_refs: payload.supersede_affected_refs }
           : {}),
       },
       reasoning: String(payload.reasoning ?? ''),

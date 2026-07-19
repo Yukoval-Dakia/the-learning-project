@@ -280,9 +280,10 @@ export type KnowledgeNodeProposalChangeT = z.infer<typeof KnowledgeNodeProposalC
 // kind (and its inbox/writer/dispatch wiring) single — only one new branch.
 export const KnowledgeEdgeProposalChange = z.object({
   // 'create' (default / absence) = propose a new edge; 'archive' = soft-delete the
-  // live edge named by archive_edge_id. Defaulted so legacy/create payloads are
-  // unchanged.
-  edge_op: z.enum(['create', 'archive']).default('create'),
+  // live edge named by archive_edge_id; 'supersede' = preserve a reconcile
+  // replacement recommendation as pending until an explicit user accept.
+  // Defaulted so legacy/create payloads are unchanged.
+  edge_op: z.enum(['create', 'archive', 'supersede']).default('create'),
   from_knowledge_id: z.string().min(1),
   to_knowledge_id: z.string().min(1),
   relation_type: RelationTypeSchema,
@@ -292,6 +293,13 @@ export const KnowledgeEdgeProposalChange = z.object({
   // PROPOSE path requires it (enforced at the tool executor, not the schema, so
   // the create branch's parse stays untouched).
   archive_edge_id: z.string().min(1).optional(),
+  // YUK-689 — a reconcile SUPERSEDE is still an edge proposal: the model may
+  // recommend replacing a live edge, but only an explicit user accept applies
+  // the archive + replacement transaction. These fields preserve the judged
+  // decision until that accept boundary.
+  supersede_confidence: z.number().min(0).max(1).optional(),
+  supersede_neighbor_index: z.number().int().min(0).nullable().optional(),
+  supersede_affected_refs: z.array(ActivityRef).min(1).optional(),
 });
 export type KnowledgeEdgeProposalChangeT = z.infer<typeof KnowledgeEdgeProposalChange>;
 

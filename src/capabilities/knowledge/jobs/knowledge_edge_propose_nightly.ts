@@ -160,9 +160,8 @@ export interface NightlyResult {
   // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS (proposed live
   // but marked). Previously spread through {...stats} but untyped here.
   warned_transitive_redundancy: number;
-  // ADR-0034 §3 / YUK-344 增量 2 — RECONCILE SUPERSEDE applied (old live edge
-  // archived + new live edge written). Previously spread through {...stats} but
-  // untyped here.
+  // YUK-689 — RECONCILE SUPERSEDE recommendations emitted as pending proposals.
+  // Historical result key retained for compatibility; no edge is mutated nightly.
   reconcile_superseded: number;
 }
 

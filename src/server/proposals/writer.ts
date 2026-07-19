@@ -79,6 +79,15 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
           ...(payload.proposed_change.archive_edge_id
             ? { archive_edge_id: payload.proposed_change.archive_edge_id }
             : {}),
+          ...(payload.proposed_change.supersede_confidence !== undefined
+            ? { supersede_confidence: payload.proposed_change.supersede_confidence }
+            : {}),
+          ...(payload.proposed_change.supersede_neighbor_index !== undefined
+            ? { supersede_neighbor_index: payload.proposed_change.supersede_neighbor_index }
+            : {}),
+          ...(payload.proposed_change.supersede_affected_refs
+            ? { supersede_affected_refs: payload.proposed_change.supersede_affected_refs }
+            : {}),
           reasoning: payload.reason_md,
           ai_proposal: payload,
         },
