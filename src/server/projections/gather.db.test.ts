@@ -482,6 +482,43 @@ async function seedKnowledgeMerge(fromIds: string[], intoId: string): Promise<vo
   });
 }
 
+// Seed a NON-knowledge accept chain: a goal proposal + its accept rate. The rate's caused_by points to
+// a subject_kind='goal' event, so prefetchKnowledgeRates (scoped to knowledge-subject accepts) must NOT
+// pull it — this is what keeps the prefetch from loading EVERY entity's rates into memory (round-2).
+async function seedForeignAcceptRate(proposeId: string): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: proposeId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'test',
+    action: 'experimental:proposal',
+    subject_kind: 'goal',
+    subject_id: 'g_foreign',
+    outcome: 'partial',
+    payload: {},
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: T0,
+  });
+  await db.insert(event).values({
+    id: newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposeId,
+    outcome: 'success',
+    payload: { rating: 'accept' },
+    caused_by_event_id: proposeId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(T0.getTime() + 100),
+  });
+}
+
 // ── YUK-549 (K6): knowledge-node merge + rate prefetch threading ──────────────────────────────
 //
 // gatherAndFoldKnowledgeNode's Q3 leg (every knowledge_merge propose event, containment-filtered) and
@@ -553,5 +590,30 @@ describe('gatherAndFoldKnowledgeNode — YUK-549 (K6) merge + rate prefetch thre
     for (const id of nodeIds) await gatherAndFoldKnowledgeNode(cdb, id);
     const selfFetchTotal = counter.n;
     expect(selfFetchTotal - prefetchTotal).toBe(nodeIds.length * 2);
+  });
+
+  it('scopes to knowledge-related rates only: a foreign entity accept rate never enters the Map (round-2 unbounded-memory fix)', async () => {
+    const db = testDb();
+    await seedKnowledgeGenesis('k_a');
+    await seedKnowledgeGenesis('k_c');
+    await seedKnowledgeMerge(['k_a'], 'k_c'); // an IN-scope knowledge merge accept rate
+    await seedForeignAcceptRate('goal_prop'); // an OUT-of-scope goal accept rate (subject_kind='goal')
+
+    const rates = await prefetchKnowledgeRates(db);
+    // ONLY the knowledge merge's accept rate is retained — the goal accept rate is scoped out, so a
+    // full-system rate flood never lands in memory (the fix for the unbounded pull).
+    expect(rates.size).toBe(1);
+    expect(rates.has('goal_prop')).toBe(false);
+    // and every retained value is genuinely a `rate` (round-2 defense: this leg only ever ingests rates).
+    expect([...rates.values()].flat().every((r) => r.action === 'rate')).toBe(true);
+
+    // byte-parity: threading the SCOPED Map folds identically to the per-node query path (the foreign
+    // rate is absent from both — it is never a knowledge node's gathered id).
+    const merges = await prefetchKnowledgeMergeEvents(db);
+    for (const id of ['k_a', 'k_c']) {
+      expect(await gatherAndFoldKnowledgeNode(db, id, merges, rates)).toEqual(
+        await gatherAndFoldKnowledgeNode(db, id),
+      );
+    }
   });
 });

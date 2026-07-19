@@ -79,6 +79,14 @@ export function reauditGolden(golden: GoldenSnapshot): GoldenReauditResult {
   // K10/K13 — the pure per-kind reducer from the registry (was a local `foldGoldenRow` switch). edge
   // folds against the golden live-edge mesh; every other kind ignores it.
   const fold = PROJECTION_FOLDS[golden.kind];
+  // round-2 (OCR): golden.kind is JSON.parse + `as` cast, so a corrupted / newer-schema golden can carry
+  // an unknown kind → `PROJECTION_FOLDS[kind]` is undefined and `fold(...)` would throw an opaque
+  // "fold is not a function". Restore the old switch-default: fail loudly with the offending kind named.
+  if (!fold) {
+    throw new Error(
+      `reauditGolden: unknown ProjectionKind '${String(golden.kind)}' in golden — corrupted file or captured under a newer schema. Re-capture with pnpm capture:golden.`,
+    );
+  }
   const drifted: { id: string; diffs: string[] }[] = [];
   for (const [id, goldenRow] of Object.entries(golden.rows)) {
     const folded = fold(id, events, mesh);
