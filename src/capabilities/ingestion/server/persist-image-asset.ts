@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
+import { eq } from 'drizzle-orm';
 
 // Shared content-addressed image-asset write path. Extracted from
 // app/api/assets/route.ts (YUK-250) so both the generic asset upload route and
@@ -44,30 +45,53 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function persistImageAsset(
   db: Db | Tx,
   r2: R2Client,
-  input: { bytes: Uint8Array; mime: string },
+  input: { bytes: Uint8Array; mime: string; compensatePutOnInsertFailure?: boolean },
 ): Promise<SourceAssetRow> {
   const { bytes, mime } = input;
   const sha = await sha256Hex(bytes);
   const storageKey = `assets/${sha}`;
   await r2.put(storageKey, bytes, mime);
 
+  const compensateFailedInsert = async (): Promise<void> => {
+    if (!input.compensatePutOnInsertFailure) return;
+    try {
+      // Content-addressed objects may be shared by independent source_asset rows. Delete
+      // only when the failed INSERT left no committed owner for this storage key.
+      const owners = await db
+        .select({ id: source_asset.id })
+        .from(source_asset)
+        .where(eq(source_asset.storage_key, storageKey))
+        .limit(1);
+      if (owners.length === 0) await r2.delete(storageKey);
+    } catch (cleanupErr) {
+      console.error('[persistImageAsset] failed to compensate R2 put:', cleanupErr);
+    }
+  };
+
   const id = createId();
   const now = new Date();
-  const [row] = await db
-    .insert(source_asset)
-    .values({
-      id,
-      kind: 'image',
-      storage_key: storageKey,
-      mime_type: mime,
-      byte_size: bytes.byteLength,
-      sha256: sha,
-      created_at: now,
-    })
-    .returning();
+  let row: SourceAssetRow | undefined;
+  try {
+    [row] = await db
+      .insert(source_asset)
+      .values({
+        id,
+        kind: 'image',
+        storage_key: storageKey,
+        mime_type: mime,
+        byte_size: bytes.byteLength,
+        sha256: sha,
+        created_at: now,
+      })
+      .returning();
+  } catch (err) {
+    await compensateFailedInsert();
+    throw err;
+  }
   // INSERT ... RETURNING always yields the inserted row, but guard the empty-array
   // case so the Promise<SourceAssetRow> contract can never resolve to undefined.
   if (!row) {
+    await compensateFailedInsert();
     throw new Error('persistImageAsset: INSERT ... RETURNING returned no row');
   }
   return row;

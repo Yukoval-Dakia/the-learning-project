@@ -669,7 +669,7 @@ describe('runJyeooFetch', () => {
     expect(await db.select().from(question)).toHaveLength(0);
   });
 
-  it('keeps a committed source_asset owner when the question transaction never starts', async () => {
+  it('compensates source_asset and R2 when the question transaction never starts', async () => {
     const kid = createId();
     await seedKnowledge(kid);
     const r2 = captureR2();
@@ -695,10 +695,59 @@ describe('runJyeooFetch', () => {
       }),
     ).rejects.toThrow('injected after asset finalization');
 
-    const [asset] = await db.select().from(source_asset);
-    expect(asset).toBeDefined();
-    expect(await r2.client.get(asset?.storage_key ?? '')).not.toBeNull();
+    expect(await db.select().from(source_asset)).toHaveLength(0);
+    expect(r2.objects.size).toBe(0);
     expect(await db.select().from(question)).toHaveLength(0);
+  });
+
+  it('compensates uploaded assets after losing the canonical reservation race', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const r2 = captureR2();
+    const png = await validPng({ r: 15, g: 25, b: 35 });
+    let competitorId = '';
+
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: async (options) => {
+        const dir = options.args[options.args.indexOf('--images') + 1] ?? '';
+        const path = join(dir, 'race.png');
+        await writeFile(path, png);
+        return spawnResult({ lines: [line({ prompt_md: `竞态图题 ![图](${path})` }), ''] });
+      },
+      enqueueSourceVerify: captureEnqueue().fn,
+      r2: r2.client,
+      afterAssetsPersistedFn: async ({ canonicalContentHash }) => {
+        competitorId = createId();
+        const now = new Date();
+        await db.insert(question).values({
+          id: competitorId,
+          kind: 'choice',
+          prompt_md: '并发胜者',
+          reference_md: 'B',
+          choices_md: ['A', 'B'],
+          judge_kind_override: 'exact',
+          knowledge_ids: [kid],
+          difficulty: 3,
+          source: 'manual',
+          draft_status: 'draft',
+          created_by: { by: 'system', task_kind: 'test-race' },
+          metadata: {},
+          canonical_content_hash: canonicalContentHash,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        });
+      },
+    });
+
+    expect(result.counts).toMatchObject({ deduped_exact: 1, inserted: 0 });
+    expect((await db.select().from(question)).map((row) => row.id)).toEqual([competitorId]);
+    expect(await db.select().from(source_asset)).toHaveLength(0);
+    expect(r2.objects.size).toBe(0);
   });
 
   it('kill switch OFF: no-op (skipped:disabled), spawn never invoked', async () => {

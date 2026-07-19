@@ -410,6 +410,7 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
+  const requiresVision = (question.image_refs?.length ?? 0) > 0;
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
@@ -509,7 +510,8 @@ export async function runSolveCheck(
       }
       taskInput = { text: JSON.stringify(input), images };
     }
-    const solverRun = await opts.runTaskFn('SolutionGenerateTask', taskInput, ctx);
+    const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
+    const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
     recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
@@ -529,6 +531,7 @@ export async function runSolveCheck(
       verdict: 'unsupported',
       reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
       compared_by: 'none',
+      ...(requiresVision ? { image_input_unavailable: true } : {}),
       ...runProvenance(),
     };
   }

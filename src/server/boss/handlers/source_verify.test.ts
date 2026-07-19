@@ -211,7 +211,7 @@ describe('runSourceVerify', () => {
     expect(result.status).toBe('verified');
     expect(imageFetchFn).toHaveBeenCalledWith(['asset-diagram'], db);
     expect(runTaskFn).toHaveBeenCalledWith(
-      'SolutionGenerateTask',
+      'SolutionGenerateVisionTask',
       expect.objectContaining({
         text: expect.stringContaining('"prompt_image_refs":["asset-diagram"]'),
         images: [{ data: 'base64-image', mediaType: 'image/png' }],
@@ -238,6 +238,34 @@ describe('runSourceVerify', () => {
 
     expect(result.status).toBe('failed');
     expect(runTaskFn).not.toHaveBeenCalled();
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    const [verifyEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(verifyEvent.payload).toMatchObject({
+      overall: 'needs_review',
+      summary_md: 'tier-2 source verify needs review: prompt image content was unavailable',
+    });
+  });
+
+  it('holds an image question when vision solving fails after image fetch succeeds', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], imageRefs: ['asset-diagram'] });
+
+    const result = await runSourceVerify({
+      db,
+      questionId: qid,
+      runTaskFn: async () => {
+        throw new Error('vision model rejected image');
+      },
+      imageFetchFn: async () => [{ data: 'base64-image', mediaType: 'image/png' }],
+    });
+
+    expect(result.status).toBe('failed');
     expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
       'draft',
     );

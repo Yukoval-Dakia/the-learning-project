@@ -250,6 +250,13 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('worked_solution_md');
   });
 
+  it('builds a vision solution prompt that requires reading attached prompt images', () => {
+    const prompt = getTaskSystemPrompt('SolutionGenerateVisionTask', resolveSubjectProfile('math'));
+    expect(prompt).toContain('附带 prompt_image_refs 对应的题目图片');
+    expect(prompt).toContain('必须实际读取这些图片');
+    expect(prompt).toContain('SolutionGenerateOutput');
+  });
+
   it('builds a QuizGenTask prompt that enforces the §0 self-declared-sources contract', () => {
     const yuwen = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('math'));

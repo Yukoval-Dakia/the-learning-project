@@ -30,10 +30,14 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
-import { persistImageAsset, sha256Hex } from '@/capabilities/ingestion/server/persist-image-asset';
+import {
+  type SourceAssetRow,
+  persistImageAsset,
+  sha256Hex,
+} from '@/capabilities/ingestion/server/persist-image-asset';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
@@ -41,7 +45,7 @@ import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { knowledge, question, source_asset } from '@/db/schema';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -138,7 +142,7 @@ export interface RunJyeooFetchParams {
   /** Test seam; production resolves getR2() lazily only after a localized image is present. */
   r2?: R2Client;
   /** Test-only failure injection after blob/source_asset finalization. */
-  afterAssetsPersistedFn?: () => Promise<void>;
+  afterAssetsPersistedFn?: (context: { canonicalContentHash: string }) => Promise<void>;
 }
 
 export type RunJyeooFetchStatus =
@@ -267,6 +271,7 @@ interface PersistedQuestionImages {
   figures: FigureRefT[];
   imageRefs: string[];
   structured: StructuredQuestionT;
+  assets: SourceAssetRow[];
 }
 
 function unique(values: string[]): string[] {
@@ -407,14 +412,21 @@ async function persistQuestionImages(
 ): Promise<PersistedQuestionImages> {
   const replacements = new Map<string, string>();
   const assetIdsBySource = new Map<string, string>();
-  for (const image of loaded.images) {
-    // Persist source_asset outside the question transaction. If the later question INSERT /
-    // UPDATE / verify-intent transaction fails, R2 still has a committed source_asset owner
-    // instead of an object whose row vanished on rollback. Unattached source_asset rows are a
-    // supported upload state and can be reclaimed by the existing asset lifecycle.
-    const asset = await persistImageAsset(db, r2, { bytes: image.bytes, mime: image.mime });
-    replacements.set(image.source, `/api/assets/${encodeURIComponent(asset.id)}/content`);
-    assetIdsBySource.set(image.source, asset.id);
+  const assets: SourceAssetRow[] = [];
+  try {
+    for (const image of loaded.images) {
+      const asset = await persistImageAsset(db, r2, {
+        bytes: image.bytes,
+        mime: image.mime,
+        compensatePutOnInsertFailure: true,
+      });
+      assets.push(asset);
+      replacements.set(image.source, `/api/assets/${encodeURIComponent(asset.id)}/content`);
+      assetIdsBySource.set(image.source, asset.id);
+    }
+  } catch (err) {
+    await cleanupQuestionAssets(db, r2, assets);
+    throw err;
   }
 
   const qWithInternalUrls: SourcedQuestionT = {
@@ -440,7 +452,27 @@ async function persistQuestionImages(
     prompt_text: qWithInternalUrls.prompt_md,
     ...(qWithInternalUrls.reference_md ? { answers: [qWithInternalUrls.reference_md] } : {}),
   };
-  return { q: qWithInternalUrls, figures, imageRefs, structured };
+  return { q: qWithInternalUrls, figures, imageRefs, structured, assets };
+}
+
+async function cleanupQuestionAssets(
+  db: Db,
+  r2: R2Client,
+  assets: readonly SourceAssetRow[],
+): Promise<void> {
+  if (assets.length === 0) return;
+  const ownedIds = new Set(assets.map((asset) => asset.id));
+  for (const storageKey of new Set(assets.map((asset) => asset.storage_key))) {
+    const owners = await db
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(eq(source_asset.storage_key, storageKey));
+    // Delete the blob before its last rows. If R2 deletion fails, the source_asset rows
+    // remain as durable owners and the failure is visible/retriable rather than becoming a
+    // naked object. Shared content-addressed blobs stay in place for their other owners.
+    if (owners.every((owner) => ownedIds.has(owner.id))) await r2.delete(storageKey);
+  }
+  await db.delete(source_asset).where(inArray(source_asset.id, [...ownedIds]));
 }
 
 export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJyeooFetchResult> {
@@ -630,61 +662,71 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       // producer hash contains this run's random temp path. Replace only that unstable provenance
       // value with Loom's URL-insensitive canonical hash; text-question provenance stays verbatim.
       const id = createId();
-      const media =
-        loadedImages.images.length > 0
-          ? await persistQuestionImages(db, imageR2 as R2Client, q, loadedImages, id)
-          : null;
-      if (media && params.afterAssetsPersistedFn) await params.afterAssetsPersistedFn();
-      const persistedQuestion = media?.q ?? q;
-      const qForInsert =
-        loadedImages.images.length > 0
-          ? { ...persistedQuestion, extraction_hash: `sha256:${canonicalContentHash}` }
-          : persistedQuestion;
-      const persisted = await db.transaction(async (tx) => {
-        // Reserve the canonical hash and materialize all question-owned references atomically.
-        // Image blobs/source_asset rows were finalized immediately before this transaction so a
-        // rollback cannot erase their only DB owner and strand an R2 object.
-        const inserted = await insertSourcedDraft(tx, {
-          id,
-          q: qForInsert,
-          knowledgeIds: [anchorKid],
-          sourceRoute: JYEOO_FETCH_ROUTE,
-          createdBy: JYEOO_CREATED_BY,
-          whitelistMatch: matchesWhitelist(q.source_url, whitelist),
-          fetchedAt: now.toISOString(),
-          canonicalContentHash,
-          supplyTrace: params.supplyTrace,
-          now,
-        });
-        if (inserted.status === 'raced_duplicate') return inserted;
-
-        if (media) {
-          await tx
-            .update(question)
-            .set({
-              // Jyeoo image questions are holistic visual prompts. The shared route supports this
-              // capability for math, but choices normally short-circuit to exact before image
-              // auto-routing, so persist the explicit route rather than silently ignoring figures.
-              ...(media.imageRefs.length > 0
-                ? { judge_kind_override: 'multimodal_direct' as const }
-                : {}),
-              figures: media.figures,
-              image_refs: media.imageRefs,
-              structured: media.structured,
-              metadata: sql`${question.metadata} || ${JSON.stringify({ prompt_image_refs: media.imageRefs })}::jsonb`,
-              updated_at: now,
-            })
-            .where(eq(question.id, id));
+      let media: PersistedQuestionImages | null = null;
+      let persisted: Awaited<ReturnType<typeof insertSourcedDraft>>;
+      try {
+        media =
+          loadedImages.images.length > 0
+            ? await persistQuestionImages(db, imageR2 as R2Client, q, loadedImages, id)
+            : null;
+        if (media && params.afterAssetsPersistedFn) {
+          await params.afterAssetsPersistedFn({ canonicalContentHash });
         }
-        await writeVerifyDispatchIntent(tx, {
-          questionId: id,
-          verifier: 'source_verify',
-          supplyTrace: inserted.supplyTrace,
-          createdAt: now,
+        const persistedQuestion = media?.q ?? q;
+        const qForInsert =
+          loadedImages.images.length > 0
+            ? { ...persistedQuestion, extraction_hash: `sha256:${canonicalContentHash}` }
+            : persistedQuestion;
+        persisted = await db.transaction(async (tx) => {
+          // Reserve the canonical hash and materialize all question-owned references atomically.
+          // Image blobs/source_asset rows are staged immediately before this transaction. A
+          // rollback or canonical race runs ref-aware compensation below before the job retries.
+          const inserted = await insertSourcedDraft(tx, {
+            id,
+            q: qForInsert,
+            knowledgeIds: [anchorKid],
+            sourceRoute: JYEOO_FETCH_ROUTE,
+            createdBy: JYEOO_CREATED_BY,
+            whitelistMatch: matchesWhitelist(q.source_url, whitelist),
+            fetchedAt: now.toISOString(),
+            canonicalContentHash,
+            supplyTrace: params.supplyTrace,
+            now,
+          });
+          if (inserted.status === 'raced_duplicate') return inserted;
+
+          if (media) {
+            await tx
+              .update(question)
+              .set({
+                // Jyeoo image questions are holistic visual prompts. The shared route supports this
+                // capability for math, but choices normally short-circuit to exact before image
+                // auto-routing, so persist the explicit route rather than silently ignoring figures.
+                ...(media.imageRefs.length > 0
+                  ? { judge_kind_override: 'multimodal_direct' as const }
+                  : {}),
+                figures: media.figures,
+                image_refs: media.imageRefs,
+                structured: media.structured,
+                metadata: sql`${question.metadata} || ${JSON.stringify({ prompt_image_refs: media.imageRefs })}::jsonb`,
+                updated_at: now,
+              })
+              .where(eq(question.id, id));
+          }
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'source_verify',
+            supplyTrace: inserted.supplyTrace,
+            createdAt: now,
+          });
+          return inserted;
         });
-        return inserted;
-      });
+      } catch (err) {
+        if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
+        throw err;
+      }
       if (persisted.status === 'raced_duplicate') {
+        if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
         counts.deduped_exact += 1;
         continue;
       }

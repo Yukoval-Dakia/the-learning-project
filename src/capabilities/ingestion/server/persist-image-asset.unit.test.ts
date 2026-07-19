@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import type { Db } from '@/db/client';
+import type { R2Client } from '@/server/r2';
+import { describe, expect, it, vi } from 'vitest';
 
-import { sha256Hex } from './persist-image-asset';
+import { persistImageAsset, sha256Hex } from './persist-image-asset';
 
 // Pure unit (no DB/R2): sha256Hex only touches crypto.subtle. Lives in the unit
 // partition (enumerated in vitest.shared.ts fastTestInclude). The DB-backed
@@ -48,5 +50,59 @@ describe('sha256Hex', () => {
     const a = new Uint8Array([7, 7, 7]);
     const b = new Uint8Array([7, 7, 7]);
     expect(await sha256Hex(a)).toBe(await sha256Hex(b));
+  });
+});
+
+describe('persistImageAsset compensation', () => {
+  function failingDb(existingOwners: Array<{ id: string }>): Db {
+    return {
+      insert: () => ({
+        values: () => ({
+          returning: async () => {
+            throw new Error('injected source_asset insert failure');
+          },
+        }),
+      }),
+      select: () => ({
+        from: () => ({
+          where: () => ({ limit: async () => existingOwners }),
+        }),
+      }),
+    } as unknown as Db;
+  }
+
+  function r2Spy(): R2Client & { put: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> } {
+    return {
+      put: vi.fn(async () => {}),
+      get: vi.fn(async () => null),
+      delete: vi.fn(async () => {}),
+    };
+  }
+
+  it('deletes a just-written R2 object when source_asset INSERT fails with no owner', async () => {
+    const r2 = r2Spy();
+    await expect(
+      persistImageAsset(failingDb([]), r2, {
+        bytes: new Uint8Array([1, 2, 3]),
+        mime: 'image/png',
+        compensatePutOnInsertFailure: true,
+      }),
+    ).rejects.toThrow('injected source_asset insert failure');
+
+    expect(r2.put).toHaveBeenCalledOnce();
+    expect(r2.delete).toHaveBeenCalledWith(expect.stringMatching(/^assets\/[0-9a-f]{64}$/));
+  });
+
+  it('keeps a content-addressed object when another source_asset row owns the key', async () => {
+    const r2 = r2Spy();
+    await expect(
+      persistImageAsset(failingDb([{ id: 'shared-owner' }]), r2, {
+        bytes: new Uint8Array([1, 2, 3]),
+        mime: 'image/png',
+        compensatePutOnInsertFailure: true,
+      }),
+    ).rejects.toThrow('injected source_asset insert failure');
+
+    expect(r2.delete).not.toHaveBeenCalled();
   });
 });
