@@ -98,7 +98,8 @@ describe('GET /api/ingestion/[id]/events contract', () => {
     await (response.body as ReadableStream).cancel().catch(() => {});
   });
 
-  it('F2 thrown computeReplay: emits an SSE error frame and closes the stream (does not hang)', async () => {
+  it('F2 thrown computeReplay: logs, emits an SSE error frame, and closes the stream (does not hang)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     computeReplay.mockRejectedValue(new Error('boom'));
     const controller = new AbortController();
     const request = new Request('http://localhost/api/ingestion/session_err/events', {
@@ -113,6 +114,14 @@ describe('GET /api/ingestion/[id]/events contract', () => {
     expect(buffer).toContain('event: error');
     // The failed initial replay must not leave a live subscription registered.
     expect(subscribe).not.toHaveBeenCalled();
+    // The swallowed DB error is logged (not silent) — tagged, with the session id
+    // and error only, no event payload.
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[ingestion:sse] initial replay failed',
+      'session_err',
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 
   it('F4 abort before await: a pre-aborted request closes without subscribing (no sse_router leak)', async () => {
@@ -214,5 +223,46 @@ describe('GET /api/ingestion/[id]/events contract', () => {
     await liveHandler({ event_id: 2 });
 
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('F-dedup overlapping NOTIFY: the live cursor advances with emitted ids so overlapping NOTIFYs do not re-send frames', async () => {
+    // Regression (PR #959 round-4): the live callback must use
+    // Math.max(lastEmittedId, event_id - 1) as the replay cursor. With a bare
+    // `event_id - 1`, a stale/overlapping NOTIFY re-queries below the high-water
+    // mark and re-emits already-sent frames.
+    computeReplay.mockResolvedValueOnce([{ id: 5, event_type: 'ingest', payload: {} }]);
+    const controller = new AbortController();
+    const request = new Request('http://localhost/api/ingestion/session_dedup/events', {
+      signal: controller.signal,
+    });
+
+    const response = await GET(request, { id: 'session_dedup' });
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read(); // consume replay frame → lastEmittedId = 5, subscribe registered
+    const liveHandler = subscribe.mock.calls[0][2] as (n: { event_id: number }) => Promise<void>;
+
+    // NOTIFY(7): a concurrent write also produced 6. Cursor = max(5, 7-1) = 6.
+    computeReplay.mockResolvedValueOnce([
+      { id: 6, event_type: 'ingest', payload: {} },
+      { id: 7, event_type: 'ingest', payload: {} },
+    ]);
+    await liveHandler({ event_id: 7 });
+    expect(computeReplay).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastEventId: 6 }),
+    );
+
+    // Overlapping/stale NOTIFY(6) arrives after 6 and 7 were already emitted. A
+    // bare event_id-1 would query lastEventId=5 and re-fetch 6,7; the dedup cursor
+    // uses max(lastEmittedId=7, 5) = 7, so nothing already-sent is re-queried.
+    computeReplay.mockResolvedValueOnce([]);
+    await liveHandler({ event_id: 6 });
+    expect(computeReplay).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastEventId: 7 }),
+    );
+
+    controller.abort();
+    await reader.cancel().catch(() => {});
   });
 });

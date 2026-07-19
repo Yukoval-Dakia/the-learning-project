@@ -12,8 +12,9 @@ import { subscribe } from '@/server/events/sse_router';
  * F1 非数字 Last-Event-ID 经 parseInt 得 NaN，守卫降级为 0（= 全量 replay）；
  * F4 abort 监听器在任何 await 之前注册 + aborted 前检，客户端在初始 replay 期间
  * 断线也能触发 unsub + close，避免 stream + DB 订阅泄漏；F2 初始 replay 与 live
- * subscribe 回调各自 try/catch，DB/连接错误发一个 SSE error 帧并收口，不让流静默
- * 挂死；unsubscribe + controller.close 收进单一幂等 close()。
+ * subscribe 回调各自 try/catch（记 console.error + 发一个 SSE error 帧并收口，不让流
+ * 静默挂死）；unsubscribe + controller.close 收进单一幂等 close()。live NOTIFY 用
+ * max(lastEmittedId, event_id-1) 当 replay 游标去重，避免并发 NOTIFY 交叠时重发帧。
  *
  * 与 sibling 的差异：ingestion 路由 businessTable 恒为字面量 'ingestion_session'
  * （永不空、非用户提供），故不需要 sibling 的 kind/id 400 闸与 business_table
@@ -33,6 +34,9 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     async start(controller) {
       let closed = false;
       let unsub: (() => void) | undefined;
+      // 去重游标：追踪已 emit 的最大 id（replay 与 live 共同推进）。live NOTIFY 用它当
+      // replay 起点，并发 NOTIFY 交叠时避免重放已发过的帧（对齐 sibling job-events.ts）。
+      let lastEmittedId = lastEventId;
 
       const close = () => {
         if (closed) return;
@@ -50,17 +54,22 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       // close() 完整清理（含 unsub），而非只置 closed —— 否则若此刻 live 订阅已建立，
       // 后续 close() 会被幂等闸短路，unsub 永不执行 → sse_router 订阅永久泄漏。
       // close() 只调 unsub + controller.close，不回调 emitSseFrame，无递归。
-      const emitSseFrame = (frame: string) => {
-        if (closed) return;
+      const emitSseFrame = (frame: string): boolean => {
+        if (closed) return false;
         try {
           controller.enqueue(encoder.encode(frame));
+          return true;
         } catch {
           close();
+          return false;
         }
       };
 
       const emit = (id: number, data: unknown) => {
-        emitSseFrame(`id: ${id}\ndata: ${JSON.stringify(data)}\n\n`);
+        // 仅在成功 enqueue 后推进游标——未送达的帧不该抬高去重起点。
+        if (emitSseFrame(`id: ${id}\ndata: ${JSON.stringify(data)}\n\n`) && id > lastEmittedId) {
+          lastEmittedId = id;
+        }
       };
 
       const emitError = () => {
@@ -102,7 +111,9 @@ export async function GET(req: Request, params: Record<string, string>): Promise
             const incoming = await computeReplay(db, {
               businessTable: 'ingestion_session',
               businessId,
-              lastEventId: notification.event_id - 1,
+              // 去重游标：并发 NOTIFY 交叠时用 max(lastEmittedId, event_id-1) 当 replay
+              // 起点，避免重放已发过的帧（单用 event_id-1 会在交叠时重发）。
+              lastEventId: Math.max(lastEmittedId, notification.event_id - 1),
             });
             for (const event of incoming) {
               emit(event.id, {
@@ -111,15 +122,19 @@ export async function GET(req: Request, params: Record<string, string>): Promise
                 payload: event.payload,
               });
             }
-          } catch {
-            // live-replay 查询失败：发一个 SSE error 事件并收口，不让流静默挂死。
+          } catch (err) {
+            // live-replay 查询失败：记日志 + 发一个 SSE error 事件并收口，不让流静默挂死。
+            // 只记 businessId（cuid，非敏感）+ err，不落 event payload。
+            console.error('[ingestion:sse] live replay failed', businessId, err);
             emitError();
             close();
           }
         });
-      } catch {
-        // F2：初始 replay / subscribe 抛错（DB/连接错误）时，发一个 SSE error 事件
-        // 通知客户端并关闭流 —— 而非让 promise 静默 reject、流永不产数据永不关闭。
+      } catch (err) {
+        // F2：初始 replay / subscribe 抛错（DB/连接错误）时，记日志 + 发一个 SSE error
+        // 事件通知客户端并关闭流 —— 而非让 promise 静默 reject、流永不产数据永不关闭。
+        // 只记 businessId（cuid，非敏感）+ err，不落 event payload。
+        console.error('[ingestion:sse] initial replay failed', businessId, err);
         emitError();
         close();
       }
