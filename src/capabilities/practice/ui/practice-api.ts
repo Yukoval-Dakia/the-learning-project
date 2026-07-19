@@ -564,10 +564,18 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
   };
 }
 
-export const savePaperAnswer = (artifactId: string, input: PaperWriteInput) =>
+export const savePaperAnswer = (
+  artifactId: string,
+  input: PaperWriteInput,
+  // keepalive lets an exit/pagehide flush outlive the page teardown: a normal fetch is
+  // dropped when the tab closes, but a keepalive PUT (unlike sendBeacon, it still carries
+  // the x-internal-token header) is allowed to finish. Best-effort only.
+  options: { keepalive?: boolean } = {},
+) =>
   apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`, {
     method: 'POST',
     body: JSON.stringify(buildPaperAnswerDraftBody(artifactId, input)),
+    ...(options.keepalive ? { keepalive: true } : {}),
   });
 
 export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>

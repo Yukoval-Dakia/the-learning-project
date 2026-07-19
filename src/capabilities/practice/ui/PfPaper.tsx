@@ -153,15 +153,100 @@ export function PfPaper({
     });
   }, []);
 
-  usePagehideTransition(() => pauseCurrentSession(true));
+  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。返回本次是否
+  // 落库（true=成功/无需保存，false=失败），供退出/关页 flush 如实计数未保存草稿。
+  // Defined above the early return so the pagehide handler and exitPaper can reach it.
+  const runSave = (
+    key: string,
+    questionId: string,
+    partRef: PaperSlot['part_ref'],
+    v: string,
+    keepalive = false,
+  ): Promise<boolean> => {
+    const sid = sessionRef.current;
+    if (!sid) {
+      // Session still opening or startPaperSession failed — do NOT drop the draft
+      // silently. Flag the slot so the honest 「保存失败·重试」chip shows; a retry once
+      // the session lands will go through.
+      setSaveFailed((f) => ({ ...f, [key]: true }));
+      return Promise.resolve(false);
+    }
+    const gen = saveGen.current;
+    const seq = (saveSeq.current[key] ?? 0) + 1;
+    saveSeq.current[key] = seq;
+    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
+    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
+    // no-op — it can't rewrite the next paper's state.
+    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
+    return savePaperAnswer(
+      artifactId,
+      {
+        session_id: sid,
+        question_id: questionId,
+        part_ref: partRef,
+        answer_md: v,
+      },
+      { keepalive },
+    )
+      .then(() => {
+        if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+        return true;
+      })
+      .catch((err) => {
+        console.error('[PfPaper] draft save failed', { key, err });
+        if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+        return false;
+      });
+  };
 
-  const exitPaper = () => {
+  // Flush every pending debounce NOW rather than let the 800ms timer (and its draft) die
+  // with the page on exit / tab-close. Each dirty slot's save fires immediately and its
+  // real outcome is recorded, so the exit copy can tell the truth instead of promising
+  // 「进度保留」over input that never landed. Returns key→saved for honest counting.
+  const flushPendingSaves = (keepalive = false): Promise<Map<string, boolean>> => {
+    const results = new Map<string, boolean>();
+    const keys = Object.keys(saveTimers.current);
+    if (keys.length === 0) return Promise.resolve(results);
+    const jobs = keys.map((key) => {
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+      const slot = slots.find((s) => slotKey(s) === key);
+      // A submitted (or vanished) slot needs no draft write — treat it as already saved.
+      if (!slot || slot.slot_state.submission?.submitted) {
+        results.set(key, true);
+        return Promise.resolve();
+      }
+      return runSave(key, slot.question_id, slot.part_ref, answers[key] ?? '', keepalive).then(
+        (ok) => {
+          results.set(key, ok);
+        },
+      );
+    });
+    return Promise.all(jobs).then(() => results);
+  };
+
+  // Hard tab-close / reload: fire keepalive draft flushes so the last ≤800ms of input
+  // isn't lost, then pause the session. Both are best-effort (pagehide has no retry UI).
+  usePagehideTransition(() => {
+    void flushPendingSaves(true);
+    return pauseCurrentSession(true);
+  });
+
+  const exitPaper = async () => {
+    // Flush any debounced draft that hasn't fired yet BEFORE reporting exit, so the host's
+    // 「进度保留」story reflects what actually persisted: a pending save is sent now and its
+    // real outcome (not the optimistic timer) decides the unsavedFailures count.
+    const flushed = await flushPendingSaves();
     void pauseCurrentSession().catch(() => {});
-    // Count slots whose last draft save failed and that aren't already submitted, so the
-    // host can drop the 「进度保留」promise on exit instead of lying.
-    const unsavedFailures = slots.filter(
-      (s) => saveFailed[slotKey(s)] && !s.slot_state.submission?.submitted,
-    ).length;
+    // Count slots left genuinely unsaved: a slot flushed just now uses its fresh outcome;
+    // an untouched slot keeps whatever standing 保存失败 flag it already had. Submitted
+    // slots never count (submitAll captured their answer regardless of the draft PUT).
+    const unsavedFailures = slots.filter((s) => {
+      if (s.slot_state.submission?.submitted) return false;
+      const k = slotKey(s);
+      const flushedOk = flushed.get(k);
+      return flushedOk === undefined ? (saveFailed[k] ?? false) : !flushedOk;
+    }).length;
     onExit({ unsavedFailures });
   };
 
@@ -184,40 +269,6 @@ export function PfPaper({
   );
   const answeredCount = slots.filter((s) => (answers[slotKey(s)] ?? '').trim().length > 0).length;
   const unanswered = slots.length - answeredCount;
-
-  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
-  const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
-    const sid = sessionRef.current;
-    if (!sid) {
-      // Session still opening or startPaperSession failed — do NOT drop the draft
-      // silently. Flag the slot so the honest 「保存失败·重试」chip shows; a retry once
-      // the session lands will go through.
-      setSaveFailed((f) => ({ ...f, [key]: true }));
-      return Promise.resolve();
-    }
-    const gen = saveGen.current;
-    const seq = (saveSeq.current[key] ?? 0) + 1;
-    saveSeq.current[key] = seq;
-    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
-    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
-    // no-op — it can't rewrite the next paper's state.
-    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
-    return savePaperAnswer(artifactId, {
-      session_id: sid,
-      question_id: questionId,
-      part_ref: partRef,
-      answer_md: v,
-    })
-      .then(() => {
-        if (!isLatest()) return;
-        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-      })
-      .catch((err) => {
-        console.error('[PfPaper] draft save failed', { key, err });
-        if (!isLatest()) return;
-        setSaveFailed((f) => ({ ...f, [key]: true }));
-      });
-  };
 
   // A submitted slot's draft no longer needs saving, so a lingering failure flag on it
   // must NOT keep the retry chip lit (submitAll captures the latest answer regardless of

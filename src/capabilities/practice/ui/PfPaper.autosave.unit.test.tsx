@@ -353,3 +353,55 @@ describe('PfPaper autosave failure (YUK-713)', () => {
     expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[1].session_id).toBe('review_B');
   });
 });
+
+describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
+  it('flushes a pending debounced draft on exit (no lost last-800ms input)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    // Type, then exit immediately — well within the 800ms debounce, so the save timer is
+    // still pending. The exit must flush it, not let it die with the unmount.
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[1]).toMatchObject({
+      question_id: 'question_1',
+      answer_md: '末尾',
+    });
+    // The flush landed → the host hears an honest 「进度保留」(zero unsaved failures).
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+  });
+
+  it('reports an unsaved failure when the exit flush itself fails', async () => {
+    mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    // The flush is attempted, and because it fails the host is told the truth instead of a
+    // false 「进度保留」.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
+
+  it('flushes pending drafts with keepalive on pagehide (tab close)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    // Simulate a hard tab-close before the debounce fires: the pending draft must be sent
+    // with keepalive so the request survives page teardown.
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[2]).toMatchObject({ keepalive: true });
+  });
+});
