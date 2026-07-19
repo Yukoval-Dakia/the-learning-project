@@ -27,6 +27,10 @@ import { buildSourceVerifyHandler } from './handlers/source_verify';
 import { buildSourcingHandler } from './handlers/sourcing';
 import { buildVariantGenHandler } from './handlers/variant_gen';
 import { buildVariantVerifyHandler } from './handlers/variant_verify';
+import {
+  VERIFY_DISPATCH_RECOVERY_QUEUE,
+  buildVerifyDispatchRecoveryHandler,
+} from './verify-dispatch-outbox';
 
 // M4-T3 (YUK-319)：本文件已渐缩为「未迁域 job 注册簿」。建队配方（YUK-237 三档
 // expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
@@ -181,6 +185,35 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'source_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildSourceVerifyHandler(db),
+  );
+
+  // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was
+  // interrupted. Recovery reads durable per-question intents and enqueues ONLY
+  // source_verify/quiz_verify; it never reruns sourcing or quiz_gen.
+  const enqueueRecoveredVerify = async (
+    verifier: 'quiz_verify' | 'source_verify',
+    questionIds: string[],
+    options?: object,
+  ) => {
+    await boss.send(verifier, { question_ids: questionIds }, options);
+  };
+  await createOrUpdateQueue(boss, VERIFY_DISPATCH_RECOVERY_QUEUE, FAST_QUEUE_OPTS);
+  await boss.work(
+    VERIFY_DISPATCH_RECOVERY_QUEUE,
+    buildVerifyDispatchRecoveryHandler(db, enqueueRecoveredVerify),
+  );
+  await boss.schedule(
+    VERIFY_DISPATCH_RECOVERY_QUEUE,
+    '10 4 * * *',
+    {},
+    {
+      tz: 'Asia/Shanghai',
+    },
+  );
+  await boss.send(
+    VERIFY_DISPATCH_RECOVERY_QUEUE,
+    { trigger: 'startup' },
+    { singletonKey: 'verify-dispatch-startup' },
   );
 
   // Product Track 1: NoteVerifyTask — enqueued after note_generate marks a

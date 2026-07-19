@@ -36,7 +36,10 @@ import type { EffectiveTruth } from '@/capabilities/practice/server/effective-tr
 // recall kinds repeat the original question, application kinds rotate the
 // root_question_id variant family. Extracted to its own module so the
 // deterministic selection core is独立可测; due-list stays thin orchestration.
-import { pickProbeForKnowledge } from '@/capabilities/practice/server/variant-rotation';
+import {
+  prefetchProbeSelection,
+  selectProbeFromPrefetch,
+} from '@/capabilities/practice/server/variant-rotation';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
@@ -258,13 +261,24 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
       .limit(candidateWindow);
 
+    // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
+    // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
+    // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
+    // set is threaded through the SAME sequential order → byte-identical probe picks.
+    const probePrefetch = await prefetchProbeSelection(
+      db,
+      knowledgeStateRows.map((stateRow) => ({
+        knowledgeId: stateRow.knowledge_id,
+        lastReviewEventId: stateRow.last_review_event_id ?? null,
+      })),
+    );
     const dueRows: ScheduledDueRow[] = [];
     for (const stateRow of knowledgeStateRows) {
       // YUK-282 / ADR-0030 — by-kind variant-rotation probe (recall repeat vs
       // application family rotation). Returns the same projection the old inline
       // pickQuestionForKnowledge did (question_id + source/metadata for tier
       // derivation); mutates usedDueQuestionIds for cross-knowledge dedup.
-      const selected = await pickProbeForKnowledge(db, {
+      const selected = selectProbeFromPrefetch(probePrefetch, {
         knowledgeId: stateRow.knowledge_id,
         lastReviewEventId: stateRow.last_review_event_id ?? null,
         usedQuestionIds: usedDueQuestionIds,

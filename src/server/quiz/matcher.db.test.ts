@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
 import {
   type QuestionSupplyTarget,
@@ -28,7 +28,112 @@ vi.mock('./matcher-flags', async (importOriginal) => {
   };
 });
 
+describe('matcher — SelectionMiss v1 observe-only adapter (YUK-702)', () => {
+  beforeEach(async () => {
+    answerClassFilterFlag.value = false;
+    await resetDb();
+  });
+
+  it('empty pool returns residual plus NO_ALLOWED_USE_ITEM and writes an aggregateable event', async () => {
+    const kc = 'kc-selection-empty';
+    await seedKc(kc, 'math');
+    const dispatch = vi.fn().mockResolvedValue(fakeDispatchResult());
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 }, { dispatch });
+
+    expect(result.residual).toHaveLength(1);
+    expect(result.selectionMiss?.reason).toBe('NO_ALLOWED_USE_ITEM');
+    expect(dispatch).toHaveBeenCalledTimes(1); // existing fallback, not the miss observer
+    const rows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:selection_miss'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload).toMatchObject({
+      reason: 'NO_ALLOWED_USE_ITEM',
+      subject_id: 'math',
+      knowledge_id: kc,
+      selection_policy_version: 'matcher-v1',
+    });
+  });
+
+  it('keeps the settled fallback result when observe-only diagnostics fail', async () => {
+    const kc = 'kc-selection-observer-failure';
+    await seedKc(kc, 'math');
+    const dispatch = vi.fn().mockResolvedValue(fakeDispatchResult());
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, limit: 1 },
+      {
+        dispatch,
+        emitSelectionMiss: async () => {
+          throw new Error('diagnostic sink unavailable');
+        },
+      },
+    );
+
+    expect(result.residual).toHaveLength(1);
+    expect(result.selectionMiss).toBeUndefined();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('wrong kind and wrong trust tier are distinguished without changing fallback order', async () => {
+    const observed: SelectionMissV1[] = [];
+    const emitSelectionMiss = async (_db: typeof db, miss: SelectionMissV1) => {
+      observed.push(miss);
+    };
+    const dispatch = vi.fn().mockResolvedValue(fakeDispatchResult());
+
+    await seedKc('kc-wrong-kind', 'math');
+    await seed({ id: 'q-wrong-kind', knowledge_ids: ['kc-wrong-kind'], kind: 'multiple_choice' });
+    const kindResult = await matcher(
+      db,
+      { knowledgeId: 'kc-wrong-kind', kind: 'short_answer', limit: 1 },
+      { dispatch, emitSelectionMiss },
+    );
+    expect(kindResult.selectionMiss?.reason).toBe('NO_REQUIRED_KIND');
+    expect(kindResult.residual).toHaveLength(1);
+
+    await seedKc('kc-wrong-tier', 'math');
+    await seed({ id: 'q-wrong-tier', knowledge_ids: ['kc-wrong-tier'], source: 'quiz_gen' });
+    const tierResult = await matcher(
+      db,
+      { knowledgeId: 'kc-wrong-tier', minSourceTier: 2, limit: 1 },
+      { dispatch, emitSelectionMiss },
+    );
+    expect(tierResult.selectionMiss?.reason).toBe('NO_TRUSTED_SOURCE');
+    expect(tierResult.residual).toHaveLength(1);
+    expect(observed.map((miss) => miss.reason)).toEqual(['NO_REQUIRED_KIND', 'NO_TRUSTED_SOURCE']);
+  });
+
+  it('archived KC reports NO_ACCESSIBLE_ITEM and never invokes fallback dispatch', async () => {
+    const kc = 'kc-selection-archived';
+    await seedKc(kc, 'math');
+    await db.update(knowledge).set({ archived_at: new Date() }).where(eq(knowledge.id, kc));
+    const dispatch = vi.fn().mockResolvedValue(fakeDispatchResult());
+    const observed: SelectionMissV1[] = [];
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, limit: 1 },
+      {
+        dispatch,
+        emitSelectionMiss: async (_db, miss) => {
+          observed.push(miss);
+        },
+      },
+    );
+
+    expect(result.selectionMiss?.reason).toBe('NO_ACCESSIBLE_ITEM');
+    expect(result.residual).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(observed).toHaveLength(1);
+  });
+});
+
 import { matcher } from './matcher';
+import type { SelectionMissV1 } from './selection-miss';
 
 // 1024-dim vector (matches EMBED_DIMS) with the first two components set — mirrors
 // pool-fetch.db.test.ts's vec() helper so matcher tests seed embeddings the same way.

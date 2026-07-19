@@ -26,7 +26,12 @@ function KpiCard({ kpi }: { kpi: Kpi }) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') kpi.onGo();
+        // YUK-718 — role=button 须同时响应 Space（原生 button 语义）；preventDefault
+        // 拦住 Space 的页面滚动。沿用 QuestionsPage / DraftReviewPage 同例。
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          kpi.onGo();
+        }
       }}
     >
       <div className="kpi-label">

@@ -18,9 +18,14 @@
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Job, SendOptions } from 'pg-boss';
 
+import {
+  DifficultyEvidence,
+  type DifficultyEvidenceT,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
 import {
   PROSE_KINDS,
   defaultJudgeKindForQuestion,
@@ -53,8 +58,22 @@ import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
+import {
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+  withSupplyTraceDifficultyEvidence,
+} from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  canonicalQuestionContentHash,
+  findExactQuestionDuplicate,
+} from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -93,6 +112,7 @@ export interface QuizGenJobData {
   // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
   // it. Context: src/server/question-supply/confusable-contrast-discovery.ts.
   knowledge_ids?: string[];
+  supply_trace?: SupplyTraceV1T;
 }
 
 // §4 — default question count when the trigger doesn't specify one.
@@ -154,7 +174,7 @@ export type RetrieveFewShotFn = (params: {
 }) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
-export type EnqueueQuizVerifyFn = (questionIds: string[]) => Promise<void>;
+export type EnqueueQuizVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -173,12 +193,15 @@ async function defaultRetrieveFewShot(params: {
   return retrieveFewShotExamples(params);
 }
 
-async function defaultEnqueueQuizVerify(questionIds: string[]): Promise<void> {
+async function defaultEnqueueQuizVerify(
+  questionIds: string[],
+  options?: SendOptions,
+): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors attribution_followup). Q5 creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('quiz_verify', { question_ids: questionIds });
+  await boss.send('quiz_verify', { question_ids: questionIds }, options);
 }
 
 // §2 / §5 — output JSON parse + judge-contract assertion (shared with
@@ -302,6 +325,7 @@ export interface RunQuizGenParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
   kind?: string;
+  supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -521,6 +545,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   };
 
   let taskResult: TaskTextResult | null = null;
+  let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
     const result = await run('QuizGenTask', input, {
       db,
@@ -589,6 +614,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    const difficultyEvidenceByQuestion: Array<{
+      question_id: string;
+      evidence: DifficultyEvidenceT;
+    }> = [];
+    const exactDuplicates: Array<{
+      existing_question_id: string;
+      new_question_id: string;
+      canonical_content_hash: string;
+      source_route: 'quiz_gen';
+    }> = [];
     const quizKnowledgeIds = new Set<string>();
     const toolQuizArtifactId = createId();
     const now = new Date();
@@ -601,6 +636,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // this new writer needs no allowlist registration. The id is shared across all
     // questions in the run (one passage → many questions probing it).
     let materialSourceDocumentId: string | null = null;
+    failureStage = 'persist';
     await db.transaction(async (tx) => {
       if (parsed.generation_method === 'material_grounded' && parsed.material) {
         materialSourceDocumentId = createId();
@@ -626,6 +662,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const declaredDifficultyEvidence =
+          q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, 'quiz_gen', now);
+        const difficultyEvidence = DifficultyEvidence.parse({
+          ...declaredDifficultyEvidence,
+          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
+          source_route: declaredDifficultyEvidence.source_route ?? 'quiz_gen',
+        });
+        const questionSupplyTrace = params.supplyTrace
+          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
+          : undefined;
         for (const kid of questionKnowledgeIds) {
           quizKnowledgeIds.add(kid);
         }
@@ -645,6 +691,22 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           parsed.generation_method === 'material_grounded' && parsed.material
             ? embedMaterialInPrompt(q.prompt_md, parsed.material.body_md)
             : q.prompt_md;
+        const canonicalContentHash = canonicalQuestionContentHash({
+          promptMd: effectivePromptMd,
+          referenceMd: q.reference_md,
+          choicesMd: q.choices_md,
+          rubricJson: q.rubric_json,
+        });
+        const existingDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+        if (existingDuplicate) {
+          exactDuplicates.push({
+            existing_question_id: existingDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'quiz_gen',
+          });
+          continue;
+        }
 
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
@@ -678,31 +740,75 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           // needs_review（内容完整性留 owner /drafts 人审）。
           ...(parseRepaired ? { parse_repaired: true } : {}),
         };
-        await tx.insert(question).values(
-          withAnswerClass({
-            id,
-            kind: q.kind,
-            source: 'quiz_gen',
-            prompt_md: effectivePromptMd,
-            reference_md: q.reference_md,
-            rubric_json: q.rubric_json ?? null,
-            choices_md: q.choices_md ?? null,
-            judge_kind_override: judgeKind,
-            knowledge_ids: questionKnowledgeIds,
-            difficulty: q.difficulty,
-            // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
-            source_ref: resolved.refId,
-            // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-            // quiz_verify passes (Q5 promotes draft→active + enrolls).
-            draft_status: 'draft',
-            created_by: aiAgentRef('QuizGenTask', result),
-            metadata: { quiz_gen: metaQuizGen },
-            created_at: now,
-            updated_at: now,
-          }),
-        );
+        const inserted = await tx
+          .insert(question)
+          .values(
+            withAnswerClass({
+              id,
+              kind: q.kind,
+              source: 'quiz_gen',
+              prompt_md: effectivePromptMd,
+              reference_md: q.reference_md,
+              rubric_json: q.rubric_json ?? null,
+              choices_md: q.choices_md ?? null,
+              judge_kind_override: judgeKind,
+              knowledge_ids: questionKnowledgeIds,
+              difficulty: q.difficulty,
+              // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+              source_ref: resolved.refId,
+              // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+              // quiz_verify passes (Q5 promotes draft→active + enrolls).
+              draft_status: 'draft',
+              created_by: aiAgentRef('QuizGenTask', result),
+              metadata: {
+                quiz_gen: metaQuizGen,
+                difficulty_evidence: difficultyEvidence,
+                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+              },
+              created_at: now,
+              canonical_content_hash: canonicalContentHash,
+              updated_at: now,
+            }),
+          )
+          // Scope the arbiter to the canonical-hash partial unique index (WHERE
+          // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
+          // silently swallow ANY unique conflict (e.g. the PK), making the
+          // `inserted.length === 0` fallback below misread an unrelated conflict as a
+          // hash collision. The `where` predicate is REQUIRED for Postgres to infer a
+          // partial unique index as the arbiter.
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
+          .returning({ id: question.id });
+        if (inserted.length === 0) {
+          const racedDuplicate = await findExactQuestionDuplicate(tx, canonicalContentHash);
+          if (!racedDuplicate) {
+            throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
+          }
+          exactDuplicates.push({
+            existing_question_id: racedDuplicate.id,
+            new_question_id: id,
+            canonical_content_hash: canonicalContentHash,
+            source_route: 'quiz_gen',
+          });
+          continue;
+        }
+        await writeVerifyDispatchIntent(tx, {
+          questionId: id,
+          verifier: 'quiz_verify',
+          supplyTrace: questionSupplyTrace,
+          createdAt: now,
+        });
         questionIds.push(id);
+        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
+
+      // When every generated question resolved to an exact duplicate there is
+      // nothing new to serve — creating a generation_status='ready' tool_quiz with
+      // tool_state.question_ids: [] would surface a practicable ZERO-question paper.
+      // Skip the artifact; the post-tx event still records the duplicate outcome.
+      if (questionIds.length === 0) return;
 
       // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create from the materialized row.
       // No causing event row exists at this point (the experimental:quiz_gen event is written AFTER
@@ -751,6 +857,13 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         createdAt: now,
       });
     });
+    // Past the commit: any throw from here on is a post-persistence failure (the
+    // drafts + verify intents are durably written), so report it distinctly rather
+    // than as 'persist'.
+    failureStage = 'event';
+    for (const duplicate of exactDuplicates) {
+      console.info('[quiz_gen] exact duplicate skipped:', duplicate);
+    }
 
     await writeEvent(db, {
       id: createId(),
@@ -765,10 +878,20 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         trigger,
         ref_id: resolved.refId,
         question_ids: questionIds,
-        tool_quiz_artifact_id: toolQuizArtifactId,
+        // null when the whole batch resolved to exact duplicates and no artifact
+        // was created (zero-question quizzes must never reach the practice face).
+        tool_quiz_artifact_id: questionIds.length > 0 ? toolQuizArtifactId : null,
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
+        stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
+        difficulty_evidence: difficultyEvidenceByQuestion,
+        exact_duplicate_count: exactDuplicates.length,
+        // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
+        // exact_duplicate_count above keeps the true total.
+        exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
+        exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
       task_run_id: result.task_run_id ?? null,
@@ -783,13 +906,20 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // DUPLICATE batch of drafts (the handler has no per-trigger idempotency key).
     // On failure we log the orphaned ids — recoverable by re-enqueueing quiz_verify,
     // which is itself idempotent per question.
-    try {
-      await enqueueQuizVerify(questionIds);
-    } catch (enqueueErr) {
+    failureStage = 'dispatch';
+    const dispatchResult = await dispatchPendingVerifyIntents(db, {
+      questionIds,
+      enqueue: async (verifier, ids, options) => {
+        if (verifier !== 'quiz_verify') {
+          throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
+        }
+        await enqueueQuizVerify(ids, options);
+      },
+    });
+    if (dispatchResult.failed > 0) {
       console.error(
-        '[quiz_gen] quiz_verify enqueue failed; drafts persisted but unverified:',
+        '[quiz_gen] quiz_verify enqueue failed; durable intents left for recovery:',
         questionIds,
-        enqueueErr,
       );
     }
 
@@ -813,7 +943,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           trigger,
           ref_id: resolved.refId,
           error: String((err as Error).message ?? err),
+          failure_stage: failureStage,
           tool_context_task_run_id: toolContextTaskRunId,
+          ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,
@@ -838,6 +970,20 @@ export function buildQuizGenHandler(
         console.warn('[quiz_gen] job missing trigger/ref_id', job.id);
         continue;
       }
+      // supply_trace is best-effort provenance from the dispatcher. Parse it here
+      // (the trust boundary) with safeParse so a malformed job payload drops the trace
+      // rather than throwing BEFORE runQuizGen's failure-bottom can emit a structured
+      // event — an uncaught throw here would surface as a bare pg-boss job failure and
+      // retry identically forever.
+      let supplyTrace: SupplyTraceV1T | undefined;
+      if (data.supply_trace) {
+        const parsed = SupplyTraceV1.safeParse(data.supply_trace);
+        if (parsed.success) {
+          supplyTrace = parsed.data;
+        } else {
+          console.warn('[quiz_gen] ignoring malformed supply_trace in job data', job.id);
+        }
+      }
       const result = await runQuizGen({
         db,
         trigger: data.trigger,
@@ -847,6 +993,7 @@ export function buildQuizGenHandler(
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

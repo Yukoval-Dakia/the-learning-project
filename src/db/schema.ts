@@ -353,6 +353,10 @@ export const question = pgTable(
     // prompt_md/reference_md/choices_md change and NULLs `embedding` on mismatch
     // (next backfill re-embeds). Compared, never read for behaviour.
     embed_content_hash: text('embed_content_hash'),
+    // YUK-704 — exact identity over canonical prompt/answer/choices/rubric. This is
+    // deliberately distinct from embed_content_hash (embedding freshness). Existing
+    // rows remain NULL; sourcing/quiz_gen stamp new rows before INSERT.
+    canonical_content_hash: text('canonical_content_hash'),
   },
   (t) => [
     check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`),
@@ -368,6 +372,9 @@ export const question = pgTable(
     //   SELECT id FROM question WHERE knowledge_ids @> '["<kc>"]'::jsonb
     // (jsonb_path_ops supports @> only — not key/path existence operators).
     index('question_knowledge_ids_gin').using('gin', sql`${t.knowledge_ids} jsonb_path_ops`),
+    uniqueIndex('question_canonical_content_hash_unique')
+      .on(t.canonical_content_hash)
+      .where(sql`${t.canonical_content_hash} IS NOT NULL`),
   ],
 );
 

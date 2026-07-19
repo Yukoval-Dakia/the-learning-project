@@ -1,6 +1,6 @@
 # boss/handlers — pg-boss job & cron catalog
 
-> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓 cron 权威目录（31 条，2026-07-06 YUK-377 复审对账；上一版只列 11 条已过时）。
+> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓 cron 权威目录（32 条；YUK-700 新增 verify recovery；上一版只列 11 条已过时）。
 
 ## CRON — 每日夜链（按时序串，Asia/Shanghai）
 | Queue | cron | 注册点 | 说明 |
@@ -13,6 +13,7 @@
 | `coach_daily` | `45 3` | agency/manifest | TodayPlan/brief（旧 review_plan 链投已 retire）|
 | `goal_scope_propose_nightly` | `50 3` | agency/manifest | mastery tree-snapshot 提议 goal_scope（cap=1）|
 | `prune_job_events` | `0 4` | ../handlers.ts | 30d bulk DELETE（其它 prune 错开避锁）|
+| `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | ../handlers.ts | 弃置 >6h stuck review session（sendBeacon-miss 安全网）|
 | `item_prior_backfill` | `20 4` | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）|
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|

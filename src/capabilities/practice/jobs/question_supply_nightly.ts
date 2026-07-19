@@ -24,6 +24,7 @@
 import type { Db } from '@/db/client';
 import type { DispatchResult } from '@/server/question-supply/dispatcher';
 import { dispatchSupplyTargets } from '@/server/question-supply/dispatcher';
+import { runInventoryShadowDualRead } from '@/server/question-supply/inventory-projection';
 import { discoverSupplyTargets } from '@/server/question-supply/target-discovery';
 import type { Job } from 'pg-boss';
 
@@ -96,15 +97,20 @@ function tallyByStatus(results: DispatchResult[], discovered: number): QuestionS
 }
 
 /**
- * 端到端夜扫：发现供给目标 → 派发到既有获取面。零写、零新 AI task（dispatcher 只 enqueue
- * 既有队列 + emit 观测事件）。空目标早返回（零派发，不触付费 job）。
+ * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面。
+ * 不新增 AI task；shadow 写入失败由 discovery seam 隔离，不改变 targets 或派发。空目标早返回
+ * （零派发，不触付费 job）。
  */
 export async function runQuestionSupplyNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<QuestionSupplyNightlyResult> {
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
-  const targets = await discoverSupplyTargets(db);
+  const targets = await discoverSupplyTargets(db, undefined, {
+    observeInventory: async (input, currentTargets) => {
+      await runInventoryShadowDualRead(db, input, currentTargets);
+    },
+  });
   if (targets.length === 0) {
     return {
       discovered: 0,

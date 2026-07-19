@@ -18,6 +18,12 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import { artifact, event, knowledge, learning_item, question, source_document } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
+import {
+  buildCoverageEvidenceDemand,
+  buildSupplyTrace,
+  evidenceDemandToTargetContext,
+} from '@/server/question-supply/evidence-demand';
+import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   QUIZ_GEN_READ_TOOLS,
@@ -259,6 +265,20 @@ describe('runQuizGen', () => {
     const enqueueQuizVerify = vi.fn(async () => {});
     const buildTavilyMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const supplyTrace = buildSupplyTrace(
+      {
+        targetId: 'target-quiz-1',
+        targetFingerprint: 'fp-quiz-1',
+        context: evidenceDemandToTargetContext(
+          buildCoverageEvidenceDemand({
+            subjectId: 'yuwen',
+            knowledgeIds: ['k1'],
+            statement: 'collect application evidence',
+          }),
+        ),
+      },
+      'quiz_gen',
+    );
 
     const result = await runQuizGen({
       db: testDb(),
@@ -269,6 +289,7 @@ describe('runQuizGen', () => {
       enqueueQuizVerify,
       buildTavilyMcpServerFn,
       buildMcpServerFn,
+      supplyTrace,
     });
 
     expect(result.status).toBe('ready');
@@ -309,6 +330,17 @@ describe('runQuizGen', () => {
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
     expect((meta?.source_refs as unknown[]).length).toBe(1);
+    const difficultyEvidence = (q1?.metadata as Record<string, unknown>).difficulty_evidence;
+    expect(difficultyEvidence).toMatchObject({
+      value: q1?.difficulty,
+      scale: 'loom_difficulty_1_5',
+      basis: 'producer_estimate',
+      source_route: 'quiz_gen',
+    });
+    expect((q1?.metadata as Record<string, unknown>).supply_trace).toMatchObject({
+      ...supplyTrace,
+      difficulty_evidence: difficultyEvidence,
+    });
 
     // YUK-203 P2 — generated quizzes become a first-class question-set artifact.
     const quizArtifacts = await testDb()
@@ -352,11 +384,147 @@ describe('runQuizGen', () => {
     expect(quizEvents[0].payload).toMatchObject({
       question_ids: result.question_ids,
       tool_quiz_artifact_id: result.tool_quiz_artifact_id,
+      supply_trace: supplyTrace,
+      difficulty_evidence: expect.arrayContaining([
+        expect.objectContaining({
+          evidence: expect.objectContaining({ source_route: 'quiz_gen' }),
+        }),
+      ]),
     });
 
     // quiz_verify enqueued with the new question ids.
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
-    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+  });
+
+  it('skips an exact duplicate, inserts the remaining question, and logs the identity conflict', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const output = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = output.questions[0];
+    const hash = canonicalQuestionContentHash({
+      promptMd: content.prompt_md,
+      referenceMd: content.reference_md,
+      choicesMd: content.choices_md,
+      rubricJson: content.rubric_json,
+    });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-existing-quiz-exact',
+        kind: content.kind,
+        prompt_md: content.prompt_md,
+        reference_md: content.reference_md,
+        choices_md: content.choices_md,
+        rubric_json: content.rubric_json as never,
+        source: 'manual',
+        draft_status: 'draft',
+        canonical_content_hash: hash,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      exact_duplicate_count: 1,
+      exact_duplicates: [
+        {
+          existing_question_id: 'q-existing-quiz-exact',
+          new_question_id: expect.any(String),
+          canonical_content_hash: hash,
+          source_route: 'quiz_gen',
+        },
+      ],
+    });
+  });
+
+  it('does not create a ready artifact when the whole batch is exact duplicates', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const output = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    await testDb()
+      .insert(question)
+      .values(
+        output.questions.map((content, index) => ({
+          id: `q-existing-all-dup-${index}`,
+          kind: content.kind,
+          prompt_md: content.prompt_md,
+          reference_md: content.reference_md,
+          choices_md: content.choices_md,
+          rubric_json: content.rubric_json as never,
+          source: 'manual',
+          draft_status: 'draft',
+          canonical_content_hash: canonicalQuestionContentHash({
+            promptMd: content.prompt_md,
+            referenceMd: content.reference_md,
+            choicesMd: content.choices_md,
+            rubricJson: content.rubric_json,
+          }),
+          created_at: new Date(),
+          updated_at: new Date(),
+        })),
+      );
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    // A zero-question quiz must never surface as practicable: no artifact row.
+    const artifacts = await testDb()
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.tool_kind, 'quiz_gen'));
+    expect(artifacts).toHaveLength(0);
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      count: 0,
+      tool_quiz_artifact_id: null,
+      exact_duplicate_count: 2,
+    });
   });
 
   it('forces copy_safety.checked_by=agent_self at gen stage, ignoring an agent-forged quiz_verify claim', async () => {
@@ -439,7 +607,7 @@ describe('runQuizGen', () => {
       .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
     expect(quizArtifacts[0].attrs).toMatchObject({ generation_method: 'material_grounded' });
 
-    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids, expect.any(Object));
   });
 
   it('material_grounded with multiple questions shares ONE source_document id', async () => {
@@ -1135,9 +1303,10 @@ describe('buildQuizGenHandler', () => {
 
     expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
-    // 2 questions per job * 2 jobs.
-    expect(rows).toHaveLength(4);
-    expect(enqueueQuizVerify).toHaveBeenCalledTimes(2);
+    // The second job returned byte-identical content, so canonical identity keeps
+    // the first batch and skips the duplicate batch without another verify enqueue.
+    expect(rows).toHaveLength(2);
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
   });
 });
 
