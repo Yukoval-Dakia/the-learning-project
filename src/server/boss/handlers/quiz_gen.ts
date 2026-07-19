@@ -72,6 +72,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
+  combineExactDuplicateKnowledgeIds,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
@@ -331,6 +332,8 @@ export interface RunQuizGenParams {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
+  /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
+  afterExactDuplicateLookupMiss?: () => Promise<void>;
 }
 
 export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
@@ -604,10 +607,17 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
       : [];
     const existingKnowledgeIds = new Set(existingKnowledgeRows.map((r) => r.id));
+    const resolvedKnowledgeRows = resolved.knowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
     const resolveQuestionKnowledgeIds = (q: QuizGenQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
-      if (resolved.knowledgeIds.length > 0) return resolved.knowledgeIds;
+      if (fallbackKnowledgeIds.length > 0) return fallbackKnowledgeIds;
       throw new Error(
         `quiz_gen question '${q.prompt_md}' references no known knowledge_id (got [${q.knowledge_ids.join(', ')}]) and the trigger resolved none`,
       );
@@ -701,19 +711,18 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           choicesMd: q.choices_md,
           rubricJson: q.rubric_json,
         });
-        const duplicateKnowledgeIds = [
-          ...new Set([
-            ...questionKnowledgeIds,
-            ...(resolved.knowledgeNode ? [resolved.knowledgeNode.id] : []),
-          ]),
-        ];
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          fallbackKnowledgeIds,
+        );
         const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
           canonicalContentHash,
           knowledgeIds: duplicateKnowledgeIds,
           actorRef: 'quiz_gen',
+          taskRunId: result.task_run_id,
           now,
         });
-        if (existingDuplicate) {
+        if (existingDuplicate?.disposition === 'merged') {
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
@@ -727,6 +736,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           });
           continue;
         }
+        await params.afterExactDuplicateLookupMiss?.();
 
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
@@ -760,36 +770,35 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           // needs_review（内容完整性留 owner /drafts 人审）。
           ...(parseRepaired ? { parse_repaired: true } : {}),
         };
-        const inserted = await tx
+        const questionRow = withAnswerClass({
+          id,
+          kind: q.kind,
+          source: 'quiz_gen',
+          prompt_md: effectivePromptMd,
+          reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
+          choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
+          knowledge_ids: questionKnowledgeIds,
+          difficulty: q.difficulty,
+          // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+          source_ref: resolved.refId,
+          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+          // quiz_verify passes (Q5 promotes draft→active + enrolls).
+          draft_status: 'draft',
+          created_by: aiAgentRef('QuizGenTask', result),
+          metadata: {
+            quiz_gen: metaQuizGen,
+            difficulty_evidence: difficultyEvidence,
+            ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+          },
+          created_at: now,
+          canonical_content_hash: canonicalContentHash,
+          updated_at: now,
+        });
+        let inserted = await tx
           .insert(question)
-          .values(
-            withAnswerClass({
-              id,
-              kind: q.kind,
-              source: 'quiz_gen',
-              prompt_md: effectivePromptMd,
-              reference_md: q.reference_md,
-              rubric_json: q.rubric_json ?? null,
-              choices_md: q.choices_md ?? null,
-              judge_kind_override: judgeKind,
-              knowledge_ids: questionKnowledgeIds,
-              difficulty: q.difficulty,
-              // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
-              source_ref: resolved.refId,
-              // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-              // quiz_verify passes (Q5 promotes draft→active + enrolls).
-              draft_status: 'draft',
-              created_by: aiAgentRef('QuizGenTask', result),
-              metadata: {
-                quiz_gen: metaQuizGen,
-                difficulty_evidence: difficultyEvidence,
-                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-              },
-              created_at: now,
-              canonical_content_hash: canonicalContentHash,
-              updated_at: now,
-            }),
-          )
+          .values(questionRow)
           // Scope the arbiter to the canonical-hash partial unique index (WHERE
           // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
           // silently swallow ANY unique conflict (e.g. the PK), making the
@@ -806,23 +815,38 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             canonicalContentHash,
             knowledgeIds: duplicateKnowledgeIds,
             actorRef: 'quiz_gen',
+            taskRunId: result.task_run_id,
             now,
           });
           if (!racedDuplicate) {
             throw new Error(`quiz_gen canonical hash conflict did not resolve for ${id}`);
           }
-          exactDuplicates.push({
-            existing_question_id: racedDuplicate.id,
-            new_question_id: id,
-            canonical_content_hash: canonicalContentHash,
-            source_route: 'quiz_gen',
-            knowledge_merge_status:
-              racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
-            added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
-            resulting_knowledge_ids: racedDuplicate.knowledgeIds,
-            preserved_draft_status: racedDuplicate.draftStatus,
-          });
-          continue;
+          if (racedDuplicate.disposition === 'released_terminal_draft') {
+            inserted = await tx
+              .insert(question)
+              .values(questionRow)
+              .onConflictDoNothing({
+                target: question.canonical_content_hash,
+                where: sql`${question.canonical_content_hash} is not null`,
+              })
+              .returning({ id: question.id });
+            if (inserted.length === 0) {
+              throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
+            }
+          } else {
+            exactDuplicates.push({
+              existing_question_id: racedDuplicate.id,
+              new_question_id: id,
+              canonical_content_hash: canonicalContentHash,
+              source_route: 'quiz_gen',
+              knowledge_merge_status:
+                racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+              added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+              resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+              preserved_draft_status: racedDuplicate.draftStatus,
+            });
+            continue;
+          }
         }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,

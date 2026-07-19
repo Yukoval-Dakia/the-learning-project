@@ -79,6 +79,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
+  combineExactDuplicateKnowledgeIds,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -241,6 +242,8 @@ export interface RunSourcingParams {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
   writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
+  /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
+  afterExactDuplicateLookupMiss?: () => Promise<void>;
 }
 
 export type RunSourcingStatus = 'ready' | 'skipped:ref_not_found';
@@ -483,12 +486,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
-        const duplicateKnowledgeIds = [
-          ...new Set([
-            ...q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid)),
-            ...fallbackKnowledgeIds,
-          ]),
-        ];
+        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
+          questionKnowledgeIds,
+          fallbackKnowledgeIds,
+        );
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: q.prompt_md,
           referenceMd: q.reference_md,
@@ -499,9 +501,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           canonicalContentHash,
           knowledgeIds: duplicateKnowledgeIds,
           actorRef: 'sourcing',
+          taskRunId: result.task_run_id,
           now,
         });
-        if (existingDuplicate) {
+        if (existingDuplicate?.disposition === 'merged') {
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
@@ -515,13 +518,13 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           });
           continue;
         }
+        await params.afterExactDuplicateLookupMiss?.();
         // Preserve the model's EXPLICIT judge_kind_override; only derive a default
         // when the agent left it absent (CR — never clobber an explicit route like
         // 'keyword' with the structural default). defaultJudgeKindForQuestion already
         // returns q.judge_kind_override first, but pinning it here keeps the contract
         // explicit and robust to future helper changes.
         const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
-        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
         const declaredDifficultyEvidence =
           q.difficulty_evidence ??
           buildProducerDifficultyEvidence(q.difficulty, SOURCING_WEB_ROUTE, now);
@@ -551,38 +554,37 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           extract: q.extract,
         };
 
-        const inserted = await tx
+        const questionRow = withAnswerClass({
+          id,
+          kind: q.kind,
+          source: 'web_sourced',
+          prompt_md: q.prompt_md,
+          reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
+          choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
+          knowledge_ids: questionKnowledgeIds,
+          difficulty: q.difficulty,
+          // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
+          // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
+          source_ref: q.source_url,
+          // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
+          // source_verify passes.
+          draft_status: 'draft',
+          created_by: aiAgentRef('SourcingTask', result),
+          metadata: {
+            web_sourced: webSourced,
+            source_ref_kind: 'url',
+            difficulty_evidence: difficultyEvidence,
+            ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+          },
+          created_at: now,
+          canonical_content_hash: canonicalContentHash,
+          updated_at: now,
+        });
+        let inserted = await tx
           .insert(question)
-          .values(
-            withAnswerClass({
-              id,
-              kind: q.kind,
-              source: 'web_sourced',
-              prompt_md: q.prompt_md,
-              reference_md: q.reference_md,
-              rubric_json: q.rubric_json ?? null,
-              choices_md: q.choices_md ?? null,
-              judge_kind_override: judgeKind,
-              knowledge_ids: questionKnowledgeIds,
-              difficulty: q.difficulty,
-              // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
-              // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
-              source_ref: q.source_url,
-              // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-              // source_verify passes.
-              draft_status: 'draft',
-              created_by: aiAgentRef('SourcingTask', result),
-              metadata: {
-                web_sourced: webSourced,
-                source_ref_kind: 'url',
-                difficulty_evidence: difficultyEvidence,
-                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
-              },
-              created_at: now,
-              canonical_content_hash: canonicalContentHash,
-              updated_at: now,
-            }),
-          )
+          .values(questionRow)
           // Scope the arbiter to the canonical-hash partial unique index (WHERE
           // canonical_content_hash IS NOT NULL). A bare ON CONFLICT DO NOTHING would
           // silently swallow ANY unique conflict (e.g. the PK), making the
@@ -599,23 +601,38 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             canonicalContentHash,
             knowledgeIds: duplicateKnowledgeIds,
             actorRef: 'sourcing',
+            taskRunId: result.task_run_id,
             now,
           });
           if (!racedDuplicate) {
             throw new Error(`sourcing canonical hash conflict did not resolve for ${id}`);
           }
-          exactDuplicates.push({
-            existing_question_id: racedDuplicate.id,
-            new_question_id: id,
-            canonical_content_hash: canonicalContentHash,
-            source_route: SOURCING_WEB_ROUTE,
-            knowledge_merge_status:
-              racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
-            added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
-            resulting_knowledge_ids: racedDuplicate.knowledgeIds,
-            preserved_draft_status: racedDuplicate.draftStatus,
-          });
-          continue;
+          if (racedDuplicate.disposition === 'released_terminal_draft') {
+            inserted = await tx
+              .insert(question)
+              .values(questionRow)
+              .onConflictDoNothing({
+                target: question.canonical_content_hash,
+                where: sql`${question.canonical_content_hash} is not null`,
+              })
+              .returning({ id: question.id });
+            if (inserted.length === 0) {
+              throw new Error(`sourcing canonical hash retry still conflicted for ${id}`);
+            }
+          } else {
+            exactDuplicates.push({
+              existing_question_id: racedDuplicate.id,
+              new_question_id: id,
+              canonical_content_hash: canonicalContentHash,
+              source_route: SOURCING_WEB_ROUTE,
+              knowledge_merge_status:
+                racedDuplicate.addedKnowledgeIds.length > 0 ? 'merged' : 'already_covered',
+              added_knowledge_ids: racedDuplicate.addedKnowledgeIds,
+              resulting_knowledge_ids: racedDuplicate.knowledgeIds,
+              preserved_draft_status: racedDuplicate.draftStatus,
+            });
+            continue;
+          }
         }
         await writeVerifyDispatchIntent(tx, {
           questionId: id,

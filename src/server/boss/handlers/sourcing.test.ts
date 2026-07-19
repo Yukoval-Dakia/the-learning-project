@@ -19,7 +19,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
-import { event, knowledge, learning_item, question } from '@/db/schema';
+import { event, knowledge, learning_item, material_fsrs_state, question } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import {
@@ -52,6 +52,19 @@ function agentMock(output: string, taskRunId?: string) {
   return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) =>
     taskRunId === undefined ? { text: output } : { text: output, task_run_id: taskRunId },
   );
+}
+
+function twoPartyBarrier() {
+  let arrivals = 0;
+  let release: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrivals += 1;
+    if (arrivals === 2) release?.();
+    await ready;
+  };
 }
 
 const VALID_OUTPUT = JSON.stringify({
@@ -356,7 +369,7 @@ describe('runSourcing', () => {
       db,
       trigger: 'knowledge',
       refId: 'k1',
-      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr-source-merge'),
       enqueueSourceVerify,
       buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
       buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
@@ -381,8 +394,13 @@ describe('runSourcing', () => {
         before: { knowledge_ids: ['k-existing'] },
         after: { knowledge_ids: ['k-existing', 'k1'] },
         reason: 'cross_kc_exact_duplicate',
+        enrolled_knowledge_ids: ['k1'],
+        task_run_id: 'tr-source-merge',
       },
     });
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1')),
+    ).toHaveLength(1);
     const [producerEvent] = await db
       .select()
       .from(event)
@@ -403,6 +421,75 @@ describe('runSourcing', () => {
         },
       ],
     });
+  });
+
+  it('reconciles a concurrent canonical-hash race into one draft with both target KCs', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const outputFor = (knowledgeId: string) => {
+      const parsed = JSON.parse(VALID_OUTPUT) as {
+        questions: Array<{ knowledge_ids: string[] }>;
+      };
+      parsed.questions[0].knowledge_ids = [knowledgeId];
+      return JSON.stringify(parsed);
+    };
+    const barrier = twoPartyBarrier();
+    const enqueueSourceVerify = vi.fn(async () => {});
+    const common = {
+      db,
+      trigger: 'knowledge' as const,
+      count: 1,
+      enqueueSourceVerify,
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      afterExactDuplicateLookupMiss: barrier,
+    };
+
+    const results = await Promise.all([
+      runSourcing({ ...common, refId: 'k1', runAgentTaskFn: agentMock(outputFor('k1')) }),
+      runSourcing({ ...common, refId: 'k2', runAgentTaskFn: agentMock(outputFor('k2')) }),
+    ]);
+
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(1);
+    expect([...rows[0].knowledge_ids].sort()).toEqual(['k1', 'k2']);
+    expect(rows[0]).toMatchObject({ draft_status: 'draft', version: 1 });
+    expect(results.map((result) => result.question_ids?.length).sort()).toEqual([0, 1]);
+    expect(enqueueSourceVerify).toHaveBeenCalledTimes(1);
+
+    const editEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_edit'));
+    expect(editEvents).toHaveLength(1);
+    expect(editEvents[0].payload).toMatchObject({
+      reason: 'cross_kc_exact_duplicate',
+      preserved_draft_status: 'draft',
+    });
+    const producerEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:sourcing'));
+    expect(producerEvents).toHaveLength(2);
+    expect(producerEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            exact_duplicate_count: 1,
+            exact_duplicate_knowledge_merge_count: 1,
+            exact_duplicates: [
+              expect.objectContaining({
+                existing_question_id: rows[0].id,
+                knowledge_merge_status: 'merged',
+                resulting_knowledge_ids: expect.arrayContaining(['k1', 'k2']),
+                preserved_draft_status: 'draft',
+              }),
+            ],
+          }),
+        }),
+      ]),
+    );
   });
 
   it('mounts the Tavily + domain MCP and folds Tavily allowedTools only when configured', async () => {

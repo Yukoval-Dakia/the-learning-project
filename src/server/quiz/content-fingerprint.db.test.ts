@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { archiveQuestion } from '@/server/questions/write';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -27,6 +27,24 @@ async function seed(id: string, draftStatus: string | null, knowledgeIds: string
     updated_at: new Date(),
   });
   return hash;
+}
+
+async function seedKnowledge(...ids: string[]) {
+  const now = new Date();
+  await db.insert(knowledge).values(
+    ids.map((id) => ({
+      id,
+      name: id,
+      domain: 'yuwen',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })),
+  );
 }
 
 describe('findExactQuestionDuplicate', () => {
@@ -79,6 +97,7 @@ describe('findExactQuestionDuplicate', () => {
   });
 
   it('atomically appends missing KCs, preserves lifecycle, audits once, and no-ops on retry', async () => {
+    await seedKnowledge('k-a', 'k-b');
     const hash = await seed('q-cross-kc', 'active', ['k-a']);
     const now = new Date('2026-07-19T11:00:00.000Z');
 
@@ -87,6 +106,7 @@ describe('findExactQuestionDuplicate', () => {
         canonicalContentHash: hash,
         knowledgeIds: ['k-a', 'k-b', 'k-b'],
         actorRef: 'quiz_gen',
+        taskRunId: 'task-run-merge',
         now,
       }),
     );
@@ -96,6 +116,7 @@ describe('findExactQuestionDuplicate', () => {
       previousKnowledgeIds: ['k-a'],
       knowledgeIds: ['k-a', 'k-b'],
       addedKnowledgeIds: ['k-b'],
+      enrolledKnowledgeIds: ['k-b'],
       previousVersion: 0,
       version: 1,
       eventId: expect.any(String),
@@ -125,8 +146,19 @@ describe('findExactQuestionDuplicate', () => {
         after: { knowledge_ids: ['k-a', 'k-b'] },
         reason: 'cross_kc_exact_duplicate',
         added_knowledge_ids: ['k-b'],
+        enrolled_knowledge_ids: ['k-b'],
+        task_run_id: 'task-run-merge',
         preserved_draft_status: 'active',
       },
+    });
+    const enrolled = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'k-b'));
+    expect(enrolled).toHaveLength(1);
+    expect(enrolled[0]).toMatchObject({
+      subject_kind: 'knowledge',
+      last_review_event_id: first?.eventId,
     });
 
     const retry = await db.transaction((tx) =>
@@ -142,4 +174,90 @@ describe('findExactQuestionDuplicate', () => {
       await db.select().from(event).where(eq(event.action, 'experimental:question_edit')),
     ).toHaveLength(1);
   });
+
+  it('filters missing or archived incoming KCs inside the merge transaction', async () => {
+    await seedKnowledge('k-live', 'k-archived');
+    await db
+      .update(knowledge)
+      .set({ archived_at: new Date('2026-07-19T10:00:00.000Z') })
+      .where(eq(knowledge.id, 'k-archived'));
+    const hash = await seed('q-live-only', 'active', []);
+
+    const result = await db.transaction((tx) =>
+      mergeExactQuestionDuplicateKnowledgeIds(tx, {
+        canonicalContentHash: hash,
+        knowledgeIds: ['k-live', 'k-archived', 'k-missing'],
+        actorRef: 'quiz_gen',
+        now: new Date('2026-07-19T11:00:00.000Z'),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      knowledgeIds: ['k-live'],
+      addedKnowledgeIds: ['k-live'],
+      enrolledKnowledgeIds: ['k-live'],
+    });
+  });
+
+  it.each([
+    ['quiz_gen', 'experimental:quiz_verify'],
+    ['web_sourced', 'experimental:source_verify'],
+  ] as const)(
+    'releases the canonical hash of a terminal %s draft so fresh production can proceed',
+    async (source, verifyAction) => {
+      await seedKnowledge('k-new');
+      const hash = await seed(`q-terminal-${source}`, 'draft', ['k-old']);
+      await db
+        .update(question)
+        .set({ source })
+        .where(eq(question.id, `q-terminal-${source}`));
+      await db.insert(event).values({
+        id: `verify-terminal-${source}`,
+        actor_kind: 'agent',
+        actor_ref: verifyAction,
+        action: verifyAction,
+        subject_kind: 'question',
+        subject_id: `q-terminal-${source}`,
+        outcome: 'failure',
+        payload: {},
+        created_at: new Date(),
+      });
+
+      const result = await db.transaction((tx) =>
+        mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash: hash,
+          knowledgeIds: ['k-new'],
+          actorRef: 'quiz_gen',
+          taskRunId: 'task-run-replace',
+          now: new Date('2026-07-19T12:00:00.000Z'),
+        }),
+      );
+
+      expect(result).toMatchObject({
+        disposition: 'released_terminal_draft',
+        addedKnowledgeIds: [],
+        previousVersion: 0,
+        version: 1,
+      });
+      const [released] = await db
+        .select()
+        .from(question)
+        .where(eq(question.id, `q-terminal-${source}`));
+      expect(released).toMatchObject({
+        canonical_content_hash: null,
+        knowledge_ids: ['k-old'],
+        draft_status: 'draft',
+        version: 1,
+      });
+      const [releaseEvent] = await db
+        .select()
+        .from(event)
+        .where(eq(event.id, result?.eventId ?? ''));
+      expect(releaseEvent.payload).toMatchObject({
+        reason: 'terminal_draft_released_for_reproduction',
+        terminal_verify_event_id: `verify-terminal-${source}`,
+        task_run_id: 'task-run-replace',
+      });
+    },
+  );
 });
