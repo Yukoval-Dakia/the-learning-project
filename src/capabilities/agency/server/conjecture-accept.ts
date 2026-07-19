@@ -26,7 +26,10 @@
 // import 环 gate：本文件不得 import producers/writer/actions；共享 helper 走
 // @/server/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
 
-import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import {
+  MAX_CONCURRENT_ACTIVE_PROBES,
+  serveProbeOnce,
+} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import {
   K_PROMOTE,
   misconceptionPromoteEnabled,
@@ -35,6 +38,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/server/events/queries';
+import { ApiError } from '@/server/http/errors';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -46,6 +50,16 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+
+// YUK-711 — wire error code raised (as a typed ApiError, HTTP 409) when the accept
+// cannot serve its discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES active
+// probes already exist. It is a RETRYABLE state conflict, NOT a failure of the
+// accept: throwing it inside the accept transaction rolls back the rate anchor + dark
+// promotion together, so the proposal stays pending and the owner can re-accept the
+// SAME finding once a probe is answered and a slot frees. The felt UI keys on this
+// code to surface a non-blaming "probe slots full, retry" inline error (teaching-brief
+// contract §7: accept 交互失败 → 保留当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error).
+export const PROBE_SLOTS_FULL_CODE = 'probe_slots_full' as const;
 
 export interface ConjectureApplierOpts {
   decision?: string;
@@ -188,19 +202,24 @@ export async function acceptConjectureProposal(
     // semantic — a probe-serve THROW (DB constraint / serialization conflict / etc.)
     // propagates through the nested SAVEPOINT and aborts the WHOLE outer tx (rate
     // event + dark promotion roll back together), so the owner never gets an accept
-    // record without its probe. Only `cap_reached` is tolerated — it's a normal
-    // RETURN (not a throw), so the probe is simply not served this round (a slot
-    // frees up as prior probes get answered → reconcile scores them →
-    // countActiveProbes drops). serveProbeOnce's internal `db.transaction` nests as
+    // record without its probe. serveProbeOnce's internal `db.transaction` nests as
     // a SAVEPOINT inside this outer tx; its `pg_advisory_xact_lock` is transaction-
     // scoped to this outer tx, so the cap-serialize guarantee holds across the whole
     // accept. ND-5 preserved: serveProbeOnce writes ONLY the draft question row
     // (no FSRS / attempt / θ̂). Idempotency: the existingRate short-circuit above
     // prevents re-accept from ever reaching this tx, so a probe is served at most
-    // once per conjecture. (Earlier "best-effort / accept still succeeds" framing
-    // was wrong — corrected per OCR review PR #705; atomicity is the design, not a
-    // tolerated fallback.)
-    await serveProbeOnce({
+    // once per conjecture.
+    //
+    // YUK-711 — `cap_reached` is a normal RETURN (not a throw), so it does NOT
+    // self-abort the tx. The earlier code IGNORED the result and COMMITTED anyway,
+    // stranding a rate anchor + dark promotion with NO probe — an accepted-without-
+    // probe dangling chain the existingRate idempotency guard then blocked the owner
+    // from ever retrying. Treat it as "this accept did not complete": throw a typed
+    // ApiError so the WHOLE outer tx rolls back (rate anchor + promotion + would-be
+    // probe all vanish). The proposal stays pending; once a live probe is answered
+    // (reconcile scores it → countActiveProbes drops) the owner re-accepts the SAME
+    // finding and it succeeds. No re-dispatch worker, no second lifecycle.
+    const probe = await serveProbeOnce({
       db: tx,
       conjectureProposalId: conjectureId,
       knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
@@ -208,6 +227,13 @@ export async function acceptConjectureProposal(
       referenceMd: requiredString(change.probe_reference_md, 'probe_reference_md', proposalId),
       now,
     });
+    if (probe.status === 'cap_reached') {
+      throw new ApiError(
+        PROBE_SLOTS_FULL_CODE,
+        `cannot accept: all ${MAX_CONCURRENT_ACTIVE_PROBES} mind-probe slots are active; answer a probe to free a slot, then retry`,
+        409,
+      );
+    }
   });
 
   // EDIT only: the owner's rewritten claim goes to mem0 CORE (single-writer
