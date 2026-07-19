@@ -695,6 +695,61 @@ describe('runSourcing', () => {
     expect(existing.knowledge_ids).toEqual(['k-existing', 'k1']);
   });
 
+  it('uses all live learning_item fallback KCs for an exact duplicate when model attribution is invalid', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    await seedLearningItem({ id: 'li-multi-fallback', knowledgeId: 'k1' });
+    await db
+      .update(learning_item)
+      .set({ knowledge_ids: ['k1', 'k2'] })
+      .where(eq(learning_item.id, 'li-multi-fallback'));
+    const parsed = JSON.parse(HALLUCINATED_KNOWLEDGE_OUTPUT) as {
+      questions: Array<{
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+      }>;
+    };
+    const content = parsed.questions[0];
+    await db.insert(question).values({
+      id: 'q-learning-item-fallback-duplicate',
+      kind: 'choice',
+      prompt_md: content.prompt_md,
+      reference_md: content.reference_md,
+      choices_md: content.choices_md,
+      rubric_json: content.rubric_json as never,
+      source: 'manual',
+      draft_status: 'active',
+      knowledge_ids: ['k-existing'],
+      canonical_content_hash: canonicalQuestionContentHash({
+        promptMd: content.prompt_md,
+        referenceMd: content.reference_md,
+        choicesMd: content.choices_md,
+        rubricJson: content.rubric_json,
+      }),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await runSourcing({
+      db,
+      trigger: 'learning_item',
+      refId: 'li-multi-fallback',
+      runAgentTaskFn: agentMock(HALLUCINATED_KNOWLEDGE_OUTPUT, 'tr-li-fallback'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const [existing] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-learning-item-fallback-duplicate'));
+    expect(existing.knowledge_ids).toEqual(['k-existing', 'k1', 'k2']);
+  });
+
   it('passes the resolved subject profile into the SourcingTask ctx (non-default subject)', async () => {
     const db = testDb();
     // a math-domain knowledge node → math profile, NOT the default yuwen voice.

@@ -496,8 +496,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         // Prelookup only needs attribution we can already prove. Preserve the historical
         // duplicate short-circuit for a manual run whose model emitted only invalid IDs: an
         // existing canonical row is usable even though a brand-new unattributed row would not be.
+        const validModelKnowledgeIds = q.knowledge_ids.filter((kid) =>
+          existingKnowledgeIds.has(kid),
+        );
         const prelookupKnowledgeIds = combineExactDuplicateKnowledgeIds(
-          q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid)),
+          validModelKnowledgeIds.length > 0 ? validModelKnowledgeIds : fallbackKnowledgeIds,
           targetKnowledgeIds,
         );
         const canonicalContentHash = canonicalQuestionContentHash({
