@@ -7,8 +7,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { goal } from '@/db/schema';
-import { backfillGoalGenesis } from '../../../scripts/backfill-genesis-events';
+import { newId } from '@/core/ids';
+import { event, goal, knowledge } from '@/db/schema';
+import {
+  backfillGoalGenesis,
+  backfillKnowledgeGenesis,
+} from '../../../scripts/backfill-genesis-events';
 import { captureGolden } from '../../../scripts/capture-golden';
 import { parseGolden, reauditGolden } from '../../../scripts/golden-reaudit';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -31,6 +35,45 @@ async function insertGoal(id: string, title: string): Promise<void> {
       updated_at: T0,
       version: 0,
     });
+}
+
+async function insertNode(id: string): Promise<void> {
+  await testDb().insert(knowledge).values({
+    id,
+    name: id,
+    domain: null,
+    parent_id: null,
+    merged_from: [],
+    proposed_by_ai: false,
+    approval_status: 'approved',
+    archived_at: null,
+    created_at: T0,
+    updated_at: T0,
+    version: 0,
+  });
+}
+
+// Seed a raw event row (K8 tests) — a standalone cross-entity proposal, no accept chain.
+async function seedRawEvent(opts: {
+  action: string;
+  subject_kind: string;
+  subject_id: string;
+}): Promise<void> {
+  await testDb().insert(event).values({
+    id: newId(),
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'test',
+    action: opts.action,
+    subject_kind: opts.subject_kind,
+    subject_id: opts.subject_id,
+    outcome: 'partial',
+    payload: {},
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: T0,
+  });
 }
 
 describe('golden capture + reaudit (Q4b)', () => {
@@ -88,5 +131,52 @@ describe('golden capture + reaudit (Q4b)', () => {
     const drifted = result.drifted.find((d) => d.id === 'g1');
     expect(drifted).toBeDefined();
     expect(drifted?.diffs.join(';')).toContain('title');
+  });
+});
+
+// ── YUK-549 (K8): CROSS_REF_ACTIONS no longer over-captures bare propose/generate ─────────────
+//
+// Every reducer that consumes propose/generate guards on subject_kind ∈ {knowledge, knowledge_edge}
+// (foldKnowledgeNode's `action==='propose' && subject_kind==='knowledge'`; foldKnowledgeEdge's
+// generate equivalent). So those events are ALWAYS carried by the golden's unchanged `subject_kind`
+// leg for those two kinds, and NO other kind's fold reads them — making the bare 'propose'/'generate'
+// CROSS_REF entries dead weight (they only pulled unrelated entities' proposals into every golden).
+describe('golden capture — YUK-549 (K8) CROSS_REF_ACTIONS trim', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a goal golden no longer over-captures bare propose/generate (they are knowledge/edge-subject, dropped from CROSS_REF)', async () => {
+    const db = testDb();
+    await insertGoal('g1', 'Alpha');
+    await backfillGoalGenesis(db, T0);
+    // stray cross-entity proposals the bare 'propose'/'generate' CROSS_REF entries USED to pull into
+    // EVERY golden — now excluded (no fold outside knowledge/knowledge_edge reads them).
+    await seedRawEvent({ action: 'propose', subject_kind: 'knowledge', subject_id: 'k_prop' });
+    await seedRawEvent({ action: 'generate', subject_kind: 'knowledge_edge', subject_id: 'e_gen' });
+
+    const golden = await captureGolden(db, 'goal');
+    // the goal golden captures its own subject_kind='goal' events, NOT the stray propose/generate.
+    expect(golden.events.some((e) => e.action === 'propose' || e.action === 'generate')).toBe(
+      false,
+    );
+    // and the trim did not lose anything the goal fold needs — birth reaudit stays CLEAN.
+    expect(reauditGolden(golden).drifted).toEqual([]);
+  });
+
+  it('a knowledge golden STILL captures propose via the subject_kind leg (no regression from the trim)', async () => {
+    const db = testDb();
+    await insertNode('k1');
+    await backfillKnowledgeGenesis(db, T0);
+    // a propose keyed on subject_kind='knowledge' — the fold consumes propose ONLY at that subject_kind,
+    // so the UNCHANGED subject_kind leg (not the dropped CROSS_REF entry) is what must carry it.
+    await seedRawEvent({ action: 'propose', subject_kind: 'knowledge', subject_id: 'k_prop' });
+
+    const golden = await captureGolden(db, 'knowledge');
+    expect(
+      golden.events.some((e) => e.action === 'propose' && e.subject_kind === 'knowledge'),
+    ).toBe(true);
+    // the un-accepted stray propose is inert to the live node's fold (skipped before parse) → CLEAN.
+    expect(reauditGolden(golden).drifted).toEqual([]);
   });
 });

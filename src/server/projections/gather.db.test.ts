@@ -37,7 +37,10 @@ import {
   edgeRowToSnapshot,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeEdgeWithMesh,
+  gatherAndFoldKnowledgeNode,
   gatherAndFoldLearningItem,
+  prefetchKnowledgeMergeEvents,
+  prefetchKnowledgeRates,
   prefetchLearningItemMergeEvents,
 } from './gather';
 
@@ -397,5 +400,153 @@ describe('gatherAndFoldLearningItem — YUK-547 merge-event prefetch threading',
     counter.n = 0;
     for (const id of itemIds) await gatherAndFoldLearningItem(cdb, id);
     expect(counter.n).toBe(itemIds.length * 3);
+  });
+});
+
+// Seed a knowledge genesis event at a CONTROLLED created_at (T0). backfillKnowledgeGenesis stamps the
+// genesis at real wall-clock time (only `ingest_at` takes the passed `now`), which would sort AFTER a
+// T0-relative merge in the canonical replay and mask the archive — this keeps ordering deterministic.
+async function seedKnowledgeGenesis(id: string): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: newId(),
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'genesis-backfill',
+      action: 'experimental:genesis',
+      subject_kind: 'knowledge',
+      subject_id: id,
+      outcome: 'success',
+      payload: {
+        row: {
+          id,
+          name: id,
+          domain: null,
+          parent_id: null,
+          merged_from: [],
+          archived_at: null,
+          proposed_by_ai: false,
+          approval_status: 'approved',
+          created_at: T0,
+          updated_at: T0,
+          version: 0,
+        },
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: T0,
+    });
+}
+
+// Seed an ACCEPTED knowledge_merge with the KNOWLEDGE fold's stricter payload (from_ids + into_id +
+// expected_versions). The learning_item seedAcceptedMerge above omits expected_versions, which the node
+// fold's KnowledgeMutationProposalChange parse REQUIRES — so the node fold would skip it as malformed.
+async function seedKnowledgeMerge(fromIds: string[], intoId: string): Promise<void> {
+  const db = testDb();
+  const proposeId = newId();
+  await db.insert(event).values({
+    id: proposeId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'experimental:knowledge_merge',
+    subject_kind: 'knowledge',
+    subject_id: intoId,
+    outcome: 'partial',
+    payload: {
+      from_ids: fromIds,
+      into_id: intoId,
+      expected_versions: Object.fromEntries([...fromIds, intoId].map((id) => [id, 0])),
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(T0.getTime() + 1000),
+  });
+  await db.insert(event).values({
+    id: newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposeId,
+    outcome: 'success',
+    payload: { rating: 'accept' },
+    caused_by_event_id: proposeId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(T0.getTime() + 2000),
+  });
+}
+
+// ── YUK-549 (K6): knowledge-node merge + rate prefetch threading ──────────────────────────────
+//
+// gatherAndFoldKnowledgeNode's Q3 leg (every knowledge_merge propose event, containment-filtered) and
+// its rate-resolution leg (the accept rates chained to the gathered propose/merge events) are both
+// node-INDEPENDENT full-table scans, so a full-table audit that folds N nodes re-ran them per node
+// (O(N × full table)). prefetchKnowledgeMergeEvents / prefetchKnowledgeRates fetch each ONCE and thread
+// them in; the two legs then filter in memory to the EXACT rows the per-node queries returned. These
+// tests prove the threading is (1) EQUIVALENT to the self-fetching path and (2) eliminates the per-node
+// full-table SELECTs. Mirrors the YUK-547 learning_item tests above.
+describe('gatherAndFoldKnowledgeNode — YUK-549 (K6) merge + rate prefetch threading', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('threading prefetched merge + rate sets folds IDENTICALLY to the self-fetching path (across nodes + a merge)', async () => {
+    const db = testDb();
+    // k_a is absorbed into k_c by an accepted merge → the from-node's fold archives it (Q3 leg) and the
+    // into-node's fold appends merged_from (rate leg gates the merge on acceptance). k_x is untouched.
+    await seedKnowledgeGenesis('k_a');
+    await seedKnowledgeGenesis('k_c');
+    await seedKnowledgeGenesis('k_x');
+    await seedKnowledgeMerge(['k_a'], 'k_c');
+
+    const merges = await prefetchKnowledgeMergeEvents(db);
+    const rates = await prefetchKnowledgeRates(db);
+    expect(merges).toHaveLength(1); // the one knowledge_merge propose event
+    expect(rates).toHaveLength(1); // its accept rate
+
+    for (const id of ['k_a', 'k_c', 'k_x']) {
+      const selfFetch = await gatherAndFoldKnowledgeNode(db, id);
+      const threaded = await gatherAndFoldKnowledgeNode(db, id, merges, rates);
+      expect(threaded).toEqual(selfFetch);
+    }
+    // sanity: the merge is a NON-TRIVIAL fold — k_a archived (Q3), k_c carries merged_from (Q1+rate).
+    expect(
+      (await gatherAndFoldKnowledgeNode(db, 'k_a', merges, rates))?.archived_at,
+    ).not.toBeNull();
+    expect((await gatherAndFoldKnowledgeNode(db, 'k_c', merges, rates))?.merged_from).toContain(
+      'k_a',
+    );
+  });
+
+  it('perf smoke: threading eliminates the per-node full-table merge + rate SELECTs (2 prefetch, not per-node)', async () => {
+    const db = testDb();
+    const nodeIds = ['k_1', 'k_2', 'k_3'];
+    for (const id of nodeIds) await seedKnowledgeGenesis(id);
+    await seedKnowledgeMerge(['k_1'], 'k_2');
+
+    const counter = { n: 0 };
+    const cdb = countingDb(db, counter);
+
+    // Prefetch ONCE: the full-table merge SELECT + the full-table rate SELECT = exactly 2 selects.
+    counter.n = 0;
+    const merges = await prefetchKnowledgeMergeEvents(cdb);
+    const rates = await prefetchKnowledgeRates(cdb);
+    expect(counter.n).toBe(2);
+
+    // Delta-based (robust to the anchor-lookup select count): the self-fetching path adds EXACTLY the
+    // per-node Q3 merge SELECT + rate SELECT (2 × N) that the prefetched path filters in memory instead.
+    counter.n = 0;
+    for (const id of nodeIds) await gatherAndFoldKnowledgeNode(cdb, id, merges, rates);
+    const prefetchTotal = counter.n;
+    counter.n = 0;
+    for (const id of nodeIds) await gatherAndFoldKnowledgeNode(cdb, id);
+    const selfFetchTotal = counter.n;
+    expect(selfFetchTotal - prefetchTotal).toBe(nodeIds.length * 2);
   });
 });
