@@ -32,6 +32,18 @@ export const ConjectureScoresResponseSchema = z.object({
       updated_at: z.string().datetime(),
     }),
   ),
+  diagnostics: z.object({
+    prediction_scores: z.object({
+      scanned_count: z.number().int().nonnegative(),
+      dropped_count: z.number().int().nonnegative(),
+      scan_truncated: z.boolean(),
+    }),
+    typed_states: z.object({
+      scanned_count: z.number().int().nonnegative(),
+      dropped_count: z.number().int().nonnegative(),
+      scan_truncated: z.boolean(),
+    }),
+  }),
 });
 
 const JudgeCalibrationStratumSchema = z.discriminatedUnion('status', [

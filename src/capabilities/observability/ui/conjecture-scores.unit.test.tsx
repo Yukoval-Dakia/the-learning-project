@@ -39,9 +39,20 @@ function typedState(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function cleanDiagnostics() {
+  return {
+    prediction_scores: { scanned_count: 0, dropped_count: 0, scan_truncated: false },
+    typed_states: { scanned_count: 0, dropped_count: 0, scan_truncated: false },
+  };
+}
+
 function render(data: unknown): string {
   const qc = new QueryClient();
-  qc.setQueryData(['admin-conjecture-scores'], data);
+  const hydrated =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? { diagnostics: cleanDiagnostics(), ...data }
+      : data;
+  qc.setQueryData(['admin-conjecture-scores'], hydrated);
   return renderToString(
     <QueryClientProvider client={qc}>
       <AdminConjectureScoresSurface navigate={() => {}} />
@@ -124,5 +135,43 @@ describe('AdminConjectureScoresSurface', () => {
     expect(html).toContain('0.400');
     expect(html).toContain('baseline 0.300 · paired n=1');
     expect(html).not.toContain('baseline 0.650');
+  });
+
+  it('keeps the normal path quiet when no rows were dropped or truncated', () => {
+    const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('aria-atomic="true"');
+    expect(html).not.toContain('部分诊断行未展示');
+    expect(html).not.toContain('data quality');
+  });
+
+  it('keeps rendering data cached before diagnostics were added to the response', () => {
+    const html = render({
+      score_basis: 'single_point',
+      prediction_scores: [score()],
+      typed_states: [],
+      diagnostics: undefined,
+    });
+    expect(html).toContain('k_xuci');
+    expect(html).not.toContain('部分诊断行未展示');
+  });
+
+  it('surfaces dropped rows and bounded-window truncation without hiding valid results', () => {
+    const html = render({
+      score_basis: 'single_point',
+      prediction_scores: [score()],
+      typed_states: [],
+      diagnostics: {
+        prediction_scores: { scanned_count: 400, dropped_count: 201, scan_truncated: true },
+        typed_states: { scanned_count: 3, dropped_count: 1, scan_truncated: false },
+      },
+    });
+    const text = html.replaceAll('<!-- -->', '');
+    expect(text).toContain('部分诊断行未展示');
+    expect(text).toContain('prediction scores：扫描 400 行，丢弃 201 行');
+    expect(text).toContain('已触及有界窗口，结果可能不完整');
+    expect(text).toContain('typed states：扫描 3 行，丢弃 1 行');
+    expect(text).toContain('k_xuci');
   });
 });

@@ -47,6 +47,15 @@ interface ConjectureScoresResponse {
   score_basis: 'single_point';
   prediction_scores: PredictionScoreRow[];
   typed_states: TypedStateRow[];
+  diagnostics: {
+    prediction_scores: ScanDiagnostics;
+    typed_states: ScanDiagnostics;
+  };
+}
+interface ScanDiagnostics {
+  scanned_count: number;
+  dropped_count: number;
+  scan_truncated: boolean;
 }
 
 const NAV: Array<{ to: string; label: string }> = [
@@ -96,6 +105,13 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
 
   const scores = data?.prediction_scores ?? [];
   const typed = data?.typed_states ?? [];
+  const diagnostics = data?.diagnostics;
+  const diagnosticWarnings = diagnostics
+    ? [
+        ['prediction scores', diagnostics.prediction_scores] as const,
+        ['typed states', diagnostics.typed_states] as const,
+      ].filter(([, d]) => d.dropped_count > 0 || d.scan_truncated)
+    : [];
   // Brier 两侧只在同一批 complete-case 行上聚合，避免 nullable 字段让 model/baseline
   // 使用不同分母，制造方向相反的视觉比较。
   const pairedBrier = scores.flatMap((s) =>
@@ -146,6 +162,30 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
           <Kpi label="typed states" value={typed.length} note={`${openStates} open`} />
         </div>
       )}
+
+      {/* biome-ignore lint/a11y/useSemanticElements: output only permits phrasing content, but this status contains a Card/list. */}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {diagnosticWarnings.length > 0 && (
+          <Card>
+            <div style={diagnosticAlertStyle}>
+              <Badge tone="coral" dot dotStatic>
+                data quality
+              </Badge>
+              <div>
+                <strong>部分诊断行未展示</strong>
+                <ul style={diagnosticListStyle}>
+                  {diagnosticWarnings.map(([label, d]) => (
+                    <li key={label}>
+                      {label}：扫描 {d.scanned_count} 行，丢弃 {d.dropped_count} 行
+                      {d.scan_truncated ? '；已触及有界窗口，结果可能不完整' : ''}。
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
 
       <Stateful
         status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
@@ -304,6 +344,19 @@ const linkRowStyle: CSSProperties = {
   fontSize: 'var(--fs-meta)',
 };
 const honestyRowStyle: CSSProperties = { margin: 'var(--s-2) 0 var(--s-3)' };
+const diagnosticAlertStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 'var(--s-3)',
+  color: 'var(--ink-2)',
+  fontSize: 13,
+  lineHeight: 1.55,
+};
+const diagnosticListStyle: CSSProperties = {
+  margin: 'var(--s-1) 0 0',
+  paddingLeft: 18,
+  color: 'var(--ink-3)',
+};
 const sectionHeadStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
