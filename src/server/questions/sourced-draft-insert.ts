@@ -110,7 +110,8 @@ export async function insertSourcedDraft(
         knowledge_ids: knowledgeIds,
         difficulty: q.difficulty,
         // source_ref = the fetched URL; source_ref_kind='url' disambiguates the overloaded
-        // source_ref column (合约三). Both land tier 2 via deriveSourceTier.
+        // source_ref column（合约三 = SourceRefKind 契约，见 src/core/schema/provenance.ts
+        // §「合约三：source_ref disambiguation」+ deriveSourceTier）. Both land tier 2.
         source_ref: q.source_url,
         // Option B — sourced drafts do NOT enter the pool / FSRS until source_verify passes.
         draft_status: 'draft',

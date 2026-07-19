@@ -56,6 +56,7 @@ import {
   type JyeooFailureClass,
   classifyJyeooExit,
   hasMalformedMarkdownImage,
+  isForeignSourceHost,
   markdownImageSources,
   parseJyeooLine,
   rewriteMarkdownImageSources,
@@ -64,6 +65,7 @@ import { type SpawnJyeooFn, spawnJyeooFetch } from '@/server/question-supply/jye
 import {
   JYEOO_DEFAULT_PAGES,
   JYEOO_FETCH_ROUTE,
+  JYEOO_SOURCE_HOST,
   jyeooBinaryPath,
   jyeooDgTokenForBand,
   jyeooFetchEnabled,
@@ -170,6 +172,7 @@ interface JyeooFetchCounts {
   invalid: number; // non-blank lines that failed JSON/Zod (dropped, batch still ok on exit 0).
   filtered_image: number; // image question dropped because localization/read validation failed.
   filtered_kind: number; // valid questions dropped for not matching the pinned kind (pre-persist).
+  filtered_url: number; // valid questions dropped for a non-jyeoo source_url host (pre-persist).
   deduped_exact: number; // dropped by canonical_content_hash exact match.
   deduped_near: number; // dropped by n-gram near-dup prefilter (active+draft pool).
   inserted: number; // drafts written (draft_status='draft').
@@ -248,6 +251,7 @@ const emptyCounts = (requested: number): JyeooFetchCounts => ({
   invalid: 0,
   filtered_image: 0,
   filtered_kind: 0,
+  filtered_url: 0,
   deduped_exact: 0,
   deduped_near: 0,
   inserted: 0,
@@ -596,14 +600,24 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       });
     }
 
-    // ── pre-persist filter: pinned-kind mismatch ────────────────────────────────
+    // ── pre-persist filters: foreign host + pinned-kind mismatch ───────────────
     // The dispatcher may pin a kind (diagnostic / format-diversity / calibration targets,
     // e.g. `choice`). The producer only INFERS kind, so — mirroring the sourcing path's
     // params.kind enforcement — drop any question whose kind does not match the pin BEFORE
     // INSERT (kindsMatch normalizes both to canonical, so `single_choice` matches `choice`).
     // Otherwise a wrong-kind draft would pass source_verify while leaving the gap unfilled.
+    //
+    // Foreign-host filter is a PER-ROW drop (not a whole-batch fail like VIP): a jyeoo scrape
+    // emits www.jyeoo.com URLs, so a foreign host on one line is a per-line anomaly, not a
+    // session-level compromise — the other lines remain valid jyeoo drafts.
+    // Image questions continue into the localization pass below; only unreadable, malformed or
+    // non-local image references increment filtered_image (YUK-727).
     const candidateQuestions: SourcedQuestionT[] = [];
     for (const q of validQuestions) {
+      if (isForeignSourceHost(q.source_url, JYEOO_SOURCE_HOST)) {
+        counts.filtered_url += 1;
+        continue;
+      }
       if (params.kind && !kindsMatch(q.kind, params.kind)) {
         counts.filtered_kind += 1;
         continue;
@@ -853,28 +867,40 @@ interface FinishFailureArgs {
  */
 async function finishFailure(args: FinishFailureArgs): Promise<RunJyeooFetchResult> {
   const { db, triggerEventId, params, counts, failureClass, detail, retryable } = args;
-  await writeEvent(db, {
-    id: createId(),
-    session_id: null,
-    actor_kind: 'agent',
-    actor_ref: 'jyeoo_fetch',
-    action: 'experimental:jyeoo_fetch',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: 'failure',
-    payload: {
-      trigger: params.trigger,
-      ref_id: params.refId,
-      failure_class: failureClass,
-      failure_detail: detail,
-      counts,
-      ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
-  });
+  // NO INSERT happened; the failure classification (terminal vs retryable) is the truth.
+  // Wrap the observability write in try/catch (mirrors runJyeooFetch's catch bottom): a
+  // transient DB error on THIS event must NOT throw, or it would convert a TERMINAL producer
+  // failure (auth/vip/…) into an uncaught throw → pg-boss retry storm. Losing one failure
+  // event is acceptable; misclassifying the retry disposition is not.
+  try {
+    await writeEvent(db, {
+      id: createId(),
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'jyeoo_fetch',
+      action: 'experimental:jyeoo_fetch',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'failure',
+      payload: {
+        trigger: params.trigger,
+        ref_id: params.refId,
+        failure_class: failureClass,
+        failure_detail: detail,
+        counts,
+        ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+  } catch (eventErr) {
+    console.error(
+      `[jyeoo_fetch] failure-event write failed for ${params.refId} (class=${failureClass}); classification stands:`,
+      eventErr,
+    );
+  }
   if (retryable) {
     throw new Error(`jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`);
   }

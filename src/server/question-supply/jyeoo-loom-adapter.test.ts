@@ -3,6 +3,7 @@ import {
   JYEOO_EXIT,
   classifyJyeooExit,
   hasMalformedMarkdownImage,
+  isForeignSourceHost,
   isImageDependentQuestion,
   markdownImageSources,
   parseJyeooLine,
@@ -217,5 +218,27 @@ describe('jyeoo markdown image destinations', () => {
     const markdown = '题面 ![图](/tmp/run/Foo_(bar).png';
     expect(markdownImageSources(markdown)).toEqual([]);
     expect(hasMalformedMarkdownImage(markdown)).toBe(true);
+  });
+});
+
+describe('isForeignSourceHost', () => {
+  const HOST = 'www.jyeoo.com';
+  it('accepts the exact jyeoo host', () => {
+    expect(isForeignSourceHost('https://www.jyeoo.com/math2/ques/detail/abc', HOST)).toBe(false);
+  });
+  it('is case-insensitive on the host', () => {
+    expect(isForeignSourceHost('https://WWW.JYEOO.COM/math2/ques/detail/abc', HOST)).toBe(false);
+  });
+  it('rejects a foreign host', () => {
+    expect(isForeignSourceHost('https://mirror.example.com/math2/ques/detail/abc', HOST)).toBe(
+      true,
+    );
+  });
+  it('rejects a look-alike host that only SUFFIXES the jyeoo host', () => {
+    // exact-hostname match, so www.jyeoo.com.evil.com is foreign (a suffix regex would miss it).
+    expect(isForeignSourceHost('https://www.jyeoo.com.evil.com/x', HOST)).toBe(true);
+  });
+  it('rejects an unparseable url', () => {
+    expect(isForeignSourceHost('not-a-url', HOST)).toBe(true);
   });
 });

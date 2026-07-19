@@ -245,3 +245,19 @@ export function rewriteMarkdownImageSources(
   }
   return rewritten;
 }
+
+// ── source host guard ─────────────────────────────────────────────────────────
+//
+// A row whose source_url host is NOT the expected jyeoo host is a producer anomaly (a
+// jyeoo scrape only ever yields www.jyeoo.com URLs). Since source_verify grounds a
+// web_sourced row against its PERSISTED extract (never a refetch), a foreign URL would
+// otherwise promote to tier-2 unchecked — so the handler filters such rows pre-INSERT.
+// An unparseable URL is treated as foreign (SourcedQuestion.parse already requires a valid
+// URL, so this only fires on a genuine host mismatch). Exact hostname match (case-folded).
+export function isForeignSourceHost(sourceUrl: string, expectedHost: string): boolean {
+  try {
+    return new URL(sourceUrl).hostname.toLowerCase() !== expectedHost.toLowerCase();
+  } catch {
+    return true;
+  }
+}

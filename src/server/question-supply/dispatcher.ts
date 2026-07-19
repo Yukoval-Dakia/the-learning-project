@@ -35,20 +35,21 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 /** pg-boss queues the dispatcher can auto-enqueue into. */
 type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
 
-/** 能自动派到后台队列的路由（pg-boss）。其余路由 emit + manual。 */
-const AUTO_DISPATCHABLE = new Set<SupplyRoute>(['sourcing_web', 'quiz_gen', 'jyeoo_fetch']);
-
 /**
- * Auto-dispatchable SupplyRoute → pg-boss queue. Single-source map (no nested ternary):
- * every AUTO_DISPATCHABLE member has an entry. An unmapped route is a programming error
- * (chooseAutoRoute returned something not in AUTO_DISPATCHABLE) and THROWS rather than
- * silently mis-routing to quiz_gen — see resolveDispatchQueue.
+ * Auto-dispatchable SupplyRoute → pg-boss queue. THE single source of the auto-dispatch
+ * route set: AUTO_DISPATCHABLE is derived from these keys, so adding a route here (with its
+ * queue) automatically makes it dispatchable — the two can't drift. `satisfies` keeps the
+ * key/value types checked while preserving the literal keys for the derived Set.
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
   sourcing_web: 'sourcing',
   jyeoo_fetch: 'jyeoo_fetch',
   quiz_gen: 'quiz_gen',
 };
+
+/** 能自动派到后台队列的路由（pg-boss）——从 AUTO_ROUTE_TO_QUEUE 的 key 派生，不独立维护
+ *  （加路由到 map 即自动可派，两者不会漂移）。其余路由 emit + manual。 */
+const AUTO_DISPATCHABLE = new Set<SupplyRoute>(Object.keys(AUTO_ROUTE_TO_QUEUE) as SupplyRoute[]);
 
 function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
   const queue = AUTO_ROUTE_TO_QUEUE[route];

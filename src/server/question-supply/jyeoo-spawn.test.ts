@@ -128,6 +128,23 @@ describe('spawnJyeooFetch', () => {
       spawnJyeooFetch({ binaryPath: SH, args: ['-c', 'exit 0'], ...generous, maxStderrBytes: -1 }),
     ).rejects.toThrow(/maxStderrBytes/);
   });
+
+  it('a process still writing when SIGKILL tears the pipe resolves without crashing', async () => {
+    // A continuously-writing child gets SIGKILL'd at the timeout mid-write, tearing the
+    // stdout pipe → Node emits 'error' on the stream. Without the stream-level error
+    // listeners this would be an uncaughtException that crashes the worker; here the run
+    // must resolve cleanly with the timeout disposition.
+    const r = await spawnJyeooFetch({
+      binaryPath: SH,
+      args: ['-c', 'while true; do printf "x\\n"; done'],
+      timeoutMs: 150,
+      maxStdoutBytes: 1_000_000,
+      maxStderrBytes: 100_000,
+    });
+    expect(r.timedOut).toBe(true);
+    expect(r.exitCode).toBeNull();
+    expect(r.signal).toBe('SIGKILL');
+  });
 });
 
 describe('sliceToCharBoundary', () => {
