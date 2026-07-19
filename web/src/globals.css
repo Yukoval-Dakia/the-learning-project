@@ -151,8 +151,11 @@
   --ink: #1f1e1d;
   --ink-2: #3d3b36;
   --ink-3: #5c5b57;
-  --ink-4: #8a8880;
-  --ink-5: #b6b3a8;
+  /* YUK-718 — tertiary/quaternary text darkened to clear WCAG AA (4.5:1) on
+     --paper: --ink-4 3.37→4.84:1, --ink-5 1.99→4.52:1. ink-4 kept > ink-5 so the
+     ramp order (ink-3 6.45 > ink-4 > ink-5) survives; hue preserved (warm grey). */
+  --ink-4: #706e68;
+  --ink-5: #74736c;
 
   --line: #e8e4d8;
   --line-strong: #d5d0bf;
@@ -307,8 +310,9 @@
     --ink: #f0e8d8;
     --ink-2: #d4cbb8;
     --ink-3: #a89e8a;
-    --ink-4: #7a705e;
-    --ink-5: #4a4438;
+    /* YUK-718 — AA on dark --paper: --ink-4 3.69→4.87:1, --ink-5 1.86→4.57:1. */
+    --ink-4: #8d8475;
+    --ink-5: #848078;
 
     --line: #3a3329;
     --line-strong: #4d4538;
@@ -369,8 +373,9 @@
   --ink: #f0e8d8;
   --ink-2: #d4cbb8;
   --ink-3: #a89e8a;
-  --ink-4: #7a705e;
-  --ink-5: #4a4438;
+  /* YUK-718 — AA on dark --paper: --ink-4 3.69→4.87:1, --ink-5 1.86→4.57:1. */
+  --ink-4: #8d8475;
+  --ink-5: #848078;
 
   --line: #3a3329;
   --line-strong: #4d4538;

@@ -409,7 +409,11 @@ export function PfSolo({
         )}
 
         {phase === 'feedback' && preview && verdict && (
-          <div className={`pfs-fb v-${verdict.tone}`}>
+          // YUK-718 — 判定卡是即时判分结果，须播报给读屏（对/错 + AI 反馈）。
+          // aria-live=polite 沿用仓库 live-region 习惯（.li-intent-preview /
+          // .pf-toasts）——不加 role=status，因 biome useSemanticElements 会要求换
+          // <output>；polite live region 已足够让读屏在判定卡出现时朗读内容。
+          <div className={`pfs-fb v-${verdict.tone}`} aria-live="polite">
             <div className="pfs-fb-head">
               <span className={`badge tone-${verdict.tone}`}>
                 <LoomIcon
