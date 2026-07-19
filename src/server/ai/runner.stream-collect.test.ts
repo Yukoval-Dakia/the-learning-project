@@ -37,6 +37,7 @@ const logMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
+  logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: vi.fn(async () => {}),
   writeAiTaskRunFinished: vi.fn(async () => {
     if (logMocks.finishedShouldThrow) throw new Error('db down');
