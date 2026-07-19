@@ -466,6 +466,105 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(typed.some((row) => row.id === 'ts_bound_0')).toBe(false);
   });
 
+  it('hard-stops each database scan after 400 raw rows', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb().transaction(async (tx) => {
+      for (let i = 0; i < 200; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_scan_valid_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_scan_valid_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_scan_valid_${i}`,
+            probe_result_event_id: `probe_scan_valid_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+      for (let i = 200; i <= 400; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_scan_corrupt_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_scan_corrupt_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_scan_corrupt_${i}`,
+            probe_result_event_id: `probe_scan_corrupt_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 'not-a-number',
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+    });
+
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        ...Array.from({ length: 200 }, (_, i) => ({
+          id: `ts_scan_valid_${i}`,
+          subject_kind: 'knowledge',
+          subject_id: `kn_scan_valid_${i}`,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: [`probe_scan_valid_${i}`],
+          updated_at: new Date(base.getTime() + i),
+        })),
+        ...Array.from({ length: 201 }, (_, offset) => {
+          const i = offset + 200;
+          return {
+            id: `ts_scan_corrupt_${i}`,
+            subject_kind: 'knowledge',
+            subject_id: `kn_scan_corrupt_${i}`,
+            typed_state: 'confused-with-X',
+            confused_with_kc_id: RIVAL_KC,
+            lifecycle: 'corrupt',
+            evidence_event_ids: [`probe_scan_corrupt_${i}`],
+            updated_at: new Date(base.getTime() + i),
+          };
+        }),
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const scores = body.prediction_scores as Array<Record<string, unknown>>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    // The newest 400 raw rows contain 201 corrupt + 199 valid rows. The one oldest valid
+    // row sits just beyond the hard cap; an unbounded query would incorrectly return 200.
+    expect(scores).toHaveLength(199);
+    expect(scores.some((row) => row.event_id === 'score_scan_valid_0')).toBe(false);
+    expect(typed).toHaveLength(199);
+    expect(typed.some((row) => row.id === 'ts_scan_valid_0')).toBe(false);
+  });
+
   it('READ-ONLY — the route writes nothing (ND-5: no FSRS, no new events, no state mutation)', async () => {
     const beforeScores = await predictionScoreCount();
     const beforeFsrs = await fsrsRowCount();
