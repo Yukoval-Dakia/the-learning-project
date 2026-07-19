@@ -579,7 +579,7 @@ describe('foldKnowledgeNode', () => {
     expect(folded).toEqual({ ...seed, name: '语文', updated_at: at(100), version: 2 });
   });
 
-  it('uses one permutation-stable same-ms order for genesis, mixed mutations, and root names', () => {
+  it('keeps production-shaped merge-into and root-name events commutative across permutations', () => {
     const rootId = 'seed:yuwen:root';
     const timestamp = at(100);
     const seed = {
@@ -603,7 +603,8 @@ describe('foldKnowledgeNode', () => {
       payload: {
         from_ids: ['k_child'],
         into_id: rootId,
-        expected_versions: { [rootId]: 0, k_child: 0 },
+        // Production applyMerge only guards from_ids; into_id intentionally has no version entry.
+        expected_versions: { k_child: 0 },
       },
     });
     const acceptMerge = rate({

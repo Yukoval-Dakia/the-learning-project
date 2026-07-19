@@ -132,9 +132,10 @@ function replayTieKey(
 }
 
 // Stable canonical total order. Timestamp remains the primary order. Within one millisecond, a
-// node's creation precedes all of its mutations, then every mutation sharing knowledge.version is
-// ordered by its explicit previous/expected version, and unrelated events follow by id. Computing
-// one tuple per event (instead of a pair-specific special case) keeps the comparator transitive.
+// node's creation precedes its explicitly versioned mutations, which are ordered by their
+// previous/expected version; remaining events follow by id. Computing one tuple per event (instead
+// of a pair-specific special case) keeps the comparator transitive. A merge into_id has no expected
+// version in the production contract, so its field-disjoint update must commute with a name update.
 function compareReplayEvents(
   a: FoldEvent,
   b: FoldEvent,
@@ -239,10 +240,13 @@ export function foldKnowledgeNode(
 
     // Subject control-plane rename/reset mirrors display_name onto the canonical knowledge root.
     // This direct action is not proposal-gated: the owner CAS + control-plane lock authorize it at
-    // write time. The version precondition makes replay idempotent and prevents an out-of-order
-    // transition from overwriting another structural mutation. previous_name is audit evidence,
-    // not a replay precondition, so the first post-YUK-728 event also heals a legacy name-only
-    // mirror that was never represented in the event log.
+    // write time. previous_name / previous_version are audit evidence, not replay preconditions:
+    // production merge events only guard from_ids and carry no into_id version, so a same-ms merge
+    // and rename cannot always be causally sorted. Their field updates commute; incrementing the
+    // folded version (rather than assigning payload.next_version) accounts for each event exactly
+    // once regardless of their same-ms order. Root-name events remain mutually version-ordered,
+    // preserving the final name across sequential rename/reset transitions. This also lets the
+    // first post-YUK-728 event heal a legacy name-only mirror absent from the historical log.
     if (
       fe.action === 'experimental:subject_root_name_update' &&
       fe.subject_kind === 'knowledge' &&
@@ -254,19 +258,11 @@ export function foldKnowledgeNode(
         continue;
       }
       if (row === null) continue;
-      if (row.version !== update.data.payload.previous_version) {
-        warnMalformed(
-          'experimental:subject_root_name_update',
-          fe.id,
-          `previous_version=${update.data.payload.previous_version} does not match folded version=${row.version}`,
-        );
-        continue;
-      }
       row = {
         ...row,
         name: update.data.payload.next_name,
         updated_at: fe.created_at,
-        version: update.data.payload.next_version,
+        version: row.version + 1,
       };
       continue;
     }
