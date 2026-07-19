@@ -342,9 +342,11 @@ describe('buildMemoryEventIngestHandler', () => {
     warnSpy.mockRestore();
   });
 
-  it('YUK-729 — swallows a reconcile enqueue failure (ingest resolves, extraction not retried)', async () => {
+  it('YUK-729 — swallows a reconcile enqueue failure, logging at ERROR with compensation context (ingest resolves, extraction not retried)', async () => {
     const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Reconcile has NO cron backstop, so the drop is logged at console.error (not warn)
+    // with enough context to reconcile the affected mem0 rows by hand.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // boss.send throws only for the reconcile enqueue; brief-regen still succeeds.
     const send = vi.fn(async (name: string) => {
       if (name === MEMORY_RECONCILE_QUEUE) throw new Error('reconcile send boom');
@@ -371,11 +373,14 @@ describe('buildMemoryEventIngestHandler', () => {
     ).resolves.toBeUndefined();
 
     expect(addEventMemory).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[memory_reconcile] reconcile enqueue failed'),
-      expect.any(Error),
-    );
-    warnSpy.mockRestore();
+    // ERROR level + carries the event id and the un-reconciled memory id for manual
+    // compensation.
+    const errorArg = errorSpy.mock.calls[0]?.[0] as string;
+    expect(errorArg).toContain('[memory_reconcile] reconcile enqueue FAILED');
+    expect(errorArg).toContain('evt_1');
+    expect(errorArg).toContain('m1');
+    expect(errorSpy.mock.calls[0]?.[1]).toBeInstanceOf(Error);
+    errorSpy.mockRestore();
   });
 
   it('YUK-729 — caps the brief-regen fan-out at MAX_BRIEF_REGEN_SCOPES and isolates failures within the cap', async () => {

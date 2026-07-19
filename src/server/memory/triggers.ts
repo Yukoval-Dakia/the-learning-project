@@ -71,7 +71,7 @@ const REGEN_SINGLETON_SECONDS = 6 * 60;
 // computeAffectedScopes puts NO ceiling on referenced_knowledge_ids, so a bulk /
 // import-style event could carry hundreds of scopes; without a cap the handler
 // would fire that many boss.send inserts for a single event. Brief regen is
-// best-effort, so a truncated tail is acceptable — the hourly/03:00 sweep partially
+// best-effort, so a truncated tail is acceptable — the daily 03:00 sweep partially
 // backstops scopes that already have a memory_brief_note row.
 export const MAX_BRIEF_REGEN_SCOPES = 64;
 // Reconcile singleton window — short (reconcile is time-sensitive convergence,
@@ -297,7 +297,7 @@ export function buildMemoryEventIngestHandler(
       //      redelivery and re-run the PAID, non-idempotent addEventMemory above
       //      (duplicate cost + a persistent duplicate mem0 row, reconcile being
       //      human-gated to KEEP_BOTH).
-      // Backstop is PARTIAL: listStaleBriefScopes (the hourly/03:00 sweep) re-scans
+      // Backstop is PARTIAL: listStaleBriefScopes (the daily 03:00 sweep) re-scans
       // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
       // scope (or a truncated one) loses just this batch's regen; scopes with an
       // existing brief row are still swept.
@@ -382,16 +382,24 @@ export function buildMemoryEventIngestHandler(
         // YUK-729 — same rationale as the brief-regen swallow above: a transient
         // reconcile-enqueue failure must NOT rethrow and force a whole-job retry
         // that re-pays for the addEventMemory extraction + spawns a duplicate mem0
-        // row. Unlike brief regen, the reconcile queue is event-driven with no
-        // cron sweep (see MEMORY_RECONCILE_QUEUE note above), so the only cost of
-        // swallowing is that THIS batch stays un-reconciled (its memories persist
-        // as raw rows) — still strictly better than a re-paid, duplicate-spawning
-        // retry.
+        // row. But the failure mode is HARSHER than brief regen: the reconcile queue
+        // is event-driven with NO cron sweep (see MEMORY_RECONCILE_QUEUE note above),
+        // and the queue's retryLimit is a JOB-layer control that never covers a failed
+        // boss.send — so a dropped enqueue leaves this batch's mem0 rows permanently
+        // un-reconciled with ZERO automatic recovery path. Per the ticket boundary we
+        // add no new recovery infra; instead this is logged at ERROR with enough
+        // context (event id + the extracted memory ids + kinds + user) that the error
+        // log IS the manual-compensation hook — an operator can re-run reconcile for
+        // those ids or inspect/merge the mem0 rows by hand.
         try {
           await enqueueMemoryReconcile(boss, newMemories, 'self');
         } catch (err) {
-          console.warn(
-            `[memory_reconcile] reconcile enqueue failed for event ${row.id}; batch left un-reconciled`,
+          console.error(
+            `[memory_reconcile] reconcile enqueue FAILED for event ${row.id}; ${newMemories.length} mem0 row(s) left permanently un-reconciled with NO auto-recovery — memory_ids=[${newMemories
+              .map((m) => m.id)
+              .join(
+                ', ',
+              )}] kinds=[${newMemories.map((m) => m.kind).join(', ')}] user=self. Manual compensation: re-enqueue reconcile for these ids or merge the mem0 rows by hand.`,
             err,
           );
         }
