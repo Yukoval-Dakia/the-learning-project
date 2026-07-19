@@ -1,8 +1,14 @@
-# 单用户假设明文化 — 无 user_id，retrofit 成本承认
+# 单用户假设明文化 — 边界与 retrofit 成本承认
 
-**决策**：本项目永久单用户。schema **不**含 `user_id` 列；auth 边界是 `middleware.ts` 的 `x-internal-token`；多设备同步走 export/import（Sub 5 落地）；多账户 / 协作 / 分享 **不支持**。
+**决策**：本项目永久单用户。业务数据不按账户分区；YUK-342 P2 引入的
+`memory_reconciliation_log.user_id` 是显式例外，当前生产 producer 固定传哨兵
+`'self'`（见 `src/db/schema.ts:1551`），因此单用户不变量由哨兵恒定维持，而非由
+“schema 没有 `user_id`”维持。auth 边界是 `server/app.ts:40-46` 的 Hono `/api/*`
+中间件（YUK-321 M5 从 Next.js auth 层迁入组合根）；多设备同步走
+export/import（Sub 5 落地）；多账户 / 协作 / 分享 **不支持**。
 
-如果未来需要多用户（分享、协作、合规多账户），认了"重做 schema + auth + middleware"成本——这是 ADR 显式承担的负债，不是 surprise。
+如果未来需要多用户（分享、协作、合规多账户），认了“重做 schema + auth + API
+组合根”成本——这是 ADR 显式承担的负债，不是 surprise。
 
 ---
 
