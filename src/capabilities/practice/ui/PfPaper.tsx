@@ -317,7 +317,14 @@ export function PfPaper({
     const questionId = cur.question_id;
     const partRef = cur.part_ref;
     if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
-    saveTimers.current[key] = setTimeout(() => runSave(key, questionId, partRef, v), 800);
+    // Drop the key when the debounce fires so saveTimers.current holds ONLY not-yet-fired
+    // saves. Otherwise an already-autosaved slot stays "pending" and the exit/pagehide
+    // flush re-saves it — a redundant PUT whose transient failure would falsely report
+    // unsavedFailures, the exact opposite of the honesty this fix is for.
+    saveTimers.current[key] = setTimeout(() => {
+      delete saveTimers.current[key];
+      void runSave(key, questionId, partRef, v);
+    }, 800);
   };
 
   const goPos = (n: number) => {

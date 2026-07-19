@@ -375,6 +375,25 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
   });
 
+  it('does not re-save an already-autosaved slot on exit (no phantom unsaved failure)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Let the 800ms debounce fire and the autosave land.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    // Exit AFTER the autosave already succeeded: the fired timer's key must be gone, so the
+    // exit flush must NOT re-issue a duplicate save (a redundant PUT whose transient failure
+    // would otherwise falsely report unsavedFailures=1).
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+    expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1);
+  });
+
   it('reports an unsaved failure when the exit flush itself fails', async () => {
     mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
     const user = userEvent.setup();
