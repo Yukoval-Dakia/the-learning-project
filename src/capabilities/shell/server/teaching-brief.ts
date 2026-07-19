@@ -336,6 +336,7 @@ function validateProbeQuestion(
   if (toRecord(probe.metadata).conjecture_proposal_id !== proposal.id) {
     return 'probe_metadata_ref_mismatch';
   }
+  if (probe.knowledge_ids.length === 0) return 'probe_knowledge_empty';
   if (probe.knowledge_ids[0] !== proposal.knowledgeId) return 'probe_knowledge_mismatch';
   if (probe.prompt_md !== proposal.probeMd) return 'probe_prompt_mismatch';
   return null;
@@ -650,36 +651,35 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
       return a.proposal.id === b.proposal.id ? 0 : a.proposal.id < b.proposal.id ? 1 : -1;
     });
 
-  for (const candidate of ranked) {
-    const proposal = candidate.proposal;
-    return {
-      brief_id: proposal.id,
-      state: 'finding',
-      updated_at: proposal.createdAt.toISOString(),
-      expires_at: new Date(
-        proposal.createdAt.getTime() + TEACHING_BRIEF_FINDING_TTL_MS,
-      ).toISOString(),
-      finding: {
-        claim_md: proposal.claimMd,
-        knowledge_id: proposal.knowledgeId,
-        cause_category: proposal.causeCategory,
-      },
-      basis: {
-        summary_md: proposal.reasonMd,
-        evidence_trace: proposal.evidence,
-      },
-      prepared_action: {
-        kind: 'review_finding',
-        proposal_id: proposal.id,
-        probe_preview_md: proposal.probeMd,
-      },
-      current_outcome: {
-        status: 'awaiting_decision',
-        summary_md: '这仍是一条待检验的判断。',
-      },
-    };
-  }
-  return null;
+  const top = ranked.at(0);
+  if (!top) return null;
+  const proposal = top.proposal;
+  return {
+    brief_id: proposal.id,
+    state: 'finding',
+    updated_at: proposal.createdAt.toISOString(),
+    expires_at: new Date(
+      proposal.createdAt.getTime() + TEACHING_BRIEF_FINDING_TTL_MS,
+    ).toISOString(),
+    finding: {
+      claim_md: proposal.claimMd,
+      knowledge_id: proposal.knowledgeId,
+      cause_category: proposal.causeCategory,
+    },
+    basis: {
+      summary_md: proposal.reasonMd,
+      evidence_trace: proposal.evidence,
+    },
+    prepared_action: {
+      kind: 'review_finding',
+      proposal_id: proposal.id,
+      probe_preview_md: proposal.probeMd,
+    },
+    current_outcome: {
+      status: 'awaiting_decision',
+      summary_md: '这仍是一条待检验的判断。',
+    },
+  };
 }
 
 /**
@@ -697,6 +697,13 @@ export async function loadTeachingBrief(
   const probe = await loadProbeBrief(db, now);
   if (probe) return { brief: probe };
 
-  await logAcceptedWithoutProbe(db, now);
+  try {
+    await logAcceptedWithoutProbe(db, now);
+  } catch (error) {
+    // Diagnostic-only scan; it must never break the finding-brief fallback.
+    console.warn('[teaching-brief] accepted-without-probe scan failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   return { brief: await loadFindingBrief(db, now) };
 }
