@@ -171,10 +171,13 @@ export async function recordPrimaryActionStarted(
   // Server-layer self-defense (double layer with the route's Zod refine): result_event_id is
   // REQUIRED for scoped_practice (the report joins on it) and FORBIDDEN for the others, so a direct
   // (non-route) caller cannot write a malformed row. A programmer-error invariant → throw.
-  if (input.actionKind === 'scoped_practice' && input.resultEventId === undefined) {
+  // Truthiness, NOT `=== undefined`: an empty string is falsy and would be DROPPED by the payload
+  // construction below (`input.resultEventId ? … : {}`), so `''` on scoped_practice must also throw —
+  // otherwise it slips past the guard and writes a scoped_practice row with no join key.
+  if (input.actionKind === 'scoped_practice' && !input.resultEventId) {
     throw new Error('recordPrimaryActionStarted: scoped_practice requires resultEventId');
   }
-  if (input.actionKind !== 'scoped_practice' && input.resultEventId !== undefined) {
+  if (input.actionKind !== 'scoped_practice' && input.resultEventId) {
     throw new Error(
       'recordPrimaryActionStarted: resultEventId is only allowed for the scoped_practice action',
     );

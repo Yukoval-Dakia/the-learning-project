@@ -157,6 +157,15 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
         DAY1,
       ),
     ).rejects.toThrow(/only allowed for the scoped_practice/);
+    // An EMPTY-STRING resultEventId on scoped_practice must also throw (it is falsy and would be
+    // dropped by the payload builder, so `=== undefined` alone would let a join-key-less row slip).
+    await expect(
+      recordPrimaryActionStarted(
+        testDb(),
+        { briefId: 'b1', actionKind: 'scoped_practice', resultEventId: '' },
+        DAY1,
+      ),
+    ).rejects.toThrow(/scoped_practice requires resultEventId/);
     expect(await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1')).toHaveLength(0);
   });
 

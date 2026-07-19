@@ -17,6 +17,7 @@
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see rebuild-projection.ts).
 import './load-env';
 
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   isCandidateError,
@@ -325,6 +326,9 @@ async function main(): Promise<void> {
 
 // CLI-gate: only run as the CLI entry point so the DB test can import loadTeachingBriefReportInput
 // without the top-level run firing.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// `resolve(process.argv[1])` — argv[1] may be relative (e.g. `tsx scripts/report-teaching-brief.ts`);
+// comparing it raw against the absolute fileURLToPath would miss, so main() would silently never run
+// and the process would exit 0 with no output. Mirrors the repo's other script entry gates.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void main();
 }
