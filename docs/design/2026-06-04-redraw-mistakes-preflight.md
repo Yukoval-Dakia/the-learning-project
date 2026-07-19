@@ -67,22 +67,34 @@ grep `app/globals.css` 结果：
 
 ## 6. Touch 文件清单
 
+### Wave-2 原始实现（历史）
+
 - **MODIFY** `app/(app)/mistakes/page.tsx`：包 `.mistakes-loom` wrapper；`PageHeader`→loom `.page-head`（eyebrow/标题/hero-cta/lead）；load/error/empty/ok 四态 → `<Stateful>` + `<EmptyState>` + `<SkLines>`；列表 `Card`+inline-style→`MistakeCard`（LoomCard + CauseBadge + CorrectionStateRenderer + chip-k + events Link）；删除约 90 行 inline `React.CSSProperties` 对象（被 loom 类取代）。**保留**：`useQuery(['mistakes'])` 全配置（queryKey/queryFn/refetchInterval/refetchOnWindowFocus）、`total`/`pending`/`attributed` 派生、`ApiAuthError` 错误分支文案、`/events/{id}` 链接、`MistakeRow` 接口。
 - **MODIFY** `app/globals.css`：尾部追加 `LOOM MISTAKES LAYER — Wave 2` banner 段（scoped `.mistakes-loom` 错题卡类 + stagger 重声明）。append 前已 grep collision-check（§5）。
 - **REUSE（不动）**：`Btn`/`LoomCard`/`LoomBadge`/`LoomIcon`/`Stateful`/`EmptyState`/`SkLines`/`CauseBadge`/`CorrectionStateRenderer`/`apiJson`/`formatRelTime` primitives 与既有 loom CSS。
 - **DROP（legacy import 移除）**：`PageHeader`、legacy `Card`、legacy `Badge`（chip 改用原生 `.chip.chip-k`）—— 若移除后 grep 确认本文件不再引用即删 import。
+
+### YUK-411 follow-up（当前 Vite SPA，2026-07-19）
+
+- **MODIFY** `src/server/records/mistakes.ts`：查询并投影 nullable `question.reference_md`，沿用 200 字符边界。
+- **MODIFY** `src/capabilities/ingestion/api/contracts.ts`、`src/capabilities/ingestion/api/mistakes.ts`：同步 wire schema 与 route 文档。
+- **MODIFY** `web/src/routes/MistakesPage.tsx`、`web/src/globals.css`：有正解时恢复 `.cmp-right` 行；null/blank 时保留单「误」降级；补既定 good token 样式。
+- **TEST** `src/capabilities/ingestion/api/mistakes.db.test.ts`、`web/src/routes/MistakesPage.unit.test.tsx`：覆盖 200 字符边界、nullable wire contract、双行与降级渲染。
+- **MODIFY** 本文档：移除已经闭合的 phase-deferred 描述，保留其余 no-mock 边界。
 
 ## 7. 风险 + 缓解
 
 - **「正解」缺失已由 YUK-411 闭合**：投影现在带 nullable `reference_md`；有值时按 loom 原形显示「误/正」，历史缺值行保持单「误」降级。
 - **复用 primitive vs 照搬 prototype**：AttributionBadge/state badge 用现有 `CauseBadge`/`CorrectionStateRenderer`（语义全覆盖），不照搬 prototype 的简化版——避免双套归因展示逻辑漂移（符合反过度工程 / 复用已有 primitive）。
 - **stagger scope**：globals stagger 仅 today-loom；本刀在 mistakes-loom 下重声明，不动 today 块，零回归。
-- **gate**：`pnpm build` = CSS-layer + route-export 唯一硬 gate（YUK-67）；无该页单测（grep=0）故不跑 vitest。
+- **gate（YUK-411）**：mistakes UI unit 4/4、mistakes API/DB 31/31、`pnpm typecheck`、`pnpm audit:api-contracts`、`pnpm audit:learner-copy`、`pnpm build` 全绿。
 
 ## 8. Build order
 
-scoped CSS 层（globals append）→ 重写 page（wrapper + chrome + Stateful 四态 + MistakeCard）→ verify gate（biome / typecheck / build）→ commit（preflight + impl）。
+Wave-2 历史顺序：scoped CSS 层（globals append）→ 重写 page（wrapper + chrome + Stateful 四态 + MistakeCard）→ verify gate（biome / typecheck / build）→ commit（preflight + impl）。
+
+YUK-411 follow-up：投影 + contract → MistakeCard nullable 双态 → CSS token → DB/API + UI unit → typecheck / audits / build。
 
 ---
 
-*本刀纯重绘 `/mistakes`；唯一 query + 派生 + events 链接接线不动；正解对照 / inline 事件链 / 知识点名 三处后端缺口按 §4 drop + 注释，绝不 mock。*
+*Wave-2 原始刀为纯重绘；YUK-411 后续只闭合正解对照的数据与渲染链。inline 事件链仍按 §4 drop，知识点名现由 knowledge-tree fan-out 提供；全程不 mock 产品数据。*
