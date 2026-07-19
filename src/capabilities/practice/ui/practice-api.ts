@@ -40,6 +40,11 @@ export interface StreamItem {
   reasoning: string;
   status: StreamStatus;
   estimated_minutes: number;
+  knowledge_name: string | null;
+  paper_title: string | null;
+  verdict: 'again' | 'hard' | 'good' | null;
+  completed_at: string | null;
+  total_slots: number | null;
 }
 
 export interface StreamView {

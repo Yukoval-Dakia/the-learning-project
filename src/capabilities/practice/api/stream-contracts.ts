@@ -40,6 +40,11 @@ const PracticeStreamViewItemSchema = z.object({
   reasoning: z.string(),
   status: PracticeStreamItemStatusSchema,
   estimated_minutes: z.number().nonnegative(),
+  knowledge_name: z.string().nullable(),
+  paper_title: z.string().nullable(),
+  verdict: z.enum(['again', 'hard', 'good']).nullable(),
+  completed_at: z.string().datetime().nullable(),
+  total_slots: z.number().int().nonnegative().nullable(),
 });
 
 export const PracticeStreamResponseSchema = z.object({
@@ -85,6 +90,11 @@ const PersistedPracticeStreamItemSchema = z.object({
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   estimated_minutes: z.number().nonnegative(),
+  knowledge_name: z.string().nullable(),
+  paper_title: z.string().nullable(),
+  verdict: z.enum(['again', 'hard', 'good']).nullable(),
+  completed_at: z.string().datetime().nullable(),
+  total_slots: z.number().int().nonnegative().nullable(),
 });
 
 export const PracticeStreamItemUpdatedResponseSchema = z.object({

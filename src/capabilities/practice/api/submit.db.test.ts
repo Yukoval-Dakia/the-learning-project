@@ -1346,6 +1346,11 @@ describe('POST /api/review/submit', () => {
       expect(labels[0].b_label).not.toBeNull(); // IRT-reverse 反推的非空 impliedB
       expect(labels[0].outcome).toBe(1); // exact correct → success → outcome 1
       expect(labels[0].attempt_event_id).not.toBeNull(); // provenance 锚
+      const [review] = await testDb()
+        .select({ payload: event.payload })
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q432_obj')));
+      expect((review.payload as Record<string, unknown>).stream_item_id).toBe(slotId);
     });
 
     it('(b) 开放题手动评级（无 auto_rate）→ 零标签（流不变）', async () => {

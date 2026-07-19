@@ -11,7 +11,7 @@
 
 import type { ToolStateSectionT } from '@/core/schema/business';
 
-type ToolStateLike =
+export type ToolStateLike =
   | {
       question_ids?: string[];
       sections?: ToolStateSectionT[] | null;
@@ -85,6 +85,21 @@ export function readPaperSections(toolState: ToolStateLike): ToolStateSectionT[]
     return (metaSections as U4Section[]).map(normalizeU4Section);
   }
   return [];
+}
+
+/**
+ * Count the paper's canonical answerable slots. Structured papers key a slot by
+ * question + part; legacy flat quizzes fall back to their question_ids list.
+ * Kept beside readPaperSections so the shelf and stream projections cannot drift.
+ */
+export function countPaperSlots(toolState: ToolStateLike): number {
+  const slotKeys = new Set<string>();
+  for (const section of readPaperSections(toolState)) {
+    for (const assignment of section.assignments) {
+      slotKeys.add(`${assignment.question_id}::${assignment.part_ref ?? ''}`);
+    }
+  }
+  return slotKeys.size > 0 ? slotKeys.size : (toolState?.question_ids?.length ?? 0);
 }
 
 export interface ResolvedSlotAssignment {
