@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDraftListQuery,
   buildPaperAnswerDraftBody,
+  buildPaperAnswerDraftInit,
   buildPaperSubmissionBody,
   buildPracticeStreamUrl,
   buildQuestionsListQuery,
@@ -148,5 +149,44 @@ describe('paper write resource bodies (YUK-644)', () => {
       part_ref: null,
       answer_md: '我的答案',
     });
+  });
+});
+
+describe('buildPaperAnswerDraftInit — keepalive body-size guard (YUK-732)', () => {
+  const base = { session_id: 'review_1', question_id: 'q1', part_ref: null };
+
+  it('serializes the body once and keeps keepalive for a normal-size draft', () => {
+    const init = buildPaperAnswerDraftInit(
+      'paper_1',
+      { ...base, answer_md: '我的答案' },
+      { keepalive: true },
+    );
+    expect(init.method).toBe('POST');
+    expect(init.keepalive).toBe(true);
+    // Same serialized string used for the size check and the request body — no double work.
+    expect(JSON.parse(init.body as string)).toEqual({
+      paper_id: 'paper_1',
+      question_id: 'q1',
+      part_ref: null,
+      content_md: '我的答案',
+    });
+  });
+
+  it('drops keepalive for an oversized draft but still sends the body', () => {
+    // Over the 60KB keepalive budget → keepalive would make fetch throw and drop the draft,
+    // so it falls back to a normal fetch that still carries the full answer.
+    const huge = 'a'.repeat(61_000);
+    const init = buildPaperAnswerDraftInit(
+      'paper_1',
+      { ...base, answer_md: huge },
+      { keepalive: true },
+    );
+    expect(init.keepalive).toBeUndefined();
+    expect(JSON.parse(init.body as string).content_md).toBe(huge);
+  });
+
+  it('never sets keepalive when it is not requested', () => {
+    const init = buildPaperAnswerDraftInit('paper_1', { ...base, answer_md: '短' });
+    expect(init.keepalive).toBeUndefined();
   });
 });

@@ -4,6 +4,7 @@
 // 整卷小结 M2 为本地模板（按错数挑选）；M4 夜链接管后改为 AI 生成随卷持久化。
 // 错题去向 trace（归因事件 / 变式排期）等 M4 归因链上线后接真数据。
 
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -124,7 +125,10 @@ export function PfRetro({
   // 三态分离（YUK-732，与 NoteReaderPage 口径一致）：瞬时加载失败 ≠ 真空态。
   // isLoadingError = 无缓存的首次 fetch 失败——示带重试的错误态；已加载后窗口聚焦/重连
   // 触发的后台 refetch 失败会保留旧 data，不落此分支、不整页替换。
-  if (detailQ.isLoadingError)
+  // 404 语义是「卷不存在/已删」= 空，不是「加载失败」——放行到下面的 EmptyState（同
+  // NoteReaderPage 口径），只有瞬时错误（网络/5xx）才示带重试的 ErrorState。
+  const isNotFound = detailQ.error instanceof ApiError && detailQ.error.status === 404;
+  if (detailQ.isLoadingError && !isNotFound)
     return (
       <div className="pfr">
         <Btn size="sm" variant="ghost" icon="arrowL" onClick={onBack}>
@@ -134,7 +138,7 @@ export function PfRetro({
       </div>
     );
   const detail = detailQ.data;
-  // 真空态：detail 成功返回但没有可复盘的记录（语义上「空」，非「加载失败」）。
+  // 真空态：detail 成功返回但没有可复盘的记录，或 404（卷不存在）——语义上「空」，非「加载失败」。
   if (!detail)
     return (
       <div className="pfr">

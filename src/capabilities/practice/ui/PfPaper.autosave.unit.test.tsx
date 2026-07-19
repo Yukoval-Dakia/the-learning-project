@@ -565,4 +565,28 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
 
     resolveSave({ ok: true });
   });
+
+  it('swallows a throwing host onExit instead of raising an unhandled rejection', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onExit = vi.fn(() => {
+      throw new Error('host boom');
+    });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PfPaper artifactId="paper_1" onExit={onExit} onSubmitted={vi.fn()} addToast={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalled());
+    // The throw was caught and logged, not left to reject the async exitPaper.
+    expect(errSpy).toHaveBeenCalledWith('[PfPaper] onExit threw', expect.any(Error));
+    errSpy.mockRestore();
+  });
 });

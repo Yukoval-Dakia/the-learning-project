@@ -564,19 +564,41 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
   };
 }
 
-export const savePaperAnswer = (
+// keepalive requests share a spec-mandated ~64KB budget across ALL of the page's in-flight
+// keepalive bodies; a body over it makes fetch throw a TypeError synchronously and the draft
+// never leaves. Stay comfortably under it (other keepalive PATCHes count too).
+export const KEEPALIVE_MAX_BODY_BYTES = 60_000;
+
+export function buildPaperAnswerDraftInit(
   artifactId: string,
   input: PaperWriteInput,
   // keepalive lets an exit/pagehide flush outlive the page teardown: a normal fetch is
   // dropped when the tab closes, but a keepalive PUT (unlike sendBeacon, it still carries
   // the x-internal-token header) is allowed to finish. Best-effort only.
   options: { keepalive?: boolean } = {},
-) =>
-  apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`, {
+): RequestInit {
+  // Serialize once and reuse for both the size check and the request body (no double work).
+  const body = JSON.stringify(buildPaperAnswerDraftBody(artifactId, input));
+  // An oversized draft falls back to a normal fetch rather than throwing on keepalive: on an
+  // in-app exit the page is still alive so it lands anyway, and on pagehide a dropped best-
+  // effort save is no worse than the TypeError that would otherwise lose it outright.
+  const withinKeepaliveBudget = new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BODY_BYTES;
+  return {
     method: 'POST',
-    body: JSON.stringify(buildPaperAnswerDraftBody(artifactId, input)),
-    ...(options.keepalive ? { keepalive: true } : {}),
-  });
+    body,
+    ...(options.keepalive && withinKeepaliveBudget ? { keepalive: true } : {}),
+  };
+}
+
+export const savePaperAnswer = (
+  artifactId: string,
+  input: PaperWriteInput,
+  options: { keepalive?: boolean } = {},
+) =>
+  apiJson(
+    `/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`,
+    buildPaperAnswerDraftInit(artifactId, input, options),
+  );
 
 export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>
   apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/submissions`, {

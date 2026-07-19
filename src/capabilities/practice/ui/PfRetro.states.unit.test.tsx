@@ -2,6 +2,7 @@
 // YUK-732 — 复盘三态分离：loading / error(带重试) / empty(真空态)，error ≠ empty。
 // 瞬时加载失败落带重试的错误态，而非把学习者困在「复盘加载失败」死胡同。
 
+import { ApiError } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -95,6 +96,17 @@ describe('PfRetro load states (YUK-732)', () => {
 
   it('shows a distinct empty state (not an error, no retry) when there is no retro detail', async () => {
     mocks.getPaperDetail.mockResolvedValue(null);
+    renderRetro();
+
+    expect(await screen.findByText('还没有复盘')).toBeTruthy();
+    expect(screen.queryByText('复盘加载失败。')).toBeNull();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+  });
+
+  it('treats a 404 as an empty state, not a retryable error', async () => {
+    // 「卷不存在/已删」is semantically empty — it must NOT show the retryable ErrorState
+    // (retrying a 404 just fails again). Mirrors the NoteReaderPage isNotFound split.
+    mocks.getPaperDetail.mockRejectedValue(new ApiError('paper not found', 404));
     renderRetro();
 
     expect(await screen.findByText('还没有复盘')).toBeTruthy();

@@ -342,7 +342,13 @@ export function PfPaper({
       const ok = outcome.get(k);
       return ok === undefined ? (saveFailed[k] ?? false) : !ok;
     }).length;
-    onExit({ unsavedFailures });
+    // Never let a throwing host onExit surface as an unhandled rejection out of this async
+    // handler — the exit work is already done; a bad host callback shouldn't crash it.
+    try {
+      onExit({ unsavedFailures });
+    } catch (err) {
+      console.error('[PfPaper] onExit threw', err);
+    }
   };
 
   if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
