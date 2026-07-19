@@ -925,6 +925,8 @@ describe('POST /api/ingestion/[id]/import', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks).toHaveLength(1);
+    // Empty session: max(ordinal) is NULL, so append base starts at zero.
+    expect(blocks[0]?.ordinal).toBe(0);
   });
 
   it('YUK-725 — manual block appends after the session max ordinal instead of colliding with extraction order', async () => {
@@ -935,24 +937,30 @@ describe('POST /api/ingestion/[id]/import', () => {
     await insertKnowledge(db, 'k1');
 
     const directA = makeImportBody().blocks[0];
+    const manualBlock = {
+      source_block_ids: [] as string[],
+      page_spans: [
+        { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' as const },
+      ],
+      image_refs: ['asset_1'],
+      final_prompt_md: 'Manual appended Q',
+      final_reference_md: null,
+      final_wrong_answer_md: 'Manual WA',
+      knowledge_ids: ['k1'],
+      cause: null,
+      difficulty: 3,
+      question_kind: 'short_answer',
+    };
     const res = await post(sessionId, {
       blocks: [
-        {
-          // Payload index 0 used to collide with block_a's extraction ordinal 0.
-          source_block_ids: [],
-          page_spans: [
-            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
-          ],
-          image_refs: ['asset_1'],
-          final_prompt_md: 'Manual appended Q',
-          final_reference_md: null,
-          final_wrong_answer_md: 'Manual WA',
-          knowledge_ids: ['k1'],
-          cause: null,
-          difficulty: 3,
-          question_kind: 'short_answer',
-        },
+        // Payload index 0 used to collide with block_a's extraction ordinal 0.
+        manualBlock,
         directA,
+        {
+          ...manualBlock,
+          final_prompt_md: 'Manual appended Q 2',
+          final_wrong_answer_md: 'Manual WA 2',
+        },
         {
           ...directA,
           block_id: 'block_b',
@@ -967,10 +975,14 @@ describe('POST /api/ingestion/[id]/import', () => {
       .select()
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
-    const manual = blocks.find((block) => block.extracted_prompt_md === 'Manual appended Q');
-    expect(manual).toBeDefined();
+    const manual1 = blocks.find((block) => block.extracted_prompt_md === 'Manual appended Q');
+    const manual2 = blocks.find((block) => block.extracted_prompt_md === 'Manual appended Q 2');
+    expect(manual1).toBeDefined();
+    expect(manual2).toBeDefined();
     // max(existing ordinals 0, 3) + 1 + payload index 0 = 4.
-    expect(manual?.ordinal).toBe(4);
+    expect(manual1?.ordinal).toBe(4);
+    // The second manual card is at payload index 2, so it receives base 4 + 2 = 6.
+    expect(manual2?.ordinal).toBe(6);
     expect(blocks.find((block) => block.id === 'block_a')?.ordinal).toBe(0);
     expect(blocks.find((block) => block.id === 'block_b')?.ordinal).toBe(3);
   });
