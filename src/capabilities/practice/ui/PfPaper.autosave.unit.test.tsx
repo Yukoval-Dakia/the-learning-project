@@ -72,13 +72,35 @@ const twoSlotDetail = {
 // Cold open: no session on the detail → the page starts one via startPaperSession.
 const noSessionDetail = { ...textDetail, session: null };
 
-function renderPaper() {
+// A single-slot detail whose one slot carries the given draft (same slot key across
+// papers, to exercise the cross-paper answer bleed).
+function draftDetail(content: string) {
+  return {
+    ...textDetail,
+    sections: [
+      {
+        section_index: 0,
+        knowledge_focus_names: [],
+        slots: [
+          {
+            ...textSlot('question_1', '简答这道题'),
+            slot_state: { draft: { content_md: content }, submission: null },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function renderPaper(artifactId = 'paper_1') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const ui = (id: string) => (
     <QueryClientProvider client={queryClient}>
-      <PfPaper artifactId="paper_1" onExit={vi.fn()} onSubmitted={vi.fn()} addToast={vi.fn()} />
-    </QueryClientProvider>,
+      <PfPaper artifactId={id} onExit={vi.fn()} onSubmitted={vi.fn()} addToast={vi.fn()} />
+    </QueryClientProvider>
   );
+  const utils = render(ui(artifactId));
+  return { ...utils, rerenderWith: (id: string) => utils.rerender(ui(id)) };
 }
 
 beforeEach(() => {
@@ -208,5 +230,41 @@ describe('PfPaper autosave failure (YUK-713)', () => {
       session_id: 'review_1',
       question_id: 'question_1',
     });
+  });
+
+  it('clears the retry chip once the failed slot is submitted (not stuck)', async () => {
+    mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await screen.findByRole('button', { name: '保存失败 · 重试' }, { timeout: 2500 });
+
+    // Submitting captures the answer regardless of the failed draft PUT — the retry chip
+    // must not stay stuck with nothing left to save.
+    await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: '保存失败 · 重试' })).toBeNull(),
+    );
+    expect(screen.getByText('草稿自动保存')).toBeTruthy();
+  });
+
+  it('clears answers and reloads the draft when the paper (artifactId) changes', async () => {
+    // Both papers share the slot key question_1:: but carry different server drafts.
+    mocks.getPaperDetail.mockImplementation((id: string) =>
+      Promise.resolve(id === 'paper_B' ? draftDetail('答案B') : draftDetail('答案A')),
+    );
+    const { rerenderWith } = renderPaper('paper_A');
+
+    expect(((await screen.findByLabelText('作答')) as HTMLTextAreaElement).value).toBe('答案A');
+
+    rerenderWith('paper_B');
+
+    // Without the answers reset the shared slot key kept 答案A and skipped paper B's draft.
+    await waitFor(() =>
+      expect((screen.getByLabelText('作答') as HTMLTextAreaElement).value).toBe('答案B'),
+    );
   });
 });

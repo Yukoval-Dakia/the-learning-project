@@ -67,10 +67,13 @@ export function PfPaper({
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
-  // carry a stale 「保存失败」into a different paper; clear pending timers in place (keep
-  // the map identity so the unmount cleanup below always sees the live timers).
+  // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
+  // in place (keep the map identity so the unmount cleanup below always sees live timers).
+  // answers must reset too: the backfill effect only fills undefined keys, so without this
+  // a shared slot key would keep paper A's answer and skip paper B's server draft.
   // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
   useEffect(() => {
+    setAnswers({});
     setSaveFailed({});
     saveSeq.current = {};
     for (const k of Object.keys(saveTimers.current)) {
@@ -184,9 +187,26 @@ export function PfPaper({
       });
   };
 
-  const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)]);
+  // A submitted slot's draft no longer needs saving, so a lingering failure flag on it
+  // must NOT keep the retry chip lit (submitAll captures the latest answer regardless of
+  // whether the draft PUT landed).
+  const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)));
   const retryFailedSaves = () => {
     if (retrying) return;
+    // Drop failure flags on any slot submitted since it failed, so the chip can't stay
+    // lit with nothing left to retry.
+    setSaveFailed((f) => {
+      const next = { ...f };
+      let changed = false;
+      for (const s of slots) {
+        const k = slotKey(s);
+        if (f[k] && submittedKeys.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : f;
+    });
     // Skip already-submitted slots — a draft PUT to a submitted slot has undefined
     // backend behaviour (setAnswer guards the same way).
     const pending = slots
@@ -242,6 +262,13 @@ export function PfPaper({
       }
       await endPaperSession(sid);
       completionCommitted = true;
+      // Every slot is now submitted — no draft can still be unsaved, so drop any lingering
+      // failure flags (and pending debounces) rather than leave the retry chip stuck.
+      setSaveFailed({});
+      for (const k of Object.keys(saveTimers.current)) {
+        clearTimeout(saveTimers.current[k]);
+        delete saveTimers.current[k];
+      }
       await qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       onSubmitted();
     } catch (e) {

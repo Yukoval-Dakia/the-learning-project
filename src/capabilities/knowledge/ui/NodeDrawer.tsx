@@ -66,8 +66,11 @@ function EdgeProposalRow({
     onDecide(decision)
       .then(() => setDone(label))
       // 409/500 → 不再让 promise 静默 reject（未捕获），点亮失败提示；.finally 复位
-      // busy 后按钮重新可点即为重试入口（mirror createM.isError 先例）。
-      .catch(() => setFailed(true))
+      // busy 后按钮重新可点即为重试入口（mirror createM.isError 先例）。记 console 便于诊断。
+      .catch((err) => {
+        console.error('[EdgeProposalRow] decide failed:', err);
+        setFailed(true);
+      })
       .finally(() => setBusy(false));
   };
   if (done)
