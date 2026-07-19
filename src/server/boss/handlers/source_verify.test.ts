@@ -15,6 +15,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { event, knowledge, question } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
@@ -22,6 +23,7 @@ import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
+  withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
@@ -83,6 +85,7 @@ interface SeedQuestionOpts {
   // missing-extract → source_consistency fail path).
   omitExtract?: boolean;
   supplyTrace?: unknown;
+  difficultyEvidence?: unknown;
 }
 
 async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
@@ -109,6 +112,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
       },
       ...(opts.sourceRefKind === null ? {} : { source_ref_kind: opts.sourceRefKind ?? 'url' }),
       ...(opts.supplyTrace ? { supply_trace: opts.supplyTrace } : {}),
+      ...(opts.difficultyEvidence ? { difficulty_evidence: opts.difficultyEvidence } : {}),
     } as Record<string, unknown>);
 
   await db.insert(question).values({
@@ -141,21 +145,25 @@ describe('runSourceVerify', () => {
   it('promotes draft→active + FSRS-enrolls when every tier-2 check passes', async () => {
     const db = testDb();
     await seedKnowledge('k1');
-    const supplyTrace = buildSupplyTrace(
-      {
-        targetId: 'target-source-verify',
-        targetFingerprint: 'fp-source-verify',
-        context: evidenceDemandToTargetContext(
-          buildCoverageEvidenceDemand({
-            subjectId: 'yuwen',
-            knowledgeIds: ['k1'],
-            statement: 'verify source evidence',
-          }),
-        ),
-      },
-      'sourcing_web',
+    const difficultyEvidence = buildProducerDifficultyEvidence(2, 'sourcing_web');
+    const supplyTrace = withSupplyTraceDifficultyEvidence(
+      buildSupplyTrace(
+        {
+          targetId: 'target-source-verify',
+          targetFingerprint: 'fp-source-verify',
+          context: evidenceDemandToTargetContext(
+            buildCoverageEvidenceDemand({
+              subjectId: 'yuwen',
+              knowledgeIds: ['k1'],
+              statement: 'verify source evidence',
+            }),
+          ),
+        },
+        'sourcing_web',
+      ),
+      difficultyEvidence,
     );
-    const qid = await seedQuestion({ knowledgeIds: ['k1'], supplyTrace });
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], supplyTrace, difficultyEvidence });
     // exact-kind solver AGREES with the reference answer → solve_check pass.
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
 
@@ -178,7 +186,10 @@ describe('runSourceVerify', () => {
     expect(events[0].outcome).toBe('success');
     // YUK-350 (L3, RL5) — a promoted verify carries NO failure_class.
     expect((events[0].payload as Record<string, unknown>).failure_class).toBeUndefined();
-    expect(events[0].payload).toMatchObject({ supply_trace: supplyTrace });
+    expect(events[0].payload).toMatchObject({
+      supply_trace: supplyTrace,
+      difficulty_evidence: difficultyEvidence,
+    });
   });
 
   it('promotes an exact text mismatch when SemanticJudge establishes equivalence', async () => {

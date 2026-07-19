@@ -1,3 +1,4 @@
+import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +7,7 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
   parseSupplyTrace,
+  withSupplyTraceDifficultyEvidence,
 } from './evidence-demand';
 import { scanCoverageGaps } from './target-discovery';
 
@@ -120,5 +122,20 @@ describe('EvidenceDemand v1', () => {
       new Set(['demand:v1:math:kc-1']),
     );
     expect(contexts.every((context) => context?.demand_version === 1)).toBe(true);
+  });
+
+  it('additively preserves production difficulty evidence on a supply trace', () => {
+    const trace = buildSupplyTrace(
+      {
+        targetId: 'target-difficulty',
+        targetFingerprint: 'fp-difficulty',
+        context: evidenceDemandToTargetContext(demand()),
+      },
+      'quiz_gen',
+    );
+    const evidence = buildProducerDifficultyEvidence(4, 'quiz_gen');
+    expect(withSupplyTraceDifficultyEvidence(trace, evidence).difficulty_evidence).toEqual(
+      evidence,
+    );
   });
 });

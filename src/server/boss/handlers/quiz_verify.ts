@@ -36,6 +36,7 @@ import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
@@ -247,6 +248,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       : {};
   const supplyTrace =
     metadataRaw.supply_trace === undefined ? undefined : parseSupplyTrace(metadataRaw.supply_trace);
+  const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
   const parsedMeta = QuizGenMetadata.safeParse(metadataRaw.quiz_gen);
   // YUK-607（PR #750 review round）— 生成输出经 jsonrepair 级修复救回的批：语法救回但
   // 内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过非 strict Zod 门）。
@@ -745,6 +747,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // `...unified` above (the unified verify contract shape). failure_class is keyed
           // there only when !promote (validation_failure), identical to the prior inline.
           verified_by: verifiedBy,
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
@@ -843,6 +846,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,

@@ -280,7 +280,16 @@ describe('runSourcing', () => {
 
     const meta = row.metadata as Record<string, unknown>;
     expect(meta.source_ref_kind).toBe('url');
-    expect(meta.supply_trace).toEqual(supplyTrace);
+    expect(meta.difficulty_evidence).toMatchObject({
+      value: row.difficulty,
+      scale: 'loom_difficulty_1_5',
+      basis: 'producer_estimate',
+      source_route: 'sourcing_web',
+    });
+    expect(meta.supply_trace).toMatchObject({
+      ...supplyTrace,
+      difficulty_evidence: meta.difficulty_evidence,
+    });
     const web = meta.web_sourced as Record<string, unknown>;
     expect(web.url).toBe('https://example.edu/wenyan/lunyu');
     expect(web.title).toBe('论语·学而 注疏');
@@ -302,7 +311,10 @@ describe('runSourcing', () => {
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('success');
-    expect(events[0].payload).toMatchObject({ supply_trace: supplyTrace });
+    expect(events[0].payload).toMatchObject({
+      supply_trace: supplyTrace,
+      difficulty_evidence: [{ question_id: qid, evidence: meta.difficulty_evidence }],
+    });
   });
 
   it('mounts the Tavily + domain MCP and folds Tavily allowedTools only when configured', async () => {

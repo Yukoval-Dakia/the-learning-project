@@ -22,6 +22,11 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import {
+  DifficultyEvidence,
+  type DifficultyEvidenceT,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
+import {
   PROSE_KINDS,
   defaultJudgeKindForQuestion,
   nonEmptyStrings,
@@ -58,7 +63,11 @@ import {
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { writeEvent } from '@/server/events/queries';
-import { type SupplyTraceV1T, parseSupplyTrace } from '@/server/question-supply/evidence-demand';
+import {
+  type SupplyTraceV1T,
+  parseSupplyTrace,
+  withSupplyTraceDifficultyEvidence,
+} from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -597,6 +606,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    const difficultyEvidenceByQuestion: Array<{
+      question_id: string;
+      evidence: DifficultyEvidenceT;
+    }> = [];
     const quizKnowledgeIds = new Set<string>();
     const toolQuizArtifactId = createId();
     const now = new Date();
@@ -635,6 +648,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const declaredDifficultyEvidence =
+          q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, 'quiz_gen', now);
+        const difficultyEvidence = DifficultyEvidence.parse({
+          ...declaredDifficultyEvidence,
+          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
+          source_route: declaredDifficultyEvidence.source_route ?? 'quiz_gen',
+        });
+        const questionSupplyTrace = params.supplyTrace
+          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
+          : undefined;
         for (const kid of questionKnowledgeIds) {
           quizKnowledgeIds.add(kid);
         }
@@ -707,7 +730,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             created_by: aiAgentRef('QuizGenTask', result),
             metadata: {
               quiz_gen: metaQuizGen,
-              ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+              difficulty_evidence: difficultyEvidence,
+              ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
             },
             created_at: now,
             updated_at: now,
@@ -716,10 +740,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'quiz_verify',
-          supplyTrace: params.supplyTrace,
+          supplyTrace: questionSupplyTrace,
           createdAt: now,
         });
         questionIds.push(id);
+        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
 
       // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create from the materialized row.
@@ -788,6 +813,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
+        difficulty_evidence: difficultyEvidenceByQuestion,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

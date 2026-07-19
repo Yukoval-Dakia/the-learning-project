@@ -14,12 +14,14 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
+import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
 import {
   buildCoverageEvidenceDemand,
   buildSupplyTrace,
   evidenceDemandToTargetContext,
+  withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
@@ -131,6 +133,7 @@ async function seedDraftQuestion(opts: {
   judge?: string | null;
   rubricJson?: unknown;
   supplyTrace?: unknown;
+  difficultyEvidence?: unknown;
 }) {
   const db = testDb();
   const now = new Date();
@@ -153,6 +156,7 @@ async function seedDraftQuestion(opts: {
     metadata: {
       quiz_gen: opts.meta ?? BASE_META,
       ...(opts.supplyTrace ? { supply_trace: opts.supplyTrace } : {}),
+      ...(opts.difficultyEvidence ? { difficulty_evidence: opts.difficultyEvidence } : {}),
     } as never,
     created_at: now,
     updated_at: now,
@@ -276,21 +280,30 @@ describe('runQuizVerify', () => {
 
   it('pass: promotes draft→active and FSRS-enrolls the question', async () => {
     await seedKnowledge('k1');
-    const supplyTrace = buildSupplyTrace(
-      {
-        targetId: 'target-quiz-verify',
-        targetFingerprint: 'fp-quiz-verify',
-        context: evidenceDemandToTargetContext(
-          buildCoverageEvidenceDemand({
-            subjectId: 'yuwen',
-            knowledgeIds: ['k1'],
-            statement: 'verify generated evidence',
-          }),
-        ),
-      },
-      'quiz_gen',
+    const difficultyEvidence = buildProducerDifficultyEvidence(3, 'quiz_gen');
+    const supplyTrace = withSupplyTraceDifficultyEvidence(
+      buildSupplyTrace(
+        {
+          targetId: 'target-quiz-verify',
+          targetFingerprint: 'fp-quiz-verify',
+          context: evidenceDemandToTargetContext(
+            buildCoverageEvidenceDemand({
+              subjectId: 'yuwen',
+              knowledgeIds: ['k1'],
+              statement: 'verify generated evidence',
+            }),
+          ),
+        },
+        'quiz_gen',
+      ),
+      difficultyEvidence,
     );
-    await seedDraftQuestion({ id: 'q1', knowledgeId: 'k1', supplyTrace });
+    await seedDraftQuestion({
+      id: 'q1',
+      knowledgeId: 'k1',
+      supplyTrace,
+      difficultyEvidence,
+    });
     const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_pass');
 
     const result = await runQuizVerify({ db: testDb(), questionId: 'q1', runTaskFn });
@@ -331,7 +344,10 @@ describe('runQuizVerify', () => {
 
     // one verify event, outcome success.
     expect(await countVerifyEvents('q1')).toBe(1);
-    expect((await verifyEventsFor('q1'))[0].payload).toMatchObject({ supply_trace: supplyTrace });
+    expect((await verifyEventsFor('q1'))[0].payload).toMatchObject({
+      supply_trace: supplyTrace,
+      difficulty_evidence: difficultyEvidence,
+    });
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);

@@ -29,6 +29,7 @@ import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
@@ -301,6 +302,7 @@ export async function runSourceVerify(
       : {};
   const supplyTrace =
     metadataRaw.supply_trace === undefined ? undefined : parseSupplyTrace(metadataRaw.supply_trace);
+  const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
@@ -539,6 +541,7 @@ export async function runSourceVerify(
                 },
               }),
           verified_by: verifiedBy,
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
@@ -581,6 +584,7 @@ export async function runSourceVerify(
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,

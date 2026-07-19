@@ -329,7 +329,17 @@ describe('runQuizGen', () => {
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
     expect((meta?.source_refs as unknown[]).length).toBe(1);
-    expect((q1?.metadata as Record<string, unknown>).supply_trace).toEqual(supplyTrace);
+    const difficultyEvidence = (q1?.metadata as Record<string, unknown>).difficulty_evidence;
+    expect(difficultyEvidence).toMatchObject({
+      value: q1?.difficulty,
+      scale: 'loom_difficulty_1_5',
+      basis: 'producer_estimate',
+      source_route: 'quiz_gen',
+    });
+    expect((q1?.metadata as Record<string, unknown>).supply_trace).toMatchObject({
+      ...supplyTrace,
+      difficulty_evidence: difficultyEvidence,
+    });
 
     // YUK-203 P2 — generated quizzes become a first-class question-set artifact.
     const quizArtifacts = await testDb()
@@ -374,6 +384,11 @@ describe('runQuizGen', () => {
       question_ids: result.question_ids,
       tool_quiz_artifact_id: result.tool_quiz_artifact_id,
       supply_trace: supplyTrace,
+      difficulty_evidence: expect.arrayContaining([
+        expect.objectContaining({
+          evidence: expect.objectContaining({ source_route: 'quiz_gen' }),
+        }),
+      ]),
     });
 
     // quiz_verify enqueued with the new question ids.

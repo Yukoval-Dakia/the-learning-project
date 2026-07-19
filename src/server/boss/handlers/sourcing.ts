@@ -30,6 +30,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import {
+  DifficultyEvidence,
+  type DifficultyEvidenceT,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import {
@@ -65,7 +70,11 @@ import { writeEvent } from '@/server/events/queries';
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { type SupplyTraceV1T, parseSupplyTrace } from '@/server/question-supply/evidence-demand';
+import {
+  type SupplyTraceV1T,
+  parseSupplyTrace,
+  withSupplyTraceDifficultyEvidence,
+} from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
@@ -442,6 +451,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     };
 
     const questionIds: string[] = [];
+    const difficultyEvidenceByQuestion: Array<{
+      question_id: string;
+      evidence: DifficultyEvidenceT;
+    }> = [];
     const now = new Date();
     failureStage = 'persist';
     await db.transaction(async (tx) => {
@@ -454,6 +467,17 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         // explicit and robust to future helper changes.
         const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        const declaredDifficultyEvidence =
+          q.difficulty_evidence ??
+          buildProducerDifficultyEvidence(q.difficulty, 'sourcing_web', now);
+        const difficultyEvidence = DifficultyEvidence.parse({
+          ...declaredDifficultyEvidence,
+          observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
+          source_route: declaredDifficultyEvidence.source_route ?? 'sourcing_web',
+        });
+        const questionSupplyTrace = params.supplyTrace
+          ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
+          : undefined;
 
         // §2.1 web_sourced provenance contract. OF-2: whitelist_match flags
         // off-whitelist sources for selection-time demotion (slice 5a) — it never
@@ -494,7 +518,8 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             metadata: {
               web_sourced: webSourced,
               source_ref_kind: 'url',
-              ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
+              difficulty_evidence: difficultyEvidence,
+              ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
             },
             created_at: now,
             updated_at: now,
@@ -503,10 +528,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         await writeVerifyDispatchIntent(tx, {
           questionId: id,
           verifier: 'source_verify',
-          supplyTrace: params.supplyTrace,
+          supplyTrace: questionSupplyTrace,
           createdAt: now,
         });
         questionIds.push(id);
+        difficultyEvidenceByQuestion.push({ question_id: id, evidence: difficultyEvidence });
       }
     });
 
@@ -652,6 +678,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         query_plan: parsed.query_plan,
         tool_context_task_run_id: toolContextTaskRunId,
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
+        difficulty_evidence: difficultyEvidenceByQuestion,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

@@ -6,6 +6,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { buildSourceLabelDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import { db } from '@/db/client';
 import {
   event,
@@ -17,7 +18,7 @@ import {
 } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
 import { type DispatchResult, type EnqueueFn, dispatchSupplyTargets } from './dispatcher';
-import { type SupplyRoute, discoverSupplyTargets } from './target-discovery';
+import { type SupplyRoute, assembleScanInput, discoverSupplyTargets } from './target-discovery';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -141,6 +142,47 @@ describe('discoverSupplyTargets — frontier zero questions', () => {
     // No active learning_item references it → not a frontier candidate at all.
     const targets = await discoverSupplyTargets(db);
     expect(targets.filter((t) => t.knowledgeIds[0] === kid)).toHaveLength(0);
+  });
+});
+
+describe('assembleScanInput — difficulty evidence precedence (YUK-703)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('projects calibrated b ahead of source labels and keeps legacy rows readable', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    await seedOpenLearningItem([kid]);
+    const sourceLabel = buildSourceLabelDifficultyEvidence({
+      value: 5,
+      scale: 'jyeoo_dg_v1',
+      confidence: 0.8,
+      sourceRoute: 'jyeoo_adapter',
+    });
+    const calibratedId = await seedQuestion([kid], {
+      source: 'web_sourced',
+      difficulty: 5,
+      metadata: { difficulty_evidence: sourceLabel },
+    });
+    await seedItemCalibration(calibratedId, { b_calib: -0.35 });
+    const legacyId = await seedQuestion([kid], { source: 'manual', difficulty: 2 });
+
+    const input = await assembleScanInput(db);
+    const calibrated = input.questions.find((row) => row.id === calibratedId);
+    const legacy = input.questions.find((row) => row.id === legacyId);
+
+    expect(calibrated?.difficultyEvidence).toMatchObject({
+      value: -0.35,
+      scale: 'rasch_logit_b',
+      basis: 'item_calibration',
+      confidence: 1,
+    });
+    expect(legacy?.difficultyEvidence).toMatchObject({
+      value: 2,
+      scale: 'loom_difficulty_1_5',
+      basis: 'legacy_numeric',
+    });
   });
 });
 

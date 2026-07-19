@@ -29,6 +29,11 @@
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import { LearningItemOpenStatus } from '@/core/schema/business';
+import {
+  type DifficultyEvidenceT,
+  readDifficultyEvidenceFromMetadata,
+  resolveDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -137,6 +142,8 @@ export interface PoolQuestion {
    * 弱 proxy——effectiveB 退回 b_anchor ?? b 仍是可靠锚，故 R3「只信真实标定」与本字段不冲突。
    */
   calibrationB: number | null;
+  /** Observe-only provenance view; calibrated evidence outranks stored labels. */
+  difficultyEvidence?: DifficultyEvidenceT;
   /** 该题挂的全部 KC。 */
   knowledgeIds: string[];
 }
@@ -674,15 +681,23 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
     ]),
   );
 
-  return rows.map((r) => ({
-    id: r.id,
-    kind: r.kind as QuestionKindT,
-    source: r.source,
-    metadata: r.metadata ?? null,
-    difficulty: r.difficulty,
-    calibrationB: effectiveBByQid.get(r.id) ?? null,
-    knowledgeIds: r.knowledge_ids ?? [],
-  }));
+  return rows.map((r) => {
+    const calibrationB = effectiveBByQid.get(r.id) ?? null;
+    return {
+      id: r.id,
+      kind: r.kind as QuestionKindT,
+      source: r.source,
+      metadata: r.metadata ?? null,
+      difficulty: r.difficulty,
+      calibrationB,
+      difficultyEvidence: resolveDifficultyEvidence({
+        calibratedB: calibrationB,
+        stored: readDifficultyEvidenceFromMetadata(r.metadata),
+        legacyDifficulty: r.difficulty,
+      }),
+      knowledgeIds: r.knowledge_ids ?? [],
+    };
+  });
 }
 
 /**

@@ -1,3 +1,4 @@
+import { DifficultyEvidence, type DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import { z } from 'zod';
 
 export const EVIDENCE_DEMAND_VERSION = 1 as const;
@@ -102,6 +103,7 @@ export const SupplyTraceV1 = SupplyTargetContextV1.extend({
   target_id: z.string().min(1),
   target_fingerprint: z.string().min(1),
   producer_route: SupplyProducerRoute.nullable(),
+  difficulty_evidence: DifficultyEvidence.optional(),
 });
 export type SupplyTraceV1T = z.infer<typeof SupplyTraceV1>;
 
@@ -144,6 +146,16 @@ export function buildSupplyTrace(
 
 export function parseSupplyTrace(value: unknown): SupplyTraceV1T {
   return SupplyTraceV1.parse(value);
+}
+
+export function withSupplyTraceDifficultyEvidence(
+  trace: SupplyTraceV1T,
+  evidence: DifficultyEvidenceT,
+): SupplyTraceV1T {
+  return SupplyTraceV1.parse({
+    ...parseSupplyTrace(trace),
+    difficulty_evidence: DifficultyEvidence.parse(evidence),
+  });
 }
 
 export function buildCoverageEvidenceDemand(input: {
