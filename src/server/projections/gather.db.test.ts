@@ -507,12 +507,17 @@ describe('gatherAndFoldKnowledgeNode — YUK-549 (K6) merge + rate prefetch thre
 
     const merges = await prefetchKnowledgeMergeEvents(db);
     const rates = await prefetchKnowledgeRates(db);
-    expect(merges).toHaveLength(1); // the one knowledge_merge propose event
-    expect(rates).toHaveLength(1); // its accept rate
+    // grouped structure (review round-1): merges keyed by ABSORBED node id, rates by caused_by id.
+    expect(merges.get('k_a')).toHaveLength(1); // the one merge that archives k_a
+    expect(merges.has('k_c')).toBe(false); // k_c is the into_id, never a from_id → not a merge key
+    expect(rates.size).toBe(1); // the one accept rate, keyed by its merge-propose id
 
+    // EQUIVALENCE (the round-1 fix's core assertion): the grouped-Map prefetch path folds
+    // byte-identically to the per-node SQL query path — across the merged from-node, the merged-into
+    // node, and an untouched node.
     for (const id of ['k_a', 'k_c', 'k_x']) {
-      const selfFetch = await gatherAndFoldKnowledgeNode(db, id);
-      const threaded = await gatherAndFoldKnowledgeNode(db, id, merges, rates);
+      const selfFetch = await gatherAndFoldKnowledgeNode(db, id); // per-node containment + caused_by queries
+      const threaded = await gatherAndFoldKnowledgeNode(db, id, merges, rates); // O(1) grouped lookups
       expect(threaded).toEqual(selfFetch);
     }
     // sanity: the merge is a NON-TRIVIAL fold — k_a archived (Q3), k_c carries merged_from (Q1+rate).

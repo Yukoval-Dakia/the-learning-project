@@ -82,39 +82,56 @@ export function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
 }
 
 /**
- * Prefetch the node-INDEPENDENT merge-event superset the node fold's Q3 leg consumes: EVERY
- * `experimental:knowledge_merge` propose event. READ-ONLY. The containment filter to ONE node
- * (`payload.from_ids @> [nodeId]`) is applied IN MEMORY by the caller (gatherAndFoldKnowledgeNode).
+ * Prefetch the node-INDEPENDENT Q3 merge leg, PRE-GROUPED for O(1) per-node lookup. READ-ONLY.
+ * Returns a Map keyed by the ABSORBED node id (each `from_id` of every `experimental:knowledge_merge`
+ * propose event) → the merge events that archive that node. Built in ONE pass over the (rare) merge
+ * events; the equivalent SQL is `payload -> 'from_ids' @> [nodeId]`, so a node's entry is exactly the
+ * rows the per-node containment query returns.
  *
- * YUK-549 (K6) — mirrors prefetchLearningItemMergeEvents. A full-table auditor that folds N nodes
- * would otherwise re-run the per-node Q3 containment scan N times; fetch the (rare) merge events ONCE
- * and thread them in.
+ * YUK-549 (K6, review round-1) — a full-table auditor folds N nodes; a FLAT array would re-scan every
+ * merge per node (O(N × merges) JS), eating the savings. The grouped Map is O(merges) once + O(1)/node.
  */
-export async function prefetchKnowledgeMergeEvents(db: DbLike): Promise<EventRow[]> {
-  return db.select().from(event).where(eq(event.action, 'experimental:knowledge_merge'));
+export async function prefetchKnowledgeMergeEvents(db: DbLike): Promise<Map<string, EventRow[]>> {
+  const merges = await db
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:knowledge_merge'));
+  // Index each merge under every from_id it archives (mirrors `payload -> 'from_ids' @> [nodeId]`:
+  // absent/non-array/non-string from_ids index under no node, as `@>` returning NULL yields no match).
+  const byFromId = new Map<string, EventRow[]>();
+  for (const m of merges) {
+    const fromIds = (m.payload as { from_ids?: unknown } | null)?.from_ids;
+    if (!Array.isArray(fromIds)) continue;
+    for (const fid of fromIds) {
+      if (typeof fid !== 'string') continue;
+      const list = byFromId.get(fid);
+      if (list) list.push(m);
+      else byFromId.set(fid, [m]);
+    }
+  }
+  return byFromId;
 }
 
 /**
- * Prefetch the node-INDEPENDENT `rate` superset the node fold's rate-resolution leg consumes: EVERY
- * `rate` event. READ-ONLY. The per-node caused_by chain (rate.caused_by_event_id ∈ this node's
- * gathered propose/merge event ids) is applied IN MEMORY by the caller.
+ * Prefetch the node-INDEPENDENT rate leg, PRE-GROUPED for O(1) per-gathered-id lookup. READ-ONLY.
+ * Returns a Map keyed by `caused_by_event_id` → the `rate` events chained to that event (rates with a
+ * NULL caused_by are dropped, exactly as `WHERE caused_by IN (…)` excludes them). Built in ONE pass.
  *
- * YUK-549 (K6) — the un-prefetched path issues one `rate WHERE caused_by IN (gatheredIds)` query per
- * node, so a full-table auditor folding N nodes runs N such queries. Fetch the rate events ONCE and
- * thread them in; the caller filters by the per-node gathered id set, so `byId` ends up identical to
- * the per-node query path (equivalence tested in gather.db.test.ts).
+ * YUK-549 (K6, review round-1) — the caller looks up ONLY its own gathered propose/merge ids
+ * (O(gatheredIds) per node), so folding N nodes is O(rates) once + O(Σ gatheredIds), not the
+ * O(N × rates) a flat-array re-filter would cost.
  */
-export async function prefetchKnowledgeRates(db: DbLike): Promise<EventRow[]> {
-  return db.select().from(event).where(eq(event.action, 'rate'));
-}
-
-// In-memory equivalent of the Q3 SQL containment `payload -> 'from_ids' @> [nodeId]`: does this merge
-// event's payload.from_ids array contain nodeId. Used to filter a prefetched merge superset per node
-// so the threaded path reproduces the per-node containment query EXACTLY (empty/absent from_ids → no
-// match, mirroring `@>` returning NULL → false).
-function mergeArchivesNode(row: EventRow, nodeId: string): boolean {
-  const fromIds = (row.payload as { from_ids?: unknown } | null)?.from_ids;
-  return Array.isArray(fromIds) && fromIds.includes(nodeId);
+export async function prefetchKnowledgeRates(db: DbLike): Promise<Map<string, EventRow[]>> {
+  const rates = await db.select().from(event).where(eq(event.action, 'rate'));
+  const byCausedBy = new Map<string, EventRow[]>();
+  for (const r of rates) {
+    const cb = r.caused_by_event_id;
+    if (cb === null) continue;
+    const list = byCausedBy.get(cb);
+    if (list) list.push(r);
+    else byCausedBy.set(cb, [r]);
+  }
+  return byCausedBy;
 }
 
 /**
@@ -126,17 +143,18 @@ function mergeArchivesNode(row: EventRow, nodeId: string): boolean {
  * row or null (node never created / fully reverted). Writes NOTHING — the caller decides
  * (shell write-through vs auditor diff).
  *
- * YUK-549 (K6) — a full-table caller (the auditor) prefetches the item-INDEPENDENT Q3 merge leg and
- * the rate leg ONCE (prefetchKnowledgeMergeEvents / prefetchKnowledgeRates) and threads them in via
- * `prefetchedMergeEvents` / `prefetchedRates`; a single-node caller (the write-through shell,
- * accept-time parity) passes nothing and each leg self-fetches here. Either way `byId` ends up with
- * the identical row set (mirrors the learning_item prefetch, YUK-547).
+ * YUK-549 (K6) — a full-table caller (the auditor) prefetches the node-INDEPENDENT Q3 merge leg and
+ * the rate leg ONCE, PRE-GROUPED by absorbed-node-id / caused-by-id (prefetchKnowledgeMergeEvents /
+ * prefetchKnowledgeRates), and threads the Maps in via `prefetchedMergeEvents` / `prefetchedRates`;
+ * this node does an O(1) merge lookup + an O(gatheredIds) rate lookup, no per-node re-scan. A
+ * single-node caller (the write-through shell, accept-time parity) passes nothing and each leg
+ * self-fetches here. Either way `byId` ends up with the identical row set.
  */
 export async function gatherAndFoldKnowledgeNode(
   db: DbLike,
   nodeId: string,
-  prefetchedMergeEvents?: EventRow[],
-  prefetchedRates?: EventRow[],
+  prefetchedMergeEvents?: Map<string, EventRow[]>,
+  prefetchedRates?: Map<string, EventRow[]>,
 ): Promise<KnowledgeRowSnapshotT | null> {
   // ── Q1: events whose subject_id IS nodeId ──────────────────────────────────────────
   // Covers genesis, auto_tag, reparent, archive, merge-as-into, split-as-from.
@@ -159,10 +177,10 @@ export async function gatherAndFoldKnowledgeNode(
 
   // ── Q3: nodeId archived because it was merged INTO another node ──────────────────────
   // The merge event's subject_id is the into_id, NOT nodeId; nodeId lives only in
-  // payload.from_ids. jsonb containment: payload -> 'from_ids' @> [nodeId]. A prefetched superset
-  // (YUK-549) is filtered in memory to the SAME rows the containment query returns.
+  // payload.from_ids. jsonb containment: payload -> 'from_ids' @> [nodeId]. The prefetched Map
+  // (YUK-549) is keyed by from_id, so `.get(nodeId)` returns the SAME rows the containment query does.
   const q3 = prefetchedMergeEvents
-    ? prefetchedMergeEvents.filter((r) => mergeArchivesNode(r, nodeId))
+    ? (prefetchedMergeEvents.get(nodeId) ?? [])
     : await db
         .select()
         .from(event)
@@ -178,20 +196,23 @@ export async function gatherAndFoldKnowledgeNode(
   for (const r of [...q1, ...q2, ...q3]) byId.set(r.id, r);
 
   // ── Rate resolution ─────────────────────────────────────────────────────────────────
-  // The reducer needs the RATE events chained to the gathered propose/mutation events. A prefetched
-  // superset (YUK-549) is filtered in memory by the gathered id set — identical to the caused_by query.
+  // The reducer needs the RATE events chained to the gathered propose/mutation events. The prefetched
+  // Map (YUK-549) is keyed by caused_by_event_id: look up each gathered id (O(gatheredIds)) — the same
+  // rows the `caused_by IN (gatheredIds)` query returns.
   const gatheredIds = [...byId.keys()];
   if (gatheredIds.length > 0) {
-    const gatheredSet = new Set(gatheredIds);
-    const rates = prefetchedRates
-      ? prefetchedRates.filter(
-          (r) => r.caused_by_event_id !== null && gatheredSet.has(r.caused_by_event_id),
-        )
-      : await db
-          .select()
-          .from(event)
-          .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, gatheredIds)));
-    for (const r of rates) byId.set(r.id, r);
+    if (prefetchedRates) {
+      for (const gid of gatheredIds) {
+        const chained = prefetchedRates.get(gid);
+        if (chained) for (const r of chained) byId.set(r.id, r);
+      }
+    } else {
+      const rates = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, gatheredIds)));
+      for (const r of rates) byId.set(r.id, r);
+    }
   }
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
