@@ -22,8 +22,11 @@
   --color-ink: #1f1e1d;
   --color-ink-2: #3d3b36;
   --color-ink-3: #5c5b57;
-  --color-ink-4: #8a8880;
-  --color-ink-5: #b6b3a8;
+  /* YUK-718 — light-theme AA values, kept in sync with the :root --ink-4/5 below
+     (which also carry the dark-theme overrides) so a future text-ink-4 utility
+     inherits the ≥4.5:1 tone instead of the old failing #8a8880/#b6b3a8. */
+  --color-ink-4: #63625c;
+  --color-ink-5: #6d6b65;
 
   /* ── Color · Hairlines & dividers ──────────────────────── */
   --color-line: #e8e4d8;
