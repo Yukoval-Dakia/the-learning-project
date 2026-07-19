@@ -717,7 +717,7 @@ export async function decideKnowledgeEdgeProposal(
   // structural alternative (widening lockMutationRows to pre-lock rewrite endpoints in one sorted
   // batch with a tx-level retry-on-stale) is heavier surgery on the shared merge-accept path used by
   // all five mutation kinds; deferred as a follow-up if a background edge writer ever makes this live.
-  const MAX_LOCK_ATTEMPTS = 5;
+  const MAX_LOCK_ATTEMPTS = 6;
   for (let attempt = 1; ; attempt += 1) {
     try {
       await db.transaction(async (tx) => {
@@ -850,8 +850,14 @@ export async function decideKnowledgeEdgeProposal(
             409,
           );
         }
+        // Exponential backoff (25/50/100/200/400ms) + jitter → a ~0.6-1s total retry window across
+        // MAX_LOCK_ATTEMPTS (OCR round-4). A merge accept holding these endpoints runs its row locks +
+        // archive + edge rewrite + 9-surface attribution repair — easily 200ms+ — so the earlier flat
+        // ~150ms window would exhaust mid-merge and 409 spuriously. Jitter decorrelates concurrent
+        // retriers. Cap keeps a single sleep bounded if MAX_LOCK_ATTEMPTS is ever raised.
+        const backoffMs = Math.min(25 * 2 ** (attempt - 1), 500);
         await new Promise((resolve) =>
-          setTimeout(resolve, 10 * attempt + Math.floor(Math.random() * 10)),
+          setTimeout(resolve, Math.floor(backoffMs * (0.75 + Math.random() * 0.5))),
         );
         continue;
       }
