@@ -10217,7 +10217,7 @@ button.seg-sm {
   padding-top: 2px;
 }
 
-/* 误 / (正 dropped — see preflight §4) comparison */
+/* 误 / 正 comparison */
 .mistakes-loom .mistake-cmp {
   display: flex;
   flex-direction: column;
@@ -10240,6 +10240,14 @@ button.seg-sm {
   font-size: var(--fs-caption);
   line-height: var(--lh-prose);
   color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+.mistakes-loom .cmp-right {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-prose);
+  color: var(--good-ink);
   white-space: pre-wrap;
   word-break: break-word;
   min-width: 0;
