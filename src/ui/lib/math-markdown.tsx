@@ -1,7 +1,40 @@
-import type { HTMLAttributes, ReactElement } from 'react';
+import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
 import rehypeKatex from 'rehype-katex';
 import remarkMath from 'remark-math';
+import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
+
+export function assetIdFromContentUrl(src: string | undefined): string | null {
+  if (!src) return null;
+  const match = /^\/api\/assets\/([^/]+)\/content(?:[?#].*)?$/.exec(src);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
+
+/** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
+function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps): ReactElement {
+  const assetId = assetIdFromContentUrl(src);
+  const asset = useAssetUrl(assetId);
+  if (!assetId) return <img {...props} src={src} alt={alt} />;
+  if (asset.error) {
+    return <span role="img" aria-label={alt || '图片加载失败'} data-asset-error="true" />;
+  }
+  return (
+    <img
+      {...props}
+      src={asset.url ?? undefined}
+      alt={alt}
+      aria-busy={asset.loading || undefined}
+      data-asset-id={assetId}
+    />
+  );
+}
 
 export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   /** Markdown source. Supports inline `$...$` and block `$$...$$` math. */
@@ -36,7 +69,12 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
     rehypePlugins.push(rehypeKatex);
   }
   return (
-    <MarkdownRenderer {...divProps} remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+    <MarkdownRenderer
+      {...divProps}
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      components={{ img: MarkdownImage }}
+    >
       {children}
     </MarkdownRenderer>
   );

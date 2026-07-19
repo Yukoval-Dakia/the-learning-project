@@ -43,6 +43,7 @@ import {
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
+import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
 import { newId } from '@/core/ids';
@@ -50,7 +51,7 @@ import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { ai_task_runs, event, knowledge, question, source_asset } from '@/db/schema';
+import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
@@ -136,13 +137,6 @@ const FETCH_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 type LookupFn = typeof lookup;
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 // FIX-7 — reject URL forms and literal destinations that can never be valid public image
 // sources. Hostnames receive a second A/AAAA answer check below.
@@ -714,22 +708,14 @@ export async function acceptImageCandidateProposal(
       );
     }
     const resolvedMime = ALLOWED_IMAGE_MIME.has(mimeType) ? mimeType : 'image/png';
-    const sha = await sha256Hex(bytes);
-    const storageKey = `assets/${sha}`;
-    await r2.put(storageKey, bytes, resolvedMime);
-
-    const sourceAssetId = createId();
-    const now = new Date();
-    await db.insert(source_asset).values({
-      id: sourceAssetId,
-      kind: 'image',
-      storage_key: storageKey,
-      mime_type: resolvedMime,
-      byte_size: bytes.byteLength,
-      sha256: sha,
+    const sourceAsset = await persistImageAsset(db, r2, {
+      bytes,
+      mime: resolvedMime,
       provenance: { image_candidate_source_url: change.source_url },
-      created_at: now,
+      compensatePutOnInsertFailure: true,
     });
+    const sourceAssetId = sourceAsset.id;
+    const now = new Date();
 
     // ── 3. ONE VLM extraction on ONE image (the per-accept付费 point) ────────────
     // FIX-4 — thread a REAL ctx (with db) to runTask so it writes its own ai_task_runs +

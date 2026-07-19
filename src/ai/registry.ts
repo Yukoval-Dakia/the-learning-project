@@ -748,6 +748,18 @@ export const tasks = {
     // via getTaskSystemPrompt(task, profile); this string is the type-required fallback.
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  SolutionGenerateVisionTask: {
+    kind: 'SolutionGenerateVisionTask',
+    description:
+      'YUK-727 — Vision-capable sibling of SolutionGenerateTask for image-bearing questions. It consumes the same JSON/output contract plus attached prompt images so source_verify can independently solve a figure-dependent draft before promotion.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5',
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    allowedTools: [],
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   QuizGenTask: {
     kind: 'QuizGenTask',
     description:

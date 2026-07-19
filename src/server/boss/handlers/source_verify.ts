@@ -41,6 +41,7 @@ import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
+  type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
   type SolveCheckResult,
   type VerifyCheck,
@@ -97,6 +98,7 @@ export interface RunSourceVerifyParams {
   db: Db;
   questionId: string;
   runTaskFn: RunTaskFn;
+  imageFetchFn?: SolveCheckImageFetchFn;
 }
 
 export interface RunSourceVerifyResult {
@@ -365,6 +367,7 @@ export async function runSourceVerify(
     const tierChecks = checksForTier(2);
     const checks: CheckOutcome[] = [];
     let unresolvedAnchoredExactMismatch = false;
+    let imageInputUnavailable = false;
 
     if (tierChecks.includes('structure_completeness')) {
       checks.push(checkStructureCompleteness(row));
@@ -386,14 +389,18 @@ export async function runSourceVerify(
         rubric_json: row.rubric_json,
         knowledge_ids: row.knowledge_ids,
         metadata: (row.metadata ?? null) as Record<string, unknown> | null,
+        image_refs: row.image_refs,
+        figures: row.figures,
       };
       const solveResult = await runSolveCheck(solveQuestion, {
         runTaskFn,
         profile: { id: subjectProfile.id, full: subjectProfile },
         db,
+        imageFetchFn: params.imageFetchFn,
       });
       unresolvedAnchoredExactMismatch =
         solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
+      imageInputUnavailable = solveResult.image_input_unavailable === true;
       checks.push(solveCheckToOutcome(solveResult));
     }
 
@@ -404,6 +411,7 @@ export async function runSourceVerify(
     const promote =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
+      !imageInputUnavailable &&
       !checks.some((c) => c.verdict === 'fail');
 
     // solve_check owns its AI run inside runSolveCheck, so this handler holds no
@@ -428,9 +436,11 @@ export async function runSourceVerify(
         ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
         : unresolvedAnchoredExactMismatch
           ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
-          : !knowledgeAlive
-            ? 'referenced knowledge point archived after sourcing; not promoted'
-            : 'tier-2 source verify did not promote';
+          : imageInputUnavailable
+            ? 'tier-2 source verify needs review: prompt image content was unavailable'
+            : !knowledgeAlive
+              ? 'referenced knowledge point archived after sourcing; not promoted'
+              : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,

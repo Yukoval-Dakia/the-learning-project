@@ -128,6 +128,10 @@ export interface SolveCheckQuestion {
   rubric_json: unknown;
   knowledge_ids?: string[] | null;
   metadata?: Record<string, unknown> | null;
+  /** Prompt-figure source_asset ids. When present, solve-check attaches their bytes. */
+  image_refs?: string[] | null;
+  /** Structured figure placement, forwarded as a textual hint alongside the image bytes. */
+  figures?: unknown[] | null;
 }
 
 export type SolveCheckVerdict = 'pass' | 'fail' | 'unsupported';
@@ -147,7 +151,14 @@ export interface SolveCheckResult {
   // cost_usd is the SUM across legs; absent when no leg reported a number.
   task_run_ids?: string[];
   cost_usd?: number;
+  /** The question requires prompt images, but not every referenced asset could be loaded. */
+  image_input_unavailable?: boolean;
 }
+
+export type SolveCheckImageFetchFn = (
+  assetIds: string[],
+  db: Db,
+) => Promise<Array<{ data: string; mediaType: string }>>;
 
 // Per-tier override knob (OF-4 (ii)): future model 异源 / threshold tuning. Zero
 // structural change — pass `{ solverModelOverride }` and the runner picks it up via
@@ -160,6 +171,8 @@ export interface SolveCheckOptions {
   db?: any;
   /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx. */
   solverModelOverride?: string;
+  /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
+  imageFetchFn?: SolveCheckImageFetchFn;
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -397,6 +410,7 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
+  const requiresVision = (question.image_refs?.length ?? 0) > 0;
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
@@ -451,14 +465,53 @@ export async function runSolveCheck(
       // question's own reference_md as a hint — only OCR-side hints if any.
       existing_answers_hint: meta.tencent_right_answer ?? null,
       existing_analysis_hint: meta.tencent_answer_analysis ?? null,
-      figures_hint: null,
+      figures_hint: question.figures ?? null,
+      prompt_image_refs: question.image_refs ?? [],
     };
     const ctx: Record<string, unknown> = { db: opts.db, subjectProfile: opts.profile.full };
     // OF-4(ii) 异源旋钮真接线（PR #312 验证轮 V4）：生产 runner 的模型覆盖读
     // `ctx.override.model`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
     // 不会被读取——那是个死旋钮。
     if (opts.solverModelOverride) ctx.override = { model: opts.solverModelOverride };
-    const solverRun = await opts.runTaskFn('SolutionGenerateTask', input, ctx);
+    const promptImageRefs = question.image_refs ?? [];
+    let taskInput: unknown = input;
+    if (promptImageRefs.length > 0) {
+      if (!opts.db) {
+        return {
+          verdict: 'unsupported',
+          reason: 'prompt images require a Db handle for source_asset resolution',
+          compared_by: 'none',
+          image_input_unavailable: true,
+        };
+      }
+      let images: Array<{ data: string; mediaType: string }>;
+      try {
+        const imageFetchFn =
+          opts.imageFetchFn ?? (await import('@/server/ai/judges/steps-judge')).defaultImageFetch;
+        images = await imageFetchFn(promptImageRefs, opts.db);
+      } catch (err) {
+        return {
+          verdict: 'unsupported',
+          reason: `prompt image fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+          compared_by: 'none',
+          image_input_unavailable: true,
+        };
+      }
+      // defaultImageFetch deliberately skips missing rows/objects. For verification,
+      // partial vision is semantic corruption: hold the draft instead of asking the
+      // solver to guess from an incomplete figure set.
+      if (images.length !== promptImageRefs.length) {
+        return {
+          verdict: 'unsupported',
+          reason: `prompt image fetch resolved ${images.length}/${promptImageRefs.length} assets`,
+          compared_by: 'none',
+          image_input_unavailable: true,
+        };
+      }
+      taskInput = { text: JSON.stringify(input), images };
+    }
+    const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
+    const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
     recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
@@ -478,6 +531,7 @@ export async function runSolveCheck(
       verdict: 'unsupported',
       reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
       compared_by: 'none',
+      ...(requiresVision ? { image_input_unavailable: true } : {}),
       ...runProvenance(),
     };
   }

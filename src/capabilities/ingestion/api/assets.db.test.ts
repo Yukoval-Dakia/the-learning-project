@@ -1,4 +1,6 @@
+import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { source_asset } from '@/db/schema';
+import type { R2Client } from '@/server/r2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -110,5 +112,32 @@ describe('POST /api/assets', () => {
     const body2 = (await res2.json()) as { asset: { storage_key: string } };
 
     expect(body1.asset.storage_key).toBe(body2.asset.storage_key);
+  });
+
+  it('serializes concurrent puts for one content-addressed storage key', async () => {
+    const db = testDb();
+    const bytes = new Uint8Array([9, 8, 7, 6]);
+    let activePuts = 0;
+    let maxActivePuts = 0;
+    const lockingR2: R2Client = {
+      get: r2.get,
+      delete: r2.delete,
+      put: async (key, body, mime) => {
+        activePuts += 1;
+        maxActivePuts = Math.max(maxActivePuts, activePuts);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await r2.put(key, body, mime);
+        activePuts -= 1;
+      },
+    };
+
+    const [first, second] = await Promise.all([
+      persistImageAsset(db, lockingR2, { bytes, mime: 'image/png' }),
+      persistImageAsset(db, lockingR2, { bytes, mime: 'image/png' }),
+    ]);
+
+    expect(first.storage_key).toBe(second.storage_key);
+    expect(maxActivePuts).toBe(1);
+    expect(await db.select().from(source_asset)).toHaveLength(2);
   });
 });

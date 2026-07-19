@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-06-06）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 36 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-19）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 42 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -134,6 +134,7 @@ Question (统一题库，single source of truth)
 | `MistakeEnrollTask` | mimo-v2.5-pro | auto-enroll observe path (YUK-145 OC-5) | 否 | — | 录入题错题元数据草稿（observe-only）|
 | `NoteRefineTask` | mimo-v2.5-pro | pg-boss `note_refine` (T-88 P4-A) | 否 | — | Living Note refine → NotePatch ops |
 | `SolutionGenerateTask` | mimo-v2.5-pro | solve orchestrator lazy-gen (YUK-193) | 否 | — | bare question → reference + worked solution |
+| `SolutionGenerateVisionTask` | mimo-v2.5 | `source_verify` 图题独立求解（YUK-727） | 否 | 输入 | 读取题面图片后生成 reference + worked solution；图片或视觉调用失败时保持 draft |
 | `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
 | `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（带 evidence ids）|
 | `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-440) | 否 | — | 教研例会 conjecture 诱导：EvidenceCells → 1 conjecture（claim + probe + probe_reference_md + predicted_p + discriminating，YUK-538 ⑬ conjecture-wire S1）；N=3 self-consistency + judge-only cap |
