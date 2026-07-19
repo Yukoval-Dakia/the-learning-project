@@ -14,6 +14,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { IconBtn } from './IconBtn';
 import { LoomIcon, type LoomIconName } from './LoomIcon';
+import { useFocusTrap } from './useFocusTrap';
 
 export interface CopilotDrawerProps {
   open: boolean;
@@ -56,18 +57,12 @@ export function CopilotDrawer({
   // 让下次打开从默认宽度起。
   const [expanded, setExpanded] = useState(false);
 
-  // ESC closes the drawer.
-  useEffect(() => {
-    if (!open) return;
-    function onKey(ev: KeyboardEvent) {
-      if (ev.key === 'Escape') {
-        ev.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  // YUK-718 — focus trap + restore + Esc close via the shared primitive, same as
+  // NodeDrawer / CommandPalette / PfSolo. Replaces the ad-hoc window-Esc listener
+  // and the open-focus effect below: useFocusTrap focuses the first focusable
+  // element on open, traps Tab within the panel, closes on Esc (stopPropagation so
+  // a stacked modal's Esc doesn't leak), and restores focus to the trigger on close.
+  useFocusTrap(open, onClose, panelRef);
 
   // Lock body scroll while drawer is open (mobile UX).
   useEffect(() => {
@@ -77,12 +72,6 @@ export function CopilotDrawer({
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open]);
-
-  // Focus the panel on open (basic focus handoff; Wave 5 doesn't ship a
-  // full focus trap — composer focuses itself on render).
-  useEffect(() => {
-    if (open) panelRef.current?.focus();
   }, [open]);
 
   // Reset to the default width whenever the drawer closes (re-opens narrow).

@@ -961,8 +961,14 @@ export function BlockEditor({
         </details>
       )}
 
+      {/* YUK-718 — BlockEditor renders once per block (list), so a real <label
+          htmlFor> would need per-instance ids that collide with YUK-717's render
+          work; per-control aria-label names each field for AT instead. The labels
+          carry the same info the visible FieldLabel does (required → aria-required,
+          selected-count in the knowledge search) so AT users aren't shortchanged. */}
       <FieldLabel>题面（已识别，可修改）</FieldLabel>
       <textarea
+        aria-label="题面（已识别，可修改）"
         value={form.prompt_md}
         onChange={(e) => setForm((cur) => ({ ...cur, prompt_md: e.target.value }))}
         rows={4}
@@ -972,6 +978,7 @@ export function BlockEditor({
 
       <FieldLabel>参考答案（可选）</FieldLabel>
       <textarea
+        aria-label="参考答案（可选）"
         value={form.reference_md}
         onChange={(e) => setForm((cur) => ({ ...cur, reference_md: e.target.value }))}
         rows={2}
@@ -981,6 +988,8 @@ export function BlockEditor({
 
       <FieldLabel>错答（必填）</FieldLabel>
       <textarea
+        aria-label="错答"
+        aria-required
         value={form.wrong_answer_md}
         onChange={(e) => setForm((cur) => ({ ...cur, wrong_answer_md: e.target.value }))}
         rows={2}
@@ -1008,6 +1017,7 @@ export function BlockEditor({
       <FieldLabel>难度 ({form.difficulty})</FieldLabel>
       <input
         type="range"
+        aria-label="难度"
         min={1}
         max={5}
         step={1}
@@ -1020,6 +1030,7 @@ export function BlockEditor({
       <FieldLabel>知识点（至少 1，已选 {form.knowledge_ids.length}）</FieldLabel>
       <input
         type="text"
+        aria-label={`知识点搜索（至少 1，已选 ${form.knowledge_ids.length}）`}
         value={kFilter}
         onChange={(e) => setKFilter(e.target.value)}
         placeholder="搜索"

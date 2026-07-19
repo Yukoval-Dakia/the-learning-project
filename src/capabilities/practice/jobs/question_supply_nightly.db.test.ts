@@ -10,8 +10,9 @@ import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { knowledge, learning_item } from '@/db/schema';
+import { event, knowledge, learning_item } from '@/db/schema';
 import type { EnqueueFn } from '@/server/question-supply/dispatcher';
+import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runQuestionSupplyNightly } from './question_supply_nightly';
 
@@ -104,6 +105,17 @@ describe('runQuestionSupplyNightly', () => {
       trigger: 'knowledge',
       ref_id: kid,
       knowledge_id: kid,
+    });
+    const shadowEvents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:supply_inventory_shadow'));
+    expect(shadowEvents).toHaveLength(1);
+    expect(shadowEvents[0]?.payload).toMatchObject({
+      knowledgeId: kid,
+      currentRecommendation: 'produce',
+      shadowRecommendation: 'produce',
+      agrees: true,
     });
   });
 
