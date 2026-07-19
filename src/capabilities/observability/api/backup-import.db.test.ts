@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { BackupImportResponseSchema } from './backup-contracts';
-import { POST } from './backup-import';
+import { MAX_BACKUP_UPLOAD_BYTES, POST } from './backup-import';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
@@ -161,6 +161,83 @@ describe('POST /api/_/import — guards', () => {
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('invalid_zip');
     expect(body.message).toContain('manifest.json');
+  });
+
+  // YUK-729 — an oversized backup upload must trip the OOM safety limit by its
+  // declared Content-Length BEFORE the whole ZIP is buffered into memory and the
+  // destructive wipe-and-reload runs. Uses the exported tripwire + 1 so it stays
+  // correct regardless of the resolved value (default ~1 GB, BACKUP_IMPORT_MAX_BYTES
+  // override).
+  it('returns 413 when the declared Content-Length exceeds the OOM tripwire, with zero side effects', async () => {
+    const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+      method: 'POST',
+      // Tiny actual body; the oversized Content-Length header is what gates.
+      body: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+      headers: {
+        'content-type': 'application/zip',
+        'content-length': String(MAX_BACKUP_UPLOAD_BYTES + 1),
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('payload_too_large');
+    // Destructive restore never started: no DELETE and no INSERT issued.
+    expect(deleteCalls.length).toBe(0);
+    expect(insertCalls.length).toBe(0);
+  });
+
+  // YUK-729 (#965 round-3) — a chunked / no-Content-Length upload skips the pre-read
+  // gate, so a POST-READ backstop must still refuse to feed an over-limit body into
+  // the destructive wipe-and-reload. Driven with a tiny env-set tripwire (re-imported
+  // module) so the check is exercised without a ~1 GB allocation.
+  it('returns 413 when a body without Content-Length exceeds the tripwire after buffering, with zero side effects', async () => {
+    // 2 MB tripwire (above the 1 MB floor) so the post-read check is exercised with a
+    // small, real allocation rather than the ~1 GB default.
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '2000000');
+    vi.resetModules();
+    const { POST: freshPost, MAX_BACKUP_UPLOAD_BYTES: smallCap } = await import('./backup-import');
+    expect(smallCap).toBe(2_000_000);
+
+    const oversized = new Uint8Array(smallCap + 1); // just over the tripwire, no Content-Length
+    const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+      method: 'POST',
+      body: oversized.buffer as ArrayBuffer,
+      headers: { 'content-type': 'application/zip' },
+    });
+    // The pre-read gate is genuinely bypassed: this runtime does not surface a
+    // Content-Length for an ArrayBuffer body, so the post-read check is what fires.
+    expect(req.headers.get('content-length')).toBeNull();
+
+    const res = await freshPost(req);
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('payload_too_large');
+    // Destructive restore never started even though the body was buffered whole.
+    expect(deleteCalls.length).toBe(0);
+    expect(insertCalls.length).toBe(0);
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  // YUK-729 (#965 round-4) — a below-floor BACKUP_IMPORT_MAX_BYTES (operator typo)
+  // must NOT be honored, or it would silently 413 every restore. It warns and falls
+  // back to the default instead.
+  it('ignores a below-floor BACKUP_IMPORT_MAX_BYTES, warning and falling back to the default', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1000'); // 1 KB — below the 1 MB floor
+    vi.resetModules();
+    const { MAX_BACKUP_UPLOAD_BYTES: resolved } = await import('./backup-import');
+
+    // Fell back to the default (the unstubbed top-level value), not the 1 KB typo.
+    expect(resolved).toBe(MAX_BACKUP_UPLOAD_BYTES);
+    expect(resolved).toBeGreaterThan(1000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('BACKUP_IMPORT_MAX_BYTES=1000'));
+
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 });
 
