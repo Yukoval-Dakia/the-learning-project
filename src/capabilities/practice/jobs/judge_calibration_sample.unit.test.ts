@@ -1,5 +1,5 @@
 // YUK-573 — judge_calibration_sample handler guards (unit, no DB):
-//   1. kill switch: strict '1' opt-in (YUK-572 RESEARCH_MEETING_AGENT_ENABLED
+//   1. kill switch: shared flag-grammar opt-in (YUK-572 RESEARCH_MEETING_AGENT_ENABLED
 //      pattern) — default OFF, cron registered but handler no-ops.
 //   2. MF3① batch pre-flight: resolveTaskProvider runs OUTSIDE the judge
 //      routes' try/catch swallow — a missing CLAUDE_CODE_OAUTH_TOKEN makes the
@@ -50,8 +50,8 @@ describe('buildJudgeCalibrationSampleHandler', () => {
     expect(runSampleFn).not.toHaveBeenCalled();
   });
 
-  it("kill switch: env 'true' (not strictly '1') → still no-op", async () => {
-    vi.stubEnv(JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV, 'true');
+  it('kill switch: unknown env literal → still no-op', async () => {
+    vi.stubEnv(JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV, 'yes');
     const runSampleFn = vi.fn(async () => okResult());
     const handler = buildJudgeCalibrationSampleHandler(mockDb, { runSampleFn });
     await handler([]);
@@ -77,6 +77,19 @@ describe('buildJudgeCalibrationSampleHandler', () => {
       expect.objectContaining({ rejudgeProvider: 'anthropic-sub', batchMax: 20 }),
       undefined,
     );
+  });
+
+  it("env 'TRUE' uses the same enabled path", async () => {
+    vi.stubEnv(JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV, 'TRUE');
+    const runSampleFn = vi.fn(async () => okResult());
+    const resolveProviderFn = vi.fn();
+    const handler = buildJudgeCalibrationSampleHandler(mockDb, {
+      runSampleFn,
+      resolveProviderFn,
+    });
+    await handler([]);
+    expect(resolveProviderFn).toHaveBeenCalledTimes(1);
+    expect(runSampleFn).toHaveBeenCalledTimes(1);
   });
 
   it('MF3① pre-flight: missing CLAUDE_CODE_OAUTH_TOKEN → handler throws, zero sampling', async () => {

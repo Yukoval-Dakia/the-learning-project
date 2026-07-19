@@ -1,9 +1,9 @@
 // YUK-573 — judge-calibration sampling config (design doc §3.5). All knobs are
-// env-overridable; the kill switch is a SEPARATE strict '1' opt-in (YUK-572
+// env-overridable; the kill switch is a SEPARATE opt-in using the shared flag grammar (YUK-572
 // dark-ship pattern — cron stays registered, handler no-ops, zero spend).
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
-/** Opt-in dark-ship flag. Handler early-returns unless this is exactly '1'. */
+/** Opt-in dark-ship flag. Handler reads it through the shared runtime-flag grammar. */
 export const JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV = 'JUDGE_CALIBRATION_SAMPLING_ENABLED';
 
 export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
