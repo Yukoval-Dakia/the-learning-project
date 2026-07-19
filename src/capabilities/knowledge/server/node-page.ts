@@ -286,28 +286,60 @@ export async function loadKnowledgeNodePage(
       })),
   ];
 
-  // 3. primary atomic — the newest non-archived note_atomic whose knowledge_ids
-  // contains this node. atomic.knowledge_ids length is 1 (ADR-0020 §3), so a
-  // node has at most one "节点简介" atomic; we still pick newest if multiple.
-  const atomicRows = await db
-    .select({
-      id: artifact.id,
-      title: artifact.title,
-      version: artifact.version,
-      body_blocks: artifact.body_blocks,
-      generation_status: artifact.generation_status,
-      verification_status: artifact.verification_status,
-    })
-    .from(artifact)
-    .where(
-      and(
-        eq(artifact.type, NOTE_ATOMIC_TYPE),
-        isNull(artifact.archived_at),
-        sql`${artifact.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
-      ),
-    )
-    .orderBy(desc(artifact.created_at))
-    .limit(1);
+  // Five independent reads for this node — the primary atomic body, the activity
+  // timeline, all labeled notes (ADR-0027), interactive artifacts (ADR-0033 D5),
+  // and the subject profile — have no data dependency on one another, so issue
+  // them in one Promise.all instead of five sequential awaits. The backlink panel
+  // below still depends on the resolved primary atomic, so it runs afterwards.
+  const [atomicRows, timelineRows, notes, interactiveArtifacts, profile] = await Promise.all([
+    // 3. primary atomic — the newest non-archived note_atomic whose knowledge_ids
+    // contains this node. atomic.knowledge_ids length is 1 (ADR-0020 §3), so a
+    // node has at most one "节点简介" atomic; we still pick newest if multiple.
+    db
+      .select({
+        id: artifact.id,
+        title: artifact.title,
+        version: artifact.version,
+        body_blocks: artifact.body_blocks,
+        generation_status: artifact.generation_status,
+        verification_status: artifact.verification_status,
+      })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.type, NOTE_ATOMIC_TYPE),
+          isNull(artifact.archived_at),
+          sql`${artifact.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+        ),
+      )
+      .orderBy(desc(artifact.created_at))
+      .limit(1),
+    // 5. timeline — events whose payload.referenced_knowledge_ids contains this
+    // node, newest first (ADR-0020 GIN index `event_referenced_knowledge_gin`).
+    db
+      .select({
+        event_id: event.id,
+        action: event.action,
+        subject_kind: event.subject_kind,
+        actor_kind: event.actor_kind,
+        outcome: event.outcome,
+        created_at: event.created_at,
+      })
+      .from(event)
+      .where(
+        sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([knowledgeId])}::jsonb`,
+      )
+      .orderBy(desc(event.created_at))
+      .limit(TIMELINE_LIMIT),
+    // 3b. all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
+    // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
+    notesForKnowledge(db, knowledgeId),
+    // 3c. interactive artifacts labeled with this node (ADR-0033 D5) — kept out of
+    // `notes` (note contract) on purpose.
+    interactiveForKnowledge(db, knowledgeId),
+    // subject profile for the focal node (slimmed at the return site).
+    resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]),
+  ]);
 
   let primaryAtomic: NodePagePrimaryAtomic | null = null;
   const backlinks: NodePageBacklink[] = [];
@@ -386,23 +418,8 @@ export async function loadKnowledgeNodePage(
     }
   }
 
-  // 5. timeline — events whose payload.referenced_knowledge_ids contains this
-  // node, newest first (ADR-0020 GIN index `event_referenced_knowledge_gin`).
-  const timelineRows = await db
-    .select({
-      event_id: event.id,
-      action: event.action,
-      subject_kind: event.subject_kind,
-      actor_kind: event.actor_kind,
-      outcome: event.outcome,
-      created_at: event.created_at,
-    })
-    .from(event)
-    .where(
-      sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([knowledgeId])}::jsonb`,
-    )
-    .orderBy(desc(event.created_at))
-    .limit(TIMELINE_LIMIT);
+  // timeline / notes / interactiveArtifacts / profile were fetched above in the
+  // Promise.all; map the raw event rows into the wire shape here (newest first).
   const timeline: NodePageTimelineEntry[] = timelineRows.map((r) => ({
     event_id: r.event_id,
     action: r.action,
@@ -411,16 +428,6 @@ export async function loadKnowledgeNodePage(
     outcome: r.outcome,
     created_at: r.created_at.toISOString(),
   }));
-
-  // 3b. all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
-  // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
-  const notes = await notesForKnowledge(db, knowledgeId);
-
-  // 3c. interactive artifacts labeled with this node (ADR-0033 D5) — parallel
-  // read, kept out of `notes` (note contract) on purpose.
-  const interactiveArtifacts = await interactiveForKnowledge(db, knowledgeId);
-
-  const profile = await resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
 
   // B1 double-truth fix — focal-node mastery / evidence_count / last_evidence_at
   // from the SoT mastery_state projection (σ(θ̂)). Absent row → cold start:
