@@ -752,6 +752,22 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
 export async function discoverSupplyTargets(
   db: Db,
   makeId?: () => string,
+  shadow?: {
+    /**
+     * Optional observe-only seam: receives settled scanner input/output but cannot replace either.
+     * Supply-v2 Phase A uses it for inventory dual-read diagnostics; serving stays current-first.
+     */
+    observeInventory?: (input: ScanInput, targets: QuestionSupplyTarget[]) => void | Promise<void>;
+  },
 ): Promise<QuestionSupplyTarget[]> {
-  return scanCoverageGaps(await assembleScanInput(db), makeId);
+  const input = await assembleScanInput(db);
+  const targets = scanCoverageGaps(input, makeId);
+  // A shadow observer must never turn an otherwise successful current scan into a failure. Its
+  // comparison ledger is best-effort diagnostics; serving/dispatch still receives `targets`.
+  try {
+    await shadow?.observeInventory?.(input, targets);
+  } catch (error) {
+    console.warn('[question-supply] inventory shadow observation failed', error);
+  }
+  return targets;
 }
