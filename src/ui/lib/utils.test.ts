@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { cn, formatCnDate, formatRelTime } from './utils';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { cn, formatCnDate, formatCnDateOnly, formatRelTime } from './utils';
 
 describe('cn', () => {
   it('joins truthy strings with spaces', () => {
@@ -22,6 +22,43 @@ describe('formatCnDate', () => {
   });
   it('returns -- for invalid input', () => {
     expect(formatCnDate('not-a-date')).toBe('--');
+  });
+});
+
+describe('formatCnDateOnly', () => {
+  // Pin the runner to UTC+8 (the project's learner timezone) so the day-boundary
+  // assertion is deterministic on a UTC CI box; restore afterwards to avoid leaking
+  // the override to sibling files in a reused worker.
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'Asia/Shanghai';
+  });
+  afterAll(() => {
+    // Reflect.deleteProperty (not `delete`, and not `= undefined` which coerces to the
+    // string 'undefined') removes the override cleanly when TZ was originally unset.
+    if (originalTz === undefined) Reflect.deleteProperty(process.env, 'TZ');
+    else process.env.TZ = originalTz;
+  });
+
+  it('has the UTC+8 pin in effect (fixture sanity)', () => {
+    expect(new Date('2026-07-19T22:00:00.000Z').getHours()).toBe(6);
+  });
+
+  it('renders the LOCAL calendar day, not the UTC slice, across the day boundary', () => {
+    // 2026-07-19 22:00 UTC = 2026-07-20 06:00 in UTC+8 → the learner is on the 20th.
+    const beforeLocalMidnight = new Date('2026-07-19T22:00:00.000Z');
+    expect(formatCnDateOnly(beforeLocalMidnight)).toBe('2026-07-20');
+    // The old UTC slice would have shown the previous day — guard against a regression.
+    expect(beforeLocalMidnight.toISOString().slice(0, 10)).toBe('2026-07-19');
+    expect(formatCnDateOnly(beforeLocalMidnight)).not.toBe('2026-07-19');
+  });
+
+  it('formats a plain daytime timestamp to its local YYYY-MM-DD', () => {
+    expect(formatCnDateOnly(new Date('2026-05-16T04:07:00.000Z'))).toBe('2026-05-16');
+  });
+
+  it('returns -- for invalid input', () => {
+    expect(formatCnDateOnly('not-a-date')).toBe('--');
   });
 });
 

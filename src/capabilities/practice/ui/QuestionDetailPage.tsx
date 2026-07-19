@@ -28,6 +28,7 @@
 
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -117,8 +118,9 @@ function hasMarkup(s: string | null | undefined): boolean {
 function dateLabel(sec: number): string {
   const d = new Date(sec * 1000);
   if (Number.isNaN(d.getTime())) return '';
-  // demo: created.replace(/-/g, " / ") → YYYY / MM / DD
-  return d.toISOString().slice(0, 10).replace(/-/g, ' / ');
+  // 本地日历日（formatCnDateOnly），不是 UTC 切片——否则「下次复习」到期日与创建日
+  // 会让 UTC+8 学习者整体错一天。demo 形态：YYYY / MM / DD。
+  return formatCnDateOnly(d).replace(/-/g, ' / ');
 }
 
 // 题面文本内嵌 markdown/latex（design QInline → MathMarkdown 单段，同 QuestionsPage）。
