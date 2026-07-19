@@ -1,7 +1,11 @@
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { getEffectiveDomain, resolveSubjectKnowledgeIds } from './domain';
+import {
+  batchResolveEffectiveDomains,
+  getEffectiveDomain,
+  resolveSubjectKnowledgeIds,
+} from './domain';
 
 describe('getEffectiveDomain', () => {
   beforeEach(async () => {
@@ -66,6 +70,90 @@ describe('getEffectiveDomain', () => {
       version: 0,
     });
     await expect(getEffectiveDomain(db, 'k1')).rejects.toThrow(/root.*domain/i);
+  });
+});
+
+// YUK-716 — batchResolveEffectiveDomains must resolve BYTE-IDENTICALLY to the per-node
+// getEffectiveDomain caught-to-null, INCLUDING the 32-hop MAX_DEPTH cap (codex #913 P2): a
+// domain-bearing ancestor beyond the cap must NOT leak into the batch (which would shift
+// effectiveThetaForKcBatch's θ_global vs the single path's max-depth throw → θ_global=0).
+describe('batchResolveEffectiveDomains (YUK-716 — mirrors getEffectiveDomain incl. MAX_DEPTH)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const now = new Date();
+  const base = {
+    merged_from: [] as string[],
+    proposed_by_ai: false,
+    approval_status: 'approved' as const,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  };
+
+  // Seed a linear chain `<prefix>_0 → <prefix>_1 → … → <prefix>_{length-1}`. The leaf
+  // (`_0`) is the start node; only the root (`_{length-1}`) carries `rootDomain`. The
+  // domain-bearing root therefore sits at climb-level `length-1` from the start node.
+  // Rows are inserted root-first so each node's parent already exists.
+  async function seedChain(
+    db: ReturnType<typeof testDb>,
+    prefix: string,
+    length: number,
+    rootDomain: string,
+  ): Promise<string> {
+    const rows = [];
+    for (let i = length - 1; i >= 0; i--) {
+      const isRoot = i === length - 1;
+      rows.push({
+        id: `${prefix}_${i}`,
+        name: `${prefix}_${i}`,
+        domain: isRoot ? rootDomain : null,
+        parent_id: isRoot ? null : `${prefix}_${i + 1}`,
+        ...base,
+      });
+    }
+    await db.insert(knowledge).values(rows);
+    return `${prefix}_0`;
+  }
+
+  it('resolves a domain AT the cap (climb-level 31, the 32nd node) identically to getEffectiveDomain', async () => {
+    const db = testDb();
+    // 32 nodes → domain at climb-level 31 (inspected within the 32-iteration cap).
+    const kc = await seedChain(db, 'atcap', 32, 'deep_at_cap');
+    const single = await getEffectiveDomain(db, kc);
+    const batch = await batchResolveEffectiveDomains(db, [kc]);
+    expect(single).toBe('deep_at_cap');
+    expect(batch.get(kc)).toBe(single); // byte-identical at the boundary
+  });
+
+  it('mirrors the MAX_DEPTH throw: a domain BEYOND 32 hops → null (batch) == throw→null (single)', async () => {
+    const db = testDb();
+    // 33 nodes → domain at climb-level 32, one past the cap: single throws max-depth.
+    const kc = await seedChain(db, 'beyond', 33, 'deep_beyond');
+    await expect(getEffectiveDomain(db, kc)).rejects.toThrow(/max depth/i);
+    const batch = await batchResolveEffectiveDomains(db, [kc]);
+    // getEffectiveDomain throws → callers catch → null domain (θ_global=0). The batch MUST
+    // produce the SAME null, NOT the deep ancestor's domain it could reach by ignoring the cap.
+    expect(batch.get(kc)).toBeNull();
+  });
+
+  it('agrees on not-found / root-null / normal resolution in one batch', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values([
+      { id: 'r', name: 'r', domain: 'yuwen', parent_id: null, ...base },
+      { id: 'c', name: 'c', domain: null, parent_id: 'r', ...base },
+      { id: 'bad_root', name: 'bad_root', domain: null, parent_id: null, ...base },
+    ]);
+    const batch = await batchResolveEffectiveDomains(db, ['c', 'r', 'bad_root', 'missing']);
+    expect(batch.get('c')).toBe('yuwen'); // normal walk
+    expect(batch.get('r')).toBe('yuwen'); // root with domain
+    expect(batch.get('bad_root')).toBeNull(); // root null domain → single throws → null
+    expect(batch.get('missing')).toBeNull(); // not found → single throws → null
+    // Cross-check the single path agrees on each id.
+    expect(await getEffectiveDomain(db, 'c')).toBe('yuwen');
+    await expect(getEffectiveDomain(db, 'bad_root')).rejects.toThrow(/root.*domain/i);
+    await expect(getEffectiveDomain(db, 'missing')).rejects.toThrow(/not found/i);
   });
 });
 
