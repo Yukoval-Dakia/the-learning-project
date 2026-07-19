@@ -6,7 +6,7 @@
 
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -496,5 +496,117 @@ describe('TeachingBriefBand — a11y landmarks (jsdom)', () => {
     expect(accept.textContent).toContain('验证');
     expect(accept.textContent).not.toContain('确认弱点');
     expect(accept.textContent).not.toContain('加进复习');
+  });
+});
+
+describe('TeachingBriefBand — brief_seen day-boundary re-report (jsdom, YUK-710)', () => {
+  it('re-reports brief_seen when the tab becomes visible on a new Shanghai day', async () => {
+    // Fake only Date so learnerLocalDay(new Date()) is controllable; setTimeout stays real so
+    // RTL's waitFor works.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-10T01:00:00.000Z')); // 2026-07-10 BJT
+      const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+        Response.json({ brief: null }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const seenPosts = () =>
+        fetchMock.mock.calls.filter((call) =>
+          String(call[0]).includes('/api/prep-desk/brief/interaction'),
+        );
+
+      const qc = mkClient();
+      qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+      renderWith(qc);
+
+      // Mount fires exactly one brief_seen for day 1.
+      await waitFor(() => expect(seenPosts()).toHaveLength(1));
+
+      // Roll the clock to the next Shanghai day; returning to the visible tab re-reports once.
+      vi.setSystemTime(new Date('2026-07-10T20:00:00.000Z')); // 2026-07-11 BJT
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() => expect(seenPosts()).toHaveLength(2));
+
+      // A same-day return does NOT re-report — the (brief_id × local day) key gate suppresses it.
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(seenPosts()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records the new-day brief_seen BEFORE an action when a visible tab crossed midnight', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-10T01:00:00.000Z')); // 2026-07-10 BJT
+      decideProposalMock.mockResolvedValue({});
+      const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+        Response.json({ brief: null }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const interactions = () =>
+        fetchMock.mock.calls
+          .filter((call) => String(call[0]).includes('/api/prep-desk/brief/interaction'))
+          .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as { type: string });
+
+      const qc = mkClient();
+      qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+      renderWith(qc);
+      await waitFor(() => expect(interactions()).toHaveLength(1)); // mount seen (day 1)
+      expect(interactions()[0]).toMatchObject({ type: 'brief_seen' });
+
+      // The tab stays visible; the Shanghai day rolls over with NO re-render / visibilitychange —
+      // so neither the [brief] effect nor the visibility listener fires. The action click must still
+      // record today's (new-day) seen first.
+      vi.setSystemTime(new Date('2026-07-10T20:00:00.000Z')); // 2026-07-11 BJT
+      fireEvent.click(screen.getByRole('button', { name: '就按这个方向验证' }));
+
+      await waitFor(() => expect(interactions()).toHaveLength(3));
+      // The new-day brief_seen is recorded BEFORE the accept_probe action (no unpaired action, and
+      // the prior day is not left as the only seen).
+      expect(interactions()[1]).toMatchObject({ type: 'brief_seen' });
+      expect(interactions()[2]).toMatchObject({
+        type: 'primary_action_started',
+        action_kind: 'accept_probe',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a same-day action does NOT add a redundant brief_seen (day-key gate)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-10T01:00:00.000Z'));
+      decideProposalMock.mockResolvedValue({});
+      const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+        Response.json({ brief: null }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const interactions = () =>
+        fetchMock.mock.calls
+          .filter((call) => String(call[0]).includes('/api/prep-desk/brief/interaction'))
+          .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as { type: string });
+
+      const qc = mkClient();
+      qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+      renderWith(qc);
+      await waitFor(() => expect(interactions()).toHaveLength(1)); // mount seen
+
+      // Same day → the click's fireSeenIfNew is a no-op; only the accept_probe action is added.
+      fireEvent.click(screen.getByRole('button', { name: '就按这个方向验证' }));
+      await waitFor(() => expect(interactions()).toHaveLength(2));
+      expect(interactions().filter((i) => i.type === 'brief_seen')).toHaveLength(1);
+      expect(interactions()[1]).toMatchObject({
+        type: 'primary_action_started',
+        action_kind: 'accept_probe',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

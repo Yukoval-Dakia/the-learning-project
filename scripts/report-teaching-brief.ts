@@ -1,0 +1,334 @@
+// YUK-710 (P0F/6) — the two-week teaching-brief survival report CLI + DB loader.
+//
+// Reads the append-only interaction ledger (experimental:brief_seen /
+// experimental:primary_action_started) plus the EXISTING canonical events (rate decisions,
+// mind_probe questions, experimental:probe_result) and prints the raw survival facts for an
+// owner's two-week go/no-go read. It is READ-ONLY (every statement is a SELECT), a standalone
+// operational script NOT wired into any request path, and adds no new pnpm test gate.
+//
+// The pure computation + formatting live in scripts/lib/teaching-brief-report.ts (unit-tested);
+// this file only shapes the window-filtered DB facts and prints. The window is an inclusive
+// Asia/Shanghai calendar-day range (learnerDayWindowUtc), the project-wide learner day boundary.
+//
+// CLI:
+//   pnpm report:teaching-brief --from 2026-07-06 --to 2026-07-19   # text report
+//   pnpm report:teaching-brief --from 2026-07-06 --to 2026-07-19 --json
+
+// Load `.env` BEFORE importing `@/db/client`. Must be first (see rebuild-projection.ts).
+import './load-env';
+
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  isCandidateError,
+  validateAckableOutcome,
+} from '@/capabilities/shell/server/teaching-brief';
+import type {
+  BriefSeenPayload,
+  PrimaryActionStartedPayload,
+} from '@/capabilities/shell/server/teaching-brief-interactions';
+import { isLearnerLocalDay, learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
+import {
+  BRIEF_ACK_ACTION,
+  BRIEF_SEEN_ACTION,
+  PRIMARY_ACTION_STARTED_ACTION,
+  PROBE_QUESTION_SOURCE,
+  PROBE_RESULT_ACTION,
+  type PrimaryActionKind,
+} from '@/core/schema/conjecture';
+import { type Db, db } from '@/db/client';
+import { event, question } from '@/db/schema';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import {
+  type AckActionFact,
+  type BriefSeenFact,
+  type DecisionFact,
+  type PrimaryActionFact,
+  type ProbeResultFact,
+  type ProbeServedFact,
+  type TeachingBriefReportInput,
+  computeTeachingBriefReport,
+  formatTeachingBriefReport,
+  parseCliFlag,
+} from './lib/teaching-brief-report';
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Load every window-filtered fact the report needs. Interaction rows are filtered by their
+ * stored `payload.local_day` (already Asia/Shanghai, `YYYY-MM-DD` lexical = chronological);
+ * every other event/question is filtered by `created_at` inside the UTC instant range that the
+ * inclusive Shanghai-day window maps to — one consistent JS-computed instant pair, no JS/SQL
+ * timezone mixing.
+ */
+export async function loadTeachingBriefReportInput(
+  database: Db,
+  from: string,
+  to: string,
+): Promise<TeachingBriefReportInput> {
+  const window = learnerDayWindowUtc(from, to);
+
+  // brief_seen — filtered by the learner-local day stored on the row.
+  const seenRows = await database
+    .select({ brief_id: event.subject_id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, BRIEF_SEEN_ACTION),
+        sql`${event.payload}->>'local_day' >= ${from}`,
+        sql`${event.payload}->>'local_day' <= ${to}`,
+      ),
+    );
+  // Validate at the boundary against the shared payload type: our writer always sets a valid
+  // local_day + seen_at, so a row missing them is a foreign / corrupt event — drop it rather than
+  // coerce to '' (which would phantom-count an empty day). No throw: one bad row never crashes the
+  // report.
+  const briefSeen: BriefSeenFact[] = [];
+  for (const row of seenRows) {
+    const p = row.payload as unknown as Partial<BriefSeenPayload>;
+    if (typeof p.local_day !== 'string' || !isLearnerLocalDay(p.local_day)) continue;
+    if (typeof p.seen_at !== 'string') continue;
+    briefSeen.push({ brief_id: row.brief_id, local_day: p.local_day, seen_at: p.seen_at });
+  }
+
+  // primary_action_started — same local-day filter.
+  const actionRows = await database
+    .select({ brief_id: event.subject_id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PRIMARY_ACTION_STARTED_ACTION),
+        sql`${event.payload}->>'local_day' >= ${from}`,
+        sql`${event.payload}->>'local_day' <= ${to}`,
+      ),
+    );
+  const primaryActions: PrimaryActionFact[] = [];
+  for (const row of actionRows) {
+    const p = row.payload as unknown as Partial<PrimaryActionStartedPayload>;
+    // Drop rows missing a valid day / timestamp / kind (foreign or corrupt). action_kind is passed
+    // through unchecked-against-the-enum on purpose: the pure fn validates it against
+    // PRIMARY_ACTION_KINDS and counts any unrecognized value as missing data (never a NaN phantom).
+    if (typeof p.local_day !== 'string' || !isLearnerLocalDay(p.local_day)) continue;
+    if (typeof p.started_at !== 'string' || typeof p.action_kind !== 'string') continue;
+    primaryActions.push({
+      brief_id: row.brief_id,
+      action_kind: p.action_kind as PrimaryActionKind,
+      local_day: p.local_day,
+      started_at: p.started_at,
+      ...(typeof p.result_event_id === 'string' && p.result_event_id.length > 0
+        ? { result_event_id: p.result_event_id }
+        : {}),
+    });
+  }
+
+  // Conjecture proposal decisions — the canonical `rate` event, joined back to the proposal so
+  // only conjecture decisions are counted. accept/edit split on the accept path's calibration
+  // anchor; dismiss carries no anchor, so the EXISTS join is what proves it is a conjecture.
+  const decisionRows = await database
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        eq(event.subject_kind, 'event'),
+        gte(event.created_at, window.from),
+        lt(event.created_at, window.to),
+        sql`EXISTS (
+          SELECT 1 FROM ${event} AS proposal
+          WHERE proposal.id = ${event.subject_id}
+            AND proposal.action = 'experimental:proposal'
+            AND proposal.subject_kind = 'mind_model'
+            AND proposal.payload->'ai_proposal'->>'kind' = 'conjecture'
+        )`,
+      ),
+    );
+  const decisions: DecisionFact[] = [];
+  for (const row of decisionRows) {
+    const p = toRecord(row.payload);
+    if (p.rating === 'accept') {
+      decisions.push({ kind: p.calibration_anchor === 'edit' ? 'edit' : 'accept' });
+    } else if (p.rating === 'dismiss') {
+      decisions.push({ kind: 'dismiss' });
+    }
+  }
+
+  // Probes served — mind_probe questions created in-window. `has_result` is then a set
+  // membership over the probe_result subjects (two plain queries beat a correlated EXISTS in
+  // the SELECT, whose in-`sql` outer-column correlation is fragile to render). The answered
+  // query is bounded by the SAME created_at window as the served query and the outcome query
+  // below: an in-window probe answered OUTSIDE the window is NOT completion here, so the
+  // completion rate can never inflate past the confirmed/retired counts that share the window
+  // (a within-window served → answered funnel, not "answered ever").
+  const servedRows = await database
+    .select({ probe_question_id: question.id })
+    .from(question)
+    .where(
+      and(
+        eq(question.source, PROBE_QUESTION_SOURCE),
+        gte(question.created_at, window.from),
+        lt(question.created_at, window.to),
+      ),
+    );
+  const servedIds = servedRows.map((row) => row.probe_question_id);
+  const answeredRows =
+    servedIds.length === 0
+      ? []
+      : await database
+          .select({ subject_id: event.subject_id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, PROBE_RESULT_ACTION),
+              eq(event.subject_kind, 'question'),
+              inArray(event.subject_id, servedIds),
+              gte(event.created_at, window.from),
+              lt(event.created_at, window.to),
+            ),
+          );
+  const answeredIds = new Set(answeredRows.map((row) => row.subject_id));
+  const probesServed: ProbeServedFact[] = servedRows.map((row) => ({
+    probe_question_id: row.probe_question_id,
+    has_result: answeredIds.has(row.probe_question_id),
+  }));
+
+  // Probe outcomes — every probe_result event in-window, then gated by the reader's OWN
+  // STRUCTURAL deliverability check (validateAckableOutcome) so the report counts exactly the
+  // outcomes a learner could have received: canonical body (action / question subject / legal
+  // resolution+outcome pair / self-consistent conjecture provenance) + the mind-probe exists +
+  // the probe is canonical for its proposal. Two live-reader dimensions are dropped because they
+  // don't fit a historical window aggregate: skipTimeWindow drops the 7-day OUTCOME_TTL and the
+  // ack-exclusion (an expired-by-now or later-acked outcome still happened); skipCurrentStatusFold
+  // drops the proposal's CURRENT correction status (a probe_result's existence structurally implies
+  // the proposal WAS accepted when delivered — a later retract/supersede must not erase it). A
+  // truly chain-broken result (provenance mismatch / DELETED probe), which is real corruption, is
+  // counted as MISSING DATA instead of silently inflating the confirmed/retired denominator.
+  const resultRows = await database
+    .select({
+      id: event.id,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      caused_by_event_id: event.caused_by_event_id,
+      created_at: event.created_at,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.subject_kind, 'question'),
+        gte(event.created_at, window.from),
+        lt(event.created_at, window.to),
+      ),
+    );
+  const now = new Date();
+  // Each row's gate is independent (2 SELECTs apiece), so run them in parallel. Concurrency is
+  // naturally bounded by the postgres-js pool (max:10, see @/db/client) and the row count is small
+  // (a fortnight of one learner's probe_results), so a direct Promise.all is safe here.
+  const gated = await Promise.all(
+    resultRows.map(async (row) => ({
+      id: row.id,
+      gate: await validateAckableOutcome(database, row, now, {
+        skipTimeWindow: true,
+        skipCurrentStatusFold: true,
+      }),
+    })),
+  );
+  const probeResults: ProbeResultFact[] = [];
+  let skippedCorruptOutcomes = 0;
+  for (const { id, gate } of gated) {
+    if (isCandidateError(gate)) {
+      skippedCorruptOutcomes += 1;
+      continue;
+    }
+    probeResults.push({ result_event_id: id, resolution: gate.value.resolution });
+  }
+
+  // Outcome acks (BRIEF_ACK_ACTION) — the "已处理该结果" signal, reusing the existing event. Counted
+  // toward the brief→action funnel (a retired brief's only trackable action; see AckActionFact). The
+  // brief_id lives in the ack's own payload; the local day is the ack's Asia/Shanghai created day.
+  const ackRows = await database
+    .select({ payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, BRIEF_ACK_ACTION),
+        eq(event.subject_kind, 'event'),
+        gte(event.created_at, window.from),
+        lt(event.created_at, window.to),
+      ),
+    );
+  const acks: AckActionFact[] = [];
+  for (const row of ackRows) {
+    const p = toRecord(row.payload);
+    if (typeof p.brief_id !== 'string' || p.brief_id.length === 0) continue; // foreign / corrupt ack
+    acks.push({
+      brief_id: p.brief_id,
+      local_day: learnerLocalDay(row.created_at),
+      acknowledged_at:
+        typeof p.acknowledged_at === 'string' ? p.acknowledged_at : row.created_at.toISOString(),
+    });
+  }
+
+  return {
+    from,
+    to,
+    briefSeen,
+    primaryActions,
+    acks,
+    decisions,
+    probesServed,
+    probeResults,
+    skippedCorruptOutcomes,
+  };
+}
+
+async function main(): Promise<void> {
+  // NEVER process.exit() — that can terminate before a piped stdout (`--json | tee`) is flushed,
+  // truncating the report. Set process.exitCode, then close the pg pool in `finally` so the event
+  // loop drains and Node exits naturally AFTER stdout has flushed (mirrors audit-calibration.ts,
+  // the repo's other DB-connecting script).
+  try {
+    const from = parseCliFlag(process.argv, 'from');
+    const to = parseCliFlag(process.argv, 'to');
+    const asJson = process.argv.includes('--json');
+    if (!from || !to) {
+      console.error('usage: pnpm report:teaching-brief --from YYYY-MM-DD --to YYYY-MM-DD [--json]');
+      process.exitCode = 2;
+      return;
+    }
+
+    const input = await loadTeachingBriefReportInput(db, from, to);
+    const report = computeTeachingBriefReport(input);
+    console.log(asJson ? JSON.stringify(report, null, 2) : formatTeachingBriefReport(report));
+  } catch (err) {
+    // Log the full error (message + stack) so an operational failure is diagnosable, not a bare
+    // one-liner (mirrors audit-calibration.ts).
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[report-teaching-brief] failed (operational error): ${msg}`);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    process.exitCode = 1;
+  } finally {
+    // @/db/client opens a postgres-js pool (max:10) that holds the event loop open; close it so
+    // this script exits cleanly. Best-effort: the report is already printed, so a close error
+    // (pool already closed / never opened) must not mask it.
+    try {
+      await db.$client.end({ timeout: 5 });
+    } catch {
+      // nothing to clean up.
+    }
+  }
+}
+
+// CLI-gate: only run as the CLI entry point so the DB test can import loadTeachingBriefReportInput
+// without the top-level run firing.
+// `resolve(process.argv[1])` — argv[1] may be relative (e.g. `tsx scripts/report-teaching-brief.ts`);
+// comparing it raw against the absolute fileURLToPath would miss, so main() would silently never run
+// and the process would exit 0 with no output. Mirrors the repo's other script entry gates.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main();
+}
