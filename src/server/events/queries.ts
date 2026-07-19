@@ -23,8 +23,9 @@
 //   - getEventChain(db, id) — Step 6: focal event + parent + reverse children
 //
 // Write API:
-//   - writeEvent(db, eventObj) — single INSERT path; calls parseEvent() before INSERT;
-//     idempotent via PK conflict do-nothing.
+//   - writeEvent(db, eventObj) — one-row convenience over writeEvents.
+//   - writeEvents(db, eventObjs) — validated multi-row INSERT; idempotent via PK conflict
+//     do-nothing and atomic with respect to parse validation.
 
 import {
   type EffectiveTruth,
@@ -1034,7 +1035,7 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
 }
 
 // ============================================================================
-// writeEvent — single-owner INSERT path (ADR-0005).
+// writeEvent(s) — single-owner INSERT path (ADR-0005).
 // ============================================================================
 
 export interface WriteEventInput {
@@ -1066,17 +1067,15 @@ export interface WriteEventInput {
 }
 
 /**
- * The single INSERT path for `event` rows. parseEvent() validates the row
+ * The single INSERT path for `event` rows. parseEvent() validates every row
  * matches a KnownEvent or experimental:* shape before writing — failures throw,
  * never silently swallowed. Per ADR-0005, no other module should call
  * `db.insert(event)` directly.
  *
- * Idempotency: PK conflict do-nothing means re-running with the same id is
- * safe. When a conflict happens we fetch the existing row's id (which equals
- * the caller's id) so callers don't need to special-case the "did nothing" path.
- * First write wins — second write does NOT overwrite payload.
+ * Idempotency: PK conflict do-nothing means re-running with the same id is safe.
+ * First write wins — a duplicate does NOT overwrite payload.
  */
-export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<string> {
+function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
   // parseEvent on a normalised view — Lane B's discriminated union locks
   // action/subject/outcome/payload. Envelope fields (id, session_id, created_at,
   // etc.) live on the DB row but outside Lane B's contract, so they're not
@@ -1103,28 +1102,42 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
     input.affected_scopes ??
     (input.ingest_at === undefined || input.ingest_at === null ? computeAffectedScopes(input) : []);
 
-  await db
-    .insert(event)
-    .values({
-      id: input.id,
-      session_id: input.session_id ?? null,
-      actor_kind: input.actor_kind,
-      actor_ref: input.actor_ref,
-      action: input.action,
-      subject_kind: input.subject_kind,
-      subject_id: input.subject_id,
-      outcome: input.outcome ?? null,
-      payload: input.payload as Record<string, unknown>,
-      caused_by_event_id: input.caused_by_event_id ?? null,
-      affected_scopes: affectedScopes,
-      task_run_id: input.task_run_id ?? null,
-      cost_micro_usd: input.cost_micro_usd ?? null,
-      // NULL default = pending ingest (ADR-0021). A non-NULL stamp opts the row
-      // out of both the outbox poller and implicit brief scopes (see above).
-      ingest_at: input.ingest_at ?? null,
-      created_at: input.created_at ?? new Date(),
-    })
-    .onConflictDoNothing({ target: event.id });
+  return {
+    id: input.id,
+    session_id: input.session_id ?? null,
+    actor_kind: input.actor_kind,
+    actor_ref: input.actor_ref,
+    action: input.action,
+    subject_kind: input.subject_kind,
+    subject_id: input.subject_id,
+    outcome: input.outcome ?? null,
+    payload: input.payload as Record<string, unknown>,
+    caused_by_event_id: input.caused_by_event_id ?? null,
+    affected_scopes: affectedScopes,
+    task_run_id: input.task_run_id ?? null,
+    cost_micro_usd: input.cost_micro_usd ?? null,
+    // NULL default = pending ingest (ADR-0021). A non-NULL stamp opts the row
+    // out of both the outbox poller and implicit brief scopes (see above).
+    ingest_at: input.ingest_at ?? null,
+    created_at: input.created_at ?? new Date(),
+  };
+}
+
+/**
+ * Validate the complete batch before issuing one multi-row INSERT. If any payload is invalid,
+ * parseEvent throws before the DB is touched. Returned ids preserve input order (including ids
+ * that already existed); first-write-wins remains the same as writeEvent.
+ */
+export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promise<string[]> {
+  if (inputs.length === 0) return [];
+  const rows = inputs.map(prepareEventInsert);
+  await db.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+
+  return inputs.map((input) => input.id);
+}
+
+export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<string> {
+  await writeEvents(db, [input]);
 
   // ADR-0021 — INSERT-only. The new row's `ingest_at` is NULL (pending). The
   // outbox poll handler in `src/server/memory/triggers.ts` picks it up and
