@@ -8,8 +8,9 @@
 //
 // No-DB unit partition（不 import db/postgres/drizzle）；纯函数，无 DOM 依赖。
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  allocateKeepaliveBudget,
   buildDraftListQuery,
   buildPaperAnswerDraftBody,
   buildPaperAnswerDraftInit,
@@ -188,5 +189,31 @@ describe('buildPaperAnswerDraftInit — keepalive body-size guard (YUK-732)', ()
   it('never sets keepalive when it is not requested', () => {
     const init = buildPaperAnswerDraftInit('paper_1', { ...base, answer_md: '短' });
     expect(init.keepalive).toBeUndefined();
+  });
+
+  it('does not measure the body when keepalive is not requested (short-circuit)', () => {
+    const spy = vi.spyOn(TextEncoder.prototype, 'encode');
+    buildPaperAnswerDraftInit('paper_1', { ...base, answer_md: '短' });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
+describe('allocateKeepaliveBudget — shared page-level keepalive budget (YUK-732)', () => {
+  it('grants keepalive only while the cumulative total stays under the cap', () => {
+    // Two 40KB bodies exceed the 60KB budget together → only the first fits.
+    expect(allocateKeepaliveBudget([40_000, 40_000])).toEqual([true, false]);
+  });
+
+  it('grants keepalive to every body that collectively fits', () => {
+    expect(allocateKeepaliveBudget([30_000, 30_000])).toEqual([true, true]);
+  });
+
+  it('skips an over-budget body but still allocates a later one that fits the remainder', () => {
+    expect(allocateKeepaliveBudget([70_000, 10_000])).toEqual([false, true]);
+  });
+
+  it('returns an empty allocation for no bodies', () => {
+    expect(allocateKeepaliveBudget([])).toEqual([]);
   });
 });

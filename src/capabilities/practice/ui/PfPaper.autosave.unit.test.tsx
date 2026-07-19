@@ -17,7 +17,12 @@ const mocks = vi.hoisted(() => ({
   submitPaperSlot: vi.fn(),
 }));
 
-vi.mock('./practice-api', () => mocks);
+// Keep the real pure helpers (buildPaperAnswerDraftBody, allocateKeepaliveBudget,
+// paperAnswerDraftBodyBytes) that flushDirtySlots calls; only the network functions are mocked.
+vi.mock('./practice-api', async () => {
+  const actual = await vi.importActual<typeof import('./practice-api')>('./practice-api');
+  return { ...actual, ...mocks };
+});
 
 const textDetail = {
   artifact_id: 'paper_1',
@@ -587,6 +592,74 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     await waitFor(() => expect(onExit).toHaveBeenCalled());
     // The throw was caught and logged, not left to reject the async exitPaper.
     expect(errSpy).toHaveBeenCalledWith('[PfPaper] onExit threw', expect.any(Error));
+    // The host didn't navigate away → the page unlocks so the learner can retry exiting.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '退出 · 进度保留' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
     errSpy.mockRestore();
+  });
+
+  it('pagehide flushes the latest typed text (answersRef, not a stale closure)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    const ta = screen.getByLabelText('作答');
+    await user.type(ta, '第一版');
+    await user.clear(ta);
+    await user.type(ta, '最终版');
+    // Hard tab-close before the debounce fires — the keepalive flush must carry the latest
+    // text, read synchronously from answersRef.
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    const last = mocks.savePaperAnswer.mock.calls.at(-1);
+    expect(last?.[1].answer_md).toBe('最终版');
+    expect(last?.[2]).toMatchObject({ keepalive: true });
+  });
+
+  it('disables 交卷 during the exit flush window (no double transition)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    });
+
+    // While exiting, submitting is disabled so a submit can't race a second terminal
+    // transition against the pending exit.
+    expect(
+      (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    resolveSave({ ok: true });
+  });
+
+  it('still pauses the session on pagehide even if the flush is problematic', async () => {
+    // A synchronously-throwing save is swallowed per-slot, and the pagehide try/catch is the
+    // backstop — either way the session pause must still fire.
+    mocks.savePaperAnswer.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.pausePaperSession).toHaveBeenCalled());
   });
 });
