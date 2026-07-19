@@ -62,6 +62,24 @@ export async function POST(req: Request): Promise<Response> {
 
   const bytes = new Uint8Array(await req.arrayBuffer());
 
+  // Post-read backstop for the pre-read gate's blind spot: a chunked / no-
+  // Content-Length upload never declares its size, so it slips past the check above
+  // and is buffered whole here. Re-check the ACTUAL byte length now. This does NOT
+  // prevent the OOM the tripwire targets — the bytes are already resident, so a body
+  // large enough to exhaust memory would have done so during arrayBuffer(). Its one
+  // job is to refuse to feed an over-limit body into the DESTRUCTIVE wipe-and-reload:
+  // if we got here with too many bytes, fail closed rather than restore. Same
+  // env-tunable ceiling as the pre-read gate.
+  if (bytes.byteLength > MAX_BACKUP_UPLOAD_BYTES) {
+    return Response.json(
+      {
+        error: 'payload_too_large',
+        message: `backup upload exceeds the ${Math.round(MAX_BACKUP_UPLOAD_BYTES / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
+      },
+      { status: 413 },
+    );
+  }
+
   const { status, body } = await restoreFromArchive({ db, r2: getR2(), bytes });
   return Response.json(body, { status });
 }

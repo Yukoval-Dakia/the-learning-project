@@ -186,6 +186,38 @@ describe('POST /api/_/import — guards', () => {
     expect(deleteCalls.length).toBe(0);
     expect(insertCalls.length).toBe(0);
   });
+
+  // YUK-729 (#965 round-3) — a chunked / no-Content-Length upload skips the pre-read
+  // gate, so a POST-READ backstop must still refuse to feed an over-limit body into
+  // the destructive wipe-and-reload. Driven with a tiny env-set tripwire (re-imported
+  // module) so the check is exercised without a ~1 GB allocation.
+  it('returns 413 when a body without Content-Length exceeds the tripwire after buffering, with zero side effects', async () => {
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1000');
+    vi.resetModules();
+    const { POST: freshPost, MAX_BACKUP_UPLOAD_BYTES: smallCap } = await import('./backup-import');
+    expect(smallCap).toBe(1000);
+
+    const oversized = new Uint8Array(smallCap + 1); // 1001 bytes, no Content-Length
+    const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
+      method: 'POST',
+      body: oversized.buffer as ArrayBuffer,
+      headers: { 'content-type': 'application/zip' },
+    });
+    // The pre-read gate is genuinely bypassed: this runtime does not surface a
+    // Content-Length for an ArrayBuffer body, so the post-read check is what fires.
+    expect(req.headers.get('content-length')).toBeNull();
+
+    const res = await freshPost(req);
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('payload_too_large');
+    // Destructive restore never started even though the body was buffered whole.
+    expect(deleteCalls.length).toBe(0);
+    expect(insertCalls.length).toBe(0);
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
 });
 
 describe('POST /api/_/import — wipe + reinsert', () => {
