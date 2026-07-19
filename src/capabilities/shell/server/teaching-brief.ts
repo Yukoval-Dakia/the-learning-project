@@ -598,17 +598,22 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           [...TERMINAL_PROPOSAL_RATINGS].map((rating) => sql`${rating}`),
           sql`, `,
         )})`,
-        // Corrected/retracted/superseded proposals are likewise excluded pre-window. A
-        // malformed correction event excludes its proposal here even though
-        // getCorrectionStatuses would keep it active — fail-closed skip is the
-        // contract's stance on corrupt records, and the in-memory check below stays as
-        // the authoritative second gate.
-        sql`NOT EXISTS (
-          SELECT 1 FROM ${event} AS correction
+        // Corrected/retracted/superseded proposals are likewise excluded pre-window.
+        // Mirror getCorrectionStatuses' last-write-wins semantics: only the LATEST
+        // correction decides, so a corrected-then-restored proposal stays eligible.
+        // A latest supersede without replacement (malformed) is excluded here even
+        // though the in-memory pass would keep the prior state — fail-closed skip is
+        // the contract's stance on corrupt records, and getCorrectionStatuses below
+        // stays as the authoritative second gate.
+        sql`COALESCE((
+          SELECT correction.payload->>'correction_kind'
+          FROM ${event} AS correction
           WHERE correction.action = 'correct'
             AND correction.subject_kind = 'event'
             AND correction.subject_id = ${event.id}
-        )`,
+          ORDER BY correction.created_at DESC, correction.id DESC
+          LIMIT 1
+        ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))

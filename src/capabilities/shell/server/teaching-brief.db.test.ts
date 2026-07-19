@@ -719,6 +719,46 @@ describe('loadTeachingBrief', () => {
     });
   });
 
+  it('keeps a corrected-then-restored finding eligible (latest correction wins)', async () => {
+    const proposal = rawProposalRow({
+      id: 'p_restored',
+      createdAt: new Date(NOW.getTime() - 3 * 60 * 60 * 1000),
+    });
+    const retractAt = new Date(NOW.getTime() - 2 * 60 * 60 * 1000);
+    const restoreAt = new Date(NOW.getTime() - 60 * 60 * 1000);
+    const corrections: Array<typeof event.$inferInsert> = [
+      {
+        id: 'correct_p_restored_retract',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: proposal.id,
+        outcome: 'success',
+        payload: { correction_kind: 'retract', reason_md: 'retracted in test' },
+        created_at: retractAt,
+      },
+      {
+        id: 'correct_p_restored_restore',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: proposal.id,
+        outcome: 'success',
+        payload: { correction_kind: 'restore', reason_md: 'restored in test' },
+        created_at: restoreAt,
+      },
+    ];
+    await testDb()
+      .insert(event)
+      .values([proposal, ...corrections]);
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result.brief).toMatchObject({ brief_id: 'p_restored', state: 'finding' });
+  });
+
   it('keeps a large accepted-without-probe quiet state bounded to constant SELECT round-trips', async () => {
     const proposalRows = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW + 30 }, (_, index) =>
       rawProposalRow({
