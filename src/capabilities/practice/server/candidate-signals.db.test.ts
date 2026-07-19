@@ -80,6 +80,7 @@ import {
   klpScoreFromGrid,
   uniformPrior,
 } from '@/core/theta-grid';
+import type { Db } from '@/db/client';
 import {
   item_calibration,
   item_family_calibration,
@@ -1306,5 +1307,56 @@ describe('A4 grid→KLP selection wiring (YUK-436, THETA_GRID_ENABLED)', () => {
     // Non-vacuous: a θ_global=0 computation gives a DIFFERENT score, so this proves the
     // restored 0.7 (not 0) actually flowed into klpScoreFromGrid.
     expect(sig.mfiScore).not.toBeCloseTo(klpScoreFromGrid(grid, 0.85, 0), 6);
+  });
+});
+
+// YUK-716 — the per-KC getMasteryState + effectiveThetaForKc N×M reads are now a bulk
+// prefetch (one getMasteryStates over the KC union + one effectiveThetaForKcBatch). Select
+// count must be O(1) in KC-count-per-candidate, not O(N×M).
+//
+// Count-instrumenting Proxy over the drizzle db (copied from
+// src/server/projections/gather.db.test.ts): increments `counter.n` per `.select()`.
+function countingDb(base: Db, counter: { n: number }): Db {
+  return new Proxy(base as object, {
+    get(target, prop, receiver) {
+      if (prop === 'select') {
+        return (...args: unknown[]) => {
+          counter.n += 1;
+          return (target as { select: (...a: unknown[]) => unknown }).select(...args);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  }) as Db;
+}
+
+describe('collectCandidateSignals — batched reads are O(1) in KC count (YUK-716)', () => {
+  it('select count does not grow with KCs-per-candidate', async () => {
+    // Fixed 3 question candidates; DISTINCT KCs per candidate so total KCs scale 8× between
+    // runs. No `source` on the candidates → the family-key lookup resolves null (its own tree
+    // read only). No knowledge rows → every KC's effective domain resolves to null (θ_global=0),
+    // so effectiveThetaForKcBatch is one tree walk + zero ability_global reads.
+    const buildCands = (kcsPer: number): CandidateInput[] =>
+      [0, 1, 2].map((c) => ({
+        refKind: 'question',
+        refId: `q_c${c}`,
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: Array.from({ length: kcsPer }, (_, k) => `kc_${c}_${k}`),
+        difficulty: 3,
+      }));
+
+    const counterSmall = { n: 0 };
+    await collectCandidateSignals(countingDb(db, counterSmall), buildCands(1));
+
+    const counterLarge = { n: 0 };
+    await collectCandidateSignals(countingDb(db, counterLarge), buildCands(8));
+
+    // KC-independent: 8× the total KCs, identical select count (proves the N×M N+1 is gone).
+    expect(counterLarge.n).toBe(counterSmall.n);
+    // Concrete ceiling: familyKey tree + mastery-union batch + effective-domain tree + one
+    // resolveBAnchor per candidate (3) = 6. No per-KC read remains.
+    expect(counterSmall.n).toBeLessThanOrEqual(6);
   });
 });

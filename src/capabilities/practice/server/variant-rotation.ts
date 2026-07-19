@@ -22,7 +22,7 @@ import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db } from '@/db/client';
 import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
-import { and, eq, notInArray, or, sql } from 'drizzle-orm';
+import { and, inArray, sql } from 'drizzle-orm';
 
 // ADR-0030 §1 — by-kind routing class.
 export type RotationClass = 'recall' | 'application';
@@ -120,84 +120,6 @@ function toProbe(row: QuestionRow): SelectedProbe {
   };
 }
 
-// Resolve the question id presented at the knowledge point's LAST review:
-//   material_fsrs_state.last_review_event_id → event.subject_id (the question).
-// NULL when never reviewed.
-async function lastReviewedQuestionId(
-  dbHandle: Db,
-  lastReviewEventId: string | null,
-): Promise<string | null> {
-  if (!lastReviewEventId) return null;
-  const rows = await dbHandle
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(eq(event.id, lastReviewEventId))
-    .limit(1);
-  return rows[0]?.subject_id ?? null;
-}
-
-// Read one question row (routing + lineage cols) if it exists.
-async function readQuestion(dbHandle: Db, questionId: string): Promise<QuestionRow | null> {
-  const rows = await dbHandle
-    .select(QUESTION_PROJECTION)
-    .from(question)
-    .where(eq(question.id, questionId))
-    .limit(1);
-  return (rows[0] as QuestionRow | undefined) ?? null;
-}
-
-// K 下首个未用 non-draft 题, created_at ASC, id ASC — the shared fallback序 used by
-// both branches (matches the pre-ADR-0030 fallback ordering exactly).
-//
-// The used-id exclusion is pushed into the WHERE (notInArray) instead of a JS
-// post-filter so the DB returns the first *available* row directly: a `.limit(N)`
-// page + in-memory `.find(unused)` would silently drop a knowledge point whose
-// first N rows are all already used this page even though available questions
-// exist past position N (CodeRabbit F1). `notInArray(col, [])` is safe in this
-// drizzle version — it lowers to `true`, so the never-used-anything case still
-// returns the genuine first non-draft row.
-async function firstForKnowledge(
-  dbHandle: Db,
-  knowledgeId: string,
-  usedQuestionIds: Set<string>,
-): Promise<SelectedProbe | null> {
-  const rows = (await dbHandle
-    .select(QUESTION_PROJECTION)
-    .from(question)
-    .where(
-      and(
-        knowledgeContains(knowledgeId),
-        notDraftPredicate(question.draft_status),
-        notInArray(question.id, [...usedQuestionIds]),
-      ),
-    )
-    .orderBy(question.created_at, question.id)
-    .limit(1)) as QuestionRow[];
-  const chosen = rows[0];
-  if (!chosen) return null;
-  usedQuestionIds.add(chosen.id);
-  return toProbe(chosen);
-}
-
-// Read the variant family of `familyRoot` that is still tagged knowledge K and
-// non-draft. Family = { q : root_question_id = familyRoot OR id = familyRoot }.
-async function readFamily(
-  dbHandle: Db,
-  familyRoot: string,
-  knowledgeId: string,
-): Promise<QuestionRow[]> {
-  return (await dbHandle
-    .select(QUESTION_PROJECTION)
-    .from(question)
-    .where(
-      and(
-        or(eq(question.root_question_id, familyRoot), eq(question.id, familyRoot)),
-        knowledgeContains(knowledgeId),
-        notDraftPredicate(question.draft_status),
-      ),
-    )) as QuestionRow[];
-}
-
 // Deterministic rotation order (ADR-0030 §3): variant_depth ASC, created_at ASC,
 // id ASC. Stable ring; same input → same order.
 function sortFamily(rows: QuestionRow[]): QuestionRow[] {
@@ -209,45 +131,161 @@ function sortFamily(rows: QuestionRow[]): QuestionRow[] {
   });
 }
 
+// YUK-716 — bulk-prefetched inputs for a whole page of due knowledge points, so the
+// per-KC probe selection runs as pure in-memory computation instead of 2-3 serial
+// round-trips per KC (the /api/review/due N+1). Three batch reads back these maps.
+export interface ProbeSelectionPrefetch {
+  // last_review_event_id → the question id presented at that review (event.subject_id).
+  lastQuestionIdByEventId: Map<string, string>;
+  // last-reviewed question rows (routing + lineage cols), keyed by id. NO draft filter —
+  // mirrors the single readQuestion, which reads any row regardless of draft_status.
+  questionRowById: Map<string, QuestionRow>;
+  // per due-KC: its pool-visible (non-draft) questions, sorted (created_at ASC, id ASC) —
+  // the exact firstForKnowledge ordering. Family reads filter this same bucket in memory.
+  kcQuestions: Map<string, QuestionRow[]>;
+}
+
 /**
- * Pick the deterministic probe question for a due knowledge point (ADR-0030).
+ * YUK-716 — prefetch every DB input {@link selectProbeFromPrefetch} needs for a batch of due
+ * knowledge points in THREE reads total (independent of KC count):
+ *   1. last-review event → presented question id (one `inArray` over event ids);
+ *   2. the last-reviewed question rows (one `inArray` over those question ids, no draft filter);
+ *   3. every non-draft question containing ANY of the due KCs (one containment scan), bucketed
+ *      per KC in (created_at, id) order.
  *
- * Routing key = the kind of the question presented at the knowledge point's LAST
- * review. NULL last review → application default (first probe).
- *
- * - recall: re-present the last question (FSRS measures THIS recall item). If it
- *   was deleted / demoted to draft / unlabelled K / already used → fall back to
- *   K's first non-draft question (created_at ASC).
- * - application: rotate within the last question's root_question_id family, taking
- *   the next member after the last (wrapping the ring). A family of one degrades
- *   to an original-repeat — the safe convergence point with recall.
- *
- * Mutates `usedQuestionIds` (adds the chosen id) so a question surfaces at most
- * once per due page (cross-knowledge dedup, unchanged from current behaviour).
+ * Bucket (3) is the superset for BOTH fallback paths: a family member must be tagged the due
+ * KC (readFamily's `knowledgeContains(K)`), so it always appears in that KC's bucket — the
+ * family read becomes an in-memory filter of the bucket by `root_question_id`/`id`.
  */
-export async function pickProbeForKnowledge(
+export async function prefetchProbeSelection(
   dbHandle: Db,
+  inputs: Array<{ knowledgeId: string; lastReviewEventId: string | null }>,
+): Promise<ProbeSelectionPrefetch> {
+  const eventIds = Array.from(
+    new Set(inputs.map((i) => i.lastReviewEventId).filter((id): id is string => id !== null)),
+  );
+  const lastQuestionIdByEventId = new Map<string, string>();
+  if (eventIds.length > 0) {
+    const rows = await dbHandle
+      .select({ id: event.id, subject_id: event.subject_id })
+      .from(event)
+      .where(inArray(event.id, eventIds));
+    for (const r of rows) lastQuestionIdByEventId.set(r.id, r.subject_id);
+  }
+
+  const lastQuestionIds = Array.from(new Set(lastQuestionIdByEventId.values()));
+  const questionRowById = new Map<string, QuestionRow>();
+  if (lastQuestionIds.length > 0) {
+    const rows = (await dbHandle
+      .select(QUESTION_PROJECTION)
+      .from(question)
+      .where(inArray(question.id, lastQuestionIds))) as QuestionRow[];
+    for (const r of rows) questionRowById.set(r.id, r);
+  }
+
+  const knowledgeIds = Array.from(new Set(inputs.map((i) => i.knowledgeId)));
+  const kcQuestions = new Map<string, QuestionRow[]>();
+  if (knowledgeIds.length > 0) {
+    // OR-of-containments over the due KC set, PARENTHESISED so it composes with the
+    // non-draft predicate as `notDraft AND (c1 OR c2 …)` (drizzle's `and` would otherwise
+    // fold the bare OR chain at the wrong precedence).
+    const containment = sql`(${sql.join(
+      knowledgeIds.map((kc) => knowledgeContains(kc)),
+      sql` OR `,
+    )})`;
+    const rows = (await dbHandle
+      .select(QUESTION_PROJECTION)
+      .from(question)
+      .where(and(notDraftPredicate(question.draft_status), containment))
+      .orderBy(question.created_at, question.id)) as QuestionRow[];
+    const dueKcSet = new Set(knowledgeIds);
+    for (const r of rows) {
+      for (const kc of r.knowledge_ids ?? []) {
+        if (!dueKcSet.has(kc)) continue;
+        const bucket = kcQuestions.get(kc);
+        if (bucket) bucket.push(r);
+        else kcQuestions.set(kc, [r]);
+      }
+    }
+  }
+
+  return { lastQuestionIdByEventId, questionRowById, kcQuestions };
+}
+
+// K 下首个未用 non-draft 题, created_at ASC, id ASC — the shared fallback序 used by
+// both branches (matches the pre-ADR-0030 fallback ordering exactly).
+//
+// Pure over the prefetched (created_at, id)-sorted bucket: `.find(unused)` returns the first
+// AVAILABLE question directly, so a knowledge point whose leading questions are all already
+// used this page still surfaces one past that prefix (the CodeRabbit F1 invariant — the
+// bucket is the FULL list, never a `.limit(N)` page).
+function firstForKnowledgePure(
+  kcQuestions: Map<string, QuestionRow[]>,
+  knowledgeId: string,
+  usedQuestionIds: Set<string>,
+): SelectedProbe | null {
+  const rows = kcQuestions.get(knowledgeId) ?? [];
+  const chosen = rows.find((row) => !usedQuestionIds.has(row.id));
+  if (!chosen) return null;
+  usedQuestionIds.add(chosen.id);
+  return toProbe(chosen);
+}
+
+// The variant family of `familyRoot` still tagged K and non-draft, filtered in memory from
+// the due-KC bucket. Family = { q ∈ bucket(K) : root_question_id = familyRoot OR id = familyRoot }.
+// bucket(K) already enforces "non-draft AND tagged K", so this matches the readFamily SQL set.
+function readFamilyPure(
+  kcQuestions: Map<string, QuestionRow[]>,
+  familyRoot: string,
+  knowledgeId: string,
+): QuestionRow[] {
+  const rows = kcQuestions.get(knowledgeId) ?? [];
+  return rows.filter((row) => row.root_question_id === familyRoot || row.id === familyRoot);
+}
+
+/**
+ * Pick the deterministic probe question for a due knowledge point (ADR-0030), PURE over a
+ * {@link ProbeSelectionPrefetch}. Byte-identical selection to the pre-YUK-716 per-KC DB walk —
+ * it is a straight in-memory translation of the same routing/fallback branches.
+ *
+ * Routing key = the kind of the question presented at the knowledge point's LAST review.
+ * NULL last review → application default (first probe).
+ *
+ * - recall: re-present the last question (FSRS measures THIS recall item). If it was deleted /
+ *   demoted to draft / unlabelled K / already used → fall back to K's first non-draft question.
+ * - application: rotate within the last question's root_question_id family, taking the next
+ *   member after the last (wrapping the ring). A family of one degrades to an original-repeat.
+ *
+ * Mutates `usedQuestionIds` (adds the chosen id) so a question surfaces at most once per due
+ * page (cross-knowledge dedup). Callers thread ONE shared set through the page in order — the
+ * used-set is the only state, so a sequential loop over prefetched inputs is order-identical
+ * to the old sequential DB loop.
+ */
+export function selectProbeFromPrefetch(
+  prefetch: ProbeSelectionPrefetch,
   input: {
     knowledgeId: string;
     lastReviewEventId: string | null;
     usedQuestionIds: Set<string>;
   },
-): Promise<SelectedProbe | null> {
+): SelectedProbe | null {
   const { knowledgeId, lastReviewEventId, usedQuestionIds } = input;
+  const { kcQuestions } = prefetch;
 
-  const lastQuestionId = await lastReviewedQuestionId(dbHandle, lastReviewEventId);
+  const lastQuestionId = lastReviewEventId
+    ? (prefetch.lastQuestionIdByEventId.get(lastReviewEventId) ?? null)
+    : null;
   // No prior review for this knowledge point → application default first probe
-  // (族里 created_at 最早根题; behaviour-equivalent to the pre-ADR-0030
-  // created_at-ASC 首选 — firstForKnowledge IS that ordering).
+  // (族里 created_at 最早根题; firstForKnowledge IS that ordering).
   if (!lastQuestionId) {
-    return firstForKnowledge(dbHandle, knowledgeId, usedQuestionIds);
+    return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
-  const lastQuestion = await readQuestion(dbHandle, lastQuestionId);
+  const lastQuestion = prefetch.questionRowById.get(lastQuestionId) ?? null;
   // Last question row vanished (hard-deleted) → no kind to route on → application
   // default first probe (most conservative; matches the recall fallback 序).
   if (!lastQuestion) {
-    return firstForKnowledge(dbHandle, knowledgeId, usedQuestionIds);
+    return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
   const cls = rotationClassForKind(lastQuestion.kind as QuestionKindT);
@@ -261,17 +299,17 @@ export async function pickProbeForKnowledge(
       return toProbe(lastQuestion);
     }
     // Deleted / demoted to draft / unlabelled K / already used → fallback.
-    return firstForKnowledge(dbHandle, knowledgeId, usedQuestionIds);
+    return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
   // application — variant-family rotation.
   const familyRoot = lastQuestion.root_question_id ?? lastQuestion.id;
-  const family = (await readFamily(dbHandle, familyRoot, knowledgeId)).filter(
+  const family = readFamilyPure(kcQuestions, familyRoot, knowledgeId).filter(
     (row) => !usedQuestionIds.has(row.id),
   );
   if (family.length === 0) {
     // Family minus used is empty → fall back to K's first 未用 non-draft 题.
-    return firstForKnowledge(dbHandle, knowledgeId, usedQuestionIds);
+    return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
   const ordered = sortFamily(family);
@@ -281,4 +319,23 @@ export async function pickProbeForKnowledge(
   const chosen = idx >= 0 ? ordered[(idx + 1) % ordered.length] : ordered[0];
   usedQuestionIds.add(chosen.id);
   return toProbe(chosen);
+}
+
+/**
+ * Single-KC entry point (ADR-0030) — prefetch this one KC's inputs, then run the pure selection
+ * core. Preserved for direct callers/tests; the batch `/api/review/due` path calls
+ * {@link prefetchProbeSelection} ONCE for the whole page and loops {@link selectProbeFromPrefetch}.
+ */
+export async function pickProbeForKnowledge(
+  dbHandle: Db,
+  input: {
+    knowledgeId: string;
+    lastReviewEventId: string | null;
+    usedQuestionIds: Set<string>;
+  },
+): Promise<SelectedProbe | null> {
+  const prefetch = await prefetchProbeSelection(dbHandle, [
+    { knowledgeId: input.knowledgeId, lastReviewEventId: input.lastReviewEventId },
+  ]);
+  return selectProbeFromPrefetch(prefetch, input);
 }
