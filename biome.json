@@ -29,7 +29,9 @@
       ".playwright-mcp",
       "test-results",
       "playwright-report",
-      "next-env.d.ts"
+      "next-env.d.ts",
+      "crates/**/target/**",
+      "crates/**/index.d.ts"
     ]
   },
   "formatter": {
