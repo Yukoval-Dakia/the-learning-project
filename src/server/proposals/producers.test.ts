@@ -1,9 +1,10 @@
-import { resolveSuggestionKind } from '@/core/schema/proposal';
-import { event, question_block } from '@/db/schema';
+import { type AiProposalPayloadT, resolveSuggestionKind } from '@/core/schema/proposal';
+import { event, question, question_block } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { listProposalInboxRows } from './inbox';
+import { proposalDisplayTitle } from './presentation';
 import {
   writeArchiveProposal,
   writeBlockMergeProposal,
@@ -21,6 +22,15 @@ describe('proposal producer helpers', () => {
 
   it('writes the remaining six producer-backed proposal kinds through the shared inbox reader', async () => {
     const db = testDb();
+    const now = new Date('2026-07-19T08:00:00.000Z');
+    await db.insert(question).values({
+      id: 'q1',
+      kind: 'short_answer',
+      prompt_md: '解释「之」在句中的作用。',
+      source: 'test',
+      created_at: now,
+      updated_at: now,
+    });
     await writeVariantQuestionProposal(db, {
       source_question_id: 'q1',
       source_attempt_event_id: 'attempt_1',
@@ -92,6 +102,10 @@ describe('proposal producer helpers', () => {
       ].sort(),
     );
     expect(rows.every((row) => row.payload.cooldown_key)).toBe(true);
+    const variant = rows.find((row) => row.kind === 'variant_question');
+    expect(variant?.presentation?.evidence_labels['question:q1']).toBe(
+      '题目 · 解释「之」在句中的作用。',
+    );
   });
 
   it('rejects judge_retraction evidence refs that do not point to judge events', async () => {
@@ -244,8 +258,14 @@ describe('proposal producer helpers', () => {
     // proposal. Guard the resolved kind, not just the absent field.
     expect(row.payload.suggestion_kind).toBeUndefined();
     expect(resolveSuggestionKind(row.payload)).toBe('proactive');
-    expect(row.presentation).toEqual({
+    expect(row.presentation).toMatchObject({
       title: '合并 3 个被切断的题块',
+      change_summary: [{ label: '动作', value: '保留 1 块，并入 2 块' }],
+      evidence_labels: {
+        'question:block_a': '第 1 块 · 题号 12 · 第 1 页 · 已知函数 f(x) 在区间上连续，',
+        'question:block_b': '第 2 块 · 题号 12 · 第 1 页 · 并满足 f(0)=1，求函数的最小值。',
+        'question:block_c': '第 3 块 · 题号 12 · 第 2 页 · 请写出完整推导过程。',
+      },
       block_merge: {
         primary: {
           id: 'block_a',
@@ -267,6 +287,93 @@ describe('proposal producer helpers', () => {
         continuity_label: '题号连续',
       },
     });
+    expect(JSON.parse(row.presentation?.technical_details ?? 'null')).toEqual(
+      row.payload.proposed_change,
+    );
+  });
+
+  it('derives a meaningful title from every proposal kind without using opaque ids', () => {
+    const payload = (kind: string, proposed_change: Record<string, unknown>) =>
+      ({ kind, proposed_change }) as unknown as AiProposalPayloadT;
+    const cases: Array<[AiProposalPayloadT, string]> = [
+      [payload('knowledge_node', { name: '二次函数' }), '新知识点：二次函数'],
+      [payload('knowledge_edge', {}), '调整知识关系'],
+      [payload('knowledge_mutation', { mutation: 'split' }), '拆分知识点'],
+      [
+        payload('learning_item', { topic: '虚词', hub: { title: '虚词总览' } }),
+        '建立学习主线：虚词总览',
+      ],
+      [payload('note_update', { summary: '补充易错点' }), '更新学习笔记：补充易错点'],
+      [payload('variant_question', { prompt_md: '求函数最值' }), '生成变式练习：求函数最值'],
+      [payload('record_promotion', {}), '整理学习记录'],
+      [payload('record_links', {}), '补充记录关联'],
+      [payload('completion', {}), '确认学习项已完成'],
+      [payload('relearn', {}), '重新巩固学习项'],
+      [payload('goal_scope', { title: '本周复习函数' }), '确认目标范围：本周复习函数'],
+      [payload('block_merge', { merge_block_ids: ['b', 'c'] }), '合并 3 个被切断的题块'],
+      [payload('defer', {}), '调整学习安排'],
+      [payload('archive', {}), '归档学习内容'],
+      [payload('judge_retraction', {}), '复核一次 AI 判定'],
+      [payload('image_candidate', { source_title: '函数图像' }), '图题来源：函数图像'],
+      [payload('question_draft', { prompt_preview: '证明两角相等' }), '审核新题：证明两角相等'],
+      [payload('question_edit', { node_preview: '原题面摘要' }), '修订一道题目：原题面摘要'],
+      [
+        payload('conjecture', { claim_md: '你可能混淆了两个定义' }),
+        '验证诊断推测：你可能混淆了两个定义',
+      ],
+    ];
+
+    expect(cases.map(([candidate]) => proposalDisplayTitle(candidate))).toEqual(
+      cases.map(([, expected]) => expected),
+    );
+  });
+
+  it('does not present missing or cross-session merge blocks as valid candidates', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-19T08:00:00.000Z');
+    await db.insert(question_block).values([
+      {
+        id: 'primary_live',
+        ingestion_session_id: 'sess_expected',
+        ordinal: 0,
+        structured: { id: 'primary', role: 'standalone', prompt_text: '保留题面' },
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'foreign_block',
+        ingestion_session_id: 'sess_other',
+        ordinal: 1,
+        structured: { id: 'foreign', role: 'standalone', prompt_text: '不应展示的题面' },
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    const id = await writeBlockMergeProposal(db, {
+      ingestion_session_id: 'sess_expected',
+      primary_block_id: 'primary_live',
+      merge_block_ids: ['foreign_block', 'missing_block'],
+      confidence: 0.6,
+      continuity_signal: 'carryover',
+      reason_md: '候选题块可能已经变化',
+    });
+
+    const row = (await listProposalInboxRows(db, { status: 'pending' })).find(
+      (candidate) => candidate.id === id,
+    );
+    expect(row?.presentation).toMatchObject({
+      title: '检查被切断的题块',
+      change_summary: [{ label: '动作', value: '候选题块已变化，请重新检查' }],
+      evidence_labels: {
+        'question:primary_live': '第 1 块 · 保留题面',
+      },
+      block_merge: {
+        primary: { id: 'primary_live', excerpt: '保留题面' },
+        merged: [],
+      },
+    });
+    expect(row?.presentation?.evidence_labels).not.toHaveProperty('question:foreign_block');
+    expect(row?.presentation?.evidence_labels).not.toHaveProperty('question:missing_block');
   });
 
   // §5 dedup (1) — the cooldown_key is derived from the SORTED merge ids, so a

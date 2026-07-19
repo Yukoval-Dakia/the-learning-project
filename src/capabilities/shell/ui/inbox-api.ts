@@ -100,8 +100,16 @@ export interface ProposalBlockPreviewWire {
   excerpt: string;
 }
 
+export interface ProposalSummaryItemWire {
+  label: string;
+  value: string;
+}
+
 export interface ProposalPresentationWire {
   title: string;
+  change_summary: ProposalSummaryItemWire[];
+  technical_details: string | null;
+  evidence_labels: Record<string, string>;
   block_merge: {
     primary: ProposalBlockPreviewWire | null;
     merged: ProposalBlockPreviewWire[];
@@ -312,11 +320,15 @@ export interface DedupedEvidence {
   count: number;
 }
 
-export function dedupeEvidence(refs: ProposalEvidenceRefWire[]): DedupedEvidence[] {
+export function dedupeEvidence(
+  refs: ProposalEvidenceRefWire[],
+  curatedLabels: Record<string, string> = {},
+): DedupedEvidence[] {
   const groups = new Map<string, DedupedEvidence>();
   for (const ref of refs) {
     const { text, route } = evidenceReadable(ref);
-    const key = route ? `${text}::${ref.id}` : text;
+    const curatedLabel = curatedLabels[`${ref.kind}:${ref.id}`];
+    const key = curatedLabel ? `${curatedLabel}::${ref.id}` : route ? `${text}::${ref.id}` : text;
     const existing = groups.get(key);
     if (existing) {
       existing.count += 1;
@@ -340,6 +352,7 @@ export function dedupeEvidence(refs: ProposalEvidenceRefWire[]): DedupedEvidence
 const RAW_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
 
 export interface ReasonSegment {
+  start: number;
   text: string;
   raw: boolean;
 }
@@ -349,10 +362,10 @@ export function splitReasonIds(md: string): ReasonSegment[] {
   let last = 0;
   for (const m of md.matchAll(RAW_ID_RE)) {
     const start = m.index ?? 0;
-    if (start > last) out.push({ text: md.slice(last, start), raw: false });
-    out.push({ text: m[0], raw: true });
+    if (start > last) out.push({ start: last, text: md.slice(last, start), raw: false });
+    out.push({ start, text: m[0], raw: true });
     last = start + m[0].length;
   }
-  if (last < md.length) out.push({ text: md.slice(last), raw: false });
+  if (last < md.length) out.push({ start: last, text: md.slice(last), raw: false });
   return out;
 }

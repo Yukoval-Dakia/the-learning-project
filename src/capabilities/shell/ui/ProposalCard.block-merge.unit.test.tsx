@@ -27,6 +27,12 @@ function proposal(): ProposalInboxRow {
     },
     presentation: {
       title: '合并 3 个被切断的题块',
+      change_summary: [{ label: '动作', value: '保留 1 块，并入 2 块' }],
+      technical_details: JSON.stringify({
+        primary_block_id: 'block-privateprimary123',
+        merge_block_ids: ['block-privatefollowup123', 'block-privateextra123'],
+      }),
+      evidence_labels: {},
       block_merge: {
         primary: {
           id: 'block-privateprimary123',
@@ -61,6 +67,27 @@ function proposal(): ProposalInboxRow {
 }
 
 describe('ProposalCard block-merge presentation', () => {
+  it('keeps legacy cached rows readable without duplicating the kind label', () => {
+    const p = proposal();
+    p.presentation = undefined;
+    const { container } = render(
+      <div className="inbox-loom">
+        <ProposalCard
+          p={p}
+          index={0}
+          resolved={null}
+          nameOf={(id) => id}
+          navigate={() => {}}
+          onResolve={() => {}}
+          onError={() => {}}
+        />
+      </div>,
+    );
+
+    expect(screen.getAllByText('块合并')).toHaveLength(1);
+    expect(container.querySelector('.proposal-title')).toBeNull();
+  });
+
   it('shows curated excerpts and continuity without leaking raw ids', () => {
     const { container } = render(
       <div className="inbox-loom">
@@ -84,9 +111,65 @@ describe('ProposalCard block-merge presentation', () => {
     expect(screen.getByText('82%')).toBeTruthy();
     expect(screen.getAllByText(/第 [12] 块 · 题号 12 · 第 1 页/)).toHaveLength(4);
 
-    const visibleText = container.textContent ?? '';
-    expect(visibleText).not.toContain('block-private');
-    expect(visibleText).not.toContain('session_private');
-    expect(visibleText).not.toContain('ingestion_session_id');
+    const upfrontText = [
+      '.proposal-title',
+      '.proposal-body',
+      '.proposal-change-summary',
+      '.merge-preview',
+      '.proposal-evidence',
+    ]
+      .map((selector) => container.querySelector(selector)?.textContent ?? '')
+      .join(' ');
+    expect(upfrontText).not.toContain('block-private');
+    expect(upfrontText).not.toContain('session_private');
+    expect(upfrontText).not.toContain('ingestion_session_id');
+
+    const details = container.querySelector('details');
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain('block-privateprimary123');
+  });
+
+  it('never renders conjecture confidence or raw numeric details', () => {
+    const p = proposal();
+    p.kind = 'conjecture';
+    p.payload = {
+      kind: 'conjecture',
+      reason_md: '建议用一道辨析题验证这个观察。',
+      evidence_refs: [],
+      proposed_change: {
+        claim_md: '你可能混淆了两个定义',
+        confidence: 0.73,
+        predicted_p: 0.42,
+      },
+    };
+    p.presentation = {
+      title: '验证诊断推测：你可能混淆了两个定义',
+      change_summary: [
+        { label: '观察', value: '你可能混淆了两个定义' },
+        { label: '重复信号', value: '3 次' },
+      ],
+      technical_details: '{"confidence":0.73,"predicted_p":0.42}',
+      evidence_labels: {},
+      block_merge: null,
+    };
+
+    const { container } = render(
+      <div className="inbox-loom">
+        <ProposalCard
+          p={p}
+          index={0}
+          resolved={null}
+          nameOf={(id) => id}
+          navigate={() => {}}
+          onResolve={() => {}}
+          onError={() => {}}
+        />
+      </div>,
+    );
+
+    expect(container.textContent).not.toContain('73%');
+    expect(container.textContent).not.toContain('0.73');
+    expect(container.textContent).not.toContain('0.42');
+    expect(container.querySelector('.proposal-technical-details')).toBeNull();
   });
 });

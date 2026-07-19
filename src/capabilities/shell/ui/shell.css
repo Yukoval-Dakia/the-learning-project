@@ -75,6 +75,26 @@
   border: 1px solid var(--line);
   border-radius: var(--r-3);
 }
+.inbox-loom .proposal-change-summary {
+  display: grid;
+  gap: var(--s-2);
+  margin: var(--s-3) 0 0;
+}
+.inbox-loom .proposal-change-summary > div {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) 1fr;
+  gap: var(--s-3);
+  align-items: baseline;
+}
+.inbox-loom .proposal-change-summary dt {
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+}
+.inbox-loom .proposal-change-summary dd {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  margin: 0;
+}
 
 .inbox-loom .proposal-learning-hub,
 .inbox-loom .proposal-learning-hub > span,
@@ -311,6 +331,41 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-2);
+}
+.inbox-loom .proposal-technical-details {
+  margin-top: var(--s-3);
+  border-top: 1px dashed var(--line-soft);
+  padding-top: var(--s-2);
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+}
+.inbox-loom .proposal-technical-details summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.inbox-loom .proposal-technical-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+.inbox-loom .proposal-technical-head button {
+  color: var(--info-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.inbox-loom .proposal-technical-details pre {
+  overflow: auto;
+  max-height: 240px;
+  margin: var(--s-2) 0 0;
+  padding: var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  font: var(--fs-meta) / var(--lh-snug) var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ---- segmented control（globals .knowledge-loom .seg L7677 同款） ----

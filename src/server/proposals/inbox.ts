@@ -781,12 +781,12 @@ async function projectLoadedProposalRows(
     });
   }
 
-  const signalsByProposalId = await loadProposalSignalsForRows(db, out);
+  const [signalsByProposalId, presentationByProposalId] = await Promise.all([
+    loadProposalSignalsForRows(db, out),
+    loadProposalPresentations(db, out),
+  ]);
   for (const row of out) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
-  }
-  const presentationByProposalId = await loadProposalPresentations(db, out);
-  for (const row of out) {
     row.presentation = presentationByProposalId.get(row.id) ?? null;
   }
   return out;
@@ -870,9 +870,11 @@ export async function getProposalInboxRow(
     signals: null,
     presentation: null,
   };
-  const presentationByProposalId = await loadProposalPresentations(db, [row]);
+  const [presentationByProposalId, signalsByProposalId] = await Promise.all([
+    loadProposalPresentations(db, [row]),
+    loadProposalSignalsForRows(db, [row]),
+  ]);
   row.presentation = presentationByProposalId.get(row.id) ?? null;
-  const signalsByProposalId = await loadProposalSignalsForRows(db, [row]);
   row.signals = signalsByProposalId.get(row.id) ?? null;
   return row;
 }
