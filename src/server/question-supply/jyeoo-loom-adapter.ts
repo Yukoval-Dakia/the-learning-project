@@ -7,8 +7,8 @@
 // is byte-aligned with loom's SourcedQuestion Zod contract; `jyeoo` is a free-form
 // extension block the handler reads for VIP status / knowledge hints / audit. This
 // module owns: (a) per-line parse + SourcedQuestion validation, (b) deterministic exit
-// classification, (c) image-dependency detection. No IO, no DB — spawn lives in
-// jyeoo-spawn.ts, persistence in the handler.
+// classification, (c) image-dependency detection + markdown destination rewriting.
+// No IO, no DB — spawn lives in jyeoo-spawn.ts, persistence in the handler.
 
 import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
 import { z } from 'zod';
@@ -138,30 +138,112 @@ export function parseJyeooLine(line: string): JyeooParsedLine {
 // ── image dependency ─────────────────────────────────────────────────────────
 //
 // A markdown image `![alt](src)` in the stem or a choice means the question's meaning
-// depends on a figure whose URL points at the (ID-drifting, VIP-gated) jyeoo host.
-// This PR does NOT download/persist figures (the --images → R2 → source_asset →
-// question.figures glue is a declared follow-up), so an image-dependent question would
-// be judged/shown with a rotting external URL and NO figure content — semantic corruption
-// (design §5.3). We therefore FILTER such questions pre-persist rather than ingest a
-// judge-corrupting draft. prompt_md, choices AND reference_md are all scanned: the full
-// solution card renders reference_md TO THE LEARNER (HintLadder), so a rotting image in
-// the answer/analysis surfaces on the learner-visible page just like one in the stem.
+// depends on a figure. YUK-727 now localizes and persists those figures; this predicate
+// remains the pure structural classifier for consumers. reference_md is scanned too: the
+// worked solution is learner-visible and must not retain a temporary/external image URL.
 //
-// This is the ONLY pre-INSERT image gate, so it is deliberately OVER-INCLUSIVE: detect the
+// Deliberately OVER-INCLUSIVE: detect the
 // markdown image MARKER STRUCTURE `![...](` rather than parse a full `(...)` URL. A URL
 // containing a literal `)` (e.g. `![x](https://h/Foo_(bar).png)`) would defeat a
 // balanced-paren/`[^)]*` regex and let the figure question slip through — better to
-// over-filter (a rare false positive costs at most one dropped candidate) than to
-// under-filter and ingest a broken-image question into the judge/learner path.
+// over-classify than to miss a prompt whose judging depends on a figure.
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(/;
 
 export function isImageDependentQuestion(q: SourcedQuestionT): boolean {
   if (MARKDOWN_IMAGE.test(q.prompt_md)) return true;
-  if (q.reference_md && MARKDOWN_IMAGE.test(q.reference_md)) return true;
   for (const choice of q.choices_md ?? []) {
     if (MARKDOWN_IMAGE.test(choice)) return true;
   }
-  return false;
+  return MARKDOWN_IMAGE.test(q.reference_md ?? '');
+}
+
+interface MarkdownImageDestination {
+  source: string;
+  start: number;
+  end: number;
+}
+
+interface MarkdownImageScan {
+  images: MarkdownImageDestination[];
+  malformed: boolean;
+}
+
+/**
+ * Locate markdown image destinations, including URLs with balanced parentheses. jyeoo-rs emits
+ * the narrow `![alt](source)` shape (no title), so the destination body is the source verbatim.
+ */
+function scanImageDestinations(markdown: string): MarkdownImageScan {
+  const found: MarkdownImageDestination[] = [];
+  let malformed = false;
+  let cursor = 0;
+  while (cursor < markdown.length) {
+    const marker = markdown.indexOf('![', cursor);
+    if (marker === -1) break;
+    const destinationStart = markdown.indexOf('](', marker + 2);
+    if (destinationStart === -1) {
+      // A bare `![` is ordinary punctuation, but a completed alt + opening destination
+      // is an image marker. The latter must never fail open into persisted Markdown.
+      if (MARKDOWN_IMAGE.test(markdown.slice(marker))) malformed = true;
+      break;
+    }
+
+    const start = destinationStart + 2;
+    let depth = 1;
+    let escaped = false;
+    let end = start;
+    for (; end < markdown.length; end += 1) {
+      const char = markdown[end];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '(') depth += 1;
+      if (char === ')') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    if (depth !== 0) {
+      malformed = true;
+      break;
+    }
+
+    const source = markdown.slice(start, end).trim();
+    if (source.length > 0) found.push({ source, start, end });
+    cursor = end + 1;
+  }
+  return { images: found, malformed };
+}
+
+function imageDestinations(markdown: string): MarkdownImageDestination[] {
+  return scanImageDestinations(markdown).images;
+}
+
+export function markdownImageSources(markdown: string | null | undefined): string[] {
+  return markdown ? imageDestinations(markdown).map((image) => image.source) : [];
+}
+
+/** True when Markdown contains an opened image destination that the balanced scanner cannot close. */
+export function hasMalformedMarkdownImage(markdown: string | null | undefined): boolean {
+  return markdown ? scanImageDestinations(markdown).malformed : false;
+}
+
+/** Replace only image destinations; alt text and surrounding markdown remain byte-identical. */
+export function rewriteMarkdownImageSources(
+  markdown: string,
+  replacements: ReadonlyMap<string, string>,
+): string {
+  let rewritten = markdown;
+  for (const image of imageDestinations(markdown).reverse()) {
+    const replacement = replacements.get(image.source);
+    if (replacement === undefined) continue;
+    rewritten = `${rewritten.slice(0, image.start)}${replacement}${rewritten.slice(image.end)}`;
+  }
+  return rewritten;
 }
 
 // ── source host guard ─────────────────────────────────────────────────────────

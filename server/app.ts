@@ -14,6 +14,41 @@ import {
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
 import { Hono } from 'hono';
+import { secureHeaders } from 'hono/secure-headers';
+
+// YUK-233 — the old Next shell carried baseline headers but deliberately omitted CSP.
+// M5 removed that shell, so Hono is now the single response boundary for both the API and
+// production SPA. The app still renders React style attributes and sandboxed interactive
+// artifacts whose about:srcdoc documents inherit the parent's CSP; those artifacts deliberately
+// run self-contained inline JS under their own stricter network-deny policy. Therefore the host
+// policy keeps inline style/script/eval compatibility while denying every external fetch channel
+// except same-origin API/static assets and local data/blob media. Removing those compatibility
+// tokens requires first moving interactive artifacts off inherited local-scheme documents.
+const SECURITY_HEADERS = secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    baseUri: ["'self'"],
+    connectSrc: ["'self'"],
+    fontSrc: ["'self'", 'data:'],
+    formAction: ["'self'"],
+    frameAncestors: ["'none'"],
+    imgSrc: ["'self'", 'data:', 'blob:'],
+    manifestSrc: ["'self'"],
+    mediaSrc: ["'self'", 'data:', 'blob:'],
+    objectSrc: ["'none'"],
+    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    workerSrc: ["'self'", 'blob:'],
+  },
+  permissionsPolicy: {
+    camera: [],
+    geolocation: [],
+    microphone: [],
+  },
+  referrerPolicy: 'strict-origin-when-cross-origin',
+  strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
+  xFrameOptions: 'DENY',
+});
 
 /** Next 风格 '[id]' 段 → Hono ':id'。M0 无参路由用不到，转换器先行 + 单测钉住。 */
 export function toHonoPath(path: string): string {
@@ -36,6 +71,9 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   // boot as well as in CI so a bad operationId/path/status declaration fails closed.
   validateComposition(capabilities);
   const app = new Hono();
+
+  // Register first so successful, auth-failed and unknown responses all receive one policy.
+  app.use('*', SECURITY_HEADERS);
 
   app.use('/api/*', async (c, next) => {
     if (c.req.path === '/api/health') return next();

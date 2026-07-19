@@ -19,22 +19,34 @@
 //     partial/mid-crash run).
 //   - Dedup identity is CONTENT ONLY (canonical_content_hash + n-gram overlap) — never
 //     ID/URL (detail IDs drift, design §5 / producer §9).
-//   - Image-dependent questions are FILTERED pre-persist (the --images → R2 →
-//     source_asset → question.figures glue is a declared follow-up; ingesting a figure
-//     question with a rotting external URL corrupts judging — design §5.3).
+//   - Image-dependent questions use jyeoo-rs --images, then local bytes → R2/source_asset
+//     → question.figures + internal asset URLs. A missing/invalid local image filters only
+//     that question before persistence; no external or temporary URL reaches the DB.
 //   - Every draft is INSERTed draft_status='draft' (audit:draft-status hard gate); the
 //     chained source_verify promotes draft→active on pass.
 
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, SendOptions } from 'pg-boss';
 
+import {
+  type SourceAssetRow,
+  lockImageStorageKey,
+  persistImageAsset,
+  sha256Hex,
+} from '@/capabilities/ingestion/server/persist-image-asset';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { AgentRef } from '@/core/schema/business';
 import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { knowledge, question, source_asset } from '@/db/schema';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -44,9 +56,11 @@ import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evi
 import {
   type JyeooFailureClass,
   classifyJyeooExit,
+  hasMalformedMarkdownImage,
   isForeignSourceHost,
-  isImageDependentQuestion,
+  markdownImageSources,
   parseJyeooLine,
+  rewriteMarkdownImageSources,
 } from '@/server/question-supply/jyeoo-loom-adapter';
 import { type SpawnJyeooFn, spawnJyeooFetch } from '@/server/question-supply/jyeoo-spawn';
 import {
@@ -66,6 +80,7 @@ import {
   canonicalQuestionContentHash,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
+import { type R2Client, getR2 } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { maxNgramOverlap } from './quiz_verify';
@@ -127,6 +142,10 @@ export interface RunJyeooFetchParams {
   supplyTrace?: SupplyTraceV1T;
   spawnJyeooFn?: SpawnJyeooFn;
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
+  /** Test seam; production resolves getR2() lazily only after a localized image is present. */
+  r2?: R2Client;
+  /** Test-only failure injection after blob/source_asset finalization. */
+  afterAssetsPersistedFn?: (context: { canonicalContentHash: string }) => Promise<void>;
 }
 
 export type RunJyeooFetchStatus =
@@ -152,7 +171,7 @@ interface JyeooFetchCounts {
   fetched: number; // non-blank NDJSON lines emitted.
   validated: number; // lines that passed the SourcedQuestion contract.
   invalid: number; // non-blank lines that failed JSON/Zod (dropped, batch still ok on exit 0).
-  filtered_image: number; // valid questions dropped as image-dependent (pre-persist).
+  filtered_image: number; // image question dropped because localization/read validation failed.
   filtered_kind: number; // valid questions dropped for not matching the pinned kind (pre-persist).
   filtered_url: number; // valid questions dropped for a non-jyeoo source_url host (pre-persist).
   deduped_exact: number; // dropped by canonical_content_hash exact match.
@@ -240,6 +259,238 @@ const emptyCounts = (requested: number): JyeooFetchCounts => ({
   verify_enqueued: 0,
 });
 
+interface LocalizedImage {
+  source: string;
+  bytes: Uint8Array;
+  mime: string;
+  sha256: string;
+}
+
+interface LoadedQuestionImages {
+  images: LocalizedImage[];
+  attachedSources: Set<string>;
+}
+
+interface PersistedQuestionImages {
+  q: SourcedQuestionT;
+  figures: FigureRefT[];
+  imageRefs: string[];
+  structured: StructuredQuestionT;
+  assets: SourceAssetRow[];
+}
+
+// `return promise` from inside an async try/finally leaves the returned promise temporarily
+// unobserved while the finally block awaits temp-dir cleanup. A fast retryable rejection can then
+// surface as an unhandledRejection even though the caller awaits runJyeooFetch. Await classified
+// failures in-place and use this marker so the outer unexpected-failure catch does not double-log.
+class RetryableJyeooProducerError extends Error {}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function detectImageMime(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  const ascii = (start: number, length: number) =>
+    String.fromCharCode(...bytes.slice(start, start + length));
+  if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(ascii(0, 6))) return 'image/gif';
+  if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') {
+    return 'image/webp';
+  }
+  return null;
+}
+
+async function loadLocalizedQuestionImages(
+  q: SourcedQuestionT,
+  imageDir: string,
+): Promise<LoadedQuestionImages | null> {
+  const markdownFields = [q.prompt_md, ...(q.choices_md ?? []), q.reference_md ?? ''];
+  if (markdownFields.some((markdown) => hasMalformedMarkdownImage(markdown))) {
+    console.warn('[jyeoo_fetch] malformed markdown image; filtering question');
+    return null;
+  }
+  const attachedSources = new Set(
+    unique([
+      ...markdownImageSources(q.prompt_md),
+      ...(q.choices_md ?? []).flatMap((choice) => markdownImageSources(choice)),
+    ]),
+  );
+  const allSources = unique([...attachedSources, ...markdownImageSources(q.reference_md)]);
+  if (allSources.length === 0) return { images: [], attachedSources };
+
+  const root = await realpath(resolve(imageDir));
+  const images: LocalizedImage[] = [];
+  for (const source of allSources) {
+    if (!isAbsolute(source)) {
+      console.warn('[jyeoo_fetch] image was not localized under the run directory:', source);
+      return null;
+    }
+    try {
+      // Resolve symlinks before the containment check. A lexical `/run/link.png` can point
+      // outside the per-run directory and must not become an arbitrary-file read primitive.
+      const path = await realpath(resolve(source));
+      const pathFromRoot = relative(root, path);
+      if (pathFromRoot.startsWith('..') || isAbsolute(pathFromRoot)) {
+        console.warn('[jyeoo_fetch] image realpath escaped the run directory:', source);
+        return null;
+      }
+      const info = await stat(path);
+      if (!info.isFile() || info.size === 0 || info.size > MAX_IMAGE_UPLOAD_BYTES) {
+        console.warn('[jyeoo_fetch] localized image failed file/size validation:', source);
+        return null;
+      }
+      const file = await readFile(path);
+      const bytes = new Uint8Array(file.buffer, file.byteOffset, file.byteLength);
+      const mime = detectImageMime(bytes);
+      if (mime === null) {
+        console.warn('[jyeoo_fetch] localized image failed size/mime validation:', source);
+        return null;
+      }
+      // Magic bytes alone accept truncated files. Decode metadata so verification never
+      // receives a nominal PNG/JPEG/GIF/WebP that the model/runtime cannot actually read.
+      const { default: sharp } = await import('sharp');
+      const metadata = await sharp(bytes, { failOn: 'error' }).metadata();
+      const expectedFormat = {
+        'image/png': 'png',
+        'image/jpeg': 'jpeg',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+      }[mime];
+      if (!metadata.width || !metadata.height || metadata.format !== expectedFormat) {
+        console.warn('[jyeoo_fetch] localized image failed decode validation:', source);
+        return null;
+      }
+      images.push({ source, bytes, mime, sha256: await sha256Hex(bytes) });
+    } catch (err) {
+      console.warn('[jyeoo_fetch] localized image unavailable; filtering question:', source, err);
+      return null;
+    }
+  }
+  return { images, attachedSources };
+}
+
+async function canonicalJyeooQuestionHash(
+  q: SourcedQuestionT,
+  loaded: LoadedQuestionImages,
+): Promise<string> {
+  if (loaded.images.length === 0) {
+    return canonicalQuestionContentHash({
+      promptMd: q.prompt_md,
+      referenceMd: q.reference_md,
+      choicesMd: q.choices_md,
+      rubricJson: q.rubric_json,
+    });
+  }
+  const neutral = new Map(loaded.images.map((image) => [image.source, 'IMAGE']));
+  const canonicalTextHash = canonicalQuestionContentHash({
+    promptMd: rewriteMarkdownImageSources(q.prompt_md, neutral),
+    referenceMd: rewriteMarkdownImageSources(q.reference_md, neutral),
+    choicesMd: q.choices_md?.map((choice) => rewriteMarkdownImageSources(choice, neutral)),
+    rubricJson: q.rubric_json,
+  });
+  const digestBySource = new Map(loaded.images.map((image) => [image.source, image.sha256]));
+  // Keep slot order (prompt → choices → reference). Same alt/text with different pixels
+  // is a different question; swapping two figures is also a different question.
+  const imageSlots = [
+    ...markdownImageSources(q.prompt_md),
+    ...(q.choices_md ?? []).flatMap((choice) => markdownImageSources(choice)),
+    ...markdownImageSources(q.reference_md),
+  ].map((source) => digestBySource.get(source));
+  return sha256Hex(new TextEncoder().encode(JSON.stringify({ canonicalTextHash, imageSlots })));
+}
+
+async function persistQuestionImages(
+  db: Db,
+  r2: R2Client,
+  q: SourcedQuestionT,
+  loaded: LoadedQuestionImages,
+  questionId: string,
+): Promise<PersistedQuestionImages> {
+  const replacements = new Map<string, string>();
+  const assetIdsBySource = new Map<string, string>();
+  const assets: SourceAssetRow[] = [];
+  try {
+    for (const image of loaded.images) {
+      const asset = await persistImageAsset(db, r2, {
+        bytes: image.bytes,
+        mime: image.mime,
+        compensatePutOnInsertFailure: true,
+      });
+      assets.push(asset);
+      replacements.set(image.source, `/api/assets/${encodeURIComponent(asset.id)}/content`);
+      assetIdsBySource.set(image.source, asset.id);
+    }
+  } catch (err) {
+    await cleanupQuestionAssets(db, r2, assets);
+    throw err;
+  }
+
+  const qWithInternalUrls: SourcedQuestionT = {
+    ...q,
+    prompt_md: rewriteMarkdownImageSources(q.prompt_md, replacements),
+    reference_md: rewriteMarkdownImageSources(q.reference_md, replacements),
+    choices_md: q.choices_md?.map((choice) => rewriteMarkdownImageSources(choice, replacements)),
+  };
+  const imageRefs = [...loaded.attachedSources]
+    .map((source) => assetIdsBySource.get(source))
+    .filter((id): id is string => id !== undefined);
+  const figures: FigureRefT[] = imageRefs.map((assetId) => ({
+    asset_id: assetId,
+    role: 'diagram',
+    source_page_index: 0,
+    source_bbox: { x: 0, y: 0, width: 1, height: 1 },
+    attached_to_index: questionId,
+    attach_confidence: 'high',
+  }));
+  const structured: StructuredQuestionT = {
+    id: questionId,
+    role: 'standalone',
+    prompt_text: qWithInternalUrls.prompt_md,
+    ...(qWithInternalUrls.reference_md ? { answers: [qWithInternalUrls.reference_md] } : {}),
+  };
+  return { q: qWithInternalUrls, figures, imageRefs, structured, assets };
+}
+
+async function cleanupQuestionAssets(
+  db: Db,
+  r2: R2Client,
+  assets: readonly SourceAssetRow[],
+): Promise<void> {
+  if (assets.length === 0) return;
+  const ownedIds = new Set(assets.map((asset) => asset.id));
+  const storageKeys = [...new Set(assets.map((asset) => asset.storage_key))].sort();
+  await db.transaction(async (tx) => {
+    // Lock in lexical order to avoid multi-image deadlocks. persistImageAsset takes the same
+    // lock before R2 put, so cleanup cannot race a writer whose owner row is not visible yet.
+    for (const storageKey of storageKeys) await lockImageStorageKey(tx, storageKey);
+    for (const storageKey of storageKeys) {
+      const owners = await tx
+        .select({ id: source_asset.id })
+        .from(source_asset)
+        .where(eq(source_asset.storage_key, storageKey));
+      // If deletion fails, the transaction rolls back and durable owner rows remain. Other
+      // committed owners keep a shared content-addressed blob in place.
+      if (owners.every((owner) => ownedIds.has(owner.id))) await r2.delete(storageKey);
+    }
+    await tx.delete(source_asset).where(inArray(source_asset.id, [...ownedIds]));
+  });
+}
+
 export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJyeooFetchResult> {
   const { db, trigger, refId } = params;
   const count = params.count ?? JYEOO_FETCH_DEFAULT_COUNT;
@@ -265,6 +516,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
   const dg = jyeooDgTokenForBand(params.difficultyBand ?? 'near');
   const triggerEventId = `jyeoo_fetch_trigger_${createId()}`;
   const counts = emptyCounts(count);
+  const imageDir = await mkdtemp(join(tmpdir(), 'loom-jyeoo-'));
 
   const args = [
     'search',
@@ -277,6 +529,8 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     dg,
     '--emit',
     'loom',
+    '--images',
+    imageDir,
   ];
 
   let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
@@ -293,7 +547,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       });
     } catch (spawnErr) {
       // OS-level spawn failure (ENOENT etc.) — terminal 'spawn' class, no INSERT.
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -310,7 +564,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     if (classification.failure !== null || truncated) {
       const failureClass: JyeooFailureClass = classification.failure ?? 'unknown';
       const retryable = classification.failure !== null ? classification.retryable : false;
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -346,7 +600,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     }
 
     if (vipViolation) {
-      return finishFailure({
+      return await finishFailure({
         db,
         triggerEventId,
         params,
@@ -358,7 +612,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       });
     }
 
-    // ── pre-persist filters: foreign host + image-dependent + pinned-kind mismatch ──
+    // ── pre-persist filters: foreign host + pinned-kind mismatch ───────────────
     // The dispatcher may pin a kind (diagnostic / format-diversity / calibration targets,
     // e.g. `choice`). The producer only INFERS kind, so — mirroring the sourcing path's
     // params.kind enforcement — drop any question whose kind does not match the pin BEFORE
@@ -368,21 +622,19 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     // Foreign-host filter is a PER-ROW drop (not a whole-batch fail like VIP): a jyeoo scrape
     // emits www.jyeoo.com URLs, so a foreign host on one line is a per-line anomaly, not a
     // session-level compromise — the other lines remain valid jyeoo drafts.
-    const textQuestions: SourcedQuestionT[] = [];
+    // Image questions continue into the localization pass below; only unreadable, malformed or
+    // non-local image references increment filtered_image (YUK-727).
+    const candidateQuestions: SourcedQuestionT[] = [];
     for (const q of validQuestions) {
       if (isForeignSourceHost(q.source_url, JYEOO_SOURCE_HOST)) {
         counts.filtered_url += 1;
-        continue;
-      }
-      if (isImageDependentQuestion(q)) {
-        counts.filtered_image += 1;
         continue;
       }
       if (params.kind && !kindsMatch(q.kind, params.kind)) {
         counts.filtered_kind += 1;
         continue;
       }
-      textQuestions.push(q);
+      candidateQuestions.push(q);
     }
 
     // ── near-dup prefilter (active+draft pool + in-batch) ──────────────────────
@@ -396,81 +648,141 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
     }> = [];
 
     failureStage = 'persist';
-    await db.transaction(async (tx) => {
-      for (const q of textQuestions) {
-        if (questionIds.length >= count) break; // respect desiredCount — don't over-supply.
+    let imageR2 = params.r2;
+    for (const q of candidateQuestions) {
+      if (questionIds.length >= count) break; // respect desiredCount — don't over-supply.
 
-        // Near-dup (content n-gram) against active+draft pool + already-staged batch.
-        const nearOverlap = maxNgramOverlap(q.prompt_md, [...poolPrompts, ...batchPrompts]);
-        if (nearOverlap >= JYEOO_NEAR_DUP_THRESHOLD) {
-          counts.deduped_near += 1;
+      const loadedImages = await loadLocalizedQuestionImages(q, imageDir);
+      if (loadedImages === null) {
+        counts.filtered_image += 1;
+        continue;
+      }
+      if (loadedImages.images.length > 0 && imageR2 === undefined) {
+        try {
+          imageR2 = getR2();
+        } catch (err) {
+          // Credentials are intentionally lazy: a missing R2 config filters this image question
+          // but never blocks pure-text candidates from the same producer batch.
+          console.warn('[jyeoo_fetch] R2 unavailable; filtering image question:', err);
+          counts.filtered_image += 1;
           continue;
         }
+      }
 
-        // Exact-dup (canonical content hash) — content fingerprint, never ID/URL. YUK-720
-        // cross-KC merge: if the SAME content already exists (possibly attributed to a
-        // DIFFERENT KC), merge the anchor KC into that row instead of re-inserting; a
-        // terminal-rejected draft is released (disposition!='merged') so we fall through to
-        // a fresh INSERT. This gives jyeoo the same dedup as sourcing (shared merge helper).
-        const canonicalContentHash = canonicalQuestionContentHash({
-          promptMd: q.prompt_md,
-          referenceMd: q.reference_md,
-          choicesMd: q.choices_md,
-          rubricJson: q.rubric_json,
-        });
-        const existingDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
+      // Near-dup (content n-gram) against active+draft pool + already-staged batch.
+      // Text-only near-dedup is unsafe for visual prompts: identical wording with different
+      // pixels is a different question. Image questions rely on the image-aware exact hash below.
+      const nearOverlap =
+        loadedImages.images.length === 0
+          ? maxNgramOverlap(q.prompt_md, [...poolPrompts, ...batchPrompts])
+          : 0;
+      if (nearOverlap >= JYEOO_NEAR_DUP_THRESHOLD) {
+        counts.deduped_near += 1;
+        continue;
+      }
+
+      // Exact-dup (canonical content hash) — the image-aware canonicalizer preserves image
+      // alt/presence while excluding transport URLs. YUK-720 cross-KC merge then attributes this
+      // anchor KC to an existing row instead of re-inserting the same content.
+      const canonicalContentHash = await canonicalJyeooQuestionHash(q, loadedImages);
+      const existingDuplicate = await db.transaction((tx) =>
+        mergeExactQuestionDuplicateKnowledgeIds(tx, {
           canonicalContentHash,
           knowledgeIds: [anchorKid],
           actorRef: 'jyeoo_fetch',
           taskRunId: undefined,
           now,
-        });
-        if (existingDuplicate?.disposition === 'merged') {
-          counts.deduped_exact += 1;
-          continue;
-        }
-
-        const id = createId();
-        // jyeoo emits knowledge_ids=[] (producer non-goal), so the anchor KC is the
-        // attribution (design §2.1). fetched_at = run time (SourcedQuestion has none).
-        const inserted = await insertSourcedDraft(tx, {
-          id,
-          q,
-          knowledgeIds: [anchorKid],
-          sourceRoute: JYEOO_FETCH_ROUTE,
-          createdBy: JYEOO_CREATED_BY,
-          whitelistMatch: matchesWhitelist(q.source_url, whitelist),
-          fetchedAt: now.toISOString(),
-          canonicalContentHash,
-          supplyTrace: params.supplyTrace,
-          mergeActorRef: 'jyeoo_fetch',
-          taskRunId: undefined,
-          now,
-        });
-        if (inserted.status === 'raced_merged') {
-          counts.deduped_exact += 1;
-          continue;
-        }
-        await writeVerifyDispatchIntent(tx, {
-          questionId: id,
-          verifier: 'source_verify',
-          supplyTrace: inserted.supplyTrace,
-          createdAt: now,
-        });
-        questionIds.push(id);
-        batchPrompts.push(q.prompt_md);
-        difficultyEvidenceByQuestion.push({
-          question_id: id,
-          evidence: inserted.difficultyEvidence,
-        });
+        }),
+      );
+      if (existingDuplicate?.disposition === 'merged') {
+        counts.deduped_exact += 1;
+        continue;
       }
-    });
+      // jyeoo-rs computes extraction_hash after --images localization, so an image question's
+      // producer hash contains this run's random temp path. Replace only that unstable provenance
+      // value with Loom's URL-insensitive canonical hash; text-question provenance stays verbatim.
+      const id = createId();
+      let media: PersistedQuestionImages | null = null;
+      let persisted: Awaited<ReturnType<typeof insertSourcedDraft>>;
+      try {
+        media =
+          loadedImages.images.length > 0
+            ? await persistQuestionImages(db, imageR2 as R2Client, q, loadedImages, id)
+            : null;
+        if (media && params.afterAssetsPersistedFn) {
+          await params.afterAssetsPersistedFn({ canonicalContentHash });
+        }
+        const persistedQuestion = media?.q ?? q;
+        const qForInsert =
+          loadedImages.images.length > 0
+            ? { ...persistedQuestion, extraction_hash: `sha256:${canonicalContentHash}` }
+            : persistedQuestion;
+        persisted = await db.transaction(async (tx) => {
+          // Reserve the canonical hash and materialize all question-owned references atomically.
+          // Image blobs/source_asset rows are staged immediately before this transaction. A
+          // rollback or canonical race runs ref-aware compensation below before the job retries.
+          const inserted = await insertSourcedDraft(tx, {
+            id,
+            q: qForInsert,
+            knowledgeIds: [anchorKid],
+            sourceRoute: JYEOO_FETCH_ROUTE,
+            createdBy: JYEOO_CREATED_BY,
+            whitelistMatch: matchesWhitelist(q.source_url, whitelist),
+            fetchedAt: now.toISOString(),
+            canonicalContentHash,
+            supplyTrace: params.supplyTrace,
+            mergeActorRef: 'jyeoo_fetch',
+            taskRunId: undefined,
+            now,
+          });
+          if (inserted.status === 'raced_merged') return inserted;
+
+          if (media) {
+            await tx
+              .update(question)
+              .set({
+                // Jyeoo image questions are holistic visual prompts. The shared route supports this
+                // capability for math, but choices normally short-circuit to exact before image
+                // auto-routing, so persist the explicit route rather than silently ignoring figures.
+                ...(media.imageRefs.length > 0
+                  ? { judge_kind_override: 'multimodal_direct' as const }
+                  : {}),
+                figures: media.figures,
+                image_refs: media.imageRefs,
+                structured: media.structured,
+                metadata: sql`${question.metadata} || ${JSON.stringify({ prompt_image_refs: media.imageRefs })}::jsonb`,
+                updated_at: now,
+              })
+              .where(eq(question.id, id));
+          }
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'source_verify',
+            supplyTrace: inserted.supplyTrace,
+            createdAt: now,
+          });
+          return inserted;
+        });
+      } catch (err) {
+        if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
+        throw err;
+      }
+      if (persisted.status === 'raced_merged') {
+        if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
+        counts.deduped_exact += 1;
+        continue;
+      }
+      questionIds.push(id);
+      batchPrompts.push(q.prompt_md);
+      difficultyEvidenceByQuestion.push({
+        question_id: id,
+        evidence: persisted.difficultyEvidence,
+      });
+    }
     counts.inserted = questionIds.length;
 
     // ── chain source_verify FIRST (best-effort; drafts + intents are durable) ────
-    // Dispatch BEFORE the canary event so counts.verify_enqueued reflects the real number
-    // of drafts handed to the chain — writing the event first would freeze verify_enqueued
-    // at 0 and make the funnel metric permanently wrong.
+    // Dispatch before the canary event so counts.verify_enqueued records the real funnel.
     if (questionIds.length > 0) {
       failureStage = 'dispatch';
       const dispatchResult = await dispatchPendingVerifyIntents(db, {
@@ -491,7 +803,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       }
     }
 
-    // ── canary success event (AFTER dispatch so counts.verify_enqueued is accurate) ─
+    // ── canary success event (after dispatch so verify_enqueued is accurate) ────
     failureStage = 'event';
     await writeEvent(db, {
       id: createId(),
@@ -521,6 +833,9 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
 
     return { status: 'ready', question_ids: questionIds, counts };
   } catch (err) {
+    // finishFailure already wrote the classified producer event. Do not add a second generic
+    // persist-stage failure event; only preserve the rejection so pg-boss redelivers the job.
+    if (err instanceof RetryableJyeooProducerError) throw err;
     // Unexpected (persist/event/dispatch) failure — write a failure event + re-throw so
     // pg-boss retries (transient DB errors). Producer-classified failures never reach
     // here (they return via finishFailure above).
@@ -551,6 +866,10 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
       console.error('[jyeoo_fetch] catch-block cleanup failed for', refId, cleanupErr);
     }
     throw err;
+  } finally {
+    await rm(imageDir, { recursive: true, force: true }).catch((err) => {
+      console.warn('[jyeoo_fetch] failed to remove image temp directory:', imageDir, err);
+    });
   }
 }
 
@@ -614,14 +933,20 @@ async function finishFailure(args: FinishFailureArgs): Promise<RunJyeooFetchResu
     );
   }
   if (retryable) {
-    throw new Error(`jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`);
+    throw new RetryableJyeooProducerError(
+      `jyeoo_fetch producer failure (${failureClass}, retryable): ${detail}`,
+    );
   }
   return { status: `failed:${failureClass}`, counts };
 }
 
 export function buildJyeooFetchHandler(
   db: Db,
-  deps: { spawnJyeooFn?: SpawnJyeooFn; enqueueSourceVerify?: EnqueueSourceVerifyFn } = {},
+  deps: {
+    spawnJyeooFn?: SpawnJyeooFn;
+    enqueueSourceVerify?: EnqueueSourceVerifyFn;
+    r2?: R2Client;
+  } = {},
 ): (jobs: Job<JyeooFetchJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
@@ -650,6 +975,7 @@ export function buildJyeooFetchHandler(
         ...(supplyTrace ? { supplyTrace } : {}),
         spawnJyeooFn: deps.spawnJyeooFn,
         enqueueSourceVerify: deps.enqueueSourceVerify,
+        r2: deps.r2,
       });
       console.log(`[jyeoo_fetch] ${data.trigger}:${data.ref_id} -> ${result.status}`);
     }

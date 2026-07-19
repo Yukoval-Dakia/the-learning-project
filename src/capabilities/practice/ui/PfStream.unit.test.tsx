@@ -35,6 +35,11 @@ function doneItem(overrides: Partial<StreamItem> = {}): StreamItem {
     reasoning: '前置你都拿下了，可以开这块新内容了。',
     status: 'done',
     estimated_minutes: 2,
+    knowledge_name: null,
+    paper_title: null,
+    verdict: null,
+    completed_at: null,
+    total_slots: null,
     ...overrides,
   };
 }
@@ -102,8 +107,8 @@ describe('PfSrcBadge (source badge — YUK-551)', () => {
   });
 });
 
-describe('PfStream done-row anchor (second bare-index site — YUK-551)', () => {
-  it('(c) done frontier row without a 「」 anchor → doneAnchor falls back to srcMeta(frontier).label', () => {
+describe('PfStream structured stream metadata', () => {
+  it('(c) done row without a structured anchor falls back to srcMeta(frontier).label', () => {
     const html = renderToString(<PfStream stream={streamOf([doneItem()])} {...noopProps} />);
     // pf-done-kp carries the anchor; with no 「」 it must be the source label 下一步 (not a crash).
     expect(html).toContain('pf-done-kp');
@@ -115,5 +120,35 @@ describe('PfStream done-row anchor (second bare-index site — YUK-551)', () => 
     const html = renderToString(<PfStream stream={streamOf([item])} {...noopProps} />);
     expect(html).toContain('pf-done-kp');
     expect(html).toContain('其它来源');
+  });
+
+  it('(e) renders structured knowledge anchor, verdict tone and the true completion time', () => {
+    const item = doneItem({
+      reasoning: '「错误的文案锚点」不应参与展示。',
+      knowledge_name: '判断句',
+      verdict: 'hard',
+      completed_at: '2026-07-03T00:42:00.000Z',
+    });
+    const html = renderToString(<PfStream stream={streamOf([item])} {...noopProps} />);
+    expect(html).toContain('判断句');
+    expect(html).not.toContain('错误的文案锚点');
+    expect(html).toContain('tone-hard');
+    expect(html).toContain('部分对');
+    expect(html).toContain('08:42 完成');
+  });
+
+  it('(f) renders paper title and slot facts from the structured read model', () => {
+    const item = doneItem({
+      status: 'pending',
+      item_kind: 'paper',
+      source: 'paper',
+      paper_title: '判断句专项卷',
+      total_slots: 8,
+      estimated_minutes: 10,
+    });
+    const html = renderToString(<PfStream stream={streamOf([item])} {...noopProps} />);
+    expect(html).toContain('判断句专项卷');
+    expect(html).toContain('<b class="tnum">8</b> 题');
+    expect(html).toMatch(/约 .*10.* 分钟/);
   });
 });

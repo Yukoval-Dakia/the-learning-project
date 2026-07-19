@@ -1,8 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 // Shared content-addressed image-asset write path. Extracted from
 // app/api/assets/route.ts (YUK-250) so both the generic asset upload route and
@@ -25,6 +26,11 @@ import type { R2Client } from '@/server/r2';
 
 export type SourceAssetRow = typeof source_asset.$inferSelect;
 
+/** Serialize every put/owner mutation for one content-addressed object. */
+export async function lockImageStorageKey(tx: Tx, storageKey: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${storageKey}, 0))`);
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Hash the VIEW's bytes, not `bytes.buffer`. A Uint8Array can be a window into
   // a larger (pooled) ArrayBuffer with a non-zero byteOffset / partial byteLength
@@ -44,31 +50,103 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function persistImageAsset(
   db: Db,
   r2: R2Client,
-  input: { bytes: Uint8Array; mime: string },
+  input: {
+    bytes: Uint8Array;
+    mime: string;
+    provenance?: typeof source_asset.$inferInsert.provenance;
+    compensatePutOnInsertFailure?: boolean;
+  },
 ): Promise<SourceAssetRow> {
   const { bytes, mime } = input;
   const sha = await sha256Hex(bytes);
   const storageKey = `assets/${sha}`;
-  await r2.put(storageKey, bytes, mime);
 
   const id = createId();
   const now = new Date();
-  const [row] = await db
-    .insert(source_asset)
-    .values({
-      id,
-      kind: 'image',
-      storage_key: storageKey,
-      mime_type: mime,
-      byte_size: bytes.byteLength,
-      sha256: sha,
-      created_at: now,
-    })
-    .returning();
+  const row = await db.transaction(async (tx) => {
+    // The key is shared across source_asset rows. Hold one DB advisory lock from before put
+    // through owner-row commit, closing the unsafe "put complete, owner not visible" window.
+    await lockImageStorageKey(tx, storageKey);
+    const hadOwnerBeforePut = input.compensatePutOnInsertFailure
+      ? (
+          await tx
+            .select({ id: source_asset.id })
+            .from(source_asset)
+            .where(eq(source_asset.storage_key, storageKey))
+            .limit(1)
+        ).length > 0
+      : true;
+    await r2.put(storageKey, bytes, mime);
+    try {
+      const [inserted] = await tx
+        .insert(source_asset)
+        .values({
+          id,
+          kind: 'image',
+          storage_key: storageKey,
+          mime_type: mime,
+          byte_size: bytes.byteLength,
+          sha256: sha,
+          provenance: input.provenance,
+          created_at: now,
+        })
+        .returning();
+      return inserted;
+    } catch (err) {
+      if (input.compensatePutOnInsertFailure && !hadOwnerBeforePut) {
+        try {
+          // The transaction may already be aborted by the failed INSERT, so use the owner
+          // snapshot taken while holding the key lock instead of issuing another SQL query.
+          await r2.delete(storageKey);
+        } catch (cleanupErr) {
+          console.error('[persistImageAsset] failed to compensate R2 put:', cleanupErr);
+        }
+      }
+      throw err;
+    }
+  });
   // INSERT ... RETURNING always yields the inserted row, but guard the empty-array
   // case so the Promise<SourceAssetRow> contract can never resolve to undefined.
   if (!row) {
     throw new Error('persistImageAsset: INSERT ... RETURNING returned no row');
   }
   return row;
+}
+
+/**
+ * Delete one logical owner and remove the content-addressed object only after its final owner.
+ * Every `assets/<sha>` owner mutation shares the same advisory-lock protocol as writes.
+ */
+export async function deleteImageAsset(db: Db, r2: R2Client, id: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [snapshot] = await tx
+      .select({ id: source_asset.id, storageKey: source_asset.storage_key })
+      .from(source_asset)
+      .where(eq(source_asset.id, id))
+      .limit(1);
+    if (!snapshot) return false;
+
+    await lockImageStorageKey(tx, snapshot.storageKey);
+
+    // The target may have disappeared while this transaction waited for a concurrent
+    // mutation of the same storage key. Re-read it under the key lock before acting.
+    const [live] = await tx
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(eq(source_asset.id, id))
+      .limit(1);
+    if (!live) return false;
+
+    const [otherOwner] = await tx
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(and(eq(source_asset.storage_key, snapshot.storageKey), ne(source_asset.id, id)))
+      .limit(1);
+
+    if (!otherOwner) {
+      await r2.delete(snapshot.storageKey);
+    }
+    await tx.delete(source_asset).where(eq(source_asset.id, id));
+    return true;
+  });
 }

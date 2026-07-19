@@ -63,6 +63,7 @@ export interface QuestionAssociationCounts {
   fsrs_cards: number;
   paper_refs: number;
   mistakes: number;
+  children: number;
 }
 
 /**
@@ -78,13 +79,16 @@ export interface QuestionAssociationCounts {
  *                (same container query the detail backlink uses). Counts ALL
  *                references incl. drafts/archived — the warning is about data the
  *                user would orphan, so we do not filter archived here.
+ *  - children:    every direct composite part linked by parent_question_id. This
+ *                includes already-drafted parts: confirmation describes the full
+ *                attached structure, while archiveQuestion only mutates live parts.
  */
 export async function countQuestionAssociations(
   db: Db,
   questionId: string,
 ): Promise<QuestionAssociationCounts> {
-  // The four counts are independent reads — run them concurrently.
-  const [[attemptRow], [mistakeRow], [fsrsRow], [paperRow]] = await Promise.all([
+  // The five counts are independent reads — run them concurrently.
+  const [[attemptRow], [mistakeRow], [fsrsRow], [paperRow], [childrenRow]] = await Promise.all([
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(event)
@@ -119,6 +123,10 @@ export async function countQuestionAssociations(
       .select({ n: sql<number>`count(*)::int` })
       .from(artifact)
       .where(sql`${artifact.tool_state}->'question_ids' @> ${JSON.stringify([questionId])}::jsonb`),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(question)
+      .where(eq(question.parent_question_id, questionId)),
   ]);
 
   return {
@@ -126,12 +134,17 @@ export async function countQuestionAssociations(
     mistakes: mistakeRow?.n ?? 0,
     fsrs_cards: fsrsRow?.n ?? 0,
     paper_refs: paperRow?.n ?? 0,
+    children: childrenRow?.n ?? 0,
   };
 }
 
 export function hasAnyAssociation(counts: QuestionAssociationCounts): boolean {
   return (
-    counts.attempts > 0 || counts.mistakes > 0 || counts.fsrs_cards > 0 || counts.paper_refs > 0
+    counts.attempts > 0 ||
+    counts.mistakes > 0 ||
+    counts.fsrs_cards > 0 ||
+    counts.paper_refs > 0 ||
+    counts.children > 0
   );
 }
 

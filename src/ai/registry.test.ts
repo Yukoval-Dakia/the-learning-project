@@ -121,6 +121,17 @@ describe('SolutionGenerateTask registry entry', () => {
   });
 });
 
+describe('SolutionGenerateVisionTask registry entry', () => {
+  it('uses the vision-capable mimo route with the same single-shot shape', () => {
+    expect(tasks.SolutionGenerateVisionTask.kind).toBe('SolutionGenerateVisionTask');
+    expect(tasks.SolutionGenerateVisionTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.SolutionGenerateVisionTask.defaultModel).toBe('mimo-v2.5');
+    expect(tasks.SolutionGenerateVisionTask.isMultimodal).toBe(true);
+    expect(tasks.SolutionGenerateVisionTask.needsToolCall).toBe(false);
+    expect(tasks.SolutionGenerateVisionTask.budget.maxIterations).toBe(1);
+  });
+});
+
 describe('QuizGenTask registry entry', () => {
   // Search-grounded QuizGen wave (T-SQ) §1 — agentic tool-calling task. Budget
   // and tool-call flags are part of the slice contract: maxIterations 8,

@@ -25,7 +25,11 @@ describe('BandChip', () => {
     expect(html).toContain('band-chip');
     expect(html).toContain('src-hard');
     expect(html).toContain('稳固'); // point band for 0.7
-    // title carries the real interval (成长–精熟 for lo=0.5/hi=0.85) + user-readable source.
+    // The real interval is visible (not title-only), with an explicit accessible label.
+    expect(html).toContain('class="bc-range"');
+    expect(html).toContain('>成长–精熟</span>');
+    expect(html).toContain('aria-label="区间 成长 至 精熟"');
+    // Tooltip retains the full qualitative summary + user-readable source.
     expect(html).toContain('区间 成长–精熟');
     expect(html).toContain('作答校准');
   });
@@ -51,6 +55,7 @@ describe('BandChip', () => {
     expect(html).toContain('未知');
     expect(html).toContain('src-soft');
     expect(html).toContain('低置信');
+    expect(html).not.toContain('bc-range');
     // ⑥ red line — no bare probability / %.
     expect(html).not.toContain('%');
     expect(html).not.toContain('0.');

@@ -105,6 +105,32 @@ describe('masteryBandView', () => {
     // not treated as band 0 — no band/loBand/hiBand fields on the unknown branch.
     expect('band' in v).toBe(false);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'treats a non-finite point estimate (%s) as unknown instead of mastered',
+    (mastery) => {
+      const v = masteryBandView(input({ mastery }));
+      expect(v).toEqual({ unknown: true, source: 'soft', lowConf: true });
+      expect('band' in v).toBe(false);
+    },
+  );
+
+  it('falls back to the finite point band when interval endpoints are non-finite', () => {
+    const v = masteryBandView(
+      input({ mastery: 0.7, mastery_lo: Number.NaN, mastery_hi: Number.POSITIVE_INFINITY }),
+    );
+    if (v.unknown) throw new Error('expected known band');
+    expect(v.band).toBe(2);
+    expect(v.loBand).toBe(2);
+    expect(v.hiBand).toBe(2);
+  });
+
+  it('orders inverted wire interval bands before exposing them to the UI', () => {
+    const v = masteryBandView(input({ mastery: 0.7, mastery_lo: 0.85, mastery_hi: 0.5 }));
+    if (v.unknown) throw new Error('expected known band');
+    expect(v.loBand).toBe(1);
+    expect(v.hiBand).toBe(3);
+  });
 });
 
 describe('masteryBandUnknown', () => {

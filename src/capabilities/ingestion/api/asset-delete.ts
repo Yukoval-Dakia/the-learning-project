@@ -1,17 +1,13 @@
-import { eq } from 'drizzle-orm';
-
+import { deleteImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { db } from '@/db/client';
-import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getR2 } from '@/server/r2';
 
 export async function DELETE(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const id = params.id;
-    const [row] = await db.select().from(source_asset).where(eq(source_asset.id, id)).limit(1);
-    if (!row) throw new ApiError('not_found', `asset ${id} not found`, 404);
-    await getR2().delete(row.storage_key);
-    await db.delete(source_asset).where(eq(source_asset.id, id));
+    const deleted = await deleteImageAsset(db, getR2(), id);
+    if (!deleted) throw new ApiError('not_found', `asset ${id} not found`, 404);
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

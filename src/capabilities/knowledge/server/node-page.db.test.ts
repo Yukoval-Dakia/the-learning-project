@@ -726,13 +726,14 @@ describe('loadKnowledgeNodePage', () => {
   // node-page ships RAW (retrievability + beta); the client bands them via
   // buildNodeThreeDim. Band-mapping math is covered by node-dims.unit.test.ts.
 
-  it('cold start: retrievability and beta are null (focal node never attempted)', async () => {
+  it('cold start without an item anchor: retrievability/beta are null and difficulty is unanchored', async () => {
     const db = testDb();
     await seedKnowledge('k1', { name: '虚词' });
     const page = await loadKnowledgeNodePage(db, 'k1');
     // no fsrs_state row → no retention data (null, NOT R=0); no mastery_state row → no β.
     expect(page?.retrievability).toBeNull();
     expect(page?.beta).toBeNull();
+    expect(page?.difficulty_anchored).toBe(false);
   });
 
   it('surfaces a real retrievability when the focal node has an FSRS state row', async () => {
@@ -759,27 +760,32 @@ describe('loadKnowledgeNodePage', () => {
       last_outcome_at: new Date(),
     });
     const page = await loadKnowledgeNodePage(db, 'k1');
-    // mastery_state row exists → β resolves, defaulting to the neutral 0 (no anchor).
-    // The client honestly degrades β=0 → 难度未知 (buildNodeThreeDim).
+    // mastery_state retains its neutral β=0 projection sentinel, while the explicit
+    // presence bit tells the client to under-claim it as unknown.
     expect(page?.beta).toBe(0);
+    expect(page?.difficulty_anchored).toBe(false);
     expect(page?.mastery).not.toBeNull();
   });
 
-  it('surfaces a non-zero beta from a hard-track item_calibration anchor', async () => {
+  it('surfaces an anchored non-zero beta before the first learner attempt', async () => {
     const db = testDb();
     await seedKnowledge('k1', { name: '虚词' });
-    await upsertMasteryState(db, {
-      subject_id: 'k1',
-      theta_hat: 0.2,
-      evidence_count: 5,
-      success_count: 3,
-      fail_count: 2,
-      last_outcome_at: new Date(),
-    });
     await seedKcDifficultyAnchor('q1', 'k1', 1);
     const page = await loadKnowledgeNodePage(db, 'k1');
-    // representative β = median hard-track effective b = 1 → difficulty band 偏难 (client).
+    // Difficulty is an item property, so it is available independently of mastery_state.
+    expect(page?.mastery).toBeNull();
     expect(page?.beta).toBe(1);
+    expect(page?.difficulty_anchored).toBe(true);
+  });
+
+  it('preserves map presence for a real medium beta=0 anchor', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedKcDifficultyAnchor('q1', 'k1', 0);
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.mastery).toBeNull();
+    expect(page?.beta).toBe(0);
+    expect(page?.difficulty_anchored).toBe(true);
   });
 });
 

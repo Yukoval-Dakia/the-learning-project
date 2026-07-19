@@ -15,6 +15,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import {
+  artifact,
   event,
   knowledge,
   learning_item,
@@ -28,7 +29,7 @@ import { ApiError } from '@/server/http/errors';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
 import { Review } from '@/server/session';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 
 import { notDraftPredicate } from '@/db/predicates';
 
@@ -41,6 +42,7 @@ import {
 } from './candidate-signals';
 import { handleReviewDue } from './due-list';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
+import { countPaperSlots } from './paper-sections';
 import { getPracticeList } from './practice-read';
 import {
   DEFAULT_SELECTION_POLICY,
@@ -706,6 +708,11 @@ export interface StreamView {
     reasoning: string;
     status: StreamItemStatus;
     estimated_minutes: number;
+    knowledge_name: string | null;
+    paper_title: string | null;
+    verdict: 'again' | 'hard' | 'good' | null;
+    completed_at: string | null;
+    total_slots: number | null;
   }>;
   budget: { pace: DailyPracticePace; minutes: number };
   progress: {
@@ -716,14 +723,180 @@ export interface StreamView {
   };
 }
 
+type StreamViewItem = StreamView['items'][number];
+
+interface StreamItemMetadata {
+  knowledgeName: string | null;
+  paperTitle: string | null;
+  verdict: StreamViewItem['verdict'];
+  completedAt: string | null;
+  totalSlots: number | null;
+}
+
+const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
+  knowledgeName: null,
+  paperTitle: null,
+  verdict: null,
+  completedAt: null,
+  totalSlots: null,
+};
+
+function eventRating(payload: unknown): StreamViewItem['verdict'] {
+  if (!payload || typeof payload !== 'object') return null;
+  const rating = (payload as Record<string, unknown>).fsrs_rating;
+  return rating === 'again' || rating === 'hard' || rating === 'good' ? rating : null;
+}
+
+function eventStreamItemId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const id = (payload as Record<string, unknown>).stream_item_id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/**
+ * Batch-enrich persisted stream rows without N+1 queries.
+ *
+ * Review matching rule:
+ *  1. Prefer the immutable review.payload.stream_item_id exact key, additionally
+ *     checking question, nullable session and the row lifetime window.
+ *  2. Historical reviews pre-YUK-336 have no key. They may match only when exactly
+ *     one same-question + same-nullable-session review exists between row creation
+ *     and its done timestamp. Ambiguity deliberately returns null rather than
+ *     displaying another attempt's judgement.
+ */
+async function resolveStreamItemMetadata(
+  db: DbLike,
+  rows: StreamItemRow[],
+): Promise<Map<string, StreamItemMetadata>> {
+  const metadata = new Map<string, StreamItemMetadata>();
+  for (const row of rows) metadata.set(row.id, { ...EMPTY_STREAM_ITEM_METADATA });
+  if (rows.length === 0) return metadata;
+
+  const questionRows = rows.filter((row) => row.item_kind === 'question');
+  const questionIds = [...new Set(questionRows.map((row) => row.ref_id))];
+  if (questionIds.length > 0) {
+    const questions = await db
+      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, questionIds));
+    const primaryKnowledgeByQuestion = new Map(
+      questions.map((row) => [row.id, row.knowledge_ids[0] ?? null]),
+    );
+    const primaryKnowledgeIds = [
+      ...new Set(
+        [...primaryKnowledgeByQuestion.values()].filter((id): id is string => id !== null),
+      ),
+    ];
+    const names = await knowledgeLabels(db, primaryKnowledgeIds);
+    for (const row of questionRows) {
+      const knowledgeId = primaryKnowledgeByQuestion.get(row.ref_id);
+      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
+      current.knowledgeName = knowledgeId ? (names.get(knowledgeId) ?? null) : null;
+      metadata.set(row.id, current);
+    }
+  }
+
+  const paperRows = rows.filter((row) => row.item_kind === 'paper');
+  const paperIds = [...new Set(paperRows.map((row) => row.ref_id))];
+  if (paperIds.length > 0) {
+    const papers = await db
+      .select({ id: artifact.id, title: artifact.title, tool_state: artifact.tool_state })
+      .from(artifact)
+      .where(inArray(artifact.id, paperIds));
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    for (const row of paperRows) {
+      const paper = paperById.get(row.ref_id);
+      if (!paper) continue;
+      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
+      current.paperTitle = paper.title;
+      current.totalSlots = countPaperSlots(paper.tool_state);
+      metadata.set(row.id, current);
+    }
+  }
+
+  const doneQuestions = questionRows.filter((row) => row.status === 'done');
+  if (doneQuestions.length > 0) {
+    const firstCreatedAt = new Date(
+      Math.min(...doneQuestions.map((row) => row.created_at.getTime())),
+    );
+    const lastCompletedAt = new Date(
+      Math.max(...doneQuestions.map((row) => row.updated_at.getTime())),
+    );
+    const reviews = await db
+      .select({
+        id: event.id,
+        session_id: event.session_id,
+        subject_id: event.subject_id,
+        payload: event.payload,
+        created_at: event.created_at,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'review'),
+          eq(event.subject_kind, 'question'),
+          inArray(event.subject_id, [...new Set(doneQuestions.map((row) => row.ref_id))]),
+          gte(event.created_at, firstCreatedAt),
+          lte(event.created_at, lastCompletedAt),
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id));
+
+    for (const row of doneQuestions) {
+      const candidates = reviews.filter(
+        (review) =>
+          review.subject_id === row.ref_id &&
+          review.session_id === row.session_id &&
+          review.created_at >= row.created_at &&
+          review.created_at <= row.updated_at,
+      );
+      const exact = candidates.filter((review) => eventStreamItemId(review.payload) === row.id);
+      const legacy = candidates.filter((review) => eventStreamItemId(review.payload) === null);
+      const matched = exact[0] ?? (legacy.length === 1 ? legacy[0] : null);
+      if (!matched) continue;
+      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
+      current.verdict = eventRating(matched.payload);
+      current.completedAt = matched.created_at.toISOString();
+      metadata.set(row.id, current);
+    }
+  }
+
+  return metadata;
+}
+
+function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): StreamViewItem {
+  return {
+    id: row.id,
+    position: row.position,
+    item_kind: row.item_kind,
+    ref_id: row.ref_id,
+    source: row.source,
+    reasoning: row.reasoning,
+    status: row.status,
+    estimated_minutes: estimateStreamItemMinutes(row.item_kind),
+    knowledge_name: metadata.knowledgeName,
+    paper_title: metadata.paperTitle,
+    verdict: metadata.verdict,
+    completed_at: metadata.completedAt,
+    total_slots: metadata.totalSlots,
+  };
+}
+
+/** Enriched PATCH response item; shares the exact projection used by GET. */
+export async function getStreamViewItem(db: DbLike, row: StreamItemRow): Promise<StreamViewItem> {
+  const metadata = await resolveStreamItemMetadata(db, [row]);
+  return toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA);
+}
+
 function buildStreamView(input: {
   date: string;
   rows: StreamItemRow[];
   budget: { pace: DailyPracticePace; minutes: number };
   scope: StreamScope | null;
   openingLine: string;
+  metadata: Map<string, StreamItemMetadata>;
 }): StreamView {
-  const { date, rows, budget, scope, openingLine } = input;
+  const { date, rows, budget, scope, openingLine, metadata } = input;
   const done = rows.filter((row) => row.status === 'done').length;
   const estimatedTotalMinutes = rows.reduce(
     (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
@@ -737,16 +910,9 @@ function buildStreamView(input: {
     date,
     scope,
     opening_line: openingLine,
-    items: rows.map((row) => ({
-      id: row.id,
-      position: row.position,
-      item_kind: row.item_kind,
-      ref_id: row.ref_id,
-      source: row.source,
-      reasoning: row.reasoning,
-      status: row.status,
-      estimated_minutes: estimateStreamItemMinutes(row.item_kind),
-    })),
+    items: rows.map((row) =>
+      toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA),
+    ),
     budget,
     progress: {
       done,
@@ -929,11 +1095,13 @@ async function getKnowledgeScopedStream(
     label: knowledgeRow.name,
     session_id: sessionId,
   };
+  const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
     date,
     rows,
     budget,
     scope,
+    metadata,
     openingLine:
       rows.length === 0
         ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
@@ -1054,11 +1222,13 @@ export async function getStream(
     rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
   }
 
+  const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
     date,
     rows,
     budget,
     scope: null,
+    metadata,
     // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
     openingLine:
       rows.length === 0

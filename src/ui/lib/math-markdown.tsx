@@ -1,5 +1,6 @@
-import type { HTMLAttributes, ReactElement } from 'react';
+import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
 import { useEffect, useState } from 'react';
+import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
 
 type MathPlugins = {
@@ -56,6 +57,38 @@ if (import.meta.env.SSR) {
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
 
+export function assetIdFromContentUrl(src: string | undefined): string | null {
+  if (!src) return null;
+  const match = /^\/api\/assets\/([^/]+)\/content(?:[?#].*)?$/.exec(src);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
+
+/** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
+function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps): ReactElement {
+  const assetId = assetIdFromContentUrl(src);
+  const asset = useAssetUrl(assetId);
+  if (!assetId) return <img {...props} src={src} alt={alt} />;
+  if (asset.error) {
+    return <span role="img" aria-label={alt || '图片加载失败'} data-asset-error="true" />;
+  }
+  return (
+    <img
+      {...props}
+      src={asset.url ?? undefined}
+      alt={alt}
+      aria-busy={asset.loading || undefined}
+      data-asset-id={assetId}
+    />
+  );
+}
+
 export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   /** Markdown source. Supports inline `$...$` and block `$$...$$` math. */
   children: string;
@@ -82,6 +115,10 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
  * re-renders with math once the chunk arrives (a warm module cache makes later
  * latex mounts synchronous). Server-side renders resolve KaTeX synchronously (see
  * the module warm-up above). Non-latex renders never touch the katex chunk.
+ *
+ * Protected `/api/assets/<id>/content` images are routed through MarkdownImage so
+ * their bytes load via the authenticated apiFetch blob URL (YUK-727), regardless
+ * of notation.
  *
  * Whitespace: react-markdown unwraps a single paragraph into <p>, but we wrap in a
  * div container so callers can apply layout styling. The wrapping div forwards
@@ -119,6 +156,7 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
       {...divProps}
       remarkPlugins={active.remarkPlugins}
       rehypePlugins={active.rehypePlugins}
+      components={{ img: MarkdownImage }}
     >
       {children}
     </MarkdownRenderer>

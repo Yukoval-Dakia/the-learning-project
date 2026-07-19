@@ -151,10 +151,13 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
 // ── DELETE — association-count guard + soft-archive (YUK-281) ─────────────────
 // Two-step:
 //   1. no `?confirm=true`  → return association counts + 409 ('confirm_required')
-//      so the UI can show the "N 条作答 / N 张复习卡 / N 份卷引用 / N 条错题" warning.
+//      so the UI can show the "N 条作答 / N 张复习卡 / N 份卷引用 / N 条错题 / N 道小题" warning.
 //      When the question has ZERO associations we still require confirm for a
 //      uniform UI flow (cheap), but the counts are all 0.
 //   2. `?confirm=true`     → soft-archive (re-draft) + cascade parts + event.
+//      When children exist, `?confirm_children=true` is additionally required.
+//      This fail-closed protocol prevents an older web bundle from silently
+//      confirming a cascade after a newer API starts reporting child counts.
 export async function DELETE(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsedParams = QuestionParamsSchema.safeParse(params);
@@ -164,6 +167,7 @@ export async function DELETE(req: Request, params: Record<string, string>): Prom
     const id = parsedParams.data.id;
     const url = new URL(req.url);
     const confirm = url.searchParams.get('confirm') === 'true';
+    const confirmChildren = url.searchParams.get('confirm_children') === 'true';
 
     const counts = await countQuestionAssociations(db, id);
 
@@ -178,6 +182,19 @@ export async function DELETE(req: Request, params: Record<string, string>): Prom
           message: 'question has associations; re-send with ?confirm=true to archive',
           associations: counts,
           has_associations: hasAnyAssociation(counts),
+        },
+        { status: 409 },
+      );
+    }
+
+    if (counts.children > 0 && !confirmChildren) {
+      return Response.json(
+        {
+          error: 'children_confirmation_required',
+          message:
+            'question has attached children; re-send with ?confirm=true&confirm_children=true to archive',
+          associations: counts,
+          has_associations: true,
         },
         { status: 409 },
       );

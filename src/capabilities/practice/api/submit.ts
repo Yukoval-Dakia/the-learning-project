@@ -528,6 +528,10 @@ async function persistSubmit(
         // ReviewOnQuestion Zod schema (2026-05-17). Optional — omitted for
         // legacy callers that never sent it.
         ...(typeof body.latency_ms === 'number' ? { duration_ms: body.latency_ms } : {}),
+        // YUK-336 — preserve the already-validated stream slot id on the immutable
+        // review event. This is the authoritative join key for StreamView verdicts;
+        // non-stream callers omit it and historical events remain valid.
+        ...(body.stream_item_id ? { stream_item_id: body.stream_item_id } : {}),
         ...judgePayload,
         ...judgeAdvicePayload,
       },

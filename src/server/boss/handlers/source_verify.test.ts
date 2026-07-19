@@ -86,6 +86,7 @@ interface SeedQuestionOpts {
   omitExtract?: boolean;
   supplyTrace?: unknown;
   difficultyEvidence?: unknown;
+  imageRefs?: string[];
 }
 
 async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
@@ -130,6 +131,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
     draft_status: opts.draftStatus === undefined ? 'draft' : opts.draftStatus,
     created_by: { by: 'ai', task_kind: 'SourcingTask' },
     metadata: metadata as never,
+    image_refs: opts.imageRefs ?? [],
     created_at: now,
     updated_at: now,
     version: 0,
@@ -239,6 +241,91 @@ describe('runSourceVerify', () => {
       await db.select().from(event).where(eq(event.action, 'experimental:source_verify'))
     ).map((candidate) => candidate.outcome);
     expect(outcomes.sort()).toEqual(['error', 'success']);
+  });
+
+  it('attaches every prompt image to the independent solver before promoting an image question', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], imageRefs: ['asset-diagram'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const imageFetchFn = vi.fn(async () => [{ data: 'base64-image', mediaType: 'image/png' }]);
+
+    const result = await runSourceVerify({
+      db,
+      questionId: qid,
+      runTaskFn,
+      imageFetchFn,
+    });
+
+    expect(result.status).toBe('verified');
+    expect(imageFetchFn).toHaveBeenCalledWith(['asset-diagram'], db);
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'SolutionGenerateVisionTask',
+      expect.objectContaining({
+        text: expect.stringContaining('"prompt_image_refs":["asset-diagram"]'),
+        images: [{ data: 'base64-image', mediaType: 'image/png' }],
+      }),
+      expect.any(Object),
+    );
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'active',
+    );
+  });
+
+  it('holds an image question for review when a referenced asset cannot be loaded', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], imageRefs: ['missing-asset'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({
+      db,
+      questionId: qid,
+      runTaskFn,
+      imageFetchFn: async () => [],
+    });
+
+    expect(result.status).toBe('failed');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    const [verifyEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(verifyEvent.payload).toMatchObject({
+      overall: 'needs_review',
+      summary_md: 'tier-2 source verify needs review: prompt image content was unavailable',
+    });
+  });
+
+  it('holds an image question when vision solving fails after image fetch succeeds', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], imageRefs: ['asset-diagram'] });
+
+    const result = await runSourceVerify({
+      db,
+      questionId: qid,
+      runTaskFn: async () => {
+        throw new Error('vision model rejected image');
+      },
+      imageFetchFn: async () => [{ data: 'base64-image', mediaType: 'image/png' }],
+    });
+
+    expect(result.status).toBe('failed');
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    const [verifyEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(verifyEvent.payload).toMatchObject({
+      overall: 'needs_review',
+      summary_md: 'tier-2 source verify needs review: prompt image content was unavailable',
+    });
   });
 
   // YUK-698 review — a JSONB `null` supply_trace (valid, distinct from absent) must NOT

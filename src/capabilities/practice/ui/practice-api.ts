@@ -40,6 +40,11 @@ export interface StreamItem {
   reasoning: string;
   status: StreamStatus;
   estimated_minutes: number;
+  knowledge_name: string | null;
+  paper_title: string | null;
+  verdict: 'again' | 'hard' | 'good' | null;
+  completed_at: string | null;
+  total_slots: number | null;
 }
 
 export interface StreamView {
@@ -231,7 +236,7 @@ export const patchQuestion = (id: string, body: QuestionPatchBody) =>
 
 // DELETE 关联约束门 + 软删。两步：
 //   1. 无 confirm → 后端回 409 'confirm_required' + associations 计数（attempts/
-//      mistakes/fsrs_cards/paper_refs）。apiJson 会把 409 抛成 ApiError 丢掉 body，
+//      mistakes/fsrs_cards/paper_refs/children）。apiJson 会把 409 抛成 ApiError 丢掉 body，
 //      故这里直接走 apiFetch 读 409 体（kind:'confirm_required' 返计数）。
 //   2. confirm=true&version=N → 软删（re-draft）+ 级联小题 + event。
 export interface QuestionAssociationCounts {
@@ -239,6 +244,7 @@ export interface QuestionAssociationCounts {
   mistakes: number;
   fsrs_cards: number;
   paper_refs: number;
+  children: number;
 }
 
 export type DeleteQuestionResult =
@@ -250,12 +256,45 @@ export type DeleteQuestionResult =
       associations: QuestionAssociationCounts;
     };
 
+function normalizeQuestionAssociationCounts(
+  counts: Partial<QuestionAssociationCounts> | null | undefined,
+  fallbackChildren: number,
+): QuestionAssociationCounts {
+  return {
+    attempts: counts?.attempts ?? 0,
+    mistakes: counts?.mistakes ?? 0,
+    fsrs_cards: counts?.fsrs_cards ?? 0,
+    paper_refs: counts?.paper_refs ?? 0,
+    // Additive wire compatibility during a rolling web/API deploy. An older API
+    // omits `children`; falling back to the already-loaded detail projection is
+    // deliberately conservative so a children-only parent never enters the
+    // "safe delete" path while the API and web bundles are on different versions.
+    children: counts?.children ?? fallbackChildren,
+  };
+}
+
+function hasQuestionAssociations(counts: QuestionAssociationCounts): boolean {
+  return (
+    counts.attempts > 0 ||
+    counts.mistakes > 0 ||
+    counts.fsrs_cards > 0 ||
+    counts.paper_refs > 0 ||
+    counts.children > 0
+  );
+}
+
 export async function deleteQuestion(
   id: string,
-  opts: { confirm?: boolean; version?: number } = {},
+  opts: {
+    confirm?: boolean;
+    confirmChildren?: boolean;
+    version?: number;
+    fallbackChildren?: number;
+  } = {},
 ): Promise<DeleteQuestionResult> {
   const sp = new URLSearchParams();
   if (opts.confirm) sp.set('confirm', 'true');
+  if (opts.confirmChildren) sp.set('confirm_children', 'true');
   if (opts.version != null) sp.set('version', String(opts.version));
   const url = `/api/questions/${encodeURIComponent(id)}${sp.toString() ? `?${sp.toString()}` : ''}`;
 
@@ -278,16 +317,23 @@ export async function deleteQuestion(
     archived?: boolean;
     event_id?: string | null;
     cascaded_part_ids?: string[];
-    associations?: QuestionAssociationCounts;
+    associations?: Partial<QuestionAssociationCounts>;
     has_associations?: boolean;
   } | null;
 
   // 409 confirm_required：约束门（version 校验之前，无写库副作用）→ 回计数给 UI 展示。
   if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
+    const associations = normalizeQuestionAssociationCounts(
+      body.associations,
+      opts.fallbackChildren ?? 0,
+    );
     return {
       kind: 'confirm_required',
-      associations: body.associations,
-      has_associations: body.has_associations ?? false,
+      associations,
+      // Old APIs can truthfully report false only because they do not know about
+      // the additive child dimension. Never let that stale aggregate override the
+      // conservative detail fallback.
+      has_associations: body.has_associations === true || hasQuestionAssociations(associations),
     };
   }
 
@@ -300,7 +346,10 @@ export async function deleteQuestion(
     kind: 'archived',
     event_id: body?.event_id ?? null,
     cascaded_part_ids: body?.cascaded_part_ids ?? [],
-    associations: body?.associations ?? { attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0 },
+    associations: normalizeQuestionAssociationCounts(
+      body?.associations,
+      opts.fallbackChildren ?? 0,
+    ),
   };
 }
 

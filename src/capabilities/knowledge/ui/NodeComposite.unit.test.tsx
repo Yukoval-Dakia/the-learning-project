@@ -23,7 +23,14 @@ function masteryInput(overrides: Partial<MasteryBandInput> = {}): MasteryBandInp
 }
 
 function input(overrides: Partial<NodeThreeDimInput> = {}): NodeThreeDimInput {
-  return { mastery: masteryInput(), beta: 1, retrievability: 0.5, evidenceCount: 9, ...overrides };
+  return {
+    mastery: masteryInput(),
+    beta: 1,
+    difficultyAnchored: true,
+    retrievability: 0.5,
+    evidenceCount: 9,
+    ...overrides,
+  };
 }
 
 describe('NodeComposite', () => {
@@ -39,7 +46,13 @@ describe('NodeComposite', () => {
   it('shows the cold-start note when evidence is thin', () => {
     const html = renderToString(
       <NodeComposite
-        input={{ mastery: null, beta: null, retrievability: null, evidenceCount: 0 }}
+        input={{
+          mastery: null,
+          beta: null,
+          difficultyAnchored: false,
+          retrievability: null,
+          evidenceCount: 0,
+        }}
       />,
     );
     expect(html).toContain('kd-cold-note');

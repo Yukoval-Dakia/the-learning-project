@@ -183,6 +183,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   evidence_count: z.number().int().nonnegative(),
   retrievability: z.number().nullable(),
   beta: z.number().nullable(),
+  difficulty_anchored: z.boolean(),
   last_evidence_at: z.string().nullable(),
   mastery_decay_bucket: z.enum(['untrained', 'fresh', 'mild', 'stale', 'unknown']),
   subject_profile: SubjectProfileSchema.pick({

@@ -636,6 +636,12 @@ function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
 - 禁止：输出 JSON 之外的文字、用 markdown 代码块包裹整段 JSON、把 hint 当成不可质疑的真值。`;
 }
 
+function buildSolutionGenerateVisionPrompt(profile: SubjectProfile): string {
+  return `${buildSolutionGeneratePrompt(profile)}
+
+多模态补充：本次 user message 在 JSON 文字之后附带 prompt_image_refs 对应的题目图片；必须实际读取这些图片中的图形、标注、坐标、表格或几何关系后再作答，禁止只凭题面文字猜测。`;
+}
+
 // T-OC slice A1 (YUK-145, OC-5) — MistakeEnrollTask prompt. Single-shot
 // structured output, NOT multimodal: given a captured, ANSWERED question (text +
 // the student's answer), draft the mistake metadata a human fills by hand at
@@ -1037,6 +1043,8 @@ export function getTaskSystemPrompt(
       return buildTeachingTurnPrompt(profile);
     case 'SolutionGenerateTask':
       return buildSolutionGeneratePrompt(profile);
+    case 'SolutionGenerateVisionTask':
+      return buildSolutionGenerateVisionPrompt(profile);
     case 'QuizGenTask':
       return buildQuizGenPrompt(profile);
     case 'QuizVerifyTask':

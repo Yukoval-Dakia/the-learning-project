@@ -18,6 +18,8 @@ import {
   runResearchMeetingNightly,
 } from './research_meeting_nightly';
 
+const NOW = new Date('2026-06-26T20:00:00Z');
+
 function failure(id: string, kcIds: string[], category: string): FailureAttempt {
   const correction_state = {
     terminal_state: 'active',
@@ -95,7 +97,7 @@ function failuresForKcs(kcs: string[], category = 'concept_confusion'): FailureA
 
 function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeetingDeps {
   return {
-    now: () => new Date('2026-06-26T20:00:00Z'),
+    now: () => NOW,
     getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
     getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
     loadKnownConjectureKeysFn: vi.fn(async () => new Set<string>()),
@@ -111,7 +113,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
 }
 
 describe('runResearchMeetingNightly', () => {
-  it('proposes one conjecture per top cell and writes a cost-bearing scan event', async () => {
+  it('proposes one conjecture per top cell and opts run bookkeeping out of memory', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const deps = baseDeps({ writeAiProposalFn, writeEventFn });
@@ -126,6 +128,22 @@ describe('runResearchMeetingNightly', () => {
     const actions = writeEventFn.mock.calls.map((c) => c[1].action);
     expect(actions).toContain('experimental:trigger_research_meeting');
     expect(actions).toContain('experimental:research_meeting_scan');
+    // Both rows are internal run bookkeeping: persisted for provenance/admin reads,
+    // born opted out of Mem0 and brief regeneration.
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:trigger_research_meeting',
+        ingest_at: NOW,
+      }),
+    );
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_scan',
+        ingest_at: NOW,
+      }),
+    );
   });
 
   it('caps proposals at the top-K salient cells', async () => {
@@ -257,8 +275,7 @@ describe('runResearchMeetingNightly', () => {
     // The deterministic reconcile half still ran (it must never be skipped)…
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(3);
-    // …but the propose half wrote NOTHING: no trigger/scan anchor events (both are
-    // outbox-eligible → empty nights fan out brief-regen for pure noise), no LLM.
+    // …but the propose half wrote NOTHING: no unnecessary trigger/scan rows, no LLM.
     expect(writeEventFn).not.toHaveBeenCalled();
     expect(induceConjectureFn).not.toHaveBeenCalled();
     expect(result.considered).toBe(0);

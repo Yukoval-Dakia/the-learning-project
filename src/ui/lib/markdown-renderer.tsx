@@ -5,6 +5,7 @@ export interface MarkdownRendererProps extends Omit<HTMLAttributes<HTMLDivElemen
   children: string;
   remarkPlugins?: ComponentProps<typeof ReactMarkdown>['remarkPlugins'];
   rehypePlugins?: ComponentProps<typeof ReactMarkdown>['rehypePlugins'];
+  components?: ComponentProps<typeof ReactMarkdown>['components'];
 }
 
 /**
@@ -16,11 +17,16 @@ export function MarkdownRenderer({
   children,
   remarkPlugins,
   rehypePlugins,
+  components,
   ...divProps
 }: MarkdownRendererProps): ReactElement {
   return (
     <div {...divProps}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>

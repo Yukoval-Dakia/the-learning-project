@@ -51,6 +51,38 @@ describe('buildHonoApp', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it('applies the Hono security-header baseline and CSP to every response', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+
+    for (const response of [
+      await app.request('/api/health'),
+      await app.request('/api/fake'),
+      await app.request('/api/not-found', {
+        headers: { 'x-internal-token': 'test-token' },
+      }),
+    ]) {
+      const csp = response.headers.get('content-security-policy');
+      expect(csp).toContain("default-src 'self'");
+      expect(csp).toContain("connect-src 'self'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+      expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+      expect(csp).not.toContain('https:');
+      expect(csp).not.toContain('*');
+      expect(response.headers.get('strict-transport-security')).toBe(
+        'max-age=63072000; includeSubDomains; preload',
+      );
+      expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(response.headers.get('x-frame-options')).toBe('DENY');
+      expect(response.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+      expect(response.headers.get('permissions-policy')).toBe(
+        'camera=(), geolocation=(), microphone=()',
+      );
+    }
+  });
+
   it('serves /api/auth/check only after token validation', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
     const app = buildHonoApp([fakeCapability]);
