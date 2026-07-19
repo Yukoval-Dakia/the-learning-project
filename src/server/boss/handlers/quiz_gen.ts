@@ -779,7 +779,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           rubric_json: q.rubric_json ?? null,
           choices_md: q.choices_md ?? null,
           judge_kind_override: judgeKind,
-          knowledge_ids: questionKnowledgeIds,
+          // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+          // must attribute identical content the same way, including the trigger's live KCs.
+          knowledge_ids: duplicateKnowledgeIds,
           difficulty: q.difficulty,
           // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
           source_ref: resolved.refId,

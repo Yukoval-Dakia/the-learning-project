@@ -154,6 +154,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
       draftStatus: question.draft_status,
       source: question.source,
       knowledgeIds: question.knowledge_ids,
+      metadata: question.metadata,
       version: question.version,
     })
     .from(question)
@@ -185,9 +186,20 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     if (terminal.length > 0) {
       const nextVersion = row.version + 1;
       const eventId = createId();
+      const archivedAt = Math.floor(params.now.getTime() / 1000);
       await tx
         .update(question)
-        .set({ canonical_content_hash: null, updated_at: params.now, version: nextVersion })
+        .set({
+          canonical_content_hash: null,
+          metadata: {
+            ...(row.metadata ?? {}),
+            archived_at: archivedAt,
+            archived_reason: 'terminal_draft_superseded_by_reproduction',
+            archived_previous_draft_status: row.draftStatus,
+          },
+          updated_at: params.now,
+          version: nextVersion,
+        })
         .where(
           and(
             eq(question.id, row.id),
@@ -207,9 +219,12 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
           question_id: row.id,
           previous_version: row.version,
           next_version: nextVersion,
-          before: { canonical_content_hash: params.canonicalContentHash },
-          after: { canonical_content_hash: null },
-          reason: 'terminal_draft_released_for_reproduction',
+          before: {
+            canonical_content_hash: params.canonicalContentHash,
+            archived_at: null,
+          },
+          after: { canonical_content_hash: null, archived_at: archivedAt },
+          reason: 'terminal_draft_superseded_for_reproduction',
           terminal_verify_event_id: terminal[0].id,
           task_run_id: params.taskRunId ?? null,
           preserved_draft_status: row.draftStatus,

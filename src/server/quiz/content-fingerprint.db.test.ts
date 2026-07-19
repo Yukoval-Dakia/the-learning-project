@@ -1,6 +1,7 @@
 import { db } from '@/db/client';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { archiveQuestion } from '@/server/questions/write';
+import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
@@ -249,14 +250,29 @@ describe('findExactQuestionDuplicate', () => {
         draft_status: 'draft',
         version: 1,
       });
+      expect(released.metadata).toMatchObject({
+        archived_reason: 'terminal_draft_superseded_by_reproduction',
+        archived_previous_draft_status: 'draft',
+      });
       const [releaseEvent] = await db
         .select()
         .from(event)
         .where(eq(event.id, result?.eventId ?? ''));
       expect(releaseEvent.payload).toMatchObject({
-        reason: 'terminal_draft_released_for_reproduction',
+        reason: 'terminal_draft_superseded_for_reproduction',
         terminal_verify_event_id: `verify-terminal-${source}`,
         task_run_id: 'task-run-replace',
+      });
+      const ownerOverride = await verifyAndPromote({
+        db,
+        questionId: `q-terminal-${source}`,
+        runTaskFn: async () => ({ text: '{}' }),
+        actor: { kind: 'user', ref: 'owner' },
+        skipVerify: { reason: 'manual override' },
+      });
+      expect(ownerOverride).toMatchObject({
+        promoted: false,
+        status: 'skipped:archived_draft',
       });
     },
   );

@@ -520,6 +520,7 @@ describe('runQuizGen', () => {
 
   it('replaces a terminal rejected draft instead of treating it as available supply', async () => {
     await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
     const parsed = JSON.parse(CLOSED_BOOK_OUTPUT) as {
       questions: Array<{
         kind: string;
@@ -527,8 +528,13 @@ describe('runQuizGen', () => {
         reference_md: string;
         choices_md: string[] | null;
         rubric_json: unknown;
+        knowledge_ids: string[];
       }>;
     };
+    // The model returns another valid KC, while k1 is the current supply target. A fresh
+    // replacement must persist their union instead of reproducing the original B-gap.
+    parsed.questions[0].knowledge_ids = ['k2'];
+    const replacementOutput = JSON.stringify(parsed);
     const content = parsed.questions[0];
     const hash = canonicalQuestionContentHash({
       promptMd: content.prompt_md,
@@ -571,7 +577,7 @@ describe('runQuizGen', () => {
       refId: 'k1',
       count: 1,
       generationMethod: 'closed_book',
-      runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-quiz-replacement'),
+      runAgentTaskFn: agentMock(replacementOutput, 'tr-quiz-replacement'),
       enqueueQuizVerify,
       buildTavilyMcpServerFn: () => null,
       buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
@@ -591,7 +597,7 @@ describe('runQuizGen', () => {
     expect(replacement).toMatchObject({
       canonical_content_hash: hash,
       draft_status: 'draft',
-      knowledge_ids: ['k1'],
+      knowledge_ids: ['k2', 'k1'],
     });
     const releaseEvents = await testDb()
       .select()
@@ -599,7 +605,7 @@ describe('runQuizGen', () => {
       .where(eq(event.action, 'experimental:question_edit'));
     expect(releaseEvents).toHaveLength(1);
     expect(releaseEvents[0].payload).toMatchObject({
-      reason: 'terminal_draft_released_for_reproduction',
+      reason: 'terminal_draft_superseded_for_reproduction',
       task_run_id: 'tr-quiz-replacement',
     });
   });

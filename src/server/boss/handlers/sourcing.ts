@@ -563,7 +563,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           rubric_json: q.rubric_json ?? null,
           choices_md: q.choices_md ?? null,
           judge_kind_override: judgeKind,
-          knowledge_ids: questionKnowledgeIds,
+          // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
+          // must attribute identical content the same way, including the trigger's live KCs.
+          knowledge_ids: duplicateKnowledgeIds,
           difficulty: q.difficulty,
           // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
           // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
