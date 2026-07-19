@@ -194,7 +194,7 @@ describe('TeachingBriefInteractionBodySchema', () => {
     ).toBe(true);
   });
 
-  it('accepts scoped_practice with a result_event_id, and accept/answer without one', () => {
+  it('accepts scoped_practice WITH a result_event_id, and accept/answer WITHOUT one', () => {
     expect(
       TeachingBriefInteractionBodySchema.safeParse({
         type: 'primary_action_started',
@@ -210,14 +210,18 @@ describe('TeachingBriefInteractionBodySchema', () => {
         action_kind: 'accept_probe',
       }).success,
     ).toBe(true);
-    // scoped_practice may also omit it (optional).
+  });
+
+  it('rejects scoped_practice MISSING its required result_event_id', () => {
+    // Required, not optional: the report's confirmed→scoped-practice numerator joins on it, and the
+    // deterministic event id means a first row written without it could never be back-filled.
     expect(
       TeachingBriefInteractionBodySchema.safeParse({
         type: 'primary_action_started',
         brief_id: 'p_contract',
         action_kind: 'scoped_practice',
       }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('rejects a result_event_id on a non-scoped_practice action', () => {

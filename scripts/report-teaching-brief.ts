@@ -218,31 +218,43 @@ function parseArg(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  const from = parseArg('from');
-  const to = parseArg('to');
-  const asJson = process.argv.includes('--json');
-  if (!from || !to) {
-    console.error('usage: pnpm report:teaching-brief --from YYYY-MM-DD --to YYYY-MM-DD [--json]');
-    process.exitCode = 2;
-    return;
-  }
+  // NEVER process.exit() — that can terminate before a piped stdout (`--json | tee`) is flushed,
+  // truncating the report. Set process.exitCode, then close the pg pool in `finally` so the event
+  // loop drains and Node exits naturally AFTER stdout has flushed (mirrors audit-calibration.ts,
+  // the repo's other DB-connecting script).
+  try {
+    const from = parseArg('from');
+    const to = parseArg('to');
+    const asJson = process.argv.includes('--json');
+    if (!from || !to) {
+      console.error('usage: pnpm report:teaching-brief --from YYYY-MM-DD --to YYYY-MM-DD [--json]');
+      process.exitCode = 2;
+      return;
+    }
 
-  const input = await loadTeachingBriefReportInput(db, from, to);
-  const report = computeTeachingBriefReport(input);
-  console.log(asJson ? JSON.stringify(report, null, 2) : formatTeachingBriefReport(report));
+    const input = await loadTeachingBriefReportInput(db, from, to);
+    const report = computeTeachingBriefReport(input);
+    console.log(asJson ? JSON.stringify(report, null, 2) : formatTeachingBriefReport(report));
+  } catch (err) {
+    console.error(
+      '[report-teaching-brief] failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+    process.exitCode = 1;
+  } finally {
+    // @/db/client opens a postgres-js pool (max:10) that holds the event loop open; close it so
+    // this script exits cleanly. Best-effort: the report is already printed, so a close error
+    // (pool already closed / never opened) must not mask it.
+    try {
+      await db.$client.end({ timeout: 5 });
+    } catch {
+      // nothing to clean up.
+    }
+  }
 }
 
 // CLI-gate: only run as the CLI entry point so the DB test can import loadTeachingBriefReportInput
-// without the top-level run firing. NEVER process.exit() — that can terminate before a piped stdout
-// (`--json | tee`) is flushed, truncating the report. Instead set process.exitCode and close the
-// pg pool so the event loop drains and Node exits naturally AFTER stdout has flushed.
+// without the top-level run firing.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main()
-    .catch((err) => {
-      console.error('[report-teaching-brief] failed:', err);
-      process.exitCode = 1;
-    })
-    .finally(() => {
-      void db.$client.end();
-    });
+  void main();
 }

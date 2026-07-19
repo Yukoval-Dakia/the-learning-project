@@ -380,16 +380,25 @@ export const TeachingBriefInteractionBodySchema = z
       })
       .strict(),
   ])
-  // The result_event_id join key is meaningful ONLY for scoped_practice (accept_probe / answer_probe
-  // have no probe_result yet), so reject it on any other action rather than leave the constraint in a
-  // comment. A discriminatedUnion member cannot itself carry a refine (that yields a ZodEffects the
-  // union rejects — mirrors TeachingBriefSchema's own union-level superRefine), so it lives here.
+  // The result_event_id join key is meaningful ONLY for scoped_practice — and REQUIRED there. A
+  // discriminatedUnion member cannot itself carry a refine (that yields a ZodEffects the union
+  // rejects — mirrors TeachingBriefSchema's own union-level superRefine), so both directions live here:
+  //   - scoped_practice WITHOUT it → reject. The report's confirmed→scoped-practice numerator joins on
+  //     it, and the deterministic event id means a first row written without it could never be
+  //     back-filled (onConflictDoNothing swallows a later retry), so a missing id must fail loudly at
+  //     the boundary rather than silently drop the outcome from the count.
+  //   - any other action WITH it → reject (accept_probe / answer_probe have no probe_result yet).
   .superRefine((body, ctx) => {
-    if (
-      body.type === 'primary_action_started' &&
-      body.action_kind !== 'scoped_practice' &&
-      body.result_event_id !== undefined
-    ) {
+    if (body.type !== 'primary_action_started') return;
+    if (body.action_kind === 'scoped_practice') {
+      if (body.result_event_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'scoped_practice requires result_event_id',
+          path: ['result_event_id'],
+        });
+      }
+    } else if (body.result_event_id !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'result_event_id is only allowed for the scoped_practice action',
