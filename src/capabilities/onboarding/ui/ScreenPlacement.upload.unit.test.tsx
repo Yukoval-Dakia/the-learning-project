@@ -80,5 +80,25 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
     expect(await screen.findByText('图片上传失败，请重试')).toBeTruthy();
     // the upload did NOT falsely report an attached image.
     expect(screen.queryByText(/已附 \d+ 张手写稿/)).toBeNull();
+    // the input is cleared so re-picking the SAME file fires onChange again.
+    expect(fileInput.value).toBe('');
+  });
+
+  it('lets the learner re-pick the same file after a failure, then attaches it on retry', async () => {
+    mocks.uploadAsset.mockRejectedValueOnce(new Error('500')).mockResolvedValue({ id: 'asset_1' });
+    const user = userEvent.setup();
+    const { container } = renderPlacement();
+
+    await screen.findByText('用一句话解释导数。');
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['bytes'], 'handwriting.png', { type: 'image/png' });
+
+    await user.upload(fileInput, file);
+    await screen.findByText('图片上传失败，请重试');
+
+    // Re-pick the same file — the cleared input value lets the retry go through.
+    await user.upload(fileInput, file);
+    expect(await screen.findByText(/已附 1 张手写稿/)).toBeTruthy();
+    expect(mocks.uploadAsset).toHaveBeenCalledTimes(2);
   });
 });

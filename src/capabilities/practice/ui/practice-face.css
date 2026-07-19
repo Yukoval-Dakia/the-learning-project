@@ -958,7 +958,7 @@
   padding: 0;
   cursor: pointer;
 }
-.pfp-saved.is-failed:hover {
+.pfp-saved.is-failed:not(:disabled):hover {
   color: var(--ink-2);
   text-decoration: underline;
 }
@@ -970,7 +970,6 @@
 .pfp-saved.is-failed:disabled {
   cursor: default;
   opacity: 0.6;
-  text-decoration: none;
 }
 
 /* ============ 结果页 / 复盘 result & retro ============ */

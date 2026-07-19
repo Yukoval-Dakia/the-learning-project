@@ -443,6 +443,9 @@ function PlacementQuestionCard({
       // A silent swallow let learners submit the probe without the handwriting they
       // thought they attached — surface it so they can retry (ProbeAnswers precedent).
       setUploadErr('图片上传失败，请重试');
+      // Clear the input so re-picking the SAME file still fires onChange (a file input
+      // emits no change event when the selection is unchanged).
+      if (fileRef.current) fileRef.current.value = '';
     } finally {
       setUploading(false);
     }
