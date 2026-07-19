@@ -3,7 +3,7 @@
 // 「进度保留」and offer a retry, instead of the old silent `.catch(() => {})`.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PfPaper } from './PfPaper';
@@ -491,5 +491,78 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
 
     await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
+
+  it('reports unsaved when exiting before the session is ready (no false 进度保留)', async () => {
+    mocks.getPaperDetail.mockResolvedValue(noSessionDetail);
+    // startPaperSession never resolves → sessionRef stays null through the exit, so the
+    // flush's runSave takes the no-session path.
+    mocks.startPaperSession.mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Exit within the debounce window: the flush dispatches runSave, which fails (no session).
+    // That failure must be counted, not swallowed into a false 「进度保留」.
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+    // No draft PUT was possible without a session.
+    expect(mocks.savePaperAnswer).not.toHaveBeenCalled();
+  });
+
+  it('exits only once even on a double-click during the flush window', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The save hangs so the first exit is parked in its settle window when the second click
+    // arrives.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+
+    const exitBtn = screen.getByRole('button', { name: '退出 · 进度保留' });
+    // Two synchronous clicks in one batch: the first begins the flush (and disables the
+    // button); the second must be rejected by the reentrancy guard, not start a second exit.
+    await act(async () => {
+      fireEvent.click(exitBtn);
+      fireEvent.click(exitBtn);
+    });
+    expect(onExit).not.toHaveBeenCalled();
+
+    resolveSave({ ok: true });
+    await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+  });
+
+  it('freezes the composer during the exit flush window (no dropped post-exit input)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The save hangs so we stay in the exit settle window while we assert.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    });
+
+    // Once exiting, the textarea is disabled so a keystroke typed during the up-to-3s settle
+    // window can't schedule a debounce that the unmount would then silently drop.
+    expect((screen.getByLabelText('作答') as HTMLTextAreaElement).disabled).toBe(true);
+
+    resolveSave({ ok: true });
   });
 });
