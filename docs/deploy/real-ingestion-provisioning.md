@@ -8,6 +8,9 @@
 >
 > This is the owner-operated half of Strategy D. The headless auto-tag audit
 > trail (Slice B, YUK-190) rides on top of the same real sessions once they exist.
+>
+> Stack: Hono API + Vite SPA (post YUK-321 M5). API contracts come from
+> capability manifests; page routes come from `src/kernel/ui-surfaces.ts`.
 
 ## 1. What real ingestion needs
 
@@ -17,9 +20,9 @@ credential groups gate the real path; everything else has a working default.
 
 | Group | Vars | Used by | Source |
 |-------|------|---------|--------|
-| **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/server/ingestion/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
-| **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/server/ingestion/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
-| **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/server/ingestion/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
+| **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/capabilities/ingestion/server/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
+| **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/capabilities/ingestion/server/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
+| **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/capabilities/ingestion/server/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
 | **Blob (Cloudflare R2)** | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Original uploads + auto-cropped figures (`src/server/r2.ts:50`). | Cloudflare R2 |
 
 Also relevant but **not** blocking ingestion:
@@ -102,19 +105,26 @@ Confirm the subject profile first:
 pnpm audit:profile   # math + physics + wenyan should all be valid
 ```
 
-**UI path:** the `/record` page (`app/(app)/record/page.tsx`) has a **拍试卷**
-tab (the `vision_paper` mode) that uploads a full worksheet image and runs it
-through the pipeline. This is the intended owner entry point.
+**UI path:** the `/record` page is implemented by
+`src/capabilities/ingestion/ui/RecordPage.tsx` and declared in
+`src/kernel/ui-surfaces.ts`. Its **拍试卷** tab (the `vision_paper` mode) uploads
+a full worksheet image and runs it through the pipeline. This is the intended
+owner entry point.
 
 **API path (authoritative, what the UI drives):**
 
 1. `POST /api/ingestion` — create an ingestion session (`learning_session`
    with `type='ingestion'`), upload the asset (`POST /api/assets`).
-2. `POST /api/ingestion/[id]/extract` — enqueue Tencent OCR extraction.
+2. `POST /api/ingestion/[id]/extract` — enqueue GLM-OCR extraction by default;
+   Tencent runs only when `EXTRACT_OCR_ENGINE='tencent'`.
 3. Review the extracted blocks: `GET /api/ingestion/[id]/blocks`; rescue a bad
    block with `POST /api/ingestion/[id]/rescue` (explicit, paid VLM).
 4. `POST /api/ingestion/[id]/import` — commit the reviewed blocks to question /
    knowledge rows.
+
+The bracketed `[id]` segments above match
+`src/capabilities/ingestion/manifest.ts`; `server/app.ts::toHonoPath` converts
+them to Hono `:id` parameters when the composition root mounts the routes.
 
 The session state machine is guarded in a single place,
 `src/server/session/ingestion.ts`:
