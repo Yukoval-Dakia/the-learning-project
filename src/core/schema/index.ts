@@ -4,6 +4,7 @@ import * as g from './generated';
 
 export * from './attempt-payload';
 export * from './business';
+export * from './conjecture';
 export * from './difficulty-evidence';
 export * from './proposal';
 

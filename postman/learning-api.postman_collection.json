@@ -1420,6 +1420,20 @@
       "name": "prep-desk",
       "item": [
         {
+          "name": "GET /api/prep-desk/brief",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/prep-desk/brief",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "prep-desk", "brief"]
+            },
+            "description": "教研简报只读投影：一次返回一个 outcome、active probe、fresh finding 或 quiet null（YUK-706）\n\n**Notes:** 严格返回 { brief: TeachingBrief | null }。全局优先级为最新未过期 outcome > 最新 active probe > salience 最高的未过期 pending finding；finding/outcome TTL 均为 7 天，probe 不按时钟过期。response 只含 finding、basis/evidence_trace、prepared_action、current_outcome，不含 confidence、predicted_p、baseline、retrievability、recurrence/backlog count、原始答案或 reference。需 x-internal-token"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/prep-desk/conjectures",
           "request": {
             "method": "GET",
@@ -1429,7 +1443,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "prep-desk", "conjectures"]
             },
-            "description": "备课台读模型：top ≤3 pending conjecture（教研团 Phase 0 / U4，YUK-406/YUK-440）\n\n**Notes:** 返回 { conjectures: [{ id, claim, knowledge_id, cause_category, probe_md, recurrence_count, discriminating, predicted_p, baseline_p_at_induction, corrected_by_owner, evidence:[{kind,id}], proposed_at }] }。salience（confidence × recurrence_count）DESC 排序后 cap 3。confidence 永不过线（本地仅用于排序后丢弃，anti-false-precision）。probe_md = 未跑的判别探针文本（团队「即将问」的题，非 flashcard）。需 x-internal-token"
+            "description": "备课台读模型：top ≤3 pending conjecture（教研团 Phase 0 / U4，YUK-406/YUK-440）\n\n**Notes:** 返回 { conjectures: [{ id, claim, knowledge_id, cause_category, probe_md, recurrence_count, discriminating, corrected_by_owner, evidence:[{kind,id}], proposed_at }] }。salience（confidence × recurrence_count）DESC 排序后 cap 3。confidence、predicted_p、baseline_p_at_induction 永不过线（本地校准值，anti-false-precision）。probe_md = 未跑的判别探针文本（团队「即将问」的题，非 flashcard）。需 x-internal-token"
           },
           "response": []
         }

@@ -101,6 +101,7 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    ANTHROPIC_API_KEY=...
    OPENAI_API_KEY=...            # Mem0 fact-layer embedder (ADR-0017)
    TUNNEL_TOKEN=<paste-token-here>
+   TUNNEL_PROTOCOL=auto          # use http2 if outbound UDP/7844 is blocked
    # + R2 / Tencent OCR keys
    # MEM0_* keys are optional — see .env.example for defaults
    ```
@@ -127,7 +128,17 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 
 ```bash
 docker compose build
-docker compose up -d
+pnpm compose:up
+```
+
+`pnpm compose:up` checks that the connector token is non-empty before Compose can
+create a cloudflared restart loop. The cloudflared container also reports Docker
+health from its `/ready` endpoint, which becomes healthy only after at least one
+edge connection is registered. Inspect it with:
+
+```bash
+docker compose ps cloudflared
+docker compose logs --tail 50 cloudflared
 ```
 
 The compose stack starts `migrate` (one-shot init that applies migrations), `postgres`

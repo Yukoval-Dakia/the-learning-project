@@ -24,12 +24,14 @@ const CONJ = {
   proposed_at: '2026-07-12T00:00:00.000Z',
 };
 
-// GET /api/prep-desk/conjectures → the seeded card; POST …/decisions → `decideStatus`.
-function mockFetch(decideStatus: number) {
+// GET /api/prep-desk/conjectures → the seeded card; POST …/decisions → `decideStatus`
+// with an optional typed error body (mirrors errorResponse: { error, message }).
+function mockFetch(decideStatus: number, errorBody?: { error: string; message: string }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === 'POST' && url.includes('/decisions')) {
-      return new Response(JSON.stringify({ ok: decideStatus < 400 }), { status: decideStatus });
+      const body = decideStatus < 400 ? { ok: true } : (errorBody ?? { ok: false });
+      return new Response(JSON.stringify(body), { status: decideStatus });
     }
     return Response.json({ conjectures: [CONJ] });
   });
@@ -83,6 +85,33 @@ describe('PrepDeskConjectures — decide error handling (jsdom)', () => {
     expect(await screen.findByText('操作失败，请重试')).toBeTruthy();
     expect(screen.getByText('你把链式法则当成两个导数相乘')).toBeTruthy();
     // The accept button re-enables (finally cleared deciding) so retry is possible.
+    const acceptBtn = screen.getByRole('button', {
+      name: '对，往这个方向想',
+    }) as HTMLButtonElement;
+    expect(acceptBtn.disabled).toBe(false);
+  });
+
+  // YUK-711 — a probe-slot-full rollback (409 probe_slots_full) surfaces a specific,
+  // non-blaming inline error (teaching-brief contract §7) rather than the generic copy,
+  // and keeps the card + re-enabled accept button for in-place retry.
+  it('surfaces the probe-slots-full message and keeps the card retryable on a 409 probe_slots_full', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(409, { error: 'probe_slots_full', message: 'probe slots are full' }),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByText('你把链式法则当成两个导数相乘');
+    await user.click(screen.getByRole('button', { name: '对，往这个方向想' }));
+
+    // Specific non-blaming copy, NOT the generic "操作失败，请重试".
+    expect(
+      await screen.findByText('同时在答的探针题满了，先完成一道，再回来接受这条。'),
+    ).toBeTruthy();
+    expect(screen.queryByText('操作失败，请重试')).toBeNull();
+    // Card stays; accept button re-enabled for in-place retry.
+    expect(screen.getByText('你把链式法则当成两个导数相乘')).toBeTruthy();
     const acceptBtn = screen.getByRole('button', {
       name: '对，往这个方向想',
     }) as HTMLButtonElement;
