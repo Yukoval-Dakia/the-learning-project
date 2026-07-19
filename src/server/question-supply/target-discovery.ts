@@ -29,6 +29,11 @@
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import { LearningItemOpenStatus } from '@/core/schema/business';
+import {
+  type DifficultyEvidenceT,
+  readDifficultyEvidenceFromMetadata,
+  resolveDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -39,6 +44,14 @@ import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import {
+  DEFAULT_EVIDENCE_DEADLINE_DAYS,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_MAX_BUDGET_MICRO_USD,
+  type SupplyTargetContextV1T,
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+} from './evidence-demand';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 
@@ -93,6 +106,12 @@ export interface QuestionSupplyTarget {
      */
     compositeParentOnly?: boolean;
   };
+  /**
+   * Supply-v2 Phase A compatibility envelope. Optional on the interface so legacy/manual
+   * callers can keep constructing QuestionSupplyTarget unchanged; every repository-owned
+   * target factory populates it.
+   */
+  context?: SupplyTargetContextV1T;
 }
 
 export type SupplyGapKind =
@@ -126,6 +145,8 @@ export interface PoolQuestion {
    * 弱 proxy——effectiveB 退回 b_anchor ?? b 仍是可靠锚，故 R3「只信真实标定」与本字段不冲突。
    */
   calibrationB: number | null;
+  /** Observe-only provenance view; calibrated evidence outranks stored labels. */
+  difficultyEvidence?: DifficultyEvidenceT;
   /** 该题挂的全部 KC。 */
   knowledgeIds: string[];
 }
@@ -161,6 +182,12 @@ export interface ScanInput {
    * 据 sourcingRoutePreference token 推导。key=subjectId。无 quiz_gen 偏好 → 该 subject 缺省不设。
    */
   generationMethodBySubject?: Record<string, 'material_grounded' | 'closed_book'>;
+  /** Optional clock/budget envelope supplied by the IO assembler; pure callers may omit it. */
+  evidenceDemandControl?: {
+    neededBy: string | null;
+    maxBudgetMicroUsd: number;
+    maxAttempts: number;
+  };
   /**
    * 「MFI/诊断选题反复缺近-θ̂ 题」的信号：本扫描器据现有题的 b 锚是否落在 |b−θ̂|≤窗口内判定
    * （无需历史选题日志——「池里根本没有近-θ̂ 题」就是「诊断反复缺」的结构性根因）。
@@ -359,6 +386,16 @@ export function scanCoverageGaps(
       minSourceTier: fields.minSourceTier,
     });
     const routePreference = input.routePreferenceBySubject[f.subjectId] ?? [];
+    const demand = buildCoverageEvidenceDemand({
+      subjectId: f.subjectId,
+      knowledgeIds: [f.knowledgeId],
+      statement: `collect observable evidence for knowledge ${f.knowledgeId}`,
+      eligibleCount: COVERAGE_DEPTH_THRESHOLD,
+      // Pass through as-is; buildCoverageEvidenceDemand owns the null/default fallbacks.
+      neededBy: input.evidenceDemandControl?.neededBy,
+      maxBudgetMicroUsd: input.evidenceDemandControl?.maxBudgetMicroUsd,
+      maxAttempts: input.evidenceDemandControl?.maxAttempts,
+    });
     targets.push({
       id: makeId(),
       fingerprint,
@@ -378,6 +415,7 @@ export function scanCoverageGaps(
       priority: computePriority(gapKind, f.evidenceCount),
       reason: fields.reason,
       constraints: fields.constraints,
+      context: evidenceDemandToTargetContext(demand),
     });
   };
 
@@ -647,15 +685,23 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
     ]),
   );
 
-  return rows.map((r) => ({
-    id: r.id,
-    kind: r.kind as QuestionKindT,
-    source: r.source,
-    metadata: r.metadata ?? null,
-    difficulty: r.difficulty,
-    calibrationB: effectiveBByQid.get(r.id) ?? null,
-    knowledgeIds: r.knowledge_ids ?? [],
-  }));
+  return rows.map((r) => {
+    const calibrationB = effectiveBByQid.get(r.id) ?? null;
+    return {
+      id: r.id,
+      kind: r.kind as QuestionKindT,
+      source: r.source,
+      metadata: r.metadata ?? null,
+      difficulty: r.difficulty,
+      calibrationB,
+      difficultyEvidence: resolveDifficultyEvidence({
+        calibratedB: calibrationB,
+        stored: readDifficultyEvidenceFromMetadata(r.metadata),
+        legacyDifficulty: r.difficulty,
+      }),
+      knowledgeIds: r.knowledge_ids ?? [],
+    };
+  });
 }
 
 /**
@@ -687,7 +733,21 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
     }
   }
 
-  return { frontier, questions, routePreferenceBySubject, generationMethodBySubject };
+  return {
+    frontier,
+    questions,
+    routePreferenceBySubject,
+    generationMethodBySubject,
+    // IO layer owns the clock; scanCoverageGaps itself remains deterministic over its input. Budget
+    // and attempts reference the builder's shared defaults so the two layers cannot drift.
+    evidenceDemandControl: {
+      neededBy: new Date(
+        Date.now() + DEFAULT_EVIDENCE_DEADLINE_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      maxBudgetMicroUsd: DEFAULT_MAX_BUDGET_MICRO_USD,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
+    },
+  };
 }
 
 /**
@@ -699,6 +759,22 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
 export async function discoverSupplyTargets(
   db: Db,
   makeId?: () => string,
+  shadow?: {
+    /**
+     * Optional observe-only seam: receives settled scanner input/output but cannot replace either.
+     * Supply-v2 Phase A uses it for inventory dual-read diagnostics; serving stays current-first.
+     */
+    observeInventory?: (input: ScanInput, targets: QuestionSupplyTarget[]) => void | Promise<void>;
+  },
 ): Promise<QuestionSupplyTarget[]> {
-  return scanCoverageGaps(await assembleScanInput(db), makeId);
+  const input = await assembleScanInput(db);
+  const targets = scanCoverageGaps(input, makeId);
+  // A shadow observer must never turn an otherwise successful current scan into a failure. Its
+  // comparison ledger is best-effort diagnostics; serving/dispatch still receives `targets`.
+  try {
+    await shadow?.observeInventory?.(input, targets);
+  } catch (error) {
+    console.warn('[question-supply] inventory shadow observation failed', error);
+  }
+  return targets;
 }

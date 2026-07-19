@@ -36,6 +36,7 @@ import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
@@ -55,6 +56,7 @@ import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
@@ -244,6 +246,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
       : {};
+  // supply_trace is best-effort provenance carried onto the verify event, not a
+  // promotion input. A JSONB `null` (valid, distinct from absent) or a malformed
+  // value must NOT throw here — this runs BEFORE the failure-bottom try, so a throw
+  // would strand the draft with no error event and retry identically forever. Mirror
+  // readDifficultyEvidenceFromMetadata: safeParse and drop on any failure.
+  const supplyTraceResult = SupplyTraceV1.safeParse(metadataRaw.supply_trace);
+  const supplyTrace = supplyTraceResult.success ? supplyTraceResult.data : undefined;
+  const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
   const parsedMeta = QuizGenMetadata.safeParse(metadataRaw.quiz_gen);
   // YUK-607（PR #750 review round）— 生成输出经 jsonrepair 级修复救回的批：语法救回但
   // 内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过非 strict Zod 门）。
@@ -742,6 +752,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // `...unified` above (the unified verify contract shape). failure_class is keyed
           // there only when !promote (validation_failure), identical to the prior inline.
           verified_by: verifiedBy,
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: result.task_run_id ?? null,
@@ -839,6 +851,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
         caused_by_event_id: null,
         task_run_id: taskResult?.task_run_id ?? null,

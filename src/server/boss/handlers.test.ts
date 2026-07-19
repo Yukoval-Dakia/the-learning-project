@@ -20,6 +20,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       updateQueue: vi.fn(async () => undefined),
       work: vi.fn(async () => undefined),
       schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
     } as unknown as PgBoss;
 
     await registerAll(boss);
@@ -78,6 +79,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       updateQueue,
       work: vi.fn(async () => undefined),
       schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
     } as unknown as PgBoss;
 
     await registerAll(boss);
@@ -151,7 +153,8 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
     const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+    const send = vi.fn(async () => 'job-id');
+    const boss = { createQueue, updateQueue, work, schedule, send } as unknown as PgBoss;
 
     // The whole point of the fix: this must not reject — both segments.
     await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
@@ -179,7 +182,8 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
     const updateQueue = vi.fn(() => Promise.resolve(undefined));
     const work = vi.fn(() => Promise.resolve(undefined));
     const schedule = vi.fn(() => Promise.resolve(undefined));
-    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+    const send = vi.fn(async () => 'job-id');
+    const boss = { createQueue, updateQueue, work, schedule, send } as unknown as PgBoss;
 
     await expect(registerHandlers(boss, {} as Db)).rejects.toThrow(
       'connection terminated unexpectedly',
@@ -203,7 +207,8 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
       const updateQueue = vi.fn(async () => undefined);
       const work = vi.fn(async () => undefined);
       const schedule = vi.fn(async () => undefined);
-      return { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+      const send = vi.fn(async () => 'job-id');
+      return { createQueue, updateQueue, work, schedule, send } as unknown as PgBoss;
     };
 
     const results = await Promise.allSettled([registerAll(makeBoss()), registerAll(makeBoss())]);
@@ -228,7 +233,8 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
     const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+    const send = vi.fn(async () => 'job-id');
+    const boss = { createQueue, updateQueue, work, schedule, send } as unknown as PgBoss;
 
     // First registration seeds the rows; the next two simulate HMR recompiles
     // re-running registration against the now-warm queue table.
