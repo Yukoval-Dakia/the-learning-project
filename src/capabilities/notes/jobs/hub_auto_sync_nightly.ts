@@ -74,9 +74,11 @@ export interface HubAutoSyncResult {
   hubs_considered: number;
   hubs_updated: number;
   hubs_skipped_version_conflict: number;
-  // FIX 4 (YUK-95 P5 review): hubs whose per-hub work threw (e.g. a
-  // target_not_found from applyNotePatch). Tallied + logged, not propagated, so
-  // one bad hub can't abort the whole nightly batch.
+  // YUK-301: stale auto-zone targets are an expected skip, distinct from an
+  // operational failure. The next nightly run retries from the fresh snapshot.
+  hubs_skipped_target_not_found: number;
+  // FIX 4 (YUK-95 P5 review): hubs whose per-hub work throws unexpectedly.
+  // Tallied + logged, not propagated, so one bad hub can't abort the batch.
   hubs_failed: number;
   // review 2026-05-29: counts the DESIRED curated cross-links per hub, summed
   // across every hub considered — including hubs whose patch was a no-op or hit a
@@ -263,13 +265,10 @@ async function defaultLoadEdges(db: Db): Promise<HubMeshEdge[]> {
  * Scan every hub, recompute its curated auto-zone, and apply a single
  * replace_block / append_block patch when (and only when) it changed.
  *
- * 0 hubs → no-op. Most per-hub failures inside `persistNoteRefineApply` surface
- * as statuses (version_conflict / not_found / archived) rather than throwing. The
- * one path that DOES throw is `applyNotePatch` raising NoteRefineApplyError (e.g.
- * a target_not_found from a null-id container — not currently reachable but
- * defensive). FIX 4 (P5 review): wrap each hub in try/catch so a single thrown
- * hub is logged + tallied (`hubs_failed`) and the loop continues, instead of
- * aborting the whole nightly batch.
+ * 0 hubs → no-op. Expected persistence races surface as statuses (including
+ * version_conflict and YUK-301's target_not_found skip). FIX 4 (P5 review): wrap
+ * each hub in try/catch so an unexpected thrown hub is logged + tallied
+ * (`hubs_failed`) and the loop continues instead of aborting the whole batch.
  */
 export async function runHubAutoSyncNightly(
   db: Db,
@@ -280,6 +279,7 @@ export async function runHubAutoSyncNightly(
     hubs_considered: hubs.length,
     hubs_updated: 0,
     hubs_skipped_version_conflict: 0,
+    hubs_skipped_target_not_found: 0,
     hubs_failed: 0,
     cross_links_desired_total: 0,
   };
@@ -321,6 +321,8 @@ export async function runHubAutoSyncNightly(
       if (applied.status === 'applied') result.hubs_updated += 1;
       else if (applied.status === 'skipped:version_conflict') {
         result.hubs_skipped_version_conflict += 1;
+      } else if (applied.status === 'skipped:target_not_found') {
+        result.hubs_skipped_target_not_found += 1;
       }
     } catch (err) {
       // One bad hub must not kill the batch: log, tally, continue.
