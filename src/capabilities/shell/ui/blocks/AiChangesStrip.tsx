@@ -12,6 +12,7 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Fragment, useState } from 'react';
 
 import { getRecentAiChanges, undoAiChange } from '../workbench-api';
 
@@ -20,14 +21,18 @@ export function AiChangesStrip({ now }: { now: Date }) {
   const q = useQuery({ queryKey: ['workbench-ai-changes'], queryFn: getRecentAiChanges });
   const rows = q.data?.rows ?? [];
 
+  // Which row's undo failed. A single shared mutation's isError can't say WHICH row and
+  // gets silently reset when another row is undone — so track the failed event id and
+  // render the error inline at that row. Cleared when that row is retried; a different
+  // row's undo leaves it intact.
+  const [failedId, setFailedId] = useState<string | null>(null);
   const undoM = useMutation({
     mutationFn: ({ artifactId, eventId }: { artifactId: string; eventId: string }) =>
       undoAiChange(artifactId, eventId),
+    onMutate: ({ eventId }) => setFailedId((id) => (id === eventId ? null : id)),
+    onError: (_e, { eventId }) => setFailedId(eventId),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
   });
-  // 「可回滚」是个承诺——撤销失败必须可见，否则用户以为已回滚。isError 在下次 mutate 时
-  // 自动复位，按钮 isPending 落定后重新可点即为重试入口。
-  const undoFailed = undoM.isError;
 
   const status: StatefulStatus = q.isLoading
     ? 'loading'
@@ -55,45 +60,49 @@ export function AiChangesStrip({ now }: { now: Date }) {
         skeleton={<SkLines rows={2} />}
         empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
       >
-        {undoFailed && (
-          <div className="meta strip-undo-err" role="alert">
-            撤销失败，请重试。
-          </div>
-        )}
         <div className="strip-list">
           {rows.map((c) => (
-            <div key={c.event_id} className={`strip${c.undone ? ' is-undone' : ''}`}>
-              <span className="strip-lead tone-coral">
-                <LoomIcon name="sparkle" size={15} />
-              </span>
-              <div className="strip-body">
-                <div className="strip-title">
-                  <b className="mono">{c.actor_ref}</b> 改了笔记
+            <Fragment key={c.event_id}>
+              <div className={`strip${c.undone ? ' is-undone' : ''}`}>
+                <span className="strip-lead tone-coral">
+                  <LoomIcon name="sparkle" size={15} />
+                </span>
+                <div className="strip-body">
+                  <div className="strip-title">
+                    <b className="mono">{c.actor_ref}</b> 改了笔记
+                  </div>
+                  <div className="strip-sub nowrap-meta mono">
+                    {c.ops_count} ops · +{c.new_blocks} blocks · v{c.previous_artifact_version}→v
+                    {c.next_artifact_version} · {formatRelTime(c.created_at, now)}
+                  </div>
                 </div>
-                <div className="strip-sub nowrap-meta mono">
-                  {c.ops_count} ops · +{c.new_blocks} blocks · v{c.previous_artifact_version}→v
-                  {c.next_artifact_version} · {formatRelTime(c.created_at, now)}
+                <div className="strip-end">
+                  {c.undone ? (
+                    <LoomBadge tone="good" dot>
+                      <LoomIcon name="check" size={12} />
+                      已撤销
+                    </LoomBadge>
+                  ) : (
+                    <Btn
+                      size="sm"
+                      variant="ghost"
+                      icon="undo"
+                      disabled={undoM.isPending}
+                      onClick={() =>
+                        undoM.mutate({ artifactId: c.artifact_id, eventId: c.event_id })
+                      }
+                    >
+                      撤销
+                    </Btn>
+                  )}
                 </div>
               </div>
-              <div className="strip-end">
-                {c.undone ? (
-                  <LoomBadge tone="good" dot>
-                    <LoomIcon name="check" size={12} />
-                    已撤销
-                  </LoomBadge>
-                ) : (
-                  <Btn
-                    size="sm"
-                    variant="ghost"
-                    icon="undo"
-                    disabled={undoM.isPending}
-                    onClick={() => undoM.mutate({ artifactId: c.artifact_id, eventId: c.event_id })}
-                  >
-                    撤销
-                  </Btn>
-                )}
-              </div>
-            </div>
+              {failedId === c.event_id && (
+                <div className="meta strip-undo-err" role="alert">
+                  撤销失败，请重试。
+                </div>
+              )}
+            </Fragment>
           ))}
         </div>
       </Stateful>

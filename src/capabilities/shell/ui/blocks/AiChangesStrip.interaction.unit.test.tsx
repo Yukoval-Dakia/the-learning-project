@@ -3,7 +3,7 @@
 // silently claiming the change was still reversible. A failed undo must be visible.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiChangesStrip } from './AiChangesStrip';
@@ -29,7 +29,7 @@ const ROW = {
 
 function renderStrip() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={qc}>
       <AiChangesStrip now={new Date('2026-07-19T01:00:00Z')} />
     </QueryClientProvider>,
@@ -56,5 +56,33 @@ describe('AiChangesStrip undo failure (YUK-713)', () => {
     expect(screen.queryByText('已撤销')).toBeNull();
     // the undo button stays available for a retry.
     expect(screen.getByRole('button', { name: '撤销' })).toBeTruthy();
+  });
+
+  it('anchors the failure to its row and keeps it when a different row is undone', async () => {
+    const ROW2 = { ...ROW, event_id: 'ev_2', artifact_id: 'art_2', actor_ref: 'zeta' };
+    mocks.getRecentAiChanges.mockResolvedValue({ window_hours: 24, rows: [ROW, ROW2] });
+    // Row 1 (ai) undo fails; row 2 (zeta) undo succeeds.
+    mocks.undoAiChange.mockImplementation(async (_artifactId: string, eventId: string) => {
+      if (eventId === 'ev_1') throw new Error('500');
+      return { status: 'undone' };
+    });
+    const user = userEvent.setup();
+    renderStrip();
+
+    const buttons = await screen.findAllByRole('button', { name: '撤销' });
+    await user.click(buttons[0]); // fail the ai row
+
+    const err = await screen.findByText('撤销失败，请重试。');
+    // The error is anchored directly to the ai row, not the zeta row.
+    expect(err.previousElementSibling).toBe(screen.getByText('ai').closest('.strip'));
+    expect(screen.getAllByText('撤销失败，请重试。')).toHaveLength(1);
+
+    // Undo the OTHER row (succeeds) — the ai row's error must NOT be silently dismissed.
+    await user.click(screen.getAllByRole('button', { name: '撤销' })[1]);
+    await waitFor(() => expect(mocks.undoAiChange).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('撤销失败，请重试。')).toBeTruthy();
+    expect(screen.getByText('撤销失败，请重试。').previousElementSibling).toBe(
+      screen.getByText('ai').closest('.strip'),
+    );
   });
 });
