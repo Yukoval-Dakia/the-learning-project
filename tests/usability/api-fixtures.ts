@@ -8,7 +8,8 @@ export type UsabilityScenario =
   | 'empty-database'
   | 'unauthorized'
   | 'practice-mutation-failure'
-  | 'questions-pagination';
+  | 'questions-pagination'
+  | 'teaching-brief';
 
 interface FixtureController {
   unexpectedRequests: string[];
@@ -62,6 +63,39 @@ function workbenchSummary(isEmpty: boolean) {
     active_goal: null,
     active_sessions: [],
     week_heat: weekHeat(),
+  };
+}
+
+// YUK-721 — a full FINDING-state teaching brief (contract §6.1 wire shape, wenyan-flavored
+// copy). Anti-guilt lock (§8.1): no calibration/confidence/recurrence/backlog anywhere; the
+// only ids are opaque provenance the UI never renders.
+function teachingBrief() {
+  return {
+    brief_id: 'evt_conjecture_wy1',
+    state: 'finding',
+    updated_at: '2026-07-18T15:10:00.000Z',
+    expires_at: '2026-07-25T15:10:00.000Z',
+    finding: {
+      claim_md: '你可能把「使动用法」和「意动用法」混为一谈——见到宾语前的活用动词就先当使动。',
+      knowledge_id: 'kn_word_activation',
+      cause_category: 'concept_misunderstanding',
+    },
+    basis: {
+      summary_md: '最近几次涉及词类活用的作答里，这个模式重复出现，值得用一道判别题确认。',
+      evidence_trace: [
+        { role: 'induction', kind: 'event', id: 'evt_attempt_wy_a' },
+        { role: 'induction', kind: 'question', id: 'q_source_wy_b' },
+      ],
+    },
+    prepared_action: {
+      kind: 'review_finding',
+      proposal_id: 'evt_conjecture_wy1',
+      probe_preview_md: '「渔人甚异之」中的「异」是使动还是意动？请说明你的判断依据。',
+    },
+    current_outcome: {
+      status: 'awaiting_decision',
+      summary_md: '这仍是一条待检验的判断。',
+    },
   };
 }
 
@@ -178,6 +212,11 @@ export async function installApiFixtures(
       });
     }
     if (key === 'GET /api/prep-desk/probes') return fulfill(route, { probes: [] });
+    // YUK-707/721 — the teaching brief band queries this on /today. The 'teaching-brief'
+    // scenario returns a full FINDING brief; every other scenario stays a quiet {brief:null}.
+    if (key === 'GET /api/prep-desk/brief') {
+      return fulfill(route, { brief: scenario === 'teaching-brief' ? teachingBrief() : null });
+    }
     if (key === 'GET /api/agents/notes') return fulfill(route, { rows: [] });
     if (key === 'GET /api/artifacts/ai-changes/recent') {
       return fulfill(route, { window_hours: 24, rows: [] });

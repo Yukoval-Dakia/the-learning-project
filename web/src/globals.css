@@ -6641,6 +6641,88 @@ button.chip:disabled:hover {
   color: var(--again-ink);
 }
 
+/* ── YUK-707 · 教研简报 teaching brief band ──
+   Same "为你而备" felt family as .prep-desk-* — thin classes, all var(--*) tokens,
+   no new colour / spacing scale / font. */
+.tb-degraded-flags {
+  margin-bottom: var(--s-3);
+}
+/* The brief card reuses .prep-desk-card (coral left spine) directly — no .tb-card needed. */
+.tb-block {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) 0;
+  border-top: 1px dashed var(--line);
+}
+.tb-block:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.tb-block-title {
+  /* real <h3>, compressed to eyebrow density (visual only; still a heading). */
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  letter-spacing: var(--ls-wide);
+  font-weight: 500;
+}
+/* :focus (not :focus-visible) — the ring must show on the PROGRAMMATIC .focus() that the
+   forward-announce effect moves to the prepared/outcome heading, which often follows a
+   mouse click on a CTA; browsers routinely skip :focus-visible for that path, hiding the
+   ring exactly when focus management fires. (Only the prepared/outcome headings carry
+   tabIndex={-1}, so the rule is inert for tb-h-finding/tb-h-basis either way.) */
+.tb-block-title:focus {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
+.tb-claim {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink);
+  min-width: 0;
+}
+.tb-basis {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.tb-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+.tb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.tb-prepared-done {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+/* Neutral base is the catch-all colour for every outcome status; only `confirmed`
+   overrides it. A new wire status therefore falls back to a defined neutral tone instead
+   of silently losing colour — the CSS no longer couples to the status enum (the component
+   may still compose `.tb-outcome-<status>`, but no per-status rule depends on it). */
+.tb-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.tb-outcome-confirmed {
+  color: var(--good-ink);
+}
+.tb-error {
+  font-size: var(--fs-meta);
+  color: var(--again-ink);
+}
+
 /* ── YUK-567 slice-2 · 待你试做 probe 作答区 ── */
 .probe-queue,
 .probe-answers {
@@ -6753,8 +6835,9 @@ button.chip:disabled:hover {
   outline: 2px solid var(--ink-5);
   outline-offset: 1px;
 }
-/* Visually hidden but focusable + in the a11y tree (keyboard file-picker access). */
-.pa-file-input {
+/* Visually hidden but kept in the a11y tree (focusable file-picker input, aria-live region,
+   etc.). Generic utility — callers add it alongside any semantic marker class they need. */
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;

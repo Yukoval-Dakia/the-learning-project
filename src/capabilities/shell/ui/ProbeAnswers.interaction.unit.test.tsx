@@ -5,11 +5,11 @@
 
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ProbeAnswers } from './ProbeAnswers';
+import { ProbeAnswerCard, ProbeAnswers } from './ProbeAnswers';
 
 const PROBE = {
   probe_question_id: 'q_probe1',
@@ -141,5 +141,53 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
 
     expect(await screen.findByText(/这次没判清/)).toBeTruthy();
     expect(screen.getByText('求 d/dx sin(x^2)。')).toBeTruthy(); // probe not lost
+  });
+});
+
+// YUK-707 · [裁决 2/3] — the shared ProbeAnswerCard is reused by the teaching brief. A
+// recorded verdict must additionally invalidate ['teaching-brief'] (so a mounted brief
+// advances in place) and call onAnswered; onDismiss must keep touching ONLY the probe
+// queue, never the brief.
+describe('ProbeAnswerCard — teaching brief coupling (jsdom)', () => {
+  function renderCard(onAnswered?: (resolution: 'confirmed' | 'retired') => void) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={qc}>
+        <ProbeAnswerCard probe={PROBE} onAnswered={onAnswered} />
+      </QueryClientProvider>,
+    );
+    return { invalidateSpy };
+  }
+
+  it('invalidates the teaching brief and calls onAnswered on a recorded verdict', async () => {
+    vi.stubGlobal('fetch', mockFetch());
+    const onAnswered = vi.fn();
+    const user = userEvent.setup();
+    const { invalidateSpy } = renderCard(onAnswered);
+
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), '2x·cos(x^2)');
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+
+    expect(await screen.findByText(/答对了/)).toBeTruthy();
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['teaching-brief'] }),
+    );
+    expect(onAnswered).toHaveBeenCalledWith('retired');
+  });
+
+  it('onDismiss invalidates only the probe queue, never the teaching brief', async () => {
+    vi.stubGlobal('fetch', mockFetch());
+    const user = userEvent.setup();
+    const { invalidateSpy } = renderCard();
+
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), '2x·cos(x^2)');
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+    await screen.findByText(/答对了/);
+    invalidateSpy.mockClear();
+
+    await user.click(screen.getByRole('button', { name: '知道了' }));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['prep-desk-probes'] });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['teaching-brief'] });
   });
 });
