@@ -27,7 +27,11 @@ import { useEffect, useRef, useState } from 'react';
 import { ProbeAnswerCard } from './ProbeAnswers';
 import { decideProposal, evidenceReadable } from './inbox-api';
 import type { PrepDeskProbeWire } from './probe-answer-api';
-import { type TeachingBrief, getTeachingBrief } from './teaching-brief-api';
+import {
+  type TeachingBrief,
+  ackTeachingBriefOutcome,
+  getTeachingBrief,
+} from './teaching-brief-api';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
 function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
@@ -57,10 +61,12 @@ export function TeachingBriefBand() {
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
 
-  // finding accept/dismiss transient state; probe_ready reveal toggle.
+  // finding accept/dismiss transient state; probe_ready reveal toggle; outcome ack.
   const [deciding, setDeciding] = useState(false);
   const [failed, setFailed] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [acking, setAcking] = useState(false);
+  const [ackFailed, setAckFailed] = useState(false);
 
   // §6 forward-announce: track {brief_id, rank}; the two focus targets are the
   // 「已经为你备好」and 「当前结果」headings.
@@ -77,6 +83,7 @@ export function TeachingBriefBand() {
     if (idChanged) {
       setRevealed(false);
       setFailed(false);
+      setAckFailed(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -116,6 +123,31 @@ export function TeachingBriefBand() {
       setFailed(true);
     } finally {
       setDeciding(false);
+    }
+  }
+
+  async function acknowledge() {
+    if (!brief || brief.prepared_action.kind !== 'acknowledge_outcome' || acking) return;
+    setAcking(true);
+    setAckFailed(false);
+    try {
+      await ackTeachingBriefOutcome(brief.prepared_action.probe_result_event_id);
+      // The acked result loses eligibility server-side; re-project to the next candidate
+      // or the quiet null. Same invalidation surface as decide (probe/digest counts move).
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
+        qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
+        qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
+      ]);
+    } catch (error) {
+      // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
+      // retry. Redacted diagnostic only (never brief/claim/answer payload).
+      console.warn('[teaching-brief] acknowledge failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setAckFailed(true);
+    } finally {
+      setAcking(false);
     }
   }
 
@@ -193,9 +225,12 @@ export function TeachingBriefBand() {
                 revealed={revealed}
                 deciding={deciding}
                 failed={failed}
+                acking={acking}
+                ackFailed={ackFailed}
                 onReveal={() => setRevealed(true)}
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
+                onAcknowledge={() => void acknowledge()}
               />
             </section>
 
@@ -226,17 +261,23 @@ function PreparedBlock({
   revealed,
   deciding,
   failed,
+  acking,
+  ackFailed,
   onReveal,
   onAccept,
   onReject,
+  onAcknowledge,
 }: {
   brief: TeachingBrief;
   revealed: boolean;
   deciding: boolean;
   failed: boolean;
+  acking: boolean;
+  ackFailed: boolean;
   onReveal: () => void;
   onAccept: () => void;
   onReject: () => void;
+  onAcknowledge: () => void;
 }) {
   if (brief.prepared_action.kind === 'review_finding') {
     return (
@@ -304,10 +345,26 @@ function PreparedBlock({
     );
   }
 
-  if (brief.prepared_action.kind === 'none') {
-    // outcome_* — prepared_action.kind === 'none': no CTA, no ack (contract §4.2). The
-    // finding was checked and the probe answered; the conclusion lives in 当前结果 below.
-    return <p className="tb-prepared-done">这道判别题已作答，暂无需要你做的下一步。</p>;
+  if (brief.prepared_action.kind === 'acknowledge_outcome') {
+    // outcome_* (YUK-708 / contract §4.2) — the probe was answered and reconciled; the
+    // conclusion lives in 当前结果 below. The only step left is "知道了", an append-only
+    // idempotent ack that retires this result from the brief (never a re-grade, never a
+    // guilt/streak beat). On failure keep the outcome + offer a retry (contract §7).
+    return (
+      <>
+        <p className="tb-prepared-done">这道判别题已作答。</p>
+        <div className="tb-actions">
+          <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
+            知道了
+          </Btn>
+          {ackFailed && (
+            <span className="tb-error" role="alert">
+              操作失败，请重试
+            </span>
+          )}
+        </div>
+      </>
+    );
   }
   // Exhaustive: every prepared_action.kind is handled above; a new kind fails to compile
   // here until it gets its own branch.

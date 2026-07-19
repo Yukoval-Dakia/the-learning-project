@@ -2,7 +2,11 @@
 // conjecture proposal → mind-probe question → probe-result event chain.
 
 import type { CauseCategoryT } from '@/core/schema/cause';
-import { PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import {
+  BRIEF_ACK_ACTION,
+  PROBE_QUESTION_SOURCE,
+  PROBE_RESULT_ACTION,
+} from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
@@ -74,10 +78,20 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
   };
 }
 
+/**
+ * The outcome states' executable next step (YUK-708 / contract §2.1): acknowledge the
+ * delivered result. P0F/2 shipped `{kind:'none'}`; P0F/4 upgrades the discriminated
+ * union + strict Zod in lockstep so the UI may render a "知道了" that appends an ack.
+ */
+export interface OutcomeAcknowledgeAction {
+  kind: 'acknowledge_outcome';
+  probe_result_event_id: string;
+}
+
 export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   state: 'outcome_confirmed';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'confirmed';
     summary_md: string;
@@ -89,7 +103,7 @@ export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
 export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
   state: 'outcome_retired';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'retired';
     summary_md: string;
@@ -366,6 +380,16 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
         // The in-loop validation below stays authoritative for provenance.
         sql`((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
+        // YUK-708 (contract §4.2): an acknowledged outcome loses eligibility immediately.
+        // Excluded pre-window (like the corrupt-pair filter) so a burst of acked results
+        // cannot evict an older un-acked valid outcome. Ack existence is binary — there
+        // is no "corrupt ack" — so this NOT EXISTS is authoritative on its own.
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${event} AS ack
+          WHERE ack.action = ${BRIEF_ACK_ACTION}
+            AND ack.subject_kind = 'event'
+            AND ack.subject_id = ${event.id}
+        )`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -440,7 +464,12 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
         cause_category: proposal.causeCategory,
       },
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
-      prepared_action: { kind: 'none' as const },
+      // YUK-708 — the outcome's executable next step is acknowledgement; the ack targets
+      // this very result event (also mirrored in current_outcome for the wire).
+      prepared_action: {
+        kind: 'acknowledge_outcome' as const,
+        probe_result_event_id: result.id,
+      },
     };
     if (resolution === 'confirmed') {
       return {

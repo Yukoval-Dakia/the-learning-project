@@ -194,6 +194,18 @@ const TeachingBriefBasisSectionSchema = z
     path: ['evidence_trace'],
   });
 
+// YUK-708 (P0F/4) — the outcome states' executable next step: acknowledge (dismiss)
+// the delivered result. Contract §2.1 requires the strict schema to be upgraded (not
+// left at `{kind:'none'}`) before the UI may render an ack action. `probe_result_event_id`
+// is the ack target — the same id carried in `current_outcome` — keeping the action
+// self-describing.
+const OutcomeAcknowledgeActionSchema = z
+  .object({
+    kind: z.literal('acknowledge_outcome'),
+    probe_result_event_id: z.string().min(1),
+  })
+  .strict();
+
 const teachingBriefCommon = {
   brief_id: z.string().min(1),
   updated_at: z.string().datetime(),
@@ -247,7 +259,7 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnio
       ...teachingBriefCommon,
       state: z.literal('outcome_confirmed'),
       expires_at: z.string().datetime(),
-      prepared_action: z.object({ kind: z.literal('none') }).strict(),
+      prepared_action: OutcomeAcknowledgeActionSchema,
       current_outcome: z
         .object({
           status: z.literal('confirmed'),
@@ -263,7 +275,7 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnio
       ...teachingBriefCommon,
       state: z.literal('outcome_retired'),
       expires_at: z.string().datetime(),
-      prepared_action: z.object({ kind: z.literal('none') }).strict(),
+      prepared_action: OutcomeAcknowledgeActionSchema,
       current_outcome: z
         .object({
           status: z.literal('retired'),
@@ -278,4 +290,20 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnio
 
 export const TeachingBriefResponseSchema = z
   .object({ brief: TeachingBriefSchema.nullable() })
+  .strict();
+
+// YUK-708 (P0F/4) — acknowledge a delivered outcome. The target is the probe_result
+// event id (the same one on `current_outcome.probe_result_event_id` /
+// `prepared_action.probe_result_event_id`); the ack is keyed on it server-side.
+export const TeachingBriefAckBodySchema = z
+  .object({ probe_result_event_id: z.string().min(1) })
+  .strict();
+
+export const TeachingBriefAckResponseSchema = z
+  .object({
+    brief_acknowledgement_event_id: z.string().min(1),
+    probe_result_event_id: z.string().min(1),
+    brief_id: z.string().min(1),
+    idempotent: z.boolean(),
+  })
   .strict();

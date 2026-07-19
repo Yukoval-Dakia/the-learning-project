@@ -17,6 +17,7 @@ import {
   TEACHING_BRIEF_OUTCOME_TTL_MS,
   loadTeachingBrief,
 } from '@/capabilities/shell/server/teaching-brief';
+import { acknowledgeTeachingBriefOutcome } from '@/capabilities/shell/server/teaching-brief-ack';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -330,7 +331,8 @@ describe('loadTeachingBrief', () => {
       state,
       updated_at: resultAt.toISOString(),
       expires_at: new Date(resultAt.getTime() + TEACHING_BRIEF_OUTCOME_TTL_MS).toISOString(),
-      prepared_action: { kind: 'none' },
+      // YUK-708 — outcome states carry the executable ack action (targets this result).
+      prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: resultId },
       current_outcome: {
         status: resolution,
         summary_md: summary,
@@ -372,6 +374,76 @@ describe('loadTeachingBrief', () => {
 
     const { brief } = await loadTeachingBrief(testDb(), NOW);
     expect(brief).toMatchObject({ brief_id: 'p_outcome', state: 'outcome_retired' });
+  });
+
+  it('drops an acknowledged outcome and selects the next candidate (YUK-708)', async () => {
+    const acked = await seedOutcome({
+      proposalId: 'p_acked',
+      proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
+      probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
+      resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
+      resolution: 'confirmed',
+    });
+    // A still-active probe sits behind the outcome; once the outcome is acked, the
+    // probe is the next globally-preferred candidate (outcome > probe > finding).
+    const activeProbe = await seedAcceptedProbe({
+      proposalId: 'p_next_probe',
+      proposalAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
+      probeAt: new Date(NOW.getTime() - 60 * 60 * 1000),
+    });
+
+    const before = await loadTeachingBrief(testDb(), NOW);
+    expect(before.brief).toMatchObject({ brief_id: 'p_acked', state: 'outcome_confirmed' });
+
+    await acknowledgeTeachingBriefOutcome(testDb(), acked.resultId, NOW);
+
+    const after = await loadTeachingBrief(testDb(), NOW);
+    expect(after.brief).toMatchObject({ brief_id: 'p_next_probe', state: 'probe_ready' });
+    expect(after.brief?.prepared_action).toMatchObject({ probe_question_id: activeProbe });
+  });
+
+  it('returns quiet null once the sole outcome is acknowledged', async () => {
+    const { resultId } = await seedOutcome({
+      proposalId: 'p_sole',
+      proposalAt: new Date(NOW.getTime() - DAY_MS),
+      probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
+      resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
+      resolution: 'retired',
+    });
+    await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
+
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+  });
+
+  it('does not let a burst of acked outcomes evict an older un-acked valid outcome', async () => {
+    const survivor = await seedOutcome({
+      proposalId: 'p_unacked_survivor',
+      proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
+      probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
+      resultAt: new Date(NOW.getTime() - DAY_MS),
+      resolution: 'confirmed',
+    });
+    // A window's worth of NEWER outcomes, each acknowledged. Excluded pre-window, they
+    // must not crowd the older un-acked survivor out of the bounded candidate set.
+    for (let i = 0; i < TEACHING_BRIEF_CANDIDATE_WINDOW; i += 1) {
+      const { resultId } = await seedOutcome({
+        proposalId: `p_acked_burst_${String(i).padStart(2, '0')}`,
+        proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
+        probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
+        resultAt: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - i) * 60_000),
+        resolution: 'confirmed',
+      });
+      await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
+    }
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+    expect(result.brief).toMatchObject({
+      brief_id: 'p_unacked_survivor',
+      state: 'outcome_confirmed',
+    });
+    expect(result.brief?.current_outcome).toMatchObject({
+      probe_result_event_id: survivor.resultId,
+    });
   });
 
   it('drops expired outcomes, keeps probes clock-invariant, and uses salience with deterministic finding ties', async () => {
