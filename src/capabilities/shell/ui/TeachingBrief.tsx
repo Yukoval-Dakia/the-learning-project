@@ -73,7 +73,7 @@ export function TeachingBriefBand() {
     const prev = prevRef.current;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
-    const idChanged = prev == null || prev.brief_id !== (brief?.brief_id ?? null);
+    const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
     if (idChanged) {
       setRevealed(false);
       setFailed(false);
@@ -84,7 +84,7 @@ export function TeachingBriefBand() {
     }
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
-    const forward = prev != null && prev.brief_id === brief.brief_id && rank > prev.rank;
+    const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
     prevRef.current = { brief_id: brief.brief_id, rank }; // always refresh the baseline.
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
@@ -122,7 +122,7 @@ export function TeachingBriefBand() {
   return (
     <div className="tb-band-wrap">
       {/* aria-live region persists across state changes; announced once per forward move. */}
-      <div className="tb-live" aria-live="polite">
+      <div className="tb-live visually-hidden" aria-live="polite">
         {liveMsg}
       </div>
       <Stateful

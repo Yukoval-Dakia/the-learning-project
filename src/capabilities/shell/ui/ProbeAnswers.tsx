@@ -174,7 +174,7 @@ export function ProbeAnswerCard({
                 type="file"
                 accept="image/*"
                 multiple
-                className="pa-file-input"
+                className="visually-hidden"
                 onChange={(e) => {
                   void onFiles(e.target.files);
                   e.target.value = '';

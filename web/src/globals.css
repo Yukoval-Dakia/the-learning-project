@@ -6663,7 +6663,12 @@ button.chip:disabled:hover {
   letter-spacing: var(--ls-wide);
   font-weight: 500;
 }
-.tb-block-title:focus-visible {
+/* :focus (not :focus-visible) — the ring must show on the PROGRAMMATIC .focus() that the
+   forward-announce effect moves to the prepared/outcome heading, which often follows a
+   mouse click on a CTA; browsers routinely skip :focus-visible for that path, hiding the
+   ring exactly when focus management fires. (Only the prepared/outcome headings carry
+   tabIndex={-1}, so the rule is inert for tb-h-finding/tb-h-basis either way.) */
+.tb-block-title:focus {
   outline: none;
   box-shadow: var(--shadow-focus);
   border-radius: var(--r-1);
@@ -6703,7 +6708,7 @@ button.chip:disabled:hover {
 .tb-outcome {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-1);
   line-height: 1.5;
   color: var(--ink-3);
 }
@@ -6827,10 +6832,9 @@ button.chip:disabled:hover {
   outline: 2px solid var(--ink-5);
   outline-offset: 1px;
 }
-/* Visually hidden but kept in the a11y tree: the keyboard file-picker (focusable) and
-   the teaching-brief aria-live region (YUK-707) share this one off-screen idiom. */
-.pa-file-input,
-.tb-live {
+/* Visually hidden but kept in the a11y tree (focusable file-picker input, aria-live region,
+   etc.). Generic utility — callers add it alongside any semantic marker class they need. */
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
