@@ -1,5 +1,8 @@
+import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
+import { CauseCategory } from '@/core/schema/cause';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { ProposalEvidenceRef } from '@/core/schema/proposal';
 import { z } from 'zod';
 
 export const SubjectListResponseSchema = z.object({
@@ -147,3 +150,132 @@ export const PrepDeskProbesResponseSchema = z.object({
     }),
   ),
 });
+
+const TeachingBriefEvidenceRefSchema = z.discriminatedUnion('role', [
+  z
+    .object({
+      role: z.literal('induction'),
+      kind: ProposalEvidenceRef.shape.kind,
+      id: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('probe'),
+      kind: z.literal('question'),
+      id: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('outcome'),
+      kind: z.literal('event'),
+      id: z.string().min(1),
+    })
+    .strict(),
+]);
+
+const TeachingBriefFindingSectionSchema = z
+  .object({
+    claim_md: z.string().min(1),
+    knowledge_id: z.string().min(1),
+    cause_category: CauseCategory,
+  })
+  .strict();
+
+const TeachingBriefBasisSectionSchema = z
+  .object({
+    summary_md: z.string().min(1),
+    evidence_trace: z.array(TeachingBriefEvidenceRefSchema).min(1),
+  })
+  .strict()
+  .refine((basis) => basis.evidence_trace.some((ref) => ref.role === 'induction'), {
+    message: 'evidence_trace requires induction evidence',
+    path: ['evidence_trace'],
+  });
+
+const teachingBriefCommon = {
+  brief_id: z.string().min(1),
+  updated_at: z.string().datetime(),
+  finding: TeachingBriefFindingSectionSchema,
+  basis: TeachingBriefBasisSectionSchema,
+};
+
+export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z.discriminatedUnion('state', [
+  z
+    .object({
+      ...teachingBriefCommon,
+      state: z.literal('finding'),
+      expires_at: z.string().datetime(),
+      prepared_action: z
+        .object({
+          kind: z.literal('review_finding'),
+          proposal_id: z.string().min(1),
+          probe_preview_md: z.string().min(1),
+        })
+        .strict(),
+      current_outcome: z
+        .object({
+          status: z.literal('awaiting_decision'),
+          summary_md: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...teachingBriefCommon,
+      state: z.literal('probe_ready'),
+      expires_at: z.null(),
+      prepared_action: z
+        .object({
+          kind: z.literal('answer_probe'),
+          probe_question_id: z.string().min(1),
+          prompt_md: z.string().min(1),
+        })
+        .strict(),
+      current_outcome: z
+        .object({
+          status: z.literal('awaiting_answer'),
+          summary_md: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...teachingBriefCommon,
+      state: z.literal('outcome_confirmed'),
+      expires_at: z.string().datetime(),
+      prepared_action: z.object({ kind: z.literal('none') }).strict(),
+      current_outcome: z
+        .object({
+          status: z.literal('confirmed'),
+          summary_md: z.string().min(1),
+          probe_question_id: z.string().min(1),
+          probe_result_event_id: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...teachingBriefCommon,
+      state: z.literal('outcome_retired'),
+      expires_at: z.string().datetime(),
+      prepared_action: z.object({ kind: z.literal('none') }).strict(),
+      current_outcome: z
+        .object({
+          status: z.literal('retired'),
+          summary_md: z.string().min(1),
+          probe_question_id: z.string().min(1),
+          probe_result_event_id: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
+
+export const TeachingBriefResponseSchema = z
+  .object({ brief: TeachingBriefSchema.nullable() })
+  .strict();
