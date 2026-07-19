@@ -238,6 +238,7 @@ export const NoteRefineApplyResultSchema = z.object({
   status: z.enum([
     'applied',
     'skipped:empty_patch',
+    'skipped:target_not_found',
     'skipped:not_found',
     'skipped:archived',
     'skipped:version_conflict',
@@ -247,6 +248,7 @@ export const NoteRefineApplyResultSchema = z.object({
   ops_count: z.number().int().nonnegative().optional(),
   new_blocks: z.number().int().nonnegative().optional(),
   artifact_version: z.number().int().nonnegative().optional(),
+  skipped_ops: z.number().int().nonnegative().optional(),
 });
 
 export const EditingBlurResponseSchema = z.object({

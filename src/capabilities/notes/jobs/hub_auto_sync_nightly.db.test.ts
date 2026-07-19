@@ -230,11 +230,11 @@ describe('runHubAutoSyncNightly', () => {
     expect(ids).toEqual(['atom_in']);
   });
 
-  it('one bad hub is tallied (hubs_failed) and does not abort the batch (FIX 4)', async () => {
+  it('one stale hub is tallied as a target skip and does not abort the batch', async () => {
     await seedKnowledge('k_hub');
     // Bad hub: its existing autoLinksContainer has a NULL id at doc root, so
     // buildAutoZonePatch derives a fallback container id (`bad_hub__auto_links`)
-    // that matches no doc-root block → applyNotePatch throws target_not_found.
+    // that matches no doc-root block → persistence returns skipped:target_not_found.
     await seedArtifact({
       id: 'bad_hub',
       type: 'note_hub',
@@ -250,9 +250,10 @@ describe('runHubAutoSyncNightly', () => {
 
     const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
 
-    // Batch survived the bad hub.
+    // Batch survived the stale hub without misclassifying it as an operational failure.
     expect(result.hubs_considered).toBe(2);
-    expect(result.hubs_failed).toBe(1);
+    expect(result.hubs_skipped_target_not_found).toBe(1);
+    expect(result.hubs_failed).toBe(0);
     expect(result.hubs_updated).toBe(1);
 
     // The healthy hub still got its auto-zone.

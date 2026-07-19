@@ -213,6 +213,126 @@ describe('runNoteRefine', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('skips a ghost target op while applying later independent ops', async () => {
+    await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({
+      text: refinePayload([
+        replaceBlockOp('ghost', 'missing target'),
+        { kind: 'append_block', block: paragraphBlock('b_survives', 'still apply this') },
+      ]),
+    }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now: new Date('2026-05-28T12:00:10Z'),
+    });
+
+    expect(result).toMatchObject({
+      status: 'applied',
+      ops_count: 1,
+      new_blocks: 1,
+      skipped_ops: 1,
+    });
+    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(updated.version).toBe(1);
+    const ids = (
+      (updated.body_blocks as unknown as { content: Array<{ attrs: { id: string } }> }).content ??
+      []
+    ).map((node) => node.attrs.id);
+    expect(ids).toContain('b_survives');
+    const [applyEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_apply'));
+    expect((applyEvent.payload as { ops: unknown[] }).ops).toHaveLength(1);
+  });
+
+  it('returns skipped:target_not_found when every op targets a ghost block', async () => {
+    await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({
+      text: refinePayload([replaceBlockOp('ghost', 'missing target')]),
+    }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+    });
+
+    expect(result).toEqual({ status: 'skipped:target_not_found', skipped_ops: 1 });
+    const [unchanged] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(unchanged.version).toBe(0);
+    expect(await testDb().select().from(event).where(eq(event.subject_id, 'a1'))).toHaveLength(0);
+  });
+
+  it('continues flushing later queued patches when an earlier deferred target became a ghost', async () => {
+    const db = testDb();
+    await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
+    const start = new Date('2026-05-28T12:00:00Z');
+    await recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now: start });
+
+    const first = await runNoteRefine({
+      db,
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn: vi.fn(async () => ({
+        text: refinePayload([replaceBlockOp('s1', 'queued replacement')]),
+      })),
+      now: new Date(start.getTime() + 1_000),
+    });
+    expect(first.status).toBe('deferred');
+
+    const [current] = await db.select().from(artifact).where(eq(artifact.id, 'a1'));
+    const currentBody = current.body_blocks as { type: 'doc'; content: Record<string, unknown>[] };
+    const withoutS1 = {
+      ...currentBody,
+      content: currentBody.content.filter(
+        (node) => (node.attrs as { id?: unknown } | undefined)?.id !== 's1',
+      ),
+    };
+    await db
+      .update(artifact)
+      .set({
+        body_blocks: withoutS1 as never,
+        version: 1,
+        updated_at: new Date(start.getTime() + 1_500),
+      })
+      .where(eq(artifact.id, 'a1'));
+
+    const second = await runNoteRefine({
+      db,
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn: vi.fn(async () => ({
+        text: refinePayload([
+          { kind: 'append_block', block: paragraphBlock('b_after_ghost', 'later patch') },
+        ]),
+      })),
+      now: new Date(start.getTime() + 2_000),
+    });
+    expect(second.status).toBe('deferred');
+
+    const flushed = await markArtifactIdleAndFlush({
+      db,
+      artifactId: 'a1',
+      now: new Date(start.getTime() + 3_000),
+    });
+    expect(flushed.results).toMatchObject([
+      { status: 'skipped:target_not_found', skipped_ops: 1 },
+      { status: 'applied', ops_count: 1, new_blocks: 1 },
+    ]);
+    const [updated] = await db.select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(updated.version).toBe(2);
+    const updatedIds = (
+      updated.body_blocks as unknown as { content: Array<{ attrs: { id: string } }> }
+    ).content.map((node) => node.attrs.id);
+    expect(updatedIds).toContain('b_after_ghost');
+  });
+
   it('mutator path: applies patch, bumps artifact.version, writes note_refine_apply event', async () => {
     await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
     const ops = [{ kind: 'append_block', block: paragraphBlock('b_new', '新加段落') }];

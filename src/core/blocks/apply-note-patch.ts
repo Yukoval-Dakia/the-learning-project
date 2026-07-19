@@ -49,6 +49,12 @@ export interface ApplyNotePatchOptions {
   enforceUserVerifiedGuard?: boolean;
 }
 
+export interface FilterMissingNotePatchTargetsResult {
+  patch: NotePatchT;
+  body_blocks: ArtifactBodyBlocksT;
+  skipped_ops: number;
+}
+
 function cloneNode(node: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(node)) as Record<string, unknown>;
 }
@@ -89,6 +95,40 @@ export function applyNotePatch(
   return {
     ...parsed.data,
     content,
+  };
+}
+
+/**
+ * Pre-applies a patch one op at a time and removes only ops whose target is no longer present.
+ * Later ops see the state produced by earlier accepted ops, so a patch may insert a block and then
+ * target it. Errors other than target_not_found remain hard failures.
+ */
+export function filterMissingNotePatchTargets(
+  bodyBlocks: unknown,
+  patch: NotePatchT,
+  options: ApplyNotePatchOptions = {},
+): FilterMissingNotePatchTargetsResult {
+  let nextBodyBlocks = applyNotePatch(bodyBlocks, { ops: [] }, options);
+  const applicableOps: NotePatchOpT[] = [];
+  let skippedOps = 0;
+
+  for (const op of patch.ops) {
+    try {
+      nextBodyBlocks = applyNotePatch(nextBodyBlocks, { ops: [op] }, options);
+      applicableOps.push(op);
+    } catch (error) {
+      if (error instanceof NoteRefineApplyError && error.code === 'target_not_found') {
+        skippedOps += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return {
+    patch: { ops: applicableOps },
+    body_blocks: nextBodyBlocks,
+    skipped_ops: skippedOps,
   };
 }
 
