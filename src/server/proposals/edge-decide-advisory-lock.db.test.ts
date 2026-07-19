@@ -1,26 +1,26 @@
 // YUK-546 (part 2) — propose-side lock discipline on the edge-proposal ACCEPT path.
 //
-// rewireKnowledgeEdges (the merge-side edge rewrite) takes a sorted
-// `pg_advisory_xact_lock(hashtext('knowledge_edge:<id>'))` on its two merge endpoints (YUK-543
-// review L1), and the merge ACCEPT (acceptProposal) first takes the mutation's knowledge rows FOR
-// UPDATE (id-sorted, lockMutationRows) BEFORE that advisory. The edge-proposal ACCEPT path
-// (decideKnowledgeEdgeProposal → create/reverse/change_type) is the OTHER writer that reads the live
-// mesh, passes the ADR-0034 topology gate (via the fold under PROJECTION_IS_WRITER=1), then writes a
-// live edge. This suite pins the lock discipline that keeps it consistent with the merge path:
-//   1. concurrent accepts of A->B and B->A serialize and the second is rejected by the topology gate
-//      (a 2-cycle can never both commit);
+// The merge ACCEPT (acceptProposal) locks the mutation's knowledge rows FOR UPDATE (id-sorted,
+// lockMutationRows) then rewireKnowledgeEdges takes a sorted `knowledge_edge:<id>` advisory. The
+// edge-proposal ACCEPT path (decideKnowledgeEdgeProposal → create/reverse/change_type) is the OTHER
+// live-edge writer. It now (1) locks its endpoint knowledge rows FOR UPDATE NOWAIT + retries, then
+// (2) takes the same-namespace sorted advisory, then (3) reads the live mesh through the fold. This
+// suite pins:
+//   1. concurrent accepts of A->B and B->A: the reverse is rejected by the ADR-0034 topology gate
+//      once the forward edge is committed (no 2-cycle);
 //   2. an accept serializes cleanly behind a holder that owns only the advisory;
-//   3. lock-then-revalidate: a merge that archives an endpoint under the lock makes the accept reject
-//      (codex P2 TOCTOU) — no live edge lands on the archived node;
-//   4. the accept takes endpoint rows FOR UPDATE BEFORE the advisory (same global order as the merge
-//      accept), so a merge-ordered holder (row FOR UPDATE -> advisory) never 40P01-deadlocks it
-//      (codex P1).
+//   3. lock-then-revalidate: a merge that archives an endpoint under the locks makes the accept
+//      reject (codex P2 TOCTOU) — no live edge lands on the archived node;
+//   4. NOWAIT keeps the accept deadlock-free against the three-endpoint merge scenario codex P1
+//      (round-3) described: merge holds {from,into}, rewrites an edge into->Z and FK-locks the
+//      external endpoint Z that is NOT in the merge's row batch.
 //
-// Every holder tx resolves `lockAcquired` ONLY after it holds its lock(s); the waiter is fired
-// (and waitForBlockedDatabaseSession polled) strictly after that promise, so there is no implicit
-// "whoever fires first wins the lock" race (CodeRabbit/codex round-2). Self-isolated fixtures (own
-// knowledge ids, own reset) so this never shares a mutable count with the propose_edge cost-ledger
-// concurrency flake (YUK-724).
+// NOWAIT means the accept never BLOCKS on a contended endpoint row — it fails fast (55P03) and the
+// outer loop retries — so most cases synchronize by "hold the lock, fire the accept, release, await
+// the accept" rather than by polling for a blocked session. Each holder tx resolves `lockAcquired`
+// only after it owns its lock(s), and the accept is fired strictly after awaiting that. Self-isolated
+// fixtures (own knowledge ids, own reset) so this never shares a mutable count with the propose_edge
+// cost-ledger concurrency flake (YUK-724).
 
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { newId } from '@/core/ids';
@@ -84,8 +84,8 @@ async function seedProposeEdgeEvent(opts: {
   return id;
 }
 
-// A resolved-on-demand promise. The holder tx resolves `lockAcquired` after it owns its lock(s); the
-// main flow awaits that before firing the waiter, and `release` lets the holder commit on demand.
+// A resolve-on-demand promise. The holder tx resolves `lockAcquired` after it owns its lock(s); the
+// main flow awaits that before firing the accept, and `release` lets the holder commit on demand.
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => {};
   const promise = new Promise<void>((r) => {
@@ -94,10 +94,10 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-// Poll pg_stat_activity until SOME other backend of this database is blocked waiting on a lock (row
-// lock OR advisory — both surface as wait_event_type='Lock'). The waiter is already known to have
-// started (we await the holder's lockAcquired before firing it), so this fires once the waiter has
-// actually queued behind the held lock.
+// Poll pg_stat_activity until another backend blocks waiting on a lock. Only usable when the accept
+// is expected to BLOCK — i.e. behind a holder that owns the advisory (the accept's advisory acquire
+// is a plain blocking wait); it is NOT usable behind a row-lock holder, since the NOWAIT row lock
+// fails fast instead of blocking.
 async function waitForBlockedDatabaseSession(): Promise<void> {
   const db = testDb();
   for (let attempt = 0; attempt < 300; attempt += 1) {
@@ -116,6 +116,8 @@ async function waitForBlockedDatabaseSession(): Promise<void> {
   throw new Error('timed out waiting for a database session to block on a lock');
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
   beforeEach(async () => {
     await resetDb();
@@ -130,13 +132,12 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     vi.unstubAllEnvs();
   });
 
-  it('serializes concurrent A->B / B->A accepts; the second is rejected by the topology gate (no 2-cycle)', async () => {
+  it('A->B / B->A: the reverse accept is rejected by the topology gate once the forward edge commits (no 2-cycle)', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
-    // B->A is the proposal under test. A->B is created + committed by the holder tx first, so when
-    // B->A finally acquires the locks its fold sees A->B and the reverse edge is a direction
-    // contradiction. NOTE: A->B and B->A are DISTINCT unique keys, so the UNIQUE(from,to,type)
-    // constraint does NOT catch this — only lock-serialization + the topology gate does.
+    // A->B is created + committed by the holder tx first; B->A is the accept under test. NOTE: A->B
+    // and B->A are DISTINCT unique keys, so the UNIQUE(from,to,type) constraint does NOT catch this —
+    // only the topology gate (fold) does, once it sees the committed A->B.
     const proposeBA = await seedProposeEdgeEvent({ from: 'B', to: 'A' });
 
     const lockAcquired = deferred();
@@ -157,22 +158,20 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     });
 
     await lockAcquired.promise;
+    // The accept's NOWAIT endpoint lock contends with the holder's FK KEY SHARE (from
+    // createKnowledgeEdge) and the advisory, so it retries until the holder commits — at which point
+    // A->B is visible and the fold rejects the reverse. Release the holder right after firing.
     const acceptBA = decideKnowledgeEdgeProposal(db, proposeBA, { decision: 'accept' });
-
-    await waitForBlockedDatabaseSession();
     release.resolve();
+
+    await expect(acceptBA).rejects.toThrow(/topology|cycle|direction|prerequisite/i);
     await holderDone;
 
-    // Now unblocked, B->A's fold sees the committed A->B and the ADR-0034 gate rejects the reverse.
-    await expect(acceptBA).rejects.toThrow(/topology|cycle|direction|prerequisite/i);
-
-    // Exactly one live edge (A->B) — the cycle never formed.
     const live = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
     expect(live).toHaveLength(1);
     expect(live[0].from_knowledge_id).toBe('A');
     expect(live[0].to_knowledge_id).toBe('B');
 
-    // The rejected accept left no rate/generate events behind (tx rolled back).
     const rateRows = await db.select().from(event).where(eq(event.caused_by_event_id, proposeBA));
     expect(rateRows).toHaveLength(0);
   });
@@ -180,8 +179,9 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
   it('serializes cleanly behind a holder that owns only the advisory; no deadlock', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
-    // related_to skips the topology gate, so this isolates serialization: after the held advisory
-    // releases the accept must simply COMPLETE (never a 40P01).
+    // related_to skips the topology gate, so this isolates advisory serialization: the accept's
+    // NOWAIT rows succeed (holder owns no rows), then it BLOCKS on the advisory; after release it
+    // must simply COMPLETE.
     const proposeBA = await seedProposeEdgeEvent({
       from: 'B',
       to: 'A',
@@ -213,16 +213,16 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     expect(live[0].to_knowledge_id).toBe('A');
   });
 
-  it('lock-then-revalidate: a merge that archives an endpoint under the lock makes the accept reject; zero live edge lands (codex P2 TOCTOU)', async () => {
+  it('lock-then-revalidate: a merge that archives an endpoint under the locks makes the accept reject; zero live edge lands (codex P2 TOCTOU)', async () => {
     const db = testDb();
     await seedKnowledge(['A', 'B']);
     const proposeAB = await seedProposeEdgeEvent({ from: 'A', to: 'B' });
 
-    // Full merge accept order: knowledge rows FOR UPDATE (id-sorted) -> knowledge_edge advisory ->
-    // archive an endpoint. The accept's PRE-lock check runs against the still-committed (live) A —
-    // A's archive is uncommitted while the holder holds — so it passes; the accept then blocks on
-    // the row lock. Without lock-then-revalidate the accept would resume and land a live A->B edge
-    // pointing at the just-archived A (FK holds on the tombstone).
+    // Full merge accept order: knowledge rows FOR UPDATE (id-sorted) -> advisory -> archive an
+    // endpoint. The accept's PRE-lock check runs against the still-committed (live) A (the archive is
+    // uncommitted while the holder holds), so it passes; the accept then NOWAIT-retries behind the
+    // held rows. Without lock-then-revalidate it would, after the holder commits, land a live A->B
+    // edge pointing at the just-archived A (FK holds on the tombstone).
     const lockAcquired = deferred();
     const release = deferred();
     const mergeHold = db.transaction(async (tx) => {
@@ -240,55 +240,67 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
 
     await lockAcquired.promise;
     const acceptAB = decideKnowledgeEdgeProposal(db, proposeAB, { decision: 'accept' });
-
-    await waitForBlockedDatabaseSession();
     release.resolve();
-    await mergeHold;
 
-    // Accept re-reads endpoints UNDER the lock, sees A now archived, and rejects (the endpoint
-    // revalidation, not the topology gate).
+    // Accept retries until the merge commits, then re-reads endpoints under its own locks, sees A
+    // archived, and rejects (the endpoint revalidation, not the topology gate).
     await expect(acceptAB).rejects.toThrow(/archived|unknown|not.?found/i);
+    await mergeHold;
 
     // No edge landed at all — the accept tx rolled back its rate/generate events and any insert.
     const all = await db.select().from(knowledge_edge);
     expect(all).toHaveLength(0);
   });
 
-  it('does not 40P01-deadlock against a merge-ordered holder (knowledge row FOR UPDATE -> advisory) (codex P1)', async () => {
+  it('three-endpoint scenario: NOWAIT keeps the accept deadlock-free when a merge rewrites into->Z (codex P1 round-3)', async () => {
     const db = testDb();
-    await seedKnowledge(['A', 'B']);
-    const proposeAB = await seedProposeEdgeEvent({ from: 'A', to: 'B' });
+    // ids chosen so the accept's remote endpoint (m_0) sorts BEFORE the merge target (m_b): the
+    // accept locks m_0 first, then contends on m_b (held by the merge). m_a is the merge's
+    // from-node; m_b is the into-node. The merge's row batch {m_a, m_b} does NOT include m_0.
+    await seedKnowledge(['m_0', 'm_a', 'm_b']);
+    const proposeBZ = await seedProposeEdgeEvent({ from: 'm_b', to: 'm_0' });
 
-    // Reproduce the exact pre-fix deadlock interleaving. The merge-sim grabs the knowledge ROW A
-    // FOR UPDATE first (as lockMutationRows does), signals, waits until the accept is blocked, THEN
-    // grabs the knowledge_edge advisory. Pre-fix the accept took the advisory FIRST then wanted the
-    // row -> accept holds advisory + wants row A, merge holds row A + wants advisory = cycle -> a
-    // Postgres 40P01. Post-fix the accept takes the ROW first (same global order as the merge), so
-    // it simply queues behind row A and no cycle forms.
-    const mergeHasRow = deferred();
-    const releaseAdvisory = deferred();
+    // merge-sim: hold {m_a, m_b} FOR UPDATE (lockMutationRows order), then — on release — INSERT the
+    // rewritten edge m_b -> m_0 (rewireKnowledgeEdges' createKnowledgeEdge(into -> Z), FK-locking
+    // the external m_0), then commit. Pre-fix (blocking FOR UPDATE) the accept would hold m_0 and
+    // wait on m_b while the merge holds m_b and waits on m_0 = 40P01. NOWAIT breaks the cycle: the
+    // accept fails fast on m_b, releases m_0, and retries, so the merge's insert proceeds.
+    const lockAcquired = deferred();
+    const release = deferred();
     const mergeSim = db.transaction(async (tx) => {
       await tx
         .select({ id: knowledge.id })
         .from(knowledge)
-        .where(inArray(knowledge.id, ['A']))
+        .where(inArray(knowledge.id, ['m_a', 'm_b']))
         .orderBy(knowledge.id)
         .for('update');
-      mergeHasRow.resolve();
-      await releaseAdvisory.promise;
-      await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', ['A']);
+      lockAcquired.resolve();
+      await release.promise;
+      await createKnowledgeEdge(tx, {
+        from_knowledge_id: 'm_b',
+        to_knowledge_id: 'm_0',
+        relation_type: 'prerequisite',
+        weight: 1,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        created_at: new Date(),
+      });
     });
 
-    await mergeHasRow.promise;
-    const acceptAB = decideKnowledgeEdgeProposal(db, proposeAB, { decision: 'accept' });
+    await lockAcquired.promise;
+    const acceptBZ = decideKnowledgeEdgeProposal(db, proposeBZ, { decision: 'accept' });
+    // Attach the settled handler NOW: the accept may exhaust its NOWAIT retries and reject during the
+    // sleep below, and without a handler already attached that would surface as an unhandled
+    // rejection. allSettled registers handlers on both promises synchronously here.
+    const settledP = Promise.allSettled([mergeSim, acceptBZ]);
 
-    // Accept is now blocked on knowledge row A FOR UPDATE (post-fix). Release the merge-sim to grab
-    // the advisory: post-fix it grabs it freely (accept holds no advisory) and commits; pre-fix it
-    // would block on the accept's advisory and trip the deadlock detector.
-    await waitForBlockedDatabaseSession();
-    releaseAdvisory.resolve();
+    // Give the accept time to attempt (pre-fix: lock m_0 + block on m_b; post-fix: NOWAIT-fail +
+    // retry, having released m_0) BEFORE the merge inserts m_b -> m_0. Time-assisted because a
+    // NOWAIT accept never blocks, so there is no lock-wait to synchronize on.
+    await sleep(250);
+    release.resolve();
 
-    const settled = await Promise.allSettled([mergeSim, acceptAB]);
+    const settled = await settledP;
     for (const r of settled) {
       if (r.status === 'rejected') {
         const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
@@ -296,11 +308,11 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
       }
     }
 
-    // The accept committed a live A->B edge (semantics intact: the merge-sim never archived A).
-    expect(settled[1].status).toBe('fulfilled');
+    // Exactly one live m_b -> m_0 edge — whichever writer won, the relationship exists once and no
+    // cycle / dangling edge remains.
     const live = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
     expect(live).toHaveLength(1);
-    expect(live[0].from_knowledge_id).toBe('A');
-    expect(live[0].to_knowledge_id).toBe('B');
+    expect(live[0].from_knowledge_id).toBe('m_b');
+    expect(live[0].to_knowledge_id).toBe('m_0');
   }, 20000);
 });
