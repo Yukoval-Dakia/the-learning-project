@@ -25,7 +25,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { ProbeAnswerCard } from './ProbeAnswers';
-import { type ProposalEvidenceRefWire, decideProposal, evidenceReadable } from './inbox-api';
+import { decideProposal, evidenceReadable } from './inbox-api';
 import type { PrepDeskProbeWire } from './probe-answer-api';
 import { type TeachingBrief, getTeachingBrief } from './teaching-brief-api';
 
@@ -167,10 +167,7 @@ export function TeachingBriefBand() {
                 {brief.basis.evidence_trace.map((ref, i) => {
                   // Reuse the inbox readable label; IGNORE route (prose-only, never <a>).
                   // key is the index — no raw id ever reaches the DOM (contract §8.2).
-                  const readable = evidenceReadable({
-                    kind: ref.kind,
-                    id: ref.id,
-                  } as ProposalEvidenceRefWire);
+                  const readable = evidenceReadable({ kind: ref.kind, id: ref.id });
                   return (
                     // biome-ignore lint/suspicious/noArrayIndexKey: index key is deliberate — raw ids must never touch the DOM.
                     <span key={i} className="pd-ev-chip">
@@ -307,7 +304,12 @@ function PreparedBlock({
     );
   }
 
-  // outcome_* — prepared_action.kind === 'none': no CTA, no ack (contract §4.2). The
-  // finding was checked and the probe answered; the conclusion lives in 当前结果 below.
-  return <p className="tb-prepared-done">这道判别题已作答，暂无需要你做的下一步。</p>;
+  if (brief.prepared_action.kind === 'none') {
+    // outcome_* — prepared_action.kind === 'none': no CTA, no ack (contract §4.2). The
+    // finding was checked and the probe answered; the conclusion lives in 当前结果 below.
+    return <p className="tb-prepared-done">这道判别题已作答，暂无需要你做的下一步。</p>;
+  }
+  // Exhaustive: every prepared_action.kind is handled above; a new kind fails to compile
+  // here until it gets its own branch.
+  return brief.prepared_action satisfies never;
 }

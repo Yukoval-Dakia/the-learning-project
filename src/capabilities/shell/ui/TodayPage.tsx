@@ -299,16 +299,23 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
   return chips;
 }
 
+// Single source for the ['overnight-digest'] query config — DegradedKindsFlags and
+// OvernightDigestBand both read it; react-query dedupes the shared key (zero extra
+// network) and this hook keeps their queryFn/key from drifting apart.
+function useOvernightDigest() {
+  return useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+}
+
 // YUK-707 · [裁决 1] — degraded_kinds silent-failure red flags, HOISTED out of the
 // overnight band to workbench position 1 (above the teaching brief), so they stay
 // directly visible and are never hidden behind the narrative card. Same ['overnight-
-// digest'] query key as OvernightDigestBand → react-query dedupes it (zero extra
-// network). Silent degrade: it renders null — no skeleton, no error surface — until real
-// degraded facts exist; the red strip is a cross-cutting flag, not a primary surface.
-// Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged) and the exact
-// original degraded-row JSX (LoomBadge tone="again" + alert icon), just relocated.
+// digest'] query (via useOvernightDigest) as OvernightDigestBand → react-query dedupes it
+// (zero extra network). Silent degrade: it renders null — no skeleton, no error surface —
+// until real degraded facts exist; the red strip is a cross-cutting flag, not a primary
+// surface. Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged) and the
+// exact original degraded-row JSX (LoomBadge tone="again" + alert icon), just relocated.
 function DegradedKindsFlags() {
-  const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  const q = useOvernightDigest();
   const d = q.data;
   if (!d || d.degraded_kinds.length === 0) return null;
   return (
@@ -326,20 +333,23 @@ function DegradedKindsFlags() {
   );
 }
 
-function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
+// Exported for the probe-queue independence regression test (YUK-707 round-2 [major]):
+// the 待你试做 queue must stay reachable while the overnight-digest query is loading/errored.
+export function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   // YUK-567 — the 备课猜想 chip toggles an inline 备课台 conjecture panel (pull, not
   // push): the team's prepared conjectures surface only when the owner opens them.
   const [conjOpen, setConjOpen] = useState(false);
-  // YUK-567 slice-2 — 待你试做 probe queue: its own query (shared ['prep-desk-probes']
-  // key with ProbeAnswers → react-query dedupes), independent of overnight activity so a
-  // served probe is always reachable.
+  // YUK-567 slice-2 — 待你试做 probe queue: its own ['prep-desk-probes'] query (shared with
+  // ProbeAnswers → react-query dedupes), independent of overnight activity so a served
+  // probe is always reachable.
   const [probeOpen, setProbeOpen] = useState(false);
-  // YUK-707 · [裁决 5] — the whole night-activity surface (activity chips + 待你试做
-  // queue) is DEMOTED into one default-collapsed disclosure now that the teaching brief is
-  // the primary "为你而备" delivery. demote-not-delete: both surfaces stay reachable (the
-  // 备课猜想 / 待你试做 二级 toggles are preserved), only the hierarchy drops a level.
+  // YUK-707 · [裁决 5] — the overnight ACTIVITY surface (activity chips + 备课猜想 / 去裁决)
+  // is DEMOTED into one default-collapsed disclosure now that the teaching brief is the
+  // primary "为你而备" delivery. demote-not-delete: the 备课猜想 二级 toggle is preserved,
+  // only the hierarchy drops a level. The 待你试做 probe queue is NOT folded in here — it
+  // rides its own independent query and stays a first-class sibling below (see the return).
   const [activityOpen, setActivityOpen] = useState(false);
-  const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  const q = useOvernightDigest();
   const probesQ = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
   const activeProbes = probesQ.data?.probes ?? [];
   const status = statefulStatus(q.isLoading, q.isError);
@@ -358,7 +368,6 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
   const hasActivity = !!d?.has_overnight_activity;
   const hasProbes = activeProbes.length > 0;
-  const hasAnything = hasActivity || hasProbes;
   return (
     <>
       <SectionLabel>夜链 · 交班</SectionLabel>
@@ -375,14 +384,16 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           errorText="夜链交班暂不可用。"
           skeleton={<SkLines rows={2} />}
         >
-          {/* degraded_kinds red flags moved to <DegradedKindsFlags/> (position 1, [裁决 1]);
-              this band keeps ALL observable facts, just demoted a level. */}
-          {d && !hasAnything && (
+          {/* degraded_kinds red flags moved to <DegradedKindsFlags/> (position 1, [裁决 1]).
+              A quiet night (no overnight activity) shows the calm empty line. A served probe
+              is NOT overnight activity, so it never suppresses this line — it renders in its
+              own sibling below, independent of this digest query's state. */}
+          {d && !hasActivity && (
             <div className="quiet-empty">
               昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。
             </div>
           )}
-          {d && hasAnything && (
+          {d && hasActivity && (
             <>
               <button
                 type="button"
@@ -395,70 +406,44 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
               </button>
               {activityOpen && (
                 <div className="prep-desk-expand">
-                  {hasActivity && (
-                    <>
-                      <div className="digest-chips">
-                        {chips.map((c) =>
-                          c.key === 'conjectures' ? (
-                            // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
-                            <button
-                              key={c.key}
-                              type="button"
-                              className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
-                              onClick={() => setConjOpen((o) => !o)}
-                              aria-expanded={conjOpen}
-                            >
-                              <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                              <b className="mono">{c.count}</b>
-                              <LoomIcon name="chevronDown" size={13} className="pd-chev" />
-                            </button>
-                          ) : (
-                            <span key={c.key} className="chip">
-                              <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                              <b className="mono">{c.count}</b>
-                            </span>
-                          ),
-                        )}
-                      </div>
-                      {conjOpen && (
-                        <div className="prep-desk-expand">
-                          <PrepDeskConjectures />
-                        </div>
-                      )}
-                      {canDecide && (
-                        <div className="digest-foot">
-                          <Btn
-                            size="sm"
-                            variant="secondary"
-                            iconEnd="arrow"
-                            onClick={() => navigate('/inbox')}
-                          >
-                            去裁决
-                          </Btn>
-                        </div>
-                      )}
-                    </>
+                  <div className="digest-chips">
+                    {chips.map((c) =>
+                      c.key === 'conjectures' ? (
+                        // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
+                        <button
+                          key={c.key}
+                          type="button"
+                          className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
+                          onClick={() => setConjOpen((o) => !o)}
+                          aria-expanded={conjOpen}
+                        >
+                          <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                          <b className="mono">{c.count}</b>
+                          <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                        </button>
+                      ) : (
+                        <span key={c.key} className="chip">
+                          <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                          <b className="mono">{c.count}</b>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  {conjOpen && (
+                    <div className="prep-desk-expand">
+                      <PrepDeskConjectures />
+                    </div>
                   )}
-                  {hasProbes && (
-                    <div className="probe-queue">
-                      {/* 待你试做 —— served probes to answer. Driven by the probes query
-                          (not the overnight digest), so it's reachable even after the 备课
-                          猜想 panel auto-collapses. Answering the last one auto-collapses. */}
-                      <button
-                        type="button"
-                        className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
-                        onClick={() => setProbeOpen((o) => !o)}
-                        aria-expanded={probeOpen}
+                  {canDecide && (
+                    <div className="digest-foot">
+                      <Btn
+                        size="sm"
+                        variant="secondary"
+                        iconEnd="arrow"
+                        onClick={() => navigate('/inbox')}
                       >
-                        <LoomIcon name="quiz" size={14} /> 待你试做{' '}
-                        <b className="mono">{activeProbes.length}</b>
-                        <LoomIcon name="chevronDown" size={13} className="pd-chev" />
-                      </button>
-                      {probeOpen && (
-                        <div className="prep-desk-expand">
-                          <ProbeAnswers />
-                        </div>
-                      )}
+                        去裁决
+                      </Btn>
                     </div>
                   )}
                 </div>
@@ -467,6 +452,30 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           )}
         </Stateful>
       </LoomCard>
+      {hasProbes && (
+        <div className="probe-queue">
+          {/* 待你试做 —— served probes to answer. Driven by its own ['prep-desk-probes']
+              query and rendered as an independent sibling (NOT inside the digest Stateful or
+              the activity disclosure), so it stays one-click reachable whenever a probe is
+              served — even while the overnight digest is loading or errored (YUK-707 round-2
+              [major]). Answering the last one auto-collapses this. */}
+          <button
+            type="button"
+            className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
+            onClick={() => setProbeOpen((o) => !o)}
+            aria-expanded={probeOpen}
+          >
+            <LoomIcon name="quiz" size={14} /> 待你试做{' '}
+            <b className="mono">{activeProbes.length}</b>
+            <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+          </button>
+          {probeOpen && (
+            <div className="prep-desk-expand">
+              <ProbeAnswers />
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
