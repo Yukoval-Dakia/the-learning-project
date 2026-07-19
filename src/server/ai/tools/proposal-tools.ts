@@ -32,7 +32,6 @@ import {
   type ProposalEvidenceRefT,
   QuestionEditOp,
   type QuestionEditOpT,
-  kindStrength,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -50,22 +49,11 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 // + question_draft proposal in one tx).
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
-import { getFailureAttemptById, getJudgeForAttempt, writeEvent } from '@/server/events/queries';
-// YUK-521 (A4 强度轴) — completion 的 A 档 auto-apply 复用既有公共物化入口
-// (acceptAiProposal，含 per-proposal 幂等 + FOR UPDATE 行锁) 与裁决速率熔断器。
-import { acceptAiProposal } from '@/server/proposals/actions';
+import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
-import {
-  COMPLETION_AUTOAPPLY_ACTION,
-  COMPLETION_AUTOAPPLY_SKIPPED_ACTION,
-} from '@/server/proposals/completion-autoapply-actions';
-import {
-  type VerdictBreakerResult,
-  checkAutoApplyBreaker,
-} from '@/server/proposals/decide-breaker';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import {
   writeArchiveProposal,
@@ -1132,89 +1120,13 @@ const LearningItemProposalOutputSchema = z.object({
   proposal_id: z.string().optional(),
   learning_item_id: z.string().optional(),
   reason: z.string().optional(),
-  // YUK-521 (A4 强度轴) — completion 是唯一 A 档 kind。proposal 写入后若熔断未 tripped
-  // 即自动物化：true=已落地（人只在撤销窗口内回滚）、false=退回 B 档留 pending（熔断
-  // tripped 或 apply 失败）。status 仍为 'proposed'（proposal 确实写了），auto_applied
-  // 是 A 档判别式（additive，不新增 status 值）。
+  // Compatibility field retained for older callers. Completion proposals are B-tier and
+  // always require an explicit user accept, so new tool executions return false.
   auto_applied: z.boolean().optional(),
 });
 
 type ProposeLearningItemCompletionInput = z.infer<typeof ProposeLearningItemCompletionInputSchema>;
 type LearningItemProposalOutput = z.infer<typeof LearningItemProposalOutputSchema>;
-
-// YUK-521 (A4 强度轴) — A 档 auto-apply 的可观测逃逸阀。两个 experimental 事件都经
-// 既有 ExperimentalEvent 通用通道（action 以 experimental: 开头、payload 松守 record，
-// 无需登记 reserved schema）：
-//   - experimental:completion_autoapply          成功落地（A 档读模型锚 + 撤销追溯）
-//   - experimental:completion_autoapply_skipped   退回 B（熔断 tripped 或 apply 失败）
-// caused_by_event_id=proposalId + payload.proposal_id 双锚，给 A 档读模型 join `correct`
-// (retract) 事件判 reverted 用。
-//
-// 吞错语义（非对称，刻意；F1 OCR note-refine 同款）：两个 event 都不让工具失败——apply 已
-// 发生（成功路径）或已决定退回（skipped 路径），故 try/catch 吞。但二者承重不同：
-//   - skipped event = 纯 telemetry，丢了无害（proposal 仍 pending，在 B 档照常 surface）。
-//   - 成功锚 (COMPLETION_AUTOAPPLY_ACTION) = A 档读模型的**唯一**数据源，非 telemetry。若它
-//     写失败（罕见，event 写极少失败）：item 已是 done（apply 是真相源、已落地），但不会作为
-//     A 档撤销卡 surface；撤销仍可经 proposal id 调既有 retract 路由、item 在正常 item 视图
-//     仍显示 done。即 affordance 退化（少一张 inbox 卡），非正确性丢失 —— 故仍不反噬工具，
-//     但下方 catch 用 error 级日志让这次承重锚失败更醒目。未来硬化：把成功锚写进 apply 同一
-//     tx（原子 either-both）。
-// action 常量已抽到 @/server/proposals/completion-autoapply-actions（读侧 auto-applied-read.ts
-// 复用同一真相，防写/读两侧字符串漂移致 A 档读模型静默返空）。
-
-type CompletionAutoApplySkipReason = 'breaker_tripped' | 'apply_error';
-
-async function writeCompletionAutoApplyEvent(
-  db: Db,
-  opts: {
-    action: string;
-    proposalId: string;
-    learningItemId: string;
-    breaker: VerdictBreakerResult;
-    actorRef: string;
-    taskRunId: string | null | undefined;
-    reason?: CompletionAutoApplySkipReason;
-  },
-): Promise<void> {
-  const now = new Date();
-  try {
-    await writeEvent(db, {
-      id: newId(),
-      actor_kind: 'agent',
-      actor_ref: opts.actorRef,
-      action: opts.action,
-      subject_kind: 'learning_item',
-      subject_id: opts.learningItemId,
-      outcome: 'success',
-      payload: {
-        proposal_id: opts.proposalId,
-        learning_item_id: opts.learningItemId,
-        level: opts.breaker.level,
-        applied: opts.breaker.applied,
-        cap: opts.breaker.cap,
-        window: opts.breaker.window,
-        ...(opts.reason ? { reason: opts.reason } : {}),
-      },
-      caused_by_event_id: opts.proposalId,
-      task_run_id: opts.taskRunId ?? null,
-      created_at: now,
-      // status-flip trail, not a memory-worthy activity → opt out of mem ingestion
-      // (mirrors the completion accept event seam).
-      ingest_at: now,
-    });
-  } catch (err) {
-    // 成功锚是 A 档读模型唯一源（见上注释）→ error 级更醒目；skipped 是纯 telemetry → warn。
-    const loadBearing = opts.action === COMPLETION_AUTOAPPLY_ACTION;
-    const log = loadBearing ? console.error : console.warn;
-    const detail = loadBearing
-      ? ' (A 档撤销卡不会 surface；撤销仍可经 proposal id 调 retract)'
-      : '';
-    log(
-      `[completion-autoapply] failed to write ${opts.action} for proposal ${opts.proposalId}${detail}:`,
-      err,
-    );
-  }
-}
 
 async function proposeLearningItemCompletionExecute(
   ctx: ToolContext,
@@ -1255,84 +1167,13 @@ async function proposeLearningItemCompletionExecute(
     caused_by_event_id: ctx.causedByEventId ?? null,
   });
 
-  // YUK-521 (A4 强度轴) — completion 是唯一 A 档 kind：proposal 写入后若裁决速率熔断
-  // 未 tripped，立即经既有公共物化入口 acceptAiProposal 自动落地（per-proposal 幂等 +
-  // acceptCompletionProposal 内的 FOR UPDATE 行锁守二次完成），人只在撤销窗口内回滚
-  // （复用既有 retractAiProposal——无新撤销逻辑）。非 A 档 → 不动（退回 B 默认）。
-  if (kindStrength('completion') !== 'A') {
-    return {
-      status: 'proposed',
-      proposal_id: proposalId,
-      learning_item_id: input.learning_item_id,
-    };
-  }
-
-  // 已知 TOCTOU（CodeRabbit #5，记录非阻塞）：先读窗口计数、后写本次 rate，故并发的多条
-  // completion 可同时看到同一未超限计数、一起放行 → 一个并发 burst 可 marginal 越过 MAX 硬顶。
-  // 接受此弱化：① 单用户工具真实并发极低（worker 串行处理 AI 任务，单 run 内 tool 调用串行）；
-  // ② MAX 是 ~3-5× 正常速率的**软**安全顶（防失控，非硬不变量），越顶后下一条即看到抬高的计数
-  // 而 trip，burst 是有界的。race-safe 计数器（FOR UPDATE / advisory lock）= follow-up，非本 PR。
-  const breaker = await checkAutoApplyBreaker(ctx.db, new Date());
-  // tripped → 退回 B 档留 pending 让人审（NOT block；用户仍能在 inbox accept）。
-  if (breaker.tripped) {
-    await writeCompletionAutoApplyEvent(ctx.db, {
-      action: COMPLETION_AUTOAPPLY_SKIPPED_ACTION,
-      proposalId,
-      learningItemId: input.learning_item_id,
-      breaker,
-      actorRef,
-      taskRunId: ctx.taskRunId,
-      reason: 'breaker_tripped',
-    });
-    return {
-      status: 'proposed',
-      proposal_id: proposalId,
-      learning_item_id: input.learning_item_id,
-      auto_applied: false,
-    };
-  }
-
-  // 失败不吞：acceptAiProposal 抛错（item 状态竞态 / 物化失败）→ console.warn 留原始
-  // 栈 + 写 skipped 事件 + 返回 auto_applied:false；proposal 留 pending 给人审
-  // （acceptCompletionProposal 抛前未写 rate event，status 仍 pending）。
-  try {
-    await acceptAiProposal(ctx.db, proposalId);
-  } catch (err) {
-    console.warn(
-      `[completion-autoapply] apply failed for proposal ${proposalId}; leaving pending:`,
-      err,
-    );
-    await writeCompletionAutoApplyEvent(ctx.db, {
-      action: COMPLETION_AUTOAPPLY_SKIPPED_ACTION,
-      proposalId,
-      learningItemId: input.learning_item_id,
-      breaker,
-      actorRef,
-      taskRunId: ctx.taskRunId,
-      reason: 'apply_error',
-    });
-    return {
-      status: 'proposed',
-      proposal_id: proposalId,
-      learning_item_id: input.learning_item_id,
-      auto_applied: false,
-    };
-  }
-
-  // 成功落地 → 写 A 档读模型锚 + 撤销追溯。
-  await writeCompletionAutoApplyEvent(ctx.db, {
-    action: COMPLETION_AUTOAPPLY_ACTION,
-    proposalId,
-    learningItemId: input.learning_item_id,
-    breaker,
-    actorRef,
-    taskRunId: ctx.taskRunId,
-  });
+  // YUK-525 — this tool is proposal-only. The canonical proposal decision route is the
+  // sole owner of the completion status mutation and user acceptance audit event.
   return {
     status: 'proposed',
     proposal_id: proposalId,
     learning_item_id: input.learning_item_id,
-    auto_applied: true,
+    auto_applied: false,
   };
 }
 

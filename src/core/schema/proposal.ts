@@ -177,9 +177,8 @@ export const acceptSupportedProposalKinds = [
 // ───────────────────────────────────────────────────────────────────────────
 // A4 出手强度轴 (YUK-521 / ADR-0039 A 档 strength tier) — 与 accept-applier 轴
 // (acceptSupportedProposalKinds, YUK-44) 正交的第三轴。三档语义：
-//   A — auto-apply（AI 自动物化 + 撤销窗口）。最小可逆动作；落地即生效，人只在撤销
-//       窗口内回滚（复用既有 retractAiProposal，绝不新写撤销逻辑）。当前唯一 A
-//       候选是 completion（学习项完成判定）。
+//   A — reserved auto-apply tier. No proposal kind currently uses it: destructive
+//       lifecycle changes require an explicit user decision.
 //   B — propose（pending 入收件箱，人审 accept）。默认档，绝大多数 kind 在此。
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
 //       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
@@ -190,13 +189,13 @@ export const acceptSupportedProposalKinds = [
 export type AiProposalStrength = 'A' | 'B' | 'C';
 
 export const aiProposalKindStrength = {
-  // A — auto-apply（唯一）。
-  completion: 'A',
+  // Completion changes learning-item lifecycle state, so it stays human-reviewed.
+  completion: 'B',
   // C — observe-only（恒 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds）。
   defer: 'C',
   archive: 'C',
   judge_retraction: 'C',
-  // B — propose（默认档，其余 15 个）。
+  // B — propose（默认档）。
   knowledge_node: 'B',
   knowledge_edge: 'B',
   knowledge_mutation: 'B',

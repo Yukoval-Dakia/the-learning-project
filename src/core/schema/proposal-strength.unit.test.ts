@@ -13,7 +13,7 @@ import {
 //   ① 强度表 keys 穷举 aiProposalKinds 全集（无遗漏 / 无幽灵 kind）；
 //   ② C 档集合 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds（防双 SoT 漂移：
 //      谁动了 acceptSupportedProposalKinds 而忘了同步强度表，这里 fail）；
-//   ③ A=={completion}，两个 LEGACY tombstone (record_links/record_promotion) 在 B。
+//   ③ A 为空（所有可物化动作都需人审），两个 LEGACY tombstone 在 B。
 
 describe('aiProposalKindStrength', () => {
   it('exhaustively covers every aiProposalKinds member (no missing / phantom keys)', () => {
@@ -29,9 +29,9 @@ describe('aiProposalKindStrength', () => {
     }
   });
 
-  it('A tier === exactly {completion}', () => {
-    const aTier = aiProposalKinds.filter((k) => aiProposalKindStrength[k] === 'A');
-    expect(aTier).toEqual(['completion']);
+  it('A tier is empty: no proposal auto-applies without a user decision', () => {
+    const strengths = new Set<string>(Object.values(aiProposalKindStrength));
+    expect(strengths.has('A')).toBe(false);
   });
 
   // The double-SoT drift guard: the observe-only (C) set must equal the set of
@@ -52,7 +52,7 @@ describe('aiProposalKindStrength', () => {
   });
 
   it('kindStrength() reads the table', () => {
-    expect(kindStrength('completion')).toBe('A');
+    expect(kindStrength('completion')).toBe('B');
     expect(kindStrength('defer')).toBe('C');
     expect(kindStrength('note_update')).toBe('B');
   });
