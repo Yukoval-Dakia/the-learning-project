@@ -1,16 +1,18 @@
-// YUK-719 (PR #917 round-1 codex P2) — pending-count truncation fidelity.
+// YUK-719 (PR #917 codex) — pending-count truncation fidelity.
 //
 // loadCopilotSummary derives pending_proposals_total from
 // countPendingProposalInboxByKind, whose byKind is only a LOWER BOUND once the
-// scan cap (batchSize × maxBatches) is exceeded (hasMore). The wire contract is a
-// bare number with no room for an "approximate" flag, so the summary must fall
-// back to the exact projection count in that case rather than silently
-// undercounting a large backlog.
+// scan cap (batchSize × maxBatches) is exceeded (hasMore). Rather than fall back
+// to the full unbounded projection — whose rate/correction/signal joins land on
+// the /today hot path exactly when the backlog is largest — the summary reports
+// the capped sum as an explicit lower bound and console.warn's once. The cap is
+// physically unreachable in this product (nightly writers cap proposal creation
+// at single digits), so this branch only ever manifests in tests that shrink it.
 
 import { event } from '@/db/schema';
 import { countPendingProposalInboxByKind } from '@/server/proposals/inbox';
 import { loadCopilotSummary } from '@/server/today/copilot-summary';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 function pendingDeferRow(
@@ -48,7 +50,7 @@ describe('loadCopilotSummary pending_proposals_total', () => {
     await resetDb();
   });
 
-  it('sums the by-kind counts when the counter stays under its scan cap', async () => {
+  it('sums the by-kind counts (exact, no warn) when the counter stays under its scan cap', async () => {
     const db = testDb();
     await db
       .insert(event)
@@ -58,11 +60,17 @@ describe('loadCopilotSummary pending_proposals_total', () => {
         pendingDeferRow('p3', 'dreaming', '2026-07-17T00:03:00.000Z'),
       ]);
 
-    const summary = await loadCopilotSummary(db);
-    expect(summary.pending_proposals_total).toBe(3);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const summary = await loadCopilotSummary(db);
+      expect(summary.pending_proposals_total).toBe(3);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
-  it('falls back to the exact projection count when the counter reports hasMore (cap exceeded)', async () => {
+  it('reports the capped lower bound and warns once when the counter reports hasMore (cap exceeded)', async () => {
     const db = testDb();
     await db
       .insert(event)
@@ -72,19 +80,30 @@ describe('loadCopilotSummary pending_proposals_total', () => {
         pendingDeferRow('p3', 'dreaming', '2026-07-17T00:03:00.000Z'),
       ]);
 
-    // Under this shrunk cap the raw counter under-reports: byKind is a lower
-    // bound with hasMore=true. This is the exact truncation the summary must not
-    // expose as an exact total.
+    // Under this shrunk cap the counter under-reports: byKind is a lower bound
+    // with hasMore=true. The summary must surface this bound as-is (never the full
+    // unbounded projection), so it stays cheap precisely at the worst moment.
     const rawCount = await countPendingProposalInboxByKind(db, { batchSize: 1, maxBatches: 1 });
     const rawTotal = Object.values(rawCount.byKind).reduce((sum, n) => sum + (n ?? 0), 0);
     expect(rawCount.hasMore).toBe(true);
     expect(rawTotal).toBeLessThan(3);
 
-    // The summary must still report the exact backlog total (3) via the
-    // projection fallback, not the truncated lower bound.
-    const summary = await loadCopilotSummary(db, {
-      pendingCountOptions: { batchSize: 1, maxBatches: 1 },
-    });
-    expect(summary.pending_proposals_total).toBe(3);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const summary = await loadCopilotSummary(db, {
+        pendingCountOptions: { batchSize: 1, maxBatches: 1 },
+      });
+      // The lower bound, not the exact backlog size (3).
+      expect(summary.pending_proposals_total).toBe(rawTotal);
+      expect(summary.pending_proposals_total).toBeLessThan(3);
+      // Warned once, with the byKind + cap context for observability.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('lower bound'),
+        expect.objectContaining({ lowerBound: rawTotal, byKind: rawCount.byKind }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

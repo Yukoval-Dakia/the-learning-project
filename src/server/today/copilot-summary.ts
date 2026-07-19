@@ -18,7 +18,7 @@
 //   • executeGetReviewDue({ limit })                 → review_due_count
 //   • executeMemoryBrief({ scopeKey: 'global' })     → brief_global_md
 //   • countPendingProposalInboxByKind()              → pending_proposals_total
-//       (exact projection fallback when the counter hits its scan cap)
+//       (capped lower bound + one console.warn if it ever hits its scan cap)
 //   • listProposalInboxPage(pending, dreaming, N)    → dreaming_preview rows
 //
 // Output is a typed `CopilotSummary` (parallel-build mock target — see
@@ -28,7 +28,12 @@ import type { Db, Tx } from '@/db/client';
 import { executeGetReviewDue, executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import type { ToolContext } from '@/server/ai/tools/types';
 import { getEvents } from '@/server/events/queries';
-import { countPendingProposalInboxByKind, listProposalInboxPage } from '@/server/proposals/inbox';
+import {
+  PENDING_PROPOSAL_COUNT_BATCH_SIZE,
+  PENDING_PROPOSAL_COUNT_MAX_BATCHES,
+  countPendingProposalInboxByKind,
+  listProposalInboxPage,
+} from '@/server/proposals/inbox';
 
 type DbLike = Db | Tx;
 
@@ -54,7 +59,11 @@ export interface CopilotSummary {
   brief_global_md: string | null;
   /** Pending Dreaming-authored proposals (latest 3). */
   dreaming_preview: CopilotSummaryDreamingPreview[];
-  /** Snapshot of pending proposal totals. */
+  /**
+   * Snapshot of the pending proposal total. Exact for this product's proposal
+   * set; only a lower bound if countPendingProposalInboxByKind hits its scan cap
+   * (physically unreachable here — see loadCopilotSummary, which warns once).
+   */
   pending_proposals_total: number;
   /** When Coach last ran (ISO) or null when it hasn't. */
   coach_last_run_at: string | null;
@@ -79,7 +88,7 @@ export interface CopilotSummaryOpts {
   /**
    * Batch/cap knobs forwarded to countPendingProposalInboxByKind. Defaults
    * (5,000 × 10 = 50k) bound the /today hot path; tests shrink them to force the
-   * cap-exceeded (hasMore) fallback without seeding 50k rows.
+   * cap-exceeded (hasMore) lower-bound + warn path without seeding 50k rows.
    */
   pendingCountOptions?: { batchSize?: number; maxBatches?: number };
 }
@@ -183,18 +192,31 @@ export async function loadCopilotSummary(
       row.proposed_at instanceof Date ? row.proposed_at.toISOString() : String(row.proposed_at),
   }));
 
-  // Sum the by-kind pending counts for the drawer's pending total. Matches the
-  // old `pendingPage.rows.length` on the bounded single-user proposal set.
-  // When the counter hit its scan cap (`hasMore`), byKind is only a LOWER BOUND;
-  // the wire contract is a bare number with no room for an "approximate" flag, so
-  // fall back to the exact (unbounded) projection count in that rare case rather
-  // than silently undercounting a large backlog. hasMore=false → no extra query.
-  let pendingProposalsTotal = Object.values(pendingCounts.byKind).reduce(
+  // Sum the by-kind pending counts for the drawer's pending total — equivalent to
+  // the prior `listProposalInboxPage({ status: 'pending' }).rows.length` for this
+  // product's proposal set. `countPendingProposalInboxByKind` only returns a LOWER
+  // BOUND if it hits its scan cap (`hasMore`), which is physically unreachable
+  // here: the nightly writers cap proposal creation at single digits, so a 50k
+  // pending backlog cannot accumulate. We deliberately do NOT fall back to the
+  // unbounded projection — that full rate/correction/signal join would land on the
+  // /today hot path exactly when the backlog is largest (its worst moment). On the
+  // impossible cap hit we report the capped sum as an explicit lower bound and warn
+  // once so the degradation is observable rather than silent.
+  const pendingProposalsTotal = Object.values(pendingCounts.byKind).reduce(
     (sum, kindCount) => sum + (kindCount ?? 0),
     0,
   );
   if (pendingCounts.hasMore) {
-    pendingProposalsTotal = (await listProposalInboxPage(db, { status: 'pending' })).rows.length;
+    const batchSize = opts.pendingCountOptions?.batchSize ?? PENDING_PROPOSAL_COUNT_BATCH_SIZE;
+    const maxBatches = opts.pendingCountOptions?.maxBatches ?? PENDING_PROPOSAL_COUNT_MAX_BATCHES;
+    console.warn(
+      'loadCopilotSummary: pending proposal count hit its scan cap; pending_proposals_total is a lower bound',
+      {
+        lowerBound: pendingProposalsTotal,
+        byKind: pendingCounts.byKind,
+        cap: batchSize * maxBatches,
+      },
+    );
   }
 
   // `total_returned` matches the rows array length — capped at
