@@ -55,6 +55,14 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
   return 'sparkle'; // awaiting_decision / awaiting_answer
 }
 
+// KC-scoped practice deep link (YUK-535): /practice?kc=<id> opens an on-demand scoped
+// session for one knowledge component. Kept as a local one-liner (the format also lives
+// in knowledge/ui/MisconceptionList) to avoid a cross-capability UI import; the knowledge
+// id travels only inside this click handler, never into the DOM (contract §8.2).
+function scopedPracticeHref(knowledgeId: string): string {
+  return `/practice?kc=${encodeURIComponent(knowledgeId)}`;
+}
+
 // The three read surfaces whose counts move when a brief advances or retires: the brief
 // itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
 // and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
@@ -70,7 +78,7 @@ async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
   ]);
 }
 
-export function TeachingBriefBand() {
+export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
   const brief = q.data?.brief ?? null;
@@ -147,12 +155,21 @@ export function TeachingBriefBand() {
   }
 
   async function acknowledge() {
-    if (!brief || brief.prepared_action.kind !== 'acknowledge_outcome' || acking) return;
+    if (!brief || acking) return;
+    // Both outcome states carry the ack target on current_outcome. Confirmed's
+    // prepared_action is now practice_scoped (YUK-709), so gate on the outcome status
+    // rather than the action kind; non-outcome briefs have nothing to acknowledge.
+    if (
+      brief.current_outcome.status !== 'confirmed' &&
+      brief.current_outcome.status !== 'retired'
+    ) {
+      return;
+    }
     const targetId = brief.brief_id;
     setAcking(true);
     setAckFailed(false);
     try {
-      await ackTeachingBriefOutcome(brief.prepared_action.probe_result_event_id);
+      await ackTeachingBriefOutcome(brief.current_outcome.probe_result_event_id);
       // The acked result loses eligibility server-side; re-project to the next candidate
       // or the quiet null (same surfaces as decide).
       await invalidateBriefSurfaces(qc);
@@ -241,6 +258,7 @@ export function TeachingBriefBand() {
               </h3>
               <PreparedBlock
                 brief={brief}
+                navigate={navigate}
                 revealed={revealed}
                 deciding={deciding}
                 failed={failed}
@@ -277,6 +295,7 @@ export function TeachingBriefBand() {
 
 function PreparedBlock({
   brief,
+  navigate,
   revealed,
   deciding,
   failed,
@@ -288,6 +307,7 @@ function PreparedBlock({
   onAcknowledge,
 }: {
   brief: TeachingBrief;
+  navigate: (to: string) => void;
   revealed: boolean;
   deciding: boolean;
   failed: boolean;
@@ -364,15 +384,53 @@ function PreparedBlock({
     );
   }
 
-  if (brief.prepared_action.kind === 'acknowledge_outcome') {
-    // outcome_* (YUK-708 / contract §4.2) — the probe was answered and reconciled; the
-    // conclusion lives in 当前结果 below. The only step left is "知道了", an append-only
-    // idempotent ack that retires this result from the brief (never a re-grade, never a
-    // guilt/streak beat). On failure keep the outcome + offer a retry (contract §7).
+  if (brief.prepared_action.kind === 'practice_scoped') {
+    // outcome_confirmed (YUK-709 / contract §9) — the probe supported the judgement. The
+    // single primary next step is KC-scoped practice on the confirmed point, reusing the
+    // existing on-demand scoped session (YUK-535) via /practice?kc=<id>. This is pure
+    // navigation: no practice state is written until the user acts, and the copy promises
+    // "练一组" (a set), never a specific count of pre-built questions — an empty/archived KC
+    // degrades honestly on the practice page itself (contract §9 / acceptance 4). The
+    // append-only "知道了" ack stays as the secondary dismiss (contract §4.2).
+    const { knowledge_id } = brief.prepared_action;
     return (
       <>
-        <p className="tb-prepared-done">这道判别题已作答。</p>
+        <p className="tb-prepared-done">这道判别题已作答，判断得到支持。</p>
         <div className="tb-actions">
+          <Btn
+            size="sm"
+            variant="primary"
+            icon="review"
+            onClick={() => navigate(scopedPracticeHref(knowledge_id))}
+          >
+            针对这个点练一组
+          </Btn>
+          <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
+            知道了
+          </Btn>
+          {ackFailed && (
+            <span className="tb-error" role="alert">
+              操作失败，请重试
+            </span>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  if (brief.prepared_action.kind === 'acknowledge_outcome') {
+    // outcome_retired (YUK-708/709 / contract §2.2 · §4.2 · §9) — the probe ruled the
+    // finding out; nothing more is prepared and NO extra practice is created. The main step
+    // is to continue the original plan (back to the planned daily practice, no KC scope),
+    // with the append-only "知道了" ack to dismiss. On failure keep the outcome + retry
+    // (contract §7).
+    return (
+      <>
+        <p className="tb-prepared-done">这道判别题已作答，这条判断已排除。</p>
+        <div className="tb-actions">
+          <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
+            回到今日练习
+          </Btn>
           <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
             知道了
           </Btn>
