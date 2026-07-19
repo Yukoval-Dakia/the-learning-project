@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 import { ApiPageSchema } from '@/kernel/http-contracts';
 
+/** Bound answer text copied into judge prompts and immutable paper events. */
+export const MAX_PAPER_ANSWER_CHARS = 12_000;
+
 export const PaperParamsSchema = z.object({ id: z.string().min(1) });
 
 export const CreateLegacyPaperReviewSessionBodySchema = z.object({
@@ -45,7 +48,7 @@ const PaperAnswerDraftBodyFields = {
   question_id: z.string().min(1),
   part_ref: z.string().min(1).nullable().optional(),
   input_kind: z.enum(['text', 'option', 'image', 'voice']).default('text'),
-  content_md: z.string().default(''),
+  content_md: z.string().max(MAX_PAPER_ANSWER_CHARS).default(''),
   image_refs: z.array(z.string()).default([]),
 };
 
@@ -81,7 +84,7 @@ export const PaperAnswerDraftSchema = z.object({
 const PaperSubmissionBodyFields = {
   question_id: z.string().min(1),
   part_ref: z.string().min(1).nullable().optional(),
-  answer_md: z.string(),
+  answer_md: z.string().max(MAX_PAPER_ANSWER_CHARS),
   image_refs: z.array(z.string()).default([]),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
 };
