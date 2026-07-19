@@ -52,6 +52,7 @@ import {
   writeAiTaskRunFinished,
   writeAiTaskRunStarted,
   writeCostLedger,
+  writeMissingMcpServersWarning,
   writeToolCallLog,
 } from './log';
 import { populateIsolatedSkills } from './populate-skills';
@@ -551,6 +552,26 @@ async function runTaskAttempt(args: {
     });
   } catch (err) {
     console.error('[runTask] writeAiTaskRunStarted failed', { task_run_id: taskRunId, kind, err });
+  }
+
+  if (def.needsToolCall && !ctx.mcpServers) {
+    console.warn('[runTask] missing_mcp_servers', {
+      event: 'missing_mcp_servers',
+      task_run_id: taskRunId,
+      kind,
+    });
+    try {
+      await writeMissingMcpServersWarning(ctx.db, {
+        task_run_id: taskRunId,
+        task_kind: kind,
+      });
+    } catch (err) {
+      console.error('[runTask] writeMissingMcpServersWarning failed', {
+        task_run_id: taskRunId,
+        kind,
+        err,
+      });
+    }
   }
 
   const abortController = new AbortController();

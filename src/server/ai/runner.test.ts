@@ -34,6 +34,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { MISSING_MCP_SERVERS_GUARD } from './log';
 import { runAgentTask, runTask, streamTask } from './runner';
 
 function successResult(text: string, cost_usd = 0.001) {
@@ -143,6 +144,39 @@ describe('runTask (Claude Agent SDK adapter)', () => {
 
     const opts = mockSdk.capturedOptions as { tools: string[] };
     expect(opts.tools).toEqual(['mcp__loom__write_proposal']);
+  });
+
+  it('warns and records a guard row when an agentic task has no mcpServers', async () => {
+    mockSdk.messages = [successResult('ok')];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runTask(
+      'KnowledgeReviewTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2() },
+    );
+
+    expect(warn).toHaveBeenCalledWith('[runTask] missing_mcp_servers', {
+      event: 'missing_mcp_servers',
+      task_run_id: result.task_run_id,
+      kind: 'KnowledgeReviewTask',
+    });
+    warn.mockRestore();
+
+    const { tool_call_log } = await import('@/db/schema');
+    const { and, eq } = await import('drizzle-orm');
+    const rows = await testDb()
+      .select()
+      .from(tool_call_log)
+      .where(
+        and(
+          eq(tool_call_log.task_run_id, result.task_run_id),
+          eq(tool_call_log.tool_name, MISSING_MCP_SERVERS_GUARD),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.output_json).toEqual({ event: 'missing_mcp_servers' });
+    expect(rows[0]?.iteration).toBe(0);
   });
 
   it('ctx.allowedTools overrides registry default', async () => {
