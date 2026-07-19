@@ -651,6 +651,13 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       preserved_draft_status: string | null;
     }> = [];
     const quizKnowledgeIds = new Set<string>();
+    const syncOwnedDuplicateKnowledge = (duplicate: { id: string; knowledgeIds: string[] }) => {
+      // A duplicate can be a pre-existing/global question (not part of this artifact) or a question
+      // freshly inserted earlier in this same batch. Only the latter belongs to tool_state, so keep
+      // the artifact tags aligned when a later generated item expands that owned row's attribution.
+      if (!questionIds.includes(duplicate.id)) return;
+      for (const knowledgeId of duplicate.knowledgeIds) quizKnowledgeIds.add(knowledgeId);
+    };
     const toolQuizArtifactId = createId();
     const now = new Date();
     // YUK-224 (slice 3, tier 3) — material_grounded persists the fetched REAL source
@@ -732,6 +739,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           now,
         });
         if (existingDuplicate?.disposition === 'merged') {
+          syncOwnedDuplicateKnowledge(existingDuplicate);
           exactDuplicates.push({
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
@@ -845,6 +853,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
             }
           } else {
+            syncOwnedDuplicateKnowledge(racedDuplicate);
             exactDuplicates.push({
               existing_question_id: racedDuplicate.id,
               new_question_id: id,

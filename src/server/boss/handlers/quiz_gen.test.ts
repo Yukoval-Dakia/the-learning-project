@@ -615,6 +615,57 @@ describe('runQuizGen', () => {
     });
   });
 
+  it('keeps artifact KC tags aligned when a later item duplicates an earlier row in the same batch', async () => {
+    await seedKnowledge({ id: 'k1' });
+    await seedKnowledge({ id: 'k2' });
+    const parsed = JSON.parse(VALID_OUTPUT) as {
+      questions: Array<{
+        kind: string;
+        prompt_md: string;
+        reference_md: string;
+        choices_md: string[] | null;
+        rubric_json: unknown;
+        knowledge_ids: string[];
+      }>;
+    };
+    const first = parsed.questions[0];
+    parsed.questions = [
+      { ...first, knowledge_ids: ['k1'] },
+      { ...first, knowledge_ids: ['k2'] },
+    ];
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-intra-batch-duplicate'),
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    const [row] = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, result.question_ids?.[0] ?? ''));
+    expect(row.knowledge_ids).toEqual(['k1', 'k2']);
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifact.knowledge_ids).toEqual(['k1', 'k2']);
+    const [producerEvent] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(producerEvent.payload).toMatchObject({
+      exact_duplicate_count: 1,
+      exact_duplicate_knowledge_merge_count: 1,
+    });
+  });
+
   it('reconciles a concurrent canonical-hash race into one draft with both target KCs', async () => {
     await seedKnowledge({ id: 'k1' });
     await seedKnowledge({ id: 'k2' });
