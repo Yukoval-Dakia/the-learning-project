@@ -11,6 +11,7 @@ import {
 } from './target-discovery';
 
 export const EVIDENCE_INVENTORY_VERSION = 1 as const;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const PIPELINE_COMMITMENT_TTL_DAYS = 7;
 // Dispatch events are fetched over a wider window than the commitment TTL so the projection can
 // still surface recently-expired commitments (expiredPipelineCommitments) for diagnostics. Events
@@ -242,7 +243,7 @@ export async function loadInventoryProjectionInput(
       .map((row) => commitmentFingerprint(row.metadata))
       .filter((value): value is string => !!value),
   );
-  const horizon = new Date(now.getTime() - PIPELINE_COMMITMENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const horizon = new Date(now.getTime() - PIPELINE_COMMITMENT_LOOKBACK_DAYS * MS_PER_DAY);
   const dispatches = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
     .from(event)
@@ -262,7 +263,7 @@ export async function loadInventoryProjectionInput(
     const fingerprint = row.payload.fingerprint;
     if (typeof fingerprint !== 'string' || fulfilledFingerprints.has(fingerprint)) continue;
     const expiresAt = new Date(
-      row.created_at.getTime() + PIPELINE_COMMITMENT_TTL_DAYS * 24 * 60 * 60 * 1000,
+      row.created_at.getTime() + PIPELINE_COMMITMENT_TTL_DAYS * MS_PER_DAY,
     );
     const desiredCount = row.payload.desired_count;
     const count =
@@ -291,7 +292,9 @@ export async function writeInventoryShadowComparisonEvents(
   comparisons: InventoryShadowComparison[],
   now = new Date(),
 ): Promise<void> {
-  // Independent observe-only inserts (each with its own newId); write them concurrently.
+  // Independent observe-only inserts (each with its own newId); write them concurrently. The
+  // concurrent fan-out is bounded — a nightly observe-only scan over a bounded frontier on a
+  // single-user deployment with a local connection pool — so it needs no batching/throttle.
   await Promise.all(
     comparisons.map((comparison) =>
       writeEvent(db, {
@@ -322,18 +325,31 @@ export async function runInventoryShadowDualRead(
   currentTargets: QuestionSupplyTarget[],
   now = new Date(),
 ): Promise<InventoryShadowComparison[]> {
-  const projections = await Promise.all(
-    input.frontier.map(async (frontier) =>
-      projectEvidenceInventory(
-        await loadInventoryProjectionInput(db, {
-          subjectId: frontier.subjectId,
-          knowledgeId: frontier.knowledgeId,
-          eligibleGoal: COVERAGE_DEPTH_THRESHOLD,
-          now,
-        }),
-      ),
-    ),
-  );
+  // Per-item isolation: this is an observe-only diagnostic path, so one frontier item's failed
+  // projection load must not reject the whole batch and blank every other item's shadow comparison.
+  // Skip the failed item (warn) and keep the rest.
+  const projections = (
+    await Promise.all(
+      input.frontier.map(async (frontier) => {
+        try {
+          return projectEvidenceInventory(
+            await loadInventoryProjectionInput(db, {
+              subjectId: frontier.subjectId,
+              knowledgeId: frontier.knowledgeId,
+              eligibleGoal: COVERAGE_DEPTH_THRESHOLD,
+              now,
+            }),
+          );
+        } catch (err) {
+          console.warn(
+            `[supply-inventory-shadow] projection failed for knowledge ${frontier.knowledgeId} (subject ${frontier.subjectId}); skipping this frontier item:`,
+            err,
+          );
+          return null;
+        }
+      }),
+    )
+  ).filter((projection): projection is EvidenceInventoryProjection => projection !== null);
   const comparisons = compareInventoryShadow(currentTargets, projections);
   await writeInventoryShadowComparisonEvents(db, comparisons, now);
   return comparisons;

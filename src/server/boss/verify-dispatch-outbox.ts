@@ -167,6 +167,9 @@ async function writeDispatchFailure(
 ) {
   try {
     const now = new Date();
+    // Truncate before persisting: driver/infra error strings can carry connection details, internal
+    // hostnames, or query text into the immutable event log read by broader observability tooling.
+    const rawMsg = input.error instanceof Error ? input.error.message : String(input.error);
     await writeEvent(db, {
       id: createId(),
       actor_kind: 'system',
@@ -180,7 +183,7 @@ async function writeDispatchFailure(
         stage: 'verify_enqueue',
         recovery: input.recovery,
         question_ids: input.questionIds ?? [],
-        error: String(input.error instanceof Error ? input.error.message : input.error),
+        error: rawMsg.slice(0, 500),
       },
       created_at: now,
       ingest_at: now,

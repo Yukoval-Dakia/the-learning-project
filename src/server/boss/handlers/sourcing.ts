@@ -77,6 +77,7 @@ import {
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
   findExactQuestionDuplicate,
 } from '@/server/quiz/content-fingerprint';
@@ -108,6 +109,11 @@ export interface SourcingJobData {
 
 // Default question count when the trigger doesn't specify one.
 export const SOURCING_DEFAULT_COUNT = 3;
+
+// The producer route this handler stamps on every draft it persists. Extracted so the value is
+// written once — a typo in any inline literal would silently produce a wrong source_route with no
+// compile-time check (the array type only constrains the shape, not the call-site strings).
+const SOURCING_WEB_ROUTE = 'sourcing_web' as const;
 
 // Read-only domain-tool surface SourcingTask mounts — enough to confirm the
 // knowledge graph so sourced questions attach to real knowledge_ids. Deliberately
@@ -466,7 +472,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       existing_question_id: string;
       new_question_id: string;
       canonical_content_hash: string;
-      source_route: 'sourcing_web';
+      source_route: typeof SOURCING_WEB_ROUTE;
     }> = [];
     const now = new Date();
     failureStage = 'persist';
@@ -485,7 +491,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             existing_question_id: existingDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
-            source_route: 'sourcing_web',
+            source_route: SOURCING_WEB_ROUTE,
           });
           continue;
         }
@@ -498,11 +504,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
         const declaredDifficultyEvidence =
           q.difficulty_evidence ??
-          buildProducerDifficultyEvidence(q.difficulty, 'sourcing_web', now);
+          buildProducerDifficultyEvidence(q.difficulty, SOURCING_WEB_ROUTE, now);
         const difficultyEvidence = DifficultyEvidence.parse({
           ...declaredDifficultyEvidence,
           observed_at: declaredDifficultyEvidence.observed_at ?? now.toISOString(),
-          source_route: declaredDifficultyEvidence.source_route ?? 'sourcing_web',
+          source_route: declaredDifficultyEvidence.source_route ?? SOURCING_WEB_ROUTE,
         });
         const questionSupplyTrace = params.supplyTrace
           ? withSupplyTraceDifficultyEvidence(params.supplyTrace, difficultyEvidence)
@@ -577,7 +583,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
             existing_question_id: racedDuplicate.id,
             new_question_id: id,
             canonical_content_hash: canonicalContentHash,
-            source_route: 'sourcing_web',
+            source_route: SOURCING_WEB_ROUTE,
           });
           continue;
         }
@@ -743,7 +749,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
-        exact_duplicates: exactDuplicates,
+        // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
+        // exact_duplicate_count above keeps the true total.
+        exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
+        exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

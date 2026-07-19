@@ -5,6 +5,13 @@ export const EVIDENCE_DEMAND_VERSION = 1 as const;
 export const SUPPLY_TRACE_VERSION = 1 as const;
 export const DEFAULT_SUPPLY_POLICY_VERSION = 'supply-v2-phase-a';
 
+// Single source of truth for the demand control defaults. The IO assembler and any pure caller that
+// omits `evidenceDemandControl` must reference these rather than re-hardcoding the literals, so the
+// two layers cannot silently drift apart.
+export const DEFAULT_MAX_BUDGET_MICRO_USD = 1_000_000;
+export const DEFAULT_MAX_ATTEMPTS = 3;
+export const DEFAULT_EVIDENCE_DEADLINE_DAYS = 7;
+
 export const EvidenceAllowedUse = z.enum([
   'practice',
   'diagnostic',
@@ -202,8 +209,8 @@ export function buildCoverageEvidenceDemand(input: {
     },
     control: {
       needed_by: input.neededBy ?? null,
-      max_budget_micro_usd: input.maxBudgetMicroUsd ?? 1_000_000,
-      max_attempts: input.maxAttempts ?? 3,
+      max_budget_micro_usd: input.maxBudgetMicroUsd ?? DEFAULT_MAX_BUDGET_MICRO_USD,
+      max_attempts: input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
     },
     causes: [input.cause ?? { kind: 'coverage_gap' }],
   });

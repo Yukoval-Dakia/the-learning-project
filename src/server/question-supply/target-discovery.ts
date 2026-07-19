@@ -45,6 +45,9 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
+  DEFAULT_EVIDENCE_DEADLINE_DAYS,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_MAX_BUDGET_MICRO_USD,
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
@@ -388,7 +391,8 @@ export function scanCoverageGaps(
       knowledgeIds: [f.knowledgeId],
       statement: `collect observable evidence for knowledge ${f.knowledgeId}`,
       eligibleCount: COVERAGE_DEPTH_THRESHOLD,
-      neededBy: input.evidenceDemandControl?.neededBy ?? null,
+      // Pass through as-is; buildCoverageEvidenceDemand owns the null/default fallbacks.
+      neededBy: input.evidenceDemandControl?.neededBy,
       maxBudgetMicroUsd: input.evidenceDemandControl?.maxBudgetMicroUsd,
       maxAttempts: input.evidenceDemandControl?.maxAttempts,
     });
@@ -734,11 +738,14 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
     questions,
     routePreferenceBySubject,
     generationMethodBySubject,
-    // IO layer owns the clock; scanCoverageGaps itself remains deterministic over its input.
+    // IO layer owns the clock; scanCoverageGaps itself remains deterministic over its input. Budget
+    // and attempts reference the builder's shared defaults so the two layers cannot drift.
     evidenceDemandControl: {
-      neededBy: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      maxBudgetMicroUsd: 1_000_000,
-      maxAttempts: 3,
+      neededBy: new Date(
+        Date.now() + DEFAULT_EVIDENCE_DEADLINE_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      maxBudgetMicroUsd: DEFAULT_MAX_BUDGET_MICRO_USD,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
     },
   };
 }

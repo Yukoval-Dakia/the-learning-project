@@ -28,9 +28,13 @@ function normalizeMarkdown(value: string): string {
       .replace(/!\[([^\]]*)\]\((?:\\.|[^)])*\)/g, (_match, alt: string) => {
         return `![${alt.trim()}](IMAGE)`;
       })
-      // Canonicalize the two standard emphasis spellings without stripping Markdown semantics.
-      .replace(/__([^_]+)__/g, '**$1**')
-      .replace(/_([^_]+)_/g, '*$1*')
+      // NOTE: underscore-emphasis is deliberately NOT canonicalized. A `_x_`→`*x*` (or `__x__`→`**x**`)
+      // rewrite corrupts LaTeX subscripts, which are pervasive in math/physics content: e.g. the real
+      // reference answer `$x_1 = 2$，$x_2 = 3$` (src/subjects/math/skills/quiz-gen-calculation/assets/
+      // few-shot.json) has the span `_1 = 2$，$x_` rewritten to `*1 = 2$，$x*`, which both mangles the
+      // canonical string and collides a genuine subscript with the asterisk emphasis form. Identity
+      // safety beats emphasis-equivalence here, so underscore forms are left verbatim. Asterisk forms
+      // (`**bold**` / `*italic*`) are already canonical and pass through untouched.
       .replace(/[\t\n\f\r ]+/g, ' ')
       .trim()
   );
@@ -75,6 +79,13 @@ export interface ExactQuestionDuplicate {
   draftStatus: string | null;
   source: string;
 }
+
+/**
+ * Cap on how many exact-duplicate records a producer serializes into its observability event.
+ * The full count is kept separately (`exact_duplicate_count`); this only bounds the sampled detail
+ * list so a batch with many duplicates cannot bloat the immutable event payload.
+ */
+export const EXACT_DUPLICATE_EVENT_SAMPLE_CAP = 20;
 
 /** Reusable active+draft lookup; legacy NULL-hash rows intentionally do not match. */
 export async function findExactQuestionDuplicate(

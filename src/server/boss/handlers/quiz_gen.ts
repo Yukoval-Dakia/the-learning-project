@@ -70,6 +70,7 @@ import {
 } from '@/server/question-supply/evidence-demand';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
   findExactQuestionDuplicate,
 } from '@/server/quiz/content-fingerprint';
@@ -886,7 +887,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
         difficulty_evidence: difficultyEvidenceByQuestion,
         exact_duplicate_count: exactDuplicates.length,
-        exact_duplicates: exactDuplicates,
+        // Cap the serialized detail so a batch with many duplicates can't bloat the event payload;
+        // exact_duplicate_count above keeps the true total.
+        exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
+        exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,

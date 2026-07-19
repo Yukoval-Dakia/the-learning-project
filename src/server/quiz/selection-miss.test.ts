@@ -23,6 +23,7 @@ describe('SelectionMiss v1', () => {
       'NO_SCORABLE_ITEM',
       'NO_INDEPENDENT_FAMILY',
       'ONLY_QUARANTINED_ITEMS',
+      'INSUFFICIENT_ELIGIBLE_ITEMS',
     ]);
   });
 
@@ -51,6 +52,9 @@ describe('SelectionMiss v1', () => {
       },
       'ONLY_QUARANTINED_ITEMS',
     ],
+    // Every observable constraint passes (all base counts > 0) but selection still missed — the
+    // partial-fulfill path. It must be INSUFFICIENT_ELIGIBLE_ITEMS, not NO_ALLOWED_USE_ITEM.
+    [{}, 'INSUFFICIENT_ELIGIBLE_ITEMS'],
   ] as const)('classifies %# deterministically', (partial, reason) => {
     const miss = classifySelectionMiss(base, {
       live_knowledge: true,

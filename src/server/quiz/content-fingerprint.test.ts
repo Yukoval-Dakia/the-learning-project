@@ -9,12 +9,40 @@ const base = {
 };
 
 describe('canonical question content fingerprint', () => {
-  it('normalizes Unicode/whitespace and equivalent emphasis Markdown', () => {
+  it('normalizes Unicode and whitespace (NFKC + collapse), keeping emphasis spelling', () => {
+    // Same emphasis spelling on both sides; only line-ending / whitespace / NFKC differ.
     expect(canonicalQuestionContentHash(base)).toBe(
       canonicalQuestionContentHash({
         ...base,
-        promptMd: '__求解__：\r\n2   +  2 = ?  ',
+        promptMd: '**求解**：\r\n2   +  2 = ?  ',
       }),
+    );
+  });
+
+  it('no longer folds underscore emphasis into asterisk emphasis (LaTeX-subscript safety)', () => {
+    // Underscore-emphasis canonicalization was removed so LaTeX subscripts survive; as a consequence
+    // `_x_` / `__x__` are now distinct from `*x*` / `**x**` at the identity layer.
+    expect(canonicalQuestionContentHash({ ...base, promptMd: '_求解_ 2+2' })).not.toBe(
+      canonicalQuestionContentHash({ ...base, promptMd: '*求解* 2+2' }),
+    );
+    expect(canonicalQuestionContentHash({ ...base, promptMd: '__求解__ 2+2' })).not.toBe(
+      canonicalQuestionContentHash({ ...base, promptMd: '**求解** 2+2' }),
+    );
+  });
+
+  it('preserves LaTeX subscripts and never collides them with emphasis', () => {
+    // (a) A genuine subscript must not hash the same as its asterisk-emphasis look-alike.
+    expect(canonicalQuestionContentHash({ ...base, referenceMd: '$x_1 = 2$' })).not.toBe(
+      canonicalQuestionContentHash({ ...base, referenceMd: '$x*1 = 2*$' }),
+    );
+    // (b) Distinct subscripts (x_1 vs x_2) are distinct identities.
+    expect(canonicalQuestionContentHash({ ...base, referenceMd: '$x_1 = 2$' })).not.toBe(
+      canonicalQuestionContentHash({ ...base, referenceMd: '$x_2 = 2$' }),
+    );
+    // Regression for the exact few-shot answer: the `_1 = 2$，$x_` span was previously rewritten to
+    // `*1 = 2$，$x*`, colliding the subscript form with the asterisk form. They must now differ.
+    expect(canonicalQuestionContentHash({ ...base, referenceMd: '$x_1 = 2$，$x_2 = 3$' })).not.toBe(
+      canonicalQuestionContentHash({ ...base, referenceMd: '$x*1 = 2$，$x*2 = 3$' }),
     );
   });
 
@@ -45,6 +73,8 @@ describe('canonical question content fingerprint', () => {
   it('pins the canonical hash for a fixture (locale-independent key ordering)', () => {
     // Regression guard for hash determinism: this constant must not drift with the
     // host locale/ICU collation. Bump only alongside CANONICAL_QUESTION_CONTENT_VERSION.
+    // Re-pinned in review round 4 when underscore-emphasis folding was removed (no deployed hashes
+    // existed, so re-pinning without a version bump is safe); __求解__ now stays verbatim.
     const fixture = {
       promptMd: '__求解__：\r\n2   +  2 = ?  ',
       referenceMd: '4',
@@ -60,7 +90,7 @@ describe('canonical question content fingerprint', () => {
       },
     };
     expect(canonicalQuestionContentHash(fixture)).toBe(
-      '9bedaa3c23781e74f04ee9e8526832a753612545c4dd863abac8b4af3eb3e229',
+      'a611df1a5ab92c685ba64b2e2fb0b6b227904cc1f7ed12ea1bab195a9d495763',
     );
   });
 
