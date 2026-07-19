@@ -11,7 +11,7 @@
  * With the flag at its default, NOTHING auto-enrolls — every captured block
  * routes to the EXISTING human review flow (src/capabilities/ingestion/api/import.ts), so
  * production behaviour is byte-equivalent to today. Auto-enroll only activates
- * when the env var is set EXPLICITLY to the string 'true' (case-insensitive).
+ * when the env var is set EXPLICITLY to `true` or `1` (case-insensitive).
  *
  * This is the **INVERSE** of the WAVE6_TRIGGER_*_ENABLED convention in
  * `src/server/artifacts/note-refine-triggers.ts`, which defaults ON. Auto-enroll
@@ -23,6 +23,8 @@
  * revert) and the owner opted in (YUK-164 #4, 2026-06-08) — so it may be enabled
  * per environment as needed. The code default stays OFF regardless.
  */
+
+import { parseFlag } from '@/core/env-flags';
 
 /** Env var that gates the auto-enroll path. Default OFF (see file header). */
 export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
@@ -82,16 +84,15 @@ export const AUTO_ENROLL_MAX_BLOCKS_PER_RUN = 10;
 export type FlagEnv = Record<string, string | undefined>;
 
 /**
- * True ONLY when `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` is explicitly 'true'
- * (case-insensitive). Undefined / '' / 'false' / any other value → false.
+ * True only when `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` uses an enabled shared literal.
+ * Undefined / blank / explicit false / any other value → false.
  *
  * NOTE the polarity: this is opt-IN (default off), the opposite of
  * `noteRefineTriggerEnabled` which is opt-OUT (default on). Auto-enroll is a
  * data-writing action on the user's behalf and must be unmissably OFF by default.
  */
 export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
-  const value = env[AUTO_ENROLL_FLAG];
-  return typeof value === 'string' && value.toLowerCase() === 'true';
+  return parseFlag(env[AUTO_ENROLL_FLAG]);
 }
 
 /**
@@ -107,14 +108,13 @@ export function autoEnrollThreshold(env: FlagEnv = process.env): number {
 }
 
 /**
- * True ONLY when `WORKFLOW_JUDGE_OBSERVE_ENABLED` is explicitly 'true'
- * (case-insensitive). Undefined / blank / false / arbitrary values are OFF.
+ * True only when `WORKFLOW_JUDGE_OBSERVE_ENABLED` uses an enabled shared literal.
+ * Undefined / blank / false / arbitrary values are OFF.
  * Observe is non-mutating, but it is not free: tagging + judging can fan out to
  * multiple paid calls, so an absent flag must preserve the hard no-op.
  */
 export function observeEnabled(env: FlagEnv = process.env): boolean {
-  const value = env[OBSERVE_FLAG];
-  return typeof value === 'string' && value.toLowerCase() === 'true';
+  return parseFlag(env[OBSERVE_FLAG]);
 }
 
 /** Whether an extraction should enqueue the paid auto-enroll/observe worker. */
@@ -123,13 +123,12 @@ export function autoEnrollJobEnabled(env: FlagEnv = process.env): boolean {
 }
 
 /**
- * YUK-482 cut ④ — True ONLY when `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED`
- * is explicitly 'true' (case-insensitive). Undefined / '' / 'false' / any other
+ * YUK-482 cut ④ — True only when `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED`
+ * uses an enabled shared literal. Undefined / blank / explicit false / any other
  * value → false. Opt-IN (default off), mirroring `autoEnrollEnabled`: the
  * student-grading branch writes a real graded attempt + θ̂ on the user's behalf,
  * so absence of the var = today's text-draft behavior, byte-for-byte.
  */
 export function studentAnswerGradingEnabled(env: FlagEnv = process.env): boolean {
-  const value = env[STUDENT_ANSWER_GRADING_FLAG];
-  return typeof value === 'string' && value.toLowerCase() === 'true';
+  return parseFlag(env[STUDENT_ANSWER_GRADING_FLAG]);
 }

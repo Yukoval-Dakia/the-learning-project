@@ -6,6 +6,8 @@
 // `GET /nudges` 必须排除 shadow=true（免翻 flag 时倒出 backlog）。owner 读 shadow 行校准参数后
 // 再翻 surfacing。shadow 行 = 暗窗期 live consumer，直接消解「建成不通电」。
 
+import { parseFlag } from '@/core/env-flags';
+
 export interface NudgeConfig {
   /** surfacing gate。true = 翻开 user-facing；false（默认）= shadow 期，写 shadow=true 证据行。 */
   enabled: boolean;
@@ -23,8 +25,7 @@ function parseIntEnv(raw: string | undefined, fallback: number): number {
 
 export function loadNudgeConfig(env: NodeJS.ProcessEnv = process.env): NudgeConfig {
   return {
-    // 严格 '1' —— 与仓内 flag 纪律一致（theta-grid / judge_calibration 等 kill-switch 先例）。
-    enabled: env.COPILOT_NUDGE_ENABLED === '1',
+    enabled: parseFlag(env.COPILOT_NUDGE_ENABLED),
     dailyMax: parseIntEnv(env.COPILOT_NUDGE_DAILY_MAX, 3),
     expiresHours: parseIntEnv(env.COPILOT_NUDGE_EXPIRES_HOURS, 24),
   };

@@ -15,7 +15,7 @@ import {
 //   (1) FLAG_TOKEN_RE 抓 `*_ENABLED` token，但末尾 word-boundary 排除 `DEFAULT_ENABLED_BY_KIND`。
 //   (2) scanFlagTokens 在剥注释保字符串的源码上抓 token（字符串里的 flag 名算；注释里的不算）。
 //   (3) reconcileFlags：代码有 ledger 无 → UNREGISTERED；ledger 有代码无 → STALE（per-file 反查）。
-//   (4) computeLiteralVariance 按 literals+大小写+polarity 分组曝光约定不一致。
+//   (4) computeLiteralVariance 按 literals+大小写分组曝光约定不一致；polarity 不制造伪变体。
 
 describe('FLAG_TOKEN_RE — matches *_ENABLED tokens, excludes DEFAULT_ENABLED_BY_KIND', () => {
   function tokens(s: string): string[] {
@@ -214,5 +214,32 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
     const oneGroup = variance.find((g) => g.signature.includes("literals='1'"));
     expect(oneGroup?.flags).toEqual(['A_ENABLED', 'B_ENABLED']);
     expect(variance.every((g) => !g.flags.includes('D_ENABLED'))).toBe(true);
+  });
+
+  it('keeps opt-in and opt-out flags in one group when their literal grammar matches', () => {
+    const ledger: Ledger = {
+      IN_ENABLED: {
+        kind: 'env',
+        literals: ['true', '1'],
+        case_insensitive: true,
+        polarity: 'opt-in',
+        file: 'in',
+        notes: 'n',
+      },
+      OUT_ENABLED: {
+        kind: 'env',
+        literals: ['true', '1'],
+        case_insensitive: true,
+        polarity: 'opt-out',
+        file: 'out',
+        notes: 'n',
+      },
+    };
+    expect(computeLiteralVariance(ledger)).toEqual([
+      {
+        signature: "literals='1'|'true' match=ci",
+        flags: ['IN_ENABLED', 'OUT_ENABLED'],
+      },
+    ]);
   });
 });

@@ -257,8 +257,8 @@ describe('buildResearchMeetingAgentNightlyHandler — kill switch', () => {
     expect(writeEventFn).not.toHaveBeenCalled(); // no claim event, zero spend
   });
 
-  it('early-returns for any value other than the exact string "1"', async () => {
-    process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = 'true';
+  it('early-returns for an unrecognized literal', async () => {
+    process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = 'yes';
     const runDirectorFn = vi.fn(async () => directorResult());
     const { writeEventFn, readEventByIdFn } = memoryEventStore();
     const handler = buildResearchMeetingAgentNightlyHandler({} as never, {
@@ -273,6 +273,20 @@ describe('buildResearchMeetingAgentNightlyHandler — kill switch', () => {
 
   it('runs when the flag is exactly "1"', async () => {
     process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = '1';
+    const runDirectorFn = vi.fn(async () => directorResult());
+    const { writeEventFn, readEventByIdFn } = memoryEventStore();
+    const handler = buildResearchMeetingAgentNightlyHandler({} as never, {
+      now: () => new Date('2026-07-06T21:00:00Z'),
+      writeEventFn,
+      readEventByIdFn,
+      runDirectorFn,
+    });
+    await handler([]);
+    expect(runDirectorFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('also runs for the shared case-insensitive "true" literal', async () => {
+    process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV] = 'TRUE';
     const runDirectorFn = vi.fn(async () => directorResult());
     const { writeEventFn, readEventByIdFn } = memoryEventStore();
     const handler = buildResearchMeetingAgentNightlyHandler({} as never, {

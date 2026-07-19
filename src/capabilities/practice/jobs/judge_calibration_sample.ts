@@ -6,8 +6,8 @@
 // owns two guards:
 //
 //   1. Kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED — default OFF. The cron
-//      stays registered; the handler early-returns unless the flag is exactly
-//      '1' (YUK-572 RESEARCH_MEETING_AGENT_ENABLED pattern). Zero spend, zero
+//      stays registered; the handler early-returns unless the shared runtime-flag
+//      grammar enables it. Zero spend, zero
 //      events.
 //
 //   2. MF3① batch-level lane pre-flight — resolveTaskProvider is called BARE
@@ -27,6 +27,7 @@
 import type { Job } from 'pg-boss';
 
 import type { Provider } from '@/ai/registry';
+import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import type {
@@ -66,9 +67,9 @@ export function buildJudgeCalibrationSampleHandler(
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
     // Dark-ship gate: default OFF. Zero spend / zero events when disabled.
-    if (process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV] !== '1') {
+    if (!parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])) {
       console.log(
-        `[judge_calibration_sample] disabled (${JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV} != 1)`,
+        `[judge_calibration_sample] disabled (${JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV})`,
       );
       return;
     }

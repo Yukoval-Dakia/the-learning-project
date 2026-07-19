@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
 
+import { parseFlag } from '@/core/env-flags';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
@@ -38,7 +39,7 @@ import { assertFromState } from './guards';
 // YUK-473 Slice 3: env-driven so the flip is CONFIG, not code (defer-flip-not-build).
 // Default false → prod stays dark until the env var is set; dev opts in via
 // `.env.local` (PLACEMENT_PROBE_ENABLED=true). Same shape as the auto-enroll flag.
-export const PLACEMENT_PROBE_ENABLED = process.env.PLACEMENT_PROBE_ENABLED === 'true';
+export const PLACEMENT_PROBE_ENABLED = parseFlag(process.env.PLACEMENT_PROBE_ENABLED);
 
 const SESSION_TABLE = 'learning_session' as const;
 

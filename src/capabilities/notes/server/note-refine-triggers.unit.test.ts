@@ -136,6 +136,13 @@ describe('note refine trigger producer', () => {
     expect(noteRefineTriggerEnabled('dreaming', env)).toBe(true);
   });
 
+  it('uses the same numeric literals without changing per-kind polarity', () => {
+    expect(noteRefineTriggerEnabled('verify', { WAVE6_TRIGGER_VERIFY_ENABLED: '1' })).toBe(true);
+    expect(noteRefineTriggerEnabled('mastery_change', { WAVE6_TRIGGER_MASTERY_ENABLED: '0' })).toBe(
+      false,
+    );
+  });
+
   it('adds mark_wrong evidence context from the correction event', async () => {
     const bossSend = vi.fn(async () => undefined);
 
