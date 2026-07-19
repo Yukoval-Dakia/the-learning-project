@@ -58,6 +58,7 @@ export const QuestionDetailQuerySchema = z.object({
 export const QuestionDetailResponseSchema = z
   .object({
     id: z.string(),
+    subject: z.string().nullable(),
     kind: z.string(),
     prompt_md: z.string(),
     difficulty: z.number().int(),

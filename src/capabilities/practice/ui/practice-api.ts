@@ -168,6 +168,7 @@ export interface QFullTimelineEntry {
 
 export interface QuestionFullDetail {
   id: string;
+  subject: string | null;
   kind: string;
   prompt_md: string;
   reference_md: string | null;
@@ -674,6 +675,7 @@ export interface DraftReviewListPage {
 
 export interface DraftReviewDetail {
   id: string;
+  subject: string | null;
   kind: string;
   source: string;
   created_at: string;

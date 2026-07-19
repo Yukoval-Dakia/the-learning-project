@@ -25,7 +25,12 @@
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import {
+  type SubjectRowLike,
+  listSubjectChoices,
+  subjectDisplayName,
+  subjectNotation,
+} from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -197,9 +202,9 @@ function QSourceTag({ source }: { source: string }) {
 }
 
 // 题面文本内嵌 markdown/latex（design QInline → MathMarkdown 单段 unwrap，同 DraftReviewPage）。
-function QInline({ text }: { text: string }) {
+function QInline({ text, notation }: { text: string; notation: string | null }) {
   return (
-    <MathMarkdown notation="latex" className="q-md-inline" style={{ display: 'inline' }}>
+    <MathMarkdown notation={notation} className="q-md-inline" style={{ display: 'inline' }}>
       {text}
     </MathMarkdown>
   );
@@ -303,7 +308,7 @@ export const QRow = memo(function QRow({
                 大题 · {q.children.length} 小题
               </span>
             )}
-            <QInline text={q.prompt_md} />
+            <QInline text={q.prompt_md} notation={subjectNotation(q.subject, subjectRows)} />
           </div>
           <QIndicators q={q} subjectRows={subjectRows} />
         </div>

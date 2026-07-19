@@ -108,7 +108,8 @@ describe('resolveSubjectRenderModel', () => {
 
 // YUK-598（review-757 P2-2 可测半）— rows 参数语义：provider 行驱动 vs 编译期回退。
 describe('listSubjectChoices / subjectDisplayName rows 语义', async () => {
-  const { listSubjectChoices, subjectDisplayName, subjectIdentityKey } = await import('./subject');
+  const { listSubjectChoices, subjectDisplayName, subjectIdentityKey, subjectNotation } =
+    await import('./subject');
   const rows = [
     { id: 'yuwen', displayName: '语文', aliases: ['wenyan'] },
     {
@@ -146,5 +147,18 @@ describe('listSubjectChoices / subjectDisplayName rows 语义', async () => {
     expect(subjectIdentityKey('huaxue', rows)).toBe('subj_chem1');
     expect(subjectIdentityKey(' YINGYU ', rows)).toBe('yingyu');
     expect(subjectIdentityKey(null, rows)).toBeNull();
+  });
+
+  it('subjectNotation：真实 provider 配置优先，builtin/alias 回退，未知为空', () => {
+    const rowsWithNotation = rows.map((row) =>
+      row.id === 'subj_chem1'
+        ? { ...row, renderConfig: { notation: 'mhchem' as string | null } }
+        : row,
+    );
+    expect(subjectNotation('subj_chem1', rowsWithNotation)).toBe('mhchem');
+    expect(subjectNotation('huaxue', rowsWithNotation)).toBe('mhchem');
+    expect(subjectNotation('math', rows)).toBe('katex');
+    expect(subjectNotation('wenyan', rows)).toBeNull();
+    expect(subjectNotation('subj_ghost', rows)).toBeNull();
   });
 });

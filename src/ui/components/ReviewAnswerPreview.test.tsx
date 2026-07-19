@@ -16,6 +16,13 @@ describe('ReviewAnswerPreview', () => {
     expect(html).toContain('隐藏预览');
   });
 
+  it('renders math preview for canonical katex notation', () => {
+    const html = renderToString(<ReviewAnswerPreview value="答案是 $x^2$" notation="katex" />);
+
+    expect(html).toContain('class="katex"');
+    expect(shouldShowAnswerPreview('katex')).toBe(true);
+  });
+
   it('does not render for non-math notation', () => {
     const html = renderToString(<ReviewAnswerPreview value="文言答案" notation="wenyan" />);
 

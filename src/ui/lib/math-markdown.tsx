@@ -41,7 +41,8 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
   children: string;
   /**
    * Subject's renderConfig.notation. KaTeX plugin chain only activates when
-   * notation === 'latex'. Other values (or undefined) skip math parsing —
+   * notation is the canonical profile value `katex` (legacy callers may still
+   * pass `latex`). Other values (or null/undefined) skip math parsing —
    * `$...$` text passes through as raw markdown.
    *
    * Callers should thread this from their subject's render model
@@ -49,7 +50,12 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
    * was rejected (Codex P1, PR #83): it would silently enable LaTeX parsing
    * for wenyan content where `$...$` is incidental punctuation.
    */
-  notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
+  notation?: string | null;
+}
+
+/** Canonical KaTeX gate plus the pre-profile legacy spelling. */
+export function isKatexNotation(notation?: string | null): boolean {
+  return notation === 'katex' || notation === 'latex';
 }
 
 /**
@@ -64,7 +70,7 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
 export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
   const remarkPlugins: MarkdownRendererProps['remarkPlugins'] = [];
   const rehypePlugins: MarkdownRendererProps['rehypePlugins'] = [];
-  if (notation === 'latex') {
+  if (isKatexNotation(notation)) {
     remarkPlugins.push(remarkMath);
     rehypePlugins.push(rehypeKatex);
   }

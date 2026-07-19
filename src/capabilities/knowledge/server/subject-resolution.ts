@@ -15,7 +15,7 @@
 // bucket rather than being dropped.
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   normalizeSubjectKey,
   resolveKnownSubjectId,
@@ -31,7 +31,7 @@ import {
 // drive it against the testcontainer, and so the P5.2 nightly sweep can reuse it
 // with the same Db it already holds.
 export async function batchResolveSubjectIds(
-  db: Db,
+  db: Db | Tx,
   rows: Array<{ id: string; knowledge_ids: string[] }>,
 ): Promise<Map<string, string>> {
   const defaultSubjectId = resolveSubjectProfile(null).id;
@@ -80,7 +80,7 @@ export async function batchResolveSubjectIds(
  * normalized raw domain, and use null only when no subject signal can be resolved.
  */
 export async function batchResolveSubjectDisplayIds(
-  db: Db,
+  db: Db | Tx,
   rows: Array<{ id: string; knowledge_ids: string[] }>,
 ): Promise<Map<string, string | null>> {
   const firstIdToSubjectId = new Map<string, string | null>();

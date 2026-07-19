@@ -26,8 +26,10 @@
 //   • mcq 正确答案高亮 → 从 reference_md 首字母解析（best-effort），编辑落 reference_md。
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { subjectNotation } from '@/ui/lib/subject';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -122,16 +124,24 @@ function dateLabel(sec: number): string {
 }
 
 // 题面文本内嵌 markdown/latex（design QInline → MathMarkdown 单段，同 QuestionsPage）。
-function QInline({ text }: { text: string }) {
+function QInline({ text, notation }: { text: string; notation: string | null }) {
   return (
-    <MathMarkdown notation="latex" className="q-md-inline" style={{ display: 'inline' }}>
+    <MathMarkdown notation={notation} className="q-md-inline" style={{ display: 'inline' }}>
       {text}
     </MathMarkdown>
   );
 }
-function QMarkdown({ text, className }: { text: string; className?: string }) {
+function QMarkdown({
+  text,
+  notation,
+  className,
+}: {
+  text: string;
+  notation: string | null;
+  className?: string;
+}) {
   return (
-    <MathMarkdown notation="latex" className={className ? `q-md ${className}` : 'q-md'}>
+    <MathMarkdown notation={notation} className={className ? `q-md ${className}` : 'q-md'}>
       {text}
     </MathMarkdown>
   );
@@ -240,12 +250,14 @@ function errMessage(err: unknown): string {
 // ── 约束感知删除 modal ───────────────────────────────────────────────────────
 export function DeleteModal({
   stem,
+  notation,
   counts,
   pending,
   onClose,
   onConfirm,
 }: {
   stem: string;
+  notation: string | null;
   // null = 尚未拿到约束计数（首拍 DELETE 在途）；非 null = 已知约束。
   counts: QuestionAssociationCounts | null;
   pending: boolean;
@@ -296,7 +308,7 @@ export function DeleteModal({
         </div>
         <div className="qb-modal-body">
           <div className="qb-modal-q">
-            <QInline text={stem} />
+            <QInline text={stem} notation={notation} />
           </div>
           {counts === null ? (
             <p>正在核对此题的关联记录…</p>
@@ -415,6 +427,7 @@ export interface QuestionDetailPageProps {
 
 export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageProps) {
   const qc = useQueryClient();
+  const { subjects: subjectRows } = useSubjects();
   const detailQ = useQuery({
     queryKey: ['question-detail', id],
     queryFn: () => getQuestionFull(id),
@@ -629,6 +642,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const isRoot = data.root_question_id === null && !isPart;
   const variantCount = Math.max(0, data.family.variant_count - 1);
   const answerKey = isMcq ? answerKeyFrom(draft.reference_md) : null;
+  const notation = subjectNotation(data.subject, subjectRows);
 
   // 关联状态计数（side rail）——读 detail 聚合（timeline/backlinks/scheduling）。
   // 与删除约束门的 associations 计数同源不同投影：这里用 detail 聚合，删除 modal 用
@@ -744,7 +758,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     <LoomIcon name="eye" size={12} />
                     预览 · 含公式 / 格式
                   </div>
-                  <QMarkdown text={draft.prompt_md} className="wenyan" />
+                  <QMarkdown text={draft.prompt_md} notation={notation} />
                 </div>
               )}
             </div>
@@ -832,7 +846,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                             border: 0,
                           }}
                         >
-                          <QInline text={opt} />
+                          <QInline text={opt} notation={notation} />
                         </button>
                       )}
                       {correct && (
@@ -865,7 +879,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               />
               {hasMarkup(draft.reference_md) && (
                 <div className="qd-answer">
-                  <QMarkdown text={draft.reference_md} />
+                  <QMarkdown text={draft.reference_md} notation={notation} />
                 </div>
               )}
             </div>
@@ -892,7 +906,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                       <span className="qd-sub-idx">{c.part_index + 1}</span>
                       <span className="qd-sub-body">
                         <div className="qd-sub-stem">
-                          <QInline text={c.prompt_md} />
+                          <QInline text={c.prompt_md} notation={notation} />
                         </div>
                         <div className="qd-sub-meta">
                           <span className="badge tone-neutral">{ck.label}</span>
@@ -1184,6 +1198,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       {del && (
         <DeleteModal
           stem={data.prompt_md}
+          notation={notation}
           counts={delCounts}
           pending={deleteMut.isPending}
           onClose={() => setDel(false)}
