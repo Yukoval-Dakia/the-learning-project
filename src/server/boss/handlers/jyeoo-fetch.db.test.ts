@@ -417,6 +417,31 @@ describe('runJyeooFetch', () => {
     expect(enqueue.ids).toHaveLength(0);
   });
 
+  it('foreign source_url host: filtered pre-persist (per-row; the batch continues)', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    // One valid jyeoo-host line + one line whose source_url is a NON-jyeoo host. The foreign
+    // row is dropped + counted; the jyeoo row still ingests (per-row filter, not batch fail).
+    const foreign = line({
+      prompt_md: '异 host 混入题',
+      source_url: `https://mirror.example.com/math2/ques/detail/${createId()}`,
+    });
+    const result = await runJyeooFetch({
+      db,
+      trigger: 'knowledge',
+      refId: kid,
+      knowledgeId: kid,
+      spawnJyeooFn: fakeSpawn(spawnResult({ lines: [line(), foreign, ''] })).fn,
+      enqueueSourceVerify: captureEnqueue().fn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.counts).toMatchObject({ validated: 2, filtered_url: 1, inserted: 1 });
+    const rows = await db.select().from(question);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.source_ref).toContain('www.jyeoo.com');
+  });
+
   it('kill switch OFF: no-op (skipped:disabled), spawn never invoked', async () => {
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.JYEOO_FETCH_ENABLED;

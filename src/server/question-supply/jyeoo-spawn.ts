@@ -141,6 +141,13 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
     // Don't let this timer keep the event loop (worker process) alive on its own.
     timer.unref();
 
+    // Stream-level 'error' listeners. child.on('error') covers spawn failure, NOT pipe
+    // errors on stdout/stderr — SIGKILL (the timeout path) tears the pipe and Node emits
+    // 'error' (EPIPE/ECONNRESET) on the stdio streams. An unhandled stream 'error' would
+    // propagate as an uncaughtException and CRASH the whole pg-boss worker; these no-op
+    // handlers keep it contained (the exit disposition still resolves via 'close').
+    child.stdout.on('error', () => {});
+    child.stderr.on('error', () => {});
     child.stdout.on('data', (chunk: Buffer) => stdoutSink.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrSink.push(chunk));
 

@@ -17,6 +17,14 @@ import type { DifficultyBand } from './target-discovery';
 // an inline string would silently produce a wrong route with no compile-time check).
 export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch' as const;
 
+// The ONLY host jyeoo-rs sources from — every source_url is
+// `https://www.jyeoo.com/{subject}/ques/detail/{id}` (producer DESIGN §1.2). A row whose
+// host is anything else is a producer anomaly (parse bug / stray redirect); the handler
+// filters it BEFORE INSERT so a foreign URL can't ride the deterministic route into tier-2
+// (source_verify grounds against the persisted extract, never a refetch, so a non-jyeoo URL
+// would otherwise promote unchecked).
+export const JYEOO_SOURCE_HOST = 'www.jyeoo.com';
+
 // Kill switch (P4). Dark-ship OPT-IN, default OFF — mirrors QUESTION_SUPPLY_REFILL_ENABLED
 // (accepts both 'true' and '1'). OFF ⇒ the dispatcher skips jyeoo_fetch and falls back to
 // sourcing_web (chooseAutoRoute), and the handler no-ops if a job still reaches it.
