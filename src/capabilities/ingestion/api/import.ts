@@ -288,6 +288,17 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
             : sourceRows.some((r) => r.visual_complexity === 'medium')
               ? 'medium'
               : 'low';
+          // YUK-221 (#919 review) — extraction order is authoritative (ordinal = true
+          // reading position). A virtual card (merge/split product) inserts back at the
+          // position of its content source(s), so its ordinal = the MIN ordinal of its
+          // source blocks. This keeps virtual and direct-imported blocks in ONE ordinal
+          // namespace; a payload-index number would collide with extraction ordinals in
+          // the same session and degrade the sort to the (ordinal, id) cuid2 tiebreak.
+          // Multiple split cards off one source share that ordinal; (ordinal, id) tiebreaks
+          // them. Fallback to the payload index only when no source row resolved (defensive:
+          // a virtual card always has ≥1 validated source above).
+          const ordinal =
+            sourceRows.length > 0 ? Math.min(...sourceRows.map((r) => r.ordinal)) : blockIndex;
 
           const [insertedRow] = await tx
             .insert(question_block)
@@ -297,9 +308,7 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
               source_document_id: sessionSourceDocumentId,
               source_asset_ids: block.image_refs,
               page_spans: block.page_spans,
-              // YUK-221 — the virtual (merged/split) card's position = its index in
-              // the import payload's block array.
-              ordinal: blockIndex,
+              ordinal,
               extracted_prompt_md: block.final_prompt_md,
               reference_md: block.final_reference_md,
               wrong_answer_md: block.final_wrong_answer_md,

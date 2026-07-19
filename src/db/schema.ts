@@ -252,7 +252,7 @@ export const question_block = pgTable(
     // A batch extracted in one shot shares ONE created_at (applyExtractionResult
     // takes `now` once), so (created_at, id) degenerated to cuid2 id order within
     // a batch — NOT the real reading order. `ordinal` is written from the
-    // extraction/import array index; historical rows were backfilled (0067) to
+    // extraction/import array index; historical rows were backfilled (0068) to
     // their prior on-screen order. Not fold truth — excluded from the W3
     // question_block create-event snapshot (see question_block-create-event.ts).
     ordinal: integer('ordinal').notNull().default(0),

@@ -220,7 +220,7 @@ export async function createIngestionPaper(
     // It replaces the old `created_at` sort, which degenerated to the cuid2 id
     // tiebreaker WITHIN a batch (applyExtractionResult stamps ONE `now` for the whole
     // batch, so created_at could not carry intra-batch order). Historical rows were
-    // backfilled (drizzle/0067) to their prior on-screen order, so this is
+    // backfilled (drizzle/0068) to their prior on-screen order, so this is
     // order-preserving for legacy papers and truly-ordered for new extractions.
     let questions: Array<{ id: string; knowledge_ids: string[] }>;
     if (params.questionIds && params.questionIds.length > 0) {

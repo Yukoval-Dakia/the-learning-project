@@ -275,7 +275,7 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(rows[0]?.indexdef).toMatch(/affected_scopes/i);
   });
 
-  it('adds question_block.ordinal (NOT NULL default 0) + session index (0067, YUK-221)', async () => {
+  it('adds question_block.ordinal (NOT NULL default 0) + session index (0068, YUK-221)', async () => {
     const cols = await db.execute<{
       column_name: string;
       data_type: string;
