@@ -50,6 +50,7 @@ describe('NoteEditor artifact search', () => {
     const input = openArtifactPicker();
 
     fireEvent.change(input, { target: { value: '二次' } });
+    await waitFor(() => expect(searchArtifacts).toHaveBeenCalledTimes(1));
     fireEvent.change(input, { target: { value: '' } });
 
     expect(searchSignal?.aborted).toBe(true);
@@ -89,6 +90,7 @@ describe('NoteEditor artifact search', () => {
     const input = openArtifactPicker();
 
     fireEvent.change(input, { target: { value: '函数' } });
+    await waitFor(() => expect(searchArtifacts).toHaveBeenCalledTimes(1));
     fireEvent.change(input, { target: { value: '函数图' } });
     await waitFor(() => expect(screen.getByRole('button', { name: /函数图像/ })).toBeTruthy());
 
@@ -97,5 +99,17 @@ describe('NoteEditor artifact search', () => {
 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('button', { name: /函数图像/ })).toBeTruthy();
+  });
+
+  it('debounces rapid input and searches only the latest query', async () => {
+    vi.mocked(searchArtifacts).mockResolvedValue({ rows: [] });
+    const input = openArtifactPicker();
+
+    fireEvent.change(input, { target: { value: '函' } });
+    fireEvent.change(input, { target: { value: '函数' } });
+    fireEvent.change(input, { target: { value: '函数图' } });
+
+    await waitFor(() => expect(searchArtifacts).toHaveBeenCalledTimes(1));
+    expect(searchArtifacts).toHaveBeenCalledWith('函数图', 'note_1', expect.any(AbortSignal));
   });
 });

@@ -9,7 +9,7 @@
 
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {
@@ -81,39 +81,62 @@ function ArtifactPicker({
     [],
   );
 
-  const runSearch = (query: string) => {
+  const runSearch = useCallback(
+    (query: string) => {
+      requestController.current?.abort();
+      const trimmed = query.trim();
+      const requestId = ++requestSeq.current;
+      if (!trimmed) {
+        requestController.current = null;
+        setRows([]);
+        setSearchState('idle');
+        return;
+      }
+
+      const controller = new AbortController();
+      requestController.current = controller;
+      setRows([]);
+      setSearchState('loading');
+      void searchArtifacts(trimmed, excludeId, controller.signal)
+        .then((result) => {
+          if (requestId !== requestSeq.current) return;
+          requestController.current = null;
+          setRows(result.rows);
+          setSearchState('idle');
+        })
+        .catch((error: unknown) => {
+          if (requestId !== requestSeq.current) return;
+          requestController.current = null;
+          if (isAbortError(error)) {
+            setSearchState('idle');
+            return;
+          }
+          setRows([]);
+          setSearchState('error');
+        });
+    },
+    [excludeId],
+  );
+
+  useEffect(() => {
     requestController.current?.abort();
-    const trimmed = query.trim();
+    requestController.current = null;
     const requestId = ++requestSeq.current;
+    const trimmed = q.trim();
     if (!trimmed) {
-      requestController.current = null;
       setRows([]);
       setSearchState('idle');
       return;
     }
 
-    const controller = new AbortController();
-    requestController.current = controller;
     setRows([]);
     setSearchState('loading');
-    void searchArtifacts(trimmed, excludeId, controller.signal)
-      .then((result) => {
-        if (requestId !== requestSeq.current) return;
-        requestController.current = null;
-        setRows(result.rows);
-        setSearchState('idle');
-      })
-      .catch((error: unknown) => {
-        if (requestId !== requestSeq.current) return;
-        requestController.current = null;
-        if (isAbortError(error)) {
-          setSearchState('idle');
-          return;
-        }
-        setRows([]);
-        setSearchState('error');
-      });
-  };
+    const timer = window.setTimeout(() => {
+      if (requestId !== requestSeq.current) return;
+      runSearch(trimmed);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [q, runSearch]);
 
   return (
     <div className="slash-menu fade-key" style={{ maxHeight: 280, overflowY: 'auto' }}>
@@ -123,11 +146,7 @@ function ArtifactPicker({
         style={{ margin: '4px 8px', width: 'calc(100% - 16px)' }}
         value={q}
         placeholder="标题关键词…"
-        onChange={(e) => {
-          const v = e.target.value;
-          setQ(v);
-          runSearch(v);
-        }}
+        onChange={(e) => setQ(e.target.value)}
       />
       {searchState === 'loading' && <output className="slash-menu-empty">正在搜索…</output>}
       {searchState === 'error' && (
