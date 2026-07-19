@@ -927,6 +927,54 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(blocks).toHaveLength(1);
   });
 
+  it('YUK-725 — manual block appends after the session max ordinal instead of colliding with extraction order', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId, ordinal: 0 });
+    await insertBlock(db, { id: 'block_b', sessionId, docId: sourceDocId, ordinal: 3 });
+    await insertKnowledge(db, 'k1');
+
+    const directA = makeImportBody().blocks[0];
+    const res = await post(sessionId, {
+      blocks: [
+        {
+          // Payload index 0 used to collide with block_a's extraction ordinal 0.
+          source_block_ids: [],
+          page_spans: [
+            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+          ],
+          image_refs: ['asset_1'],
+          final_prompt_md: 'Manual appended Q',
+          final_reference_md: null,
+          final_wrong_answer_md: 'Manual WA',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        },
+        directA,
+        {
+          ...directA,
+          block_id: 'block_b',
+          source_block_ids: ['block_b'],
+          final_prompt_md: 'Direct B',
+        },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    const manual = blocks.find((block) => block.extracted_prompt_md === 'Manual appended Q');
+    expect(manual).toBeDefined();
+    // max(existing ordinals 0, 3) + 1 + payload index 0 = 4.
+    expect(manual?.ordinal).toBe(4);
+    expect(blocks.find((block) => block.id === 'block_a')?.ordinal).toBe(0);
+    expect(blocks.find((block) => block.id === 'block_b')?.ordinal).toBe(3);
+  });
+
   it('manual block without image_refs → 400', async () => {
     const db = testDb();
     const { sessionId } = await setupSession(db);
