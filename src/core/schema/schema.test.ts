@@ -229,6 +229,9 @@ describe('schema generated from drizzle', () => {
         { page_index: 0, bbox: { x: 0, y: 0.7, width: 1, height: 0.3 }, role: 'continuation' },
         { page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 0.4 }, role: 'answer_area' },
       ],
+      // YUK-221 — ordinal is NOT NULL, so the SELECT schema requires it (unlike the
+      // INSERT schema above, where the column DEFAULT makes it optional).
+      ordinal: 0,
       extracted_prompt_md: '跨页题面',
       structured: null,
       figures: [],
