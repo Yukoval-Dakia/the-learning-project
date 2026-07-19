@@ -47,7 +47,7 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
@@ -118,7 +118,7 @@ interface CopilotTurnsResponse {
   turns: ReplayTurn[];
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: 'user' | 'ai';
   text: string;
@@ -212,6 +212,111 @@ export interface CopilotDockProps {
   /** Keep the visible shell launcher in sync with pending proactive nudges. */
   onNudgeCountChange?: (count: number) => void;
 }
+
+interface MessageRowProps {
+  message: ChatMessage;
+  navigate: (to: string) => void;
+  onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
+  // Per-row (not global) chip flags so a corrective-chip click on ONE message
+  // does not re-render every other row: only the matching row sees its flag flip.
+  chipPending: boolean;
+  chipAcked: boolean;
+}
+
+// YUK-715 — one chat row, memoized so an SSE delta (which rebuilds only the
+// growing message object and leaves every other message referentially unchanged)
+// does not re-run the static rows' ReactMarkdown parse. Default shallow prop
+// comparison is the honest render-input check here: `setMessages` map updates
+// preserve the reference of unchanged messages, `navigate`/`onAcceptCorrective`
+// are stable, and the chip flags are per-row booleans — so an unchanged row's
+// props are all reference-equal and it skips re-rendering.
+export const MessageRow = memo(function MessageRow({
+  message: m,
+  navigate,
+  onAcceptCorrective,
+  chipPending,
+  chipAcked,
+}: MessageRowProps) {
+  return (
+    <div
+      className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
+      data-testid={`copilot-msg-${m.role}`}
+    >
+      <div className="msg-avatar">
+        {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
+      </div>
+      <div className="msg-body">
+        <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+        {/* The Markdown parser is warmed only when the drawer opens. Until
+            its chunk arrives, DeferredMarkdownRenderer keeps escaped plain
+            text visible instead of blanking or crashing the conversation.
+            Copilot has no subject profile, so dollar syntax stays plain. */}
+        <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
+        {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
+            message. A NEW testid distinct from copilot-thinking (which
+            only covers the pre-first-byte gap). Reuses the Dock chat
+            tokens — no new visual system. */}
+        {m.streaming ? (
+          <span className="chat-caret" data-testid="copilot-msg-streaming" aria-hidden="true">
+            ▍
+          </span>
+        ) : null}
+        {/* AF S4 / YUK-203 U6 — teaching skill turn carrier. explain is
+            already covered by msg-text above; ask_check renders the
+            materialized question + a corrective accept-chip; end shows a
+            close-out notice. Reuses the Dock chat tokens — no new visual
+            system (§5.1). */}
+        {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
+          <div className="skill-turn-check" data-testid="copilot-skill-ask-check">
+            <DeferredMarkdownRenderer className="skill-turn-q-prompt">
+              {m.skill_turn.structured_question.prompt_md}
+            </DeferredMarkdownRenderer>
+            {m.skill_turn.structured_question.choices_md &&
+            m.skill_turn.structured_question.choices_md.length > 0 ? (
+              <ol className="skill-turn-q-choices">
+                {m.skill_turn.structured_question.choices_md.map((choice, i) => (
+                  <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>
+                    <DeferredMarkdownRenderer>{choice}</DeferredMarkdownRenderer>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {m.session_id ? (
+              <button
+                type="button"
+                className="chip is-corrective"
+                data-testid="copilot-corrective-chip"
+                // Disabled while in-flight (pending) or already acked —
+                // prevents duplicate AcceptSuggestionChip KPI events.
+                disabled={chipPending || chipAcked}
+                onClick={() => {
+                  const sid = m.session_id;
+                  const qid = m.skill_turn?.structured_question?.id;
+                  if (sid && qid) void onAcceptCorrective(sid, qid, m.reply_event_id);
+                }}
+              >
+                重做 / 回看前置
+              </button>
+            ) : null}
+            {chipAcked ? <output className="skill-turn-ack">已记录（不计入接受率）</output> : null}
+          </div>
+        ) : null}
+        {m.skill_turn?.kind === 'end' ? (
+          <div className="skill-turn-end" data-testid="copilot-skill-end">
+            本轮教学已结束，继续提问将回到自由对话。
+          </div>
+        ) : null}
+        {/* YUK-307 (presentation layer §2.5) — the agent's hero
+            nomination for this turn, below the reply text. Only AI
+            turns carry one; absent ⇒ nothing rendered (the common
+            case). T5 ribbon dosage: no technical ribbon on a hero. */}
+        {m.role === 'ai' && m.primary_view ? (
+          <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
+        ) : null}
+      </div>
+    </div>
+  );
+});
 
 export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotDockProps) {
   // YUK-577 — proactive-nudge state. A pending nudge is rendered as a badge/bar; the drawer itself
@@ -832,95 +937,22 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 问 Loom 任何事 —— 它会读你的错题、知识图谱与今日计划来回答。
               </p>
             ) : null}
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
-                data-testid={`copilot-msg-${m.role}`}
-              >
-                <div className="msg-avatar">
-                  {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
-                </div>
-                <div className="msg-body">
-                  <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
-                  {/* The Markdown parser is warmed only when the drawer opens. Until
-                      its chunk arrives, DeferredMarkdownRenderer keeps escaped plain
-                      text visible instead of blanking or crashing the conversation.
-                      Copilot has no subject profile, so dollar syntax stays plain. */}
-                  <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
-                  {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
-                      message. A NEW testid distinct from copilot-thinking (which
-                      only covers the pre-first-byte gap). Reuses the Dock chat
-                      tokens — no new visual system. */}
-                  {m.streaming ? (
-                    <span
-                      className="chat-caret"
-                      data-testid="copilot-msg-streaming"
-                      aria-hidden="true"
-                    >
-                      ▍
-                    </span>
-                  ) : null}
-                  {/* AF S4 / YUK-203 U6 — teaching skill turn carrier. explain is
-                      already covered by msg-text above; ask_check renders the
-                      materialized question + a corrective accept-chip; end shows a
-                      close-out notice. Reuses the Dock chat tokens — no new visual
-                      system (§5.1). */}
-                  {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
-                    <div className="skill-turn-check" data-testid="copilot-skill-ask-check">
-                      <DeferredMarkdownRenderer className="skill-turn-q-prompt">
-                        {m.skill_turn.structured_question.prompt_md}
-                      </DeferredMarkdownRenderer>
-                      {m.skill_turn.structured_question.choices_md &&
-                      m.skill_turn.structured_question.choices_md.length > 0 ? (
-                        <ol className="skill-turn-q-choices">
-                          {m.skill_turn.structured_question.choices_md.map((choice, i) => (
-                            <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>
-                              <DeferredMarkdownRenderer>{choice}</DeferredMarkdownRenderer>
-                            </li>
-                          ))}
-                        </ol>
-                      ) : null}
-                      {m.session_id ? (
-                        <button
-                          type="button"
-                          className="chip is-corrective"
-                          data-testid="copilot-corrective-chip"
-                          // Disabled while in-flight (pending) or already acked —
-                          // prevents duplicate AcceptSuggestionChip KPI events.
-                          disabled={
-                            chipPending === m.skill_turn.structured_question.id ||
-                            chipAcked === m.skill_turn.structured_question.id
-                          }
-                          onClick={() => {
-                            const sid = m.session_id;
-                            const qid = m.skill_turn?.structured_question?.id;
-                            if (sid && qid) void acceptCorrectiveChip(sid, qid, m.reply_event_id);
-                          }}
-                        >
-                          重做 / 回看前置
-                        </button>
-                      ) : null}
-                      {chipAcked === m.skill_turn.structured_question.id ? (
-                        <output className="skill-turn-ack">已记录（不计入接受率）</output>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {m.skill_turn?.kind === 'end' ? (
-                    <div className="skill-turn-end" data-testid="copilot-skill-end">
-                      本轮教学已结束，继续提问将回到自由对话。
-                    </div>
-                  ) : null}
-                  {/* YUK-307 (presentation layer §2.5) — the agent's hero
-                      nomination for this turn, below the reply text. Only AI
-                      turns carry one; absent ⇒ nothing rendered (the common
-                      case). T5 ribbon dosage: no technical ribbon on a hero. */}
-                  {m.role === 'ai' && m.primary_view ? (
-                    <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
-                  ) : null}
-                </div>
-              </div>
-            ))}
+            {messages.map((m) => {
+              // Per-row chip flags: only the message whose structured question is
+              // pending/acked flips, so a corrective-chip state change re-renders
+              // that one row instead of every memoized row.
+              const qid = m.skill_turn?.structured_question?.id;
+              return (
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  navigate={navigate}
+                  onAcceptCorrective={acceptCorrectiveChip}
+                  chipPending={qid != null && chipPending === qid}
+                  chipAcked={qid != null && chipAcked === qid}
+                />
+              );
+            })}
             {sending ? (
               <div className="msg msg-ai" data-testid="copilot-thinking">
                 <div className="msg-avatar">
