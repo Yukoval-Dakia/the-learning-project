@@ -94,6 +94,7 @@ function renderEditor(
         form={options.editorForm ?? form}
         setForm={noop}
         knowledgeNodes={options.knowledgeNodes ?? []}
+        subjectRows={[]}
         onMergeIntoPrev={noop}
         onSplitMerge={noop}
         onRescue={noop}

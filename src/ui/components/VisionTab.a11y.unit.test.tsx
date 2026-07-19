@@ -50,6 +50,7 @@ function renderBlockEditor() {
         form={buildBlockForm(primary)}
         setForm={vi.fn()}
         knowledgeNodes={[]}
+        subjectRows={[]}
         onMergeIntoPrev={vi.fn()}
         onSplitMerge={vi.fn()}
         onRescue={vi.fn()}
