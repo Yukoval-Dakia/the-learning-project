@@ -1,78 +1,157 @@
+# OS metadata
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# Dependencies and package-manager caches
 node_modules/
-.env
-.env.local
-.env*.bak
-.idea/
-.vscode/
+.pnpm-store/
+.yarn/cache/
+.yarn/install-state.gz
+.pnp.*
 
-# Build
+# Environment files, credentials, and private keys
+.env*
+!.env.example
+!.env.*.example
+!.envrc
+.direnv/
+.dev.vars*
+!.dev.vars.example
+.npmrc
+.netrc
+credentials*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+
+# Build and framework output
 dist/
+build/
 .cache/
-
-# Test coverage reports (@vitest/coverage-v8 output — generated, never committed)
-coverage/
-
-# Wrangler runtime artifacts (leftover from old workers/ setup)
+.turbo/
+.vite/
 .wrangler/
 .wrangler-state/
-.dev.vars
 workers/
-
-# Drizzle generated
-drizzle/.snapshots/
-
-# Vercel
 .vercel/
 .next/
-
-# Next.js
 next-env.d.ts
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 
-.env*.local
-
-# Claude Code per-user local overrides (project shared settings go in settings.json)
-.claude/settings.local.json
-
-# Per-user local MCP server config (machine-specific tokens / paths)
-.mcp.json
-
-# mem0 history SQLite sidecar for local dev (MEM0_HISTORY_DB_PATH=./.mem0/...;
-# prod uses the compose mem0data volume / /tmp). Machine-local, never commit.
-.mem0/
-
-# Subagent worktrees (created by Agent tool with isolation:"worktree")
-.claude/worktrees/
-.playwright-mcp/
+# Test, coverage, and browser automation output
+coverage/
 test-results/
 playwright-report/
+blob-report/
+.playwright-mcp/
+playwright/.auth/
 
-# Scheduled-tasks runtime lock (ScheduleWakeup / loop artifact)
-.claude/scheduled_tasks.lock
+# Logs, local databases, and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.tmp/
+tmp/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.dump
 
-# remember skill hook logs
-.remember/
+# Python and Rust local output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+target/
 
-# Manual sanity / preflight output — run locally, not committed
-docs/preflight/*-vision-rejudge.json
+# Generated archives and installers
+/*.zip
+/*.tar
+/*.tar.gz
+/*.tgz
+/*.7z
+/*.dmg
+/*.pkg
 
-# pnpm package store cache (machine-local, ~866 MB; never commit)
-.pnpm-store/
+# IDE and editor state
+.idea/
+.vscode/
+.fleet/
+.zed/
+*.iml
 
-# Local agent/tool state dirs (opencode, omo, omc, ocx) — machine-local, never
-# commit; no leading slash so a nested .omc/ (hook-created inside src/) is
-# caught too
+# Drizzle generated snapshots
+drizzle/.snapshots/
+
+# Per-user tool configuration and runtime state
+.mcp.json
+.claude/settings.local.json
+**/.claude/scheduled_tasks.lock
+**/.claude/scheduled_tasks.json
+**/.claude/routines/.state/
+**/.claude/worktrees/
+**/.claude/checkpoints/
+**/.claude/mailbox/
+**/.claude/agent-registry.json
+**/.claude/agent-memory-local
+**/.claude/first-run
+**/.claude/assistant-daemon-state.json
+.codex/tmp/
+.codex/logs/
+.devin/config.local.json
+.serena/project.local.yml
+.codegraph/
+.visual/
+.mimocode-project-id
+.git-pr-body.md
+
+# Local agent/tool state directories. No leading slash: hooks may create them
+# below nested source directories too.
 .ocx/
 .omc/
 .omo/
+.omx/
 .opencode/
 
-# Cursor IDE runtime hook state (continual-learning.json etc.) — runtime-mutated
-# state the Cursor hook keeps rewriting + auto-committing; was wrongly tracked and
-# caused perpetual checkout conflicts. rules/ (.cursor/rules/*.mdc) stays tracked.
+# Cursor runtime hook state; .cursor/rules remains tracked.
 .cursor/hooks/state/
 
-# External sample/tutorial clones dropped into the repo root — not project source
-getting-started-with-browserbase/
-docling-docx-parse-output/
+# Local memory and scheduled-agent output
+.mem0/
+.remember/
+
+# External sample/tutorial clones dropped into the repository root
+/getting-started-with-browserbase/
+/docling-docx-parse-output/
+
+# One-off local preflight output
+docs/preflight/*-vision-rejudge.json
+
+# Stale session handoff and root-level visual QA captures. Durable design
+# evidence belongs under docs/design/ instead.
+/RESUME.md
+/d-ui-knowledge-snapshot.md
+/d-ui-*.png
+/kg-*.png
+/kg-harness.html
+/kg-static.html
+/m4-visual-*.png
+/visual-demo-today.png
+/yuk[0-9]*.png
