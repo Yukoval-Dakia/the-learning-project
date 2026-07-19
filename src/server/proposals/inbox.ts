@@ -73,6 +73,11 @@ export interface ListProposalInboxOpts {
   // decision excludes C-strength observe-only records. The Inbox uses this lane to guarantee that
   // a large observation backlog cannot hide actionable rows behind the API page boundary.
   lane?: ProposalInboxLane;
+  // Optional projection-layer filter on the source event's `actor_ref` (e.g.
+  // 'dreaming'). Applied alongside status/kind in projectLoadedProposalRows so the
+  // ranked pagination loop refills to the requested `limit` of matching rows,
+  // rather than the caller projecting every row just to post-filter by author.
+  actorRef?: string;
   limit?: number;
   cursor?: string;
 }
@@ -727,9 +732,9 @@ export async function listProposalInboxRows(
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
-  filters: Pick<ListProposalInboxOpts, 'status' | 'kind' | 'lane'> = {},
+  filters: Pick<ListProposalInboxOpts, 'status' | 'kind' | 'lane' | 'actorRef'> = {},
 ): Promise<ProposalInboxRow[]> {
-  const { status, kind, lane } = filters;
+  const { status, kind, lane, actorRef } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
@@ -746,6 +751,7 @@ async function projectLoadedProposalRows(
     const correction = correctionDecisionByProposal.get(row.id);
     const rowStatus = deriveProposalStatus(row, correction, rate);
     if (status && rowStatus !== status) continue;
+    if (actorRef && row.actor_ref !== actorRef) continue;
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
     if (kind && payload.kind !== kind) continue;

@@ -17,7 +17,9 @@
 //   • latest experimental:coach_scan event payload  → daily_focus + plan_count
 //   • executeGetReviewDue({ limit })                 → review_due_count
 //   • executeMemoryBrief({ scopeKey: 'global' })     → brief_global_md
-//   • listProposalInboxPage(pending)                 → dreaming_preview rows
+//   • countPendingProposalInboxByKind()              → pending_proposals_total
+//       (capped lower bound + one console.warn if it ever hits its scan cap)
+//   • listProposalInboxPage(pending, dreaming, N)    → dreaming_preview rows
 //
 // Output is a typed `CopilotSummary` (parallel-build mock target — see
 // TodayPlanPlaceholder in coach schema).
@@ -26,7 +28,12 @@ import type { Db, Tx } from '@/db/client';
 import { executeGetReviewDue, executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import type { ToolContext } from '@/server/ai/tools/types';
 import { getEvents } from '@/server/events/queries';
-import { listProposalInboxPage } from '@/server/proposals/inbox';
+import {
+  PENDING_PROPOSAL_COUNT_BATCH_SIZE,
+  PENDING_PROPOSAL_COUNT_MAX_BATCHES,
+  countPendingProposalInboxByKind,
+  listProposalInboxPage,
+} from '@/server/proposals/inbox';
 
 type DbLike = Db | Tx;
 
@@ -52,7 +59,11 @@ export interface CopilotSummary {
   brief_global_md: string | null;
   /** Pending Dreaming-authored proposals (latest 3). */
   dreaming_preview: CopilotSummaryDreamingPreview[];
-  /** Snapshot of pending proposal totals. */
+  /**
+   * Snapshot of the pending proposal total. Exact for this product's proposal
+   * set; only a lower bound if countPendingProposalInboxByKind hits its scan cap
+   * (physically unreachable here — see loadCopilotSummary, which warns once).
+   */
   pending_proposals_total: number;
   /** When Coach last ran (ISO) or null when it hasn't. */
   coach_last_run_at: string | null;
@@ -74,6 +85,12 @@ export interface CopilotSummaryOpts {
    * exercise the actual count.
    */
   reviewDueLimit?: number;
+  /**
+   * Batch/cap knobs forwarded to countPendingProposalInboxByKind. Defaults
+   * (5,000 × 10 = 50k) bound the /today hot path; tests shrink them to force the
+   * cap-exceeded (hasMore) lower-bound + warn path without seeding 50k rows.
+   */
+  pendingCountOptions?: { batchSize?: number; maxBatches?: number };
 }
 
 export async function loadCopilotSummary(
@@ -97,30 +114,44 @@ export async function loadCopilotSummary(
     callerActor: { kind: 'system', ref: 'today-copilot-summary' },
   };
 
-  const [latestCoach, latestDreaming, pendingPage, dueOutput, briefOutput] = await Promise.all([
-    getEvents(db, {
-      action: 'experimental:coach_scan',
-      outcome: 'success',
-      limit: 1,
-    }),
-    getEvents(db, {
-      action: 'experimental:dreaming_scan',
-      outcome: 'success',
-      limit: 1,
-    }),
-    // No `limit` — we need the exact total for `pending_proposals_total`.
-    // listProposalInboxPage with limit=undefined projects all pending rows
-    // in a single ranked query (see loadProposalEvents). On a single-user
-    // system this is bounded; if it grows we'll swap to a dedicated
-    // count(*) helper.
-    listProposalInboxPage(db, { status: 'pending' }),
-    // FSRS review-due signal — reuse the DomainTool execute fn so the
-    // predicate (subject_kind='question' AND due_at <= now + never-reviewed
-    // failures backfill) stays single-sourced. Schema caps `limit` at 50.
-    executeGetReviewDue(toolCtx, { limit: reviewDueLimit }),
-    // Global memory brief gestalt (single row by unique scope_key).
-    executeMemoryBrief(toolCtx, { scopeKey: 'global' }),
-  ]);
+  const [latestCoach, latestDreaming, pendingCounts, dreamingPage, dueOutput, briefOutput] =
+    await Promise.all([
+      getEvents(db, {
+        action: 'experimental:coach_scan',
+        outcome: 'success',
+        limit: 1,
+      }),
+      getEvents(db, {
+        action: 'experimental:dreaming_scan',
+        outcome: 'success',
+        limit: 1,
+      }),
+      // Pending total via the by-kind counter — it skips the signal joins,
+      // sorting, and accepted/dismissed history a full inbox projection pays on
+      // every /today load. Summing the per-kind counts gives the same total as
+      // the old `listProposalInboxPage({ status: 'pending' }).rows.length`
+      // (same pending-derivation universe, no lane filter) UNLESS the counter
+      // hits its scan cap — see the hasMore lower-bound handling below. The
+      // `?? undefined` guards a caller passing `pendingCountOptions: null`: JS
+      // default-param substitution fires on undefined, not null, so null would
+      // otherwise reach the helper body and throw on `options.batchSize`.
+      countPendingProposalInboxByKind(db, opts.pendingCountOptions ?? undefined),
+      // Dreaming preview: the top `previewLimit` pending proposals authored by
+      // Dreaming, in the inbox ranking order. Bounded via the actorRef filter +
+      // limit so the ranked pagination loop stops after `previewLimit` matching
+      // rows, instead of projecting every pending row just to slice a few off.
+      listProposalInboxPage(db, {
+        status: 'pending',
+        actorRef: 'dreaming',
+        limit: previewLimit,
+      }),
+      // FSRS review-due signal — reuse the DomainTool execute fn so the
+      // predicate (subject_kind='question' AND due_at <= now + never-reviewed
+      // failures backfill) stays single-sourced. Schema caps `limit` at 50.
+      executeGetReviewDue(toolCtx, { limit: reviewDueLimit }),
+      // Global memory brief gestalt (single row by unique scope_key).
+      executeMemoryBrief(toolCtx, { scopeKey: 'global' }),
+    ]);
 
   const coachEvent = latestCoach[0] ?? null;
   const dreamingEvent = latestDreaming[0] ?? null;
@@ -154,16 +185,42 @@ export async function loadCopilotSummary(
         ? (coachPayload.proposals_created as number)
         : null;
 
-  const dreamingPreview: CopilotSummaryDreamingPreview[] = pendingPage.rows
-    .filter((row) => row.actor_ref === 'dreaming')
-    .slice(0, previewLimit)
-    .map((row) => ({
-      proposal_id: row.id,
-      kind: row.kind,
-      brief: row.payload.reason_md.slice(0, 200),
-      proposed_at:
-        row.proposed_at instanceof Date ? row.proposed_at.toISOString() : String(row.proposed_at),
-    }));
+  // dreamingPage.rows is already filtered to actor_ref='dreaming' and capped at
+  // previewLimit in ranking order, so this maps 1:1 (no post-filter/slice).
+  const dreamingPreview: CopilotSummaryDreamingPreview[] = dreamingPage.rows.map((row) => ({
+    proposal_id: row.id,
+    kind: row.kind,
+    brief: row.payload.reason_md.slice(0, 200),
+    proposed_at:
+      row.proposed_at instanceof Date ? row.proposed_at.toISOString() : String(row.proposed_at),
+  }));
+
+  // Sum the by-kind pending counts for the drawer's pending total — equivalent to
+  // the prior `listProposalInboxPage({ status: 'pending' }).rows.length` for this
+  // product's proposal set. `countPendingProposalInboxByKind` only returns a LOWER
+  // BOUND if it hits its scan cap (`hasMore`), which is physically unreachable
+  // here: the nightly writers cap proposal creation at single digits, so a 50k
+  // pending backlog cannot accumulate. We deliberately do NOT fall back to the
+  // unbounded projection — that full rate/correction/signal join would land on the
+  // /today hot path exactly when the backlog is largest (its worst moment). On the
+  // impossible cap hit we report the capped sum as an explicit lower bound and warn
+  // once so the degradation is observable rather than silent.
+  const pendingProposalsTotal = Object.values(pendingCounts.byKind).reduce(
+    (sum, kindCount) => sum + (kindCount ?? 0),
+    0,
+  );
+  if (pendingCounts.hasMore) {
+    const batchSize = opts.pendingCountOptions?.batchSize ?? PENDING_PROPOSAL_COUNT_BATCH_SIZE;
+    const maxBatches = opts.pendingCountOptions?.maxBatches ?? PENDING_PROPOSAL_COUNT_MAX_BATCHES;
+    console.warn(
+      'loadCopilotSummary: pending proposal count hit its scan cap; pending_proposals_total is a lower bound',
+      {
+        lowerBound: pendingProposalsTotal,
+        byKind: pendingCounts.byKind,
+        cap: batchSize * maxBatches,
+      },
+    );
+  }
 
   // `total_returned` matches the rows array length — capped at
   // `reviewDueLimit` (max 50 per GetReviewDueInputSchema). For queue sizes
@@ -184,7 +241,7 @@ export async function loadCopilotSummary(
     review_due_count: reviewDueCount,
     brief_global_md: briefGlobalMd,
     dreaming_preview: dreamingPreview,
-    pending_proposals_total: pendingPage.rows.length,
+    pending_proposals_total: pendingProposalsTotal,
     coach_last_run_at: coachEvent ? coachEvent.created_at.toISOString() : null,
     dreaming_last_run_at: dreamingEvent ? dreamingEvent.created_at.toISOString() : null,
   };

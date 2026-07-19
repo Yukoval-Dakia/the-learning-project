@@ -1122,6 +1122,73 @@ describe('proposal inbox reader', () => {
     expect(result.hasMore).toBe(false);
   });
 
+  it('filters the ranked pending page by actor_ref and honors limit without dropping lower-ranked matches', async () => {
+    const db = testDb();
+    // Interleave dreaming- and self-authored pending proposals so the top-ranked
+    // rows are NOT all dreaming. Ranking with no signals is desc(created_at),
+    // desc(id), so full order is d1, s1, d2, s2, d3.
+    const deferRow = (
+      id: string,
+      actorRef: string,
+      createdAt: string,
+    ): typeof event.$inferInsert => ({
+      id,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: `item_${id}`,
+      outcome: 'partial',
+      payload: {
+        ai_proposal: {
+          kind: 'defer',
+          target: { subject_kind: 'learning_item', subject_id: `item_${id}` },
+          reason_md: `observe ${id}`,
+          evidence_refs: [],
+          proposed_change: {
+            learning_item_id: `item_${id}`,
+            defer_until: '2026-07-18T00:00:00.000Z',
+            reason: 'low energy',
+          },
+        },
+      },
+      created_at: new Date(createdAt),
+    });
+    await db
+      .insert(event)
+      .values([
+        deferRow('d1', 'dreaming', '2026-07-17T00:05:00.000Z'),
+        deferRow('s1', 'self', '2026-07-17T00:04:00.000Z'),
+        deferRow('d2', 'dreaming', '2026-07-17T00:03:00.000Z'),
+        deferRow('s2', 'self', '2026-07-17T00:02:00.000Z'),
+        deferRow('d3', 'dreaming', '2026-07-17T00:01:00.000Z'),
+      ]);
+
+    const allPending = await listProposalInboxPage(db, { status: 'pending' });
+    const dreamingFromFull = allPending.rows
+      .filter((row) => row.actor_ref === 'dreaming')
+      .map((row) => row.id);
+    expect(dreamingFromFull).toEqual(['d1', 'd2', 'd3']);
+
+    // actorRef filter returns exactly the dreaming rows, in the same ranking order.
+    const dreamingOnly = await listProposalInboxPage(db, {
+      status: 'pending',
+      actorRef: 'dreaming',
+    });
+    expect(dreamingOnly.rows.map((row) => row.id)).toEqual(['d1', 'd2', 'd3']);
+
+    // Bounded fetch: the limit caps dreaming matches, and d2 (ranked below the
+    // higher self row s1) is NOT lost — this is exactly what the /today drawer
+    // preview relies on when it stops after `previewLimit` dreaming rows.
+    const boundedDreaming = await listProposalInboxPage(db, {
+      status: 'pending',
+      actorRef: 'dreaming',
+      limit: 2,
+    });
+    expect(boundedDreaming.rows.map((row) => row.id)).toEqual(['d1', 'd2']);
+    expect(boundedDreaming.rows.map((row) => row.id)).toEqual(dreamingFromFull.slice(0, 2));
+  });
+
   it('counts in bounded batches and keeps decisions reachable behind an observation backlog', async () => {
     const db = testDb();
     const observationRows: Array<typeof event.$inferInsert> = Array.from(
