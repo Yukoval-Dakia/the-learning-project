@@ -386,6 +386,21 @@ async function loadProposalFacts(
   return factsFromProposalRow(row, requiredStatus);
 }
 
+/**
+ * Load conjecture facts straight from the proposal's RAW event, WITHOUT the correction/status
+ * fold — verifies only that the event exists and is a canonical conjecture proposal. Used by the
+ * historical report path (validateAckableOutcome skipCurrentStatusFold), where a later retract must
+ * not erase an outcome that was already delivered. Mirrors loadFindingBrief's raw-row source.
+ */
+async function loadRawConjectureFacts(
+  db: DbLike,
+  proposalId: string,
+): Promise<CandidateResult<ConjectureFacts>> {
+  const [raw] = await db.select().from(event).where(eq(event.id, proposalId)).limit(1);
+  if (!raw) return { reason: 'proposal_not_found' };
+  return factsFromRawProposalRow(raw);
+}
+
 async function loadAcceptedClaim(
   db: DbLike,
   proposalId: string,
@@ -492,7 +507,21 @@ export async function validateAckableOutcome(
   // report over a past fortnight must still count outcomes that are now expired) nor the
   // ack-exclusion (loadOutcomeBrief's SQL NOT-EXISTS, which the reader owns; a later-acked
   // outcome still happened and must be counted). Default false keeps the reader/ack path exact.
-  { serial = false, skipTimeWindow = false }: { serial?: boolean; skipTimeWindow?: boolean } = {},
+  //
+  // skipCurrentStatusFold (YUK-710 round-5): the report also must NOT fold the proposal's CURRENT
+  // correction status. A probe can only be minted from an accepted proposal and an answer only
+  // scores an active probe, so the probe_result's existence structurally implies the proposal WAS
+  // accepted when the outcome was delivered; a later retract/mark_wrong/supersede must not erase a
+  // delivery that already happened. When true, the proposal is loaded from its RAW event
+  // (factsFromRawProposalRow — verifies it is a canonical conjecture, no status fold) instead of
+  // loadProposalFacts(...'accepted'). Every non-status structural check still runs: canonical body
+  // + self-consistent provenance + probe exists (a deleted probe is real corruption → still skip) +
+  // the probe is canonical for its proposal (validateProbeQuestion). Default false → reader/ack exact.
+  {
+    serial = false,
+    skipTimeWindow = false,
+    skipCurrentStatusFold = false,
+  }: { serial?: boolean; skipTimeWindow?: boolean; skipCurrentStatusFold?: boolean } = {},
 ): Promise<CandidateResult<AckableOutcomeFacts>> {
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
@@ -516,16 +545,20 @@ export async function validateAckableOutcome(
   // time. Both orderings check probe_not_found first, so the reason precedence is stable.
   const loadProbe = () =>
     db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+  // skipCurrentStatusFold → read the proposal from its RAW event (verifies it is a canonical
+  // conjecture, no correction/status fold), otherwise require the folded status to be 'accepted'
+  // (the live reader/ack path).
+  const loadProposal = (): Promise<CandidateResult<ConjectureFacts>> =>
+    skipCurrentStatusFold
+      ? loadRawConjectureFacts(db, conjectureEventId)
+      : loadProposalFacts(db, conjectureEventId, 'accepted');
   let probeRows: QuestionRow[];
   let proposalResult: CandidateResult<ConjectureFacts>;
   if (serial) {
     probeRows = await loadProbe();
-    proposalResult = await loadProposalFacts(db, conjectureEventId, 'accepted');
+    proposalResult = await loadProposal();
   } else {
-    [probeRows, proposalResult] = await Promise.all([
-      loadProbe(),
-      loadProposalFacts(db, conjectureEventId, 'accepted'),
-    ]);
+    [probeRows, proposalResult] = await Promise.all([loadProbe(), loadProposal()]);
   }
   const probe = probeRows[0];
   // probe_not_found stays the first-checked break so its reason code precedence is stable.

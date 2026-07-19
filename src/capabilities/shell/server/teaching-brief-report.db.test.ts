@@ -253,4 +253,36 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
     expect(report.skipped_corrupt_outcomes).toBe(1);
   });
+
+  it('still counts an in-window outcome whose proposal was RETRACTED after delivery', async () => {
+    const chain = await seedChain('confirmed');
+    // A post-delivery retract: a `correct` retract event flips the proposal's folded status off
+    // 'accepted'. The live reader/ack would now skip the outcome — but a probe_result can only exist
+    // because the proposal WAS accepted when it was minted, so the historical report must still count
+    // the confirmed judgement it truly delivered in-window (round-5 codex P2). NOT missing data.
+    await writeEvent(testDb(), {
+      id: 'correct_retract',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: chain.proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'retracted after the outcome was delivered',
+        affected_refs: [{ kind: 'question', id: 'q_dummy' }],
+      },
+      caused_by_event_id: chain.proposalId,
+      ingest_at: new Date(),
+    });
+
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+    // Retract folded away the accepted status, but the outcome is still counted, not skipped.
+    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(report.skipped_corrupt_outcomes).toBe(0);
+  });
 });

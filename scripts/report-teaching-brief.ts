@@ -192,15 +192,16 @@ export async function loadTeachingBriefReportInput(
   }));
 
   // Probe outcomes — every probe_result event in-window, then gated by the reader's OWN
-  // structural deliverability check (validateAckableOutcome) so the report counts exactly the
+  // STRUCTURAL deliverability check (validateAckableOutcome) so the report counts exactly the
   // outcomes a learner could have received: canonical body (action / question subject / legal
-  // resolution+outcome pair / self-consistent conjecture provenance) AND a complete accepted
-  // chain (the mind-probe exists + is canonical for its proposal + the proposal is accepted).
-  // skipTimeWindow=true drops ONLY the live-reader dimensions that don't belong in a historical
-  // window aggregate — the 7-day OUTCOME_TTL and the ack-exclusion — so an expired-by-now or
-  // later-acked outcome still counts. A chain-broken result (ref mismatch / missing probe /
-  // un-accepted proposal), which the reader/ack would skip, is counted as MISSING DATA here
-  // instead of silently inflating the confirmed/retired denominator.
+  // resolution+outcome pair / self-consistent conjecture provenance) + the mind-probe exists +
+  // the probe is canonical for its proposal. Two live-reader dimensions are dropped because they
+  // don't fit a historical window aggregate: skipTimeWindow drops the 7-day OUTCOME_TTL and the
+  // ack-exclusion (an expired-by-now or later-acked outcome still happened); skipCurrentStatusFold
+  // drops the proposal's CURRENT correction status (a probe_result's existence structurally implies
+  // the proposal WAS accepted when delivered — a later retract/supersede must not erase it). A
+  // truly chain-broken result (provenance mismatch / DELETED probe), which is real corruption, is
+  // counted as MISSING DATA instead of silently inflating the confirmed/retired denominator.
   const resultRows = await database
     .select({
       id: event.id,
@@ -224,7 +225,10 @@ export async function loadTeachingBriefReportInput(
   const probeResults: ProbeResultFact[] = [];
   let skippedCorruptOutcomes = 0;
   for (const row of resultRows) {
-    const gate = await validateAckableOutcome(database, row, now, { skipTimeWindow: true });
+    const gate = await validateAckableOutcome(database, row, now, {
+      skipTimeWindow: true,
+      skipCurrentStatusFold: true,
+    });
     if (isCandidateError(gate)) {
       skippedCorruptOutcomes += 1;
       continue;

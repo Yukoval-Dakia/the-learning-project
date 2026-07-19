@@ -16,6 +16,7 @@
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
 
+import { learnerLocalDay } from '@/core/learner-day';
 import { scopedPracticeHref } from '@/ui/lib/routes';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -72,6 +73,20 @@ async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
   ]);
 }
 
+// YUK-710 — the client-side brief_seen suppression key. It MUST be `brief_id × learner-local day`
+// (the SAME grain as the server's idempotency + the report's funnel), never brief_id alone: a tab
+// left open across the Asia/Shanghai midnight must re-report the SAME brief on the new day (else that
+// day's open is never counted and its action becomes unpaired). Reuses learnerLocalDay so the client
+// never rederives a timezone. Exported pure for unit testing the day-boundary re-fire.
+export function nextBriefSeenState(
+  prevKey: string | null,
+  briefId: string,
+  now: Date,
+): { report: boolean; key: string } {
+  const key = `${briefId}|${learnerLocalDay(now)}`;
+  return { report: key !== prevKey, key };
+}
+
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
@@ -94,6 +109,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
   // does not land its failure on the brief the user is now looking at.
   const latestBriefIdRef = useRef<string | null>(null);
+  // YUK-710 — last-reported brief_seen key (brief_id × learner-local day); see nextBriefSeenState.
+  const briefSeenKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const prev = prevRef.current;
@@ -114,11 +131,14 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       prevRef.current = null; // null → reset baseline; never announce.
       return;
     }
-    // YUK-710 — record the "opened a delivered brief" funnel signal once per brief appearance.
-    // Fires only when the brief_id changes (mount or swap), never on a same-brief forward state
-    // advance or a refetch that returns the same brief; the server is also idempotent per
-    // brief × local day, so this is doubly safe. Fire-and-forget: no UI, no learner-visible count.
-    if (idChanged) {
+    // YUK-710 — record the "opened a delivered brief" funnel signal once per brief × learner-local
+    // day. Suppressed when the (brief_id, local day) key is unchanged (a same-brief same-day forward
+    // state advance or a refetch that returns the same brief), but RE-FIRES when the day rolls over
+    // for a still-on-screen brief — so a tab held across Asia/Shanghai midnight still counts the new
+    // day's open. The server is also idempotent per brief × local day, so this is doubly safe.
+    const seen = nextBriefSeenState(briefSeenKeyRef.current, brief.brief_id, new Date());
+    briefSeenKeyRef.current = seen.key;
+    if (seen.report) {
       reportBriefInteraction({
         type: 'brief_seen',
         brief_id: brief.brief_id,
