@@ -120,6 +120,8 @@ interface ConjectureFacts {
   probeMd: string;
   evidence: TeachingBriefEvidenceRef[];
   createdAt: Date;
+  /** Internal selector ranking only — never serialized into the wire (contract §5). */
+  salience: number;
 }
 
 interface CandidateError {
@@ -195,6 +197,7 @@ function factsFromProposalRow(
         })),
       ),
       createdAt: row.proposed_at,
+      salience: change.confidence * change.recurrence_count,
     },
   };
 }
@@ -237,6 +240,7 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
         })),
       ),
       createdAt: row.created_at,
+      salience: change.confidence * change.recurrence_count,
     },
   };
 }
@@ -356,7 +360,8 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
         lte(event.created_at, now),
       ),
     )
-    .orderBy(desc(event.created_at), desc(event.id));
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
   for (const result of results) {
     const payload = toRecord(result.payload);
@@ -470,7 +475,8 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
         )`,
       ),
     )
-    .orderBy(desc(question.created_at), desc(question.id));
+    .orderBy(desc(question.created_at), desc(question.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
   for (const probe of probes) {
     const metadata = toRecord(probe.metadata);
@@ -592,6 +598,17 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           [...TERMINAL_PROPOSAL_RATINGS].map((rating) => sql`${rating}`),
           sql`, `,
         )})`,
+        // Corrected/retracted/superseded proposals are likewise excluded pre-window. A
+        // malformed correction event excludes its proposal here even though
+        // getCorrectionStatuses would keep it active — fail-closed skip is the
+        // contract's stance on corrupt records, and the in-memory check below stays as
+        // the authoritative second gate.
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${event} AS correction
+          WHERE correction.action = 'correct'
+            AND correction.subject_kind = 'event'
+            AND correction.subject_id = ${event.id}
+        )`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -616,14 +633,7 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
       ) {
         return [];
       }
-      const parsed = AiProposalPayload.parse(toRecord(row.payload).ai_proposal);
-      if (parsed.kind !== 'conjecture') return [];
-      return [
-        {
-          proposal: proposalResult.value,
-          salience: parsed.proposed_change.confidence * parsed.proposed_change.recurrence_count,
-        },
-      ];
+      return [{ proposal: proposalResult.value, salience: proposalResult.value.salience }];
     })
     .sort((a, b) => {
       const aSalience = a.salience;

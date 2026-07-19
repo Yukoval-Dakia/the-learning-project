@@ -8,5 +8,5 @@ export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
 /** The canonical event action that records the qualitative probe outcome. */
 export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
-/** Felt + writer cap for concurrently served, unanswered probes. */
+/** Reader + writer cap for concurrently served, unanswered probes. */
 export const MAX_CONCURRENT_ACTIVE_PROBES = 3;

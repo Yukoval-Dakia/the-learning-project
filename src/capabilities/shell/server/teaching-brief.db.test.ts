@@ -681,6 +681,44 @@ describe('loadTeachingBrief', () => {
     });
   });
 
+  it('does not let a burst of corrected conjectures evict an older pending finding', async () => {
+    const correctedNewer = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW }, (_, index) =>
+      rawProposalRow({
+        id: `p_corrected_${String(index).padStart(2, '0')}`,
+        createdAt: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000),
+      }),
+    );
+    const corrections = correctedNewer.map(
+      (proposal, index): typeof event.$inferInsert => ({
+        id: `correct_${proposal.id}`,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: proposal.id,
+        outcome: 'success',
+        payload: { correction_kind: 'retract', reason_md: 'retracted in test' },
+        created_at: new Date(
+          NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000 + 1_000,
+        ),
+      }),
+    );
+    const olderPending = rawProposalRow({
+      id: 'p_pending_behind_corrected_burst',
+      createdAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
+    });
+    await testDb()
+      .insert(event)
+      .values([olderPending, ...correctedNewer, ...corrections]);
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result.brief).toMatchObject({
+      brief_id: 'p_pending_behind_corrected_burst',
+      state: 'finding',
+    });
+  });
+
   it('keeps a large accepted-without-probe quiet state bounded to constant SELECT round-trips', async () => {
     const proposalRows = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW + 30 }, (_, index) =>
       rawProposalRow({
