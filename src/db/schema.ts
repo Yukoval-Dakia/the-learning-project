@@ -248,6 +248,14 @@ export const question_block = pgTable(
       >()
       .notNull()
       .default([]),
+    // YUK-221 — true 0-based positional order within an ingestion_session_id.
+    // A batch extracted in one shot shares ONE created_at (applyExtractionResult
+    // takes `now` once), so (created_at, id) degenerated to cuid2 id order within
+    // a batch — NOT the real reading order. `ordinal` is written from the
+    // extraction/import array index; historical rows were backfilled (0067) to
+    // their prior on-screen order. Not fold truth — excluded from the W3
+    // question_block create-event snapshot (see question_block-create-event.ts).
+    ordinal: integer('ordinal').notNull().default(0),
     // 2026-05-14: deviation from plan Step 0.4 —— plan 原文要求 DROP COLUMN，但
     // 当前 cascade.ts / ingestion route / import route 仍写此列，若现在 DROP 则
     // typecheck + 测试在 Step 1-10 之间全断。改为 nullable（行为：新代码不写、
@@ -278,6 +286,8 @@ export const question_block = pgTable(
       'question_block_extraction_confidence_range',
       sql`${t.extraction_confidence} BETWEEN 0 AND 1`,
     ),
+    // YUK-221 — the /blocks + make-paper fall-through reads order by this key.
+    index('question_block_session_ordinal_idx').on(t.ingestion_session_id, t.ordinal),
   ],
 );
 

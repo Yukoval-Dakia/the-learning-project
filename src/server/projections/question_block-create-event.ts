@@ -26,13 +26,18 @@ type QuestionBlockRow = typeof question_block.$inferSelect;
 
 /**
  * Map a LIVE `question_block` row (the `.returning()` shape) → the projected `QuestionBlockRowSnapshot`
- * the create event carries. The ONLY structural difference is the legacy deprecated
- * `extracted_prompt_md` column (DROP deferred to Step 11.5), which the snapshot EXCLUDES (markdown
- * views derive from `structured` at render time, ADR-0002) — every other column is fold truth. Drop
- * it BEFORE the snapshot so `.strict()` (which rejects unknown keys) accepts the payload.
+ * the create event carries. Two columns are EXCLUDED before the snapshot:
+ *   - `extracted_prompt_md` — legacy deprecated (DROP deferred to Step 11.5); markdown views derive
+ *     from `structured` at render time (ADR-0002).
+ *   - `ordinal` (YUK-221) — positional creation metadata, NOT fold truth: it is assigned once from the
+ *     extraction/import array index and never re-derived from events (the fold does not carry it, and
+ *     the projection upsert leaves it untouched on conflict). Excluding it keeps `.strict()` green
+ *     without threading a non-fold column through the event-sourcing snapshot.
+ * Every OTHER column is fold truth. Drop the excluded columns BEFORE the snapshot so `.strict()`
+ * (which rejects unknown keys) accepts the payload.
  */
 export function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnapshotT {
-  const { extracted_prompt_md: _legacy, ...snapshot } = row;
+  const { extracted_prompt_md: _legacy, ordinal: _ordinal, ...snapshot } = row;
   return snapshot as unknown as QuestionBlockRowSnapshotT;
 }
 

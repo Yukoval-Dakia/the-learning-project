@@ -208,21 +208,20 @@ export async function createIngestionPaper(
     //
     // The order key lives on `question_block`: every imported question persists
     // `metadata.question_block_id` (import/route.ts:407,421), and the block list's
-    // canonical display order is `ORDER BY question_block.created_at` (the /blocks
-    // read path, src/capabilities/ingestion/api/blocks.ts:65 — the read the user's
+    // canonical display order is `ORDER BY question_block.ordinal` (the /blocks
+    // read path, src/capabilities/ingestion/api/blocks.ts — the read the user's
     // on-screen paper order comes from). We join question → question_block on that
-    // id and order by (question_block.created_at, question_block.id, question.id) —
-    // the same primary key /blocks uses — so the paper's slot sequence equals the
-    // on-screen block order.
+    // id and order by (question_block.ordinal, question_block.id, question.id) —
+    // the same key /blocks uses — so the paper's slot sequence equals the on-screen
+    // block order.
     //
-    // F2 SEMANTIC BOUNDARY (PR #309 round-3) — block `created_at` is NOT a true
-    // positional ordinal: applyExtractionResult (src/server/session/ingestion.ts)
-    // takes `now` ONCE before the insert loop, so every block in a batch shares the
-    // SAME created_at. ORDER BY created_at therefore degenerates to the id
-    // tiebreaker (cuid2, unordered) WITHIN a batch. This ordering's only defensible
-    // guarantee is "identical to what /blocks shows the user" (both use the same
-    // key) — NOT "the true reading order". Persisting a real block ordinal is the
-    // proper fix and is tracked as a follow-up in YUK-221.
+    // YUK-221 (was the F2 SEMANTIC BOUNDARY from PR #309 round-3) — `ordinal` is the
+    // true 0-based positional key, written from the extraction/import array index.
+    // It replaces the old `created_at` sort, which degenerated to the cuid2 id
+    // tiebreaker WITHIN a batch (applyExtractionResult stamps ONE `now` for the whole
+    // batch, so created_at could not carry intra-batch order). Historical rows were
+    // backfilled (drizzle/0067) to their prior on-screen order, so this is
+    // order-preserving for legacy papers and truly-ordered for new extractions.
     let questions: Array<{ id: string; knowledge_ids: string[] }>;
     if (params.questionIds && params.questionIds.length > 0) {
       const rows = await tx
@@ -243,7 +242,8 @@ export async function createIngestionPaper(
     } else {
       // LEFT JOIN so a question whose metadata.question_block_id has no matching
       // block row (manual/legacy import path) still appears; such rows sort last
-      // (NULL block created_at) with question.id as the final stable tiebreaker.
+      // (NULL block ordinal sorts last under ASC) with question.id as the final
+      // stable tiebreaker.
       questions = await tx
         .select({ id: question.id, knowledge_ids: question.knowledge_ids })
         .from(question)
@@ -252,7 +252,7 @@ export async function createIngestionPaper(
           sql`${question.metadata}->>'question_block_id' = ${question_block.id}`,
         )
         .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`)
-        .orderBy(asc(question_block.created_at), asc(question_block.id), asc(question.id));
+        .orderBy(asc(question_block.ordinal), asc(question_block.id), asc(question.id));
     }
     // The normalized id sequence — session-filtered + order-preserved — used by
     // BOTH the reuse-branch comparison (F4) and the create-branch build below.

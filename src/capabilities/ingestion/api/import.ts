@@ -297,6 +297,9 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
               source_document_id: sessionSourceDocumentId,
               source_asset_ids: block.image_refs,
               page_spans: block.page_spans,
+              // YUK-221 — the virtual (merged/split) card's position = its index in
+              // the import payload's block array.
+              ordinal: blockIndex,
               extracted_prompt_md: block.final_prompt_md,
               reference_md: block.final_reference_md,
               wrong_answer_md: block.final_wrong_answer_md,
