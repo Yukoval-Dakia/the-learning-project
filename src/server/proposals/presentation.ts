@@ -4,6 +4,7 @@ import { question, question_block } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
+type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
@@ -66,6 +67,7 @@ function titled(base: string, detail: unknown): string {
 function readableToken(value: unknown): string | null {
   const text = textOf(value);
   if (!text) return null;
+  if (DOMAIN_TOKEN[text]) return DOMAIN_TOKEN[text];
   return text
     .split('_')
     .filter(Boolean)
@@ -101,10 +103,100 @@ const QUESTION_EDIT_OPERATION: Record<string, string> = {
   set_node_kind: '调整题型',
 };
 
+const DOMAIN_TOKEN: Record<string, string> = {
+  prerequisite: '前置关系',
+  related_to: '相关关系',
+  contrasts_with: '易混淆关系',
+  applied_in: '应用关系',
+  derived_from: '推导关系',
+  choice: '选择题',
+  true_false: '判断题',
+  fill_blank: '填空题',
+  short_answer: '简答题',
+  essay: '论述题',
+  computation: '计算题',
+  reading: '阅读题',
+  translation: '翻译题',
+  derivation: '推导题',
+  mastery_high_persisted: '掌握表现持续稳定',
+  check_all_passed: '所有检查均通过',
+  no_recent_mistake: '近期没有同类错误',
+  user_stated_understanding: '你已确认理解',
+};
+
+const RECORD_PROMOTION_TARGET: Record<string, string> = {
+  question: '整理为练习题',
+  learning_item: '整理为学习项',
+  artifact: '整理为学习笔记',
+};
+
+function estimatedDifficulty(value: unknown): string | null {
+  if (typeof value !== 'number') return null;
+  const level = value <= 2 ? '偏低' : value >= 4 ? '偏高' : '中等';
+  return `${level}（AI 估计，仅供参考）`;
+}
+
+function estimatedMasteryTrend(current: unknown, peak: unknown): string | null {
+  if (typeof current !== 'number' || typeof peak !== 'number') return null;
+  const gap = peak - current;
+  const trend =
+    gap > 0.15 ? '较历史高点明显回落' : gap > 0.03 ? '较历史高点有所回落' : '建议复核当前掌握状态';
+  return `${trend}（AI 估计，仅供参考）`;
+}
+
+function noteUpdateSummary(change: Record<string, unknown> | null): string | null {
+  const summary = recordOf(change?.summary);
+  const ops = summary?.ops_count;
+  const blocks = summary?.new_blocks;
+  if (typeof ops !== 'number') return textOf(change?.summary_md ?? change?.summary);
+  return `${ops} 处内容调整${typeof blocks === 'number' ? `，其中新增 ${blocks} 块` : ''}`;
+}
+
+function questionEditSummary(change: QuestionEditChange): ProposalSummaryItem[] {
+  const edit = change.edit;
+  const location =
+    edit.op === 'edit_node_text' ? null : summaryItem('题面定位', change.node_preview);
+  switch (edit.op) {
+    case 'edit_node_text':
+      return compact([
+        summaryItem('修改', QUESTION_EDIT_OPERATION[edit.op]),
+        summaryItem('新题面', edit.prompt_text),
+      ]);
+    case 'edit_reference':
+      return compact([
+        summaryItem('修改', QUESTION_EDIT_OPERATION[edit.op]),
+        location,
+        edit.answers === undefined
+          ? null
+          : summaryItem(
+              '新答案',
+              edit.answers.length > 0 ? edit.answers.join('；') : '清空参考答案',
+            ),
+        edit.analysis === undefined
+          ? null
+          : summaryItem('新解析', edit.analysis.length > 0 ? edit.analysis : '清空解析'),
+      ]);
+    case 'set_choice':
+      return compact([
+        summaryItem('修改', QUESTION_EDIT_OPERATION[edit.op]),
+        location,
+        summaryItem(
+          '新选项',
+          edit.options.map((option) => `${option.label}. ${option.text}`).join('；'),
+        ),
+      ]);
+    case 'set_node_kind':
+      return compact([
+        summaryItem('修改', QUESTION_EDIT_OPERATION[edit.op]),
+        location,
+        summaryItem('新题型', readableToken(edit.kind)),
+      ]);
+  }
+}
+
 /** Per-kind human projection of the machine-shaped proposed_change. */
 export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSummaryItem[] {
   const change = recordOf(payload.proposed_change);
-  const edit = recordOf(change?.edit);
   switch (payload.kind) {
     case 'knowledge_node':
       return compact([summaryItem('新知识点', change?.name)]);
@@ -144,23 +236,23 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
     }
     case 'note_update': {
       const patch = recordOf(change?.patch);
+      const summary = recordOf(change?.summary);
       const opCount = Array.isArray(patch?.ops)
         ? patch.ops.length
         : Array.isArray(change?.ops)
           ? change.ops.length
-          : null;
+          : typeof summary?.ops_count === 'number'
+            ? summary.ops_count
+            : null;
       return compact([
         summaryItem('修改', opCount === null ? '更新笔记内容' : `${opCount} 处内容调整`),
-        summaryItem('说明', change?.summary_md ?? change?.summary),
+        summaryItem('说明', noteUpdateSummary(change)),
       ]);
     }
     case 'variant_question':
       return compact([
         summaryItem('新题题面', change?.prompt_md),
-        summaryItem(
-          '难度',
-          typeof change?.difficulty === 'number' ? `${change.difficulty} / 5` : null,
-        ),
+        summaryItem('AI 估计难度', estimatedDifficulty(change?.difficulty)),
         summaryItem(
           '变式层级',
           typeof change?.variant_depth === 'number' ? `第 ${change.variant_depth} 层` : null,
@@ -179,10 +271,8 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
           typeof change?.days_since_done === 'number' ? `${change.days_since_done} 天` : null,
         ),
         summaryItem(
-          '掌握变化',
-          typeof change?.current_mastery === 'number' && typeof change?.peak_mastery === 'number'
-            ? `${Math.round(change.current_mastery * 100)}%（历史峰值 ${Math.round(change.peak_mastery * 100)}%）`
-            : null,
+          'AI 估计掌握趋势',
+          estimatedMasteryTrend(change?.current_mastery, change?.peak_mastery),
         ),
       ]);
     case 'defer':
@@ -200,14 +290,14 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
         summaryItem('关联', links === null ? '补充记录之间的关联' : `${links} 条关联`),
       ]);
     }
-    case 'record_promotion':
+    case 'record_promotion': {
+      const target = textOf(change?.target);
+      const draft = recordOf(change?.draft);
       return compact([
-        summaryItem(
-          '动作',
-          readableToken(change?.target_kind ?? change?.promote_to) ?? '整理为长期学习记录',
-        ),
-        summaryItem('标题', change?.title),
+        summaryItem('目标', (target && RECORD_PROMOTION_TARGET[target]) ?? '整理为长期学习对象'),
+        summaryItem('草稿标题或题面', draft?.title ?? draft?.prompt_md),
       ]);
+    }
     case 'archive':
       return compact([
         summaryItem('动作', '移出当前工作区'),
@@ -248,17 +338,10 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
       return compact([
         summaryItem('题面', change?.prompt_preview),
         summaryItem('题型', readableToken(change?.kind)),
-        summaryItem(
-          '难度',
-          typeof change?.difficulty === 'number' ? `${change.difficulty} / 5` : null,
-        ),
+        summaryItem('AI 估计难度', estimatedDifficulty(change?.difficulty)),
       ]);
     case 'question_edit':
-      return compact([
-        summaryItem('修改', QUESTION_EDIT_OPERATION[textOf(edit?.op) ?? ''] ?? '调整题目'),
-        summaryItem('当前内容', change?.node_preview),
-        summaryItem('新内容', edit?.prompt_text ?? edit?.analysis),
-      ]);
+      return questionEditSummary(payload.proposed_change);
     case 'conjecture':
       return compact([
         summaryItem('观察', change?.claim_md),
@@ -298,12 +381,14 @@ export function proposalDisplayTitle(payload: AiProposalPayloadT): string {
     }
     case 'note_update': {
       const change = recordOf(payload.proposed_change);
-      return titled('更新学习笔记', change?.summary_md ?? change?.summary);
+      return titled('更新学习笔记', noteUpdateSummary(change));
     }
     case 'variant_question':
       return titled('生成变式练习', payload.proposed_change.prompt_md);
-    case 'record_promotion':
-      return '整理学习记录';
+    case 'record_promotion': {
+      const target = textOf(recordOf(payload.proposed_change)?.target);
+      return titled('整理学习记录', target ? RECORD_PROMOTION_TARGET[target] : null);
+    }
     case 'record_links':
       return '补充记录关联';
     case 'completion':

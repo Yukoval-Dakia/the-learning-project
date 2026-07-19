@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { listProposalInboxRows } from './inbox';
-import { proposalDisplayTitle } from './presentation';
+import { proposalChangeSummary, proposalDisplayTitle } from './presentation';
 import {
   writeArchiveProposal,
   writeBlockMergeProposal,
@@ -326,6 +326,96 @@ describe('proposal producer helpers', () => {
     expect(cases.map(([candidate]) => proposalDisplayTitle(candidate))).toEqual(
       cases.map(([, expected]) => expected),
     );
+  });
+
+  it('keeps AI estimates qualitative and maps record/question edits to their real fields', () => {
+    const payload = (kind: string, proposed_change: Record<string, unknown>) =>
+      ({ kind, proposed_change }) as unknown as AiProposalPayloadT;
+
+    expect(
+      proposalChangeSummary(
+        payload('question_draft', {
+          prompt_preview: '证明两角相等',
+          kind: 'short_answer',
+          difficulty: 5,
+        }),
+      ),
+    ).toEqual([
+      { label: '题面', value: '证明两角相等' },
+      { label: '题型', value: '简答题' },
+      { label: 'AI 估计难度', value: '偏高（AI 估计，仅供参考）' },
+    ]);
+    expect(
+      proposalChangeSummary(payload('relearn', { current_mastery: 0.41, peak_mastery: 0.92 })),
+    ).toEqual([
+      {
+        label: 'AI 估计掌握趋势',
+        value: '较历史高点明显回落（AI 估计，仅供参考）',
+      },
+    ]);
+
+    expect(
+      proposalChangeSummary(
+        payload('record_promotion', {
+          target: 'learning_item',
+          draft: { title: '虚词辨析计划' },
+        }),
+      ),
+    ).toEqual([
+      { label: '目标', value: '整理为学习项' },
+      { label: '草稿标题或题面', value: '虚词辨析计划' },
+    ]);
+
+    expect(
+      proposalChangeSummary(
+        payload('question_edit', {
+          node_preview: '选择正确解释',
+          edit: {
+            op: 'set_choice',
+            node_id: 'node_1',
+            options: [
+              { label: 'A', text: '代词' },
+              { label: 'B', text: '助词' },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { label: '修改', value: '更新选项' },
+      { label: '题面定位', value: '选择正确解释' },
+      { label: '新选项', value: 'A. 代词；B. 助词' },
+    ]);
+    expect(
+      proposalChangeSummary(
+        payload('question_edit', {
+          node_preview: '解释句意',
+          edit: {
+            op: 'edit_reference',
+            node_id: 'node_2',
+            answers: ['取消句子独立性'],
+          },
+        }),
+      ),
+    ).toEqual([
+      { label: '修改', value: '修改答案或解析' },
+      { label: '题面定位', value: '解释句意' },
+      { label: '新答案', value: '取消句子独立性' },
+    ]);
+    expect(
+      proposalChangeSummary(
+        payload('question_edit', {
+          node_preview: '判断下列说法',
+          edit: { op: 'set_node_kind', node_id: 'node_3', kind: 'true_false' },
+        }),
+      ),
+    ).toContainEqual({ label: '新题型', value: '判断题' });
+
+    expect(
+      proposalChangeSummary(payload('note_update', { summary: { ops_count: 2, new_blocks: 1 } })),
+    ).toEqual([
+      { label: '修改', value: '2 处内容调整' },
+      { label: '说明', value: '2 处内容调整，其中新增 1 块' },
+    ]);
   });
 
   it('does not present missing or cross-session merge blocks as valid candidates', async () => {
