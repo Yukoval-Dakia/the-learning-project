@@ -411,6 +411,7 @@ export const fastTestInclude = [
   'src/server/memory/reconcile-llm.test.ts',
   // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
   // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
+  'src/server/memory/read.test.ts',
   'src/server/memory/search-memories.test.ts',
   'src/server/r2.test.ts',
   // P2a (YUK-312) — review 域 5 条 unit 条目已随模块迁入 src/capabilities/practice/，

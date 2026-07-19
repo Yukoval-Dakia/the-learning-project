@@ -30,6 +30,7 @@ import {
   dismissProposal,
   writeKnowledgeProposeEvent,
 } from './proposals';
+import { seedKnowledge } from './seed';
 
 // liveSnapshot — project the live `knowledge` row down to the structural
 // KnowledgeRowSnapshot subset (drops embed_* columns, coerces timestamps to
@@ -123,6 +124,24 @@ async function insertProposeEvent(opts: {
       created_at: now,
     });
   }
+}
+
+async function waitForBlockedDatabaseSession(): Promise<void> {
+  const db = testDb();
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = (await db.execute(sql<{ blocked: boolean }>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND wait_event_type = 'Lock'
+      ) AS blocked
+    `)) as Array<{ blocked: boolean }>;
+    if (rows[0]?.blocked) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for a database session to block on a row lock');
 }
 
 describe('writeKnowledgeProposeEvent', () => {
@@ -1198,6 +1217,97 @@ describe('acceptProposal — high-tier mutations', () => {
 describe('acceptProposal — PR-A2b projection parity', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('timestamps a merge after a root-name write that held the affected row lock first', async () => {
+    const db = testDb();
+    await seedKnowledge(db);
+    const rootId = 'seed:yuwen:root';
+    await insertKnowledge({ id: 'k_merge_waiter', domain: 'yuwen', version: 0 });
+    await insertProposeEvent({
+      id: 'p_merge_waiter',
+      subject_id: rootId,
+      payload: {
+        mutation: 'merge',
+        from_ids: ['k_merge_waiter'],
+        into_id: rootId,
+        expected_versions: { k_merge_waiter: 0 },
+      },
+    });
+
+    let releaseRootLock!: () => void;
+    const rootLockRelease = new Promise<void>((resolve) => {
+      releaseRootLock = resolve;
+    });
+    let announceRootLock!: () => void;
+    const rootLockAcquired = new Promise<void>((resolve) => {
+      announceRootLock = resolve;
+    });
+    const rootNameWrite = db.transaction(async (tx) => {
+      const [root] = await tx
+        .select({ name: knowledge.name, version: knowledge.version })
+        .from(knowledge)
+        .where(eq(knowledge.id, rootId))
+        .for('update');
+      if (!root) throw new Error('seed root missing');
+      announceRootLock();
+      await rootLockRelease;
+
+      const materializedAt = new Date();
+      await tx
+        .update(knowledge)
+        .set({ name: '语文基础', version: root.version + 1, updated_at: materializedAt })
+        .where(eq(knowledge.id, rootId));
+      await tx.insert(event).values({
+        id: 'root_name_before_merge',
+        actor_kind: 'user',
+        actor_ref: 'owner',
+        action: 'experimental:subject_root_name_update',
+        subject_kind: 'knowledge',
+        subject_id: rootId,
+        outcome: 'success',
+        payload: {
+          control_action: 'rename',
+          subject_id: 'yuwen',
+          previous_name: root.name,
+          next_name: '语文基础',
+          previous_version: root.version,
+          next_version: root.version + 1,
+        },
+        created_at: materializedAt,
+        ingest_at: materializedAt,
+      });
+    });
+
+    await rootLockAcquired;
+    const mergeAccept = acceptProposal(db, 'p_merge_waiter');
+    let waitError: unknown;
+    try {
+      await waitForBlockedDatabaseSession();
+    } catch (error) {
+      waitError = error;
+    } finally {
+      releaseRootLock();
+    }
+    await rootNameWrite;
+    if (waitError) {
+      await mergeAccept.catch(() => undefined);
+      throw waitError;
+    }
+    await expect(mergeAccept).resolves.toMatchObject({ kind: 'merge_applied', into_id: rootId });
+
+    const [rootNameEvent] = await db
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(eq(event.id, 'root_name_before_merge'));
+    const [acceptEvent] = await db
+      .select({ created_at: event.created_at })
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_merge_waiter')));
+    expect(acceptEvent.created_at.getTime()).toBeGreaterThanOrEqual(
+      rootNameEvent.created_at.getTime(),
+    );
+    expect(await gatherAndFoldKnowledgeNode(db, rootId)).toEqual(await liveSnapshot(rootId));
   });
 
   it('propose_new accept: rate carries materialized_ids, index row written, fold == row', async () => {

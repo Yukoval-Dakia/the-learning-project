@@ -473,9 +473,17 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      // Single-owner soft-delete. Throws not_found if the edge id is unknown;
-      // returns { archived:false } if it was already archived (idempotent).
-      await archiveKnowledgeEdge(tx, archiveEdgeId, now);
+      // Single-owner soft-delete. A racing archive that won after the preflight guard is a
+      // conflict: roll this transaction back rather than appending a second fold-visible archive
+      // event whose timestamp would diverge from the row.
+      const archived = await archiveKnowledgeEdge(tx, archiveEdgeId, now);
+      if (!archived.archived) {
+        throw new ApiError(
+          'conflict',
+          `knowledge_edge ${archiveEdgeId} changed before proposal ${proposeEventId} was applied`,
+          409,
+        );
+      }
 
       // Provenance + idempotency anchor: a `generate` event whose subject is the
       // archived edge, mirroring the create path so the re-decide guard above

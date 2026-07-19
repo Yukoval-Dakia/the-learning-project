@@ -1,20 +1,43 @@
-// YUK-471 W3-C3 (review) — the ONE shared artifact / question_block row→snapshot field-pick.
+// YUK-471 W3-C3 / YUK-587 — shared live-row → structural-snapshot field-picks.
 //
-// The auditor (scripts/audit-projection.ts), the genesis backfill (scripts/backfill-genesis-events.ts),
-// and the accept-time parity assert (src/server/projections/parity.ts, re-exported under the
-// artifactLiveRowToSnapshot / questionBlockLiveRowToSnapshot names) all need the SAME live-row →
-// structural-snapshot mapping. Three byte-identical copies were a drift hazard: a future schema change
-// (esp. dropping the legacy question_block.extracted_prompt_md column) could silently diverge the audit
-// / backfill snapshot shape from what the fold reproduces. Consolidating to one exported mapper makes
-// that impossible — every consumer picks the same fields here.
+// The auditor, genesis backfill, live seed and accept-time parity asserts all need the SAME live-row →
+// structural-snapshot mapping. Duplicate field-picks are a drift hazard: a future schema change could
+// silently diverge the seed/backfill snapshot shape from what the fold reproduces. Consolidating them
+// here makes that impossible — every consumer picks the same fields.
 //
 // NO Zod parse — a `.parse()` throw on the hot path could abort a live write in prod, defeating the
 // never-throw-on-the-hot-path contract the parity asserts uphold. A plain field-pick cannot throw; the
 // row came straight from the DB so its types hold. (The strict genesis parse still runs at writeEvent in
 // the backfill — that barrier is intentional there, not here.)
 
-import type { ArtifactRowSnapshotT, QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
-import type { artifact, question_block } from '@/db/schema';
+import type {
+  ArtifactRowSnapshotT,
+  KnowledgeRowSnapshotT,
+  QuestionBlockRowSnapshotT,
+} from '@/core/schema/event/genesis';
+import type { artifact, knowledge, question_block } from '@/db/schema';
+
+/**
+ * Map a live `knowledge` row to its structural snapshot. The embed_* columns are derived search-index
+ * state, not fold truth, so they are deliberately omitted. Used by both the one-shot genesis backfill
+ * and the migrate-time subject-root seed (YUK-587); sharing this mapper prevents their genesis payloads
+ * from drifting apart.
+ */
+export function knowledgeRowToSnapshot(row: typeof knowledge.$inferSelect): KnowledgeRowSnapshotT {
+  return {
+    id: row.id,
+    name: row.name,
+    domain: row.domain,
+    parent_id: row.parent_id,
+    merged_from: row.merged_from,
+    archived_at: row.archived_at,
+    proposed_by_ai: row.proposed_by_ai,
+    approval_status: row.approval_status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
 
 /**
  * Map a live `artifact` DB row to ArtifactRowSnapshotT. artifact has NO derived/embed columns

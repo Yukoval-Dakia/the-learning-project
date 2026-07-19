@@ -5,6 +5,7 @@ import {
   type KnowledgeRowSnapshotT,
   ProposeKnowledge,
   RateEvent,
+  SubjectRootNameUpdateExperimental,
 } from '../schema/event';
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
@@ -47,8 +48,7 @@ const KnowledgeArchivePayload = z.object({
 // SHARED FoldEvent — the reducer consumes the flat `event`-row projection from
 // ./fold-event (the SAME shape the edge reducer consumes and PR-A2's IO shell
 // builds). The flat columns it reads:
-//   - `id` / `created_at` — accept linkage + (created_at, id) ordering tiebreak +
-//     row timestamps.
+//   - `id` / `created_at` — accept linkage + canonical replay ordering + row timestamps.
 //   - `subject_kind` / `subject_id` — routing. Present on the SPECIALISED Event
 //     members (ProposeKnowledge, GenesisExperimental …) but DROPPED by the
 //     generic `ExperimentalEvent` member, so the fold reads them off the flat
@@ -79,12 +79,79 @@ function toParseInput(fe: FoldEvent): unknown {
   };
 }
 
-// Stable (created_at asc, id asc) comparator — the canonical event read order
-// (identical tiebreak to corrections.ts, the fold blueprint).
-function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
-  const ta = a.created_at.getTime();
-  const tb = b.created_at.getTime();
+function mutationPreviousVersionForNode(fe: FoldEvent, nodeId: string): number | null {
+  if (fe.subject_kind !== 'knowledge') return null;
+
+  if (fe.action === 'experimental:subject_root_name_update' && fe.subject_id === nodeId) {
+    const update = SubjectRootNameUpdateExperimental.safeParse(toParseInput(fe));
+    return update.success ? update.data.payload.previous_version : null;
+  }
+
+  if (fe.action === 'experimental:knowledge_archive') {
+    const archive = KnowledgeArchivePayload.safeParse(fe.payload);
+    return archive.success && archive.data.node_id === nodeId
+      ? (archive.data.expected_version ?? null)
+      : null;
+  }
+
+  if (!fe.action.startsWith('experimental:knowledge_')) return null;
+  const mutation = KnowledgeMutationProposalChange.safeParse({
+    mutation: fe.action.replace(/^experimental:knowledge_/, ''),
+    ...fe.payload,
+  });
+  if (!mutation.success) return null;
+
+  switch (mutation.data.mutation) {
+    case 'reparent':
+      return mutation.data.node_id === nodeId ? mutation.data.expected_version : null;
+    case 'merge':
+      return mutation.data.into_id === nodeId || mutation.data.from_ids.includes(nodeId)
+        ? (mutation.data.expected_versions[nodeId] ?? null)
+        : null;
+    case 'split':
+      return mutation.data.from_id === nodeId ? mutation.data.expected_version : null;
+  }
+}
+
+function replayTieKey(
+  fe: FoldEvent,
+  nodeId: string,
+  materializedKnowledgeByProposeId: Map<string, string[]>,
+): readonly [tier: number, version: number] {
+  const createsNode =
+    (fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId &&
+      (fe.action === 'experimental:genesis' || fe.action === 'experimental:auto_tag_kc_created')) ||
+    (materializedKnowledgeByProposeId.get(fe.id)?.includes(nodeId) ?? false);
+  if (createsNode) return [0, 0];
+
+  const previousVersion = mutationPreviousVersionForNode(fe, nodeId);
+  if (previousVersion !== null) return [1, previousVersion];
+
+  return [2, 0];
+}
+
+// Stable canonical total order. The materialization timestamp (accept time for proposals, envelope
+// time otherwise) is primary. Within one millisecond, a node's creation precedes its explicitly
+// versioned mutations, which are ordered by their previous/expected version; remaining events
+// follow by id. Computing one tuple per event (instead of a pair-specific special case) keeps the
+// comparator transitive. A merge into_id has no expected version in the production contract, so
+// its field-disjoint update must also commute with a same-ms name update.
+function compareReplayEvents(
+  a: FoldEvent,
+  b: FoldEvent,
+  nodeId: string,
+  materializedKnowledgeByProposeId: Map<string, string[]>,
+  acceptedAtByProposeId: Map<string, Date>,
+): number {
+  const ta = (acceptedAtByProposeId.get(a.id) ?? a.created_at).getTime();
+  const tb = (acceptedAtByProposeId.get(b.id) ?? b.created_at).getTime();
   if (ta !== tb) return ta - tb;
+
+  const [aTier, aVersion] = replayTieKey(a, nodeId, materializedKnowledgeByProposeId);
+  const [bTier, bVersion] = replayTieKey(b, nodeId, materializedKnowledgeByProposeId);
+  if (aTier !== bTier) return aTier - bTier;
+  if (aVersion !== bVersion) return aVersion - bVersion;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
@@ -132,13 +199,14 @@ export function foldKnowledgeNode(
     if (mk) materializedKnowledgeByProposeId.set(proposeId, mk);
   }
 
-  // ---------- pass 2: apply in (created_at asc, id asc) order ----------
-  // Walk the SOURCE events in the canonical read order (created_at, id) — the same
-  // order corrections.ts reads and the accept path wrote them — and apply each
-  // effect on `nodeId` to a running row. Ordering is driven by the envelope id (a
-  // true tiebreak when two events share a created_at), which is exactly why the
-  // fold takes the envelope-wrapped FoldEvent rather than bare EventT.
-  const ordered = [...events].sort(byCreatedThenId);
+  // ---------- pass 2: apply in canonical replay order ----------
+  // Walk source events by materialization timestamp (the accepting rate's time for proposals).
+  // Events for one node that share a millisecond use a total creation/version/id tie order so
+  // causal transitions never depend on random envelope ids or the database's unordered Q1 result.
+  // This is why the fold takes envelope-wrapped FoldEvent rows rather than bare EventT values.
+  const ordered = [...events].sort((a, b) =>
+    compareReplayEvents(a, b, nodeId, materializedKnowledgeByProposeId, acceptedAtByProposeId),
+  );
 
   let row: KnowledgeRowSnapshotT | null = null;
 
@@ -169,6 +237,35 @@ export function foldKnowledgeNode(
       }
       // The seed IS the base state (version, timestamps and all carried verbatim).
       row = { ...knownRow.data, merged_from: [...knownRow.data.merged_from] };
+      continue;
+    }
+
+    // Subject control-plane rename/reset mirrors display_name onto the canonical knowledge root.
+    // This direct action is not proposal-gated: the owner CAS + control-plane lock authorize it at
+    // write time. previous_name / previous_version are audit evidence, not replay preconditions:
+    // production merge events only guard from_ids and carry no into_id version, so a same-ms merge
+    // and rename cannot always be causally sorted. Their field updates commute; incrementing the
+    // folded version (rather than assigning payload.next_version) accounts for each event exactly
+    // once regardless of their same-ms order. Root-name events remain mutually version-ordered,
+    // preserving the final name across sequential rename/reset transitions. This also lets the
+    // first post-YUK-728 event heal a legacy name-only mirror absent from the historical log.
+    if (
+      fe.action === 'experimental:subject_root_name_update' &&
+      fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId
+    ) {
+      const update = SubjectRootNameUpdateExperimental.safeParse(toParseInput(fe));
+      if (!update.success) {
+        warnMalformed('experimental:subject_root_name_update', fe.id, update.error);
+        continue;
+      }
+      if (row === null) continue;
+      row = {
+        ...row,
+        name: update.data.payload.next_name,
+        updated_at: fe.created_at,
+        version: row.version + 1,
+      };
       continue;
     }
 

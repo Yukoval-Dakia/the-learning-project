@@ -20,7 +20,7 @@
 
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 /** One LOG-only calibration score row (mapped from an experimental:prediction_score event). */
 export interface ConjecturePredictionScoreRow {
@@ -32,10 +32,10 @@ export interface ConjecturePredictionScoreRow {
   baseline_p: number;
   outcome: 0 | 1;
   resolution: 'confirmed' | 'retired';
-  brier_model: number;
-  brier_baseline: number;
-  log_loss_model: number;
-  skill_score_point: number;
+  brier_model: number | null;
+  brier_baseline: number | null;
+  log_loss_model: number | null;
+  skill_score_point: number | null;
   retrievability_at_judge: number | null;
   created_at: string;
 }
@@ -45,7 +45,7 @@ export interface ConjectureTypedStateRow {
   id: string;
   knowledge_id: string;
   typed_state: 'confused-with-X';
-  confused_with_kc_id: string | null;
+  confused_with_kc_id: string;
   lifecycle: 'open' | 'resolved';
   evidence_event_ids: string[];
   last_evidence_at: string | null;
@@ -57,9 +57,42 @@ export interface ConjectureScoresRead {
   score_basis: 'single_point';
   prediction_scores: ConjecturePredictionScoreRow[];
   typed_states: ConjectureTypedStateRow[];
+  diagnostics: {
+    prediction_scores: ConjectureScanDiagnostics;
+    typed_states: ConjectureScanDiagnostics;
+  };
+}
+
+export interface ConjectureScanDiagnostics {
+  /** Raw matching rows actually passed through the fail-closed mapper. */
+  scanned_count: number;
+  /** Scanned rows rejected by the mapper. Unscanned older rows are not counted. */
+  dropped_count: number;
+  /** True when older matching rows exist but the result/scan bound stopped inspection. */
+  scan_truncated: boolean;
 }
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
+const ADMIN_RESULT_LIMIT = 200;
+// Invalid rows fail closed after selection. Bounded over-fetch keeps a small corrupt tail from
+// crowding valid diagnostics out of the response without returning to an unbounded table scan.
+const ADMIN_SCAN_LIMIT = ADMIN_RESULT_LIMIT * 2;
+
+type OptionalNumber = { ok: true; value: number | null } | { ok: false };
+
+function optionalFiniteNumber(value: unknown): OptionalNumber {
+  if (value === null || value === undefined) return { ok: true, value: null };
+  if (typeof value !== 'number' || !Number.isFinite(value)) return { ok: false };
+  return { ok: true, value };
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isValidDate(value: unknown): value is Date {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
 
 function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow | null {
   const p = r.payload as Record<string, unknown> | null;
@@ -77,9 +110,22 @@ function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow 
   const conj = p.conjecture_event_id;
   const probe = p.probe_result_event_id;
   const kc = p.knowledge_id;
-  if (typeof conj !== 'string' || typeof probe !== 'string' || typeof kc !== 'string') return null;
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const retrievability = p.retrievability_at_judge;
+  if (!isNonEmptyString(conj) || !isNonEmptyString(probe) || !isNonEmptyString(kc)) return null;
+  if (!isValidDate(r.created_at)) return null;
+  const brierModel = optionalFiniteNumber(p.brier_model);
+  const brierBaseline = optionalFiniteNumber(p.brier_baseline);
+  const logLossModel = optionalFiniteNumber(p.log_loss_model);
+  const skillScorePoint = optionalFiniteNumber(p.skill_score_point);
+  const retrievability = optionalFiniteNumber(p.retrievability_at_judge);
+  if (
+    !brierModel.ok ||
+    !brierBaseline.ok ||
+    !logLossModel.ok ||
+    !skillScorePoint.ok ||
+    !retrievability.ok
+  ) {
+    return null;
+  }
   return {
     event_id: r.id,
     conjecture_event_id: conj,
@@ -89,13 +135,62 @@ function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow 
     baseline_p,
     outcome,
     resolution,
-    brier_model: num(p.brier_model),
-    brier_baseline: num(p.brier_baseline),
-    log_loss_model: num(p.log_loss_model),
-    skill_score_point: num(p.skill_score_point),
-    retrievability_at_judge:
-      typeof retrievability === 'number' && Number.isFinite(retrievability) ? retrievability : null,
+    brier_model: brierModel.value,
+    brier_baseline: brierBaseline.value,
+    log_loss_model: logLossModel.value,
+    skill_score_point: skillScorePoint.value,
+    retrievability_at_judge: retrievability.value,
     created_at: r.created_at.toISOString(),
+  };
+}
+
+function rowToTypedState(r: typeof kc_typed_state.$inferSelect): ConjectureTypedStateRow | null {
+  if (!isNonEmptyString(r.id) || r.subject_kind !== 'knowledge') return null;
+  if (!isNonEmptyString(r.subject_id) || r.typed_state !== 'confused-with-X') return null;
+  if (!isNonEmptyString(r.confused_with_kc_id)) return null;
+  if (r.lifecycle !== 'open' && r.lifecycle !== 'resolved') return null;
+  if (!Array.isArray(r.evidence_event_ids) || !r.evidence_event_ids.every(isNonEmptyString)) {
+    return null;
+  }
+  if (r.last_evidence_at !== null && !isValidDate(r.last_evidence_at)) return null;
+  if (!isValidDate(r.updated_at)) return null;
+  return {
+    id: r.id,
+    knowledge_id: r.subject_id,
+    typed_state: r.typed_state,
+    confused_with_kc_id: r.confused_with_kc_id,
+    lifecycle: r.lifecycle,
+    evidence_event_ids: r.evidence_event_ids,
+    last_evidence_at: r.last_evidence_at?.toISOString() ?? null,
+    updated_at: r.updated_at.toISOString(),
+  };
+}
+
+function collectBoundedRows<Raw, Mapped>(
+  rowsWithSentinel: readonly Raw[],
+  map: (row: Raw) => Mapped | null,
+): { rows: Mapped[]; diagnostics: ConjectureScanDiagnostics } {
+  // The query fetches one sentinel beyond the hard scan window solely to distinguish exactly-N rows
+  // from a genuinely truncated backlog. The sentinel is never mapped and is not counted as scanned.
+  const scanWindow = rowsWithSentinel.slice(0, ADMIN_SCAN_LIMIT);
+  const rows: Mapped[] = [];
+  let scanned_count = 0;
+  let dropped_count = 0;
+  for (const raw of scanWindow) {
+    scanned_count += 1;
+    const mapped = map(raw);
+    if (mapped === null) dropped_count += 1;
+    else rows.push(mapped);
+    if (rows.length === ADMIN_RESULT_LIMIT) break;
+  }
+  return {
+    rows,
+    diagnostics: {
+      scanned_count,
+      dropped_count,
+      scan_truncated:
+        rowsWithSentinel.length > ADMIN_SCAN_LIMIT || scanned_count < scanWindow.length,
+    },
   };
 }
 
@@ -105,33 +200,33 @@ function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow 
  * Never writes. Never flips flags. Never touches FSRS/θ̂ (ND-5).
  */
 export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {
-  const scoreRows = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
-
-  const prediction_scores: ConjecturePredictionScoreRow[] = [];
-  for (const r of scoreRows) {
-    const mapped = rowToScore(r);
-    if (mapped) prediction_scores.push(mapped);
-  }
-  // Newest-first (the owner sees the freshest calibration evidence at the top).
-  prediction_scores.sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-
+  const scoreRows = await db
+    .select()
+    .from(event)
+    .where(eq(event.action, PREDICTION_SCORE_ACTION))
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(ADMIN_SCAN_LIMIT + 1);
+  const scores = collectBoundedRows(scoreRows, rowToScore);
   const typedRows = await db
     .select()
     .from(kc_typed_state)
-    .where(eq(kc_typed_state.typed_state, 'confused-with-X'));
+    .where(
+      and(
+        eq(kc_typed_state.subject_kind, 'knowledge'),
+        eq(kc_typed_state.typed_state, 'confused-with-X'),
+      ),
+    )
+    .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
+    .limit(ADMIN_SCAN_LIMIT + 1);
+  const typed = collectBoundedRows(typedRows, rowToTypedState);
 
-  const typed_states: ConjectureTypedStateRow[] = typedRows.map((r) => ({
-    id: r.id,
-    knowledge_id: r.subject_id,
-    typed_state: 'confused-with-X',
-    confused_with_kc_id: r.confused_with_kc_id,
-    lifecycle: r.lifecycle as 'open' | 'resolved',
-    evidence_event_ids: r.evidence_event_ids ?? [],
-    last_evidence_at: r.last_evidence_at ? r.last_evidence_at.toISOString() : null,
-    updated_at: r.updated_at.toISOString(),
-  }));
-
-  return { score_basis: 'single_point', prediction_scores, typed_states };
+  return {
+    score_basis: 'single_point',
+    prediction_scores: scores.rows,
+    typed_states: typed.rows,
+    diagnostics: {
+      prediction_scores: scores.diagnostics,
+      typed_states: typed.diagnostics,
+    },
+  };
 }

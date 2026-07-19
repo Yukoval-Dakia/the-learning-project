@@ -77,7 +77,7 @@ import type { DifficultyBand } from '@/server/question-supply/target-discovery';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import {
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
+  mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/server/quiz/content-fingerprint';
 import { type R2Client, getR2 } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -664,11 +664,20 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
         continue;
       }
 
-      // Exact-dup (canonical content hash) — its canonicalizer preserves image alt/presence while
-      // excluding transport URLs, so random temp paths and internal asset ids share one identity.
+      // Exact-dup (canonical content hash) — the image-aware canonicalizer preserves image
+      // alt/presence while excluding transport URLs. YUK-720 cross-KC merge then attributes this
+      // anchor KC to an existing row instead of re-inserting the same content.
       const canonicalContentHash = await canonicalJyeooQuestionHash(q, loadedImages);
-      const existingDuplicate = await findExactQuestionDuplicate(db, canonicalContentHash);
-      if (existingDuplicate) {
+      const existingDuplicate = await db.transaction((tx) =>
+        mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash,
+          knowledgeIds: [anchorKid],
+          actorRef: 'jyeoo_fetch',
+          taskRunId: undefined,
+          now,
+        }),
+      );
+      if (existingDuplicate?.disposition === 'merged') {
         counts.deduped_exact += 1;
         continue;
       }
@@ -705,9 +714,11 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
             fetchedAt: now.toISOString(),
             canonicalContentHash,
             supplyTrace: params.supplyTrace,
+            mergeActorRef: 'jyeoo_fetch',
+            taskRunId: undefined,
             now,
           });
-          if (inserted.status === 'raced_duplicate') return inserted;
+          if (inserted.status === 'raced_merged') return inserted;
 
           if (media) {
             await tx
@@ -739,7 +750,7 @@ export async function runJyeooFetch(params: RunJyeooFetchParams): Promise<RunJye
         if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
         throw err;
       }
-      if (persisted.status === 'raced_duplicate') {
+      if (persisted.status === 'raced_merged') {
         if (media) await cleanupQuestionAssets(db, imageR2 as R2Client, media.assets);
         counts.deduped_exact += 1;
         continue;

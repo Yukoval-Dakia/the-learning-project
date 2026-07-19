@@ -41,6 +41,7 @@ const logMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
+  logMissingMcpServersWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
   writeCostLedger: logMock.cost,

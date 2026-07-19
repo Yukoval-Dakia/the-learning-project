@@ -35,6 +35,7 @@ import { question } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 
 import {
+  buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInput,
   parseSelectionOrchestratorOutput,
 } from '@/server/ai/selection-orchestrator';
@@ -77,8 +78,8 @@ export interface ComposeSoftmaxDeps {
   /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
   runTaskFn?: RunTaskFn;
   /**
-   * mem0 learner-prior loader。省略 → production 动态 import createMemoryClient +
-   * searchMemories；构造/搜索失败一律退空 prior，不改变 LLM fallback level。
+   * mem0 learner-prior loader。省略 → production 动态 import server/memory read seam；
+   * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
    */
   loadMemoryPrior?: LoadMemoryPriorFn;
   /** Poisson 抽样 rng（默认 Math.random）；测试传 seeded rng 确定化。 */
@@ -546,7 +547,8 @@ async function tryLlmOrchestration(
   loadMemoryPrior?: LoadMemoryPriorFn,
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
-    const candidateText = buildSelectionOrchestratorTaskInput(samplable).candidates;
+    const candidateBlock = buildSelectionOrchestratorTaskInput(samplable);
+    const candidateText = candidateBlock.candidates;
     if (candidateText.trim().length === 0) {
       // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
       // 补结构化 warn，让「LLM 编排输入为空」这条 fallback 路径可观测（与下方 catch 的 L2-failure
@@ -560,7 +562,8 @@ async function tryLlmOrchestration(
     // failure only removes the optional memoryPrior field. In particular, do not let it reach the
     // outer catch (which correctly means the L2 orchestration itself failed).
     const memories = await loadMemoryPriorFailSoft(loadMemoryPrior);
-    const taskInput = buildSelectionOrchestratorTaskInput(samplable, memories);
+    const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
+    const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
     const fn = runTaskFn ?? (await defaultRunTaskFn());
     const result = await fn('SelectionOrchestratorTask', taskInput, { db });
     const refIds = samplable.map((s) => s.refId);
@@ -612,14 +615,10 @@ async function loadMemoryPriorFailSoft(loader?: LoadMemoryPriorFn): Promise<read
 
 /** Production-only lazy loader: no mem0/native dependency enters the module graph before L2 runs. */
 const defaultLoadMemoryPrior: LoadMemoryPriorFn = async () => {
-  const [{ createMemoryClient }, { searchMemories }] = await Promise.all([
-    import('@/server/memory/client'),
-    import('@/server/memory/search-memories'),
-  ]);
-  // createMemoryClient may throw synchronously when env/config is unavailable. The caller's
+  const { readMemoryFacts } = await import('@/server/memory/read');
+  // Client construction may throw synchronously when env/config is unavailable. The caller's
   // loadMemoryPriorFailSoft boundary intentionally covers this construction as well as search.
-  const client = createMemoryClient();
-  const result = await searchMemories(client, SELECTION_MEMORY_QUERY, {
+  const result = await readMemoryFacts(SELECTION_MEMORY_QUERY, {
     topK: MEM0_PRIOR_CAP,
     // No subject:* filter: attempt/review facts are generally global+topic scoped and a subject
     // filter would silently discard the learner facts this advisory is meant to surface.

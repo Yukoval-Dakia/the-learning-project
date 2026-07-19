@@ -64,6 +64,35 @@ export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): 
 }
 
 /**
+ * Materialize a fresh FSRS card only when the subject has never been enrolled.
+ *
+ * Unlike {@link upsertFsrsState}, the conflict branch is intentionally a no-op: enrollment can
+ * race a review submit, and the newly-created card must never overwrite a schedule/history that
+ * appeared after an optimistic read. This module remains the single writer for the projection.
+ */
+export async function enrollFsrsStateIfAbsent(
+  db: DbLike,
+  input: UpsertFsrsStateInput,
+): Promise<boolean> {
+  const inserted = await db
+    .insert(material_fsrs_state)
+    .values({
+      id: newId(),
+      subject_kind: input.subject_kind,
+      subject_id: input.subject_id,
+      state: input.state,
+      due_at: input.due_at,
+      last_review_event_id: input.last_review_event_id,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing({
+      target: [material_fsrs_state.subject_kind, material_fsrs_state.subject_id],
+    })
+    .returning({ id: material_fsrs_state.id });
+  return inserted.length > 0;
+}
+
+/**
  * YUK-543 — repair `material_fsrs_state` (R-axis scheduling projection) when a KC (`fromId`) is
  * merged into another (`intoId`). NEVER merges FSRS Card state / recomputes stability or due dates
  * (no invented merge math; spec §6). 3-case identity-rename/freeze-and-log, mirroring

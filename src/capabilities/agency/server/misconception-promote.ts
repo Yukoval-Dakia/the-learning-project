@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 
 import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconception-edges';
+import { parseFlag } from '@/core/env-flags';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
 import { misconception } from '@/db/schema';
@@ -73,7 +74,7 @@ function normalizeConfidenceWeight(raw: number): number {
  * MISCONCEPTION_RECURRENCE_ENABLED, which cannot be runtime-mocked).
  */
 export function misconceptionPromoteEnabled(): boolean {
-  return process.env.MISCONCEPTION_PROMOTE_ENABLED === '1';
+  return parseFlag(process.env.MISCONCEPTION_PROMOTE_ENABLED);
 }
 
 /**
@@ -86,7 +87,7 @@ export function misconceptionPromoteEnabled(): boolean {
  * (Tier 1 ships the track dark, per design 2026-07-01-misconception-promote-mechanism.md §2).
  */
 export function misconceptionHardConfirmEnabled(): boolean {
-  return process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED === '1';
+  return parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED);
 }
 
 /**

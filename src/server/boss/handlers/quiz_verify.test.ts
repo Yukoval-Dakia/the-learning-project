@@ -353,6 +353,58 @@ describe('runQuizVerify', () => {
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
   });
 
+  it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedKnowledge('k2');
+    await seedDraftQuestion({ id: 'q_verify_version_race', knowledgeId: 'k1' });
+    let mutated = false;
+    const staleRun = vi.fn(async (kind: string) => {
+      if (kind === 'QuizVerifyTask' && !mutated) {
+        mutated = true;
+        await db
+          .update(question)
+          .set({ knowledge_ids: ['k1', 'k2'], version: 1 })
+          .where(eq(question.id, 'q_verify_version_race'));
+      }
+      return { text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr-stale-verify' };
+    });
+
+    await expect(
+      runQuizVerify({ db, questionId: 'q_verify_version_race', runTaskFn: staleRun }),
+    ).rejects.toThrow('changed during verification');
+
+    const [afterStale] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q_verify_version_race'));
+    expect(afterStale).toMatchObject({
+      draft_status: 'draft',
+      knowledge_ids: ['k1', 'k2'],
+      version: 1,
+    });
+    const staleEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_verify'));
+    expect(staleEvents.map((candidate) => candidate.outcome)).toEqual(['error']);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k2')).toBe(0);
+
+    const retry = await runQuizVerify({
+      db,
+      questionId: 'q_verify_version_race',
+      runTaskFn: runTaskMock(verifyOutput({ overall: 'pass' }), 'tr-current-verify'),
+    });
+    expect(retry.status).toBe('verified');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k2')).toBe(1);
+    const outcomes = (
+      await db.select().from(event).where(eq(event.action, 'experimental:quiz_verify'))
+    ).map((candidate) => candidate.outcome);
+    expect(outcomes.sort()).toEqual(['error', 'success']);
+  });
+
   // Codex (PR #295) — enroll-if-absent. Verifying a NEW question that binds to a
   // knowledge point which already has an FSRS projection (supplementary-question
   // scenario) must NOT reset that node's state/due_at back to a fresh card.

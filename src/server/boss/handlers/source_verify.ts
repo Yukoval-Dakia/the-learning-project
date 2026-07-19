@@ -454,6 +454,22 @@ export async function runSourceVerify(
 
     let wasDemoted = false;
     await db.transaction(async (tx) => {
+      // The checks above ran against `row.version`. Cross-KC reconciliation bumps that version
+      // under the same row lock; a mismatch makes this verdict stale, so abort before writing a
+      // terminal event/promotion. The catch records a retriable outcome='error' and pg-boss reruns
+      // against the current KC set. If this lock wins first, the later reconciler observes active
+      // lifecycle and enrolls its added KC atomically.
+      const [current] = await tx
+        .select({ version: question.version, knowledgeIds: question.knowledge_ids })
+        .from(question)
+        .where(eq(question.id, questionId))
+        .limit(1)
+        .for('update');
+      if (!current || current.version !== row.version) {
+        throw new Error(
+          `source_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+        );
+      }
       if (promote) {
         await tx
           .update(question)
@@ -464,7 +480,7 @@ export async function runSourceVerify(
         // quiz_verify): materialize an initial card only for knowledge points with no
         // existing projection; never reset an existing schedule.
         const initial = initialFsrsState(now);
-        const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
+        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
             const existing = await getFsrsState(tx, 'knowledge', knowledgeId);

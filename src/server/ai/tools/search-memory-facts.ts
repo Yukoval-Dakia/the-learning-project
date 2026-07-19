@@ -1,8 +1,8 @@
 // YUK-203 U4 / L-memtool — `search_memory_facts` DomainTool.
 //
-// First agent-layer tool over the Mem0 fact layer (pgvector). Thin wrapper on
-// `MemoryClient.search()` (src/server/memory/client.ts:179-186); orthogonal to
-// the Dreaming-maintained `query_memory_brief` note layer (context-readers.ts).
+// First agent-layer tool over the Mem0 fact layer (pgvector). Reads through the
+// server/memory read seam; orthogonal to the Dreaming-maintained
+// `query_memory_brief` note layer (context-readers.ts).
 //
 // Governance (docs/design/2026-06-04-u0-decisions.md D7②): granted to
 // coach / dreaming / copilot ONLY. Per ADR-0017 memory is an attention prior,
@@ -10,8 +10,7 @@
 // mastery / FSRS and never biases judging. `mirrorEvent: 'never'` keeps the
 // internal retrieval out of the user-visible event stream.
 
-import { type MemoryClient, createMemoryClient } from '@/server/memory/client';
-import { searchMemories } from '@/server/memory/search-memories';
+import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
@@ -67,33 +66,33 @@ export const SearchMemoryFactsOutputSchema = z.object({
 });
 export type SearchMemoryFactsOutput = z.infer<typeof SearchMemoryFactsOutputSchema>;
 
-// Inject seam (plan §62 / client DI seam at client.ts:143-161). The memory
-// client construction needs env (XIAOMI/OPENAI keys) and is NOT carried on
-// ToolContext (types.ts:38-44), so we self-construct lazily via a factory. Tests
-// pass a stub factory so unit tests never touch real env / pgvector.
-export type MemoryClientFactory = () => MemoryClient;
-
-const defaultMemoryClientFactory: MemoryClientFactory = () => createMemoryClient();
+// Inject seam (plan §62). The read module owns lazy client construction because
+// its env is NOT carried on ToolContext. Tests pass a stub factory so unit tests
+// never touch real env / pgvector.
+export type MemoryClientFactory = MemoryReadClientFactory;
 
 export function buildSearchMemoryFactsTool(
   opts: { memoryFactory?: MemoryClientFactory } = {},
 ): DomainTool<SearchMemoryFactsInput, SearchMemoryFactsOutput> {
-  const memoryFactory = opts.memoryFactory ?? defaultMemoryClientFactory;
+  const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(
     _ctx: ToolContext,
     input: SearchMemoryFactsInput,
   ): Promise<SearchMemoryFactsOutput> {
-    const client = memoryFactory();
     // P3 (YUK-351): read through the searchMemories wrapper so soft-superseded
     // facts (P2 reconcile markers) are filtered out and survivors are recency-
     // reranked. `user_id` is still forced to 'self' inside the client wrapper
     // (client.ts:195) — single-user invariant. `scopeKey` is threaded through the
     // documented `{ contains }` filter shape (client.ts:191-194).
-    const result = await searchMemories(client, input.query, {
-      topK: input.topK ?? DEFAULT_FACTS_TOP_K,
-      filters: input.scopeKey ? { scope_key: input.scopeKey } : undefined,
-    });
+    const result = await readMemoryFacts(
+      input.query,
+      {
+        topK: input.topK ?? DEFAULT_FACTS_TOP_K,
+        filters: input.scopeKey ? { scope_key: input.scopeKey } : undefined,
+      },
+      readDeps,
+    );
     const facts = result.results ?? [];
     return SearchMemoryFactsOutputSchema.parse({ facts, count: facts.length });
   }

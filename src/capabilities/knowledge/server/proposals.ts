@@ -84,6 +84,36 @@ function mutationSubjectId(payload: KnowledgeMutationPayload): string {
   }
 }
 
+function mutationRowIds(payload: KnowledgeMutationPayload): string[] {
+  switch (payload.mutation) {
+    case 'propose_new':
+      return [];
+    case 'reparent':
+    case 'archive':
+      return [payload.node_id];
+    case 'merge':
+      return [payload.into_id, ...payload.from_ids];
+    case 'split':
+      return [payload.from_id];
+  }
+}
+
+async function lockMutationRows(tx: Tx, payload: KnowledgeMutationPayload): Promise<void> {
+  const ids = [...new Set(mutationRowIds(payload))].sort();
+  if (ids.length === 0) return;
+
+  // The accept event's timestamp is also the live row's materialization timestamp. Lock every row
+  // that this mutation can update, in a stable order, before capturing that timestamp. Otherwise an
+  // accept that waits behind a subject-root rename can commit second with an earlier timestamp,
+  // making fold order disagree with the actual row-write order (YUK-728).
+  await tx
+    .select({ id: knowledge.id })
+    .from(knowledge)
+    .where(inArray(knowledge.id, ids))
+    .orderBy(knowledge.id)
+    .for('update');
+}
+
 // =============================================================================
 // Mutation payload types (unchanged from pre-Step-9 — UI / KnowledgeReviewTask
 // still emit these shapes; we map propose_new → ProposeKnowledge and the rest
@@ -745,7 +775,10 @@ export async function rewireKnowledgeEdges(
     // Self-loop after rewrite (edge already touched intoId, or a loser→loser edge): the edge
     // collapses — archive-only, no create (a self-edge is never meaningful).
     if (newFrom === newTo) {
-      await archiveKnowledgeEdge(tx, edge.id, now);
+      const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+      if (!archived.archived) {
+        throw new Error(`merge: knowledge_edge ${edge.id} changed before self-loop collapse`);
+      }
       await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
       if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
       result.push({ old_edge_id: edge.id, new_edge_id: null, outcome: 'collapsed_self_loop' });
@@ -773,7 +806,10 @@ export async function rewireKnowledgeEdges(
     }
 
     // Archive the old edge (+ fold event), then create the rewritten edge (+ fold event).
-    await archiveKnowledgeEdge(tx, edge.id, now);
+    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+    if (!archived.archived) {
+      throw new Error(`merge: knowledge_edge ${edge.id} changed before rewire`);
+    }
     await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
     if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
 
@@ -1161,22 +1197,6 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       const propose = await readProposeEvent(tx, proposalId);
       await assertNotAlreadyRated(tx, proposalId);
 
-      // YUK-471 W1 PR-A2b — the SINGLE accept-time timestamp. Computed ONCE here
-      // and threaded through (1) the applyX call (row created_at/updated_at) and
-      // (2) the rate=accept event's created_at. One shared `now` is what makes
-      // fold(events) == row reproducible byte-exact: the node reducer stamps the
-      // projected row from the accept event's created_at, so the live row must be
-      // stamped from the same instant. (Sub-ms shift from the old per-applier
-      // `new Date()` is the only behavior change for live users.)
-      const now = new Date();
-      // YUK-471 W1 PR-B — read the SoT-flip gate ONCE per accept. OFF (default): imperative
-      // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
-      // is the row writer for EVERY kind the accept touches (propose_new / reparent / archive /
-      // merge / split) — propose_new skips its imperative INSERT; the mutation appliers keep
-      // their version-guarded UPDATE and the projection overwrites from events (see the seam
-      // below). Flag OFF stays the full-verification rollback.
-      const flip = projectionIsWriter();
-
       // Reconstruct mutation payload from event shape
       const mutationKind: string =
         propose.action === 'propose'
@@ -1189,6 +1209,20 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         mutation: mutationKind,
         ...(payloadBody as Record<string, unknown>),
       } as KnowledgeMutationPayload;
+
+      // YUK-471 W1 PR-A2b / YUK-728 — the SINGLE materialization timestamp. Existing rows are
+      // locked first so timestamp order matches their actual serialized write order, including
+      // subject-root rename/reset transactions that share the same knowledge row. The instant is
+      // then threaded through (1) applyX and (2) rate=accept for byte-exact fold == row parity.
+      await lockMutationRows(tx, apply);
+      const now = new Date();
+      // YUK-471 W1 PR-B — read the SoT-flip gate ONCE per accept. OFF (default): imperative
+      // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
+      // is the row writer for EVERY kind the accept touches (propose_new / reparent / archive /
+      // merge / split) — propose_new skips its imperative INSERT; the mutation appliers keep
+      // their version-guarded UPDATE and the projection overwrites from events (see the seam
+      // below). Flag OFF stays the full-verification rollback.
+      const flip = projectionIsWriter();
 
       let result: AcceptResult;
       // YUK-543 — the merge-repair breadcrumb captured from applyMerge, threaded onto the accept

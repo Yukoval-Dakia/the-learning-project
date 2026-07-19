@@ -27,6 +27,16 @@ function at(offsetMs: number): Date {
   return new Date(T0.getTime() + offsetMs);
 }
 
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
+      item,
+      ...rest,
+    ]),
+  );
+}
+
 // propose_new propose event (action='propose').
 function proposeNew(opts: {
   id?: string;
@@ -183,6 +193,36 @@ function autoTag(opts: {
       name: opts.name,
       generated_by: 'tag_knowledge',
       reasoning: 'auto',
+    },
+  };
+}
+
+function subjectRootNameUpdate(opts: {
+  id?: string;
+  created_at: Date;
+  rootId: string;
+  controlAction?: 'rename' | 'reset';
+  previousName: string;
+  nextName: string;
+  previousVersion: number;
+}): FoldEvent {
+  return {
+    id: opts.id ?? nextId('root-name'),
+    created_at: opts.created_at,
+    actor_kind: 'user',
+    actor_ref: 'owner',
+    action: 'experimental:subject_root_name_update',
+    subject_kind: 'knowledge',
+    subject_id: opts.rootId,
+    outcome: 'success',
+    caused_by_event_id: null,
+    payload: {
+      control_action: opts.controlAction ?? 'rename',
+      subject_id: 'yuwen',
+      previous_name: opts.previousName,
+      next_name: opts.nextName,
+      previous_version: opts.previousVersion,
+      next_version: opts.previousVersion + 1,
     },
   };
 }
@@ -463,6 +503,213 @@ describe('foldKnowledgeNode', () => {
     expect(after?.domain).toBeNull();
     // ACCEPT-TIME: updated_at = the reparent ACCEPT (at(51)), not the propose (at(50)).
     expect(after?.updated_at).toEqual(at(51));
+  });
+
+  it('replays subject-root name updates and heals a legacy name-only mirror', () => {
+    const rootId = 'seed:yuwen:root';
+    const seed = {
+      id: rootId,
+      name: '语文',
+      domain: 'yuwen' as string | null,
+      parent_id: null,
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: at(0),
+      updated_at: at(0),
+      version: 0,
+    };
+    const rename = subjectRootNameUpdate({
+      created_at: at(100),
+      rootId,
+      // A pre-YUK-728 direct mirror may have changed the live name without changing the fold.
+      // previous_name remains audit evidence; the matching version lets this event heal the gap.
+      previousName: '古文旧名',
+      nextName: '现代语文',
+      previousVersion: 0,
+    });
+
+    expect(foldKnowledgeNode(rootId, [rename, genesis({ created_at: at(0), row: seed })])).toEqual({
+      ...seed,
+      name: '现代语文',
+      updated_at: at(100),
+      version: 1,
+    });
+  });
+
+  it('orders same-millisecond root-name transitions by their explicit version chain', () => {
+    const rootId = 'seed:yuwen:root';
+    const seed = {
+      id: rootId,
+      name: '语文',
+      domain: 'yuwen' as string | null,
+      parent_id: null,
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: at(0),
+      updated_at: at(0),
+      version: 0,
+    };
+    const rename = subjectRootNameUpdate({
+      id: 'zzz_rename',
+      created_at: at(100),
+      rootId,
+      previousName: '语文',
+      nextName: '古文',
+      previousVersion: 0,
+    });
+    const reset = subjectRootNameUpdate({
+      id: 'aaa_reset',
+      created_at: at(100),
+      rootId,
+      controlAction: 'reset',
+      previousName: '古文',
+      nextName: '语文',
+      previousVersion: 1,
+    });
+
+    const folded = foldKnowledgeNode(rootId, [
+      reset,
+      rename,
+      genesis({ id: 'genesis_root', created_at: at(0), row: seed }),
+    ]);
+    expect(folded).toEqual({ ...seed, name: '语文', updated_at: at(100), version: 2 });
+  });
+
+  it('keeps production-shaped merge-into and root-name events commutative across permutations', () => {
+    const rootId = 'seed:yuwen:root';
+    const timestamp = at(100);
+    const seed = {
+      id: rootId,
+      name: '语文',
+      domain: 'yuwen' as string | null,
+      parent_id: null,
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: timestamp,
+      updated_at: timestamp,
+      version: 0,
+    };
+    const merge = mutationPropose({
+      id: 'zzz_merge',
+      created_at: timestamp,
+      action: 'experimental:knowledge_merge',
+      subject_id: rootId,
+      payload: {
+        from_ids: ['k_child'],
+        into_id: rootId,
+        // Production applyMerge only guards from_ids; into_id intentionally has no version entry.
+        expected_versions: { k_child: 0 },
+      },
+    });
+    const acceptMerge = rate({
+      id: 'rate_accept_merge',
+      created_at: timestamp,
+      causedBy: merge.id,
+      rating: 'accept',
+    });
+    const rename = subjectRootNameUpdate({
+      id: 'aaa_rename',
+      created_at: timestamp,
+      rootId,
+      previousName: '语文',
+      nextName: '现代语文',
+      previousVersion: 1,
+    });
+    const ignored: FoldEvent = {
+      id: 'mmm_ignored',
+      created_at: timestamp,
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:noop',
+      subject_kind: 'knowledge',
+      subject_id: rootId,
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: {},
+    };
+    const events = [
+      rename,
+      ignored,
+      merge,
+      acceptMerge,
+      genesis({ id: 'zzz_genesis', created_at: timestamp, row: seed }),
+    ];
+    const expected = {
+      ...seed,
+      name: '现代语文',
+      merged_from: ['k_child'],
+      updated_at: timestamp,
+      version: 2,
+    };
+
+    for (const input of permutations(events)) {
+      expect(foldKnowledgeNode(rootId, input)).toEqual(expected);
+    }
+  });
+
+  it('orders a proposal mutation by accept time rather than its earlier proposal time', () => {
+    const rootId = 'seed:yuwen:root';
+    const seed = {
+      id: rootId,
+      name: '语文',
+      domain: 'yuwen' as string | null,
+      parent_id: null,
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: at(0),
+      updated_at: at(0),
+      version: 0,
+    };
+    const merge = mutationPropose({
+      id: 'merge_proposed_first',
+      created_at: at(10),
+      action: 'experimental:knowledge_merge',
+      subject_id: rootId,
+      payload: {
+        from_ids: ['k_child'],
+        into_id: rootId,
+        expected_versions: { k_child: 0 },
+      },
+    });
+    const rename = subjectRootNameUpdate({
+      id: 'rename_before_accept',
+      created_at: at(20),
+      rootId,
+      previousName: '语文',
+      nextName: '现代语文',
+      previousVersion: 0,
+    });
+    const acceptMerge = rate({
+      id: 'merge_accepted_last',
+      created_at: at(30),
+      causedBy: merge.id,
+      rating: 'accept',
+    });
+    const events = [
+      merge,
+      rename,
+      acceptMerge,
+      genesis({ id: 'genesis_root', created_at: at(0), row: seed }),
+    ];
+    const expected = {
+      ...seed,
+      name: '现代语文',
+      merged_from: ['k_child'],
+      updated_at: at(30),
+      version: 2,
+    };
+
+    for (const input of permutations(events)) {
+      expect(foldKnowledgeNode(rootId, input)).toEqual(expected);
+    }
   });
 
   it('auto_tag_kc_created creates a KC row keyed on subject_id', () => {

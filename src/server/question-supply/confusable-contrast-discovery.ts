@@ -28,6 +28,7 @@
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { loadConfusablePairs } from '@/capabilities/knowledge/server/misconception-confusable-read';
+import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { buildCoverageEvidenceDemand, evidenceDemandToTargetContext } from './evidence-demand';
@@ -47,7 +48,7 @@ import {
  * runtime-mockable). OFF ⇒ discoverConfusableContrastTargets is a NO-OP.
  */
 export function confusableContrastEnabled(): boolean {
-  return process.env.CONFUSABLE_CONTRAST_ENABLED === '1';
+  return parseFlag(process.env.CONFUSABLE_CONTRAST_ENABLED);
 }
 
 // A contrast/discrimination item is naturally OBJECTIVE (present A and B, ask to

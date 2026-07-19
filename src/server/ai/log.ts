@@ -49,6 +49,18 @@ export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Pro
   return id;
 }
 
+/** Warn when a tool-calling task has no MCP servers configured in its context. */
+export function logMissingMcpServersWarning(entry: {
+  task_run_id: string;
+  task_kind: string;
+}): void {
+  console.warn('[runTask] missing_mcp_servers', {
+    event: 'missing_mcp_servers',
+    task_run_id: entry.task_run_id,
+    kind: entry.task_kind,
+  });
+}
+
 /** YUK-79: backfill `mirrored_event_id` after mirrorEvent policy fires. */
 export async function setToolCallLogMirroredEventId(
   db: DbLike,
