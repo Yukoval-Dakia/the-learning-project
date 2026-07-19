@@ -27,6 +27,16 @@ function at(offsetMs: number): Date {
   return new Date(T0.getTime() + offsetMs);
 }
 
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
+      item,
+      ...rest,
+    ]),
+  );
+}
+
 // propose_new propose event (action='propose').
 function proposeNew(opts: {
   id?: string;
@@ -567,6 +577,79 @@ describe('foldKnowledgeNode', () => {
       genesis({ id: 'genesis_root', created_at: at(0), row: seed }),
     ]);
     expect(folded).toEqual({ ...seed, name: '语文', updated_at: at(100), version: 2 });
+  });
+
+  it('uses one permutation-stable same-ms order for genesis, mixed mutations, and root names', () => {
+    const rootId = 'seed:yuwen:root';
+    const timestamp = at(100);
+    const seed = {
+      id: rootId,
+      name: '语文',
+      domain: 'yuwen' as string | null,
+      parent_id: null,
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: timestamp,
+      updated_at: timestamp,
+      version: 0,
+    };
+    const merge = mutationPropose({
+      id: 'zzz_merge',
+      created_at: timestamp,
+      action: 'experimental:knowledge_merge',
+      subject_id: rootId,
+      payload: {
+        from_ids: ['k_child'],
+        into_id: rootId,
+        expected_versions: { [rootId]: 0, k_child: 0 },
+      },
+    });
+    const acceptMerge = rate({
+      id: 'rate_accept_merge',
+      created_at: timestamp,
+      causedBy: merge.id,
+      rating: 'accept',
+    });
+    const rename = subjectRootNameUpdate({
+      id: 'aaa_rename',
+      created_at: timestamp,
+      rootId,
+      previousName: '语文',
+      nextName: '现代语文',
+      previousVersion: 1,
+    });
+    const ignored: FoldEvent = {
+      id: 'mmm_ignored',
+      created_at: timestamp,
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:noop',
+      subject_kind: 'knowledge',
+      subject_id: rootId,
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: {},
+    };
+    const events = [
+      rename,
+      ignored,
+      merge,
+      acceptMerge,
+      genesis({ id: 'zzz_genesis', created_at: timestamp, row: seed }),
+    ];
+    const expected = {
+      ...seed,
+      name: '现代语文',
+      merged_from: ['k_child'],
+      updated_at: timestamp,
+      version: 2,
+    };
+
+    for (const input of permutations(events)) {
+      expect(foldKnowledgeNode(rootId, input)).toEqual(expected);
+    }
   });
 
   it('auto_tag_kc_created creates a KC row keyed on subject_id', () => {

@@ -65,6 +65,8 @@ export * from './nudge-events';
 //   6. GenesisExperimental — experimental:genesis 的特化（YUK-471 W1, Codex #4 parse barrier）
 //   7. GoalStatusUpdateExperimental / GoalScopeUpdateExperimental — goal 动作事件特化
 //      （YUK-471 W2，使 status/scope 变更 fold-visible，./goal-events.ts）
+//   7b. SubjectRootNameUpdateExperimental — subject control-plane 根节点名称转移事件特化
+//       （YUK-728：使 rename/reset 的 knowledge root mirror fold-visible）
 //   8. MistakeVariantCreateExperimental — mistake_variant 运行时 creation BASE 事件特化
 //      （YUK-471 W2 critic A4：携带 fold-blind cause_category；genesis 仅 backfill，
 //       runtime create 用专属事件，./mistake-variant-events.ts）

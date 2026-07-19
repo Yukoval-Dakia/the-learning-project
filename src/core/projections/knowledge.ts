@@ -48,8 +48,7 @@ const KnowledgeArchivePayload = z.object({
 // SHARED FoldEvent — the reducer consumes the flat `event`-row projection from
 // ./fold-event (the SAME shape the edge reducer consumes and PR-A2's IO shell
 // builds). The flat columns it reads:
-//   - `id` / `created_at` — accept linkage + (created_at, id) ordering tiebreak +
-//     row timestamps.
+//   - `id` / `created_at` — accept linkage + canonical replay ordering + row timestamps.
 //   - `subject_kind` / `subject_id` — routing. Present on the SPECIALISED Event
 //     members (ProposeKnowledge, GenesisExperimental …) but DROPPED by the
 //     generic `ExperimentalEvent` member, so the fold reads them off the flat
@@ -80,25 +79,76 @@ function toParseInput(fe: FoldEvent): unknown {
   };
 }
 
-function rootNamePreviousVersion(fe: FoldEvent): number | null {
-  if (fe.action !== 'experimental:subject_root_name_update') return null;
-  const value = fe.payload.previous_version;
-  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+function mutationPreviousVersionForNode(fe: FoldEvent, nodeId: string): number | null {
+  if (fe.subject_kind !== 'knowledge') return null;
+
+  if (fe.action === 'experimental:subject_root_name_update' && fe.subject_id === nodeId) {
+    const update = SubjectRootNameUpdateExperimental.safeParse(toParseInput(fe));
+    return update.success ? update.data.payload.previous_version : null;
+  }
+
+  if (fe.action === 'experimental:knowledge_archive') {
+    const archive = KnowledgeArchivePayload.safeParse(fe.payload);
+    return archive.success && archive.data.node_id === nodeId
+      ? (archive.data.expected_version ?? null)
+      : null;
+  }
+
+  if (!fe.action.startsWith('experimental:knowledge_')) return null;
+  const mutation = KnowledgeMutationProposalChange.safeParse({
+    mutation: fe.action.replace(/^experimental:knowledge_/, ''),
+    ...fe.payload,
+  });
+  if (!mutation.success) return null;
+
+  switch (mutation.data.mutation) {
+    case 'reparent':
+      return mutation.data.node_id === nodeId ? mutation.data.expected_version : null;
+    case 'merge':
+      return mutation.data.into_id === nodeId || mutation.data.from_ids.includes(nodeId)
+        ? (mutation.data.expected_versions[nodeId] ?? null)
+        : null;
+    case 'split':
+      return mutation.data.from_id === nodeId ? mutation.data.expected_version : null;
+  }
 }
 
-// Stable canonical order. Subject-root name updates additionally carry an explicit version chain;
-// use it between two such events for the same root so sequential control transactions that land in
-// the same millisecond cannot be reordered by random event ids. Every other event keeps the
-// established (created_at asc, id asc) order.
-function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
-  if (a.subject_id === b.subject_id) {
-    const av = rootNamePreviousVersion(a);
-    const bv = rootNamePreviousVersion(b);
-    if (av !== null && bv !== null && av !== bv) return av - bv;
-  }
+function replayTieKey(
+  fe: FoldEvent,
+  nodeId: string,
+  materializedKnowledgeByProposeId: Map<string, string[]>,
+): readonly [tier: number, version: number] {
+  const createsNode =
+    (fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId &&
+      (fe.action === 'experimental:genesis' || fe.action === 'experimental:auto_tag_kc_created')) ||
+    (materializedKnowledgeByProposeId.get(fe.id)?.includes(nodeId) ?? false);
+  if (createsNode) return [0, 0];
+
+  const previousVersion = mutationPreviousVersionForNode(fe, nodeId);
+  if (previousVersion !== null) return [1, previousVersion];
+
+  return [2, 0];
+}
+
+// Stable canonical total order. Timestamp remains the primary order. Within one millisecond, a
+// node's creation precedes all of its mutations, then every mutation sharing knowledge.version is
+// ordered by its explicit previous/expected version, and unrelated events follow by id. Computing
+// one tuple per event (instead of a pair-specific special case) keeps the comparator transitive.
+function compareReplayEvents(
+  a: FoldEvent,
+  b: FoldEvent,
+  nodeId: string,
+  materializedKnowledgeByProposeId: Map<string, string[]>,
+): number {
   const ta = a.created_at.getTime();
   const tb = b.created_at.getTime();
   if (ta !== tb) return ta - tb;
+
+  const [aTier, aVersion] = replayTieKey(a, nodeId, materializedKnowledgeByProposeId);
+  const [bTier, bVersion] = replayTieKey(b, nodeId, materializedKnowledgeByProposeId);
+  if (aTier !== bTier) return aTier - bTier;
+  if (aVersion !== bVersion) return aVersion - bVersion;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
@@ -146,13 +196,14 @@ export function foldKnowledgeNode(
     if (mk) materializedKnowledgeByProposeId.set(proposeId, mk);
   }
 
-  // ---------- pass 2: apply in (created_at asc, id asc) order ----------
-  // Walk the SOURCE events in the canonical read order (created_at, id) — the same
-  // order corrections.ts reads and the accept path wrote them — and apply each
-  // effect on `nodeId` to a running row. Ordering is driven by the envelope id (a
-  // true tiebreak when two events share a created_at), which is exactly why the
-  // fold takes the envelope-wrapped FoldEvent rather than bare EventT.
-  const ordered = [...events].sort(byCreatedThenId);
+  // ---------- pass 2: apply in canonical replay order ----------
+  // Walk source events by timestamp. Events for one node that share a millisecond use a total
+  // creation/version/id tie order so causal version transitions never depend on random envelope
+  // ids or the database's unordered Q1 result. This is why the fold takes envelope-wrapped
+  // FoldEvent rows rather than bare EventT values.
+  const ordered = [...events].sort((a, b) =>
+    compareReplayEvents(a, b, nodeId, materializedKnowledgeByProposeId),
+  );
 
   let row: KnowledgeRowSnapshotT | null = null;
 
