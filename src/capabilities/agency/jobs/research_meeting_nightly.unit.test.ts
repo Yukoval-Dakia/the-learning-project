@@ -130,7 +130,20 @@ describe('runResearchMeetingNightly', () => {
     expect(actions).toContain('experimental:research_meeting_scan');
     // Both rows are internal run bookkeeping: persisted for provenance/admin reads,
     // born opted out of Mem0 and brief regeneration.
-    expect(writeEventFn.mock.calls.map((c) => c[1].ingest_at)).toEqual([NOW, NOW]);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:trigger_research_meeting',
+        ingest_at: NOW,
+      }),
+    );
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_scan',
+        ingest_at: NOW,
+      }),
+    );
   });
 
   it('caps proposals at the top-K salient cells', async () => {
