@@ -32,8 +32,12 @@
 //
 // See docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
 
+import { lookup } from 'node:dns/promises';
+import { type LookupFunction, isIP } from 'node:net';
+
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { Agent } from 'undici';
 
 import {
   type ColdStartBridgeRunTaskFn,
@@ -73,8 +77,14 @@ export interface ImageCandidateAcceptResult {
 // non-DB side effects) and assert the cost-ledger / source_verify wiring runs WITHOUT
 // real R2 / real model spend.
 export interface ImageCandidateAcceptDeps {
-  /** Download the image bytes for the candidate's source_url. */
+  /**
+   * Trusted-only test/composition seam. A replacement owns the complete SSRF
+   * invariant (DNS validation, address pinning, redirect checks and byte cap);
+   * production leaves this unset and uses defaultFetchImageBytes below.
+   */
   fetchImageBytesFn?: (url: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
+  /** DNS resolver seam for deterministic SSRF tests. Defaults to node:dns lookup. */
+  lookupFn?: LookupFn;
   /** R2 client for persisting the downloaded asset. Defaults to getR2(). */
   r2?: R2Client;
   /** VisionExtractTask runner seam (defaults to the production runner). */
@@ -119,12 +129,13 @@ const ACCEPT_FAILED_ACTION = 'experimental:image_candidate_accept_failed';
 // latency so a slow-but-alive accept is not stolen out from under itself.
 const ACCEPT_STALE_MS = 10 * 60 * 1000; // 10 minutes
 
-// FIX-7 — defaultFetchImageBytes guards (single-user self-hosted tool boundary, NOT a
-// DNS-rebinding-grade SSRF defense — the surface sits behind the internal-token gate and
-// runs on an internal network; we just reject the obvious foot-guns of feeding an
-// AI-written URL straight into fetch + the VLM).
+// FIX-7/YUK-688 — AI-written URLs are untrusted even behind the internal-token gate.
+// Validate syntax, literal hosts, DNS answers, every redirect, timeout, size and MIME
+// before bytes can reach R2 or the VLM.
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+type LookupFn = typeof lookup;
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const hash = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
@@ -133,12 +144,9 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join('');
 }
 
-// FIX-7 — reject URLs that resolve to a non-public destination before any network call.
-// Hostname-level only (no DNS resolution → no rebinding protection, by design — see the
-// boundary note above). Covers: non-http(s) schemes, localhost, loopback, RFC1918
-// private ranges, link-local incl. the 169.254.169.254 cloud metadata endpoint, and
-// .local mDNS names.
-function assertPublicHttpUrl(url: string): void {
+// FIX-7 — reject URL forms and literal destinations that can never be valid public image
+// sources. Hostnames receive a second A/AAAA answer check below.
+function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -149,6 +157,13 @@ function assertPublicHttpUrl(url: string): void {
       400,
     );
   }
+  if (parsed.username || parsed.password) {
+    throw new ApiError(
+      'validation_error',
+      'image_candidate source_url must not contain credentials',
+      400,
+    );
+  }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ApiError(
       'validation_error',
@@ -156,38 +171,196 @@ function assertPublicHttpUrl(url: string): void {
       400,
     );
   }
-  const host = parsed.hostname.toLowerCase();
-  // Strip IPv6 brackets if present (URL.hostname keeps them).
-  const bareHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
-  // FIX-R2-7 — the IPv6 unique-local / link-local prefixes (fc00::/7, fe80::/10) must
-  // ONLY be matched against a real IPv6 LITERAL (host contains ':'). The old
-  // bareHost.startsWith('fc'|'fd'|'fe80') matched normal DNS names like fcdn.example.com
-  // or fdic.gov (false-positive private-host rejection). A hostname can never be an IPv6
-  // literal without a ':', so gate the IPv6 checks on that and use precise prefix regexes.
-  const isIpv6Literal = bareHost.includes(':');
-  const isPrivateIpv6 =
-    isIpv6Literal &&
-    (bareHost === '::1' || // loopback
-      /^f[cd][0-9a-f]{2}:/i.test(bareHost) || // unique-local fc00::/7
-      /^fe80:/i.test(bareHost)); // link-local fe80::/10
-  const isPrivate =
-    bareHost === 'localhost' ||
-    bareHost.endsWith('.localhost') ||
-    bareHost.endsWith('.local') ||
-    bareHost === '0.0.0.0' ||
-    /^127\./.test(bareHost) ||
-    /^10\./.test(bareHost) ||
-    /^192\.168\./.test(bareHost) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(bareHost) ||
-    /^169\.254\./.test(bareHost) || // link-local incl. cloud metadata 169.254.169.254
-    isPrivateIpv6;
-  if (isPrivate) {
+  const bareHost = stripIpv6Brackets(parsed.hostname.toLowerCase());
+  const blockedName =
+    bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
+  const literalFamily = isIP(bareHost);
+  if (blockedName || (literalFamily !== 0 && isBlockedIpAddress(bareHost))) {
     throw new ApiError(
       'validation_error',
-      `image_candidate source_url resolves to a private/loopback/link-local host (${bareHost}); refusing to fetch`,
+      `image_candidate source_url resolves to a non-public host (${bareHost}); refusing to fetch`,
       400,
     );
   }
+  return parsed;
+}
+
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
+
+function parseIpv4Value(address: string): number | null {
+  if (isIP(address) !== 4) return null;
+  return address
+    .split('.')
+    .map(Number)
+    .reduce((value, octet) => value * 256 + octet, 0);
+}
+
+function ipv4InCidr(value: number, base: string, prefix: number): boolean {
+  const baseValue = parseIpv4Value(base);
+  if (baseValue === null) return false;
+  const blockSize = 2 ** (32 - prefix);
+  return Math.floor(value / blockSize) === Math.floor(baseValue / blockSize);
+}
+
+const BLOCKED_IPV4_CIDRS = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.88.99.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+] as const;
+
+function parseIpv6Words(address: string): number[] | null {
+  if (isIP(address) !== 6) return null;
+  let normalized = address.toLowerCase();
+  const dottedTail = normalized.match(/(?:^|:)(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (dottedTail) {
+    const value = parseIpv4Value(dottedTail);
+    if (value === null) return null;
+    normalized = `${normalized.slice(0, -dottedTail.length)}${(value >>> 16).toString(16)}:${(
+      value & 0xffff
+    ).toString(16)}`;
+  }
+  const halves = normalized.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves[1] ? halves[1].split(':') : [];
+  const zeroCount = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (zeroCount < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const words = [...head, ...Array.from({ length: zeroCount }, () => '0'), ...tail].map((word) =>
+    Number.parseInt(word, 16),
+  );
+  return words.length === 8 && words.every((word) => Number.isInteger(word)) ? words : null;
+}
+
+function isBlockedIpAddress(address: string): boolean {
+  const normalized = stripIpv6Brackets(address.toLowerCase());
+  const ipv4 = parseIpv4Value(normalized);
+  if (ipv4 !== null) {
+    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(ipv4, base, prefix));
+  }
+
+  const words = parseIpv6Words(normalized);
+  if (!words) return true;
+  const mappedIpv4 =
+    words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff
+      ? words[6] * 65_536 + words[7]
+      : null;
+  const compatibleIpv4 = words.slice(0, 6).every((word) => word === 0)
+    ? words[6] * 65_536 + words[7]
+    : null;
+  if (mappedIpv4 !== null) {
+    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(mappedIpv4, base, prefix));
+  }
+  if (compatibleIpv4 !== null) {
+    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(compatibleIpv4, base, prefix));
+  }
+
+  // RFC 6052 well-known NAT64 prefix 64:ff9b::/96 embeds an IPv4 destination in
+  // the final 32 bits. Treat a mapped non-public IPv4 exactly like ::ffff:x.y.z.w;
+  // otherwise a NAT64-enabled host could reach metadata/loopback through the WKP.
+  if (words[0] === 0x0064 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0)) {
+    const nat64Ipv4 = words[6] * 65_536 + words[7];
+    if (BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(nat64Ipv4, base, prefix))) {
+      return true;
+    }
+  }
+
+  return (
+    (words[0] & 0xfe00) === 0xfc00 || // unique-local fc00::/7
+    (words[0] & 0xffc0) === 0xfe80 || // link-local fe80::/10
+    (words[0] & 0xff00) === 0xff00 || // multicast ff00::/8
+    words[0] === 0x2002 || // deprecated 6to4 (embeds an IPv4 destination)
+    (words[0] === 0x2001 && words[1] === 0) || // Teredo 2001:0000::/32
+    (words[0] === 0x2001 && words[1] === 0x0db8) || // documentation 2001:db8::/32
+    (words[0] === 0x0100 && words.slice(1, 4).every((word) => word === 0)) || // discard-only
+    (words[0] === 0x0064 && words[1] === 0xff9b && words[2] === 1) // local-use NAT64
+  );
+}
+
+type ResolvedAddress = { address: string; family: 4 | 6 };
+const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+
+async function resolvePublicAddresses(parsed: URL, lookupFn: LookupFn): Promise<ResolvedAddress[]> {
+  const bareHost = stripIpv6Brackets(parsed.hostname);
+  const literalFamily = isIP(bareHost);
+  if (literalFamily === 4 || literalFamily === 6) {
+    if (isBlockedIpAddress(bareHost)) {
+      throw new ApiError(
+        'validation_error',
+        `image_candidate source_url host ${bareHost} is non-public; refusing to fetch`,
+        400,
+      );
+    }
+    return [{ address: bareHost, family: literalFamily }];
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let answers: Array<{ address: string; family: number }>;
+  try {
+    answers = await Promise.race([
+      lookupFn(bareHost, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('DNS lookup timed out')), DNS_LOOKUP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    throw new ApiError(
+      'extraction_failed',
+      `image_candidate source_url DNS lookup failed for ${bareHost}: ${err instanceof Error ? err.message : String(err)}`,
+      422,
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  if (answers.length === 0) {
+    throw new ApiError(
+      'extraction_failed',
+      `image_candidate source_url DNS lookup returned no addresses for ${bareHost}`,
+      422,
+    );
+  }
+  const invalid = answers.find(
+    (answer) => (answer.family !== 4 && answer.family !== 6) || isBlockedIpAddress(answer.address),
+  );
+  if (invalid) {
+    throw new ApiError(
+      'validation_error',
+      `image_candidate source_url host ${bareHost} resolves to a non-public address (${invalid.address}); refusing to fetch`,
+      400,
+    );
+  }
+  return answers as ResolvedAddress[];
+}
+
+function createPinnedLookup(answers: ResolvedAddress[]): LookupFunction {
+  return (_hostname, options, callback) => {
+    const requestedFamily = typeof options.family === 'number' ? options.family : 0;
+    const candidates = answers.filter(
+      (answer) => requestedFamily === 0 || answer.family === requestedFamily,
+    );
+    if (candidates.length === 0) {
+      const err = Object.assign(new Error('no prevalidated address for requested family'), {
+        code: 'ENOTFOUND',
+      });
+      callback(err, '', 0);
+      return;
+    }
+    if (options.all) callback(null, candidates);
+    else callback(null, candidates[0].address, candidates[0].family);
+  };
 }
 
 // FIX-R2-1 — fetch follows 30x by default, which would let an AI-written URL that
@@ -197,94 +370,126 @@ function assertPublicHttpUrl(url: string): void {
 // a redirect loop / chain can't spin.
 const MAX_REDIRECTS = 3;
 
+async function readBoundedResponseBody(res: Response, url: string): Promise<Uint8Array> {
+  if (!res.body) return new Uint8Array();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IMAGE_BYTES) {
+      await reader.cancel();
+      throw new ApiError(
+        'payload_too_large',
+        `image_candidate source_url body exceeds ${MAX_IMAGE_BYTES} bytes for ${url}`,
+        413,
+      );
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function defaultFetchImageBytes(
   url: string,
+  lookupFn: LookupFn = lookup,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
-  // FIX-7 — gate the AI-written URL before any network call.
-  assertPublicHttpUrl(url);
   let currentUrl = url;
-  let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    res = await fetch(currentUrl, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    const parsed = assertPublicHttpUrl(currentUrl);
+    const approvedAddresses = await resolvePublicAddresses(parsed, lookupFn);
+    const dispatcher = new Agent({
+      connect: {
+        lookup: createPinnedLookup(approvedAddresses),
+        // Ask Undici's connector for all vetted A/AAAA answers so it can race/fall
+        // back across legitimate multi-address origins without performing DNS again.
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 250,
+      },
     });
-    // A 30x with a Location is a redirect we must re-guard before following (the original
-    // URL passed the SSRF check, but the redirect target is just as AI-influenced).
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get('location');
-      if (!location) {
+    try {
+      // The URL retains its original hostname (Host + TLS SNI), while the Agent's
+      // connector can use only the exact public answers validated above. This closes
+      // the DNS-rebinding gap between validation and socket connect.
+      const res = await fetch(currentUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        dispatcher,
+      } as RequestInit & { dispatcher: Agent });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        await res.body?.cancel();
+        if (!location) {
+          throw new ApiError(
+            'extraction_failed',
+            `image fetch got ${res.status} with no Location for ${currentUrl}`,
+            422,
+          );
+        }
+        if (hop === MAX_REDIRECTS) {
+          throw new ApiError(
+            'extraction_failed',
+            `image fetch exceeded ${MAX_REDIRECTS} redirects starting at ${url}`,
+            422,
+          );
+        }
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+      if (!res.ok) {
+        await res.body?.cancel();
         throw new ApiError(
           'extraction_failed',
-          `image fetch got ${res.status} with no Location for ${currentUrl}`,
+          `image fetch failed (${res.status}) for ${url}`,
           422,
         );
       }
-      if (hop === MAX_REDIRECTS) {
+
+      const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+      if (!mimeType.startsWith('image/')) {
+        await res.body?.cancel();
         throw new ApiError(
-          'extraction_failed',
-          `image fetch exceeded ${MAX_REDIRECTS} redirects starting at ${url}`,
+          'unsupported_media_type',
+          `image_candidate source_url returned non-image Content-Type '${mimeType || '(none)'}' for ${url}`,
           422,
         );
       }
-      // Resolve relative Location against the current URL, then re-run the FULL SSRF guard
-      // on the resolved target — a redirect to 169.254.169.254 / localhost is rejected here
-      // (before the next fetch), so the redirect can never reach a private host.
-      const nextUrl = new URL(location, currentUrl).toString();
-      assertPublicHttpUrl(nextUrl);
-      currentUrl = nextUrl;
-      continue;
+      if (!ALLOWED_IMAGE_MIME.has(mimeType)) {
+        await res.body?.cancel();
+        throw new ApiError(
+          'unsupported_media_type',
+          `image_candidate source_url Content-Type '${mimeType}' is not a supported image type (supported: ${[...ALLOWED_IMAGE_MIME].join(', ')})`,
+          422,
+        );
+      }
+      const declaredLength = Number(res.headers.get('content-length') ?? '');
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_IMAGE_BYTES) {
+        await res.body?.cancel();
+        throw new ApiError(
+          'payload_too_large',
+          `image_candidate source_url Content-Length ${declaredLength} exceeds ${MAX_IMAGE_BYTES} bytes`,
+          413,
+        );
+      }
+      return { bytes: await readBoundedResponseBody(res, url), mimeType };
+    } finally {
+      // Cleanup must never replace the fetch/validation error that explains the
+      // failed accept. There are no reusable sockets beyond this one guarded hop.
+      await dispatcher.close().catch((err) => {
+        console.warn('[image_candidate_accept] failed to close pinned dispatcher', err);
+      });
     }
-    break;
   }
-  if (!res) {
-    throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);
-  }
-  if (!res.ok) {
-    throw new ApiError('extraction_failed', `image fetch failed (${res.status}) for ${url}`, 422);
-  }
-  const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
-  // FIX-2 — a non-image Content-Type means we'd be feeding HTML/JSON bytes to the VLM,
-  // burning money to extract garbage. Reject BEFORE the paid flow. (defaultFetchImageBytes
-  // runs upstream of runVisionExtract, so an early throw here never reaches the model.)
-  if (!mimeType.startsWith('image/')) {
-    throw new ApiError(
-      'unsupported_media_type',
-      `image_candidate source_url returned non-image Content-Type '${mimeType || '(none)'}' for ${url}`,
-      422,
-    );
-  }
-  // FIX-R2-4 — an image/* MIME outside the VLM pipeline's supported set (png/jpeg/webp)
-  // must be REJECTED, not silently re-tagged as image/png. The old code persisted gif /
-  // svg / bmp bytes under a falsified image/png mime_type, so R2 served a wrong
-  // Content-Type AND the bytes were decoded by the VLM as PNG (garbage). Reject loudly
-  // with the real MIME + the supported list so the failure is diagnosable.
-  if (!ALLOWED_IMAGE_MIME.has(mimeType)) {
-    throw new ApiError(
-      'unsupported_media_type',
-      `image_candidate source_url Content-Type '${mimeType}' is not a supported image type (supported: ${[...ALLOWED_IMAGE_MIME].join(', ')})`,
-      422,
-    );
-  }
-  // FIX-7 — Content-Length pre-check (cheap reject of an obviously-huge body) +
-  // post-read actual-size check (a missing/lying Content-Length can't sneak past).
-  const declaredLength = Number(res.headers.get('content-length') ?? '');
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_IMAGE_BYTES) {
-    throw new ApiError(
-      'payload_too_large',
-      `image_candidate source_url Content-Length ${declaredLength} exceeds ${MAX_IMAGE_BYTES} bytes`,
-      413,
-    );
-  }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength > MAX_IMAGE_BYTES) {
-    throw new ApiError(
-      'payload_too_large',
-      `image_candidate source_url body ${bytes.byteLength} exceeds ${MAX_IMAGE_BYTES} bytes`,
-      413,
-    );
-  }
-  return { bytes, mimeType };
+  throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);
 }
 
 async function defaultRunTaskFn(
@@ -493,7 +698,8 @@ export async function acceptImageCandidateProposal(
   }
 
   try {
-    const fetchImageBytes = deps.fetchImageBytesFn ?? defaultFetchImageBytes;
+    const fetchImageBytes =
+      deps.fetchImageBytesFn ?? ((sourceUrl) => defaultFetchImageBytes(sourceUrl, deps.lookupFn));
     const r2 = deps.r2 ?? getR2();
     const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
