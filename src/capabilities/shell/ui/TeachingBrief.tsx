@@ -173,7 +173,13 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
     const targetId = brief.brief_id;
-    // YUK-710 — accept starts the "verify this direction" primary action (accept_probe).
+    // YUK-710 — interacting with the brief PROVES it was opened today, so record the seen first.
+    // This closes the persistently-visible-across-midnight gap: a tab that stays visible over the
+    // Asia/Shanghai day boundary re-runs neither the [brief] effect nor visibilitychange, so without
+    // this the accept would write a new-day action with no matching new-day seen (unpaired + the
+    // prior day left unconverted). The day-key gate makes it a same-day no-op.
+    fireSeenIfNew(brief);
+    // accept starts the "verify this direction" primary action (accept_probe).
     // dismiss ("不太像") is a proposal decision, already the canonical `rate` event, so it is
     // NOT re-instrumented here. Fired on click (action STARTED), before the network call.
     if (decision === 'accept') {
@@ -217,6 +223,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       return;
     }
     const targetId = brief.brief_id;
+    // YUK-710 — the ack is counted as an action in the report funnel, so guarantee today's seen
+    // first (same persistently-visible-across-midnight guard as decide; day-key gate = same-day no-op).
+    fireSeenIfNew(brief);
     setAcking(true);
     setAckFailed(false);
     try {
@@ -316,10 +325,13 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 acking={acking}
                 ackFailed={ackFailed}
                 onReveal={() => {
+                  // YUK-710 — clicking reveal proves the brief was opened today; record the seen
+                  // first (same across-midnight guard as decide/acknowledge; day-key gate = no-op).
+                  fireSeenIfNew(brief);
                   // The reveal button stays mounted after revealing (it toggles aria-expanded), so
                   // guard on !revealed: a repeat click must not re-fire the answer_probe POST.
                   if (revealed) return;
-                  // YUK-710 — revealing the answer card starts the answer_probe primary action.
+                  // Revealing the answer card starts the answer_probe primary action.
                   if (brief.prepared_action.kind === 'answer_probe') {
                     reportBriefInteraction({
                       type: 'primary_action_started',
@@ -332,6 +344,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
                 onAcknowledge={() => void acknowledge()}
+                reportSeen={() => fireSeenIfNew(brief)}
               />
             </section>
 
@@ -395,6 +408,7 @@ function PreparedBlock({
   onAccept,
   onReject,
   onAcknowledge,
+  reportSeen,
 }: {
   brief: TeachingBrief;
   navigate: (to: string) => void;
@@ -407,6 +421,8 @@ function PreparedBlock({
   onAccept: () => void;
   onReject: () => void;
   onAcknowledge: () => void;
+  // YUK-710 — record today's brief_seen before a tracked action (across-midnight guard).
+  reportSeen: () => void;
 }) {
   if (brief.prepared_action.kind === 'review_finding') {
     return (
@@ -492,7 +508,11 @@ function PreparedBlock({
             variant="primary"
             icon="review"
             onClick={() => {
-              // YUK-710 — starting KC-scoped practice is the confirmed outcome's primary action.
+              // YUK-710 — clicking proves today's open; record the seen first (across-midnight
+              // guard: a tab visible over the day boundary would otherwise write this new-day action
+              // with no matching new-day seen). The day-key gate makes it a same-day no-op.
+              reportSeen();
+              // Starting KC-scoped practice is the confirmed outcome's primary action.
               // result_event_id links this start back to its probe_result so the report can
               // compute the confirmed → scoped-practice rate. Fired before navigating away.
               reportBriefInteraction({
