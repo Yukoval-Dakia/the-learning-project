@@ -17,6 +17,8 @@ import {
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
   SubjectListResponseSchema,
+  TeachingBriefAckBodySchema,
+  TeachingBriefAckResponseSchema,
   TeachingBriefResponseSchema,
   WorkbenchSummaryResponseSchema,
 } from './api/contracts';
@@ -160,6 +162,23 @@ export const shellCapability = defineCapability({
         responses: { 200: TeachingBriefResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/prep-desk-brief').then((m) => m.GET),
+      },
+      // YUK-708 (P0F/4) — append-only, idempotent outcome acknowledgement ("知道了").
+      // Retires a delivered outcome from brief eligibility; writes NO derived status
+      // back onto proposal/question/result (contract §4.2). Deeper path segment than
+      // GET /api/prep-desk/brief, so the two do not collide.
+      {
+        method: 'POST',
+        path: '/api/prep-desk/brief/ack',
+        operationId: 'acknowledgeTeachingBrief',
+        request: { body: TeachingBriefAckBodySchema },
+        responses: {
+          200: TeachingBriefAckResponseSchema,
+          201: TeachingBriefAckResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/teaching-brief-ack').then((m) => m.POST),
       },
     ],
   },

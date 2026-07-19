@@ -2,9 +2,13 @@
 // conjecture proposal → mind-probe question → probe-result event chain.
 
 import type { CauseCategoryT } from '@/core/schema/cause';
-import { PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import {
+  BRIEF_ACK_ACTION,
+  PROBE_QUESTION_SOURCE,
+  PROBE_RESULT_ACTION,
+} from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
@@ -74,10 +78,20 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
   };
 }
 
+/**
+ * The outcome states' executable next step (YUK-708 / contract §2.1): acknowledge the
+ * delivered result. P0F/2 shipped `{kind:'none'}`; P0F/4 upgrades the discriminated
+ * union + strict Zod in lockstep so the UI may render a "知道了" that appends an ack.
+ */
+export interface OutcomeAcknowledgeAction {
+  kind: 'acknowledge_outcome';
+  probe_result_event_id: string;
+}
+
 export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   state: 'outcome_confirmed';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'confirmed';
     summary_md: string;
@@ -89,7 +103,7 @@ export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
 export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
   state: 'outcome_retired';
   expires_at: string;
-  prepared_action: { kind: 'none' };
+  prepared_action: OutcomeAcknowledgeAction;
   current_outcome: {
     status: 'retired';
     summary_md: string;
@@ -111,6 +125,9 @@ export interface TeachingBriefResponse {
 type QuestionRow = typeof question.$inferSelect;
 type EventRow = typeof event.$inferSelect;
 type BriefStage = 'outcome' | 'probe' | 'finding';
+// A pooled connection OR an open transaction. The ack writer runs the outcome selection
+// inside its advisory-locked transaction (YUK-708 round-8), so these readers accept a Tx.
+type DbLike = Db | Tx;
 
 interface ConjectureFacts {
   id: string;
@@ -140,8 +157,58 @@ function warnSkipped(stage: BriefStage, candidateId: string, reason: string): vo
   });
 }
 
-function isCandidateError<T>(result: CandidateResult<T>): result is CandidateError {
+export function isCandidateError<T>(result: CandidateResult<T>): result is CandidateError {
   return 'reason' in result;
+}
+
+/** The canonical facts a probe_result outcome event must carry to be projectable. */
+export interface CanonicalProbeResultFacts {
+  resolution: 'confirmed' | 'retired';
+  outcome: 0 | 1;
+  /** = the conjecture proposal id (brief_id); payload conjecture_event_id === caused_by. */
+  conjectureEventId: string;
+  probeQuestionId: string;
+}
+
+/**
+ * Single source of truth for "is this a canonical, displayable/acknowledgeable probe
+ * outcome". Validates the result EVENT itself: correct action, a question subject, a
+ * legal resolution/outcome pair (confirmed↔0 / retired↔1), and self-consistent
+ * conjecture provenance (payload.conjecture_event_id non-empty and === caused_by).
+ * The reader (loadOutcomeBrief) and the ack writer (teaching-brief-ack.ts) both gate on
+ * this so a corrupt result can never be projected OR acknowledged — the two paths' notion
+ * of a canonical result cannot drift (YUK-708 review round-1, codex P2).
+ */
+export function validateCanonicalProbeResult(
+  row: Pick<EventRow, 'action' | 'subject_kind' | 'subject_id' | 'caused_by_event_id' | 'payload'>,
+): CandidateResult<CanonicalProbeResultFacts> {
+  if (row.action !== PROBE_RESULT_ACTION) return { reason: 'result_action_mismatch' };
+  if (
+    row.subject_kind !== 'question' ||
+    typeof row.subject_id !== 'string' ||
+    row.subject_id.length === 0
+  ) {
+    return { reason: 'result_subject_invalid' };
+  }
+  const payload = toRecord(row.payload);
+  const resolution = payload.resolution;
+  const outcome = payload.outcome;
+  if (
+    !((resolution === 'confirmed' && outcome === 0) || (resolution === 'retired' && outcome === 1))
+  ) {
+    return { reason: 'outcome_resolution_mismatch' };
+  }
+  const conjectureEventId = payload.conjecture_event_id;
+  if (
+    typeof conjectureEventId !== 'string' ||
+    conjectureEventId.length === 0 ||
+    row.caused_by_event_id !== conjectureEventId
+  ) {
+    return { reason: 'result_provenance_mismatch' };
+  }
+  return {
+    value: { resolution, outcome, conjectureEventId, probeQuestionId: row.subject_id },
+  };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -286,7 +353,7 @@ function hasProposalRejectMarker(row: EventRow): boolean {
 }
 
 async function loadProposalFacts(
-  db: Db,
+  db: DbLike,
   proposalId: string,
   requiredStatus: 'pending' | 'accepted',
 ): Promise<CandidateResult<ConjectureFacts>> {
@@ -302,7 +369,11 @@ async function loadProposalFacts(
   return factsFromProposalRow(row, requiredStatus);
 }
 
-async function loadAcceptedClaim(db: Db, proposalId: string, fallback: string): Promise<string> {
+async function loadAcceptedClaim(
+  db: DbLike,
+  proposalId: string,
+  fallback: string,
+): Promise<string> {
   const rates = await db
     .select({ payload: event.payload })
     .from(event)
@@ -350,7 +421,115 @@ function appendProbeEvidence(
   return dedupeEvidence([...proposal.evidence, { role: 'probe', kind: 'question', id: probeId }]);
 }
 
-async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
+/** The full chain facts needed to project OR acknowledge a delivered outcome. */
+export interface AckableOutcomeFacts {
+  proposal: ConjectureFacts;
+  probe: QuestionRow;
+  resolution: 'confirmed' | 'retired';
+  /** = the conjecture proposal id (brief_id). */
+  conjectureEventId: string;
+}
+
+/**
+ * Single source of truth for "is this result a delivered, ackable outcome" — the COMPLETE
+ * set of deliverability dimensions loadOutcomeBrief uses, so the reader and the ack writer
+ * (teaching-brief-ack.ts) can never diverge (YUK-708 review rounds 2–4, codex P2):
+ *   1. canonical result event — action, question subject, legal resolution/outcome pair,
+ *      self-consistent provenance (validateCanonicalProbeResult);
+ *   2. time window — half-open (now − OUTCOME_TTL, now]; a future-dated result is not yet
+ *      deliverable and an expired one no longer is. Uses the reader's TTL constant, not a
+ *      copied literal, and mirrors loadOutcomeBrief's SQL prefilter exactly;
+ *   3. the mind-probe question exists;
+ *   4. its conjecture proposal is accepted — loadProposalFacts → getProposalInboxRow →
+ *      deriveProposalStatus, which FOLDS corrections (retract/mark_wrong/supersede flip the
+ *      status off 'accepted'), so proposal-correction exclusion is covered by this shared
+ *      path with no extra predicate;
+ *   5. the probe is canonical for that proposal (validateProbeQuestion — source/draft/
+ *      provenance/KC/prompt/created-in-future).
+ * The ONE reader dimension deliberately NOT re-gated here is the `NOT EXISTS ack` filter:
+ * for the writer that is the idempotency check, so an already-acked result returns
+ * idempotent:true (see acknowledgeTeachingBriefOutcome), not a 409. Reason codes stay stable
+ * (canonical-result reasons + result_created_in_future / result_expired / probe_not_found /
+ * proposal_not_accepted / probe_*) for both the reader's skip log and the writer's 409.
+ */
+export async function validateAckableOutcome(
+  db: DbLike,
+  result: Pick<
+    EventRow,
+    | 'id'
+    | 'action'
+    | 'subject_kind'
+    | 'subject_id'
+    | 'caused_by_event_id'
+    | 'created_at'
+    | 'payload'
+  >,
+  now: Date,
+  // The write path (ack) runs this inside its advisory-locked transaction, whose single
+  // connection cannot serve the two reads concurrently — it passes serial:true. The GET
+  // read path keeps the round-3 Promise.all micro-optimization (default).
+  { serial = false }: { serial?: boolean } = {},
+): Promise<CandidateResult<AckableOutcomeFacts>> {
+  const canonical = validateCanonicalProbeResult(result);
+  if (isCandidateError(canonical)) return canonical;
+  const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
+
+  // Time window — identical to loadOutcomeBrief's SQL prefilter (shared TTL constant, no
+  // literal duplication). Half-open, eligible iff (now − OUTCOME_TTL) < created_at <= now:
+  // a future-dated result is not yet deliverable; an expired one is no longer. Runs before
+  // the DB chain queries so an out-of-window result short-circuits cheaply.
+  const createdMs = result.created_at.getTime();
+  if (createdMs > now.getTime()) return { reason: 'result_created_in_future' };
+  if (createdMs <= now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS)
+    return { reason: 'result_expired' };
+
+  // The probe lookup and the proposal-facts load depend only on the canonical products, not
+  // on each other. On the pooled read path they run together (Promise.all, separate
+  // connections); on a single-connection transaction (serial:true) they must run one at a
+  // time. Both orderings check probe_not_found first, so the reason precedence is stable.
+  const loadProbe = () =>
+    db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+  let probeRows: QuestionRow[];
+  let proposalResult: CandidateResult<ConjectureFacts>;
+  if (serial) {
+    probeRows = await loadProbe();
+    proposalResult = await loadProposalFacts(db, conjectureEventId, 'accepted');
+  } else {
+    [probeRows, proposalResult] = await Promise.all([
+      loadProbe(),
+      loadProposalFacts(db, conjectureEventId, 'accepted'),
+    ]);
+  }
+  const probe = probeRows[0];
+  // probe_not_found stays the first-checked break so its reason code precedence is stable.
+  if (!probe) return { reason: 'probe_not_found' };
+  if (isCandidateError(proposalResult)) return proposalResult;
+  const proposal = proposalResult.value;
+
+  const probeError = validateProbeQuestion(probe, proposal, now);
+  if (probeError) return { reason: probeError };
+
+  return { value: { proposal, probe, resolution, conjectureEventId } };
+}
+
+/**
+ * The single primary outcome the reader would currently deliver (newest un-acked, in-window,
+ * fully-canonical outcome), or null. Exported so the ack writer can require its target to be
+ * exactly this — making the writer's ackable set identical to the reader's delivered set,
+ * including the SELECTION dimension (an older outcome hidden behind a newer primary is not
+ * ackable and resurfaces once the newer one is acked — YUK-708 review round-5, codex P2).
+ *
+ * The ack writer runs this INSIDE its advisory-locked transaction so the primary verdict and
+ * the ack append share one snapshot+lock — the TOCTOU window between an out-of-tx snapshot and
+ * the in-lock append (a judge inserting a newer result, a proposal retract, TTL rolling) is
+ * structurally closed (round-8, mirrors answerProbe's all-reads-in-tx precedent). Pass
+ * serial:true on that single-connection tx path; the GET read path keeps the Promise.all.
+ */
+export async function loadOutcomeBrief(
+  db: DbLike,
+  now: Date,
+  { serial = false }: { serial?: boolean } = {},
+): Promise<OutcomeConfirmedTeachingBrief | OutcomeRetiredTeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
     .select()
@@ -366,62 +545,30 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
         // The in-loop validation below stays authoritative for provenance.
         sql`((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
+        // YUK-708 (contract §4.2): an acknowledged outcome loses eligibility immediately.
+        // Excluded pre-window (like the corrupt-pair filter) so a burst of acked results
+        // cannot evict an older un-acked valid outcome. Ack existence is binary — there
+        // is no "corrupt ack" — so this NOT EXISTS is authoritative on its own.
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${event} AS ack
+          WHERE ack.action = ${BRIEF_ACK_ACTION}
+            AND ack.subject_kind = 'event'
+            AND ack.subject_id = ${event.id}
+        )`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
   for (const result of results) {
-    const payload = toRecord(result.payload);
-    const resolution = payload.resolution;
-    const outcome = payload.outcome;
-    if (
-      !(
-        (resolution === 'confirmed' && outcome === 0) ||
-        (resolution === 'retired' && outcome === 1)
-      )
-    ) {
-      warnSkipped('outcome', result.id, 'outcome_resolution_mismatch');
+    // Shared full-chain gate (single source of truth with the ack writer): canonical
+    // result + existing canonical mind-probe + accepted conjecture proposal.
+    const outcome = await validateAckableOutcome(db, result, now, { serial });
+    if (isCandidateError(outcome)) {
+      warnSkipped('outcome', result.id, outcome.reason);
       continue;
     }
-    const proposalId = payload.conjecture_event_id;
-    if (
-      result.subject_kind !== 'question' ||
-      typeof result.subject_id !== 'string' ||
-      result.subject_id.length === 0
-    ) {
-      warnSkipped('outcome', result.id, 'result_subject_invalid');
-      continue;
-    }
-    if (
-      typeof proposalId !== 'string' ||
-      proposalId.length === 0 ||
-      result.caused_by_event_id !== proposalId
-    ) {
-      warnSkipped('outcome', result.id, 'result_provenance_mismatch');
-      continue;
-    }
-
-    const [probe] = await db
-      .select()
-      .from(question)
-      .where(eq(question.id, result.subject_id))
-      .limit(1);
-    if (!probe) {
-      warnSkipped('outcome', result.id, 'probe_not_found');
-      continue;
-    }
-    const proposalResult = await loadProposalFacts(db, proposalId, 'accepted');
-    if (isCandidateError(proposalResult)) {
-      warnSkipped('outcome', result.id, proposalResult.reason);
-      continue;
-    }
-    const proposal = proposalResult.value;
-    const probeError = validateProbeQuestion(probe, proposal, now);
-    if (probeError) {
-      warnSkipped('outcome', result.id, probeError);
-      continue;
-    }
+    const { proposal, probe, resolution } = outcome.value;
 
     const claimMd = await loadAcceptedClaim(db, proposal.id, proposal.claimMd);
     const evidence = dedupeEvidence([
@@ -440,7 +587,12 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
         cause_category: proposal.causeCategory,
       },
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
-      prepared_action: { kind: 'none' as const },
+      // YUK-708 — the outcome's executable next step is acknowledgement; the ack targets
+      // this very result event (also mirrored in current_outcome for the wire).
+      prepared_action: {
+        kind: 'acknowledge_outcome' as const,
+        probe_result_event_id: result.id,
+      },
     };
     if (resolution === 'confirmed') {
       return {

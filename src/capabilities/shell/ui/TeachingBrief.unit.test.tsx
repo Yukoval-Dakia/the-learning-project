@@ -102,7 +102,7 @@ function outcomeConfirmedBrief(
         { role: 'outcome', kind: 'event', id: 'evt_probe_result_01' },
       ],
     },
-    prepared_action: { kind: 'none' },
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
     current_outcome: {
       status: 'confirmed',
       summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
@@ -216,24 +216,30 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expectClean(html);
   });
 
-  it('outcome_confirmed: conclusion in 当前结果 region, status icon, NO CTA', () => {
+  it('outcome_confirmed: conclusion in 当前结果 region, status icon, ONLY the ack CTA', () => {
     const brief = outcomeConfirmedBrief();
     const html = render(brief);
     // Structural: the server-owned summary renders (assert the fixture value, not a
-    // hardcoded server literal — [裁决 9a]) and there is no actionable button.
+    // hardcoded server literal — [裁决 9a]).
     expect(html).toContain(brief.current_outcome.summary_md);
     expect(html).toContain('当前结果');
     expect(html).toContain('tb-outcome-confirmed');
-    expect(html).not.toContain('<button');
+    // YUK-708 — the only action on an outcome is the append-only "知道了" ack; no
+    // accept/answer CTA leaks in, and the ack target id never reaches the DOM.
+    expect(html).toContain('知道了');
+    expect(html).not.toContain('就按这个方向验证');
+    expect(html).not.toContain('现在就试做这道题');
     expectClean(html);
   });
 
-  it('outcome_retired: conclusion + retired styling, NO CTA', () => {
+  it('outcome_retired: conclusion + retired styling, ONLY the ack CTA', () => {
     const brief = outcomeRetiredBrief();
     const html = render(brief);
     expect(html).toContain(brief.current_outcome.summary_md);
     expect(html).toContain('tb-outcome-retired');
-    expect(html).not.toContain('<button');
+    expect(html).toContain('知道了');
+    expect(html).not.toContain('就按这个方向验证');
+    expect(html).not.toContain('现在就试做这道题');
     expectClean(html);
   });
 

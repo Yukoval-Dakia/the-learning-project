@@ -24,6 +24,13 @@ vi.mock('./inbox-api', async (importOriginal) => {
   return { ...actual, decideProposal: decideProposalMock };
 });
 
+// Spy on the outcome ack caller; keep the wire types + getTeachingBrief real.
+const { ackOutcomeMock } = vi.hoisted(() => ({ ackOutcomeMock: vi.fn() }));
+vi.mock('./teaching-brief-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./teaching-brief-api')>();
+  return { ...actual, ackTeachingBriefOutcome: ackOutcomeMock };
+});
+
 const FINDING_CLAIM = '你可能在复合层级增加时漏掉内层变化率。';
 const PROBE_TEXT = '求 d/dx sin(x²)，并标出每一层变化率。';
 
@@ -100,7 +107,7 @@ function outcomeBrief(): OutcomeConfirmedTeachingBrief {
         { role: 'outcome', kind: 'event', id: 'evt_probe_result_01' },
       ],
     },
-    prepared_action: { kind: 'none' },
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
     current_outcome: {
       status: 'confirmed',
       summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
@@ -148,6 +155,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   decideProposalMock.mockReset();
+  ackOutcomeMock.mockReset();
 });
 
 describe('TeachingBriefBand — loading / error (jsdom)', () => {
@@ -253,6 +261,58 @@ describe('TeachingBriefBand — probe_ready reveal (jsdom)', () => {
     expect(cta.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getAllByRole('button', { name: '提交作答' })).toHaveLength(1);
     expect(screen.getByPlaceholderText(/写下你的解答/)).toBeTruthy();
+  });
+});
+
+describe('TeachingBriefBand — outcome ack (jsdom, YUK-708)', () => {
+  it('知道了 acks the outcome result and invalidates the wired keys', async () => {
+    ackOutcomeMock.mockResolvedValue({
+      brief_acknowledgement_event_id: 'ack_1',
+      probe_result_event_id: 'evt_probe_result_01',
+      brief_id: 'evt_conj_01',
+      idempotent: false,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: outcomeBrief() });
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    await user.click(await screen.findByRole('button', { name: '知道了' }));
+
+    // Acks the very result event carried by prepared_action.
+    expect(ackOutcomeMock).toHaveBeenCalledWith('evt_probe_result_01');
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['teaching-brief'] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['overnight-digest'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['prep-desk-probes'] });
+  });
+
+  it('ack failure keeps the outcome and surfaces a non-blaming retry (contract §7)', async () => {
+    ackOutcomeMock.mockRejectedValue(new Error('boom'));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    const brief = outcomeBrief();
+    qc.setQueryData(['teaching-brief'], { brief });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    await user.click(await screen.findByRole('button', { name: '知道了' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('操作失败，请重试');
+    // Not optimistically dismissed — the outcome conclusion is still on screen.
+    expect(screen.getByText(brief.current_outcome.summary_md)).toBeTruthy();
+    const ack = screen.getByRole('button', { name: '知道了' }) as HTMLButtonElement;
+    expect(ack.disabled).toBe(false);
   });
 });
 
