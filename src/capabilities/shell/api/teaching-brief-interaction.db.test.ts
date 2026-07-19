@@ -144,6 +144,22 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     expect(row.affected_scopes).toEqual([]);
   });
 
+  it('recordPrimaryActionStarted enforces the scoped_practice ↔ resultEventId invariant (server-layer)', async () => {
+    // A direct (non-route) caller must not bypass the Zod refine: scoped_practice without a
+    // resultEventId, or a non-scoped action carrying one, is a programmer error → throw, no row.
+    await expect(
+      recordPrimaryActionStarted(testDb(), { briefId: 'b1', actionKind: 'scoped_practice' }, DAY1),
+    ).rejects.toThrow(/scoped_practice requires resultEventId/);
+    await expect(
+      recordPrimaryActionStarted(
+        testDb(),
+        { briefId: 'b1', actionKind: 'accept_probe', resultEventId: 'res_x' },
+        DAY1,
+      ),
+    ).rejects.toThrow(/only allowed for the scoped_practice/);
+    expect(await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1')).toHaveLength(0);
+  });
+
   it('route POST returns 201 on a fresh seen then 200 on the idempotent repeat', async () => {
     const first = await post({ type: 'brief_seen', brief_id: 'b1', brief_state: 'finding' });
     expect(first.status).toBe(201);

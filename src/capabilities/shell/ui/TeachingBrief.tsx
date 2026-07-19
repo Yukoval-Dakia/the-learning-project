@@ -24,7 +24,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ProbeAnswerCard } from './ProbeAnswers';
 import { decideProposal, evidenceReadable } from './inbox-api';
@@ -112,6 +112,18 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   // YUK-710 — last-reported brief_seen key (brief_id × learner-local day); see nextBriefSeenState.
   const briefSeenKeyRef = useRef<string | null>(null);
 
+  // YUK-710 — report a "brief opened" once per brief × learner-local day. Shared by the [brief]
+  // effect (mount / swap / same-brief state advance) and the visibilitychange listener (returning
+  // to the tab), so a still-on-screen brief re-counts after the Asia/Shanghai day rolls over. The
+  // key gate makes every extra trigger a no-op within the same day; the server is idempotent too.
+  const fireSeenIfNew = useCallback((b: TeachingBrief) => {
+    const seen = nextBriefSeenState(briefSeenKeyRef.current, b.brief_id, new Date());
+    briefSeenKeyRef.current = seen.key;
+    if (seen.report) {
+      reportBriefInteraction({ type: 'brief_seen', brief_id: b.brief_id, brief_state: b.state });
+    }
+  }, []);
+
   useEffect(() => {
     const prev = prevRef.current;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
@@ -131,20 +143,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       prevRef.current = null; // null → reset baseline; never announce.
       return;
     }
-    // YUK-710 — record the "opened a delivered brief" funnel signal once per brief × learner-local
-    // day. Suppressed when the (brief_id, local day) key is unchanged (a same-brief same-day forward
-    // state advance or a refetch that returns the same brief), but RE-FIRES when the day rolls over
-    // for a still-on-screen brief — so a tab held across Asia/Shanghai midnight still counts the new
-    // day's open. The server is also idempotent per brief × local day, so this is doubly safe.
-    const seen = nextBriefSeenState(briefSeenKeyRef.current, brief.brief_id, new Date());
-    briefSeenKeyRef.current = seen.key;
-    if (seen.report) {
-      reportBriefInteraction({
-        type: 'brief_seen',
-        brief_id: brief.brief_id,
-        brief_state: brief.state,
-      });
-    }
+    // YUK-710 — record the "opened a delivered brief" funnel signal (once per brief × learner-local
+    // day; see fireSeenIfNew). Fires on mount / brief swap / same-brief state advance; the day-key
+    // gate suppresses the same-day repeats, and the visibilitychange effect below covers the case of
+    // an idle tab crossing Asia/Shanghai midnight (this [brief] effect alone would not re-run then).
+    fireSeenIfNew(brief);
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
     const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
@@ -152,7 +155,20 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
     (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();
-  }, [brief]);
+  }, [brief, fireSeenIfNew]);
+
+  // YUK-710 — an idle tab crossing Asia/Shanghai midnight never re-runs the [brief] effect, so on
+  // its own the same-brief new-day open would be missed. Returning to the tab (visibilitychange →
+  // visible) IS the moment a "brief opened" should count, so re-evaluate the seen-key then; the
+  // day-key gate keeps a same-day return a no-op.
+  useEffect(() => {
+    if (!brief) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fireSeenIfNew(brief);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [brief, fireSeenIfNew]);
 
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;

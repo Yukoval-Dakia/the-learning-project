@@ -11,6 +11,7 @@ import {
   type TeachingBriefReportInput,
   computeTeachingBriefReport,
   formatTeachingBriefReport,
+  parseCliFlag,
 } from './lib/teaching-brief-report';
 
 function emptyInput(from = '2026-07-06', to = '2026-07-19'): TeachingBriefReportInput {
@@ -272,5 +273,26 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     // Time-to-action pairs seen → ack (120s).
     expect(report.time_to_action.count).toBe(1);
     expect(report.time_to_action.median_ms).toBe(120_000);
+  });
+});
+
+describe('parseCliFlag (YUK-710)', () => {
+  it('reads a space-form and an inline-form flag value', () => {
+    const argv = ['node', 'script', '--from', '2026-07-06', '--to', '2026-07-19'];
+    expect(parseCliFlag(argv, 'from')).toBe('2026-07-06');
+    expect(parseCliFlag(argv, 'to')).toBe('2026-07-19');
+    expect(parseCliFlag(['--from=2026-07-06'], 'from')).toBe('2026-07-06');
+  });
+
+  it('treats a value that looks like another flag as missing (no silent swallow)', () => {
+    // `--from --to 2026-07-19`: --from's value was omitted, so it must be undefined (not '--to').
+    const argv = ['--from', '--to', '2026-07-19'];
+    expect(parseCliFlag(argv, 'from')).toBeUndefined();
+    expect(parseCliFlag(argv, 'to')).toBe('2026-07-19');
+  });
+
+  it('returns undefined for an absent flag or a trailing flag with no value', () => {
+    expect(parseCliFlag([], 'from')).toBeUndefined();
+    expect(parseCliFlag(['--from'], 'from')).toBeUndefined();
   });
 });

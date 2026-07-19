@@ -498,3 +498,44 @@ describe('TeachingBriefBand — a11y landmarks (jsdom)', () => {
     expect(accept.textContent).not.toContain('加进复习');
   });
 });
+
+describe('TeachingBriefBand — brief_seen day-boundary re-report (jsdom, YUK-710)', () => {
+  it('re-reports brief_seen when the tab becomes visible on a new Shanghai day', async () => {
+    // Fake only Date so learnerLocalDay(new Date()) is controllable; setTimeout stays real so
+    // RTL's waitFor works.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-10T01:00:00.000Z')); // 2026-07-10 BJT
+      const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+        Response.json({ brief: null }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const seenPosts = () =>
+        fetchMock.mock.calls.filter((call) =>
+          String(call[0]).includes('/api/prep-desk/brief/interaction'),
+        );
+
+      const qc = mkClient();
+      qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+      renderWith(qc);
+
+      // Mount fires exactly one brief_seen for day 1.
+      await waitFor(() => expect(seenPosts()).toHaveLength(1));
+
+      // Roll the clock to the next Shanghai day; returning to the visible tab re-reports once.
+      vi.setSystemTime(new Date('2026-07-10T20:00:00.000Z')); // 2026-07-11 BJT
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() => expect(seenPosts()).toHaveLength(2));
+
+      // A same-day return does NOT re-report — the (brief_id × local day) key gate suppresses it.
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(seenPosts()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

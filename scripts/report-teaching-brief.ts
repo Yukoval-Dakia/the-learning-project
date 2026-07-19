@@ -48,6 +48,7 @@ import {
   type TeachingBriefReportInput,
   computeTeachingBriefReport,
   formatTeachingBriefReport,
+  parseCliFlag,
 } from './lib/teaching-brief-report';
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -285,22 +286,14 @@ export async function loadTeachingBriefReportInput(
   };
 }
 
-function parseArg(name: string): string | undefined {
-  const flag = `--${name}`;
-  const idx = process.argv.indexOf(flag);
-  if (idx !== -1 && idx + 1 < process.argv.length) return process.argv[idx + 1];
-  const inline = process.argv.find((a) => a.startsWith(`${flag}=`));
-  return inline?.slice(flag.length + 1);
-}
-
 async function main(): Promise<void> {
   // NEVER process.exit() — that can terminate before a piped stdout (`--json | tee`) is flushed,
   // truncating the report. Set process.exitCode, then close the pg pool in `finally` so the event
   // loop drains and Node exits naturally AFTER stdout has flushed (mirrors audit-calibration.ts,
   // the repo's other DB-connecting script).
   try {
-    const from = parseArg('from');
-    const to = parseArg('to');
+    const from = parseCliFlag(process.argv, 'from');
+    const to = parseCliFlag(process.argv, 'to');
     const asJson = process.argv.includes('--json');
     if (!from || !to) {
       console.error('usage: pnpm report:teaching-brief --from YYYY-MM-DD --to YYYY-MM-DD [--json]');
@@ -312,10 +305,11 @@ async function main(): Promise<void> {
     const report = computeTeachingBriefReport(input);
     console.log(asJson ? JSON.stringify(report, null, 2) : formatTeachingBriefReport(report));
   } catch (err) {
-    console.error(
-      '[report-teaching-brief] failed:',
-      err instanceof Error ? err.message : String(err),
-    );
+    // Log the full error (message + stack) so an operational failure is diagnosable, not a bare
+    // one-liner (mirrors audit-calibration.ts).
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[report-teaching-brief] failed (operational error): ${msg}`);
+    if (err instanceof Error && err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
     // @/db/client opens a postgres-js pool (max:10) that holds the event loop open; close it so

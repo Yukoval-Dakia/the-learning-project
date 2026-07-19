@@ -168,6 +168,17 @@ export async function recordPrimaryActionStarted(
   input: { briefId: string; actionKind: PrimaryActionKind; resultEventId?: string },
   now: Date = new Date(),
 ): Promise<RecordInteractionResult> {
+  // Server-layer self-defense (double layer with the route's Zod refine): result_event_id is
+  // REQUIRED for scoped_practice (the report joins on it) and FORBIDDEN for the others, so a direct
+  // (non-route) caller cannot write a malformed row. A programmer-error invariant → throw.
+  if (input.actionKind === 'scoped_practice' && input.resultEventId === undefined) {
+    throw new Error('recordPrimaryActionStarted: scoped_practice requires resultEventId');
+  }
+  if (input.actionKind !== 'scoped_practice' && input.resultEventId !== undefined) {
+    throw new Error(
+      'recordPrimaryActionStarted: resultEventId is only allowed for the scoped_practice action',
+    );
+  }
   const localDay = learnerLocalDay(now);
   const payload: PrimaryActionStartedPayload = {
     action_kind: input.actionKind,
