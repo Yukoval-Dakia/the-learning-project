@@ -154,8 +154,58 @@ function warnSkipped(stage: BriefStage, candidateId: string, reason: string): vo
   });
 }
 
-function isCandidateError<T>(result: CandidateResult<T>): result is CandidateError {
+export function isCandidateError<T>(result: CandidateResult<T>): result is CandidateError {
   return 'reason' in result;
+}
+
+/** The canonical facts a probe_result outcome event must carry to be projectable. */
+export interface CanonicalProbeResultFacts {
+  resolution: 'confirmed' | 'retired';
+  outcome: 0 | 1;
+  /** = the conjecture proposal id (brief_id); payload conjecture_event_id === caused_by. */
+  conjectureEventId: string;
+  probeQuestionId: string;
+}
+
+/**
+ * Single source of truth for "is this a canonical, displayable/acknowledgeable probe
+ * outcome". Validates the result EVENT itself: correct action, a question subject, a
+ * legal resolution/outcome pair (confirmed↔0 / retired↔1), and self-consistent
+ * conjecture provenance (payload.conjecture_event_id non-empty and === caused_by).
+ * The reader (loadOutcomeBrief) and the ack writer (teaching-brief-ack.ts) both gate on
+ * this so a corrupt result can never be projected OR acknowledged — the two paths' notion
+ * of a canonical result cannot drift (YUK-708 review round-1, codex P2).
+ */
+export function validateCanonicalProbeResult(
+  row: Pick<EventRow, 'action' | 'subject_kind' | 'subject_id' | 'caused_by_event_id' | 'payload'>,
+): CandidateResult<CanonicalProbeResultFacts> {
+  if (row.action !== PROBE_RESULT_ACTION) return { reason: 'result_action_mismatch' };
+  if (
+    row.subject_kind !== 'question' ||
+    typeof row.subject_id !== 'string' ||
+    row.subject_id.length === 0
+  ) {
+    return { reason: 'result_subject_invalid' };
+  }
+  const payload = toRecord(row.payload);
+  const resolution = payload.resolution;
+  const outcome = payload.outcome;
+  if (
+    !((resolution === 'confirmed' && outcome === 0) || (resolution === 'retired' && outcome === 1))
+  ) {
+    return { reason: 'outcome_resolution_mismatch' };
+  }
+  const conjectureEventId = payload.conjecture_event_id;
+  if (
+    typeof conjectureEventId !== 'string' ||
+    conjectureEventId.length === 0 ||
+    row.caused_by_event_id !== conjectureEventId
+  ) {
+    return { reason: 'result_provenance_mismatch' };
+  }
+  return {
+    value: { resolution, outcome, conjectureEventId, probeQuestionId: row.subject_id },
+  };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -396,40 +446,19 @@ async function loadOutcomeBrief(db: Db, now: Date): Promise<TeachingBrief | null
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
   for (const result of results) {
-    const payload = toRecord(result.payload);
-    const resolution = payload.resolution;
-    const outcome = payload.outcome;
-    if (
-      !(
-        (resolution === 'confirmed' && outcome === 0) ||
-        (resolution === 'retired' && outcome === 1)
-      )
-    ) {
-      warnSkipped('outcome', result.id, 'outcome_resolution_mismatch');
+    // Shared canonical-result gate (single source of truth with the ack writer): legal
+    // resolution/outcome pair + question subject + self-consistent conjecture provenance.
+    const canonical = validateCanonicalProbeResult(result);
+    if (isCandidateError(canonical)) {
+      warnSkipped('outcome', result.id, canonical.reason);
       continue;
     }
-    const proposalId = payload.conjecture_event_id;
-    if (
-      result.subject_kind !== 'question' ||
-      typeof result.subject_id !== 'string' ||
-      result.subject_id.length === 0
-    ) {
-      warnSkipped('outcome', result.id, 'result_subject_invalid');
-      continue;
-    }
-    if (
-      typeof proposalId !== 'string' ||
-      proposalId.length === 0 ||
-      result.caused_by_event_id !== proposalId
-    ) {
-      warnSkipped('outcome', result.id, 'result_provenance_mismatch');
-      continue;
-    }
+    const { resolution, conjectureEventId: proposalId, probeQuestionId } = canonical.value;
 
     const [probe] = await db
       .select()
       .from(question)
-      .where(eq(question.id, result.subject_id))
+      .where(eq(question.id, probeQuestionId))
       .limit(1);
     if (!probe) {
       warnSkipped('outcome', result.id, 'probe_not_found');

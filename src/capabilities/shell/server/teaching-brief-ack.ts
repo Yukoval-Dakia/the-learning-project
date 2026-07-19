@@ -19,8 +19,12 @@
 // is atomic: two racing "知道了" clicks can never both insert. A prior ack short-circuits
 // and is reported with idempotent:true (the first ack wins, append-only).
 
+import {
+  isCandidateError,
+  validateCanonicalProbeResult,
+} from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
-import { BRIEF_ACK_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -43,10 +47,12 @@ export interface AcknowledgeBriefResult {
  * `experimental:brief_acknowledged` event keyed on the probe_result event, or
  * short-circuits to the existing ack when one is already recorded.
  *
- * Fail-closed on a bad target: the id MUST be a genuine `experimental:probe_result`
- * outcome event (404 when absent, 409 when it is some other event) — we never ack an
- * arbitrary event id. We only READ the result's provenance (`conjecture_event_id`),
- * never write derived status back onto it (contract §4.2).
+ * Fail-closed on a bad target: the id MUST resolve to a CANONICAL
+ * `experimental:probe_result` outcome (404 when absent, 409 when it is not a canonical
+ * result — wrong action, illegal resolution/outcome pair, or provenance mismatch). This
+ * reuses the reader's `validateCanonicalProbeResult` gate so a result the brief would
+ * never display can never be acked. We only READ the result's provenance
+ * (`conjecture_event_id`), never write derived status back onto it (contract §4.2).
  */
 export async function acknowledgeTeachingBriefOutcome(
   db: Db,
@@ -62,6 +68,8 @@ export async function acknowledgeTeachingBriefOutcome(
       .select({
         action: event.action,
         subject_kind: event.subject_kind,
+        subject_id: event.subject_id,
+        caused_by_event_id: event.caused_by_event_id,
         payload: event.payload,
       })
       .from(event)
@@ -74,21 +82,20 @@ export async function acknowledgeTeachingBriefOutcome(
         404,
       );
     }
-    if (result.action !== PROBE_RESULT_ACTION || result.subject_kind !== 'question') {
+    // Reuse the reader's canonical-result gate (single source of truth): a corrupt or
+    // incoherent result — wrong action/subject, illegal resolution/outcome pair, or
+    // provenance mismatch (payload.conjecture_event_id ≠ caused_by) — is NOT
+    // acknowledgeable. The reader would never display it, so acking it would mark an
+    // untraceable outcome as handled. Fail-closed 409 (YUK-708 review round-1, codex P2).
+    const canonical = validateCanonicalProbeResult(result);
+    if (isCandidateError(canonical)) {
       throw new ApiError(
-        'not_a_probe_result',
-        `event ${probeResultEventId} is not a probe_result outcome`,
+        'not_a_canonical_probe_result',
+        `event ${probeResultEventId} is not a canonical probe_result outcome (${canonical.reason})`,
         409,
       );
     }
-    const briefId = (result.payload as Record<string, unknown> | null)?.conjecture_event_id;
-    if (typeof briefId !== 'string' || briefId.length === 0) {
-      throw new ApiError(
-        'probe_result_missing_conjecture_ref',
-        `probe_result ${probeResultEventId} has no conjecture_event_id`,
-        409,
-      );
-    }
+    const briefId = canonical.value.conjectureEventId;
 
     // One effective ack per outcome: a prior ack short-circuits — NO second event
     // (append-only, first ack wins). The advisory lock above makes this atomic.

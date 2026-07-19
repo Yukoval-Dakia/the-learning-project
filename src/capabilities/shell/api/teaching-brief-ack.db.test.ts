@@ -188,4 +188,44 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
     expect(res.status).toBe(409);
     expect(await ackEvents(notResultId)).toHaveLength(0);
   });
+
+  // Round-1 (codex P2): a probe_result that passes the surface "is a probe_result"
+  // check but is CORRUPT must still fail-closed — the reader would never display it, so
+  // acking it would mark an untraceable outcome as handled. Same canonical gate as the
+  // reader (validateCanonicalProbeResult), so writer/reader semantics cannot drift.
+  it('409 on a probe_result with an illegal resolution/outcome pair, zero append', async () => {
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: 'q_probe_illegal',
+      // Illegal: 'confirmed' must pair with outcome=0, not 1.
+      payload: { conjecture_event_id: 'p_illegal', outcome: 1, resolution: 'confirmed' },
+      caused_by_event_id: 'p_illegal',
+    });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
+
+  it('409 on a probe_result whose caused_by disagrees with conjecture_event_id, zero append', async () => {
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: 'q_probe_incoherent',
+      // Legal pair, but incoherent provenance: payload ref ≠ caused_by.
+      payload: { conjecture_event_id: 'p_ref', outcome: 0, resolution: 'confirmed' },
+      caused_by_event_id: 'p_different',
+    });
+    const res = await post({ probe_result_event_id: resultId });
+    expect(res.status).toBe(409);
+    expect(await ackEvents(resultId)).toHaveLength(0);
+  });
 });
