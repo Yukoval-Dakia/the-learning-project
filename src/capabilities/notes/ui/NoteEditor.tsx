@@ -9,7 +9,7 @@
 
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {
@@ -52,6 +52,12 @@ function withText(b: BodyBlock, text: string): BodyBlock {
   };
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
+  );
+}
+
 function ArtifactPicker({
   excludeId,
   onPick,
@@ -63,6 +69,75 @@ function ArtifactPicker({
 }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Array<{ id: string; title: string; type: string }>>([]);
+  const [searchState, setSearchState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const requestSeq = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      requestSeq.current += 1;
+      requestController.current?.abort();
+    },
+    [],
+  );
+
+  const runSearch = useCallback(
+    (query: string) => {
+      requestController.current?.abort();
+      const trimmed = query.trim();
+      const requestId = ++requestSeq.current;
+      if (!trimmed) {
+        requestController.current = null;
+        setRows([]);
+        setSearchState('idle');
+        return;
+      }
+
+      const controller = new AbortController();
+      requestController.current = controller;
+      setRows([]);
+      setSearchState('loading');
+      void searchArtifacts(trimmed, excludeId, controller.signal)
+        .then((result) => {
+          if (requestId !== requestSeq.current) return;
+          requestController.current = null;
+          setRows(result.rows);
+          setSearchState('idle');
+        })
+        .catch((error: unknown) => {
+          if (requestId !== requestSeq.current) return;
+          requestController.current = null;
+          if (isAbortError(error)) {
+            setSearchState('idle');
+            return;
+          }
+          setRows([]);
+          setSearchState('error');
+        });
+    },
+    [excludeId],
+  );
+
+  useEffect(() => {
+    requestController.current?.abort();
+    requestController.current = null;
+    const requestId = ++requestSeq.current;
+    const trimmed = q.trim();
+    if (!trimmed) {
+      setRows([]);
+      setSearchState('idle');
+      return;
+    }
+
+    setRows([]);
+    setSearchState('loading');
+    const timer = window.setTimeout(() => {
+      if (requestId !== requestSeq.current) return;
+      runSearch(trimmed);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [q, runSearch]);
+
   return (
     <div className="slash-menu fade-key" style={{ maxHeight: 280, overflowY: 'auto' }}>
       <div className="slash-head meta">交叉链 · 搜索笔记/学习项</div>
@@ -71,16 +146,20 @@ function ArtifactPicker({
         style={{ margin: '4px 8px', width: 'calc(100% - 16px)' }}
         value={q}
         placeholder="标题关键词…"
-        onChange={(e) => {
-          const v = e.target.value;
-          setQ(v);
-          if (v.trim().length >= 1) {
-            void searchArtifacts(v.trim(), excludeId).then((r) => setRows(r.rows));
-          } else {
-            setRows([]);
-          }
-        }}
+        onChange={(e) => setQ(e.target.value)}
       />
+      {searchState === 'loading' && <output className="slash-menu-empty">正在搜索…</output>}
+      {searchState === 'error' && (
+        <>
+          <div className="slash-menu-empty" role="alert">
+            搜索失败，请重试。
+          </div>
+          <button type="button" className="slash-item" onClick={() => runSearch(q)}>
+            <LoomIcon name="refresh" size={13} />
+            <span>重试搜索</span>
+          </button>
+        </>
+      )}
       {rows.map((a) => (
         <button type="button" key={a.id} className="slash-item" onClick={() => onPick(a)}>
           <LoomIcon name="link" size={14} />

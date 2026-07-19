@@ -111,9 +111,10 @@ export interface ArtifactSearchRow {
   type: string;
 }
 
-export const searchArtifacts = (q: string, exclude?: string) =>
+export const searchArtifacts = (q: string, exclude?: string, signal?: AbortSignal) =>
   apiJson<{ rows: ArtifactSearchRow[] }>(
     `/api/artifacts/search?q=${encodeURIComponent(q)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`,
+    { signal },
   );
 
 export interface QuestionPickRow {
