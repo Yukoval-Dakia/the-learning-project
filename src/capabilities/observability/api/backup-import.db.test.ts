@@ -163,11 +163,12 @@ describe('POST /api/_/import — guards', () => {
     expect(body.message).toContain('manifest.json');
   });
 
-  // YUK-729 — an oversized backup upload must be rejected by its declared
-  // Content-Length BEFORE the whole ZIP is buffered into memory and the
-  // destructive wipe-and-reload runs. Uses the exported cap + 1 so it stays correct
-  // if the export-side derivation (MAX_INLINE_ASSETS / MAX_IMAGE_UPLOAD_BYTES) moves.
-  it('returns 413 when the declared Content-Length exceeds the backup cap, with zero side effects', async () => {
+  // YUK-729 — an oversized backup upload must trip the OOM safety limit by its
+  // declared Content-Length BEFORE the whole ZIP is buffered into memory and the
+  // destructive wipe-and-reload runs. Uses the exported tripwire + 1 so it stays
+  // correct regardless of the resolved value (default ~1 GB, BACKUP_IMPORT_MAX_BYTES
+  // override).
+  it('returns 413 when the declared Content-Length exceeds the OOM tripwire, with zero side effects', async () => {
     const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
       method: 'POST',
       // Tiny actual body; the oversized Content-Length header is what gates.
