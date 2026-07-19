@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-19　·　历史头部日志（2026-06-23 ~ 07-18）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-19 · 12 小时双线推进：P0F 教研简报闭环 1-5 + jyeoo 供给接入 + 优化七票，agent 17 PR 自主合并】** agent 主线 17 PR 合入（#907-912/915-920/922-923/934/939），owner 并行合入 ~12 个（#921/#929-931/#935-938/#940-947，含消化 agent 当日立的 YUK-720/723/725/726）。三大块：① **P0F 教研简报闭环 P0F/1-5 全落**——契约（YUK-705）→read model（706）→/today 简报 band（707，#918）→幂等 ack 写端（708，#934：9 轮 codex 逐层收紧至「writer 接受集 ≡ reader 交付集」+ 事务内权威判词 + 幂等前置；1 条全局 selection lock 诉求 owner-WONT_FIX 注释化）→confirmed→KC-scoped 练习 CTA（709，#946 在飞 round-2）；② **jyeoo-rs 确定性供给链 dark-ship**（697，#939：NDJSON adapter + spawn 安全壳 + jyeoo_fetch 一等路由 + 图题/异 host 闸 + canary/kill switch；jyeoo-rs 非 git 只读，producer 加固以 patch 提案 doc 交 owner；与 owner 并行 #938 的 sourcing.ts 完成双边语义调和，jyeoo 顺势接入 cross-KC 合并）；③ **优化扫描七票全清**（YUK-713 诚实失败链 9 轮 + 714/715/716/717/718/719）+ YUK-221 paper ordinal。纪律面：全程分段 gate grep 真实 EXIT 行；Docker IO 退化时 S2 按目录四分片；flake YUK-724 第 3/4 次发生已记录并建议并发隔离。Linear 当日 Done：YUK-697/705-708/711/713-719/721/221；In Progress：YUK-709（#946）；新立 YUK-720/722-727。生产未动（无部署授权）。
+> **【更新 2026-07-19 · 12 小时双线推进：P0F 教研简报闭环 1-5 + jyeoo 供给接入 + 优化七票，agent 17 PR 自主合并】** agent 主线 17 PR 合入（#907-912/915-920/922-923/934/939），owner 并行合入 ~12 个（#921/#929-931/#935-938/#940-947，含消化 agent 当日立的 YUK-720/723/725/726）。三大块：① **P0F 教研简报闭环 P0F/1-5 全落**——契约（YUK-705）→read model（706）→/today 简报 band（707，#918）→幂等 ack 写端（708，#934：9 轮 codex 逐层收紧至「writer 接受集 ≡ reader 交付集」+ 事务内权威判词 + 幂等前置；1 条全局 selection lock 诉求 owner-WONT_FIX 注释化）→confirmed→KC-scoped 练习 CTA（709，#946 已合）；② **jyeoo-rs 确定性供给链 dark-ship**（697，#939：NDJSON adapter + spawn 安全壳 + jyeoo_fetch 一等路由 + 图题/异 host 闸 + canary/kill switch；jyeoo-rs 非 git 只读，producer 加固以 patch 提案 doc 交 owner；与 owner 并行 #938 的 sourcing.ts 完成双边语义调和，jyeoo 顺势接入 cross-KC 合并）；③ **优化扫描七票全清**（YUK-713 诚实失败链 9 轮 + 714/715/716/717/718/719）+ YUK-221 paper ordinal。纪律面：全程分段 gate grep 真实 EXIT 行；Docker IO 退化时 S2 按目录四分片；flake YUK-724 第 3/4 次发生已记录并建议并发隔离。Linear 当日 Done：YUK-697/705-708/711/713-719/721/221；（YUK-709 亦于收尾时随 #946 合入转 Done）；新立 YUK-720/722-727。生产未动（无部署授权）。
 
 ## 🎯 主线方向（当前）
 
@@ -14,7 +14,7 @@
 
 ## NOW（当前 active 线）
 
-- **#946（YUK-709 P0F/5 confirmed→KC 练习 CTA）在飞**：S1/S3/全量 S2 已绿于 fb9e23ef，round-2 两条 minor 修复在 lane 内待收（AckDismiss 抽取 + /practice?kc 路由常量）；收口后 P0F 只剩 YUK-710 telemetry。
+- **P0F/1-5 全部落地（#946 已于收尾窗合入,4cd490f8）**：教研简报闭环只剩 YUK-710 telemetry,已列 NEXT 首位。
 - **jyeoo 供给链已 dark-ship（#939 merged）**：`JYEOO_FETCH_ENABLED` 默认 OFF；开闸前 owner 需过目 `docs/design/2026-07-19-yuk697-producer-patch-proposal.md`（cache TTL + VIP 硬闸 + exit-1 文档化,jyeoo-rs 非 git 未被改动）并自行落 producer patch。
 - **方向 B「可开始用」milestone gate 不变**：冷库零题仍需 owner 上传/生成内容跑首次真实 placement；本轮无部署授权，生产态未改。
 - **安全 owner/operator lane = YUK-669**：历史清洗/force-update 与 secret scanning 仍 owner 门控,禁止 agent 自行执行。
@@ -54,8 +54,8 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞：#946（YUK-709）**——gate 全绿于 fb9e23ef,round-2 两 minor 修复由 yuk709 lane 收口后合;另有本 closeout docs PR(仅看板,owner 授权后合)。agent 主线 17 PR 已全部合并(2026-07-19)。
-- **worktree 在飞**:`tlp-wt-yuk709`(#946 lane,round-2 修复中)+ `tlp-wt-closeout`(本看板 PR);其余当日 lane worktree 已全清。**遗留本地分支**(squash-merge 后 `-d` 拒删,按 git-guard 不 `-D`,owner 可批量清理):yuk-718-a11y-semantics-wave / yuk-718-theme-token-sync / yuk-719-server-read-cleanups / yuk-713-silent-mutation-failures / yuk-221-block-ordinal / yuk-715-render-memo / yuk-717-graph-vision-render / yuk-708-brief-probe-outcome / yuk-697-jyeoo-supply。
+- **PR 在飞：仅本 closeout docs PR #949**(看板,owner 授权后合)。agent 主线 18 PR 已全部合并(2026-07-19,含收尾窗合入的 #946)。
+- **worktree 在飞**:仅 `tlp-wt-closeout`(本看板 PR);其余当日 lane worktree 已全清。**遗留本地分支**(squash-merge 后 `-d` 拒删,按 git-guard 不 `-D`,owner 可批量清理):yuk-718-a11y-semantics-wave / yuk-718-theme-token-sync / yuk-719-server-read-cleanups / yuk-713-silent-mutation-failures / yuk-221-block-ordinal / yuk-715-render-memo / yuk-717-graph-vision-render / yuk-708-brief-probe-outcome / yuk-697-jyeoo-supply / yuk-709-confirmed-practice-cta。
 - **外部/owner 门控**:YUK-669 历史清洗;GitHub Actions billing 零步失败(YUK-712),Cursor/CodeRabbit 配额耗尽——本轮每 PR 由 OCR/codex 1-9 轮有效 review 覆盖,merge 证据=本地分段 gate 真实 EXIT 行。
 - **本地工作树**:owner 既有未跟踪文件(`.codex/*`、`AGENTS.md`、jyeoo 设计 doc)未暂存未改写;jyeoo-rs 仓库只读未动。
 - **基建注意**:今日 ~20 轮全量 DB suite 后 Docker fsync IO 明显退化(TRUNCATE 等 DataFileImmediateSync),S2 曾三次超 10 分钟窗;已用按目录四分片方案绕过。owner 空闲时重启 Docker/OrbStack 可复原(compose 栈在跑,agent 未动)。
