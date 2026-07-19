@@ -1,11 +1,12 @@
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { type UnzipFileInfo, unzipSync } from 'fflate';
 
 import { ApiError } from '@/server/http/errors';
 
-// YUK-258 — DOCX routing predicate. Deterministic, sub-millisecond, runs
-// synchronously in the upload route BEFORE any converter spawn. A .docx is a zip;
-// we unzip in-memory (fflate, zero native deps) and count MathType OLE objects by
-// substring-matching `ProgID="Equation` in word/document*.xml.
+// YUK-258/YUK-273 — DOCX routing + converter security preflight. It runs
+// synchronously BEFORE any Pandoc/LibreOffice spawn. A .docx is a zip; we inflate
+// only bounded document XML and relationship parts, reject external relationships,
+// then count MathType OLE objects in word/document*.xml.
 //
 //   count > 0 → 'visual'  (MathType 卷: formulas are OLE images — pandoc/OMML
 //                          cannot extract them, so the file must go through the
@@ -39,8 +40,98 @@ const DOC_XML_PARTS = ['word/document.xml', 'word/document2.xml'];
 // legitimate paper).
 const MAX_DECOMPRESSED_PART_BYTES = 50_000_000;
 
+// Converters may resolve OOXML relationships while rendering. Reject external
+// templates/images/objects before either converter sees the file. Relationship
+// parts are tiny in normal documents; these bounds prevent the security preflight
+// itself becoming a decompression/count DoS.
+const MAX_RELATIONSHIP_PART_BYTES = 1_000_000;
+const MAX_RELATIONSHIP_TOTAL_BYTES = 4_000_000;
+const MAX_RELATIONSHIP_PARTS = 256;
+const RELATIONSHIP_PART_RE = /(?:^|\/)_rels\/[^/]*\.rels$/i;
+
 function decodeXml(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
+  // XML processors infer BOM-less UTF-16 from the leading '<' NUL pattern.
+  // Mirror that sniffing so a converter cannot see relationship tags that this
+  // preflight decoded as NUL-filled UTF-8 and consequently failed to inspect.
+  if (bytes[0] === 0x3c && bytes[1] === 0x00) {
+    return new TextDecoder('utf-16le').decode(bytes);
+  }
+  if (bytes[0] === 0x00 && bytes[1] === 0x3c) {
+    return new TextDecoder('utf-16be').decode(bytes);
+  }
   return new TextDecoder('utf-8').decode(bytes);
+}
+
+function decodeNumericXmlEntities(value: string): string {
+  return value.replace(/&#(x[0-9a-f]+|\d+);/gi, (_entity, token: string) => {
+    const hexadecimal = token[0]?.toLowerCase() === 'x';
+    const codePoint = Number.parseInt(hexadecimal ? token.slice(1) : token, hexadecimal ? 16 : 10);
+    const validXml10CodePoint =
+      codePoint === 0x09 ||
+      codePoint === 0x0a ||
+      codePoint === 0x0d ||
+      (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+      (codePoint >= 0x10000 && codePoint <= 0x10ffff);
+    if (!validXml10CodePoint) {
+      throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 字符引用无效）', 400);
+    }
+    return String.fromCodePoint(codePoint);
+  });
+}
+
+function hasDangerousExternalRelationship(bytes: Uint8Array): boolean {
+  const xml = decodeXml(bytes);
+  // Custom entities can make raw-text validation diverge from a converter's XML
+  // parser. OOXML relationship parts do not require DTDs, so reject them outright.
+  if (/<!DOCTYPE\b/i.test(xml)) return true;
+  // fast-xml-parser normalizes some forbidden numeric references permissively;
+  // validate every numeric reference against XML 1.0 before object parsing.
+  decodeNumericXmlEntities(xml);
+
+  const validation = XMLValidator.validate(xml, { allowBooleanAttributes: false });
+  if (validation !== true) {
+    throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
+  }
+
+  let parsed: {
+    Relationships?: { Relationship?: Array<Record<string, unknown>> };
+  };
+  try {
+    parsed = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      removeNSPrefix: true,
+      parseAttributeValue: false,
+      processEntities: true,
+      strictReservedNames: true,
+      isArray: (tagName) => tagName === 'Relationship',
+    }).parse(xml) as typeof parsed;
+  } catch {
+    throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
+  }
+
+  for (const attributes of parsed.Relationships?.Relationship ?? []) {
+    const normalizedAttributes = new Map(
+      Object.entries(attributes).map(([name, value]) => [name.toLowerCase(), value]),
+    );
+    const rawTargetMode = normalizedAttributes.get('targetmode');
+    const targetMode =
+      typeof rawTargetMode === 'string' ? decodeNumericXmlEntities(rawTargetMode) : '';
+    if (targetMode.toLowerCase() !== 'external') continue;
+    // External hyperlinks are inert clickable metadata; converters do not fetch
+    // them while rendering. Unknown/resource-loading external types stay blocked.
+    const rawType = normalizedAttributes.get('type');
+    const type = typeof rawType === 'string' ? decodeNumericXmlEntities(rawType).toLowerCase() : '';
+    if (!type.endsWith('/hyperlink')) return true;
+  }
+  return false;
 }
 
 /**
@@ -52,21 +143,40 @@ function decodeXml(bytes: Uint8Array): string {
  */
 export function classifyDocx(docxBytes: Uint8Array): DocxLine {
   const docXmlParts = new Set<string>(DOC_XML_PARTS);
+  let relationshipPartCount = 0;
+  let relationshipTotalBytes = 0;
+  const relationshipPartNames = new Set<string>();
   let entries: Record<string, Uint8Array>;
   try {
-    // Only inflate the document body XML part(s); the filter runs per-entry
-    // BEFORE inflation, so the archive's media/styles/etc. are never
-    // decompressed. Reject a body part whose decompressed size is implausibly
-    // large (zip-bomb guard) before fflate inflates it.
+    // Only inflate document body XML + relationship parts. The filter runs before
+    // inflation, so media/styles/etc. are skipped and size/count bounds can reject
+    // suspicious relationship manifests without allocating their contents.
     entries = unzipSync(docxBytes, {
       filter: (file: UnzipFileInfo) => {
-        if (!docXmlParts.has(file.name)) return false;
-        if (file.originalSize > MAX_DECOMPRESSED_PART_BYTES) {
+        if (docXmlParts.has(file.name)) {
+          if (file.originalSize <= MAX_DECOMPRESSED_PART_BYTES) return true;
           throw new ApiError(
             'validation_error',
             '无法解析 DOCX（word/document.xml 解压后过大，可能是异常文件）',
             400,
           );
+        }
+        if (!RELATIONSHIP_PART_RE.test(file.name)) return false;
+        const normalizedName = file.name.toLowerCase();
+        if (relationshipPartNames.has(normalizedName)) {
+          throw new ApiError('validation_error', '无法解析 DOCX（存在重复关系文件）', 400);
+        }
+        relationshipPartNames.add(normalizedName);
+        relationshipPartCount += 1;
+        if (relationshipPartCount > MAX_RELATIONSHIP_PARTS) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件数量异常）', 400);
+        }
+        if (file.originalSize > MAX_RELATIONSHIP_PART_BYTES) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件解压后过大）', 400);
+        }
+        relationshipTotalBytes += file.originalSize;
+        if (relationshipTotalBytes > MAX_RELATIONSHIP_TOTAL_BYTES) {
+          throw new ApiError('validation_error', '无法解析 DOCX（关系文件解压总量过大）', 400);
         }
         return true;
       },
@@ -87,6 +197,17 @@ export function classifyDocx(docxBytes: Uint8Array): DocxLine {
       '无法解析 DOCX（缺少 word/document.xml，可能不是有效 .docx）',
       400,
     );
+  }
+
+  for (const [part, bytes] of Object.entries(entries)) {
+    if (!RELATIONSHIP_PART_RE.test(part)) continue;
+    if (hasDangerousExternalRelationship(bytes)) {
+      throw new ApiError(
+        'validation_error',
+        `DOCX 包含外部资源关系（${part}）；请移除链接图片、模板或对象后重试`,
+        400,
+      );
+    }
   }
 
   let mathTypeCount = 0;

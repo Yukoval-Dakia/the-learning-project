@@ -19,6 +19,16 @@ function docxBytes(name: string): Uint8Array {
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
+function encodeUtf16(value: string, littleEndian: boolean): Uint8Array {
+  const bytes = new Uint8Array(value.length * 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    bytes[index * 2 + (littleEndian ? 0 : 1)] = unit & 0xff;
+    bytes[index * 2 + (littleEndian ? 1 : 0)] = unit >>> 8;
+  }
+  return bytes;
+}
+
 describe('classifyDocx', () => {
   it('routes a MathType docx → visual', () => {
     expect(classifyDocx(docxBytes('math-mathtype.docx'))).toBe('visual');
@@ -65,6 +75,139 @@ describe('classifyDocx', () => {
     expect(classifyDocx(bytes)).toBe('visual');
   });
 
+  it('rejects an external OOXML relationship before converter execution', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(`<?xml version="1.0"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Target="http://169.254.169.254/latest/meta-data/" Id="rId1" TargetMode="External" Type="image"/>
+        </Relationships>`),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('detects external TargetMode independent of attribute order, quote and casing', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      '_rels/.rels': enc.encode(
+        "<Relationships><Relationship type='template' targetmode='external' Target='http://127.0.0.1/'/></Relationships>",
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('parses a greater-than sign inside a quoted attribute before TargetMode', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Target="http://169.254.169.254/?x=>" TargetMode="External" Type="image"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('decodes XML character references before checking TargetMode', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="image" TargetMode="&#69;xternal" Target="http://169.254.169.254/x"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it.each([
+    ['UTF-16LE', true],
+    ['UTF-16BE', false],
+  ] as const)('detects external relationships in BOM-less %s XML', async (_label, littleEndian) => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const relationXml =
+      '<Relationships><Relationship Type="image" TargetMode="External" Target="http://169.254.169.254/x"/></Relationships>';
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': encodeUtf16(relationXml, littleEndian),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/外部资源关系/) }),
+    );
+  });
+
+  it('maps an out-of-range XML character reference to validation_error 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="image" TargetMode="&#x110000;" Target="x"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/字符引用无效/) }),
+    );
+  });
+
+  it('maps a forbidden XML NUL character reference to validation_error 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="image" TargetMode="&#0;External" Target="x"/></Relationships>',
+      ),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(expect.objectContaining({ status: 400 }));
+  });
+
+  it('allows inert external hyperlink metadata', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="https://example.com/reference"/></Relationships>',
+      ),
+    });
+
+    expect(classifyDocx(bytes)).toBe('text');
+  });
+
+  it('allows bounded internal OOXML relationships', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': enc.encode(
+        '<Relationships><Relationship Id="rId1" Target="media/image1.png" Type="image"/></Relationships>',
+      ),
+    });
+
+    expect(classifyDocx(bytes)).toBe('text');
+  });
+
   // codex-5 / coderabbit-C — selective inflation: only word/document*.xml is
   // decompressed. A large non-document entry must NOT block classification (it is
   // never inflated by the filter).
@@ -98,5 +241,76 @@ describe('classifyDocx', () => {
       expect((err as ApiError).status).toBe(400);
       expect((err as ApiError).message).toMatch(/解压后过大/);
     }
+  });
+
+  it('rejects a relationship part that decompresses past its ceiling → 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const bytes = zipSync({
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+      'word/_rels/document.xml.rels': new Uint8Array(1_100_000),
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({
+        status: 400,
+        message: expect.stringMatching(/关系文件解压后过大/),
+      }),
+    );
+  });
+
+  it('rejects excessive cumulative relationship inflation → 400', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const entries: Record<string, Uint8Array> = {
+      'word/document.xml': enc.encode('<w:document xmlns:w="x">paper</w:document>'),
+    };
+    for (let index = 0; index < 5; index += 1) {
+      entries[`word/section${index}/_rels/part.xml.rels`] = new Uint8Array(900_000);
+    }
+    const bytes = zipSync(entries);
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/解压总量过大/) }),
+    );
+  });
+
+  it('rejects duplicate relationship part names before conversion', async () => {
+    const { Zip, ZipPassThrough } = await import('fflate');
+    const enc = new TextEncoder();
+    const chunks: Uint8Array[] = [];
+    const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const archive = new Zip((err, chunk, final) => {
+        if (err) return reject(err);
+        chunks.push(chunk);
+        if (final) {
+          const total = chunks.reduce((sum, item) => sum + item.byteLength, 0);
+          const joined = new Uint8Array(total);
+          let offset = 0;
+          for (const item of chunks) {
+            joined.set(item, offset);
+            offset += item.byteLength;
+          }
+          resolve(joined);
+        }
+      });
+      for (const [name, content] of [
+        ['word/document.xml', '<w:document xmlns:w="x">paper</w:document>'],
+        ['word/_rels/document.xml.rels', '<Relationships/>'],
+        [
+          'word/_rels/document.xml.rels',
+          '<Relationships><Relationship Type="image" TargetMode="External" Target="http://127.0.0.1/x"/></Relationships>',
+        ],
+      ] as const) {
+        const file = new ZipPassThrough(name);
+        archive.add(file);
+        file.push(enc.encode(content), true);
+      }
+      archive.end();
+    });
+
+    expect(() => classifyDocx(bytes)).toThrowError(
+      expect.objectContaining({ status: 400, message: expect.stringMatching(/重复关系文件/) }),
+    );
   });
 });
