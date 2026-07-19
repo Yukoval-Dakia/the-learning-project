@@ -9,6 +9,10 @@ import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
 import { ApiError } from '@/server/http/errors';
 import {
+  type ProposalPresentation,
+  loadProposalPresentations,
+} from '@/server/proposals/presentation';
+import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
@@ -59,6 +63,7 @@ export interface ProposalInboxRow {
   source_action: string;
   source_subject_kind: string;
   signals: ProposalSignalSnapshot | null;
+  presentation: ProposalPresentation | null;
 }
 
 export interface ListProposalInboxOpts {
@@ -772,12 +777,17 @@ async function projectLoadedProposalRows(
       source_action: row.action,
       source_subject_kind: row.subject_kind,
       signals: null,
+      presentation: null,
     });
   }
 
-  const signalsByProposalId = await loadProposalSignalsForRows(db, out);
+  const [signalsByProposalId, presentationByProposalId] = await Promise.all([
+    loadProposalSignalsForRows(db, out),
+    loadProposalPresentations(db, out),
+  ]);
   for (const row of out) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
+    row.presentation = presentationByProposalId.get(row.id) ?? null;
   }
   return out;
 }
@@ -858,8 +868,13 @@ export async function getProposalInboxRow(
     source_action: proposalRow.action,
     source_subject_kind: proposalRow.subject_kind,
     signals: null,
+    presentation: null,
   };
-  const signalsByProposalId = await loadProposalSignalsForRows(db, [row]);
+  const [presentationByProposalId, signalsByProposalId] = await Promise.all([
+    loadProposalPresentations(db, [row]),
+    loadProposalSignalsForRows(db, [row]),
+  ]);
+  row.presentation = presentationByProposalId.get(row.id) ?? null;
   row.signals = signalsByProposalId.get(row.id) ?? null;
   return row;
 }

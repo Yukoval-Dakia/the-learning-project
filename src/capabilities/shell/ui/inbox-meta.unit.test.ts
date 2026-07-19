@@ -200,9 +200,9 @@ describe('splitReasonIds', () => {
   it('命中 block-<cuid>，prose 段保留原词', () => {
     const segs = splitReasonIds('建议合并题块 block-abc123def456 与下一块');
     expect(segs).toEqual([
-      { text: '建议合并题块 ', raw: false },
-      { text: 'block-abc123def456', raw: true },
-      { text: ' 与下一块', raw: false },
+      { start: 0, text: '建议合并题块 ', raw: false },
+      { start: 7, text: 'block-abc123def456', raw: true },
+      { start: 25, text: ' 与下一块', raw: false },
     ]);
   });
 
@@ -228,7 +228,7 @@ describe('splitReasonIds', () => {
 
   it('纯 prose 返回单个 raw=false 段，拼回原文不变', () => {
     const md = '建议接受这个合并';
-    expect(splitReasonIds(md)).toEqual([{ text: md, raw: false }]);
+    expect(splitReasonIds(md)).toEqual([{ start: 0, text: md, raw: false }]);
   });
 
   it('多个 ID 全部切出，拼回逐字等于原文', () => {

@@ -1,10 +1,8 @@
 // M4-T6 (YUK-319/YUK-318)：提议卡（设计稿 screen-mistakes.jsx ProposalCard
 // L60-124）。偏差（真 wire 适配，design pre-flight 预批）：
-// ①无策展 title——reason_md 即正文，head 收敛为 kind-tag + ai-tag + resolved-stamp；
-// ②SubjectTag 不渲——科目轴 M5 随 effective_domain 派生收编；
-// ③merge-preview 不渲——block_merge 的 proposed_change 形态未钉死，reason_md 承载；
-// ④「改关系」从即点即换改为 inline seg 展开 5 关系再选（真 decide 不可反复试）；
-// ⑤evidence 渲多枚——真 evidence_refs 是数组，设计稿演示单枚。
+// ①SubjectTag 不渲——科目轴 M5 随 effective_domain 派生收编；
+// ②「改关系」从即点即换改为 inline seg 展开 5 关系再选（真 decide 不可反复试）；
+// ③evidence 渲多枚——真 evidence_refs 是数组，设计稿演示单枚。
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
@@ -80,16 +78,18 @@ export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPrev
 function EvidenceChip({
   er,
   count,
+  label: curatedLabel,
   navigate,
 }: {
   er: ProposalEvidenceRefWire;
   count: number;
+  label?: string;
   navigate: (to: string) => void;
 }) {
   const { text, route } = evidenceReadable(er);
   // S7 (YUK-335)：去重后 count>1 时把数量并进文案（「源自 N 次 AI 判定事件」式），
   // 单枚保持原句不动。
-  const label = count > 1 ? text.replace('一', String(count)) : text;
+  const label = curatedLabel ?? (count > 1 ? text.replace('一', String(count)) : text);
   const content = (
     <>
       <span className="er-ic">
@@ -191,9 +191,24 @@ export function ProposalCard({
   const edgeFrom = isEdge ? change?.from_knowledge_id : undefined;
   const edgeTo = isEdge ? change?.to_knowledge_id : undefined;
   const rel = change?.relation_type;
-  const confidence = typeof p.payload.confidence === 'number' ? p.payload.confidence : null;
+  const confidence =
+    p.kind === 'conjecture'
+      ? null
+      : typeof p.payload.confidence === 'number'
+        ? p.payload.confidence
+        : p.kind === 'block_merge' && typeof change?.confidence === 'number'
+          ? change.confidence
+          : null;
   const learningPlan =
     p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
+  const mergePreview = p.kind === 'block_merge' ? p.presentation?.block_merge : null;
+  const mergeBlockLabelById = new Map(
+    mergePreview
+      ? [mergePreview.primary, ...mergePreview.merged]
+          .filter((block) => block !== null)
+          .map((block) => [block.id, block.label] as const)
+      : [],
+  );
 
   return (
     <LoomCard
@@ -213,6 +228,7 @@ export function ProposalCard({
         {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）。primitive 内部
             对非 corrective 早返回 null，故 proactive/缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
         <SuggestionKindTag kind={p.payload.suggestion_kind as SuggestionKind | undefined} />
+        {p.presentation?.title && <span className="proposal-title">{p.presentation.title}</span>}
         {resolved && (
           <span className="badge tone-good resolved-stamp" style={{ marginLeft: 'auto' }}>
             <LoomIcon name="check" size={12} />
@@ -221,22 +237,40 @@ export function ProposalCard({
         )}
       </div>
 
-      {/* S7 (YUK-335, audit §3.4)：reason_md 含真 block-<cuid> 等不透明 ID，
-          视觉去权重——切成 prose 段 + raw-id 段，raw 段包进 <code .ev-rawid>
-          读作「技术引用 chip」而非正文等权（AI 原句逐字保留，display-only）。 */}
+      {/* YUK-264：reason_md 的不透明 ID 不再露在正文；已加载的题块显示位置身份，
+          其他引用折叠为通用标签，原 ID 只保留在 hover title 供追溯。 */}
       <div className="proposal-body">
-        {splitReasonIds(p.payload.reason_md).map((seg, i) =>
+        {splitReasonIds(p.payload.reason_md).map((seg) =>
           seg.raw ? (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 切分段顺序稳定，无重排
-            <code key={i} className="ev-rawid">
-              {seg.text}
-            </code>
+            <button
+              type="button"
+              key={seg.start}
+              className="ev-rawid"
+              title={`复制引用 ${seg.text}`}
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(seg.text)
+                  .catch(() => onError('复制技术引用失败。'));
+              }}
+            >
+              {mergeBlockLabelById.get(seg.text) ?? '技术引用'}
+            </button>
           ) : (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 切分段顺序稳定，无重排
-            <span key={i}>{seg.text}</span>
+            <span key={seg.start}>{seg.text}</span>
           ),
         )}
       </div>
+
+      {p.presentation && p.presentation.change_summary.length > 0 && (
+        <dl className="proposal-change-summary">
+          {p.presentation.change_summary.map((item) => (
+            <div key={`${item.label}:${item.value}`}>
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       {learningPlan && (
         <div className="proposal-learning-plan">
@@ -257,6 +291,33 @@ export function ProposalCard({
                 </li>
               ))}
             </ol>
+          )}
+        </div>
+      )}
+
+      {mergePreview?.primary && mergePreview.merged.length > 0 && (
+        <div className="merge-preview">
+          <div className="merge-block">
+            <div className="merge-label">保留 · {mergePreview.primary.label}</div>
+            <div className="merge-text">{mergePreview.primary.excerpt}</div>
+          </div>
+          <div className="merge-join" aria-hidden="true">
+            <LoomIcon name="arrow" size={16} />
+          </div>
+          <div className="merge-block merge-into">
+            <div className="merge-label">并入 · {mergePreview.merged.length} 块</div>
+            {mergePreview.merged.map((block) => (
+              <div className="merge-text merge-text-part" key={block.id}>
+                <b>{block.label}</b>
+                <span>{block.excerpt}</span>
+              </div>
+            ))}
+          </div>
+          {mergePreview.continuity_label && (
+            <div className="merge-reason">
+              <LoomIcon name="sparkle" size={12} />
+              连续依据：{mergePreview.continuity_label}
+            </div>
           )}
         </div>
       )}
@@ -366,15 +427,38 @@ export function ProposalCard({
       {p.payload.evidence_refs.length > 0 && (
         <div className="proposal-evidence">
           {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
-          {dedupeEvidence(p.payload.evidence_refs).map(({ ref, count }) => (
-            <EvidenceChip
-              key={`${ref.kind}:${ref.id}`}
-              er={ref}
-              count={count}
-              navigate={navigate}
-            />
-          ))}
+          {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
+            ({ ref, count }) => (
+              <EvidenceChip
+                key={`${ref.kind}:${ref.id}`}
+                er={ref}
+                count={count}
+                label={p.presentation?.evidence_labels[`${ref.kind}:${ref.id}`]}
+                navigate={navigate}
+              />
+            ),
+          )}
         </div>
+      )}
+
+      {p.kind !== 'conjecture' && p.presentation?.technical_details && (
+        <details className="proposal-technical-details">
+          <summary>技术详情</summary>
+          <div className="proposal-technical-head">
+            <span>原始变更数据（含引用 ID）</span>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(p.presentation?.technical_details ?? '')
+                  .catch(() => onError('复制技术详情失败。'));
+              }}
+            >
+              复制
+            </button>
+          </div>
+          <pre>{p.presentation.technical_details}</pre>
+        </details>
       )}
     </LoomCard>
   );
