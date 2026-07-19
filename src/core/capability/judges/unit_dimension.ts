@@ -12,7 +12,12 @@ import type { LlmFallbackOutputT } from './unit_dimension/types';
 let acceleratorModulePromise: Promise<typeof import('./unit_dimension/accelerator')> | undefined;
 
 function loadAccelerator(): Promise<typeof import('./unit_dimension/accelerator')> {
-  acceleratorModulePromise ??= import('./unit_dimension/accelerator');
+  acceleratorModulePromise ??= import('./unit_dimension/accelerator').catch((error) => {
+    // Don't cache a rejected load (e.g. transient chunk-fetch failure) — clear the
+    // memo so the next judge run retries the import instead of failing forever.
+    acceleratorModulePromise = undefined;
+    throw error;
+  });
   return acceleratorModulePromise;
 }
 
