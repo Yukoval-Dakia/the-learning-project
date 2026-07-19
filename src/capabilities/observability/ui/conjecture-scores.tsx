@@ -26,10 +26,10 @@ interface PredictionScoreRow {
   baseline_p: number;
   outcome: 0 | 1;
   resolution: 'confirmed' | 'retired';
-  brier_model: number;
-  brier_baseline: number;
-  log_loss_model: number;
-  skill_score_point: number;
+  brier_model: number | null;
+  brier_baseline: number | null;
+  log_loss_model: number | null;
+  skill_score_point: number | null;
   retrievability_at_judge: number | null;
   created_at: string;
 }
@@ -37,7 +37,7 @@ interface TypedStateRow {
   id: string;
   knowledge_id: string;
   typed_state: 'confused-with-X';
-  confused_with_kc_id: string | null;
+  confused_with_kc_id: string;
   lifecycle: 'open' | 'resolved';
   evidence_event_ids: string[];
   last_evidence_at: string | null;
@@ -70,8 +70,9 @@ function formatTime(value: string | null): string {
   });
 }
 
-const fmt = (n: number) => n.toFixed(3);
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const fmt = (n: number | null) => (n === null ? '—' : n.toFixed(3));
+const mean = (xs: number[]): number | null =>
+  xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 
 export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: string) => void }) {
   const q = useQuery({
@@ -95,9 +96,15 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
 
   const scores = data?.prediction_scores ?? [];
   const typed = data?.typed_states ?? [];
-  // mean Brier 是标准描述性聚合（Brier score 本就是逐条均值）——可展示，不附「beats baseline」判词。
-  const meanBrierModel = mean(scores.map((s) => s.brier_model));
-  const meanBrierBaseline = mean(scores.map((s) => s.brier_baseline));
+  // Brier 两侧只在同一批 complete-case 行上聚合，避免 nullable 字段让 model/baseline
+  // 使用不同分母，制造方向相反的视觉比较。
+  const pairedBrier = scores.flatMap((s) =>
+    s.brier_model === null || s.brier_baseline === null
+      ? []
+      : [{ model: s.brier_model, baseline: s.brier_baseline }],
+  );
+  const meanBrierModel = mean(pairedBrier.map((s) => s.model));
+  const meanBrierBaseline = mean(pairedBrier.map((s) => s.baseline));
   const openStates = typed.filter((t) => t.lifecycle === 'open').length;
   // 诚实：skill_score_point 是**退化的单点值**（scoring.ts），把它逐条平均去下「beats baseline」判词 =
   // 伪造那个被 DEFER 的窗口聚合（真·window BSS = 1 − mean(BS_m)/mean(BS_base)，Rust-owned + ADR-0046）。
@@ -127,8 +134,12 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
           {/* 描述性 mean Brier（越低越好，reader 自比 model vs baseline）；空数据集 dash，不把 0 当真值。 */}
           <Kpi
             label="mean Brier"
-            value={scores.length === 0 ? '—' : fmt(meanBrierModel)}
-            note={scores.length === 0 ? undefined : `baseline ${fmt(meanBrierBaseline)}`}
+            value={fmt(meanBrierModel)}
+            note={
+              meanBrierBaseline === null
+                ? undefined
+                : `baseline ${fmt(meanBrierBaseline)} · paired n=${pairedBrier.length}`
+            }
           />
           {/* window skill（真·beats-baseline 判词）DEFER 给 Rust window 聚合（ADR-0046）——本页不伪造。 */}
           <Kpi label="window skill" value="deferred" note="window BSS · ADR-0046" />
@@ -199,7 +210,13 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
                           </td>
                           <td style={tdStyle}>{fmt(s.log_loss_model)}</td>
                           <td style={tdStyle}>
-                            <span style={s.skill_score_point > 0 ? okMarkStyle : undefined}>
+                            <span
+                              style={
+                                s.skill_score_point !== null && s.skill_score_point > 0
+                                  ? okMarkStyle
+                                  : undefined
+                              }
+                            >
                               {fmt(s.skill_score_point)}
                             </span>
                           </td>

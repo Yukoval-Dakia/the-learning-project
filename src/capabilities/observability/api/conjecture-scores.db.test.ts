@@ -277,6 +277,331 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(scores).toHaveLength(0);
   });
 
+  it('renders missing score metrics as null but drops corrupt numeric metrics', async () => {
+    const now = new Date('2026-07-04T00:00:00Z');
+    const commonPayload = {
+      conjecture_event_id: 'conj',
+      probe_result_event_id: 'probe',
+      knowledge_id: KC_ID,
+      predicted_p: 0.3,
+      baseline_p: 0.6,
+      outcome: 0,
+      resolution: 'confirmed',
+      brier_baseline: 0.36,
+      log_loss_model: 0.356,
+      skill_score_point: 0.75,
+    } as const;
+
+    await writeEvent(testDb(), {
+      id: 'score_missing_metric',
+      actor_kind: 'system',
+      actor_ref: 'reconcile',
+      action: PREDICTION_SCORE_ACTION,
+      subject_kind: 'event',
+      subject_id: 'probe_missing_metric',
+      outcome: 'success',
+      payload: { ...commonPayload, brier_model: null },
+      created_at: now,
+      ingest_at: now,
+    });
+    await writeEvent(testDb(), {
+      id: 'score_corrupt_metric',
+      actor_kind: 'system',
+      actor_ref: 'reconcile',
+      action: PREDICTION_SCORE_ACTION,
+      subject_kind: 'event',
+      subject_id: 'probe_corrupt_metric',
+      outcome: 'success',
+      payload: { ...commonPayload, brier_model: 'not-a-number' },
+      created_at: new Date(now.getTime() + 1),
+      ingest_at: now,
+    });
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const scores = body.prediction_scores as Array<Record<string, unknown>>;
+    expect(scores).toHaveLength(1);
+    expect(scores[0]).toMatchObject({
+      event_id: 'score_missing_metric',
+      brier_model: null,
+      brier_baseline: 0.36,
+    });
+  });
+
+  it('fail-closes corrupt typed-state lifecycle and provenance rows', async () => {
+    const now = new Date('2026-07-04T00:00:00Z');
+    await seedTypedState({
+      id: 'ts_valid',
+      knowledgeId: KC_ID,
+      confusedWithKcId: RIVAL_KC,
+      lifecycle: 'open',
+      evidenceEventIds: ['probe_valid'],
+    });
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        {
+          id: 'ts_bad_lifecycle',
+          subject_kind: 'knowledge',
+          subject_id: 'kn_bad_lifecycle',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'corrupt',
+          evidence_event_ids: ['probe_bad_lifecycle'],
+          updated_at: now,
+        },
+        {
+          id: 'ts_bad_provenance',
+          subject_kind: 'knowledge',
+          subject_id: 'kn_bad_provenance',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: ['probe_valid', 42] as unknown as string[],
+          updated_at: now,
+        },
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    expect(typed).toHaveLength(1);
+    expect(typed[0]?.id).toBe('ts_valid');
+  });
+
+  it('bounds both reads to the newest 200 rows in the database', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb().transaction(async (tx) => {
+      for (let i = 0; i <= 200; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_bound_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_bound_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_bound_${i}`,
+            probe_result_event_id: `probe_bound_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+      const corruptAt = new Date(base.getTime() + 201);
+      await writeEvent(tx, {
+        id: 'score_bound_corrupt_newest',
+        actor_kind: 'system',
+        actor_ref: 'reconcile',
+        action: PREDICTION_SCORE_ACTION,
+        subject_kind: 'event',
+        subject_id: 'probe_bound_corrupt_newest',
+        outcome: 'success',
+        payload: {
+          conjecture_event_id: 'conjecture_bound_corrupt_newest',
+          probe_result_event_id: 'probe_bound_corrupt_newest',
+          knowledge_id: KC_ID,
+          predicted_p: 0.3,
+          baseline_p: 0.6,
+          outcome: 0,
+          resolution: 'confirmed',
+          brier_model: 'not-a-number',
+          brier_baseline: 0.36,
+          log_loss_model: 0.356,
+          skill_score_point: 0.75,
+        },
+        created_at: corruptAt,
+        ingest_at: corruptAt,
+      });
+    });
+    await testDb()
+      .insert(kc_typed_state)
+      .values(
+        Array.from({ length: 201 }, (_, i) => ({
+          id: `ts_bound_${i}`,
+          subject_kind: 'knowledge',
+          subject_id: `kn_bound_${i}`,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: [`probe_bound_${i}`],
+          updated_at: new Date(base.getTime() + i),
+        })),
+      );
+    await testDb()
+      .insert(kc_typed_state)
+      .values({
+        id: 'ts_bound_corrupt_newest',
+        subject_kind: 'knowledge',
+        subject_id: 'kn_bound_corrupt_newest',
+        typed_state: 'confused-with-X',
+        confused_with_kc_id: RIVAL_KC,
+        lifecycle: 'corrupt',
+        evidence_event_ids: ['probe_bound_corrupt_newest'],
+        updated_at: new Date(base.getTime() + 201),
+      });
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const scores = body.prediction_scores as Array<Record<string, unknown>>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    expect(scores).toHaveLength(200);
+    expect(scores[0]?.event_id).toBe('score_bound_200');
+    expect(scores.at(-1)?.event_id).toBe('score_bound_1');
+    expect(scores.some((row) => row.event_id === 'score_bound_0')).toBe(false);
+    expect(typed).toHaveLength(200);
+    expect(typed[0]?.id).toBe('ts_bound_200');
+    expect(typed.at(-1)?.id).toBe('ts_bound_1');
+    expect(typed.some((row) => row.id === 'ts_bound_0')).toBe(false);
+  });
+
+  it('hard-stops each database scan after 400 raw rows', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb().transaction(async (tx) => {
+      for (let i = 0; i < 200; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_scan_valid_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_scan_valid_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_scan_valid_${i}`,
+            probe_result_event_id: `probe_scan_valid_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+      for (let i = 200; i <= 400; i += 1) {
+        const createdAt = new Date(base.getTime() + i);
+        await writeEvent(tx, {
+          id: `score_scan_corrupt_${i}`,
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: `probe_scan_corrupt_${i}`,
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: `conjecture_scan_corrupt_${i}`,
+            probe_result_event_id: `probe_scan_corrupt_${i}`,
+            knowledge_id: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 'not-a-number',
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+          },
+          created_at: createdAt,
+          ingest_at: createdAt,
+        });
+      }
+    });
+
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        ...Array.from({ length: 200 }, (_, i) => ({
+          id: `ts_scan_valid_${i}`,
+          subject_kind: 'knowledge',
+          subject_id: `kn_scan_valid_${i}`,
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: [`probe_scan_valid_${i}`],
+          updated_at: new Date(base.getTime() + i),
+        })),
+        ...Array.from({ length: 201 }, (_, offset) => {
+          const i = offset + 200;
+          return {
+            id: `ts_scan_corrupt_${i}`,
+            subject_kind: 'knowledge',
+            subject_id: `kn_scan_corrupt_${i}`,
+            typed_state: 'confused-with-X',
+            confused_with_kc_id: RIVAL_KC,
+            lifecycle: 'corrupt',
+            evidence_event_ids: [`probe_scan_corrupt_${i}`],
+            updated_at: new Date(base.getTime() + i),
+          };
+        }),
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const scores = body.prediction_scores as Array<Record<string, unknown>>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    // The newest 400 raw rows contain 201 corrupt + 199 valid rows. The one oldest valid
+    // row sits just beyond the hard cap; an unbounded query would incorrectly return 200.
+    expect(scores).toHaveLength(199);
+    expect(scores.some((row) => row.event_id === 'score_scan_valid_0')).toBe(false);
+    expect(typed).toHaveLength(199);
+    expect(typed.some((row) => row.id === 'ts_scan_valid_0')).toBe(false);
+  });
+
+  it('filters unrelated subject kinds before applying the typed-state scan budget', async () => {
+    const base = new Date('2026-07-01T00:00:00Z');
+    await testDb()
+      .insert(kc_typed_state)
+      .values([
+        {
+          id: 'ts_kind_valid',
+          subject_kind: 'knowledge',
+          subject_id: 'kn_kind_valid',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: RIVAL_KC,
+          lifecycle: 'open',
+          evidence_event_ids: ['probe_kind_valid'],
+          updated_at: base,
+        },
+        ...Array.from({ length: 400 }, (_, offset) => {
+          const i = offset + 1;
+          return {
+            id: `ts_kind_unrelated_${i}`,
+            subject_kind: 'artifact',
+            subject_id: `art_kind_unrelated_${i}`,
+            typed_state: 'confused-with-X',
+            confused_with_kc_id: RIVAL_KC,
+            lifecycle: 'open',
+            evidence_event_ids: [`probe_kind_unrelated_${i}`],
+            updated_at: new Date(base.getTime() + i),
+          };
+        }),
+      ]);
+
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    const typed = body.typed_states as Array<Record<string, unknown>>;
+    expect(typed).toHaveLength(1);
+    expect(typed[0]?.id).toBe('ts_kind_valid');
+  });
+
   it('READ-ONLY — the route writes nothing (ND-5: no FSRS, no new events, no state mutation)', async () => {
     const beforeScores = await predictionScoreCount();
     const beforeFsrs = await fsrsRowCount();
