@@ -70,7 +70,7 @@ import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import { NotePatch } from '@/core/schema/note-patch';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   artifact,
   completion_evidence,
@@ -299,6 +299,52 @@ async function reconcileExistingRateSignal(
 function assertEdgeDecisionInput(input: EdgeProposalDecisionInput): void {
   if (input.decision === 'change_type' && !input.new_relation_type) {
     throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+  }
+}
+
+/**
+ * YUK-546 — the edge-accept endpoint invariants (both endpoints live + not a direct tree pair),
+ * factored out (OCR round-2) so the pre-tx fast-fail (on `db`) and the post-lock revalidation
+ * (on `tx`, under the row + advisory locks) can never drift in what they enforce. Throws the same
+ * ApiError shapes the inline checks used.
+ */
+async function assertEdgeEndpointsValid(
+  dbOrTx: Db | Tx,
+  fromId: string,
+  toId: string,
+  endpointIds: string[],
+): Promise<void> {
+  const rows = await dbOrTx
+    .select({
+      id: knowledge.id,
+      parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(inArray(knowledge.id, endpointIds));
+  const active = new Set(rows.filter((r) => r.archived_at === null).map((r) => r.id));
+  const missing = endpointIds.filter((id) => !active.has(id));
+  if (missing.length > 0) {
+    throw new ApiError(
+      'not_found',
+      `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
+      404,
+    );
+  }
+  if (
+    isDirectTreePair(
+      fromId,
+      toId,
+      rows.flatMap((node) =>
+        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
+      ),
+    )
+  ) {
+    throw new ApiError(
+      'tree_redundancy',
+      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
+      409,
+    );
   }
 }
 
@@ -655,38 +701,9 @@ export async function decideKnowledgeEdgeProposal(
   const weight = proposePayload.weight ?? 1;
 
   const endpointIds = Array.from(new Set([fromId, toId]));
-  const found = await db
-    .select({
-      id: knowledge.id,
-      parent_id: knowledge.parent_id,
-      archived_at: knowledge.archived_at,
-    })
-    .from(knowledge)
-    .where(inArray(knowledge.id, endpointIds));
-  const foundActive = new Set(found.filter((r) => r.archived_at === null).map((r) => r.id));
-  const missing = endpointIds.filter((id) => !foundActive.has(id));
-  if (missing.length > 0) {
-    throw new ApiError(
-      'not_found',
-      `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
-      404,
-    );
-  }
-  if (
-    isDirectTreePair(
-      fromId,
-      toId,
-      found.flatMap((node) =>
-        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
-      ),
-    )
-  ) {
-    throw new ApiError(
-      'tree_redundancy',
-      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
-      409,
-    );
-  }
+  // Pre-tx fast-fail (no lock): reject an obviously-invalid proposal before opening a tx. The
+  // authoritative re-check runs under the locks inside the tx (assertEdgeEndpointsValid on `tx`).
+  await assertEdgeEndpointsValid(db, fromId, toId, endpointIds);
 
   const edgeId = createId();
   const generateEventId = createId();
@@ -696,62 +713,38 @@ export async function decideKnowledgeEdgeProposal(
 
   try {
     await db.transaction(async (tx) => {
-      // YUK-546 — symmetric propose-side advisory lock. rewireKnowledgeEdges (the merge-side edge
-      // rewrite) already takes `pg_advisory_xact_lock(hashtext('knowledge_edge:<id>'))` on its two
-      // merge endpoints (YUK-543 review L1); this accept path — the OTHER writer that reads the live
-      // mesh, passes the ADR-0034 topology gate, then writes a live edge — took no such lock, leaving
-      // the "two READ COMMITTED txs each pass the gate then merge into a cycle" window open (that
-      // exact follow-up the merge-side comment flagged). Acquire the SAME namespace, SAME sorted
-      // acquisition on THIS edge's [fromId, toId] BEFORE the fold's live-mesh read below
-      // (projectKnowledgeEdgeGuarded / assertKnowledgeEdgeParity → gatherAndFoldKnowledgeEdge, a fresh
-      // `archived_at IS NULL` SELECT): a concurrent accept of A→B and B→A now serializes — the second
-      // blocks here until the first commits, then its fold sees the committed edge and the topology
-      // gate rejects the reverse edge instead of silently completing the cycle. Sorted string order
-      // shares one global lock ordering with the merge path, so accept-vs-merge on the same nodes
-      // never deadlocks.
+      // YUK-546 (codex P1, round-2) — unify lock ORDER with the merge accept path to prevent a 40P01
+      // deadlock. acceptProposal's merge path takes the mutation's knowledge rows FOR UPDATE
+      // (id-sorted, lockMutationRows) BEFORE rewireKnowledgeEdges takes the knowledge_edge advisory.
+      // This accept path took the advisory FIRST, then the edge write's FK grabbed a KEY SHARE on the
+      // endpoint rows → the opposite order → a circular wait (accept blocked on merge's row lock,
+      // merge blocked on accept's advisory = 40P01). Take the endpoint knowledge rows FOR UPDATE in
+      // the SAME id-sorted order + strength FIRST, then the advisory, so both paths share one global
+      // order (knowledge rows → knowledge_edge advisory). FOR UPDATE (not the FK's KEY SHARE) is
+      // required: it must conflict with a concurrent archive UPDATE (FOR NO KEY UPDATE), which KEY
+      // SHARE does not — matching lockMutationRows' own strength so the two paths serialize cleanly.
+      await tx
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(inArray(knowledge.id, endpointIds))
+        .orderBy(knowledge.id)
+        .for('update');
+
+      // YUK-546 — symmetric propose-side advisory lock (mirrors rewireKnowledgeEdges' merge-side
+      // lock: same 'knowledge_edge' namespace + sorted acquisition via acquireSortedAdvisoryLocks).
+      // Acquired before the fold's live-mesh read below (projectKnowledgeEdgeGuarded /
+      // assertKnowledgeEdgeParity → gatherAndFoldKnowledgeEdge, a fresh `archived_at IS NULL` SELECT)
+      // so a concurrent accept of A→B and B→A serializes and the second is rejected by the ADR-0034
+      // topology gate instead of silently completing the cycle.
       await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
 
-      // YUK-546 (codex P2) — lock-then-revalidate. The active-endpoint + tree-pair checks above ran
-      // on `db` BEFORE this advisory lock. A merge holding knowledge_edge:<fromId> can, inside that
-      // window, archive an endpoint + rewire + commit; the accept then resumes with a STALE
-      // "both endpoints live" result and a blind write would land a live edge pointing at a
-      // just-archived node — the FK still holds on the archived tombstone, and no rewire will ever
-      // revisit it. The fold's topology gate does NOT check endpoint archival, so it would not catch
-      // this either. Re-read the endpoints UNDER the lock (tx-scoped → sees the merge's committed
-      // archive) and re-assert both invariants; a now-stale check rejects the accept and rolls the
-      // tx back, the same outcome shape as the topology gate.
-      const revalRows = await tx
-        .select({
-          id: knowledge.id,
-          parent_id: knowledge.parent_id,
-          archived_at: knowledge.archived_at,
-        })
-        .from(knowledge)
-        .where(inArray(knowledge.id, endpointIds));
-      const revalActive = new Set(revalRows.filter((r) => r.archived_at === null).map((r) => r.id));
-      const revalMissing = endpointIds.filter((id) => !revalActive.has(id));
-      if (revalMissing.length > 0) {
-        throw new ApiError(
-          'not_found',
-          `unknown or archived knowledge_id(s): ${revalMissing.join(', ')}`,
-          404,
-        );
-      }
-      if (
-        isDirectTreePair(
-          fromId,
-          toId,
-          revalRows.flatMap((node) =>
-            node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
-          ),
-        )
-      ) {
-        throw new ApiError(
-          'tree_redundancy',
-          `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
-          409,
-        );
-      }
+      // YUK-546 (codex P2) — lock-then-revalidate. The pre-tx endpoint/tree checks ran on `db` before
+      // these locks; a merge holding the endpoint row + knowledge_edge advisory can archive an
+      // endpoint + rewire + commit in that window, after which a blind write would land a live edge
+      // pointing at the just-archived node (FK holds on the tombstone; the fold's topology gate does
+      // NOT check endpoint archival). Re-assert both invariants tx-scoped under the locks — a stale
+      // check rejects and rolls the accept back, the same outcome shape as the topology gate.
+      await assertEdgeEndpointsValid(tx, fromId, toId, endpointIds);
 
       await writeEvent(tx, {
         id: rateEventId,
