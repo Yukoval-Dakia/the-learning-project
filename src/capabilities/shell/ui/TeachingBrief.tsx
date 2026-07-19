@@ -160,6 +160,7 @@ export function TeachingBriefBand() {
       // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
       // retry. Redacted diagnostic only (never brief/claim/answer payload).
       console.warn('[teaching-brief] acknowledge failed', {
+        brief_id: targetId,
         error: error instanceof Error ? error.message : String(error),
       });
       // Guard against a brief swap mid-flight (same parity as decide).

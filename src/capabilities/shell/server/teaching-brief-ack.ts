@@ -146,6 +146,18 @@ export async function acknowledgeTeachingBriefOutcome(
   // result, a proposal retract, or TTL rolling), closing the TOCTOU window structurally
   // (round-8, mirrors answerProbe's all-reads-in-tx precedent). A racer that committed its ack
   // first is caught by the in-lock findExistingAck and returns idempotent, not a 409 (round-6).
+  //
+  // KNOWN LIMITATION (round-9, deliberate WONT_FIX): the advisory lock is per-TARGET, not a
+  // global selection lock, so a primary-changing writer on a DIFFERENT chain (a judge inserting
+  // a newer probe_result, a proposal retract) that commits in the sub-millisecond window between
+  // this tx's last SELECT and its INSERT is not serialized against this ack. That is acceptable:
+  // (a) the in-tx verdict already guarantees the target WAS the delivered primary in this
+  // snapshot; (b) acking the outcome the user was actually shown a moment ago is their real
+  // intent, and the ack is append-only (it retires nothing but its own target — no corruption);
+  // (c) a global selection lock would couple research-pipeline write throughput to the UI's
+  // dismissal ledger, a much worse trade. The exact-version upgrade path, if ever needed, is the
+  // round-5 delivery-token: stamp a token when a brief is delivered and require it on ack, so the
+  // server verifies the precise delivered version instead of re-deriving "current primary".
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeResultEventId}, 0))`);
 
