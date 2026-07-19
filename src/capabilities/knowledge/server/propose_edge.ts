@@ -785,6 +785,7 @@ export async function applyApprovedEdgeSupersede(
       relation_type: p.relation_type,
       weight: p.weight,
       reasoning: p.reasoning,
+      propose_event_id: proposeEventId,
     },
     caused_by_event_id: proposeEventId,
     created_at: now,

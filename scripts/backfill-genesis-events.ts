@@ -56,7 +56,6 @@ import { newId } from '@/core/ids';
 import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
-  KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
@@ -94,6 +93,7 @@ import {
 // (esp. the question_block extracted_prompt_md strip, design §5.2).
 import {
   artifactRowToSnapshot,
+  knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
 import { and, eq, inArray, or } from 'drizzle-orm';
@@ -103,7 +103,6 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { ZodError } from 'zod';
 
 type DbLike = Db | Tx;
-type KnowledgeRow = typeof knowledge.$inferSelect;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
@@ -122,27 +121,6 @@ export interface BackfillCounts {
   artifact: { seeded: number; skipped: number };
   learning_item: { seeded: number; skipped: number };
   question_block: { seeded: number; skipped: number };
-}
-
-// knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
-// the embed_* columns (embedding / embed_model / embed_version / embed_content_hash). Those
-// are DERIVED maintenance state the fold does not own, so they are NOT part of the structural
-// snapshot fold(genesis) reproduces (mirrors the node shell's embed_* exclusion). Dates stay
-// Date — GenesisExperimental's z.coerce.date() accepts both Date and the jsonb ISO string.
-function knowledgeRowToSnapshot(row: KnowledgeRow): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
 }
 
 // edgeRowToSnapshot — map a live `knowledge_edge` DB row to KnowledgeEdgeRowSnapshotT. The

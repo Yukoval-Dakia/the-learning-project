@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
+  archiveKnowledgeEdge,
   createKnowledgeEdge,
   getKnowledgeEdgeById,
   listKnowledgeEdges,
@@ -268,6 +269,51 @@ describe('listKnowledgeEdges', () => {
     expect(active).toEqual([]);
     const withArchived = await listKnowledgeEdges(db, { includeArchived: true });
     expect(withArchived).toHaveLength(1);
+  });
+});
+
+describe('archiveKnowledgeEdge', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('allows exactly one concurrent caller to own the archive transition', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+    });
+    const firstAt = new Date('2026-07-19T12:00:00.000Z');
+    const secondAt = new Date('2026-07-19T12:00:01.000Z');
+
+    const results = await Promise.all([
+      archiveKnowledgeEdge(db, id, firstAt),
+      archiveKnowledgeEdge(db, id, secondAt),
+    ]);
+
+    expect(results.map((result) => result.archived).sort()).toEqual([false, true]);
+    const winnerAt = results[0].archived ? firstAt : secondAt;
+    const [row] = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id));
+    expect(row.archived_at?.getTime()).toBe(winnerAt.getTime());
+  });
+
+  it('keeps an already archived edge idempotent and distinguishes a missing id', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+    });
+
+    expect((await archiveKnowledgeEdge(db, id)).archived).toBe(true);
+    expect((await archiveKnowledgeEdge(db, id)).archived).toBe(false);
+    await expect(archiveKnowledgeEdge(db, 'missing-edge')).rejects.toMatchObject({
+      code: 'not_found',
+      status: 404,
+    });
   });
 });
 
