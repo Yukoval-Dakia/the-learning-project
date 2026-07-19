@@ -1,23 +1,19 @@
 // YUK-706 (P0F/2) — one read-only TeachingBrief projected from the existing
 // conjecture proposal → mind-probe question → probe-result event chain.
 
-import {
-  PROBE_QUESTION_SOURCE,
-  PROBE_RESULT_ACTION,
-} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import type { CauseCategoryT } from '@/core/schema/cause';
+import { PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import {
-  type ProposalInboxRow,
-  getProposalInboxRow,
-  listProposalInboxPage,
-} from '@/server/proposals/inbox';
-import { and, desc, eq, gt, lte, sql } from 'drizzle-orm';
+import { getCorrectionStatuses } from '@/server/events/corrections';
+import { type ProposalInboxRow, getProposalInboxRow } from '@/server/proposals/inbox';
+import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Bounded recent-candidate window; keeps quiet reads constant-round-trip. */
+export const TEACHING_BRIEF_CANDIDATE_WINDOW = 50;
 
 export type TeachingBriefEvidenceRef =
   | {
@@ -112,6 +108,7 @@ export interface TeachingBriefResponse {
 }
 
 type QuestionRow = typeof question.$inferSelect;
+type EventRow = typeof event.$inferSelect;
 type BriefStage = 'outcome' | 'probe' | 'finding';
 
 interface ConjectureFacts {
@@ -200,6 +197,87 @@ function factsFromProposalRow(
       createdAt: row.proposed_at,
     },
   };
+}
+
+function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts> {
+  const parsed = AiProposalPayload.safeParse(toRecord(row.payload).ai_proposal);
+  if (
+    !parsed.success ||
+    parsed.data.kind !== 'conjecture' ||
+    row.action !== 'experimental:proposal' ||
+    row.subject_kind !== 'mind_model'
+  ) {
+    return { reason: 'proposal_payload_invalid' };
+  }
+
+  const payload = parsed.data;
+  const change = payload.proposed_change;
+  if (
+    payload.target.subject_kind !== 'mind_model' ||
+    payload.target.subject_id !== change.knowledge_id ||
+    row.subject_id !== change.knowledge_id
+  ) {
+    return { reason: 'proposal_target_mismatch' };
+  }
+  if (payload.evidence_refs.length === 0) return { reason: 'induction_evidence_missing' };
+
+  return {
+    value: {
+      id: row.id,
+      claimMd: change.claim_md,
+      knowledgeId: change.knowledge_id,
+      causeCategory: change.cause_category,
+      reasonMd: payload.reason_md,
+      probeMd: change.probe_md,
+      evidence: dedupeEvidence(
+        payload.evidence_refs.map((ref) => ({
+          role: 'induction' as const,
+          kind: ref.kind,
+          id: ref.id,
+        })),
+      ),
+      createdAt: row.created_at,
+    },
+  };
+}
+
+async function loadLatestRatesByProposal(
+  db: Db,
+  proposalIds: string[],
+): Promise<Map<string, EventRow>> {
+  if (proposalIds.length === 0) return new Map();
+  const rates = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, proposalIds)))
+    .orderBy(desc(event.created_at), desc(event.id));
+  const latest = new Map<string, EventRow>();
+  for (const rate of rates) {
+    const proposalId = rate.caused_by_event_id;
+    if (proposalId && !latest.has(proposalId)) latest.set(proposalId, rate);
+  }
+  return latest;
+}
+
+const TERMINAL_PROPOSAL_RATINGS = new Set([
+  'accept',
+  'reverse',
+  'change_type',
+  'dismiss',
+  'rollback',
+]);
+
+function hasTerminalRate(rate: EventRow | undefined): boolean {
+  if (!rate) return false;
+  const rating = toRecord(rate.payload).rating;
+  return typeof rating === 'string' && TERMINAL_PROPOSAL_RATINGS.has(rating);
+}
+
+function hasProposalRejectMarker(row: EventRow): boolean {
+  const payload = toRecord(row.payload);
+  const rubric = toRecord(payload.rubric_verdict);
+  const topology = toRecord(payload.topology_verdict);
+  return rubric.ok === false || topology.status === 'reject';
 }
 
 async function loadProposalFacts(
@@ -441,31 +519,54 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
   return null;
 }
 
-async function logAcceptedWithoutProbe(db: Db): Promise<void> {
-  const { rows } = await listProposalInboxPage(db, {
-    status: 'accepted',
-    kind: 'conjecture',
-  });
+async function logAcceptedWithoutProbe(db: Db, now: Date): Promise<void> {
+  const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_FINDING_TTL_MS);
+  // Latest-rate status, canonical kind, TTL, and missing-probe detection all stay in
+  // one bounded SQL query. Corrections fold in one additional batch query below.
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:proposal'),
+        eq(event.subject_kind, 'mind_model'),
+        gt(event.created_at, lowerBound),
+        lte(event.created_at, now),
+        sql`${event.payload}->'ai_proposal'->>'kind' = 'conjecture'`,
+        sql`${event.payload}->'rubric_verdict'->>'ok' IS DISTINCT FROM 'false'`,
+        sql`${event.payload}->'topology_verdict'->>'status' IS DISTINCT FROM 'reject'`,
+        sql`(
+          SELECT latest_rate.payload->>'rating'
+          FROM ${event} AS latest_rate
+          WHERE latest_rate.action = 'rate'
+            AND latest_rate.caused_by_event_id = ${event.id}
+          ORDER BY latest_rate.created_at DESC, latest_rate.id DESC
+          LIMIT 1
+        ) IN ('accept', 'reverse', 'change_type')`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${question}
+          WHERE ${question.source} = ${PROBE_QUESTION_SOURCE}
+            AND ${question.source_ref} = ${event.id}
+            AND ${question.metadata}->>'conjecture_proposal_id' = ${event.id}
+        )`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
+  const correctionStatuses = await getCorrectionStatuses(
+    db,
+    rows.map((row) => row.id),
+  );
   for (const row of rows) {
-    const [probe] = await db
-      .select({ id: question.id })
-      .from(question)
-      .where(
-        and(
-          eq(question.source, PROBE_QUESTION_SOURCE),
-          eq(question.source_ref, row.id),
-          sql`${question.metadata}->>'conjecture_proposal_id' = ${row.id}`,
-        ),
-      )
-      .limit(1);
-    if (!probe) warnSkipped('probe', row.id, 'accepted_without_probe');
+    if (correctionStatuses.get(row.id)?.state !== 'active') continue;
+    warnSkipped('probe', row.id, 'accepted_without_probe');
   }
 }
 
 async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_FINDING_TTL_MS);
   const rawConjectures = await db
-    .select({ id: event.id, payload: event.payload })
+    .select()
     .from(event)
     .where(
       and(
@@ -475,43 +576,50 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
         lte(event.created_at, now),
         sql`${event.payload}->'ai_proposal'->>'kind' = 'conjecture'`,
       ),
-    );
-  for (const raw of rawConjectures) {
-    const parsed = AiProposalPayload.safeParse(toRecord(raw.payload).ai_proposal);
-    if (!parsed.success || parsed.data.kind !== 'conjecture') {
-      warnSkipped('finding', raw.id, 'proposal_payload_invalid');
-    }
-  }
-
-  const { rows } = await listProposalInboxPage(db, {
-    status: 'pending',
-    kind: 'conjecture',
-  });
-  const ranked = rows
-    .filter(
-      (row) =>
-        row.proposed_at.getTime() <= now.getTime() &&
-        now.getTime() < row.proposed_at.getTime() + TEACHING_BRIEF_FINDING_TTL_MS,
     )
-    .sort((a, b) => {
-      const aChange = a.payload.kind === 'conjecture' ? a.payload.proposed_change : null;
-      const bChange = b.payload.kind === 'conjecture' ? b.payload.proposed_change : null;
-      const aSalience = aChange ? aChange.confidence * aChange.recurrence_count : -1;
-      const bSalience = bChange ? bChange.confidence * bChange.recurrence_count : -1;
-      if (aSalience !== bSalience) return bSalience - aSalience;
-      if (a.proposed_at.getTime() !== b.proposed_at.getTime()) {
-        return b.proposed_at.getTime() - a.proposed_at.getTime();
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
+  const proposalIds = rawConjectures.map((row) => row.id);
+  const [latestRates, correctionStatuses] = await Promise.all([
+    loadLatestRatesByProposal(db, proposalIds),
+    getCorrectionStatuses(db, proposalIds),
+  ]);
+
+  const ranked = rawConjectures
+    .flatMap((row) => {
+      const proposalResult = factsFromRawProposalRow(row);
+      if (isCandidateError(proposalResult)) {
+        warnSkipped('finding', row.id, proposalResult.reason);
+        return [];
       }
-      return a.id === b.id ? 0 : a.id < b.id ? 1 : -1;
+      if (
+        correctionStatuses.get(row.id)?.state !== 'active' ||
+        hasProposalRejectMarker(row) ||
+        hasTerminalRate(latestRates.get(row.id))
+      ) {
+        return [];
+      }
+      const parsed = AiProposalPayload.parse(toRecord(row.payload).ai_proposal);
+      if (parsed.kind !== 'conjecture') return [];
+      return [
+        {
+          proposal: proposalResult.value,
+          salience: parsed.proposed_change.confidence * parsed.proposed_change.recurrence_count,
+        },
+      ];
+    })
+    .sort((a, b) => {
+      const aSalience = a.salience;
+      const bSalience = b.salience;
+      if (aSalience !== bSalience) return bSalience - aSalience;
+      if (a.proposal.createdAt.getTime() !== b.proposal.createdAt.getTime()) {
+        return b.proposal.createdAt.getTime() - a.proposal.createdAt.getTime();
+      }
+      return a.proposal.id === b.proposal.id ? 0 : a.proposal.id < b.proposal.id ? 1 : -1;
     });
 
-  for (const row of ranked) {
-    const proposalResult = factsFromProposalRow(row, 'pending');
-    if (isCandidateError(proposalResult)) {
-      warnSkipped('finding', row.id, proposalResult.reason);
-      continue;
-    }
-    const proposal = proposalResult.value;
+  for (const candidate of ranked) {
+    const proposal = candidate.proposal;
     return {
       brief_id: proposal.id,
       state: 'finding',
@@ -557,6 +665,6 @@ export async function loadTeachingBrief(
   const probe = await loadProbeBrief(db, now);
   if (probe) return { brief: probe };
 
-  await logAcceptedWithoutProbe(db);
+  await logAcceptedWithoutProbe(db, now);
   return { brief: await loadFindingBrief(db, now) };
 }

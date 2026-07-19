@@ -12,6 +12,7 @@ import {
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { shellCapability } from '@/capabilities/shell/manifest';
 import {
+  TEACHING_BRIEF_CANDIDATE_WINDOW,
   TEACHING_BRIEF_FINDING_TTL_MS,
   TEACHING_BRIEF_OUTCOME_TTL_MS,
   loadTeachingBrief,
@@ -26,6 +27,79 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-07-19T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function rawProposalRow(opts: {
+  id: string;
+  createdAt: Date;
+  confidence?: number;
+  recurrenceCount?: number;
+}): typeof event.$inferInsert {
+  const knowledgeId = `kn_${opts.id}`;
+  return {
+    id: opts.id,
+    actor_kind: 'agent',
+    actor_ref: 'research_meeting',
+    action: 'experimental:proposal',
+    subject_kind: 'mind_model',
+    subject_id: knowledgeId,
+    outcome: 'partial',
+    payload: {
+      ai_proposal: {
+        kind: 'conjecture',
+        target: { subject_kind: 'mind_model', subject_id: knowledgeId },
+        reason_md: `basis for ${opts.id}`,
+        evidence_refs: [{ kind: 'event', id: `evt_evidence_${opts.id}` }],
+        cooldown_key: `conjecture:${opts.id}`,
+        proposed_change: {
+          claim_md: `claim for ${opts.id}`,
+          knowledge_id: knowledgeId,
+          cause_category: 'concept_misunderstanding',
+          confidence: opts.confidence ?? 0.5,
+          recurrence_count: opts.recurrenceCount ?? 2,
+          probe_md: `probe for ${opts.id}`,
+          probe_reference_md: `reference for ${opts.id}`,
+          discriminating: true,
+          corrected_by_owner: false,
+          predicted_p: 0.3,
+          baseline_p_at_induction: 0.6,
+        },
+      },
+    },
+    created_at: opts.createdAt,
+  };
+}
+
+function rawAcceptRateRow(proposalId: string, createdAt: Date): typeof event.$inferInsert {
+  return {
+    id: `rate_${proposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: proposalId },
+    caused_by_event_id: proposalId,
+    created_at: createdAt,
+  };
+}
+
+function selectCountingDb(base: Db): { db: Db; selectCount: () => number } {
+  let count = 0;
+  const counting = new Proxy(base, {
+    get(target, property) {
+      if (property === 'select') {
+        return (...args: unknown[]) => {
+          count += 1;
+          return (target.select as (...selectArgs: unknown[]) => unknown)(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as Db;
+  return { db: counting, selectCount: () => count };
+}
 
 interface ProposalSeed {
   id: string;
@@ -546,6 +620,56 @@ describe('loadTeachingBrief', () => {
         reason: 'accepted_without_probe',
       }),
     );
+    warn.mockRestore();
+  });
+
+  it('bounds the finding selector to the 50 newest raw conjecture candidates', async () => {
+    const newestWindow = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW }, (_, index) =>
+      rawProposalRow({
+        id: `p_window_${String(index).padStart(2, '0')}`,
+        createdAt: new Date(NOW.getTime() - (TEACHING_BRIEF_CANDIDATE_WINDOW - index) * 60_000),
+      }),
+    );
+    const olderHighSalience = rawProposalRow({
+      id: 'p_outside_window_high_salience',
+      createdAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
+      confidence: 1,
+      recurrenceCount: 100,
+    });
+    await testDb()
+      .insert(event)
+      .values([olderHighSalience, ...newestWindow]);
+
+    const result = await loadTeachingBrief(testDb(), NOW);
+
+    expect(result.brief).toMatchObject({ brief_id: 'p_window_49', state: 'finding' });
+  });
+
+  it('keeps a large accepted-without-probe quiet state bounded to constant SELECT round-trips', async () => {
+    const proposalRows = Array.from({ length: TEACHING_BRIEF_CANDIDATE_WINDOW + 30 }, (_, index) =>
+      rawProposalRow({
+        id: `p_perf_${String(index).padStart(3, '0')}`,
+        createdAt: new Date(NOW.getTime() - (index + 2) * 60_000),
+      }),
+    );
+    const rateRows = proposalRows.map((proposal, index) =>
+      rawAcceptRateRow(proposal.id, new Date(NOW.getTime() - (index + 1) * 60_000)),
+    );
+    await testDb()
+      .insert(event)
+      .values([...proposalRows, ...rateRows]);
+    const counted = selectCountingDb(testDb());
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await loadTeachingBrief(counted.db, NOW);
+
+    expect(result).toEqual({ brief: null });
+    expect(counted.selectCount()).toBeLessThanOrEqual(7);
+    expect(
+      warn.mock.calls.filter(([, detail]) =>
+        String((detail as { reason?: unknown }).reason).includes('accepted_without_probe'),
+      ),
+    ).toHaveLength(TEACHING_BRIEF_CANDIDATE_WINDOW);
     warn.mockRestore();
   });
 
