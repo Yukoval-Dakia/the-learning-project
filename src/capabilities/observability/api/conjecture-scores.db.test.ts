@@ -399,6 +399,31 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
           ingest_at: createdAt,
         });
       }
+      const corruptAt = new Date(base.getTime() + 201);
+      await writeEvent(tx, {
+        id: 'score_bound_corrupt_newest',
+        actor_kind: 'system',
+        actor_ref: 'reconcile',
+        action: PREDICTION_SCORE_ACTION,
+        subject_kind: 'event',
+        subject_id: 'probe_bound_corrupt_newest',
+        outcome: 'success',
+        payload: {
+          conjecture_event_id: 'conjecture_bound_corrupt_newest',
+          probe_result_event_id: 'probe_bound_corrupt_newest',
+          knowledge_id: KC_ID,
+          predicted_p: 0.3,
+          baseline_p: 0.6,
+          outcome: 0,
+          resolution: 'confirmed',
+          brier_model: 'not-a-number',
+          brier_baseline: 0.36,
+          log_loss_model: 0.356,
+          skill_score_point: 0.75,
+        },
+        created_at: corruptAt,
+        ingest_at: corruptAt,
+      });
     });
     await testDb()
       .insert(kc_typed_state)
@@ -414,6 +439,18 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
           updated_at: new Date(base.getTime() + i),
         })),
       );
+    await testDb()
+      .insert(kc_typed_state)
+      .values({
+        id: 'ts_bound_corrupt_newest',
+        subject_kind: 'knowledge',
+        subject_id: 'kn_bound_corrupt_newest',
+        typed_state: 'confused-with-X',
+        confused_with_kc_id: RIVAL_KC,
+        lifecycle: 'corrupt',
+        evidence_event_ids: ['probe_bound_corrupt_newest'],
+        updated_at: new Date(base.getTime() + 201),
+      });
 
     const res = await GET();
     const body = (await res.json()) as Record<string, unknown>;

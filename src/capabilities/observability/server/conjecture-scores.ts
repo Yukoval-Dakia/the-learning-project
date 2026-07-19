@@ -60,7 +60,10 @@ export interface ConjectureScoresRead {
 }
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
-const ADMIN_READ_LIMIT = 200;
+const ADMIN_RESULT_LIMIT = 200;
+// Invalid rows fail closed after selection. Bounded over-fetch keeps a small corrupt tail from
+// crowding valid diagnostics out of the response without returning to an unbounded table scan.
+const ADMIN_SCAN_LIMIT = ADMIN_RESULT_LIMIT * 2;
 
 type OptionalNumber = { ok: true; value: number | null } | { ok: false };
 
@@ -161,24 +164,26 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
     .from(event)
     .where(eq(event.action, PREDICTION_SCORE_ACTION))
     .orderBy(desc(event.created_at), desc(event.id))
-    .limit(ADMIN_READ_LIMIT);
+    .limit(ADMIN_SCAN_LIMIT);
 
   const prediction_scores: ConjecturePredictionScoreRow[] = [];
   for (const r of scoreRows) {
     const mapped = rowToScore(r);
     if (mapped) prediction_scores.push(mapped);
+    if (prediction_scores.length === ADMIN_RESULT_LIMIT) break;
   }
   const typedRows = await db
     .select()
     .from(kc_typed_state)
     .where(eq(kc_typed_state.typed_state, 'confused-with-X'))
     .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
-    .limit(ADMIN_READ_LIMIT);
+    .limit(ADMIN_SCAN_LIMIT);
 
   const typed_states: ConjectureTypedStateRow[] = [];
   for (const r of typedRows) {
     const mapped = rowToTypedState(r);
     if (mapped) typed_states.push(mapped);
+    if (typed_states.length === ADMIN_RESULT_LIMIT) break;
   }
 
   return { score_basis: 'single_point', prediction_scores, typed_states };
