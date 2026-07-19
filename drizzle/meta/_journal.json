@@ -484,6 +484,13 @@
       "when": 1784437812391,
       "tag": "0068_yuk221_question_block_ordinal",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1784492803677,
+      "tag": "0069_yuk733_jsonb_gin_indexes",
+      "breakpoints": true
     }
   ]
 }
