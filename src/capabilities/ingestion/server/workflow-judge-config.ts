@@ -30,9 +30,8 @@ export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
 /**
  * Env var that gates the OBSERVE-only path (Strategy D Slice B, YUK-190).
- * Default ON: when the enroll flag above is OFF (its default), observe runs
- * tagging + judge and writes a durable per-block audit event (zero domain rows,
- * blocks stay 'draft'). Set to 'false' to make OFF a true no-op again.
+ * Default OFF: observe still spends one or more paid model calls per block, so
+ * it must be explicitly enabled just like the mutating auto-enroll path.
  */
 export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
 
@@ -76,6 +75,9 @@ export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
  */
 export const AUTO_ENROLL_SINGLETON_SECONDS = 60;
 
+/** Hard ceiling for paid tagging/judging work admitted by one session job. */
+export const AUTO_ENROLL_MAX_BLOCKS_PER_RUN = 10;
+
 /** Minimal env shape these readers need (a superset of NodeJS.ProcessEnv). */
 export type FlagEnv = Record<string, string | undefined>;
 
@@ -105,16 +107,19 @@ export function autoEnrollThreshold(env: FlagEnv = process.env): number {
 }
 
 /**
- * True UNLESS `WORKFLOW_JUDGE_OBSERVE_ENABLED` is explicitly 'false'
- * (case-insensitive). Default ON — observe is the desired OFF-flag behavior
- * (run tagging + judge, write the audit trail, change no domain state). Note
- * the polarity differs from `autoEnrollEnabled` (opt-IN): observe is opt-OUT so
- * the absence of the var preserves the "OFF means observe" goal (Slice B,
- * YUK-190). Setting it to 'false' restores the pre-Slice-B hard no-op.
+ * True ONLY when `WORKFLOW_JUDGE_OBSERVE_ENABLED` is explicitly 'true'
+ * (case-insensitive). Undefined / blank / false / arbitrary values are OFF.
+ * Observe is non-mutating, but it is not free: tagging + judging can fan out to
+ * multiple paid calls, so an absent flag must preserve the hard no-op.
  */
 export function observeEnabled(env: FlagEnv = process.env): boolean {
   const value = env[OBSERVE_FLAG];
-  return !(typeof value === 'string' && value.toLowerCase() === 'false');
+  return typeof value === 'string' && value.toLowerCase() === 'true';
+}
+
+/** Whether an extraction should enqueue the paid auto-enroll/observe worker. */
+export function autoEnrollJobEnabled(env: FlagEnv = process.env): boolean {
+  return autoEnrollEnabled(env) || observeEnabled(env);
 }
 
 /**

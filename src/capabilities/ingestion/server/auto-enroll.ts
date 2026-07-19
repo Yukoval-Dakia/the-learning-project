@@ -12,7 +12,8 @@
  * byte-for-byte. See workflow-judge-config.ts file header.
  * ============================================================================
  *
- * When the flag is explicitly ON: for each 'draft' question_block in the session
+ * When a flag is explicitly ON: for at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN
+ * 'draft' question_blocks in the session
  * it runs TaggingTask → WorkflowJudge. Blocks routed 'auto' (high combined
  * confidence) are enrolled WITHOUT human review by INSERTing a `question` and
  * calling `enrollCapturedBlock(tx, { ..., generatedBy: 'workflow_judge' })` (the
@@ -53,6 +54,7 @@ import {
 } from '@/capabilities/ingestion/server/tagging';
 import { runWorkflowJudge } from '@/capabilities/ingestion/server/workflow-judge';
 import {
+  AUTO_ENROLL_MAX_BLOCKS_PER_RUN,
   type FlagEnv,
   autoEnrollEnabled,
   autoEnrollThreshold,
@@ -250,8 +252,8 @@ export async function runAutoEnrollForSession(
 
   // ---- Mode resolution (Strategy D Slice B, YUK-190). ----
   // enroll flag ON  → 'enroll' (the original auto-import path, UNCHANGED).
-  // enroll OFF + observe ON (the default) → 'observe' (tag+judge, audit-only).
-  // enroll OFF + observe OFF → 'off' (the pre-Slice-B hard no-op).
+  // enroll OFF + observe explicitly ON → 'observe' (tag+judge, audit-only).
+  // both flags absent/OFF (the default) → 'off' (hard no-op).
   const mode: 'enroll' | 'observe' | 'off' = autoEnrollEnabled(env)
     ? 'enroll'
     : observeEnabled(env)
@@ -311,7 +313,9 @@ export async function runAutoEnrollForSession(
   const sourceDocumentId = session.source_document_id ?? '';
   const sessionEntrypoint = session.entrypoint ?? 'vision_paper';
 
-  // Load all draft blocks for the session.
+  // Bound the paid fan-out before block assembly, tagging, judging, or grading.
+  // Extraction enqueues this job once per session, so excess blocks stay draft
+  // for the existing human review flow instead of generating unbounded spend.
   const blocks = await params.db
     .select()
     .from(question_block)
@@ -320,7 +324,9 @@ export async function runAutoEnrollForSession(
         eq(question_block.ingestion_session_id, params.sessionId),
         eq(question_block.status, 'draft'),
       ),
-    );
+    )
+    .orderBy(question_block.id)
+    .limit(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
 
   // ---- YUK-202 — BlockAssembly path-B per-session merge-proposal pass. ----
   // Runs in BOTH modes ('enroll' + 'observe', i.e. mode !== 'off' which already

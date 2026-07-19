@@ -1,7 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
-import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
+import {
+  AUTO_ENROLL_SINGLETON_SECONDS,
+  autoEnrollJobEnabled,
+} from '@/capabilities/ingestion/server/workflow-judge-config';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -222,26 +225,29 @@ export async function initiateDocxTextUpload(
     return { sessionId, sourceDocumentId, blockCount: params.blocks.length };
   });
 
-  // Codex-3 — fan out to the observe-only auto_enroll job AFTER the transaction
+  // Codex-3 / YUK-696 — fan out only when a paid mode is explicitly enabled,
+  // and only AFTER the transaction
   // commits, mirroring tencent_ocr_extract's post-extract hook so the text DOCX
   // line gets the same AI prefill / auto-enroll observe path as the visual/PDF/
   // image entrypoints. Inline import + swallow-and-log: a failed enqueue must
   // NOT fail an ingestion that already landed its blocks in 'extracted'.
   // Enqueueing after commit guarantees the auto_enroll worker can see the rows.
-  try {
-    const { getStartedBoss } = await import('@/server/boss/client');
-    const boss = await getStartedBoss();
-    // YUK-486 — same enqueue dedup as the tencent path (parity): singletonKey + singletonSeconds
-    // collapses near-simultaneous duplicate sends for one session into a single job. The per-block
-    // FOR UPDATE claim in runAutoEnrollForSession is the producer-agnostic structural guarantee
-    // against double-INSERT; this key only reduces redundant job runs.
-    await boss.send(
-      'auto_enroll',
-      { sessionId: result.sessionId },
-      { singletonKey: result.sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-    );
-  } catch (err) {
-    console.error('[docx_text] failed to enqueue auto_enroll', err);
+  if (autoEnrollJobEnabled(process.env)) {
+    try {
+      const { getStartedBoss } = await import('@/server/boss/client');
+      const boss = await getStartedBoss();
+      // YUK-486 — same enqueue dedup as the tencent path (parity): singletonKey + singletonSeconds
+      // collapses near-simultaneous duplicate sends for one session into a single job. The per-block
+      // FOR UPDATE claim in runAutoEnrollForSession is the producer-agnostic structural guarantee
+      // against double-INSERT; this key only reduces redundant job runs.
+      await boss.send(
+        'auto_enroll',
+        { sessionId: result.sessionId },
+        { singletonKey: result.sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
+      );
+    } catch (err) {
+      console.error('[docx_text] failed to enqueue auto_enroll', err);
+    }
   }
 
   // YUK-577 — fan out to the copilot proactive-nudge evaluator (post-commit, observe-only).

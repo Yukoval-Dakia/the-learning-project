@@ -2,9 +2,9 @@
 //
 // Enqueued by tencent_ocr_extract after a successful extraction (session
 // 'extracted'|'partial'). Runs runAutoEnrollForSession, which with the enroll
-// flag OFF + observe ON (the default) runs TaggingTask + WorkflowJudge per draft
-// block and writes one durable `experimental:auto_enroll_observed` audit event
-// per block — zero domain rows, every block stays 'draft'. See
+// flag OFF + observe explicitly ON runs TaggingTask + WorkflowJudge for a bounded set of draft
+// blocks and writes one durable `experimental:auto_enroll_observed` audit event per block —
+// zero domain rows, every block stays 'draft'. Both paid modes default OFF. See
 // docs/superpowers/specs/2026-06-01-stratD-sliceB-auto-enroll-wiring-design.md.
 //
 // Failure boundary (§5): per-block tagging/judge/observe-write faults are
