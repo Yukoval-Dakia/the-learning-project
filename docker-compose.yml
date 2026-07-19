@@ -152,7 +152,16 @@ services:
     # ingress restart can't silently pull a regressed tunnel build. Bump
     # deliberately.
     image: cloudflare/cloudflared:2026.5.2
-    command: tunnel --no-autoupdate run
+    command:
+      - tunnel
+      - --no-autoupdate
+      # Fix the metrics port so Docker can probe the connector's real edge
+      # readiness instead of treating a merely-running process as healthy.
+      - --metrics
+      - 0.0.0.0:2000
+      - --protocol
+      - ${TUNNEL_PROTOCOL:-auto}
+      - run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
     depends_on:
@@ -160,6 +169,12 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
 
 networks:
   internal:
