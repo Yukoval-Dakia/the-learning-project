@@ -174,9 +174,10 @@ Slice B is separately opt-in because its model calls are paid:
   and the owner opt-in was recorded in YUK-164; the code default remains OFF.
 
 To build the first-real-data audit trail, set
-`WORKFLOW_JUDGE_OBSERVE_ENABLED=true` in the worker environment and restart the
-worker before uploading. Keep auto-enroll OFF while collecting observe-only
-evidence.
+`WORKFLOW_JUDGE_OBSERVE_ENABLED=true` in the worker environment and restart all
+job consumers before uploading. Locally, stop and restart the whole
+`pnpm dev:local` process: it launches both the `rw:api` in-process worker and the
+standalone worker. Keep auto-enroll OFF while collecting observe-only evidence.
 
 ## 7. Out of scope here
 
