@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import { resolveQualifyingEventSubjects } from './active-subjects';
 import {
+  MAX_BRIEF_REGEN_SCOPES,
   MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
@@ -374,6 +375,57 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.stringContaining('[memory_reconcile] reconcile enqueue failed'),
       expect.any(Error),
     );
+    warnSpy.mockRestore();
+  });
+
+  it('YUK-729 — caps the brief-regen fan-out at MAX_BRIEF_REGEN_SCOPES and isolates failures within the cap', async () => {
+    // A bulk / import-style event carrying far more affected scopes than the cap.
+    const scopeCount = MAX_BRIEF_REGEN_SCOPES + 50;
+    const affected = Array.from({ length: scopeCount }, (_, i) => `topic:k${i}`);
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // One scope INSIDE the cap throws; it must not abort the remaining enqueues.
+    const send = vi.fn(async (name: string, data: { scope_key?: string }) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE && data.scope_key === 'topic:k0') {
+        throw new Error('one scope boom');
+      }
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_bulk',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: affected,
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_bulk' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    // Fan-out is capped: exactly MAX_BRIEF_REGEN_SCOPES brief-regen enqueues attempted
+    // (not scopeCount) — the failing one still counts as an attempt.
+    const regenSends = send.mock.calls.filter((c) => c[0] === MEMORY_BRIEF_REGEN_QUEUE);
+    expect(regenSends.length).toBe(MAX_BRIEF_REGEN_SCOPES);
+    // A scope beyond the cap was never touched.
+    expect(send).not.toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: `topic:k${MAX_BRIEF_REGEN_SCOPES}` },
+      expect.anything(),
+    );
+    // Truncation surfaced; the in-cap failure did not abort the handler.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES}`),
+    );
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 });

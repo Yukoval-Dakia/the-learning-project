@@ -192,12 +192,14 @@ describe('POST /api/_/import — guards', () => {
   // the destructive wipe-and-reload. Driven with a tiny env-set tripwire (re-imported
   // module) so the check is exercised without a ~1 GB allocation.
   it('returns 413 when a body without Content-Length exceeds the tripwire after buffering, with zero side effects', async () => {
-    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1000');
+    // 2 MB tripwire (above the 1 MB floor) so the post-read check is exercised with a
+    // small, real allocation rather than the ~1 GB default.
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '2000000');
     vi.resetModules();
     const { POST: freshPost, MAX_BACKUP_UPLOAD_BYTES: smallCap } = await import('./backup-import');
-    expect(smallCap).toBe(1000);
+    expect(smallCap).toBe(2_000_000);
 
-    const oversized = new Uint8Array(smallCap + 1); // 1001 bytes, no Content-Length
+    const oversized = new Uint8Array(smallCap + 1); // just over the tripwire, no Content-Length
     const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
       method: 'POST',
       body: oversized.buffer as ArrayBuffer,
@@ -215,6 +217,25 @@ describe('POST /api/_/import — guards', () => {
     expect(deleteCalls.length).toBe(0);
     expect(insertCalls.length).toBe(0);
 
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  // YUK-729 (#965 round-4) — a below-floor BACKUP_IMPORT_MAX_BYTES (operator typo)
+  // must NOT be honored, or it would silently 413 every restore. It warns and falls
+  // back to the default instead.
+  it('ignores a below-floor BACKUP_IMPORT_MAX_BYTES, warning and falling back to the default', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1000'); // 1 KB — below the 1 MB floor
+    vi.resetModules();
+    const { MAX_BACKUP_UPLOAD_BYTES: resolved } = await import('./backup-import');
+
+    // Fell back to the default (the unstubbed top-level value), not the 1 KB typo.
+    expect(resolved).toBe(MAX_BACKUP_UPLOAD_BYTES);
+    expect(resolved).toBeGreaterThan(1000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('BACKUP_IMPORT_MAX_BYTES=1000'));
+
+    warnSpy.mockRestore();
     vi.unstubAllEnvs();
     vi.resetModules();
   });

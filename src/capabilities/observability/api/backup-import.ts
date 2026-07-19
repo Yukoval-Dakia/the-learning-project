@@ -21,12 +21,38 @@ import { BackupImportQuerySchema } from './backup-contracts';
 // single-user tool, streaming is out of scope for this ticket. Sits behind the
 // x-internal-token + ?confirm=wipe-and-reload double gate.
 const DEFAULT_BACKUP_IMPORT_MAX_BYTES = 1_000_000_000;
+// Sane floor for the override (#965 round-4). Any real backup — even a schema-only
+// one with no assets — is well over ~1 MB, so a smaller cap is almost certainly an
+// operator typo (e.g. meaning MB but writing the wrong count) that would silently
+// 413 every restore. Below the floor we warn and fall back to the default rather
+// than honoring a self-defeating value.
+const MIN_BACKUP_IMPORT_MAX_BYTES = 1_000_000;
 function resolveBackupImportMaxBytes(): number {
   const raw = process.env.BACKUP_IMPORT_MAX_BYTES;
-  const parsed = raw ? Number(raw) : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BACKUP_IMPORT_MAX_BYTES;
+  if (raw === undefined || raw === '') return DEFAULT_BACKUP_IMPORT_MAX_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < MIN_BACKUP_IMPORT_MAX_BYTES) {
+    console.warn(
+      `[backup_import] ignoring BACKUP_IMPORT_MAX_BYTES=${raw}: must be a number >= ${MIN_BACKUP_IMPORT_MAX_BYTES} bytes; falling back to the ${DEFAULT_BACKUP_IMPORT_MAX_BYTES}-byte default (a too-low cap would silently 413 every restore)`,
+    );
+    return DEFAULT_BACKUP_IMPORT_MAX_BYTES;
+  }
+  return parsed;
 }
 export const MAX_BACKUP_UPLOAD_BYTES = resolveBackupImportMaxBytes();
+
+// Shared 413 for both the pre-read (Content-Length) and post-read (buffered length)
+// tripwire checks, so the payload and the operator hint stay identical (#965
+// round-4 minor).
+function payloadTooLargeResponse(): Response {
+  return Response.json(
+    {
+      error: 'payload_too_large',
+      message: `backup upload exceeds the ${Math.round(MAX_BACKUP_UPLOAD_BYTES / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
+    },
+    { status: 413 },
+  );
+}
 
 export async function POST(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -51,13 +77,7 @@ export async function POST(req: Request): Promise<Response> {
   const rawContentLength = req.headers.get('content-length');
   const declaredBytes = rawContentLength ? Number(rawContentLength) : Number.NaN;
   if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BACKUP_UPLOAD_BYTES) {
-    return Response.json(
-      {
-        error: 'payload_too_large',
-        message: `backup upload exceeds the ${Math.round(MAX_BACKUP_UPLOAD_BYTES / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
-      },
-      { status: 413 },
-    );
+    return payloadTooLargeResponse();
   }
 
   const bytes = new Uint8Array(await req.arrayBuffer());
@@ -71,13 +91,7 @@ export async function POST(req: Request): Promise<Response> {
   // if we got here with too many bytes, fail closed rather than restore. Same
   // env-tunable ceiling as the pre-read gate.
   if (bytes.byteLength > MAX_BACKUP_UPLOAD_BYTES) {
-    return Response.json(
-      {
-        error: 'payload_too_large',
-        message: `backup upload exceeds the ${Math.round(MAX_BACKUP_UPLOAD_BYTES / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
-      },
-      { status: 413 },
-    );
+    return payloadTooLargeResponse();
   }
 
   const { status, body } = await restoreFromArchive({ db, r2: getR2(), bytes });

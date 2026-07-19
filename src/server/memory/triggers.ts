@@ -67,6 +67,13 @@ export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover'
 export const MEMORY_RECONCILE_QUEUE = 'memory_reconcile';
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
+// YUK-729 (#965 round-4, codex P2) — cap the per-event brief-regen fan-out.
+// computeAffectedScopes puts NO ceiling on referenced_knowledge_ids, so a bulk /
+// import-style event could carry hundreds of scopes; without a cap the handler
+// would fire that many boss.send inserts for a single event. Brief regen is
+// best-effort, so a truncated tail is acceptable — the hourly/03:00 sweep partially
+// backstops scopes that already have a memory_brief_note row.
+export const MAX_BRIEF_REGEN_SCOPES = 64;
 // Reconcile singleton window — short (reconcile is time-sensitive convergence,
 // unlike the 6-min brief). Owner directive: 90s.
 const RECONCILE_SINGLETON_SECONDS = 90;
@@ -277,28 +284,40 @@ export function buildMemoryEventIngestHandler(
       // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
       // enqueue reconcile for the new memory ids.
       const memResult = admitToExtraction ? await client.addEventMemory(row) : null;
-      // YUK-729 — enqueue each affected scope INDEPENDENTLY and swallow+log the
-      // failures. Two properties matter: (1) allSettled per scope, so one scope's
-      // transient boss.send hiccup does not skip the remaining scopes (a plain
-      // sequential for-loop under one try/catch would abort the rest); (2) no
-      // rethrow, so the handler never triggers pg-boss redelivery of the PAID,
-      // non-idempotent addEventMemory above (redelivery = duplicate cost + a
-      // persistent duplicate mem0 row, reconcile being human-gated to KEEP_BOTH).
-      // Backstop is PARTIAL, not total: listStaleBriefScopes (the hourly/03:00
-      // sweep) re-scans only scopes that ALREADY have a memory_brief_note row, so a
-      // scope whose FIRST brief never got written loses just THIS batch's regen;
-      // scopes with an existing brief row are still swept.
-      const regenResults = await Promise.allSettled(
-        row.affected_scopes.map((scopeKey) => enqueueBriefRegen(boss, scopeKey)),
-      );
-      const regenFailures = regenResults.flatMap((result, i) =>
-        result.status === 'rejected'
-          ? [{ scope: row.affected_scopes[i], reason: result.reason }]
-          : [],
-      );
+      // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
+      // loop. Three properties matter:
+      //  (1) bounded fan-out — slice to MAX_BRIEF_REGEN_SCOPES so an unbounded
+      //      affected_scopes list (bulk/import event) cannot spray hundreds of
+      //      enqueues; a truncated tail is best-effort (partial sweep backstop);
+      //  (2) sequential — one boss.send at a time (concurrency 1), not a
+      //      Promise.allSettled over every scope, so a large event does not slam the
+      //      shared connection pool with concurrent inserts (#965 round-4, codex P2);
+      //  (3) per-scope try/catch — one scope's transient failure neither skips the
+      //      rest NOR rethrows out of the handler. A rethrow would trigger pg-boss
+      //      redelivery and re-run the PAID, non-idempotent addEventMemory above
+      //      (duplicate cost + a persistent duplicate mem0 row, reconcile being
+      //      human-gated to KEEP_BOTH).
+      // Backstop is PARTIAL: listStaleBriefScopes (the hourly/03:00 sweep) re-scans
+      // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
+      // scope (or a truncated one) loses just this batch's regen; scopes with an
+      // existing brief row are still swept.
+      const regenScopes = row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES);
+      if (row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
+        console.warn(
+          `[memory_brief_bridge] event ${row.id} has ${row.affected_scopes.length} affected scopes; capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES} (best-effort, sweep partially backstops the rest)`,
+        );
+      }
+      const regenFailures: { scope: string; reason: unknown }[] = [];
+      for (const scopeKey of regenScopes) {
+        try {
+          await enqueueBriefRegen(boss, scopeKey);
+        } catch (err) {
+          regenFailures.push({ scope: scopeKey, reason: err });
+        }
+      }
       if (regenFailures.length > 0) {
         console.warn(
-          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id} (${regenFailures.length}/${row.affected_scopes.length} scopes: ${regenFailures.map((f) => f.scope).join(', ')}); scopes with an existing brief are still swept, a first-appearance scope loses only this batch`,
+          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id} (${regenFailures.length}/${regenScopes.length} scopes: ${regenFailures.map((f) => f.scope).join(', ')}); scopes with an existing brief are still swept, a first-appearance scope loses only this batch`,
           regenFailures.map((f) => f.reason),
         );
       }
