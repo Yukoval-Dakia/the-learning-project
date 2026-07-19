@@ -395,7 +395,7 @@ export async function judgeEdgeReconcile(
     env?: Env;
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
-    onUsage?: (usage: ReconcileUsage) => void;
+    onUsage?: (usage: ReconcileUsage) => void | Promise<void>;
   } = {},
 ): Promise<EdgeReconcileDecision> {
   // No neighbors → nothing to reconcile against → KEEP_BOTH. Skip the GLM call
@@ -487,10 +487,11 @@ export async function judgeEdgeReconcile(
 
   // Surface usage for cost_ledger BEFORE the content/parse guards — a billed-but-
   // empty response still cost money (mirrors reconcile-llm.ts YUK-359). Guard so a
-  // callback throw never corrupts the reconcile result.
+  // callback failure never corrupts the reconcile result. Await the callback so
+  // the accounting attempt settles before the judgment resolves.
   if (opts.onUsage && json.usage) {
     try {
-      opts.onUsage({
+      await opts.onUsage({
         promptTokens: json.usage.prompt_tokens ?? 0,
         completionTokens: json.usage.completion_tokens ?? 0,
       });

@@ -289,9 +289,41 @@ describe('judgeEdgeReconcile', () => {
     await judgeEdgeReconcile(candidate(), [neighbor()], {
       env: MOCK_ENV,
       fetchImpl: fetchMock as unknown as typeof fetch,
-      onUsage: (u) => seen.push(u),
+      onUsage: (u) => {
+        seen.push(u);
+      },
     });
     expect(seen).toEqual([{ promptTokens: 321, completionTokens: 12 }]);
+  });
+
+  it('awaits an async onUsage callback before resolving', async () => {
+    const fetchMock = vi.fn(async () =>
+      glmResponse(
+        { decision: { action: 'KEEP_BOTH', neighbor_index: null, confidence: 0.9, reason: 'ok' } },
+        { usage: { prompt_tokens: 321, completion_tokens: 12, total_tokens: 333 } },
+      ),
+    );
+    let releaseUsage!: () => void;
+    const usagePending = new Promise<void>((resolve) => {
+      releaseUsage = resolve;
+    });
+    let resolved = false;
+
+    const judgment = judgeEdgeReconcile(candidate(), [neighbor()], {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      onUsage: () => usagePending,
+    }).then(() => {
+      resolved = true;
+    });
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resolved).toBe(false);
+
+    releaseUsage();
+    await judgment;
+    expect(resolved).toBe(true);
   });
 
   it('throws RetryableError on a 5xx GLM response', async () => {

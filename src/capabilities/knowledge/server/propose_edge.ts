@@ -473,24 +473,29 @@ export async function runEdgeProposeAndWrite(
                 env: params.env as never,
                 // YUK-344: ledger live reconcile GLM tokens to cost_ledger, mirroring
                 // the memory reconcile path (triggers.ts onUsage / YUK-359). Best-effort
-                // — a ledger write failure must never fail reconcile, so swallow + log.
+                // — a ledger write failure must never fail reconcile, so swallow + log;
+                // successful writes are awaited so callers never observe a pre-ledger result.
                 // Only the LIVE judge bills; the injected test fn (judgeReconcileFn) has
                 // no GLM call, so it correctly never reaches this onUsage.
-                onUsage: (usage) => {
+                onUsage: async (usage) => {
                   // CodeRabbit/PR-Agent Finding 3 — thread the ACTUAL resolved GLM
                   // model (the same resolveGlmConfig the judge uses) instead of
                   // hardcoding 'glm-5.2', which drifts when MEM0_LLM_MODEL overrides
                   // the model. Single source of truth: resolveGlmConfig(env).
                   const model = resolveGlmConfig(params.env as Env).model;
-                  void writeCostLedger(params.db, {
-                    task_kind: 'edge_reconcile',
-                    provider: 'glm',
-                    model,
-                    cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
-                    currency: 'CNY',
-                    tokens_in: usage.promptTokens,
-                    tokens_out: usage.completionTokens,
-                  }).catch((err) => console.error('[edge_reconcile] writeCostLedger failed', err));
+                  try {
+                    await writeCostLedger(params.db, {
+                      task_kind: 'edge_reconcile',
+                      provider: 'glm',
+                      model,
+                      cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
+                      currency: 'CNY',
+                      tokens_in: usage.promptTokens,
+                      tokens_out: usage.completionTokens,
+                    });
+                  } catch (err) {
+                    console.error('[edge_reconcile] writeCostLedger failed', err);
+                  }
                 },
               }));
           // Defensive re-apply of the confidence threshold: the live
