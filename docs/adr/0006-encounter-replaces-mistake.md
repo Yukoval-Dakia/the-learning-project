@@ -35,6 +35,17 @@
 - `cost_ledger` / `tool_call_log` —— per-step AI 账本，比 event 更细粒度
 - `job_events`（Sub 0c）—— pg-boss 状态机的 plumbing 事件流，与领域 event 不同关注点
 
+### `mistake` 与 `mistake_variant` 不是同一实体
+
+本 ADR 删除的是旧 `mistake` 表：一行代表一次错题记录的事实模型已由失败的 attempt event
+取代；用户可见列表另由 `learning_record(kind='mistake', attempt_event_id=...)` 物化。
+
+`mistake_variant` 表仍然存在，但它不是旧表的残留或改名。它是 ADR-0018 定义的变式题
+lifecycle ledger，以 `parent_question_id` 为父题，跟踪 `variant_question` proposal 从 `draft`
+到 `active` / `broken` / `dismissed` 的状态，并执行每个父题的生成上限。真正的错误作答仍只由
+`event(action='attempt', outcome='failure', subject_kind='question')` 表达；接受后的变式题存入
+`question(source='mistake_variant')`。
+
 ---
 
 ## event 表 schema

@@ -1,19 +1,38 @@
 # 错题管理
 
-> Last reviewed: 2026-05-28 (T-PD8)
+> Last reviewed: 2026-07-19 (YUK-245)
 >
 > 见 [架构基础](../architecture.md) 了解 `learning_record` / `event` / `question` / `material_fsrs_state` schema、FSRS state 和 AI 任务层。
-> 题面统一在 `question` 表（见 [`quiz.md`](quiz.md)），「错题」是 event 流的一种视图。
+> 题面统一在 `question` 表（见 [`quiz.md`](quiz.md)）；错答事实来自 event 流，用户可见条目
+> 物化为 `learning_record(kind='mistake')`。
 > 用户活动上下文入口详见 [`records.md`](records.md)；错题是 `LearningRecord(kind='mistake')`。
 > 变式 lifecycle 详见 [ADR-0018](../adr/0018-mistake-variant-lifecycle-and-variants-max.md)；错因 cause taxonomy 详见 [ADR-0006](../adr/0006-encounter-replaces-mistake.md)。
 
 ---
 
-## 0. 数据模型现状（2026-05-28，post-1c.1 Step 9 + ADR-0018）
+## 0. 数据模型现状（2026-07-19，ADR-0006 v2 + ADR-0018）
 
-> ⚠️ 下面 §1–§6 的 `Mistake` / `mistake_id` / `Mistake.cause` 等命名是 Phase 1 sketch 期写的，**实际表已 DROP**（1c.1 Step 9）。整篇 doc 的"错题"概念在落地实现里是 event 流的一个视图。读完本节心里替换即可，后续段落保留作为概念语义参考。
+> 术语边界：本文小写“错题”是产品概念；后文大写 `Mistake`、`Mistake.cause`、
+> `mistake_id` 是 Phase 1 sketch 的伪代码，不是当前数据库实体。旧 `mistake` 表已在
+> 1c.1 Step 9 删除。当前用户可见错题由 `learning_record(kind='mistake')` 物化，事实来源是
+> `event` 中失败的 attempt。`mistake_variant` 是另一张仍存在的**变式生成生命周期账本**，
+> 它不存错题记录，也不是被删除的 `mistake` 表的替代品。
 
-**2026-05-18 目标存储**：
+当前读写链路：
+
+```text
+question
+  ← event(action='attempt', subject_kind='question', outcome='failure')  # 答错事实
+      ← event(action='judge', subject_kind='event')                     # AI 错因
+      ← event(action='experimental:user_cause', subject_kind='event')   # 用户错因
+  → learning_record(kind='mistake', attempt_event_id=...)               # 收件箱/错题页物化记录
+
+variant_question proposal
+  → mistake_variant(status='draft'|'active'|'broken'|'dismissed')       # 变式 lifecycle ledger
+  → question(source='mistake_variant')                                  # 接受后物化的变式题
+```
+
+**当前存储**：
 
 | 概念 | 实际存储 | 备注 |
 |---|---|---|
@@ -29,7 +48,7 @@
 只作为学习表现信号，除非用户/agent 标记这题值得保留，才额外创建
 `learning_record(kind='worked_example')`。
 
-**当前已实现存储（迁移前）**：
+**旧 sketch 到当前实现的映射**：
 
 | Phase 1 sketch 词 | 实际存储 | 备注 |
 |---|---|---|
@@ -37,7 +56,7 @@
 | `Mistake.cause`（user 手填或 AI 归因） | AI: `event(action='judge', subject_kind='event', caused_by=<attempt id>, payload.cause)`。<br>User: `event(action='experimental:user_cause', subject_kind='event', caused_by=<attempt id>, payload={primary_category, user_notes})` | 用户优先 |
 | `Mistake.fsrs_state` | `material_fsrs_state(subject_kind='question', subject_id=<qid>, state, due_at, last_review_event_id)` | 一行 / 题 |
 | `Mistake.source = 'quiz_answer' / 'manual' / 'vision_*' / 'reverse_mark'` | 当前只跑 `manual` (POST /api/mistakes) + `vision_single` / `vision_paper`（OCR → import）；`quiz_answer` 自动管线 + `reverse_mark` 留到 Phase 2 quiz 时再展开 | |
-| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 + ADR-0018 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `event(action='propose', subject_kind='question')` payload `AiProposal.kind='variant_question'`（src/core/schema/proposal.ts；`ai_proposal` 表已 DROP），不再直接物化 `question`。**双 pass 已上线**：`variant_verify` handler（src/server/boss/handlers/variant_verify.ts）verdict='fail' 时翻 `mistake_variant.status='broken'`、verdict='pass' 时保持 `active`。`mistake_variant` ledger 表 track per-parent variants_max=3 防繁殖；3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后物化 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)`。详见 §3.4 + ADR-0018 | |
+| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 + ADR-0018 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `event(action='propose', subject_kind='question')` payload `AiProposal.kind='variant_question'`（src/core/schema/proposal.ts；`ai_proposal` 表已 DROP），不再直接物化 `question`。**双 pass 已上线**：`variant_verify` handler（src/server/boss/handlers/variant_verify.ts）verdict='fail' 时翻 `mistake_variant.status='broken'`、verdict='pass' 时保持 `active`。这里的 `mistake_variant` 是独立 lifecycle ledger：按 `parent_question_id` 跟踪 proposal/物化/验证状态，不含错误作答事实。它用于 per-parent variants_max=3 防繁殖；3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后物化 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)`。详见 §3.4 + ADR-0018 | |
 | `judgment` 表 + `JudgeRouter` | DROPped（1c.1 Step 1.4）；判分走 `event(action='judge')` 替代 | |
 | `mistake.deleted_at` soft-delete | 未实现（event 流没有 retraction 机制）；申诉翻盘 Phase 1d 再设计 | |
 
