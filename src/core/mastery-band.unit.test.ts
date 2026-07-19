@@ -124,6 +124,13 @@ describe('masteryBandView', () => {
     expect(v.loBand).toBe(2);
     expect(v.hiBand).toBe(2);
   });
+
+  it('orders inverted wire interval bands before exposing them to the UI', () => {
+    const v = masteryBandView(input({ mastery: 0.7, mastery_lo: 0.85, mastery_hi: 0.5 }));
+    if (v.unknown) throw new Error('expected known band');
+    expect(v.loBand).toBe(1);
+    expect(v.hiBand).toBe(3);
+  });
 });
 
 describe('masteryBandUnknown', () => {
