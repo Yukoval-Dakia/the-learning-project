@@ -27,6 +27,11 @@ function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
 }
 
+// Bounded wait for an in-flight draft to settle on exit before reporting: past this we treat
+// the save as unsaved rather than hang the exit indefinitely. A late success only over-warns
+// (a conservative, honesty-preserving direction), never a false 「进度保留」.
+const EXIT_FLUSH_TIMEOUT_MS = 3000;
+
 export function PfPaper({
   artifactId,
   onExit,
@@ -72,6 +77,11 @@ export function PfPaper({
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
   // pending save, silently dropping A's last keystrokes while the UI still claims saved.
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Draft saves dispatched but not yet settled (latest promise per slot key). The debounce
+  // timer is deleted the instant it fires, so without this an exit during the in-flight POST
+  // window would see no pending timer and neither await nor keepalive-resend the save — a
+  // slow-net / teardown cancel would then be reported as 「进度保留」. Cleared per paper.
+  const inFlightSaves = useRef<Map<string, Promise<boolean>>>(new Map());
 
   // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
   // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
@@ -93,6 +103,9 @@ export function PfPaper({
       clearTimeout(saveTimers.current[k]);
       delete saveTimers.current[k];
     }
+    // Drop the old paper's in-flight tracking so a new paper's exit can't await A's saves
+    // (their late settle is already a no-op via the bumped saveGen).
+    inFlightSaves.current.clear();
   }, [artifactId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
@@ -178,7 +191,7 @@ export function PfPaper({
     // (gen) and this must be its newest request (seq). A save that outlives its paper is a
     // no-op — it can't rewrite the next paper's state.
     const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
-    return savePaperAnswer(
+    const done = savePaperAnswer(
       artifactId,
       {
         session_id: sid,
@@ -196,56 +209,95 @@ export function PfPaper({
         console.error('[PfPaper] draft save failed', { key, err });
         if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
         return false;
+      })
+      .finally(() => {
+        // Deregister only if a newer save for this slot hasn't already replaced this entry.
+        if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
       });
+    // Track as in-flight so an exit/pagehide during the POST window can await or re-send it.
+    inFlightSaves.current.set(key, done);
+    return done;
   };
 
-  // Flush every pending debounce NOW rather than let the 800ms timer (and its draft) die
-  // with the page on exit / tab-close. Each dirty slot's save fires immediately and its
-  // real outcome is recorded, so the exit copy can tell the truth instead of promising
-  // 「进度保留」over input that never landed. Returns key→saved for honest counting.
-  const flushPendingSaves = (keepalive = false): Promise<Map<string, boolean>> => {
-    const results = new Map<string, boolean>();
-    const keys = Object.keys(saveTimers.current);
-    if (keys.length === 0) return Promise.resolve(results);
-    const jobs = keys.map((key) => {
+  // Fire every not-yet-fired debounce NOW so its draft joins the in-flight set instead of
+  // dying with the page. A fired timer already deleted its own key, so this only touches
+  // genuinely pending ones.
+  const firePendingTimers = () => {
+    for (const key of Object.keys(saveTimers.current)) {
       clearTimeout(saveTimers.current[key]);
       delete saveTimers.current[key];
       const slot = slots.find((s) => slotKey(s) === key);
-      // A submitted (or vanished) slot needs no draft write — treat it as already saved.
-      if (!slot || slot.slot_state.submission?.submitted) {
-        results.set(key, true);
-        return Promise.resolve();
-      }
-      return runSave(key, slot.question_id, slot.part_ref, answers[key] ?? '', keepalive).then(
-        (ok) => {
-          results.set(key, ok);
-        },
-      );
-    });
-    return Promise.all(jobs).then(() => results);
+      // A submitted (or vanished) slot needs no draft write.
+      if (!slot || slot.slot_state.submission?.submitted) continue;
+      void runSave(key, slot.question_id, slot.part_ref, answers[key] ?? '');
+    }
   };
 
-  // Hard tab-close / reload: fire keepalive draft flushes so the last ≤800ms of input
-  // isn't lost, then pause the session. Both are best-effort (pagehide has no retry UI).
+  // Wait (bounded) for every in-flight draft save to settle so the exit count reflects real
+  // outcomes rather than an optimistic timer or a still-open POST. Returns key→saved.
+  const settleInFlightSaves = (): Promise<Map<string, boolean>> => {
+    const entries = [...inFlightSaves.current.entries()];
+    const results = new Map<string, boolean>();
+    if (entries.length === 0) return Promise.resolve(results);
+    return Promise.all(
+      entries.map(
+        ([key, promise]) =>
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              results.set(key, false);
+              resolve();
+            }, EXIT_FLUSH_TIMEOUT_MS);
+            void promise.then(
+              (ok) => {
+                clearTimeout(timer);
+                results.set(key, ok);
+                resolve();
+              },
+              () => {
+                clearTimeout(timer);
+                results.set(key, false);
+                resolve();
+              },
+            );
+          }),
+      ),
+    ).then(() => results);
+  };
+
+  // Hard tab-close / reload: the page is tearing down, so awaiting is useless. Re-send the
+  // latest draft with keepalive for every slot that is either pending (unfired debounce) or
+  // still in flight (a normal POST the teardown may cancel). Idempotent — the draft PUT is
+  // last-write-wins, so re-sending the newest text is safe. Then pause the session.
   usePagehideTransition(() => {
-    void flushPendingSaves(true);
+    const keys = new Set([...Object.keys(saveTimers.current), ...inFlightSaves.current.keys()]);
+    for (const key of keys) {
+      if (saveTimers.current[key]) {
+        clearTimeout(saveTimers.current[key]);
+        delete saveTimers.current[key];
+      }
+      const slot = slots.find((s) => slotKey(s) === key);
+      if (!slot || slot.slot_state.submission?.submitted) continue;
+      void runSave(key, slot.question_id, slot.part_ref, answers[key] ?? '', true);
+    }
     return pauseCurrentSession(true);
   });
 
   const exitPaper = async () => {
-    // Flush any debounced draft that hasn't fired yet BEFORE reporting exit, so the host's
-    // 「进度保留」story reflects what actually persisted: a pending save is sent now and its
-    // real outcome (not the optimistic timer) decides the unsavedFailures count.
-    const flushed = await flushPendingSaves();
+    // Fire any not-yet-fired debounce, then wait for ALL in-flight saves — those just fired
+    // AND any POST already open from a debounce that fired moments ago (its timer key is
+    // gone, so only in-flight tracking catches it). The host's 「进度保留」story then reflects
+    // what actually persisted, not an optimistic timer or an unsettled POST.
+    firePendingTimers();
+    const outcome = await settleInFlightSaves();
     void pauseCurrentSession().catch(() => {});
-    // Count slots left genuinely unsaved: a slot flushed just now uses its fresh outcome;
-    // an untouched slot keeps whatever standing 保存失败 flag it already had. Submitted
-    // slots never count (submitAll captured their answer regardless of the draft PUT).
+    // Count slots left genuinely unsaved: a slot that just settled uses its real outcome; an
+    // untouched slot keeps whatever standing 保存失败 flag it had. Submitted slots never count
+    // (submitAll captured their answer regardless of the draft PUT).
     const unsavedFailures = slots.filter((s) => {
       if (s.slot_state.submission?.submitted) return false;
       const k = slotKey(s);
-      const flushedOk = flushed.get(k);
-      return flushedOk === undefined ? (saveFailed[k] ?? false) : !flushedOk;
+      const ok = outcome.get(k);
+      return ok === undefined ? (saveFailed[k] ?? false) : !ok;
     }).length;
     onExit({ unsavedFailures });
   };

@@ -423,4 +423,55 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
     expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[2]).toMatchObject({ keepalive: true });
   });
+
+  it('waits for an in-flight save to settle on exit (no false 进度保留 during the POST window)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The POST stays open until we resolve it, so exit happens squarely in the in-flight
+    // window: the debounce already fired (timer key gone) but the save has not settled.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Let the 800ms debounce fire so the POST is dispatched and left in flight.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    // Exit must not report until the in-flight save settles.
+    expect(onExit).not.toHaveBeenCalled();
+
+    resolveSave({ ok: true });
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+    // We awaited the existing POST — no duplicate save was issued.
+    expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the in-flight save as unsaved when it rejects after exit', async () => {
+    let rejectSave: (e: unknown) => void = () => {};
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    expect(onExit).not.toHaveBeenCalled();
+
+    rejectSave(new Error('500'));
+    // The in-flight save failed → the host is told the truth instead of a false 「进度保留」.
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
 });
