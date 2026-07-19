@@ -201,11 +201,12 @@ describe('findExactQuestionDuplicate', () => {
   });
 
   it.each([
-    ['quiz_gen', 'experimental:quiz_verify'],
-    ['web_sourced', 'experimental:source_verify'],
+    ['quiz_gen', 'experimental:quiz_verify', 'failure'],
+    ['web_sourced', 'experimental:source_verify', 'failure'],
+    ['quiz_gen', 'experimental:quiz_verify', null],
   ] as const)(
-    'releases the canonical hash of a terminal %s draft so fresh production can proceed',
-    async (source, verifyAction) => {
+    'releases the canonical hash of a terminal %s draft via %s (outcome=%s)',
+    async (source, verifyAction, verifyOutcome) => {
       await seedKnowledge('k-new');
       const hash = await seed(`q-terminal-${source}`, 'draft', ['k-old']);
       await db
@@ -219,7 +220,7 @@ describe('findExactQuestionDuplicate', () => {
         action: verifyAction,
         subject_kind: 'question',
         subject_id: `q-terminal-${source}`,
-        outcome: 'failure',
+        outcome: verifyOutcome,
         payload: {},
         created_at: new Date(),
       });

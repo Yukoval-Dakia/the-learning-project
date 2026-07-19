@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import type { Db, Tx } from '@/db/client';
@@ -184,7 +184,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
           eq(event.action, terminalVerifyAction),
           eq(event.subject_kind, 'question'),
           eq(event.subject_id, row.id),
-          ne(event.outcome, 'error'),
+          or(isNull(event.outcome), ne(event.outcome, 'error')),
         ),
       )
       .limit(1);
