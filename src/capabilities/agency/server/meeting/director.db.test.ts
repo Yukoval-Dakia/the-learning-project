@@ -173,6 +173,9 @@ describe('runResearchMeetingDirector — pipeline', () => {
 
     const proposals = await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR);
     expect(proposals).toHaveLength(1);
+    // A conjecture remains memory-eligible: it is an evidence-backed learner belief,
+    // unlike the surrounding execution bookkeeping.
+    expect(proposals[0].ingest_at).toBeNull();
     const payload = proposals[0].payload as { ai_proposal: Record<string, unknown> };
     const ai = payload.ai_proposal as {
       kind: string;
@@ -195,9 +198,13 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(scans).toHaveLength(1);
     expect(scans[0].cost_micro_usd).toBe(50_000);
     expect(scans[0].payload).toMatchObject({ proposals_created: 1, outcome: 'success' });
+    expect(scans[0].ingest_at).not.toBeNull();
+    expect(scans[0].affected_scopes).toEqual([]);
 
     const triggers = await testDb().select().from(event).where(eq(event.action, TRIGGER_ACTION));
     expect(triggers).toHaveLength(1);
+    expect(triggers[0].ingest_at).not.toBeNull();
+    expect(triggers[0].affected_scopes).toEqual([]);
   });
 
   it('records a genuine zero cost as 0 (not null) — round-3 review OCR #7, dreaming_nightly:388 precedent (null means UNKNOWN/degraded, not "no spend")', async () => {
@@ -348,6 +355,7 @@ describe('runResearchMeetingDirector — pipeline', () => {
     });
     const writeEventFn = vi.fn(async (db: unknown, input: WriteEventInput) => {
       if (input.action === SCOUT_SPAWNED_ACTION) {
+        expect(input.ingest_at).toEqual(NOW);
         throw new Error('scout_spawned write blew up');
       }
       return writeEvent(db as never, input);

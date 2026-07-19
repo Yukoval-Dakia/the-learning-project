@@ -143,6 +143,10 @@ function buildConjectureProposalInput(
   induced: InduceConjectureResult,
   triggerEventId: string,
 ): WriteAiProposalInput {
+  // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
+  // Unlike probe/scan bookkeeping, this is a durable, evidence-backed belief about the
+  // learner that the memory layer should retain. writeAiProposal therefore receives no
+  // ingest_at opt-out; owner accept/edit remains the later calibration boundary.
   return {
     actor_ref: RESEARCH_MEETING_ACTOR,
     outcome: 'partial',
@@ -225,9 +229,9 @@ export async function runResearchMeetingNightly(
 
   // Empty-night early return (YUK-377 复审 §3.5): zero top cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has
-  // nothing to anchor. Skip the trigger + scan events entirely — both are outbox-eligible
-  // (no ingest_at opt-out), so an empty night would otherwise fan two pure-noise rows into
-  // memory ingest → potential brief-regen churn. MUST stay AFTER the reconcile call above:
+  // nothing to anchor. Skip the trigger + scan events entirely — even though YUK-515 now
+  // opts both out of memory, two empty-run rows would still add useless audit churn.
+  // MUST stay AFTER the reconcile call above:
   // the deterministic settlement half is never skipped. Zero external consumers of these
   // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
   if (topCells.length === 0) {
@@ -257,6 +261,8 @@ export async function runResearchMeetingNightly(
       candidate_cells: topCells.length,
       pending_conjectures: knownConjectureKeys.size,
     },
+    // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
+    ingest_at: now,
     created_at: now,
   });
 
@@ -300,6 +306,8 @@ export async function runResearchMeetingNightly(
     },
     caused_by_event_id: triggerEventId,
     cost_micro_usd: null,
+    // Aggregate observability only; not evidence about the learner.
+    ingest_at: now,
     created_at: now,
   });
 

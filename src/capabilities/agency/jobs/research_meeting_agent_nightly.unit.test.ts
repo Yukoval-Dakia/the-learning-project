@@ -168,6 +168,7 @@ describe('runResearchMeetingAgentNightly — dayKey claim idempotency', () => {
     expect(result.reason).toBe('already_claimed_today');
     expect(runDirectorFn).not.toHaveBeenCalled(); // the loser never spends
     expect(writeEventFn).toHaveBeenCalledTimes(1); // this run DID attempt an insert (lost it)
+    expect(writeEventFn.mock.calls[0][1].ingest_at).toEqual(new Date('2026-07-06T21:00:00Z'));
     expect(readEventByIdFn).toHaveBeenCalledTimes(2); // existence check + persisted read-back
   });
 
