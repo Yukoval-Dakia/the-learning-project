@@ -46,6 +46,11 @@
 // the proposalId. conjecture_event_id === conjectureProposalId.
 
 import { newId } from '@/core/ids';
+import {
+  MAX_CONCURRENT_ACTIVE_PROBES,
+  PROBE_QUESTION_SOURCE,
+  PROBE_RESULT_ACTION,
+} from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -55,14 +60,9 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 type DbOrTx = Db | Tx;
 
-/** The `source` value stamped on every probe question (pool-invisibility marker). */
-export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
-
-/** Hard cap on probes that are served-but-unanswered at any moment (invariant #2). */
-export const MAX_CONCURRENT_ACTIVE_PROBES = 3;
-
-/** Canonical single outcome event — loose escape hatch, NEVER reserved (§2.2). */
-export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
+// Compatibility re-export for existing agency callers. Cross-capability readers
+// import the persisted vocabulary from core instead of this server implementation.
+export { MAX_CONCURRENT_ACTIVE_PROBES, PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION };
 
 /** Persisted claim written before a paid probe judge invocation (YUK-691). */
 export const PROBE_JUDGE_STARTED_ACTION = 'experimental:probe_judge_started' as const;
