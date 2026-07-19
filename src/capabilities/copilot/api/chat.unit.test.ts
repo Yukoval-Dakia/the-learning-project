@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
@@ -9,8 +9,9 @@ const getStartedBossMock = vi.hoisted(() => vi.fn());
 const findOrCreateMock = vi.hoisted(() => vi.fn());
 const writeJobEventMock = vi.hoisted(() => vi.fn());
 const shouldEnqueueMock = vi.hoisted(() => vi.fn());
+const dbExecuteMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('@/db/client', () => ({ db: { execute: dbExecuteMock } }));
 // YUK-364 — schema 镜像真实形态的关键字段（durable / triggered_by / user_message），
 // 让 durable 分支可被触发；其余字段省略（route 只读这几个）。
 vi.mock('@/capabilities/copilot/server/chat', () => ({
@@ -34,7 +35,11 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
 }));
 vi.mock('@/capabilities/copilot/server/copilot-run-status', () => ({
   COPILOT_RUN_TABLE: 'copilot_run',
-  COPILOT_RUN_EVENTS: { QUEUED: 'copilot_run.queued', FAILED: 'copilot_run.failed' },
+  COPILOT_RUN_EVENTS: {
+    QUEUED: 'copilot_run.queued',
+    DONE: 'copilot_run.done',
+    FAILED: 'copilot_run.failed',
+  },
 }));
 vi.mock('@/server/boss/client', () => ({ getStartedBoss: getStartedBossMock }));
 vi.mock('@/server/events/writer', () => ({ writeJobEvent: writeJobEventMock }));
@@ -45,6 +50,7 @@ vi.mock('@/server/session', () => ({
 
 import { POST } from '@/capabilities/copilot/api/chat';
 import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 
 const post = (body: unknown) =>
   POST(
@@ -56,6 +62,11 @@ const post = (body: unknown) =>
   );
 
 const readAll = (res: Response) => new Response(res.body).text();
+
+beforeEach(() => {
+  __resetRateLimitForTests();
+  dbExecuteMock.mockReset().mockResolvedValue([{ count: 0 }]);
+});
 
 describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
   it('delta 帧 FIFO 先于终态 reply 帧，framing 与旧栈逐字节一致', async () => {
@@ -93,6 +104,24 @@ describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
 
 // YUK-364 — durable 分流。
 describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
+  it('YUK-693 — outstanding backlog at cap returns 429 before writing or enqueueing', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    dbExecuteMock.mockResolvedValue([{ count: 5 }]);
+    findOrCreateMock.mockReset();
+    writeUserAskMock.mockReset();
+    writeJobEventMock.mockReset();
+    bossSendMock.mockReset();
+
+    const res = await post({ user_message: '再排一个任务', triggered_by: 'chat', durable: true });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('30');
+    expect(findOrCreateMock).not.toHaveBeenCalled();
+    expect(writeUserAskMock).not.toHaveBeenCalled();
+    expect(writeJobEventMock).not.toHaveBeenCalled();
+    expect(bossSendMock).not.toHaveBeenCalled();
+  });
+
   it('durable:true + chat + enqueue-enabled → 202 JSON { run_id }，boss.send(copilot_run)，不开 SSE 流', async () => {
     shouldEnqueueMock.mockReturnValue(true);
     // mockReset 清掉调用记录，让 invocationCallOrder happen-before 断言只看本用例。
@@ -114,12 +143,12 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     });
     // user_ask 写入 = run handle。
     expect(writeUserAskMock).toHaveBeenCalledWith(
-      {},
+      expect.objectContaining({ execute: dbExecuteMock }),
       expect.objectContaining({ sessionId: 'sess_1', userMessage: '讲讲这道题' }),
     );
     // queued 初态事件。
     expect(writeJobEventMock).toHaveBeenCalledWith(
-      {},
+      expect.objectContaining({ execute: dbExecuteMock }),
       expect.objectContaining({
         business_table: 'copilot_run',
         business_id: 'copilot_user_ask_RID',
@@ -167,7 +196,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
 
     // 补偿：FAILED job_event（status→failed 非卡死 queued）。
     expect(writeJobEventMock).toHaveBeenCalledWith(
-      {},
+      expect.objectContaining({ execute: dbExecuteMock }),
       expect.objectContaining({
         business_table: 'copilot_run',
         business_id: 'copilot_user_ask_F2',
@@ -177,7 +206,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     );
     // 补偿：copilot_reply error domain event（chained user_ask）让该轮不是 phantom。
     expect(writeReplyMock).toHaveBeenCalledWith(
-      {},
+      expect.objectContaining({ execute: dbExecuteMock }),
       expect.objectContaining({
         sessionId: 'sess_F2',
         userAskEventId: 'copilot_user_ask_F2',

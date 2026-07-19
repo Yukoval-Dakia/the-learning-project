@@ -19,6 +19,10 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import {
+  MAX_OUTSTANDING_DURABLE_RUNS,
+  countOutstandingDurableRuns,
+} from '@/capabilities/copilot/server/durable-backlog';
 // YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
 // consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/server/durable-pickup';
@@ -26,8 +30,13 @@ import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Conversation } from '@/server/session';
+
+// Closes the count-then-enqueue race inside the single Hono API process. A slot
+// moves from this counter into durable job_events once QUEUED is committed.
+let durableDispatchReservations = 0;
 
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
@@ -81,7 +90,24 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
     let runId: string | undefined;
     let sessionId: string | undefined;
+    let reservedDispatchSlot = false;
     try {
+      // YUK-693 — bound both a short request burst and the durable backlog. The
+      // process-local reservation closes concurrent count→enqueue races; the DB
+      // query remains the durable source of truth across restarts/processes.
+      checkRateLimit();
+      const outstanding = await countOutstandingDurableRuns(db);
+      if (outstanding + durableDispatchReservations >= MAX_OUTSTANDING_DURABLE_RUNS) {
+        throw new ApiError(
+          'copilot_backlog_full',
+          `durable Copilot backlog is full (max ${MAX_OUTSTANDING_DURABLE_RUNS})`,
+          429,
+          { 'Retry-After': '30' },
+        );
+      }
+      durableDispatchReservations++;
+      reservedDispatchSlot = true;
+
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
       const conv = await Conversation.findOrCreateCopilotConversation(db, {});
       sessionId = conv.sessionId;
@@ -164,6 +190,8 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       }
       // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
       return errorResponse(err);
+    } finally {
+      if (reservedDispatchSlot) durableDispatchReservations--;
     }
   }
 
