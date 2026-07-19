@@ -197,4 +197,39 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     expect(report.time_to_action.min_ms).toBe(10_000);
     expect(report.time_to_action.max_ms).toBe(30_000);
   });
+
+  it('drops an unrecognized action_kind (no NaN phantom key; by-kind sum equals total)', () => {
+    const input = emptyInput();
+    input.primaryActions = [
+      {
+        brief_id: 'b1',
+        action_kind: 'accept_probe',
+        local_day: '2026-07-10',
+        started_at: '2026-07-10T00:00:10.000Z',
+      },
+      // A malformed / injected kind (cast past the type) must be dropped, not counted.
+      {
+        brief_id: 'b1',
+        action_kind: 'totally_bogus' as unknown as 'accept_probe',
+        local_day: '2026-07-10',
+        started_at: '2026-07-10T00:00:20.000Z',
+      },
+    ];
+    const report = computeTeachingBriefReport(input);
+    expect(report.total_action_starts).toBe(1);
+    expect(report.skipped_unrecognized_action_rows).toBe(1);
+    // No NaN phantom key: the three known kinds sum to exactly total_action_starts.
+    const byKindSum =
+      report.action_starts_by_kind.accept_probe +
+      report.action_starts_by_kind.answer_probe +
+      report.action_starts_by_kind.scoped_practice;
+    expect(byKindSum).toBe(report.total_action_starts);
+    expect(Object.keys(report.action_starts_by_kind)).toEqual([
+      'accept_probe',
+      'answer_probe',
+      'scoped_practice',
+    ]);
+    // The skipped count is surfaced as missing data in the text report.
+    expect(formatTeachingBriefReport(report)).toContain('unrecognized action_kind');
+  });
 });

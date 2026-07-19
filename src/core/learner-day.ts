@@ -16,6 +16,10 @@ const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
 
 /** The learner's Asia/Shanghai calendar day (`YYYY-MM-DD`) for an instant. */
 export function learnerLocalDay(at: Date): string {
+  // Fail loud on an invalid Date rather than letting `Intl.format` emit "Invalid Date" — that
+  // string would otherwise flow into a deterministic event id + payload and silently corrupt the
+  // ledger (a bad clock / NaN timestamp must surface, not be persisted as a fake bucket).
+  if (Number.isNaN(at.getTime())) throw new Error('learnerLocalDay: invalid date');
   return SHANGHAI_DAY_FORMATTER.format(at);
 }
 

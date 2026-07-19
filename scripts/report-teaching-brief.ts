@@ -138,7 +138,11 @@ export async function loadTeachingBriefReportInput(
 
   // Probes served — mind_probe questions created in-window. `has_result` is then a set
   // membership over the probe_result subjects (two plain queries beat a correlated EXISTS in
-  // the SELECT, whose in-`sql` outer-column correlation is fragile to render).
+  // the SELECT, whose in-`sql` outer-column correlation is fragile to render). The answered
+  // query is bounded by the SAME created_at window as the served query and the outcome query
+  // below: an in-window probe answered OUTSIDE the window is NOT completion here, so the
+  // completion rate can never inflate past the confirmed/retired counts that share the window
+  // (a within-window served → answered funnel, not "answered ever").
   const servedRows = await database
     .select({ probe_question_id: question.id })
     .from(question)
@@ -161,6 +165,8 @@ export async function loadTeachingBriefReportInput(
               eq(event.action, PROBE_RESULT_ACTION),
               eq(event.subject_kind, 'question'),
               inArray(event.subject_id, servedIds),
+              gte(event.created_at, window.from),
+              lt(event.created_at, window.to),
             ),
           );
   const answeredIds = new Set(answeredRows.map((row) => row.subject_id));

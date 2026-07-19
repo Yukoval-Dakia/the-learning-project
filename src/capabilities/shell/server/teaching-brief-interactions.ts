@@ -34,7 +34,6 @@
 // mem0 learner-fact collection. This is a pure observational ledger: it writes NO derived status
 // back onto the proposal / question / result, and touches NO FSRS / mastery / θ̂ state.
 
-import { newId } from '@/core/ids';
 import { learnerLocalDay } from '@/core/learner-day';
 import {
   BRIEF_SEEN_ACTION,

@@ -15,6 +15,12 @@ describe('learnerLocalDay (Asia/Shanghai)', () => {
     // One minute earlier is still the 9th locally.
     expect(learnerLocalDay(new Date('2026-07-09T15:59:00.000Z'))).toBe('2026-07-09');
   });
+
+  it('throws on an invalid Date rather than bucketing "Invalid Date"', () => {
+    // A NaN timestamp must fail loud — never flow "Invalid Date" into a deterministic id / payload.
+    expect(() => learnerLocalDay(new Date('not-a-date'))).toThrow();
+    expect(() => learnerLocalDay(new Date(Number.NaN))).toThrow();
+  });
 });
 
 describe('isLearnerLocalDay', () => {

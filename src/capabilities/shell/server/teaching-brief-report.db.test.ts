@@ -33,7 +33,7 @@ function windowAroundNow(): { from: string; to: string } {
 
 async function seedChain(
   resolution: 'confirmed' | 'retired',
-  opts: { dismiss?: boolean } = {},
+  opts: { dismiss?: boolean; answerAt?: Date } = {},
 ): Promise<{ proposalId: string; resultId: string }> {
   const proposalId = await writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
@@ -96,6 +96,9 @@ async function seedChain(
     probeQuestionId: served.probe_question_id,
     outcome: resolution === 'confirmed' ? 0 : 1,
     resolution,
+    // Stamp the probe_result's created_at to place the ANSWER inside or outside the report window
+    // independently of when the probe was served (defaults to real now = in-window).
+    ...(opts.answerAt ? { now: opts.answerAt } : {}),
   });
   return { proposalId, resultId: result.probe_result_event_id };
 }
@@ -171,6 +174,26 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.days_with_briefs).toBe(0);
     expect(report.decisions).toEqual({ accept: 0, edit: 0, dismiss: 0 });
     expect(report.probes_served).toBe(0);
+    expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
+  });
+
+  it('a probe served in-window but answered out-of-window is not counted as completed', async () => {
+    // Served at real now (in-window); answered ~100 days ago (out-of-window). The completion
+    // query shares the window, so this must NOT inflate the completion rate — and its outcome is
+    // likewise absent, keeping the two consistent (round-1 codex P2).
+    await seedChain('confirmed', {
+      answerAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000),
+    });
+
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+
+    expect(report.probes_served).toBe(1);
+    // 0/1 completion (answer is out-of-window), NOT a fabricated 1/1.
+    expect(report.probe_completion).toEqual({ numerator: 0, denominator: 1, rate: 0 });
+    // The out-of-window outcome is absent too — completion and outcomes stay consistent.
     expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
   });
 });
