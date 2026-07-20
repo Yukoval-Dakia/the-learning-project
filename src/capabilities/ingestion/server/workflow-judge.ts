@@ -23,7 +23,7 @@ import type { TaggingOutputT, WorkflowJudgeResultT } from '@/core/schema/tagging
 type QuestionKindT = z.infer<typeof QuestionKind>;
 
 export interface RunWorkflowJudgeInput {
-  /** question_block.extraction_confidence (0..1). Always 1.0 from extraction. */
+  /** question_block.extraction_confidence (0..1), reported by StructureTask. */
   extractionConfidence: number;
   /** TaggingTask output for this block (already grid-filtered by the invoker). */
   tagging: TaggingOutputT;

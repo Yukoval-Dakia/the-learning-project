@@ -518,6 +518,9 @@ async function processOneOcrJob(
         ],
         source_asset_ids: assetIds,
         image_refs: assetIds,
+        // StructureTask emits a calibrated overall confidence. Missing values
+        // (fallback engines / old test doubles) fail closed to human review.
+        extraction_confidence: structure.extraction_confidence ?? 0,
       };
     });
 

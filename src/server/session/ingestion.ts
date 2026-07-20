@@ -189,6 +189,8 @@ export type ExtractionBlockInput = {
   source_asset_ids: string[];
   /** image refs (usually same as source_asset_ids) */
   image_refs: string[];
+  /** Provider-reported confidence in the extracted structure, in [0, 1]. */
+  extraction_confidence: number;
 };
 
 export type ApplyExtractionResultParams = {
@@ -243,6 +245,17 @@ export async function applyExtractionResult(
   const now = new Date();
   const insertedBlockIds: string[] = [];
   for (const [ordinal, blk] of params.blocks.entries()) {
+    if (
+      !Number.isFinite(blk.extraction_confidence) ||
+      blk.extraction_confidence < 0 ||
+      blk.extraction_confidence > 1
+    ) {
+      throw new ApiError(
+        'validation_error',
+        'Ingestion.applyExtractionResult: extraction_confidence must be within [0, 1]',
+        400,
+      );
+    }
     const blockId = createId();
     insertedBlockIds.push(blockId);
     const [insertedRow] = await tx
@@ -266,7 +279,7 @@ export async function applyExtractionResult(
         image_refs: blk.image_refs,
         crop_refs: blk.figures.map((f) => f.asset_id),
         visual_complexity: 'medium',
-        extraction_confidence: 1,
+        extraction_confidence: blk.extraction_confidence,
         status: 'draft',
         knowledge_hint: null,
         merged_from_block_ids: [],
