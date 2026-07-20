@@ -402,7 +402,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       // args; we validate + stash them in the capture ref. LLM NEVER writes the DB.
       tool(
         REPORT_FINDINGS_LOCAL_NAME,
-        'Report your three-question investigation conclusion. Call EXACTLY ONCE to finish. evidence_refs must be first-hand event ids (attempt / probe / prediction_score) — never agent_note ids.',
+        'Report your three-question investigation conclusion. Call EXACTLY ONCE to finish. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — never agent_note ids.',
         ReportFindingsShape,
         async (args) => {
           const parsed = ReportFindingsSchema.safeParse(args);

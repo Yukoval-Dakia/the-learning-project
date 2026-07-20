@@ -23,7 +23,7 @@ export const ReportFindingsShape = {
   suggested_probe_angle: z.string().max(800),
   // Human-readable synthesis.
   findings_md: z.string().max(4000),
-  // PRIMARY event ids only (attempt / probe / prediction_score) — NEVER agent_note ids.
+  // PRIMARY event ids only (attempt / review / probe / prediction_score) — NEVER agent_note ids.
   // The structural stop is filterPrimaryEvidenceRefs (below); the .max(12) caps blast radius.
   evidence_refs: z.array(z.string()).max(12),
   // Internal calibration only — NEVER rendered to the user as a number.

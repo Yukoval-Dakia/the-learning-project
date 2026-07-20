@@ -14,6 +14,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Capture the registered tool handlers + names via a mocked SDK.
 const mockSdk = vi.hoisted(() => ({
+  descriptions: new Map<string, string>(),
   handlers: new Map<
     string,
     (args: unknown) => Promise<{ content: { type: string; text: string }[] }>
@@ -30,11 +31,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   tool: vi.fn(
     (
       name: string,
-      _desc: string,
+      desc: string,
       _schema: unknown,
       handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
     ) => {
       mockSdk.handlers.set(name, handler);
+      mockSdk.descriptions.set(name, desc);
       mockSdk.registeredNames.push(name);
       return { name };
     },
@@ -92,6 +94,7 @@ async function seedFailureAttempt(opts: {
 beforeEach(async () => {
   await resetDb();
   mockSdk.handlers.clear();
+  mockSdk.descriptions.clear();
   mockSdk.registeredNames = [];
   mockSdk.serverName = undefined;
   capture = createFindingsCapture();
@@ -111,6 +114,12 @@ describe('buildEvidenceServer — registration', () => {
       'get_traces',
       'report_findings',
     ]);
+  });
+
+  it('advertises review events as valid report_findings evidence', () => {
+    expect(mockSdk.descriptions.get('report_findings')).toContain(
+      'attempt / review / probe / prediction_score',
+    );
   });
 });
 
