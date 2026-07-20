@@ -757,7 +757,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     <LoomIcon name="eye" size={12} />
                     预览 · 含公式 / 格式
                   </div>
-                  <QMarkdown text={draft.prompt_md} notation={notation} />
+                  <QMarkdown text={draft.prompt_md} notation={notation} className="wenyan" />
                 </div>
               )}
             </div>
