@@ -5,6 +5,13 @@ import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
+  it('keeps the strict QuestionKind enum explicit for MistakeEnroll output', () => {
+    const prompt = getTaskSystemPrompt('MistakeEnrollTask', resolveSubjectProfile('math'));
+    expect(prompt).toContain(
+      'question_type —— 从题面判题型：choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation 之一。',
+    );
+  });
+
   it('uses answer-class and structure guidance instead of closed-set kind contracts', () => {
     for (const task of ['QuizGenTask', 'QuestionAuthorTask', 'SourcingTask'] as const) {
       const prompt = getTaskSystemPrompt(task, resolveSubjectProfile('math'));

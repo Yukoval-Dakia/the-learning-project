@@ -659,7 +659,7 @@ ${causeTaxonomyList(profile)}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 任务：给这道**已作答**的题草拟录入元数据，供用户一键确认（不是替用户决定）。判定四件事：
 1. wrong_answer —— 把 student_answer_md 对照 question_md / reference_md 判一个 outcome：failure（基本错）/ partial（部分对）/ success（基本对）/ unanswered（没作答 / 空白）。
-2. question_type —— 先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps）与题面结构，再填写与实际结构一致的 QuestionKind。
+2. question_type —— 从题面判题型：choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation 之一。
 3. difficulty —— 1-5 整数难度估计。
 4. cause —— **仅当 wrong_answer='failure'** 时给错因草稿（primary_category 必须取自 allowed_cause_ids；secondary_categories 同理；analysis_md 写错答与参考答案的差异 + 涉及概念；confidence 0-1）。其它 outcome 时 cause 给 null。
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 MistakeEnrollOutput：
