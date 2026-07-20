@@ -357,6 +357,35 @@ describe('Ingestion.applyExtractionResult', () => {
     await cleanup(sessionId, sourceDocId);
   });
 
+  it('validates the whole batch before writes when called with a bare Db', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracting');
+    const block = (confidence: number) => ({
+      structured: STEM_FIXTURE,
+      figures: [],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      source_asset_ids: ['asset_a'],
+      image_refs: ['asset_a'],
+      extraction_confidence: confidence,
+    });
+
+    await expect(
+      applyExtractionResult(db, {
+        sessionId,
+        sourceDocumentId: sourceDocId,
+        blocks: [block(0.8), block(Number.NaN)],
+        layoutQuality: 'structured',
+        warnings: [],
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
+
   it('rejects from non-extracting state (409)', async () => {
     const { sessionId, sourceDocId } = await makeSession('uploaded');
     await expect(
