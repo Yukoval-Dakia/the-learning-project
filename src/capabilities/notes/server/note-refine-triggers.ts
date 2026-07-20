@@ -1,4 +1,5 @@
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
+import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
@@ -42,7 +43,7 @@ type BossSend = (
     };
   },
   options?: { singletonKey: string; singletonSeconds: number },
-) => Promise<unknown>;
+) => Promise<string | null>;
 
 export type NoteRefineTriggerResult =
   | { status: 'enqueued'; artifact_id: string; kind: NoteRefineTriggerKind }
@@ -55,17 +56,9 @@ export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const value = env[FLAG_BY_KIND[kind]];
-  // YUK-358 决定7 — unset/empty falls back to the per-kind default (verify=OFF,
-  // the other 4=ON). When set, an explicit literal wins for EVERY kind: "false"
-  // disables, "true" enables — so verify is a pure opt-in ("true") and the others
-  // keep their kill-switch ("false") semantics. Any other non-empty value keeps
-  // the kind's default (no accidental flip from a typo'd flag).
-  if (value === undefined || value === '') return DEFAULT_ENABLED_BY_KIND[kind];
-  const normalized = value.toLowerCase();
-  if (normalized === 'false') return false;
-  if (normalized === 'true') return true;
-  return DEFAULT_ENABLED_BY_KIND[kind];
+  return parseFlag(env[FLAG_BY_KIND[kind]], {
+    defaultValue: DEFAULT_ENABLED_BY_KIND[kind],
+  });
 }
 
 export async function enqueueNoteRefineTrigger(input: {

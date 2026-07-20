@@ -62,7 +62,7 @@ describe('note refine trigger producer', () => {
   it('honors kill switches before touching pg-boss', async () => {
     // YUK-358 决定6 — dwell trigger retired; keep kill-switch coverage on a
     // SURVIVING real-signal kind (mastery_change).
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env = { ...process.env, WAVE6_TRIGGER_MASTERY_ENABLED: 'false' };
 
     expect(noteRefineTriggerEnabled('mastery_change', env)).toBe(false);
@@ -92,7 +92,7 @@ describe('note refine trigger producer', () => {
   // skip the enqueue so deleting note_verify's dead proposal does NOT silently
   // turn on a new AI-cost path. Setting the flag to "true" opts in.
   it('verify kind is default-OFF: unset flag skips without touching pg-boss', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env: NodeJS.ProcessEnv = { ...process.env, WAVE6_TRIGGER_VERIFY_ENABLED: undefined };
 
     expect(noteRefineTriggerEnabled('verify', env)).toBe(false);
@@ -109,7 +109,7 @@ describe('note refine trigger producer', () => {
   });
 
   it('verify kind opts in when WAVE6_TRIGGER_VERIFY_ENABLED="true" and forwards verify context', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env = { ...process.env, WAVE6_TRIGGER_VERIFY_ENABLED: 'true' };
 
     expect(noteRefineTriggerEnabled('verify', env)).toBe(true);
@@ -153,7 +153,8 @@ describe('note refine trigger producer', () => {
     expect(noteRefineTriggerEnabled('dreaming', env)).toBe(true);
   });
 
-  it('uses the same numeric literals without changing per-kind polarity', () => {
+  it('keeps the 60-minute rolling window and numeric per-kind flag polarity', () => {
+    expect(NOTE_REFINE_TRIGGER_DEBOUNCE_MS).toBe(60 * 60_000);
     expect(noteRefineTriggerEnabled('verify', { WAVE6_TRIGGER_VERIFY_ENABLED: '1' })).toBe(true);
     expect(noteRefineTriggerEnabled('mastery_change', { WAVE6_TRIGGER_MASTERY_ENABLED: '0' })).toBe(
       false,
@@ -161,7 +162,7 @@ describe('note refine trigger producer', () => {
   });
 
   it('adds mark_wrong evidence context from the correction event', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
 
     await enqueueMarkWrongNoteRefine({
       artifactId: 'art_1',
