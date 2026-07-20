@@ -24,102 +24,11 @@
  */
 export function extractObjectBlock(src: string, openIdx: number): string | null {
   if (src[openIdx] !== '{') return null;
+  const { codeMask } = analyzeSource(src);
   let depth = 0;
-  let i = openIdx;
-  // String / comment state. For template literals we track `${}` interpolation depth so
-  // braces inside an interpolation contribute to the real object depth.
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  // Stack of template-interpolation brace depths (to know when a `}` closes ${} vs object).
-  const templateInterpDepth: number[] = [];
-
-  for (; i < src.length; i += 1) {
+  for (let i = openIdx; i < src.length; i += 1) {
+    if (codeMask[i] === 0) continue;
     const c = src[i];
-    const next = src[i + 1];
-    const prev = src[i - 1];
-
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c === '*' && next === '/') {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === '`') {
-        inTemplate = false;
-        continue;
-      }
-      if (c === '$' && next === '{') {
-        // enter an interpolation — record the object-brace depth at entry so the
-        // matching `}` is recognised as closing the interpolation, not the object.
-        templateInterpDepth.push(depth);
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      // braces inside template text (not interpolation) are literal — ignore.
-      if (c === '}' && templateInterpDepth.length > 0) {
-        const entryDepth = templateInterpDepth[templateInterpDepth.length - 1];
-        if (depth - 1 === entryDepth) {
-          templateInterpDepth.pop();
-          depth -= 1;
-          continue;
-        }
-      }
-      continue;
-    }
-
-    // not in any string/comment.
-    if (c === '/' && next === '/') {
-      inLineComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlockComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      continue;
-    }
     if (c === '{') {
       depth += 1;
       continue;
@@ -129,10 +38,7 @@ export function extractObjectBlock(src: string, openIdx: number): string | null 
       if (depth === 0) {
         return src.slice(openIdx, i + 1);
       }
-      continue;
     }
-    // `prev` referenced to satisfy the no-unused guard for future escape handling.
-    void prev;
   }
   return null;
 }

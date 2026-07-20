@@ -63,6 +63,22 @@ describe('extractObjectBlock (brace-balance)', () => {
     expect(blockFrom(src)).toBe('{ msg: `text } with ${cond ? "x" : "y"} more`, k: 1 }');
   });
 
+  it('handles nested template literals inside an interpolation without counting text braces', () => {
+    const src =
+      'values({ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" })';
+    expect(blockFrom(src)).toBe(
+      '{ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" }',
+    );
+  });
+
+  it('keeps scanning an INSERT after a nested template that contains a closing brace', () => {
+    const src =
+      'tx.insert(question).values({ prompt_md: `${ok ? `answer }` : `hint`}`, draft_status: "draft" });';
+    const sites = scanQuestionInserts('nested.ts', src);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(true);
+  });
+
   it('returns null when no matching close brace', () => {
     expect(extractObjectBlock('{ a: 1', 0)).toBeNull();
   });
