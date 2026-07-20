@@ -18,6 +18,7 @@ import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorInput,
   buildSelectionOrchestratorTaskInput,
+  buildSelectionOrchestratorTaskInputWithCandidates,
   parseSelectionOrchestratorOutput,
 } from './selection-orchestrator';
 
@@ -295,16 +296,30 @@ describe('mem0 learner prior advisory block (B3)', () => {
       }),
     );
 
-    const first = buildSelectionOrchestratorTaskInput(candidates).candidates.split('\n');
-    const second = buildSelectionOrchestratorTaskInput([...candidates].reverse()).candidates.split(
-      '\n',
+    const first = buildSelectionOrchestratorTaskInputWithCandidates(candidates);
+    const second = buildSelectionOrchestratorTaskInputWithCandidates([...candidates].reverse());
+    const firstLines = first.input.candidates.split('\n');
+
+    expect(firstLines).toHaveLength(24);
+    expect(second).toEqual(first);
+    expect(firstLines[0]).toContain('refId=q-00');
+    expect(firstLines[1]).toContain('refId=q-01');
+    expect(firstLines[2]).toContain('refId=q-29');
+    expect(firstLines).not.toContainEqual(expect.stringContaining('refId=q-02'));
+    expect(first.selectedCandidates.map((candidate) => candidate.refId)).toHaveLength(24);
+  });
+
+  it('uses refId as the deterministic cutoff tie-break for equal scores', () => {
+    const candidates = Array.from({ length: 25 }, (_, index) =>
+      questionSignal({ refId: `tie-${index.toString().padStart(2, '0')}`, diagnosticScore: 0.1 }),
     );
 
-    expect(first).toHaveLength(24);
-    expect(second).toEqual(first);
-    expect(first[0]).toContain('refId=q-00');
-    expect(first[1]).toContain('refId=q-01');
-    expect(first[2]).toContain('refId=q-29');
-    expect(first).not.toContainEqual(expect.stringContaining('refId=q-02'));
+    const selected = buildSelectionOrchestratorTaskInputWithCandidates(
+      [...candidates].reverse(),
+    ).selectedCandidates;
+
+    expect(selected.map((candidate) => candidate.refId)).toEqual(
+      candidates.slice(0, 24).map((candidate) => candidate.refId),
+    );
   });
 });

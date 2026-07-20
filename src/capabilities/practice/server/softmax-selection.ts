@@ -37,9 +37,8 @@ import { inArray } from 'drizzle-orm';
 
 import {
   buildMemoryPriorAdvisoryBlock,
-  buildSelectionOrchestratorTaskInput,
+  buildSelectionOrchestratorTaskInputWithCandidates,
   parseSelectionOrchestratorOutput,
-  preselectSelectionOrchestratorCandidates,
 } from '@/server/ai/selection-orchestrator';
 import {
   type CandidateInput,
@@ -549,8 +548,8 @@ async function tryLlmOrchestration(
   loadMemoryPrior?: LoadMemoryPriorFn,
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
-    const orchestratedCandidates = preselectSelectionOrchestratorCandidates(samplable);
-    const candidateBlock = buildSelectionOrchestratorTaskInput(orchestratedCandidates);
+    const { input: candidateBlock, selectedCandidates } =
+      buildSelectionOrchestratorTaskInputWithCandidates(samplable);
     const candidateText = candidateBlock.candidates;
     if (candidateText.trim().length === 0) {
       // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
@@ -569,7 +568,7 @@ async function tryLlmOrchestration(
     const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
     const fn = runTaskFn ?? (await defaultRunTaskFn());
     const result = await fn('SelectionOrchestratorTask', taskInput, { db });
-    const refIds = orchestratedCandidates.map((s) => s.refId);
+    const refIds = selectedCandidates.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
     // throw message 如 'no valid candidates after refId ⊆ filter + dedup' 自带诊断上下文），
