@@ -78,8 +78,15 @@ describe('runCopilotChat (two-surface routing)', () => {
       }),
       expect.objectContaining({
         allowedTools: [...resolveMcpAllowedTools('copilot')],
+        taskRunId: expect.stringMatching(/^copilot_task_/),
       }),
     );
+
+    const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
+    const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      taskRunId?: string;
+    };
+    expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
   });
 
   // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
@@ -1207,6 +1214,11 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     expect(deltas).toEqual(['OK']);
     expect(runAgentTaskFn).not.toHaveBeenCalled();
     expect(streamAgentTaskFn).toHaveBeenCalledTimes(1);
+    const mcpCtx = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0].ctx;
+    const runnerCtx = (streamAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      taskRunId?: string;
+    };
+    expect(runnerCtx?.taskRunId).toBe(mcpCtx?.taskRunId);
 
     // Result equals what the non-stream path would return — real task_run_id + reply.
     expect(result.task_run_id).toBe('task_stream_real');
