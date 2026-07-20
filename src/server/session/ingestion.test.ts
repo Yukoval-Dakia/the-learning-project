@@ -196,6 +196,7 @@ describe('Ingestion.applyExtractionResult', () => {
             page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
             source_asset_ids: ['asset_a'],
             image_refs: ['asset_a'],
+            extraction_confidence: 0.73,
           },
         ],
         layoutQuality: 'structured',
@@ -213,6 +214,7 @@ describe('Ingestion.applyExtractionResult', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks).toHaveLength(1);
     expect(blocks[0].layout_quality).toBe('structured');
+    expect(blocks[0].extraction_confidence).toBeCloseTo(0.73, 10);
     expect(blocks[0].ordinal).toBe(0); // YUK-221 — first block gets ordinal 0
 
     // Domain event chained to session_id (ExtractSourceDocument shape)
@@ -249,6 +251,7 @@ describe('Ingestion.applyExtractionResult', () => {
           page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
           source_asset_ids: ['asset_a'],
           image_refs: ['asset_a'],
+          extraction_confidence: 0.8,
         })),
         layoutQuality: 'structured',
         warnings: [],
@@ -284,6 +287,7 @@ describe('Ingestion.applyExtractionResult', () => {
             page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
             source_asset_ids: ['asset_a'],
             image_refs: ['asset_a'],
+            extraction_confidence: 0.55,
           },
         ],
         layoutQuality: 'partial',
@@ -322,6 +326,37 @@ describe('Ingestion.applyExtractionResult', () => {
     await cleanup(sessionId, sourceDocId);
   });
 
+  it('rejects extraction confidence outside [0, 1]', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracting');
+    await expect(
+      db.transaction((tx) =>
+        applyExtractionResult(tx, {
+          sessionId,
+          sourceDocumentId: sourceDocId,
+          blocks: [
+            {
+              structured: STEM_FIXTURE,
+              figures: [],
+              page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+              source_asset_ids: ['asset_a'],
+              image_refs: ['asset_a'],
+              extraction_confidence: 1.01,
+            },
+          ],
+          layoutQuality: 'structured',
+          warnings: [],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
+
   it('rejects from non-extracting state (409)', async () => {
     const { sessionId, sourceDocId } = await makeSession('uploaded');
     await expect(
@@ -336,6 +371,7 @@ describe('Ingestion.applyExtractionResult', () => {
               page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
               source_asset_ids: ['asset_a'],
               image_refs: ['asset_a'],
+              extraction_confidence: 0.9,
             },
           ],
           layoutQuality: 'structured',

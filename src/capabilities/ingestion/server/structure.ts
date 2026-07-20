@@ -88,6 +88,9 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
 
 export const StructureOutput = z.object({
   layout_quality: z.enum(['structured', 'partial', 'text_only']),
+  // A calibrated self-report from the structure model. Older/model-degraded
+  // responses that omit it fail closed to 0 instead of masquerading as certain.
+  extraction_confidence: z.number().min(0).max(1).default(0),
   warnings: z.array(z.string()).default([]),
   questions: z.array(StructureNode),
 });
@@ -112,6 +115,8 @@ export type FigureAssignment = {
 export type StructureResult = {
   questions: StructuredQuestionT[];
   layout_quality: LayoutQuality;
+  /** Overall confidence in the extracted structure; persisted on each emitted block. */
+  extraction_confidence?: number;
   warnings: string[];
   /**
    * YUK-227 S3 Slice A — VLM figure assignments extracted from figure_ids on
@@ -349,6 +354,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   return {
     questions,
     layout_quality: parsed.layout_quality,
+    extraction_confidence: parsed.extraction_confidence,
     warnings: parsed.warnings,
     ...(assignmentsOut && assignmentsOut.length > 0 ? { figureAssignments: assignmentsOut } : {}),
   };

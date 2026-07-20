@@ -267,7 +267,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上**明确**属于某小问的图归到该 sub 节点。**只在判断确定时填 figure_ids**——拿不准的图省略（不要猜，留给几何兜底）。漏报比错报代价小：几何兜底一定能处理漏报，但 VLM 错误归属会覆盖兜底，下游无法纠正。position 字段（图的位置摘要）可辅助判断同页归属关系，但仍以图片视觉为准。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
-{"layout_quality":"structured"|"partial"|"text_only","warnings":["..."],"questions":[StructureNode, ...]}
+{"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
 {"role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
@@ -279,6 +279,7 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - student_answer_present 是布尔：该节点的题面区域是否有学生手写作答 / 批改痕迹。**只报 true/false，绝不转写手写文字**（手写是作答像素，下游判分用，不做 OCR）。无 / 不确定给 null 或省略。
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
+- extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
 - options / answers / analysis 没有就给 null 或省略，不要编。
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }

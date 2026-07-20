@@ -53,6 +53,7 @@ describe('runStructureTask', () => {
       ) => ({
         text: vlmJson({
           layout_quality: 'structured',
+          extraction_confidence: 0.82,
           warnings: [],
           questions: [
             {
@@ -84,6 +85,7 @@ describe('runStructureTask', () => {
     expect(input.images).toHaveLength(2);
 
     expect(result.layout_quality).toBe('structured');
+    expect(result.extraction_confidence).toBe(0.82);
     expect(result.questions).toHaveLength(1);
     const stem = result.questions[0];
     expect(stem.role).toBe('stem');
@@ -138,6 +140,19 @@ describe('runStructureTask', () => {
   it('throws StructureTaskError when output fails schema validation', async () => {
     const runTaskFn = vi.fn(async () => ({
       text: vlmJson({ layout_quality: 'nonsense', questions: [] }),
+    }));
+    await expect(
+      runStructureTask({ pageImages: [IMG], tencentHintMd: '', pageCount: 1, runTaskFn }),
+    ).rejects.toBeInstanceOf(StructureTaskError);
+  });
+
+  it('rejects an out-of-range extraction confidence', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        extraction_confidence: 1.1,
+        questions: [{ role: 'standalone', prompt_text: '题目' }],
+      }),
     }));
     await expect(
       runStructureTask({ pageImages: [IMG], tencentHintMd: '', pageCount: 1, runTaskFn }),

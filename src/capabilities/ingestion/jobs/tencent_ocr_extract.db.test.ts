@@ -99,6 +99,7 @@ function makeVlmStub(): RunStructureFn {
         },
       ],
       layout_quality: 'structured',
+      extraction_confidence: 0.87,
       warnings: [],
     }) satisfies StructureResult) as RunStructureFn;
 }
@@ -278,6 +279,7 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.length).toBeGreaterThanOrEqual(1);
     expect(blocks[0].structured?.source).toBe('vlm_structure');
+    expect(blocks[0].extraction_confidence).toBeCloseTo(0.87, 10);
     // GLM OCR was the text + figure layer.
     expect(glmOcrFn).toHaveBeenCalledOnce();
 
