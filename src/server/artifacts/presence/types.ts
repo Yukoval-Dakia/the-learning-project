@@ -70,6 +70,7 @@ export interface EnqueueOrApplyInput {
   taskResult?: TaskTextResult;
   triggerEventId?: string | null;
   actorRef?: string;
+  forceApplyAfterTimeout?: boolean;
   now?: Date;
 }
 

@@ -190,6 +190,7 @@ export class PgPresenceStore implements PresenceStore {
       if (isIdle) return true;
 
       const forceApply =
+        (input.forceApplyAfterTimeout ?? true) &&
         row.editing_started_at !== null &&
         now.getTime() - row.editing_started_at.getTime() >= EDITING_FORCE_APPLY_TIMEOUT_MS;
       if (forceApply) return true;

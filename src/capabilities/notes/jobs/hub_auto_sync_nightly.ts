@@ -327,6 +327,7 @@ export async function runHubAutoSyncNightly(
         artifactId: hub.id,
         patch,
         actorRef: ACTOR_REF,
+        forceApplyAfterTimeout: !deps.skipActiveHubs,
         now: deps.now,
       };
       const applied = deps.skipActiveHubs

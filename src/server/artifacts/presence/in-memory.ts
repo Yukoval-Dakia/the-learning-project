@@ -82,7 +82,10 @@ export class InMemoryPresenceStore implements PresenceStore {
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
     const now = input.now ?? new Date();
     const state = this.currentState(input.artifactId, now);
-    if (!(await this.isArtifactIdle(input.artifactId, now)) && !this.shouldForceApply(state, now)) {
+    if (
+      !(await this.isArtifactIdle(input.artifactId, now)) &&
+      !((input.forceApplyAfterTimeout ?? true) && this.shouldForceApply(state, now))
+    ) {
       state.pending = coalesceQueuedPatchByActor(state.pending, {
         patch: input.patch,
         taskResult: input.taskResult,

@@ -16,7 +16,10 @@ import {
   knowledge,
   knowledge_edge,
 } from '@/db/schema';
-import { markArtifactIdleAndFlush } from '@/server/artifacts/editing-session';
+import {
+  EDITING_FORCE_APPLY_TIMEOUT_MS,
+  markArtifactIdleAndFlush,
+} from '@/server/artifacts/editing-session';
 import { buildHubAutoSyncNightlyHandler, runHubAutoSyncNightly } from './hub_auto_sync_nightly';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -311,6 +314,33 @@ describe('runHubAutoSyncNightly', () => {
 describe('buildHubAutoSyncNightlyHandler', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('defers mutation sync past the generic force timeout while heartbeat stays fresh', async () => {
+    const now = new Date();
+    await seedKnowledge('k_hub');
+    await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
+    await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
+    await testDb()
+      .insert(editing_presence)
+      .values({
+        artifact_id: 'hub1',
+        status: 'editing',
+        last_heartbeat_at: now,
+        editing_started_at: new Date(now.getTime() - EDITING_FORCE_APPLY_TIMEOUT_MS - 1),
+        pending: [],
+      });
+
+    const result = await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true, now });
+    expect(result.hubs_deferred_active_edit).toBe(1);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(0);
+
+    await markArtifactIdleAndFlush({ db: testDb(), artifactId: 'hub1', now });
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(1);
   });
 
   it('coalesces repeated active-hub mutation syncs and flushes the latest auto-zone once', async () => {
