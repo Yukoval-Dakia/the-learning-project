@@ -35,6 +35,11 @@ describe('getTaskSystemPrompt', () => {
     expect(sourcingPrompt).toContain(
       'derivation：judge_kind_override="semantic"，rubric_json.required_points',
     );
+    for (const task of ['QuizGenTask', 'QuestionAuthorTask'] as const) {
+      expect(getTaskSystemPrompt(task, resolveSubjectProfile('math'))).toContain(
+        'derivation：judge_kind_override="semantic"，rubric_json.required_points',
+      );
+    }
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`

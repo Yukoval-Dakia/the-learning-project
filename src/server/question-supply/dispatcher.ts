@@ -346,6 +346,7 @@ export async function dispatchSupplyTarget(
         // 题型 hint（'any' → 不 pin）；扫描器的 kind 字段（forwarded：sourcing→kinds, quiz_gen→kind）。
         ...(target.kind && target.kind !== 'any' ? { kind: target.kind } : {}),
         ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
+        ...(target.constraints.kindRequired ? { kind_required: true } : {}),
         ...(queue === 'quiz_gen' ? { generation_method: generationMethodFor(target) } : {}),
         // YUK-697 — jyeoo_fetch handler maps the target's difficulty band → jyeoo --dg token
         // (deterministic 难度补带, design §2.2). Only forwarded on the jyeoo_fetch queue.

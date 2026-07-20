@@ -106,6 +106,7 @@ export interface QuizGenJobData {
   // into the QuizGenTask input so the agent can target the题型.
   kind?: string;
   objective_only?: boolean;
+  kind_required?: boolean;
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
   // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
@@ -328,6 +329,7 @@ export interface RunQuizGenParams {
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
   kind?: string;
   objectiveOnly?: boolean;
+  kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
@@ -548,6 +550,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // so the agent can target it; absent → the agent free-targets (original behaviour).
     ...(params.kind ? { requested_kind: params.kind } : {}),
     ...(params.objectiveOnly ? { objective_only: true } : {}),
+    ...(params.kindRequired ? { kind_required: true } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -576,11 +579,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       );
     }
 
-    if (params.objectiveOnly && params.kind) {
+    if ((params.objectiveOnly || params.kindRequired) && params.kind) {
       for (const q of parsed.questions) {
         if (!kindsMatch(q.kind, params.kind)) {
+          const constraint = params.objectiveOnly ? 'objective-only' : 'required';
           throw new Error(
-            `quiz_gen objective-only kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+            `quiz_gen ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
           );
         }
       }
@@ -1073,6 +1077,7 @@ export function buildQuizGenHandler(
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
         ...(data.objective_only ? { objectiveOnly: true } : {}),
+        ...(data.kind_required ? { kindRequired: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,

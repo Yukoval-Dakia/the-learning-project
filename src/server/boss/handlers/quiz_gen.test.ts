@@ -1484,6 +1484,30 @@ describe('runQuizGen', () => {
     expect(enqueueQuizVerify).toHaveBeenCalledOnce();
   });
 
+  it('rejects a kind mismatch when supply explicitly requires the requested kind', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_required_kind_mismatch');
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'reading',
+        kindRequired: true,
+        runAgentTaskFn,
+        enqueueQuizVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/required kind='reading'.*'short_answer'/);
+    expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
+      requested_kind: 'reading',
+      kind_required: true,
+    });
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
   it('rejects a kind mismatch for objective-only calibration supply', async () => {
     await seedKnowledge({ id: 'k1' });
     const enqueueQuizVerify = vi.fn(async () => {});

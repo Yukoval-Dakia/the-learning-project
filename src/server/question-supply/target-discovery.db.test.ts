@@ -633,7 +633,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
       preferredGenerationMethod: 'closed_book' as const,
       priority: 0.4,
       reason: 'format diversity gap',
-      constraints: {},
+      constraints: { kindRequired: true },
     };
 
     const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
@@ -650,6 +650,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     expect(r.chosenRoute).toBe('quiz_gen');
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0].queue).toBe('quiz_gen');
+    expect(enqueued[0].data).toMatchObject({ kind: 'short_answer', kind_required: true });
     // FINDING #3: generation_method carried through = closed_book (NOT minSourceTier-derived).
     expect(enqueued[0].data.generation_method).toBe('closed_book');
   });

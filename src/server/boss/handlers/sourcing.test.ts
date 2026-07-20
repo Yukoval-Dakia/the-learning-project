@@ -1010,6 +1010,31 @@ describe('runSourcing', () => {
     expect(enqueueSourceVerify).toHaveBeenCalledOnce();
   });
 
+  it('rejects a kind mismatch when supply explicitly requires the requested kind', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const enqueueSourceVerify = vi.fn(async () => {});
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_required_kind_mismatch');
+    await expect(
+      runSourcing({
+        db,
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'reading',
+        kindRequired: true,
+        runAgentTaskFn,
+        enqueueSourceVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/required kind='reading'.*'short_answer'/);
+    expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
+      kinds: ['reading'],
+      kind_required: true,
+    });
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
+  });
+
   it('rejects a kind mismatch for objective-only calibration supply', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });

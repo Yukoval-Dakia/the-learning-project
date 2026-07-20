@@ -100,6 +100,8 @@ export interface QuestionSupplyTarget {
   constraints: {
     needsImage?: boolean;
     objectiveOnly?: boolean;
+    /** Hard structural kind requirement for targets such as format_diversity; distinct from objective-only supply. */
+    kindRequired?: boolean;
     calibrationCandidate?: boolean;
     avoidDuplicateOfQuestionIds?: string[];
     /**
@@ -507,7 +509,7 @@ export function scanCoverageGaps(
         desiredCount: 1,
         minSourceTier: 3, // 题型多样性属探索级，生成题可接受。
         reason: `knowledge ${f.knowledgeId} has only recall-style items; need an application/transfer item`,
-        constraints: {},
+        constraints: { kindRequired: true },
       });
     }
   }
