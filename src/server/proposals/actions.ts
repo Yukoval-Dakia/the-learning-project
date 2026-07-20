@@ -880,6 +880,7 @@ async function dispatchAccept(
         );
       }
       const result = await acceptProposal(db, proposalId);
+      if (result.kind === 'merge_applied') await enqueueHubAutoSync();
       await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
       return { kind: 'knowledge_mutation', result };
     }

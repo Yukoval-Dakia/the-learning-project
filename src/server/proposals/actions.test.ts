@@ -1158,6 +1158,43 @@ describe('proposal lifecycle owner service', () => {
     });
   });
 
+  it('enqueues hub sync only after a successful merge accept', async () => {
+    const db = testDb();
+    await seedKnowledge(['merge_from', 'merge_into']);
+    const proposalId = await writeKnowledgeProposeEvent(db, {
+      payload: {
+        mutation: 'merge',
+        from_ids: ['merge_from'],
+        into_id: 'merge_into',
+        expected_versions: { merge_from: 0, merge_into: 0 },
+      },
+      reasoning: 'Merge duplicate nodes.',
+    });
+
+    await acceptAiProposal(db, proposalId);
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+
+    await acceptAiProposal(db, proposalId);
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+  });
+
+  it('does not enqueue hub sync when a merge accept rolls back', async () => {
+    const db = testDb();
+    await seedKnowledge(['stale_from', 'stale_into']);
+    const proposalId = await writeKnowledgeProposeEvent(db, {
+      payload: {
+        mutation: 'merge',
+        from_ids: ['stale_from'],
+        into_id: 'stale_into',
+        expected_versions: { stale_from: 1, stale_into: 0 },
+      },
+      reasoning: 'Stale merge must roll back.',
+    });
+
+    await expect(acceptAiProposal(db, proposalId)).rejects.toThrow(/stale/i);
+    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
+  });
+
   it('acceptAiProposal materializes a knowledge_mutation proposal through the knowledge owner service', async () => {
     const db = testDb();
     await seedKnowledge(['k_parent', 'k_child', 'k_new_parent']);
