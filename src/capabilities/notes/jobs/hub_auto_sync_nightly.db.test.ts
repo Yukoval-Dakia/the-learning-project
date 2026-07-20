@@ -7,6 +7,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { ArtifactBodyBlocks } from '@/core/schema/business';
 import {
   artifact,
   artifact_block_ref,
@@ -312,39 +313,66 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     await resetDb();
   });
 
-  it('durably defers active hubs for mutation jobs and flushes on blur', async () => {
+  it('coalesces repeated active-hub mutation syncs and flushes the latest auto-zone once', async () => {
     await seedKnowledge('k_hub');
     await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
     await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
-    await testDb().insert(editing_presence).values({
-      artifact_id: 'hub1',
-      status: 'editing',
-      last_heartbeat_at: new Date(),
-      editing_started_at: new Date(),
-      pending: [],
-    });
+    await testDb()
+      .insert(editing_presence)
+      .values({
+        artifact_id: 'hub1',
+        status: 'editing',
+        last_heartbeat_at: new Date(),
+        editing_started_at: new Date(),
+        pending: [
+          {
+            patch: {
+              ops: [
+                {
+                  kind: 'append_block',
+                  block: {
+                    type: 'paragraph',
+                    attrs: { id: 'unrelated_pending' },
+                    content: [{ type: 'text', text: 'keep me' }],
+                  },
+                },
+              ],
+            },
+            triggerEventId: null,
+            actorRef: 'other_actor',
+            queuedAtMs: Date.now(),
+          },
+        ],
+      });
 
     const result = await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true });
     expect(result.hubs_deferred_active_edit).toBe(1);
+    await seedArtifact({ id: 'atom2', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'B' });
+    const secondResult = await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true });
+    expect(secondResult.hubs_deferred_active_edit).toBe(1);
     expect(
       await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
     ).toHaveLength(0);
-    expect(
-      (
-        await testDb()
-          .select()
-          .from(editing_presence)
-          .where(eq(editing_presence.artifact_id, 'hub1'))
-      )[0]?.pending,
-    ).toHaveLength(1);
+    const [presence] = await testDb()
+      .select()
+      .from(editing_presence)
+      .where(eq(editing_presence.artifact_id, 'hub1'));
+    expect(presence?.pending.map((item) => item.actorRef)).toEqual([
+      'other_actor',
+      'hub_auto_sync',
+    ]);
 
     await markArtifactIdleAndFlush({ db: testDb(), artifactId: 'hub1' });
     const deferredEvents = await testDb()
       .select()
       .from(event)
       .where(eq(event.action, 'experimental:note_refine_apply'));
-    expect(deferredEvents).toHaveLength(1);
-    expect(deferredEvents[0]?.actor_ref).toBe('hub_auto_sync');
+    expect(deferredEvents).toHaveLength(2);
+    expect(deferredEvents.map((item) => item.actor_ref)).toEqual(['other_actor', 'hub_auto_sync']);
+    const [hub] = await testDb().select().from(artifact).where(eq(artifact.id, 'hub1'));
+    const content = ArtifactBodyBlocks.parse(hub?.body_blocks).content ?? [];
+    expect(content.filter((node) => node.type === 'autoLinksContainer')).toHaveLength(1);
+    expect(autoZoneChildren(hub?.body_blocks)).toHaveLength(2);
   });
 
   it('preserves hub actor provenance for an immediate mutation sync', async () => {

@@ -37,6 +37,19 @@ export interface SerializedQueuedPatch {
   queuedAtMs: number;
 }
 
+export function coalesceQueuedPatchByActor<T extends { actorRef?: string }>(
+  pending: T[],
+  item: T,
+): T[] {
+  if (!item.actorRef) return [...pending, item];
+  const existingIndex = pending.findIndex((queued) => queued.actorRef === item.actorRef);
+  if (existingIndex < 0) return [...pending, item];
+  return pending.flatMap((queued, index) => {
+    if (queued.actorRef !== item.actorRef) return [queued];
+    return index === existingIndex ? [item] : [];
+  });
+}
+
 export interface EditingSessionSnapshot {
   artifact_id: string;
   status: EditingStatus;

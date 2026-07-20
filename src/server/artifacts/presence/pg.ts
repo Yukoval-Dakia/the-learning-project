@@ -38,6 +38,7 @@ import {
   type QueuedPatch,
   type RecordHeartbeatInput,
   type SerializedQueuedPatch,
+  coalesceQueuedPatchByActor,
 } from './types';
 
 // DB row shape — drizzle reads timestamptz as Date, jsonb as parsed array.
@@ -195,7 +196,7 @@ export class PgPresenceStore implements PresenceStore {
       // 不 idle 不 force：入队，写回 commit。
       await tx
         .update(editing_presence)
-        .set({ pending: [...freshPending.kept, item] })
+        .set({ pending: coalesceQueuedPatchByActor(freshPending.kept, item) })
         .where(eq(editing_presence.artifact_id, input.artifactId));
       return false;
     });

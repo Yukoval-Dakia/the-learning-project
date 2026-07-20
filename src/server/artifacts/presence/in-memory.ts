@@ -13,6 +13,7 @@ import {
   type PresenceStore,
   type QueuedPatch,
   type RecordHeartbeatInput,
+  coalesceQueuedPatchByActor,
 } from './types';
 
 interface EditingSessionState {
@@ -81,7 +82,7 @@ export class InMemoryPresenceStore implements PresenceStore {
     const now = input.now ?? new Date();
     const state = this.currentState(input.artifactId, now);
     if (!(await this.isArtifactIdle(input.artifactId, now)) && !this.shouldForceApply(state, now)) {
-      state.pending.push({
+      state.pending = coalesceQueuedPatchByActor(state.pending, {
         patch: input.patch,
         taskResult: input.taskResult,
         triggerEventId: input.triggerEventId ?? null,
