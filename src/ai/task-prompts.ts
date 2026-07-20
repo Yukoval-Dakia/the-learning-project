@@ -687,6 +687,9 @@ ${causeTaxonomyList(profile)}
 // + an in-process domain-tool MCP (read the user's mistakes + knowledge graph);
 // the tool NAMES are resolved at run time, so this prompt refers to them by
 // capability, not by exact mcp__* identifier.
+const CANONICAL_QUESTION_KINDS =
+  'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation';
+
 function buildQuizGenPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, few_shot_examples_md?, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按下面的规则自行选择。requested_kind 若出现，是上游提供的结构提示：理解它代表的答案类型（受限答案、关键词、开放语义或分步推导）与题面结构，优先据此命题；若素材天然支持更合适的结构，可输出实际结构对应的 kind，下游会对每题独立质检。
 若已加载本学科的出题规范 skill（quiz-gen-<…>），先读它声明的「结构描述符」段（这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标上），再按其题面结构 / 采分点 / 答案格式规范出题。
@@ -707,7 +710,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 
 每题输出形状（QuizGenQuestion）：
 {
-  "kind": "与题面和答案结构一致的 QuestionKind",
+  "kind": "${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）",
   "prompt_md": "原创题面 markdown，可含 LaTeX",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A 的正文（不含 A. 序号）", "选项 B 的正文（不含 B. 序号）", ...] | null,
@@ -731,7 +734,7 @@ source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；clos
 - 不需要真原文锚的常规题用 search_grounded（搜背景素材、自己出题），material 留空或省略。
 
 题目要求：
-- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再选择与该结构一致的 QuestionKind；客观选择结构统一用 "choice"。
+- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
 - ${profile.promptFragments.checkQuestionPolicy}
 - choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；reference_md 第一行是正确选项原文。
 - 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。
@@ -809,10 +812,10 @@ structured 树形（StructuredQuestion，二选一）：
 节点 id 随便填占位字符串即可——运行时会**重新生成**全部节点 id，不要依赖你给的 id。
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuestionAuthorDraft：
-{"kind":"与题面和答案结构一致的 QuestionKind","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
+{"kind":"${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
 
 题目要求：
-- 恰好一道题；requested_kind 若出现，将它作为答案类型与题面结构指导，不作字符串闭集目标；kind 写实际生成题目的结构。
+- 恰好一道题；requested_kind 若出现，将它作为答案类型与题面结构指导，不作字符串闭集目标；kind 从 ${CANONICAL_QUESTION_KINDS} 中选择实际生成题目的结构，并遵循输出的 kind 对应的格式规则。
 - requested_difficulty 出现时 difficulty 必须等于它；缺省自定。
 - 每个叶节点（standalone 根 / 每个 sub）**必须**有非空 answers 和/或 analysis——缺答案的题会被整道拒收。
 - choice / true_false：judge_kind_override="exact"，options 给 3–4 个选项，choices_md 同步给选项原文，answers 第一条是正确选项原文。
@@ -947,7 +950,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 
 每题输出形状（SourcedQuestion）：
 {
-  "kind": "与题面和答案结构一致的 QuestionKind",
+  "kind": "${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）",
   "prompt_md": "题面 markdown（忠实抽取，可含 LaTeX）",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A", "选项 B", ...] | null,
@@ -972,7 +975,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 {"questions":[SourcedQuestion, ...],"image_candidates":[SourcingImageCandidate, ...](可省略),"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
 
 题目要求：
-- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再选择与该结构一致的 QuestionKind；客观选择结构统一用 "choice"。
+- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
 - choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。

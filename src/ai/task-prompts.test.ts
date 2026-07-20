@@ -17,6 +17,10 @@ describe('getTaskSystemPrompt', () => {
       const prompt = getTaskSystemPrompt(task, resolveSubjectProfile('math'));
       expect(prompt).toContain('答案类型');
       expect(prompt).toContain('结构');
+      expect(prompt).toContain(
+        'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation',
+      );
+      expect(prompt).toContain('输出的 kind 对应的格式规则');
       expect(prompt).not.toContain('硬约束');
       expect(prompt).not.toContain('整批会被拒收');
       expect(prompt).not.toContain('kind 只能是');
