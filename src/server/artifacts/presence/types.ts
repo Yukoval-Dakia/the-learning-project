@@ -42,12 +42,12 @@ export function coalesceQueuedPatchByActor<T extends { actorRef?: string }>(
   item: T,
 ): T[] {
   if (!item.actorRef) return [...pending, item];
-  const existingIndex = pending.findIndex((queued) => queued.actorRef === item.actorRef);
-  if (existingIndex < 0) return [...pending, item];
-  return pending.flatMap((queued, index) => {
-    if (queued.actorRef !== item.actorRef) return [queued];
-    return index === existingIndex ? [item] : [];
-  });
+  return [...pending.filter((queued) => queued.actorRef !== item.actorRef), item];
+}
+
+export interface ClearPendingByActorInput {
+  artifactId: string;
+  actorRef: string;
 }
 
 export interface EditingSessionSnapshot {
@@ -111,6 +111,9 @@ export interface PresenceStore {
   // force-apply ceiling); otherwise enqueue it for later flush. The actual DB
   // write (persistNoteRefineApply) happens outside any atomic section.
   enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult>;
+
+  // Remove only deferred work owned by one actor; preserve unrelated and legacy actorless FIFO.
+  clearPendingByActor(input: ClearPendingByActorInput): Promise<void>;
 
   // Mark the artifact idle and flush all pending patches in FIFO order.
   markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult>;

@@ -26,6 +26,7 @@ import type { Db } from '@/db/client';
 import { editing_presence } from '@/db/schema';
 
 import {
+  type ClearPendingByActorInput,
   EDITING_FORCE_APPLY_TIMEOUT_MS,
   EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingSessionSnapshot,
@@ -215,6 +216,22 @@ export class PgPresenceStore implements PresenceStore {
       triggerEventId: input.triggerEventId ?? null,
       actorRef: input.actorRef,
       now,
+    });
+  }
+
+  async clearPendingByActor(input: ClearPendingByActorInput): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ pending: editing_presence.pending })
+        .from(editing_presence)
+        .where(eq(editing_presence.artifact_id, input.artifactId))
+        .for('update')
+        .limit(1);
+      if (!row) return;
+      await tx
+        .update(editing_presence)
+        .set({ pending: row.pending.filter((item) => item.actorRef !== input.actorRef) })
+        .where(eq(editing_presence.artifact_id, input.artifactId));
     });
   }
 

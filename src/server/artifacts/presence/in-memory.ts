@@ -2,6 +2,7 @@ import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-
 import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
 
 import {
+  type ClearPendingByActorInput,
   EDITING_FORCE_APPLY_TIMEOUT_MS,
   EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingSessionSnapshot,
@@ -101,6 +102,11 @@ export class InMemoryPresenceStore implements PresenceStore {
       actorRef: input.actorRef,
       now,
     });
+  }
+
+  async clearPendingByActor(input: ClearPendingByActorInput): Promise<void> {
+    const state = this.sessions.get(input.artifactId);
+    if (state) state.pending = state.pending.filter((item) => item.actorRef !== input.actorRef);
   }
 
   async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {

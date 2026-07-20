@@ -326,6 +326,12 @@ describe('buildHubAutoSyncNightlyHandler', () => {
         editing_started_at: new Date(),
         pending: [
           {
+            patch: { ops: [{ kind: 'append_block', block: { type: 'paragraph' } }] },
+            triggerEventId: null,
+            actorRef: 'hub_auto_sync',
+            queuedAtMs: Date.now() - 1,
+          },
+          {
             patch: {
               ops: [
                 {
@@ -373,6 +379,60 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     const content = ArtifactBodyBlocks.parse(hub?.body_blocks).content ?? [];
     expect(content.filter((node) => node.type === 'autoLinksContainer')).toHaveLength(1);
     expect(autoZoneChildren(hub?.body_blocks)).toHaveLength(2);
+  });
+
+  it('clears a stale deferred hub patch when mutation recompute is a no-op', async () => {
+    await seedKnowledge('k_hub');
+    await seedArtifact({
+      id: 'hub1',
+      type: 'note_hub',
+      knowledgeIds: ['k_hub'],
+      bodyBlocks: {
+        type: 'doc',
+        content: [
+          {
+            type: 'autoLinksContainer',
+            attrs: { id: 'hub1__auto_links', title: 'Related' },
+            content: [],
+          },
+        ],
+      },
+    });
+    await testDb()
+      .insert(editing_presence)
+      .values({
+        artifact_id: 'hub1',
+        status: 'editing',
+        last_heartbeat_at: new Date(),
+        editing_started_at: new Date(),
+        pending: [
+          {
+            patch: { ops: [{ kind: 'append_block', block: { type: 'paragraph' } }] },
+            triggerEventId: null,
+            actorRef: 'hub_auto_sync',
+            queuedAtMs: Date.now() - 2,
+          },
+          {
+            patch: { ops: [{ kind: 'append_block', block: { type: 'paragraph' } }] },
+            triggerEventId: null,
+            actorRef: 'other_actor',
+            queuedAtMs: Date.now() - 1,
+          },
+          {
+            patch: { ops: [{ kind: 'append_block', block: { type: 'paragraph' } }] },
+            triggerEventId: null,
+            queuedAtMs: Date.now(),
+          },
+        ],
+      });
+
+    await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true });
+
+    const [presence] = await testDb()
+      .select()
+      .from(editing_presence)
+      .where(eq(editing_presence.artifact_id, 'hub1'));
+    expect(presence?.pending.map((item) => item.actorRef)).toEqual(['other_actor', undefined]);
   });
 
   it('preserves hub actor provenance for an immediate mutation sync', async () => {

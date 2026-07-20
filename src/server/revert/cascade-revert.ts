@@ -507,6 +507,9 @@ export async function orchestrateCascadeRevert(
     },
     compensationEventIds,
   };
+  // A top-level Db means the transaction above has committed. With a caller Tx it
+  // only committed a SAVEPOINT, so that caller must enqueue after its outer commit.
+  // The structural count limits synchronization to actual knowledge-edge archives.
   if ('$client' in db && structuralRowsArchived > 0) await enqueueHubAutoSync();
   return result;
 }

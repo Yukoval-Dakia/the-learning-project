@@ -110,6 +110,44 @@ describe('enqueueOrApplyNoteRefinePatch', () => {
     expect((await getEditingSessionSnapshot('art_1'))?.pending_patches).toBe(1);
   });
 
+  it('moves a replaced actor patch to the queue end and preserves legacy FIFO', async () => {
+    await recordEditingHeartbeat({ artifactId: 'art_1', status: 'editing', now: T0 });
+    await enqueueOrApplyNoteRefinePatch({
+      db,
+      artifactId: 'art_1',
+      patch,
+      actorRef: 'hub_auto_sync',
+      now: at(1_000),
+    });
+    await enqueueOrApplyNoteRefinePatch({
+      db,
+      artifactId: 'art_1',
+      patch,
+      now: at(2_000),
+    });
+    await enqueueOrApplyNoteRefinePatch({
+      db,
+      artifactId: 'art_1',
+      patch,
+      actorRef: 'other_actor',
+      now: at(3_000),
+    });
+    await enqueueOrApplyNoteRefinePatch({
+      db,
+      artifactId: 'art_1',
+      patch,
+      actorRef: 'hub_auto_sync',
+      now: at(4_000),
+    });
+
+    await markArtifactIdleAndFlush({ db, artifactId: 'art_1', now: at(5_000) });
+    expect(persistNoteRefineApply.mock.calls.map(([input]) => input.actorRef)).toEqual([
+      undefined,
+      'other_actor',
+      'hub_auto_sync',
+    ]);
+  });
+
   it('force-applies a patch once editing exceeds the force-apply timeout', async () => {
     await recordEditingHeartbeat({ artifactId: 'art_1', status: 'editing', now: T0 });
     // Keep the heartbeat alive so isArtifactIdle does not short-circuit; the

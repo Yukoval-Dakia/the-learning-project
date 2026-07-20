@@ -34,7 +34,10 @@
 // TipTap node already passes `attrs` through (passthrough schema), so no node
 // schema change is required.
 
-import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
+import {
+  clearPendingByActor,
+  enqueueOrApplyNoteRefinePatch,
+} from '@/server/artifacts/editing-session';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -312,7 +315,12 @@ export async function runHubAutoSyncNightly(
       result.cross_links_desired_total += curated.length;
 
       const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
-      if (!patch) continue;
+      if (!patch) {
+        if (deps.skipActiveHubs) {
+          await clearPendingByActor({ artifactId: hub.id, actorRef: ACTOR_REF });
+        }
+        continue;
+      }
 
       const input = {
         db,

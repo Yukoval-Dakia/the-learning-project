@@ -2,6 +2,7 @@ import { db } from '@/db/client';
 
 import { PgPresenceStore } from './presence/pg';
 import type {
+  ClearPendingByActorInput,
   EditingSessionSnapshot,
   EnqueueOrApplyInput,
   EnqueueOrApplyResult,
@@ -43,6 +44,10 @@ export function enqueueOrApplyNoteRefinePatch(
   input: EnqueueOrApplyInput,
 ): Promise<EnqueueOrApplyResult> {
   return getPresenceStore().enqueueOrApplyNoteRefinePatch(input);
+}
+
+export function clearPendingByActor(input: ClearPendingByActorInput): Promise<void> {
+  return getPresenceStore().clearPendingByActor(input);
 }
 
 export function markArtifactIdleAndFlush(

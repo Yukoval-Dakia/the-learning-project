@@ -26,7 +26,7 @@ async function handleLegacyKnowledgeDecision(
 
     if (body.decision === 'accept') {
       const result = await acceptProposal(db, id);
-      if (result.kind === 'merge_applied') await enqueueHubAutoSync();
+      await enqueueHubAutoSync();
       return Response.json(result);
     }
 
