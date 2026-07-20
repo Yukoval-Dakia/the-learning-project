@@ -16,6 +16,7 @@ describe('QuestionDetailPage delete association modal (YUK-298)', () => {
         stem="阅读材料"
         notation={null}
         counts={{ attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0, children: 2 }}
+        hasAssociations={true}
         pending={false}
         onClose={() => {}}
         onConfirm={onConfirm}
@@ -31,5 +32,28 @@ describe('QuestionDetailPage delete association modal (YUK-298)', () => {
     expect((deleteButton as HTMLButtonElement).disabled).toBe(false);
     await user.click(deleteButton);
     expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
+  it('requires the confirmation phrase when only the aggregate association flag is known', async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DeleteModal
+        stem="旧接口题目"
+        notation={null}
+        counts={{ attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0, children: 0 }}
+        hasAssociations={true}
+        pending={false}
+        onClose={() => {}}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(screen.getByText(/旧接口未返回分类计数/)).toBeTruthy();
+    const deleteButton = screen.getByRole('button', { name: '从题库移除' });
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
+
+    await user.type(screen.getByPlaceholderText('删除'), '删除');
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(false);
   });
 });
