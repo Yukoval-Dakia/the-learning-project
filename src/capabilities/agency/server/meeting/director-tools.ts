@@ -36,6 +36,7 @@ import {
   SPAWN_TOOL_NAME,
 } from '@/server/agency/scout/tool-names';
 import { conjectureKey } from '@/server/conjectures/evidence';
+import { getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -149,7 +150,7 @@ const PRIMARY_EVIDENCE_ACTIONS = [
 async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
   if (refs.length === 0) return false;
   const rows = await db
-    .select({ id: event.id })
+    .select({ id: event.id, action: event.action })
     .from(event)
     .where(
       and(
@@ -161,7 +162,10 @@ async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
         ),
       ),
     );
-  return rows.length === refs.length;
+  if (rows.length !== refs.length) return false;
+  const reviewIds = rows.filter((row) => row.action === 'review').map((row) => row.id);
+  const activeReviews = await Promise.all(reviewIds.map((id) => getFailureAttemptById(db, id)));
+  return activeReviews.every((review) => review !== null);
 }
 
 export interface BuildDirectorServerOpts {

@@ -273,6 +273,67 @@ describe('runResearchMeetingDirector — pipeline', () => {
     });
   });
 
+  it('rejects a corrected failed review event as primary evidence', async () => {
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          id: 'review_corrected',
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'review',
+          subject_kind: 'question',
+          subject_id: 'q_review_corrected',
+          outcome: 'failure',
+          payload: {},
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        },
+        {
+          id: 'correct_review_corrected',
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: 'review_corrected',
+          outcome: 'success',
+          payload: {
+            correction_kind: 'retract',
+            reason_md: 'review was recorded incorrectly',
+            affected_refs: [{ kind: 'question', id: 'q_review_corrected' }],
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: new Date(NOW.getTime() + 1_000),
+        },
+      ]);
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['review_corrected'],
+      });
+      return {
+        task_run_id: 'director_run_corrected_review_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(result.proposals_created).toBe(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+  });
+
   it('rejects a successful review event as primary evidence', async () => {
     await testDb().insert(event).values({
       id: 'review_success',
