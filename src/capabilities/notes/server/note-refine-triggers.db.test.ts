@@ -7,17 +7,85 @@
 //   - RED LINE (ADR-0035): the emit path NEVER writes mastery_state (read-only).
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MASTERY_PROGRESS_ACTION,
   emitMasteryProgressSignal,
   readMasteryProgress,
 } from '@/capabilities/notes/server/mastery-progress-signal';
-import { event, mastery_state } from '@/db/schema';
+import { enqueueNoteRefineTrigger } from '@/capabilities/notes/server/note-refine-triggers';
+import { event, job_events, mastery_state } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+describe('note refine rolling debounce', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('keeps a cross-process claim for 60 minutes across fixed-slot boundaries', async () => {
+    const bossSend = vi.fn().mockResolvedValue('job_1');
+    const first = new Date('2026-05-28T12:59:55.000Z');
+
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_boundary',
+        kind: 'mark_wrong',
+        now: first,
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'enqueued' });
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_boundary',
+        kind: 'mark_wrong',
+        now: new Date('2026-05-28T13:00:01.000Z'),
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'skipped:debounced' });
+
+    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(
+      await testDb()
+        .select()
+        .from(job_events)
+        .where(eq(job_events.business_id, 'mark_wrong:art_boundary')),
+    ).toHaveLength(1);
+  });
+
+  it('releases the rolling claim when pg-boss send fails so the trigger can retry', async () => {
+    const bossSend = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boss unavailable'))
+      .mockResolvedValueOnce('job_retry');
+    const now = new Date('2026-05-28T12:30:00.000Z');
+
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_retry',
+        kind: 'mark_wrong',
+        now,
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'failed', error: 'boss unavailable' });
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_retry',
+        kind: 'mark_wrong',
+        now: new Date(now.getTime() + 1_000),
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'enqueued' });
+
+    expect(bossSend).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('mastery-progress-signal (ADR-0040 决定2 p(L) delta 埋点)', () => {
   beforeEach(async () => {

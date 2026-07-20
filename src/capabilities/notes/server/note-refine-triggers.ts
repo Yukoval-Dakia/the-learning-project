@@ -1,8 +1,10 @@
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
+import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 
@@ -40,7 +42,7 @@ type BossSend = (
       trigger_event_id?: string;
     };
   },
-  options: { singletonKey: string; singletonSeconds: number },
+  options?: { singletonKey: string; singletonSeconds: number },
 ) => Promise<unknown>;
 
 export type NoteRefineTriggerResult =
@@ -85,12 +87,51 @@ export async function enqueueNoteRefineTrigger(input: {
     return { status: 'skipped:test_env', artifact_id: input.artifactId, kind: input.kind };
   }
 
+  let claimId: number | undefined;
   try {
     let send = input.bossSend;
     if (!send) {
       const boss = await getStartedBoss();
       send = boss.send.bind(boss);
     }
+    if (input.db) {
+      const claimCutoff = new Date(
+        (input.now ?? new Date()).getTime() - NOTE_REFINE_TRIGGER_DEBOUNCE_MS,
+      );
+      const claimed = await input.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`note_refine:${key}`}))`);
+        const existing = await tx
+          .select({ occurred_at: job_events.occurred_at })
+          .from(job_events)
+          .where(
+            and(
+              eq(job_events.business_table, 'note_refine_debounce'),
+              eq(job_events.business_id, key),
+              gt(job_events.occurred_at, claimCutoff),
+            ),
+          )
+          .orderBy(desc(job_events.occurred_at))
+          .limit(1);
+        if (existing.length > 0) return false;
+
+        const inserted = await tx
+          .insert(job_events)
+          .values({
+            business_table: 'note_refine_debounce',
+            business_id: key,
+            event_type: 'note_refine.enqueued',
+            payload: {},
+            occurred_at: input.now ?? new Date(),
+          })
+          .returning({ id: job_events.id });
+        claimId = inserted[0]?.id;
+        return true;
+      });
+      if (!claimed) {
+        return { status: 'skipped:debounced', artifact_id: input.artifactId, kind: input.kind };
+      }
+    }
+
     const jobId = await send(
       'note_refine',
       {
@@ -102,10 +143,12 @@ export async function enqueueNoteRefineTrigger(input: {
           trigger_event_id: input.triggerEventId,
         },
       },
-      {
-        singletonKey: key,
-        singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
-      },
+      input.db
+        ? undefined
+        : {
+            singletonKey: key,
+            singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
+          },
     );
     return {
       status: jobId === null ? 'skipped:debounced' : 'enqueued',
@@ -113,6 +156,16 @@ export async function enqueueNoteRefineTrigger(input: {
       kind: input.kind,
     };
   } catch (err) {
+    if (claimId !== undefined && input.db) {
+      try {
+        await input.db.delete(job_events).where(eq(job_events.id, claimId));
+      } catch (cleanupErr) {
+        console.warn(
+          `[note_refine:${input.kind}] claim cleanup failed for ${input.artifactId}:`,
+          cleanupErr,
+        );
+      }
+    }
     const error = err instanceof Error ? err.message : String(err);
     console.warn(`[note_refine:${input.kind}] enqueue failed for ${input.artifactId}:`, err);
     return { status: 'failed', artifact_id: input.artifactId, kind: input.kind, error };

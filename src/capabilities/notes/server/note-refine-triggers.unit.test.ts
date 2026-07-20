@@ -77,6 +77,16 @@ describe('note refine trigger producer', () => {
     expect(bossSend).not.toHaveBeenCalled();
   });
 
+  it('preserves test-environment skip semantics before touching pg-boss', async () => {
+    await expect(
+      enqueueNoteRefineTrigger({
+        artifactId: 'art_test',
+        kind: 'mark_wrong',
+        env: { ...process.env, NODE_ENV: 'test' },
+      }),
+    ).resolves.toMatchObject({ status: 'skipped:test_env' });
+  });
+
   // RED-2 (YUK-358 决定7) — the verify kind is OPT-IN (default-OFF). Unlike the
   // other 4 kinds (default-ON), an UNSET WAVE6_TRIGGER_VERIFY_ENABLED flag must
   // skip the enqueue so deleting note_verify's dead proposal does NOT silently
