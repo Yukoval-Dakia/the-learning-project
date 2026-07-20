@@ -14,7 +14,7 @@
 
 - **driver 仅做 cockpit / handoff 对账**：没有 merge-ready implementation lane；不再启动新实现线。
 - **PR #1003 / YUK-686**：owner 已授权删除 Node 22，并已在 `f1ed3662` 同步 Node 24 公开合同；当前 frozen install/Rust parity 因 lockfile 缺 `@types/node@22.19.18` 失败，OCR 为外部 TLS 下载失败。修 lockfile 后 exact-head 重跑，不恢复 Node 22 lane。
-- **Linear 全量重数受阻**：官方 MCP 按 priority 0–4 分区仅返回 137 票并全部错误标为 `hasNextPage=false`，且漏掉已知 YUK-745，无法生成可信全量数。早先快照加已知最小变更的 sanity 下界为 total 745 / Done 620 / Backlog 89 / In Progress 11 / Canceled 17 / Duplicate 8（strict open 100）；这不是宣称无其他并发变更的精确现值。
+- **Backlog 净额已对清**：起点 open 106；截至最后可信全量快照 744/open101，毛关闭/取消 12、同期新建 Backlog 7，净减 5。快照后已知 YUK-744/YUK-595 Done（−2）与 YUK-745 新建（+1），无其他并发变更时推导 open 100，即本轮毛关闭/取消 14、新建 8、净减 6。MOVE_BACKLOG 与 In Progress→Backlog 只做状态卫生，不减少 open。
 - **owner 工作树保护**：主工作树 `.codex/*`、`AGENTS.md` 与两份未跟踪 design doc 不 stage、不改写、不清理。
 
 ## NEXT（就绪，排队）
