@@ -14,6 +14,7 @@
 //   • markdown 经 @/ui/lib/math-markdown；notation 由 detail.subject 对应的真实 profile
 //     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
+import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -63,9 +64,7 @@ const DR_SOURCE_FALLBACK = {
   tone: 'neutral' as Tone,
   icon: 'doc' as LoomIconName,
 };
-function srcMeta(source: string) {
-  return DR_SOURCE[source] ?? DR_SOURCE_FALLBACK;
-}
+const srcMeta = makeLookup(DR_SOURCE, DR_SOURCE_FALLBACK);
 
 // question.kind（QuestionKind enum + QUESTION_KIND_OPTIONS 标签）→ label/icon。
 const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
@@ -80,20 +79,21 @@ const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   derivation: { label: '推导', icon: 'fx' },
 };
 const QKIND_FALLBACK = { label: '题', icon: 'quiz' as LoomIconName };
-function kindMeta(kind: string) {
-  return QKIND[kind] ?? QKIND_FALLBACK;
-}
+const kindMeta = makeLookup(QKIND, QKIND_FALLBACK);
 
 // difficulty 1-5 → tone + word（data-review.jsx DR_DIFF）。
-const DR_DIFF: Record<number, { tone: Tone; word: string }> = {
+const DR_DIFF: Record<string, { tone: Tone; word: string }> = {
   1: { tone: 'good', word: '易' },
   2: { tone: 'good', word: '较易' },
   3: { tone: 'hard', word: '中等' },
   4: { tone: 'again', word: '较难' },
   5: { tone: 'again', word: '难' },
 };
+const DR_DIFF_FALLBACK = { tone: 'neutral' as Tone, word: '难度' };
+const lookupDiffMeta = makeLookup(DR_DIFF, DR_DIFF_FALLBACK);
 function diffMeta(d: number) {
-  return DR_DIFF[d] ?? { tone: 'neutral' as Tone, word: `难度 ${d}` };
+  const meta = lookupDiffMeta(String(d));
+  return meta === DR_DIFF_FALLBACK ? { ...meta, word: `难度 ${d}` } : meta;
 }
 
 // verify 状态（data-review.jsx DR_VERIFY）→ label/tone/icon。
