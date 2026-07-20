@@ -18,7 +18,7 @@
 | `item_prior_backfill` | `20 4` | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）|
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
-| `research_meeting_nightly` | `10 4` | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
+| `research_meeting_nightly` | `5 4` | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
 | `embed_backfill` | `40 4` | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
 | `recalibration_nightly` | `50 4` | practice/manifest | 攒够 label → b_calib firm-up（compose 前就位）|
 | `answer_class_backfill` | `0 5` | practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）|
