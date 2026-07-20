@@ -979,6 +979,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 - choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
+- derivation：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查推导步骤，避免缺少 steps 判分契约。
 - computation：只验最终答案可 exact；验方法要点用 semantic + required_points。
 - knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。
 - whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。

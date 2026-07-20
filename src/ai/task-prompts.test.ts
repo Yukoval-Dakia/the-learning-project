@@ -32,6 +32,9 @@ describe('getTaskSystemPrompt', () => {
     const sourcingPrompt = getTaskSystemPrompt('SourcingTask', resolveSubjectProfile('math'));
     expect(sourcingPrompt).toContain('无论是否偏离上游 kinds 提示');
     expect(sourcingPrompt).not.toContain('无论是否偏离 requested_kind');
+    expect(sourcingPrompt).toContain(
+      'derivation：judge_kind_override="semantic"，rubric_json.required_points',
+    );
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
