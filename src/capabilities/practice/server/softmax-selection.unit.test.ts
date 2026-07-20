@@ -32,4 +32,18 @@ describe('statisticalWeights candidate isolation', () => {
     expect(Object.is(inPair, solo)).toBe(true);
     expect(Object.is(inReorderedTriple, solo)).toBe(true);
   });
+
+  it('prefers uncertainty-penalized diagnostic score over raw MFI', () => {
+    expect(weightFor([signal('diagnostic-first', 0.2, 0.08)], 'diagnostic-first')).toBe(0.08);
+  });
+
+  it('downweights a difficulty-proxy anchor while preserving the positivity floor', () => {
+    const proxy = signal('proxy', 0.2, 0.1);
+    proxy.bSource = 'difficulty_proxy';
+    const emptyProxy = signal('empty-proxy');
+    emptyProxy.bSource = 'difficulty_proxy';
+
+    expect(weightFor([proxy], 'proxy')).toBeCloseTo(0.03);
+    expect(weightFor([emptyProxy], 'empty-proxy')).toBeGreaterThan(0);
+  });
 });

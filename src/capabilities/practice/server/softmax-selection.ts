@@ -20,7 +20,7 @@
 // 控制流（三条路径，两级 fallback，**永不 throw 出去**——日常工具不能挂）：
 //   softmax 主路：候选信号 → L2 LLM 权重 → sampler 抽样 → 落题 + 记真 π_i。
 //     ├─ L1 fallback（LLM/runTask 挂 OR parse 挂 OR 空）：纯统计 sampler，
-//     │    用 mfiScore（退 diagnosticScore）当权重跑 sampleByWeight（仍记真 π_i）。
+//     │    用 diagnosticScore（退 mfiScore；弱锚降权）当权重跑 sampleByWeight（仍记真 π_i）。
 //     └─ L2 fallback（候选收集本身挂 / catastrophic）：退确定性 composeDailyStream
 //          （legacy，π_i 不记）。
 //
@@ -30,6 +30,7 @@
 
 import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
+import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
@@ -38,6 +39,7 @@ import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInput,
   parseSelectionOrchestratorOutput,
+  preselectSelectionOrchestratorCandidates,
 } from '@/server/ai/selection-orchestrator';
 import {
   type CandidateInput,
@@ -547,7 +549,8 @@ async function tryLlmOrchestration(
   loadMemoryPrior?: LoadMemoryPriorFn,
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
-    const candidateBlock = buildSelectionOrchestratorTaskInput(samplable);
+    const orchestratedCandidates = preselectSelectionOrchestratorCandidates(samplable);
+    const candidateBlock = buildSelectionOrchestratorTaskInput(orchestratedCandidates);
     const candidateText = candidateBlock.candidates;
     if (candidateText.trim().length === 0) {
       // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
@@ -566,7 +569,7 @@ async function tryLlmOrchestration(
     const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
     const fn = runTaskFn ?? (await defaultRunTaskFn());
     const result = await fn('SelectionOrchestratorTask', taskInput, { db });
-    const refIds = samplable.map((s) => s.refId);
+    const refIds = orchestratedCandidates.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
     // throw message 如 'no valid candidates after refId ⊆ filter + dedup' 自带诊断上下文），
@@ -579,7 +582,7 @@ async function tryLlmOrchestration(
     //   → 违反 ADR-0043 §7 positivity（每个 samplable 候选都需 π_i>0，否则它永不被选中、也
     //   永不被记进 IPW 资产 → active-PPI 估计偏置）。
     //   修复：FLOOR-FILL——保留 LLM 给出的权重（它的编排信号），对 LLM 漏掉的每个 samplable
-    //   候选补一个**统计**权重（mfiScore → 退 diagnosticScore → 退 STAT_FLOOR_EPSILON），
+    //   候选补一个**统计**权重（diagnosticScore → 退 mfiScore → 退 STAT_FLOOR_EPSILON；弱锚降权），
     //   使其留在加权池里、π_i>0。这样既不丢候选，又不抹掉 LLM 对它排过的那些的偏好。
     const llmWeightByRef = new Map<string, number>(parsed.map((c) => [c.refId, c.weight]));
     const weighted: WeightedCandidate[] = samplable.map((s) => ({
@@ -635,19 +638,24 @@ async function defaultRunTaskFn(): Promise<RunTaskFn> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// L1 fallback：纯统计 sampler。用 mfiScore（退 diagnosticScore，再退小正权）当权重。
+// L1 fallback：纯统计 sampler。用 diagnosticScore（退 mfiScore，再退小正权；弱锚降权）当权重。
 // ───────────────────────────────────────────────────────────────────────────
 
 /** 无任何 MFI/诊断信号时的小正权——保 π_i>0（positivity）、softmax 退化为近均匀。 */
 const STAT_FLOOR_EPSILON = 0.01;
 
 /**
- * 一条 samplable 候选的统计权重：mfiScore 优先；缺则 diagnosticScore；都缺（无 θ̂/b）
+ * 一条 samplable 候选的统计权重：diagnosticScore 优先；缺则 mfiScore；都缺（无 θ̂/b）
  * 给 STAT_FLOOR_EPSILON 小正权（仍可被抽中，π_i>0 保 positivity——符合「无信号 → 不偏好」
  * 语义）。L1 统计 fallback 与 FINDING 1 的 floor-fill 共用此函数（单一真相，权重语义一致）。
  */
 function statisticalFloorWeight(s: CollectedSignal): number {
-  return s.mfiScore ?? s.diagnosticScore ?? STAT_FLOOR_EPSILON;
+  const signalWeight = s.diagnosticScore ?? s.mfiScore;
+  if (signalWeight === undefined) return STAT_FLOOR_EPSILON;
+  return Math.max(
+    STAT_FLOOR_EPSILON,
+    signalWeight * (s.bSource === 'difficulty_proxy' ? DIFFICULTY_PROXY_WEIGHT : 1),
+  );
 }
 
 /**

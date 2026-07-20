@@ -285,4 +285,26 @@ describe('mem0 learner prior advisory block (B3)', () => {
     expect(input.memoryPrior).toContain('<ADVISORY_ONLY>');
     expect(input.memoryPrior).toContain('FACT: often benefits from an example');
   });
+
+  it('deterministically preselects and caps candidates by diagnostic then MFI score', () => {
+    const candidates = Array.from({ length: 30 }, (_, index) =>
+      questionSignal({
+        refId: `q-${index.toString().padStart(2, '0')}`,
+        diagnosticScore: index < 2 ? undefined : index / 100,
+        mfiScore: index < 2 ? 1 - index / 10 : 0,
+      }),
+    );
+
+    const first = buildSelectionOrchestratorTaskInput(candidates).candidates.split('\n');
+    const second = buildSelectionOrchestratorTaskInput([...candidates].reverse()).candidates.split(
+      '\n',
+    );
+
+    expect(first).toHaveLength(24);
+    expect(second).toEqual(first);
+    expect(first[0]).toContain('refId=q-00');
+    expect(first[1]).toContain('refId=q-01');
+    expect(first[2]).toContain('refId=q-29');
+    expect(first).not.toContainEqual(expect.stringContaining('refId=q-02'));
+  });
 });

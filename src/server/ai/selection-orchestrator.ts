@@ -23,6 +23,7 @@ import {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
   MEM0_PRIOR_ITEM_CHAR_CAP,
+  SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from '@/capabilities/practice/server/selection-constants';
 import {
   type SelectionOrchestratorCandidateT,
@@ -163,12 +164,26 @@ export function buildMemoryPriorAdvisoryBlock(memories: readonly string[]): stri
   return `${MEMORY_PRIOR_OPEN}${inner}${MEMORY_PRIOR_CLOSE}`;
 }
 
+export function preselectSelectionOrchestratorCandidates(
+  candidates: CollectedSignal[],
+): CollectedSignal[] {
+  return [...candidates]
+    .sort(
+      (a, b) =>
+        (b.diagnosticScore ?? b.mfiScore ?? 0) - (a.diagnosticScore ?? a.mfiScore ?? 0) ||
+        a.refId.localeCompare(b.refId),
+    )
+    .slice(0, SELECTION_ORCHESTRATOR_CANDIDATE_CAP);
+}
+
 /** Build the exact user-input object serialized by runTask. */
 export function buildSelectionOrchestratorTaskInput(
   candidates: CollectedSignal[],
   memories: readonly string[] = [],
 ): SelectionOrchestratorTaskInput {
-  const candidateBlock = buildSelectionOrchestratorInput(candidates);
+  const candidateBlock = buildSelectionOrchestratorInput(
+    preselectSelectionOrchestratorCandidates(candidates),
+  );
   const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
   return memoryPrior ? { candidates: candidateBlock, memoryPrior } : { candidates: candidateBlock };
 }

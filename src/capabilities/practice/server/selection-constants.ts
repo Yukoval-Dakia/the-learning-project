@@ -65,6 +65,13 @@ export const MEM0_PRIOR_ITEM_CHAR_CAP = 240;
 export const MEM0_PRIOR_BLOCK_CHAR_CAP = 1_200;
 
 /**
+ * SelectionOrchestratorTask candidate prompt cap. Candidates are deterministically preselected by
+ * diagnostic score (falling back to MFI), so L2 prompt size stays bounded without changing the
+ * complete statistical sampling pool or its positivity guarantees.
+ */
+export const SELECTION_ORCHESTRATOR_CANDIDATE_CAP = 24;
+
+/**
  * P2 D2 / A8 — dark-ship flag for the `misconceptionRecurrence` selection signal
  * (candidate-signals.ts aggregateMisconceptionRecurrence).
  *
