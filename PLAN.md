@@ -27,7 +27,7 @@
 
 ## PARKED（已捕获，不是现在）
 
-- **研究板终版 65 票**：owner/product/scientific、design preflight、architecture/research、external/ops、data/statistics、large-program 六类；完整 65-ID 清单与逐票理由见本 session backlog-engine 终验产物（107/107 equality 已过）。
+- **研究板终版 65 票**：owner/product/scientific、design preflight、architecture/research、external/ops、data/statistics、large-program 六类；完整 65-ID 清单与动作边界见 `docs/planning/2026-07-20-backlog-reconciliation.md`（107/107 equality 已过）。
 - **补扫新增研究/大项**：YUK-213、YUK-346、YUK-588、YUK-605、YUK-675；YUK-268/287/524/550/685 保持 Backlog；YUK-310/354 keep active；YUK-322 可 close Done；YUK-373/532 可 cancel obsolete；YUK-555 仅在 cap acceptance 搬入 YUK-605 后 cancel。
 - **四条 acceptance-ready 新 issue 草案（尚未获 filing 授权）**：ASR/TTS audio evidence path · rating cause semantics 移入 SubjectProfile · LearningRecord single-writer/CAS/transition-policy（已证非 YUK-503 duplicate）· misconception recurrence aggregate batching。不得只留脑内；下一拍获准后建 Linear。
 - **YUK-679 扩 scope，不另立重复票**：纳入 `srtOutcome` + continuous-credit/Fisher 数值路径的 Rust port 或 ADR-0046 exemption 裁决。
