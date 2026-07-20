@@ -37,7 +37,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞：0**：#1003 merge `f6b6ad0b`，#1005 merge `57c5edde`；本轮无残留 open PR。
+- **实现 PR 在飞：0；docs closeout 在飞：1**：#1003 merge `f6b6ad0b`，#1005 merge `57c5edde`；当前仅本 `PLAN.md` closeout PR #1006 在飞，无残留 implementation PR。
 - **遗留 worktree**：`/Users/yuqi/yukoval-projects/the-learning-project/.claude/worktrees/pr1000-ci-dedup` 仍可能被另一 session 持有；#1003 已 merge，但未经持有者确认不得删除或复用。Harness 临时 agent worktree由其自行清理。
 - **本地主工作树保护清单**：`.codex/hooks.json`、`AGENTS.md`、`.codex/hooks/codex-remember-session-start.sh`、`.codex/hooks/codex-remember-stop.sh`、`.codex/hooks/codex_extract.py`、`.codex/hooks/resolve-remember-plugin.sh`、`docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`、`docs/design/2026-07-19-evidence-supply-v2-architecture.md`。
 - **Docker 当前轻量快照**：2 images / 461.2 MB、build cache 0；containers 0；volumes 5 / 542 MB。此前运行中的测试容器已退出；volumes 仍按指令未清理。
