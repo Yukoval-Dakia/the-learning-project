@@ -5,6 +5,18 @@ import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
+  it('uses answer-class and structure guidance instead of closed-set kind contracts', () => {
+    for (const task of ['QuizGenTask', 'QuestionAuthorTask', 'SourcingTask'] as const) {
+      const prompt = getTaskSystemPrompt(task, resolveSubjectProfile('math'));
+      expect(prompt).toContain('答案类型');
+      expect(prompt).toContain('结构');
+      expect(prompt).not.toContain('硬约束');
+      expect(prompt).not.toContain('整批会被拒收');
+      expect(prompt).not.toContain('kind 只能是');
+      expect(prompt).not.toContain('question_type —— 从题面判题型');
+    }
+  });
+
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
   // (was wenyan), so the default NoteGenerateTask prompt carries the general
   // role + voice, NOT wenyan's classical-Chinese fragments.

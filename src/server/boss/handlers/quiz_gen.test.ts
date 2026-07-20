@@ -1460,36 +1460,28 @@ describe('runQuizGen', () => {
     expect(rows.every((r) => !r.knowledge_ids.includes('k_arch_same'))).toBe(true);
   });
 
-  // YUK-226 S2-5b F3 (PR #320 round-4) — same pre-persist assert for the 题型 pin: an agent
-  // that produced a different kind than requested must FAIL the run (not persist an
-  // off-target draft). The catch writes a failure event + re-throws → pg-boss retries.
-  it('throws (no insert, no enqueue) when the agent produces the wrong requested kind', async () => {
+  it('persists and verifies actual output when a requested kind is only guidance', async () => {
     await seedKnowledge({ id: 'k1' });
-    // VALID_OUTPUT's questions are short_answer + choice; we pin 'reading' → mismatch.
-    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind_violation');
+    // VALID_OUTPUT's questions are short_answer + choice; requested reading is guidance only.
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind_guidance');
     const enqueueQuizVerify = vi.fn(async () => {});
 
-    await expect(
-      runQuizGen({
-        db: testDb(),
-        trigger: 'knowledge',
-        refId: 'k1',
-        kind: 'reading',
-        runAgentTaskFn,
-        enqueueQuizVerify,
-        buildTavilyMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
-      }),
-    ).rejects.toThrow(/pinned kind='reading' but agent produced question of kind 'short_answer'/);
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      kind: 'reading',
+      runAgentTaskFn,
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
 
+    expect(result.status).toBe('ready');
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
-    expect(rows).toHaveLength(0);
-    expect(enqueueQuizVerify).not.toHaveBeenCalled();
-    const events = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:quiz_gen'));
-    expect(events.some((e) => e.outcome === 'failure')).toBe(true);
+    expect(rows.map((row) => row.kind)).toEqual(['short_answer', 'choice']);
+    expect(rows.every((row) => row.answer_class !== null)).toBe(true);
+    expect(enqueueQuizVerify).toHaveBeenCalledOnce();
   });
 
   it('persists when the agent honours the pinned kind (computation↔calculation normalized)', async () => {
