@@ -539,7 +539,7 @@ describe('proposal signals — corrective KPI exclusion (P5.6)', () => {
 
   const correctiveSource = {
     id: 'proposal_corr',
-    kind: 'variant_question',
+    kind: 'variant_question' as const,
     payload: { cooldown_key: 'variant_question:q1:a1', suggestion_kind: 'corrective' as const },
   };
   const proactiveSource = {
@@ -600,6 +600,59 @@ describe('proposal signals — corrective KPI exclusion (P5.6)', () => {
     // total === 0 → filtered out of the roll-up (no denominator pollution).
     const rates = await getProposalAcceptanceRates(db);
     expect(rates.find((r) => r.kind === 'variant_question')).toBeUndefined();
+  });
+
+  it('preserves a corrective-dismiss cooldown when reconcile has zero KPI counts', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: correctiveSource.id,
+      payload: {
+        kind: correctiveSource.kind,
+        target: { subject_kind: 'learning_item', subject_id: 'li_corr_dismiss' },
+        reason_md: 'corrective dismiss',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_corr_dismiss' },
+        cooldown_key: correctiveSource.payload.cooldown_key,
+        suggestion_kind: 'corrective',
+      },
+    });
+    await db.insert(event).values({
+      id: 'rate_corr_dismiss',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: correctiveSource.id,
+      outcome: 'success',
+      payload: { rating: 'dismiss', user_note: 'redo not needed' },
+      caused_by_event_id: correctiveSource.id,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-31T00:00:00.000Z'),
+    });
+
+    await recordProposalDecisionSignal(db, correctiveSource, 'dismiss', 'redo not needed');
+    const [beforeReconcile] = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, correctiveSource.payload.cooldown_key));
+
+    await ensureProposalDecisionSignal(db, correctiveSource, 'dismiss', 'redo not needed');
+
+    const [afterReconcile] = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, correctiveSource.payload.cooldown_key));
+    expect(afterReconcile).toMatchObject({
+      accept_count: 0,
+      dismiss_count: 0,
+      acceptance_rate: 0,
+      dismiss_reason: 'redo not needed',
+    });
+    expect(afterReconcile.cooldown_until?.getTime()).toBe(
+      beforeReconcile.cooldown_until?.getTime(),
+    );
   });
 
   it('AC-3b: rebuild/reconcile keeps accept_count gated for corrective; sibling proactive still counts', async () => {
