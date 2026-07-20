@@ -12,6 +12,8 @@
 // 约束优先级（Task 13 Step 3 字面给定的判据，权威）：
 //   1. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
 //   2. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
+//   2.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
+//        objectiveOnly，但必须生成 A↔B 辨析题，不能被通用客观题路由改写。
 //   3. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
 //   4. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
 //
@@ -26,7 +28,9 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  *
  * 判据顺序见文件头。`target.routePreference` 由扫描器据 subject profile 的
  * `sourcingRoutePreference` 播种（见 target-discovery.ts seedRoutePreference）——只有在
- * 没有更硬的约束（图/高可信源/客观题）触发时才用它，否则约束优先链覆盖偏好。
+ * 没有更硬的约束（图/高可信源/客观题）触发时才用它；唯一例外是
+ * `confusable_contrast`，其显式 routePreference 在通用 objectiveOnly 分支前生效，
+ * 以保留 quiz_gen 辨析题生成路线。
  *
  * YUK-697 — 纯函数不变（同 target + 同静态 profile 同输出）：新增 jyeoo_fetch 只在
  * subject profile 声明 jyeooSupply 时排到 sourcing_web 之前（确定性抓取 > agent 找题，
@@ -44,6 +48,9 @@ export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
     return jyeoo
       ? ['jyeoo_fetch', 'sourcing_web', 'ingest_existing', 'author_question']
       : ['sourcing_web', 'ingest_existing', 'author_question'];
+  }
+  if (target.gapKind === 'confusable_contrast' && target.routePreference.length > 0) {
+    return target.routePreference;
   }
   if (target.constraints.objectiveOnly) {
     return jyeoo

@@ -95,6 +95,8 @@ export interface SourcingJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Forwarded
   // into the SourcingTask input's existing `kinds?` field so the agent can target the题型.
   kind?: string;
+  objective_only?: boolean;
+  kind_required?: boolean;
   supply_trace?: SupplyTraceV1T;
 }
 
@@ -226,6 +228,8 @@ export interface RunSourcingParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the SourcingTask input (existing `kinds?`).
   kind?: string;
+  objectiveOnly?: boolean;
+  kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
@@ -387,6 +391,8 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // SourcingTask prompt's existing `kinds?` input (plural — a single hint forwarded as a
     // one-element list) so the agent can target the题型. Absent → the agent free-targets.
     ...(params.kind ? { kinds: [params.kind] } : {}),
+    ...(params.objectiveOnly ? { objective_only: true } : {}),
+    ...(params.kindRequired ? { kind_required: true } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -401,25 +407,20 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     taskResult = result;
     const parsed = parseOutput(result.text);
 
-    // YUK-226 S2-5b F4 (PR #320 验证轮 A3) — same 题型 pin enforcement as quiz_gen F3, same
-    // semantics: when the 找题次序 requested a kind (params.kind, forwarded as the `kinds`
-    // input hint), every sourced question MUST be that kind. The prompt only HINTS `kinds`,
-    // so an agent that returned an off-target 题型 would ingest a wrong-kind draft. Compare
-    // via kindsMatch, which normalizes BOTH sides to canonical (持久 QuestionKind) — so a
-    // `reading_comprehension` request matches a `reading` output and `calculation` matches
-    // `computation`, regardless of which vocabulary params.kind arrived in. On mismatch
-    // throw to fail the whole job (the catch writes a failure event + re-throws → pg-boss
-    // retries), the SAME loud-fail semantics F3 uses. Unpinned runs keep the agent's free
-    // targeting.
-    if (params.kind) {
+    if ((params.objectiveOnly || params.kindRequired) && params.kind) {
       for (const q of parsed.questions) {
         if (!kindsMatch(q.kind, params.kind)) {
+          const constraint = params.objectiveOnly ? 'objective-only' : 'required';
           throw new Error(
-            `sourcing pinned kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+            `sourcing ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
           );
         }
       }
     }
+
+    // kinds is answer-class/structure guidance for retrieval, not a whole-output
+    // acceptance gate. Persist each schema-valid extracted question and leave quality
+    // judgment to source_verify. The separate Jyeoo per-row filter remains unchanged.
 
     // Constrain self-reported knowledge_ids to REAL knowledge nodes (mirror quiz_gen):
     // the agent may hallucinate ids; intersect with existing nodes and fall back to
@@ -666,11 +667,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
               // so the run-level resolved nodes are the correct attribution. Empty
               // when the trigger resolved no live node (e.g. a manual free-form ref).
               knowledge_ids: fallbackKnowledgeIds,
-              // YUK-227 S3 Slice C (FIX-R2-5) — carry the run's 题型约束 (if pinned) so
-              // accept materializes the question as that kind. The text path enforces
-              // kindsMatch per question (above); image candidates have no per-question
-              // kind until accept's VLM, so the run-level requested kind is the correct
-              // constraint. Absent on an unpinned run → accept falls back to short_answer.
+              // Carry the run's structure hint for image extraction. Image candidates
+              // have no readable question structure until accept's VLM, so requested_kind
+              // remains useful guidance there. Unhinted accept falls back to short_answer.
               ...(params.kind ? { requested_kind: params.kind } : {}),
             },
             // Dedup key so re-sourcing the same image page does not stack duplicate
@@ -843,6 +842,8 @@ export function buildSourcingHandler(
         // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.objective_only ? { objectiveOnly: true } : {}),
+        ...(data.kind_required ? { kindRequired: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,

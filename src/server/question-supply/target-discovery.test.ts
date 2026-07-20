@@ -249,6 +249,8 @@ describe('scanCoverageGaps — R4 recall-only pool', () => {
     const fmt = targets.find((t) => t.gapKind === 'format_diversity');
     expect(fmt).toBeDefined();
     expect(fmt?.kind).toBe('short_answer');
+    expect(fmt?.constraints.kindRequired).toBe(true);
+    expect(fmt?.constraints.objectiveOnly).toBeUndefined();
     expect(fmt?.reason).toContain('recall');
   });
 

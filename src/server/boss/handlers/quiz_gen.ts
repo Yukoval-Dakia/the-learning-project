@@ -105,6 +105,8 @@ export interface QuizGenJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
   // into the QuizGenTask input so the agent can target the题型.
   kind?: string;
+  objective_only?: boolean;
+  kind_required?: boolean;
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
   // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
@@ -326,6 +328,8 @@ export interface RunQuizGenParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
   kind?: string;
+  objectiveOnly?: boolean;
+  kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
@@ -545,6 +549,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
     // so the agent can target it; absent → the agent free-targets (original behaviour).
     ...(params.kind ? { requested_kind: params.kind } : {}),
+    ...(params.objectiveOnly ? { objective_only: true } : {}),
+    ...(params.kindRequired ? { kind_required: true } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -573,24 +579,20 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       );
     }
 
-    // YUK-226 S2-5b F3 (PR #320 验证轮 A3) — pre-persist assert for the 题型 pin. When the
-    // 找题次序 requested a specific kind (params.kind), every produced question MUST be that
-    // kind; the prompt only HINTS requested_kind, so a model that wrote a different kind
-    // would persist an off-target draft. Compare via kindsMatch, which normalizes BOTH
-    // sides to canonical (持久 QuestionKind) — so a `reading_comprehension` request matches
-    // a `reading` output and `calculation` matches `computation`, regardless of which
-    // vocabulary params.kind arrived in. On mismatch throw (the catch writes a failure
-    // event + re-throws → pg-boss retries) rather than silently persisting the wrong 题型.
-    // Unpinned runs keep the agent's choice.
-    if (params.kind) {
+    if ((params.objectiveOnly || params.kindRequired) && params.kind) {
       for (const q of parsed.questions) {
         if (!kindsMatch(q.kind, params.kind)) {
+          const constraint = params.objectiveOnly ? 'objective-only' : 'required';
           throw new Error(
-            `quiz_gen pinned kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+            `quiz_gen ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
           );
         }
       }
     }
+
+    // requested_kind is answer-class/structure guidance for generation, not a
+    // whole-output acceptance gate. Persist the actual schema-valid output and let
+    // quiz_verify evaluate its quality instead of rejecting an otherwise usable batch.
 
     // Constrain self-reported knowledge_ids to REAL knowledge nodes. The agent may
     // hallucinate ids; an unattributable draft would pass verify yet never resolve
@@ -1074,6 +1076,8 @@ export function buildQuizGenHandler(
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.objective_only ? { objectiveOnly: true } : {}),
+        ...(data.kind_required ? { kindRequired: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,

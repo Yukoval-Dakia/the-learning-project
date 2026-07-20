@@ -5,6 +5,48 @@ import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
+  it('keeps the strict QuestionKind enum explicit for MistakeEnroll output', () => {
+    const prompt = getTaskSystemPrompt('MistakeEnrollTask', resolveSubjectProfile('math'));
+    expect(prompt).toContain(
+      'question_type —— 从题面判题型：choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation 之一。',
+    );
+  });
+
+  it('uses answer-class and structure guidance instead of closed-set kind contracts', () => {
+    for (const task of ['QuizGenTask', 'QuestionAuthorTask', 'SourcingTask'] as const) {
+      const prompt = getTaskSystemPrompt(task, resolveSubjectProfile('math'));
+      expect(prompt).toContain('答案类型');
+      expect(prompt).toContain('结构');
+      expect(prompt).toContain(
+        'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation',
+      );
+      expect(prompt).toContain('输出的 kind 对应的格式规则');
+      expect(prompt).toContain('objective_only=true');
+      expect(prompt).toContain('是硬约束');
+      expect(prompt).not.toContain('requested_kind 是上游找题次序**指定**的题型（**硬约束**');
+      expect(prompt).not.toContain('整批会被拒收');
+      expect(prompt).not.toContain('kind 只能是');
+      expect(prompt).not.toContain('question_type —— 从题面判题型');
+    }
+
+    const sourcingPrompt = getTaskSystemPrompt('SourcingTask', resolveSubjectProfile('math'));
+    expect(sourcingPrompt).toContain('无论是否偏离上游 kinds 提示');
+    expect(sourcingPrompt).not.toContain('无论是否偏离 requested_kind');
+    expect(sourcingPrompt).toContain(
+      'derivation：judge_kind_override="semantic"，rubric_json.required_points',
+    );
+    for (const task of ['QuizGenTask', 'QuestionAuthorTask'] as const) {
+      expect(getTaskSystemPrompt(task, resolveSubjectProfile('math'))).toContain(
+        'derivation：judge_kind_override="semantic"，rubric_json.required_points',
+      );
+    }
+    expect(sourcingPrompt.match(/^- derivation：/gm)).toHaveLength(1);
+    const authorPrompt = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
+    expect(authorPrompt).toContain(
+      'objective_only 与 kind_required 均非 true 时，requested_kind 若出现',
+    );
+  });
+
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
   // (was wenyan), so the default NoteGenerateTask prompt carries the general
   // role + voice, NOT wenyan's classical-Chinese fragments.
