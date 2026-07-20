@@ -3,6 +3,7 @@
 // item 挂在线上、AI 开场白与第一人称理由陪练递题、已完成项收紧成织入的一行；
 // 跳过的留流尾可捡回；流尾点播移交真实 Copilot tool loop，不在本地伪造成功态。
 
+import { makeLookup } from '@/ui/lib/makeLookup';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -53,18 +54,19 @@ const SRC_META_FALLBACK: SrcMeta = { label: '其它来源', tone: 'neutral', ico
 // 发新源、FE 忘同步」藏进『其它来源』badge——dev 下每个未知值 warn 一次（模块级 Set 去重,
 // 不做无门槛 per-render warn）,prod 零噪声。
 const warnedSources = new Set<string>();
+const lookupSrcMeta = makeLookup(SRC_META as Readonly<Record<string, SrcMeta>>, SRC_META_FALLBACK);
 
 // 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 + PfSolo 顶栏）——不再有 bare index。
 function srcMeta(source: string): SrcMeta {
-  const meta = SRC_META[source as StreamSource];
-  if (meta) return meta;
+  const meta = lookupSrcMeta(source);
+  if (meta !== SRC_META_FALLBACK) return meta;
   if (import.meta.env.DEV && !warnedSources.has(source)) {
     warnedSources.add(source);
     console.warn(
       `[PfStream] 未知 stream source '${source}'——已回退『其它来源』badge。若为新增后端源，请同步 practice-api.ts StreamSource 联合 + PfStream SRC_META。`,
     );
   }
-  return SRC_META_FALLBACK;
+  return meta;
 }
 
 export function PfSrcBadge({ source }: { source: string }) {

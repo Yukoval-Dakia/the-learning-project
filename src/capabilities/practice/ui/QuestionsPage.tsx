@@ -24,6 +24,7 @@
 
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
+import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
 import { formatCnDateOnly } from '@/ui/lib/utils';
@@ -55,9 +56,7 @@ const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   derivation: { label: '推导', icon: 'fx' },
 };
 const QKIND_FALLBACK = { label: '题', icon: 'quiz' as LoomIconName };
-function kindMeta(kind: string) {
-  return QKIND[kind] ?? QKIND_FALLBACK;
-}
+const kindMeta = makeLookup(QKIND, QKIND_FALLBACK);
 
 // 真 QuestionSource enum（core/schema/business.ts，13 值）→ label/tone/icon。
 const QSOURCE: Record<string, { label: string; tone: Tone; icon: LoomIconName }> = {
@@ -80,20 +79,21 @@ const QSOURCE_FALLBACK = {
   tone: 'neutral' as Tone,
   icon: 'doc' as LoomIconName,
 };
-function srcMeta(source: string) {
-  return QSOURCE[source] ?? QSOURCE_FALLBACK;
-}
+const srcMeta = makeLookup(QSOURCE, QSOURCE_FALLBACK);
 
 // difficulty 1-5 → tone + word（data-questions.jsx QDIFF）。
-const QDIFF: Record<number, { tone: Tone; word: string }> = {
+const QDIFF: Record<string, { tone: Tone; word: string }> = {
   1: { tone: 'good', word: '易' },
   2: { tone: 'good', word: '较易' },
   3: { tone: 'hard', word: '中等' },
   4: { tone: 'again', word: '较难' },
   5: { tone: 'again', word: '难' },
 };
+const QDIFF_FALLBACK = { tone: 'hard' as Tone, word: '难度' };
+const lookupDiffMeta = makeLookup(QDIFF, QDIFF_FALLBACK);
 function diffMeta(d: number) {
-  return QDIFF[d] ?? { tone: 'hard' as Tone, word: `难度 ${d}` };
+  const meta = lookupDiffMeta(String(d));
+  return meta === QDIFF_FALLBACK ? { ...meta, word: `难度 ${d}` } : meta;
 }
 
 // subject 派生轴 → label/tone. Label 从注册表派生（subjectDisplayName，alias-aware：

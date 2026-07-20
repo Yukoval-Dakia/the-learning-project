@@ -27,6 +27,7 @@
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
 import { ApiError } from '@/ui/lib/api';
+import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
@@ -66,9 +67,7 @@ const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   derivation: { label: '推导', icon: 'fx' },
 };
 const QKIND_FALLBACK = { label: '题', icon: 'quiz' as LoomIconName };
-function kindMeta(kind: string) {
-  return QKIND[kind] ?? QKIND_FALLBACK;
-}
+const kindMeta = makeLookup(QKIND, QKIND_FALLBACK);
 
 const QSOURCE: Record<string, { label: string; tone: Tone; icon: LoomIconName }> = {
   quiz_gen: { label: 'AI 生成', tone: 'coral', icon: 'sparkle' },
@@ -90,13 +89,13 @@ const QSOURCE_FALLBACK = {
   tone: 'neutral' as Tone,
   icon: 'doc' as LoomIconName,
 };
-function srcMeta(source: string) {
-  return QSOURCE[source] ?? QSOURCE_FALLBACK;
-}
+const srcMeta = makeLookup(QSOURCE, QSOURCE_FALLBACK);
 
-const QDIFF: Record<number, Tone> = { 1: 'good', 2: 'good', 3: 'hard', 4: 'again', 5: 'again' };
+const QDIFF: Record<string, Tone> = { 1: 'good', 2: 'good', 3: 'hard', 4: 'again', 5: 'again' };
+const QDIFF_FALLBACK: Tone = 'hard';
+const lookupDiffTone = makeLookup<Tone>(QDIFF, QDIFF_FALLBACK);
 function diffTone(d: number): Tone {
-  return QDIFF[d] ?? 'hard';
+  return lookupDiffTone(String(d));
 }
 
 // draft_status（NULL≡active）→ 状态 badge。
