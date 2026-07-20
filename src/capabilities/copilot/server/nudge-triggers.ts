@@ -12,7 +12,8 @@
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
-import { type AnyColumn, type SQL, and, desc, eq, sql } from 'drizzle-orm';
+import { getCorrectionStatuses } from '@/server/events/corrections';
+import { type AnyColumn, type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgeConfig } from './nudge-config';
 
@@ -27,12 +28,19 @@ export const NUDGE_OPENED_ACTION = 'experimental:copilot_nudge_opened';
 export const INTERRUPT_SENSITIVE_KINDS: ReadonlySet<string> = new Set(['kc_wrong_streak']);
 
 /** boss.send payload —— 只带定位 id，判定事实由 handler 从 event 表回读（evidence-first §3.1）。 */
-export type NudgeEvaluateInput = { kind: 'ingestion_complete'; session_id: string };
+export type NudgeEvaluateInput =
+  | { kind: 'ingestion_complete'; session_id: string }
+  | { kind: 'attempt_failure'; attempt_event_id: string };
 
 export type NudgeDecisionReason =
   | 'no_extract_event' // ingestion 完成事件缺失（post-commit 后不应发生，防御）
   | 'no_blocks' // 提取 0 片段——不为空材料开口
   | 'already_nudged' // 同一触发源已发过 nudge（perf 层；unique index 是正确性保证）
+  | 'attempt_not_found'
+  | 'not_failure'
+  | 'no_knowledge'
+  | 'streak_below_threshold'
+  | 'kc_cooldown'
   | 'daily_cap' // 当日可见 nudge 达上限（best-effort 软上限，非硬保证——TOCTOU §3.2）
   | 'dismiss_fused'; // owner 当日 dismiss 过同 kind → 该 kind 当日不再发（A3「同场景」）
 
@@ -71,12 +79,205 @@ export async function isInActivePracticeSession(db: Db): Promise<boolean> {
  * 确定性判定：一个 ingestion 完成事件是否应产生一条主动开口 nudge。
  * 只读——不写任何 event。fire=true 的 NudgeToWrite 交给 handler 写入 + 幂等收口。
  */
+async function evaluateWrongStreak(
+  db: Db,
+  input: Extract<NudgeEvaluateInput, { kind: 'attempt_failure' }>,
+  config: NudgeConfig,
+  now: Date,
+): Promise<NudgeDecision> {
+  const triggerRows = await db
+    .select({ id: event.id, action: event.action, outcome: event.outcome, payload: event.payload })
+    .from(event)
+    .where(eq(event.id, input.attempt_event_id))
+    .limit(1);
+  const trigger = triggerRows[0];
+  if (!trigger || (trigger.action !== 'attempt' && trigger.action !== 'review')) {
+    return { fire: false, reason: 'attempt_not_found' };
+  }
+  if (trigger.outcome !== 'failure' || trigger.payload?.unsupported_judge === true) {
+    return { fire: false, reason: 'not_failure' };
+  }
+
+  const knowledgeIds = Array.from(
+    new Set(
+      (Array.isArray(trigger.payload?.referenced_knowledge_ids)
+        ? trigger.payload.referenced_knowledge_ids
+        : []
+      )
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .sort(),
+    ),
+  );
+  if (knowledgeIds.length === 0) return { fire: false, reason: 'no_knowledge' };
+
+  const candidates: Array<{ kcId: string; streak: number; tailEventIds: string[] }> = [];
+  for (const kcId of knowledgeIds) {
+    const rows = await db
+      .select({ id: event.id, outcome: event.outcome, payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          inArray(event.action, ['attempt', 'review']),
+          eq(event.subject_kind, 'question'),
+          sql`${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb`,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(100);
+
+    const attemptIds = rows.map((row) => row.id);
+    const judges =
+      attemptIds.length === 0
+        ? []
+        : await db
+            .select({ id: event.id, subjectId: event.subject_id })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'judge'),
+                eq(event.subject_kind, 'event'),
+                inArray(event.subject_id, attemptIds),
+              ),
+            );
+    const judgeIds = judges.map((judge) => judge.id);
+    const correctionStatuses = await getCorrectionStatuses(db, judgeIds);
+    const appealedJudgeIds =
+      judgeIds.length === 0
+        ? new Set<string>()
+        : new Set(
+            (
+              await db
+                .select({ subjectId: event.subject_id })
+                .from(event)
+                .where(
+                  and(
+                    eq(event.action, 'experimental:appeal_request'),
+                    eq(event.subject_kind, 'event'),
+                    inArray(event.subject_id, judgeIds),
+                  ),
+                )
+            ).map((row) => row.subjectId),
+          );
+    const contestedAttemptIds = new Set(
+      judges
+        .filter((judge) => {
+          const correction = correctionStatuses.get(judge.id);
+          return (
+            appealedJudgeIds.has(judge.id) ||
+            (correction !== undefined && correction.state !== 'active')
+          );
+        })
+        .map((judge) => judge.subjectId),
+    );
+
+    const tailEventIds: string[] = [];
+    for (const row of rows) {
+      if (
+        row.outcome !== 'failure' ||
+        row.payload?.unsupported_judge === true ||
+        contestedAttemptIds.has(row.id)
+      ) {
+        break;
+      }
+      tailEventIds.push(row.id);
+    }
+    candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
+  }
+
+  candidates.sort((a, b) => b.streak - a.streak || a.kcId.localeCompare(b.kcId));
+  const winner = candidates[0];
+  if (!winner || winner.streak < config.streakN) {
+    return { fire: false, reason: 'streak_below_threshold' };
+  }
+
+  const duplicateRows = await db
+    .select({ one: sql<number>`1` })
+    .from(event)
+    .where(and(eq(event.action, NUDGE_ACTION), eq(event.caused_by_event_id, trigger.id)))
+    .limit(1);
+  if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
+
+  const shadow = !config.enabled;
+  if (!shadow) {
+    const capRows = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, NUDGE_ACTION),
+          sql`${event.payload}->>'shadow' = 'false'`,
+          sameShanghaiDay(event.created_at, now),
+        ),
+      );
+    if (Number(capRows[0]?.n ?? 0) >= config.dailyMax) return { fire: false, reason: 'daily_cap' };
+
+    const cooldownRows = await db
+      .select({ one: sql<number>`1` })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, NUDGE_ACTION),
+          eq(event.subject_kind, 'knowledge'),
+          eq(event.subject_id, winner.kcId),
+          sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
+          sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+        ),
+      )
+      .limit(1);
+    if (cooldownRows.length > 0) return { fire: false, reason: 'kc_cooldown' };
+
+    const dismissed = alias(event, 'streak_dismissed');
+    const nudge = alias(event, 'streak_nudge');
+    const fusedRows = await db
+      .select({ one: sql<number>`1` })
+      .from(dismissed)
+      .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
+      .where(
+        and(
+          eq(dismissed.action, NUDGE_DISMISSED_ACTION),
+          eq(nudge.subject_kind, 'knowledge'),
+          eq(nudge.subject_id, winner.kcId),
+          sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
+          sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+        ),
+      )
+      .limit(1);
+    if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
+  }
+
+  const inActiveSession = await isInActivePracticeSession(db);
+  return {
+    fire: true,
+    event: {
+      subject_kind: 'knowledge',
+      subject_id: winner.kcId,
+      caused_by_event_id: trigger.id,
+      payload: {
+        kind: 'kc_wrong_streak',
+        headline: `这个知识点已经连续答错 ${winner.streak} 次，要不要换个角度看看？`,
+        expires_at: new Date(now.getTime() + config.expiresHours * 3_600_000).toISOString(),
+        shadow,
+        in_active_session: inActiveSession,
+        evidence: {
+          kc_id: winner.kcId,
+          streak_n: winner.streak,
+          tail_event_ids: winner.tailEventIds,
+        },
+      },
+    },
+  };
+}
+
 export async function evaluateNudgeTrigger(
   db: Db,
   input: NudgeEvaluateInput,
   config: NudgeConfig,
   now: Date = new Date(),
 ): Promise<NudgeDecision> {
+  if (input.kind === 'attempt_failure') {
+    return evaluateWrongStreak(db, input, config, now);
+  }
+
   // 1. 触发源 = 该 session 的域 extract 事件（evidence-first 证据链 + unique 幂等键）。
   //    subject_id = source_document_id（docx-ingestion.ts:208 / applyExtractionResult），用于取标题。
   const extractRows = await db

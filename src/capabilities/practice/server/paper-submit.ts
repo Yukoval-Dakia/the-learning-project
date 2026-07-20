@@ -54,6 +54,7 @@ import {
 import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
+import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import { collectMasteryRefineTargets } from './note-refine-targets';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
@@ -1045,6 +1046,8 @@ export async function submitPaperSlot(
   // flag-off 短路 → BYTE-IDENTICAL（YUK-455 回归锚）。partial 不触发（非干净答错）。
   // `&& wroteNewAttempt`：仅在真持久化了新 attempt 时发——挡 in-tx 竞态-loser 回放双发（同上块）。
   // post-commit / best-effort；红线（ADR-0035）：只 EMIT 独立 event 投影，绝不写 mastery_state。
+  if (wroteNewAttempt) await enqueueWrongStreakNudge(attemptOutcome, attemptEventId);
+
   if (PREREQ_RISK_EMIT_ENABLED && attemptOutcome === 'failure' && wroteNewAttempt) {
     await emitPrereqRiskSignal({
       db,
