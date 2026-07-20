@@ -319,6 +319,7 @@ export async function runHubAutoSyncNightly(
             db,
             artifactId: hub.id,
             patch,
+            actorRef: ACTOR_REF,
             now: deps.now,
           })
         : await persistNoteRefineApply({

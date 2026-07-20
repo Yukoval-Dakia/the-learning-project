@@ -85,6 +85,7 @@ export class InMemoryPresenceStore implements PresenceStore {
         patch: input.patch,
         taskResult: input.taskResult,
         triggerEventId: input.triggerEventId ?? null,
+        actorRef: input.actorRef,
         queuedAt: cloneDate(now),
       });
       return { status: 'deferred', artifact_id: input.artifactId };
@@ -96,6 +97,7 @@ export class InMemoryPresenceStore implements PresenceStore {
       patch: input.patch,
       taskResult: input.taskResult,
       triggerEventId: input.triggerEventId ?? null,
+      actorRef: input.actorRef,
       now,
     });
   }
@@ -115,6 +117,7 @@ export class InMemoryPresenceStore implements PresenceStore {
         patch: item.patch,
         taskResult: item.taskResult,
         triggerEventId: item.triggerEventId ?? null,
+        actorRef: item.actorRef,
         now,
       });
       results.push(result);

@@ -339,9 +339,27 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     ).toHaveLength(1);
 
     await markArtifactIdleAndFlush({ db: testDb(), artifactId: 'hub1' });
-    expect(
-      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
-    ).toHaveLength(1);
+    const deferredEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_apply'));
+    expect(deferredEvents).toHaveLength(1);
+    expect(deferredEvents[0]?.actor_ref).toBe('hub_auto_sync');
+  });
+
+  it('preserves hub actor provenance for an immediate mutation sync', async () => {
+    await seedKnowledge('k_hub');
+    await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
+    await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
+
+    await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true });
+
+    const events = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_apply'));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.actor_ref).toBe('hub_auto_sync');
   });
 
   it('preserves source-less nightly apply during active editing', async () => {

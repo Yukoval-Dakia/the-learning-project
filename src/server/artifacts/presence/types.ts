@@ -20,6 +20,7 @@ export interface QueuedPatch {
   patch: NotePatchT;
   taskResult?: TaskTextResult;
   triggerEventId?: string | null;
+  actorRef?: string;
   queuedAt: Date;
 }
 
@@ -32,6 +33,7 @@ export interface SerializedQueuedPatch {
   patch: unknown;
   taskResult?: unknown;
   triggerEventId: string | null;
+  actorRef?: string;
   queuedAtMs: number;
 }
 
@@ -54,6 +56,7 @@ export interface EnqueueOrApplyInput {
   patch: NotePatchT;
   taskResult?: TaskTextResult;
   triggerEventId?: string | null;
+  actorRef?: string;
   now?: Date;
 }
 

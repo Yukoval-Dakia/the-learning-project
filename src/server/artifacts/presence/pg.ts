@@ -115,6 +115,7 @@ export class PgPresenceStore implements PresenceStore {
       patch: input.patch,
       taskResult: input.taskResult,
       triggerEventId: input.triggerEventId ?? null,
+      actorRef: input.actorRef,
       queuedAtMs: now.getTime(),
     };
 
@@ -211,6 +212,7 @@ export class PgPresenceStore implements PresenceStore {
       patch: input.patch,
       taskResult: input.taskResult,
       triggerEventId: input.triggerEventId ?? null,
+      actorRef: input.actorRef,
       now,
     });
   }
@@ -252,6 +254,7 @@ export class PgPresenceStore implements PresenceStore {
         patch: item.patch as QueuedPatch['patch'],
         taskResult: item.taskResult as QueuedPatch['taskResult'],
         triggerEventId: item.triggerEventId ?? null,
+        actorRef: item.actorRef,
         now,
       });
       results.push(result);
