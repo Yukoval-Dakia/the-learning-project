@@ -118,7 +118,7 @@ b 是 item 参数,标准上需对考生总体积分(MMLE)。但在 fixed-anchor 
   - LLM 直接 prompt 估难度 → 弱(Razavi & Powers 2025 预印本核验:direct estimate「moderate to strong」但早年级差,且本质是单点 rating)。
   - **LLM 抽教学/认知特征 → 喂 tree-based 模型**:Razavi & Powers 2025 实测 **r 高达 0.87**(B1 写 r≈0.78 是保守口径,文献支持更高)。这是冷启先验的主力路径。
   - **LLM 模拟不同能力考生 → 拟合 IRT**(B1「模拟考生 ensemble」):SMART 框架(arXiv:2507.05129,见核验表)和 Dueñas et al. 2024(GPT-3.5 模拟医考生)是这条线的代表 —— 但二者均为**预印本/会议未定级**,引用力度需诚实标注。
-  - **ML 难度预测接入 IRT 不依赖具体署名**：正式地基仅采用已核验的通用「贝叶斯 IRT + 先验」原理（Bock & Aitkin 1981 的 MMLE/EM 边际似然框架）；ML 输出只作需实证校准的先验输入。
+  - **ML 难度预测接入 IRT 尚未形成正式地基**：Bock & Aitkin 1981 只支撑 MMLE/EM 的边际似然 item-parameter 估计，不能替代 Bayesian prior 方案依据；ML 输出的 prior 形式、校准方法与证据来源须另行选定并验证。
 
 ---
 
@@ -132,7 +132,7 @@ b 是 item 参数,标准上需对考生总体积分(MMLE)。但在 fixed-anchor 
 
 4. **慢热四阶段的 CAT/Elo/Fisher-info 借用有成熟文献,LLM 特征抽取的实证 r 比 B1 写的更高。** CAT 的 maximum-information 选题(Lord 1980)、Elo 在教育中的 θ/难度在线估计(Pelánek 2016,Computers & Education,核验)都是定级期刊/经典源;LLM 抽特征 r≈0.87(Razavi & Powers 2025,B1 写 0.78 偏保守)。Elo 阶段「锁 item 难度防方差膨胀」与 Pelánek 2016 的 Elo 变体讨论吻合。
 
-5. **ML 难度预测作为先验只按通用贝叶斯 IRT 原理表述；LLM 模拟考生路径的来源按其正式发表状态标注引用力度。** 净影响:B1 算法骨架(PFA + θ/b 硬轨 + a/c 软轨 + LLM 先验 + 慢热四阶段)的**核心承重点全部有经同行评审的经典/定级文献支撑**;「ML 预测当贝叶斯先验」的正式依据是 MMLE/Bock-Aitkin 的边际似然框架 + 一般贝叶斯 IRT,不再挂靠无法精确溯源的署名。
+5. **ML 难度预测作为先验仍是待验证设计；LLM 模拟考生路径的来源按其正式发表状态标注引用力度。** 净影响:B1 算法骨架的 PFA、θ/b 硬轨与 a/c 软轨有相应经典/定级文献；「ML 预测当 Bayesian prior」不再借 MMLE/Bock-Aitkin 的边际似然框架越界背书，须在实现前补 prior 形式、校准方法与可核验来源。
 
 ---
 
@@ -768,7 +768,7 @@ I now have comprehensive verification across all four lanes. Producing the final
 
 **L4. Stocking 1990 不可读成「规定样本量 N」**：KT 路与 n=1 路都已诚实标注 Stocking 讲的是能力**分布/构成**而非样本量阈值。**确认此自查正确**——这是全corpus 最 load-bearing 的源，被两路主动收紧措辞，是诚实加分项。
 
-**L5. ML 难度预测进入 IRT 先验的证据边界**：无法精确溯源的工作不作引用；正式论证只落在已核验的 MMLE/Bock-Aitkin 边际似然框架与一般贝叶斯 IRT。具体 ML 预测值属于待校准的先验输入，不据此扩张证据强度。
+**L5. ML 难度预测进入 IRT 先验的证据边界**：MMLE/Bock-Aitkin 边际似然框架不回答外部 ML 预测如何成为 Bayesian item prior。具体 prior 形式、校准方法与来源均待验证；补齐前，ML 预测值只是候选输入，不作正式论证。
 
 **L6. RUM/Fusion（DiBello/Stout/Roussos 1995 + Hartz 2002）一手未 fetch**：CDM 路诚实标「部分二手」，载体是论文集章节 + 博士论文（非期刊同评）。保留此标即可，不构成过度声称。
 
