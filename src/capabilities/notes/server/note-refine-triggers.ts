@@ -5,7 +5,7 @@ import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 
