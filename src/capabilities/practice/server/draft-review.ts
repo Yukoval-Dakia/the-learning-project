@@ -23,6 +23,10 @@
 
 import { and, desc, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
 
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/capabilities/knowledge/server/subject-resolution';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -66,6 +70,10 @@ export interface DraftReviewRow {
  */
 export interface DraftReviewDetail {
   id: string;
+  /** Learner-facing subject id derived from the first knowledge node, or null. */
+  subject: string | null;
+  /** Server-resolved render notation; includes retired custom subject profiles. */
+  notation: string | null;
   kind: string;
   source: string;
   created_at: Date;
@@ -428,10 +436,16 @@ export async function getDraftReviewDetail(
     : null;
 
   const labelById = await resolveKnowledgeLabels(db, row.knowledge_ids);
+  const subjectById = await batchResolveSubjectDisplayIds(db, [
+    { id: row.id, knowledge_ids: row.knowledge_ids },
+  ]);
+  const subject = subjectById.get(row.id) ?? null;
   const choices = row.choices_md as string[] | null;
 
   return {
     id: row.id,
+    subject,
+    notation: resolveSubjectRenderNotation(subject),
     kind: row.kind,
     source: row.source,
     created_at: row.created_at,

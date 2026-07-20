@@ -514,8 +514,9 @@ describe('listQuestions', () => {
 
       const res = await listQuestions(testDb(), { limit: 50, offset: 0 });
       expect(res.items).toHaveLength(1);
-      // additive 默认：未 enrich 时四项是 null / 非大题，不触发任何额外查询。
+      // additive 默认：未 enrich 时派生字段为空 / 非大题，不触发任何额外查询。
       expect(res.items[0].subject).toBeNull();
+      expect(res.items[0].notation).toBeNull();
       expect(res.items[0].knowledge_labels).toBeNull();
       expect(res.items[0].is_composite).toBe(false);
       expect(res.items[0].children).toEqual([]);
@@ -529,6 +530,7 @@ describe('listQuestions', () => {
       expect(res.items).toHaveLength(1);
       // subject 是派生 profile id（yuwen domain → yuwen profile）。
       expect(res.items[0].subject).toBe('yuwen');
+      expect(res.items[0].notation).toBeNull();
       // knowledge_labels 解析非归档 name（seedKnowledge 写 name = `node <id>`）。
       expect(res.items[0].knowledge_labels).toEqual([{ id: k, name: `node ${k}` }]);
     });

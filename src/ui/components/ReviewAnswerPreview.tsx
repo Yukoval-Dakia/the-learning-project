@@ -1,13 +1,13 @@
 'use client';
 
-import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { MathMarkdown, isKatexNotation } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui/primitives/Button';
 import { useEffect, useState } from 'react';
 
 export const ANSWER_PREVIEW_DEBOUNCE_MS = 180;
 
 export function shouldShowAnswerPreview(notation?: string | null) {
-  return notation === 'latex';
+  return isKatexNotation(notation);
 }
 
 export function ReviewAnswerPreview({
@@ -46,7 +46,7 @@ export function ReviewAnswerPreview({
       </div>
       {expanded && (
         <MathMarkdown
-          notation="latex"
+          notation={notation}
           className={`review-answer-preview__body${text ? '' : ' is-empty'}`}
         >
           {text || '输入后在这里预览 Markdown / LaTeX'}

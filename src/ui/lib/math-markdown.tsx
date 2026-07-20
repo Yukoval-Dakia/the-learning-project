@@ -9,9 +9,9 @@ type MathPlugins = {
 };
 
 // rehype-katex pulls the full katex library (~270KB) into whatever chunk imports
-// it. KaTeX is only ever needed when a subject renders LaTeX (notation ===
-// 'latex'), so it is loaded on demand via dynamic import() rather than statically
-// — keeping katex out of the practice/review route chunks for non-latex subjects
+// it. KaTeX is only ever needed when a subject's notation is `katex` (or legacy
+// `latex`), so it is loaded on demand via dynamic import() rather than statically
+// — keeping katex out of the practice/review route chunks for non-math subjects
 // (e.g. Phase-1 wenyan). Both the client path below and the SSR warm-up use
 // import(), so katex is never a static edge in any chunk; it lands in its own
 // dynamic chunk. Mirrors deferred-markdown-renderer's module-memo pattern.
@@ -32,7 +32,7 @@ function loadMathPlugins(): Promise<MathPlugins> {
     .then(([remarkMath, rehypeKatex]) => cacheMathPlugins(remarkMath.default, rehypeKatex.default))
     .catch((error: unknown) => {
       // Don't cache a rejected load (e.g. transient chunk-fetch failure) — clear
-      // the memo so the next latex render retries the import instead of failing
+      // the memo so the next math render retries the import instead of failing
       // forever. The plain-markdown fallback stays readable meanwhile.
       mathPluginsPromise = null;
       throw error;
@@ -94,7 +94,8 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
   children: string;
   /**
    * Subject's renderConfig.notation. KaTeX plugin chain only activates when
-   * notation === 'latex'. Other values (or undefined) skip math parsing —
+   * notation is the canonical profile value `katex` (legacy callers may still
+   * pass `latex`). Other values (or null/undefined) skip math parsing —
    * `$...$` text passes through as raw markdown and the katex chunk is never
    * fetched.
    *
@@ -103,18 +104,23 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
    * was rejected (Codex P1, PR #83): it would silently enable LaTeX parsing
    * for wenyan content where `$...$` is incidental punctuation.
    */
-  notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
+  notation?: string | null;
+}
+
+/** Canonical KaTeX gate plus the pre-profile legacy spelling. */
+export function isKatexNotation(notation?: string | null): boolean {
+  return notation === 'katex' || notation === 'latex';
 }
 
 /**
  * Shared markdown renderer. Applied wherever LaTeX math may appear in user-facing
  * content: review prompt / reference / feedback; note section body; teaching turn text.
  *
- * When notation === 'latex' on the browser, the KaTeX plugin chain is loaded
+ * When notation is `katex` (or legacy `latex`) on the browser, the KaTeX plugin chain is loaded
  * lazily on first render: the content shows as plain markdown for one frame, then
  * re-renders with math once the chunk arrives (a warm module cache makes later
- * latex mounts synchronous). Server-side renders resolve KaTeX synchronously (see
- * the module warm-up above). Non-latex renders never touch the katex chunk.
+ * math mounts synchronous). Server-side renders resolve KaTeX synchronously (see
+ * the module warm-up above). Non-math renders never touch the katex chunk.
  *
  * Protected `/api/assets/<id>/content` images are routed through MarkdownImage so
  * their bytes load via the authenticated apiFetch blob URL (YUK-727), regardless
@@ -126,16 +132,16 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
  * helpers can be spread directly.
  */
 export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
-  const isLatex = notation === 'latex';
-  // Initialize from the module cache so an already-warm latex mount (or any SSR
+  const isKatex = isKatexNotation(notation);
+  // Initialize from the module cache so an already-warm math mount (or any SSR
   // render, where the cache is warmed at module eval) renders synchronously with
   // no fallback frame; a cold browser mount starts null and loads in the effect.
   const [mathPlugins, setMathPlugins] = useState<MathPlugins | null>(() =>
-    isLatex ? loadedMathPlugins : null,
+    isKatex ? loadedMathPlugins : null,
   );
 
   useEffect(() => {
-    if (!isLatex || mathPlugins) return;
+    if (!isKatex || mathPlugins) return;
     let cancelled = false;
     void loadMathPlugins()
       .then((plugins) => {
@@ -147,10 +153,9 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
     return () => {
       cancelled = true;
     };
-  }, [isLatex, mathPlugins]);
+  }, [isKatex, mathPlugins]);
 
-  const active = isLatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
-
+  const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
   return (
     <MarkdownRenderer
       {...divProps}

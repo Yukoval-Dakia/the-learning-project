@@ -168,6 +168,8 @@ export interface QFullTimelineEntry {
 
 export interface QuestionFullDetail {
   id: string;
+  subject: string | null;
+  notation: string | null;
   kind: string;
   prompt_md: string;
   reference_md: string | null;
@@ -467,6 +469,7 @@ export interface QBankQuestion {
   created_at_sec: number; // unix 秒。
   // enrich 路径填（enrich:false 时后端给 null / 非大题默认）。
   subject: string | null; // 派生学科 profile id（'yuwen'|'math'|'eng'|'general'...）。
+  notation: string | null; // server resolvable profile；retired custom 仍保留。
   knowledge_labels: QBankKnowledgeLabel[] | null;
   is_composite: boolean; // 有 question_part 子题（大题）。
   children: QBankQuestion[]; // 大题的有序小题（part_index 序）；非大题为 []。
@@ -732,6 +735,8 @@ export interface DraftReviewListPage {
 
 export interface DraftReviewDetail {
   id: string;
+  subject: string | null;
+  notation: string | null;
   kind: string;
   source: string;
   created_at: string;

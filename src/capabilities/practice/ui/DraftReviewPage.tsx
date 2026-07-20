@@ -11,8 +11,8 @@
 //     行号渲染，正确项无从得知（后端 detail 不含 answer key 对照），故不高亮 correct。
 //   • 省略 AI origin/置信度/成本（后端无此投影，且 demo 本就 Tweak-gated）——不渲 DrOrigin。
 //   • 难度 pips / 知识点 tags 接真 detail.difficulty / detail.knowledge[].label。
-//   • markdown 经 @/ui/lib/math-markdown（notation='latex'，与 ReviewAnswerPreview 一致，
-//     草稿池跨科含 LaTeX 数学题）；QInline 用同组件（react-markdown 单段自动 unwrap）。
+//   • markdown 经 @/ui/lib/math-markdown；notation 由 detail.subject 对应的真实 profile
+//     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -187,6 +187,7 @@ function KnowledgeTags({ tags }: { tags: { id: string; label: string }[] }) {
 // ── preview pane（DrPreview + DrPreviewBody，split 布局） ──────────
 
 function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
+  const notation = d.notation;
   return (
     <>
       {d.passage && (
@@ -195,7 +196,7 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
             <LoomIcon name="book" size={12} />
             材料 passage
           </div>
-          <MathMarkdown notation="latex" className="dr-passage">
+          <MathMarkdown notation={notation} className="dr-passage">
             {d.passage}
           </MathMarkdown>
         </div>
@@ -206,7 +207,7 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
           <LoomIcon name="quiz" size={12} />
           题面 prompt_md
         </div>
-        <MathMarkdown notation="latex" className="dr-stem-doc">
+        <MathMarkdown notation={notation} className="dr-stem-doc">
           {d.prompt_md}
         </MathMarkdown>
         {d.options && d.options.length > 0 && (
@@ -218,7 +219,7 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
               <div key={i} className="dr-opt">
                 <span className="dr-opt-key">{String.fromCharCode(65 + i)}</span>
                 <span className="dr-opt-txt">
-                  <MathMarkdown notation="latex">{opt}</MathMarkdown>
+                  <MathMarkdown notation={notation}>{opt}</MathMarkdown>
                 </span>
               </div>
             ))}
@@ -233,7 +234,7 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
               <LoomIcon name="check" size={12} />
               参考答案 answer
             </div>
-            <MathMarkdown notation="latex" className="dr-answer-body">
+            <MathMarkdown notation={notation} className="dr-answer-body">
               {d.answer}
             </MathMarkdown>
           </div>
@@ -410,6 +411,7 @@ function DrForceModal({
 }) {
   const [reason, setReason] = useState('');
   const ok = reason.trim().length >= 4;
+  const notation = d.notation;
 
   // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
   // 同 CommandPalette）。trap 自带初始聚焦（panel 首个 focusable）、Tab 循环、
@@ -458,7 +460,7 @@ function DrForceModal({
             </span>
           </div>
           <div className="dr-modal-q">
-            <MathMarkdown notation="latex">{d.prompt_md}</MathMarkdown>
+            <MathMarkdown notation={notation}>{d.prompt_md}</MathMarkdown>
           </div>
           <label className="dr-field-label" htmlFor="dr-reason">
             绕过验证的理由 <span className="req">*</span> 必填

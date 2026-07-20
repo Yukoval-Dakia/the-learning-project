@@ -15,12 +15,26 @@
 // bucket rather than being dropped.
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
+  type SubjectRegistry,
+  getDefaultSubjectRegistry,
   normalizeSubjectKey,
   resolveKnownSubjectId,
   resolveSubjectProfile,
 } from '@/subjects/profile';
+
+/**
+ * Resolve render notation from the server's resolvable registry, not the learner
+ * selectable list. Retired custom subjects remain registered specifically so
+ * historical questions keep their original rendering semantics.
+ */
+export function resolveSubjectRenderNotation(
+  subjectId: string | null,
+  registry: SubjectRegistry = getDefaultSubjectRegistry(),
+): string | null {
+  return registry.resolve(subjectId).renderConfig.notation ?? null;
+}
 
 // T-CS / YUK-168 — batch-resolve each row's learning-subject id from its first
 // knowledge id, deduplicating the parent-chain walk. A naive per-row resolve
@@ -31,7 +45,7 @@ import {
 // drive it against the testcontainer, and so the P5.2 nightly sweep can reuse it
 // with the same Db it already holds.
 export async function batchResolveSubjectIds(
-  db: Db,
+  db: Db | Tx,
   rows: Array<{ id: string; knowledge_ids: string[] }>,
 ): Promise<Map<string, string>> {
   const defaultSubjectId = resolveSubjectProfile(null).id;
@@ -80,7 +94,7 @@ export async function batchResolveSubjectIds(
  * normalized raw domain, and use null only when no subject signal can be resolved.
  */
 export async function batchResolveSubjectDisplayIds(
-  db: Db,
+  db: Db | Tx,
   rows: Array<{ id: string; knowledge_ids: string[] }>,
 ): Promise<Map<string, string | null>> {
   const firstIdToSubjectId = new Map<string, string | null>();

@@ -24,6 +24,7 @@ const composite: QBankQuestion = {
   draft_status: null,
   created_at_sec: 1_784_000_000,
   subject: 'yuwen',
+  notation: null,
   knowledge_labels: [],
   is_composite: true,
   children: [],

@@ -14,6 +14,7 @@ describe('QuestionDetailPage delete association modal (YUK-298)', () => {
     render(
       <DeleteModal
         stem="阅读材料"
+        notation={null}
         counts={{ attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0, children: 2 }}
         pending={false}
         onClose={() => {}}

@@ -12,13 +12,16 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const NOW = new Date('2026-06-07T00:00:00Z');
 
-async function seedKnowledge(id: string, opts: { archived?: boolean; name?: string } = {}) {
+async function seedKnowledge(
+  id: string,
+  opts: { archived?: boolean; name?: string; domain?: string } = {},
+) {
   await testDb()
     .insert(knowledge)
     .values({
       id,
       name: opts.name ?? `node ${id}`,
-      domain: 'yuwen',
+      domain: opts.domain ?? 'yuwen',
       archived_at: opts.archived ? NOW : null,
       created_at: NOW,
       updated_at: NOW,
@@ -182,6 +185,24 @@ describe('loadQuestionDetail', () => {
     // archived knowledge dropped from labels; k1 kept.
     expect(res?.labels.map((l) => l.id)).toEqual([k1]);
     expect(res?.knowledge_ids).toEqual([k1, kArchived]);
+  });
+
+  it('projects the canonical subject id used by notation consumers', async () => {
+    const kMath = newId();
+    const kWenyan = newId();
+    await seedKnowledge(kMath, { domain: 'math' });
+    await seedKnowledge(kWenyan, { domain: 'wenyan' });
+    const mathQuestion = await seedQuestion({ knowledge_ids: [kMath] });
+    const wenyanQuestion = await seedQuestion({ knowledge_ids: [kWenyan] });
+
+    expect(await loadQuestionDetail(testDb(), mathQuestion)).toMatchObject({
+      subject: 'math',
+      notation: 'katex',
+    });
+    expect(await loadQuestionDetail(testDb(), wenyanQuestion)).toMatchObject({
+      subject: 'yuwen',
+      notation: null,
+    });
   });
 
   it('returns the variant family with is_self marked', async () => {

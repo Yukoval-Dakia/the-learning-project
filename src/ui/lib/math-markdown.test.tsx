@@ -18,6 +18,13 @@ describe('MathMarkdown — KaTeX rendering', () => {
     expect(html).toContain('square root:');
   });
 
+  it('renders canonical subject-profile notation=katex', () => {
+    const html = renderToString(
+      <MathMarkdown notation="katex">{'profile math: $x^2$'}</MathMarkdown>,
+    );
+    expect(html).toContain('class="katex"');
+  });
+
   it('renders block math with display class', () => {
     // remark-math treats `$$...$$` as block when it's on its own paragraph
     // (surrounded by blank lines or at edges). Inline form `$$x$$` mid-text
@@ -35,6 +42,14 @@ describe('MathMarkdown — KaTeX rendering', () => {
     // No katex class — math syntax surfaces as raw text
     expect(html).not.toContain('class="katex"');
     expect(html).toContain('文言文');
+  });
+
+  it('keeps wenyan dollar punctuation literal when profile notation is null', () => {
+    const html = renderToString(
+      <MathMarkdown notation={null}>{'《史记》标价 $12$，并非公式。'}</MathMarkdown>,
+    );
+    expect(html).not.toContain('class="katex"');
+    expect(html).toContain('$12$');
   });
 
   it('renders plain markdown (lists, emphasis) regardless of notation', () => {
