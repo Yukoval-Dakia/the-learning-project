@@ -53,13 +53,13 @@ YUK-187, YUK-268, YUK-287, YUK-350, YUK-376, YUK-377, YUK-386, YUK-438, YUK-492,
 
 YUK-322, YUK-326, YUK-397, YUK-407, YUK-440, YUK-471, YUK-490, YUK-585.
 
-Already applied and re-read before this board: YUK-326, YUK-397, YUK-407, YUK-440, YUK-471, YUK-585. YUK-490 was already Done. **YUK-322 remains a proposed correction requiring approval.**
+Already applied and re-read before this board: YUK-326, YUK-397, YUK-407, YUK-440, YUK-471, YUK-585. YUK-490 was already Done. **YUK-322 was subsequently owner-approved, applied, and re-read as Done.**
 
 ## CANCEL_OBSOLETE — 3
 
 YUK-255, YUK-373, YUK-532.
 
-YUK-255 was already applied and re-read. **YUK-373 and YUK-532 remain proposed corrections requiring approval.**
+YUK-255 was already applied and re-read. **YUK-373 and YUK-532 were subsequently owner-approved, applied, and re-read as Canceled.**
 
 ## CANCEL_OBSOLETE_CONDITIONAL — 1
 
@@ -67,13 +67,14 @@ YUK-255 was already applied and re-read. **YUK-373 and YUK-532 remain proposed c
 
 ## Additional issue capture
 
-- Extend **YUK-679**, rather than create a duplicate, to include `srtOutcome`, continuous-credit/Fisher helpers, and either a Rust port or a written ADR-0046 exemption while preserving replay compatibility.
-- Four acceptance-ready drafts remain filing-approval gated:
-  1. ASR/TTS audio evidence path for English listening/speaking.
-  2. Move rating/cause semantics into `SubjectProfile`.
-  3. Restore or formally revise LearningRecord single-writer/CAS/status-transition policy.
-  4. Batch misconception-recurrence aggregate reads before enabling the flag.
+- **YUK-679** was extended in place (rather than duplicated) with `srtOutcome`, continuous-credit/Fisher helpers, a Rust-port-or-ADR-0046-exemption closure, and explicit historical replay compatibility.
+- The four owner-approved acceptance-ready drafts were filed and re-read in Backlog:
+  1. **YUK-738** — ASR/TTS audio evidence path for English listening/speaking.
+  2. **YUK-739** — move rating/cause semantics into `SubjectProfile`.
+  3. **YUK-740** — restore LearningRecord single-writer/CAS/status-transition policy.
+  4. **YUK-741** — batch misconception-recurrence aggregate reads before enabling the flag.
+- Independent YUK-584 verification approved the merged implementation; its sole remaining optional throw/retry coverage hardening was captured as **YUK-742** (Backlog).
 
 ## Mutation boundary
 
-No newly proposed Linear transition or issue creation was performed while producing the corrected board. YUK-555 is not part of any immediate mutation set.
+All owner-approved immediate corrections and captures above were applied and re-read. **YUK-555 remains intentionally unmodified** until its hard-cap acceptance is explicitly preserved in YUK-605 or a named successor.
