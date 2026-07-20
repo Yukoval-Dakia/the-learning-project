@@ -6,16 +6,15 @@ import {
   enqueueNoteRefineTrigger,
   enqueueVerifyNoteRefine,
   noteRefineTriggerEnabled,
-  resetNoteRefineTriggerStateForTests,
 } from '@/capabilities/notes/server/note-refine-triggers';
 
 describe('note refine trigger producer', () => {
-  beforeEach(() => {
-    resetNoteRefineTriggerStateForTests();
-  });
-
   it('enqueues enabled triggers and debounces repeated artifact/kind pairs', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi
+      .fn()
+      .mockResolvedValueOnce('job_1')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('job_2');
     const now = new Date('2026-05-28T12:00:00.000Z');
 
     await expect(
@@ -44,22 +43,26 @@ describe('note refine trigger producer', () => {
       }),
     ).resolves.toMatchObject({ status: 'enqueued' });
 
-    expect(bossSend).toHaveBeenCalledTimes(2);
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_1',
-      trigger: {
-        kind: 'mark_wrong',
-        context_md: undefined,
-        evidence_ids: undefined,
-        trigger_event_id: 'evt_attempt_1',
+    expect(bossSend).toHaveBeenCalledTimes(3);
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_1',
+        trigger: {
+          kind: 'mark_wrong',
+          context_md: undefined,
+          evidence_ids: undefined,
+          trigger_event_id: 'evt_attempt_1',
+        },
       },
-    });
+      { singletonKey: 'mark_wrong:art_1', singletonSeconds: 3600 },
+    );
   });
 
   it('honors kill switches before touching pg-boss', async () => {
     // YUK-358 决定6 — dwell trigger retired; keep kill-switch coverage on a
     // SURVIVING real-signal kind (mastery_change).
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env = { ...process.env, WAVE6_TRIGGER_MASTERY_ENABLED: 'false' };
 
     expect(noteRefineTriggerEnabled('mastery_change', env)).toBe(false);
@@ -74,12 +77,22 @@ describe('note refine trigger producer', () => {
     expect(bossSend).not.toHaveBeenCalled();
   });
 
+  it('preserves test-environment skip semantics before touching pg-boss', async () => {
+    await expect(
+      enqueueNoteRefineTrigger({
+        artifactId: 'art_test',
+        kind: 'mark_wrong',
+        env: { ...process.env, NODE_ENV: 'test' },
+      }),
+    ).resolves.toMatchObject({ status: 'skipped:test_env' });
+  });
+
   // RED-2 (YUK-358 决定7) — the verify kind is OPT-IN (default-OFF). Unlike the
   // other 4 kinds (default-ON), an UNSET WAVE6_TRIGGER_VERIFY_ENABLED flag must
   // skip the enqueue so deleting note_verify's dead proposal does NOT silently
   // turn on a new AI-cost path. Setting the flag to "true" opts in.
   it('verify kind is default-OFF: unset flag skips without touching pg-boss', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env: NodeJS.ProcessEnv = { ...process.env, WAVE6_TRIGGER_VERIFY_ENABLED: undefined };
 
     expect(noteRefineTriggerEnabled('verify', env)).toBe(false);
@@ -96,7 +109,7 @@ describe('note refine trigger producer', () => {
   });
 
   it('verify kind opts in when WAVE6_TRIGGER_VERIFY_ENABLED="true" and forwards verify context', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
     const env = { ...process.env, WAVE6_TRIGGER_VERIFY_ENABLED: 'true' };
 
     expect(noteRefineTriggerEnabled('verify', env)).toBe(true);
@@ -111,15 +124,19 @@ describe('note refine trigger producer', () => {
     ).resolves.toMatchObject({ status: 'enqueued', artifact_id: 'art_v', kind: 'verify' });
 
     expect(bossSend).toHaveBeenCalledTimes(1);
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_v',
-      trigger: {
-        kind: 'verify',
-        context_md: expect.stringContaining('Verify summary: 例句解释缺少文本证据。'),
-        evidence_ids: ['evt_verify_1'],
-        trigger_event_id: 'evt_verify_1',
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_v',
+        trigger: {
+          kind: 'verify',
+          context_md: expect.stringContaining('Verify summary: 例句解释缺少文本证据。'),
+          evidence_ids: ['evt_verify_1'],
+          trigger_event_id: 'evt_verify_1',
+        },
       },
-    });
+      { singletonKey: 'verify:art_v', singletonSeconds: 3600 },
+    );
   });
 
   // The surviving real-signal kinds stay default-ON: an unset flag still enqueues.
@@ -136,7 +153,8 @@ describe('note refine trigger producer', () => {
     expect(noteRefineTriggerEnabled('dreaming', env)).toBe(true);
   });
 
-  it('uses the same numeric literals without changing per-kind polarity', () => {
+  it('keeps the 60-minute rolling window and numeric per-kind flag polarity', () => {
+    expect(NOTE_REFINE_TRIGGER_DEBOUNCE_MS).toBe(60 * 60_000);
     expect(noteRefineTriggerEnabled('verify', { WAVE6_TRIGGER_VERIFY_ENABLED: '1' })).toBe(true);
     expect(noteRefineTriggerEnabled('mastery_change', { WAVE6_TRIGGER_MASTERY_ENABLED: '0' })).toBe(
       false,
@@ -144,7 +162,7 @@ describe('note refine trigger producer', () => {
   });
 
   it('adds mark_wrong evidence context from the correction event', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi.fn(async () => 'job_1');
 
     await enqueueMarkWrongNoteRefine({
       artifactId: 'art_1',
@@ -154,14 +172,18 @@ describe('note refine trigger producer', () => {
       bossSend,
     });
 
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_1',
-      trigger: expect.objectContaining({
-        kind: 'mark_wrong',
-        context_md: expect.stringContaining('block_id=block_1'),
-        evidence_ids: ['evt_correct_1'],
-        trigger_event_id: 'evt_correct_1',
-      }),
-    });
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_1',
+        trigger: expect.objectContaining({
+          kind: 'mark_wrong',
+          context_md: expect.stringContaining('block_id=block_1'),
+          evidence_ids: ['evt_correct_1'],
+          trigger_event_id: 'evt_correct_1',
+        }),
+      },
+      { singletonKey: 'mark_wrong:art_1', singletonSeconds: 3600 },
+    );
   });
 });

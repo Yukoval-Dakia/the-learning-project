@@ -1,10 +1,14 @@
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
+import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+import { and, eq, gt, sql } from 'drizzle-orm';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
+const NOTE_REFINE_DEBOUNCE_TABLE = 'note_refine_debounce';
 
 // M3 (YUK-317, D6)：error_rate 信号已删（内嵌自测链路裁撤）。
 // YUK-358 决定6 (ADR-0040)：dwell 信号已裁（editing presence 不再触发 refine）。
@@ -40,9 +44,12 @@ type BossSend = (
       trigger_event_id?: string;
     };
   },
-) => Promise<unknown>;
-
-const lastEnqueuedAt = new Map<string, number>();
+  options?: {
+    singletonKey?: string;
+    singletonSeconds?: number;
+    db?: ReturnType<typeof fromPgBossDrizzleTx>;
+  },
+) => Promise<string | null>;
 
 export type NoteRefineTriggerResult =
   | { status: 'enqueued'; artifact_id: string; kind: NoteRefineTriggerKind }
@@ -51,17 +58,10 @@ export type NoteRefineTriggerResult =
   | { status: 'skipped:test_env'; artifact_id: string; kind: NoteRefineTriggerKind }
   | { status: 'failed'; artifact_id: string; kind: NoteRefineTriggerKind; error: string };
 
-export function resetNoteRefineTriggerStateForTests(): void {
-  lastEnqueuedAt.clear();
-}
-
 export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // YUK-358 决定7 — unset/empty/unknown falls back to the per-kind default
-  // (verify=OFF, the other real-signal kinds=ON). Explicit shared literals override
-  // that default, preserving both opt-in and opt-out polarity without a second grammar.
   return parseFlag(env[FLAG_BY_KIND[kind]], {
     defaultValue: DEFAULT_ENABLED_BY_KIND[kind],
   });
@@ -78,15 +78,10 @@ export async function enqueueNoteRefineTrigger(input: {
   bossSend?: BossSend;
   env?: NodeJS.ProcessEnv;
 }): Promise<NoteRefineTriggerResult> {
-  const now = input.now ?? new Date();
   if (!noteRefineTriggerEnabled(input.kind, input.env ?? process.env)) {
     return { status: 'skipped:disabled', artifact_id: input.artifactId, kind: input.kind };
   }
   const key = `${input.kind}:${input.artifactId}`;
-  const last = lastEnqueuedAt.get(key);
-  if (last !== undefined && now.getTime() - last < NOTE_REFINE_TRIGGER_DEBOUNCE_MS) {
-    return { status: 'skipped:debounced', artifact_id: input.artifactId, kind: input.kind };
-  }
 
   // Same hazard class as YUK-239 (STB-5): a bare VITEST key would silently skip
   // real enqueues if prod ever set it. Route through the central guard (NODE_ENV
@@ -101,7 +96,7 @@ export async function enqueueNoteRefineTrigger(input: {
       const boss = await getStartedBoss();
       send = boss.send.bind(boss);
     }
-    await send('note_refine', {
+    const data = {
       artifact_id: input.artifactId,
       trigger: {
         kind: input.kind,
@@ -109,9 +104,55 @@ export async function enqueueNoteRefineTrigger(input: {
         evidence_ids: input.evidenceIds,
         trigger_event_id: input.triggerEventId,
       },
+    };
+
+    if (input.db) {
+      const enqueued = await input.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`note_refine:${key}`}))`);
+        const cutoff = input.now
+          ? sql`${input.now.toISOString()}::timestamptz - ${NOTE_REFINE_TRIGGER_DEBOUNCE_MS} * interval '1 millisecond'`
+          : sql`now() - ${NOTE_REFINE_TRIGGER_DEBOUNCE_MS} * interval '1 millisecond'`;
+        const existing = await tx
+          .select({ id: job_events.id })
+          .from(job_events)
+          .where(
+            and(
+              eq(job_events.business_table, NOTE_REFINE_DEBOUNCE_TABLE),
+              eq(job_events.business_id, key),
+              gt(job_events.occurred_at, cutoff),
+            ),
+          )
+          .limit(1);
+        if (existing.length > 0) return false;
+
+        const jobId = await send('note_refine', data, { db: fromPgBossDrizzleTx(tx) });
+        if (jobId === null) return false;
+
+        await tx.insert(job_events).values({
+          business_table: NOTE_REFINE_DEBOUNCE_TABLE,
+          business_id: key,
+          event_type: 'note_refine.enqueued',
+          payload: { kind: input.kind, artifact_id: input.artifactId, job_id: jobId },
+          ...(input.now ? { occurred_at: input.now } : {}),
+        });
+        return true;
+      });
+      return {
+        status: enqueued ? 'enqueued' : 'skipped:debounced',
+        artifact_id: input.artifactId,
+        kind: input.kind,
+      };
+    }
+
+    const jobId = await send('note_refine', data, {
+      singletonKey: key,
+      singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
     });
-    lastEnqueuedAt.set(key, now.getTime());
-    return { status: 'enqueued', artifact_id: input.artifactId, kind: input.kind };
+    return {
+      status: jobId === null ? 'skipped:debounced' : 'enqueued',
+      artifact_id: input.artifactId,
+      kind: input.kind,
+    };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.warn(`[note_refine:${input.kind}] enqueue failed for ${input.artifactId}:`, err);

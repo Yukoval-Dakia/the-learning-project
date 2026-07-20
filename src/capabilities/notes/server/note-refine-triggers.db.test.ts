@@ -7,17 +7,129 @@
 //   - RED LINE (ADR-0035): the emit path NEVER writes mastery_state (read-only).
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MASTERY_PROGRESS_ACTION,
   emitMasteryProgressSignal,
   readMasteryProgress,
 } from '@/capabilities/notes/server/mastery-progress-signal';
-import { event, mastery_state } from '@/db/schema';
+import { enqueueNoteRefineTrigger } from '@/capabilities/notes/server/note-refine-triggers';
+import { event, job_events, mastery_state } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+describe('note refine rolling debounce', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('keeps a cross-process claim for 60 minutes across fixed-slot boundaries', async () => {
+    const bossSend = vi.fn().mockResolvedValue('job_1');
+    const first = new Date('2026-05-28T12:59:55.000Z');
+
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_boundary',
+        kind: 'mark_wrong',
+        now: first,
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'enqueued' });
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_boundary',
+        kind: 'mark_wrong',
+        now: new Date('2026-05-28T13:00:01.000Z'),
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'skipped:debounced' });
+
+    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(bossSend.mock.calls[0]?.[2]).toMatchObject({ db: expect.any(Object) });
+    const claims = await testDb()
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, 'mark_wrong:art_boundary'));
+    expect(claims).toHaveLength(1);
+    expect(claims[0]?.payload).toEqual({
+      kind: 'mark_wrong',
+      artifact_id: 'art_boundary',
+      job_id: 'job_1',
+    });
+  });
+
+  it('waits behind a failing same-key send, then enqueues without dropping the trigger', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const firstSend = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    let firstSendStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      firstSendStarted = resolve;
+    });
+    const bossSend = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        firstSendStarted();
+        return firstSend;
+      })
+      .mockResolvedValueOnce('job_second');
+
+    const first = enqueueNoteRefineTrigger({
+      db: testDb(),
+      artifactId: 'art_concurrent',
+      kind: 'mark_wrong',
+      bossSend,
+    });
+    await started;
+    const second = enqueueNoteRefineTrigger({
+      db: testDb(),
+      artifactId: 'art_concurrent',
+      kind: 'mark_wrong',
+      bossSend,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(bossSend).toHaveBeenCalledTimes(1);
+
+    rejectFirst(new Error('boss unavailable'));
+    await expect(first).resolves.toMatchObject({ status: 'failed', error: 'boss unavailable' });
+    await expect(second).resolves.toMatchObject({ status: 'enqueued' });
+    expect(bossSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves no rolling claim when pg-boss returns null', async () => {
+    const bossSend = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('job_retry');
+
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_null',
+        kind: 'mark_wrong',
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'skipped:debounced' });
+    await expect(
+      enqueueNoteRefineTrigger({
+        db: testDb(),
+        artifactId: 'art_null',
+        kind: 'mark_wrong',
+        bossSend,
+      }),
+    ).resolves.toMatchObject({ status: 'enqueued' });
+
+    expect(bossSend).toHaveBeenCalledTimes(2);
+    expect(
+      await testDb()
+        .select()
+        .from(job_events)
+        .where(eq(job_events.business_id, 'mark_wrong:art_null')),
+    ).toHaveLength(1);
+  });
+});
 
 describe('mastery-progress-signal (ADR-0040 决定2 p(L) delta 埋点)', () => {
   beforeEach(async () => {
