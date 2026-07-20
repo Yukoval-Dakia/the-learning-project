@@ -118,7 +118,7 @@ b 是 item 参数,标准上需对考生总体积分(MMLE)。但在 fixed-anchor 
   - LLM 直接 prompt 估难度 → 弱(Razavi & Powers 2025 预印本核验:direct estimate「moderate to strong」但早年级差,且本质是单点 rating)。
   - **LLM 抽教学/认知特征 → 喂 tree-based 模型**:Razavi & Powers 2025 实测 **r 高达 0.87**(B1 写 r≈0.78 是保守口径,文献支持更高)。这是冷启先验的主力路径。
   - **LLM 模拟不同能力考生 → 拟合 IRT**(B1「模拟考生 ensemble」):SMART 框架(arXiv:2507.05129,见核验表)和 Dueñas et al. 2024(GPT-3.5 模拟医考生)是这条线的代表 —— 但二者均为**预印本/会议未定级**,引用力度需诚实标注。
-  - ⚠️ **B1 提到的「ML 难度预测当 Bayesian IRT prior(Ulitzsch 2025)」我无法独立核验存在性**(见核验表),**不应作为正式地基引用**,需 owner 提供原始出处或删除该具体署名。
+  - **ML 难度预测接入 IRT 不依赖具体署名**：正式地基仅采用已核验的通用「贝叶斯 IRT + 先验」原理（Bock & Aitkin 1981 的 MMLE/EM 边际似然框架）；ML 输出只作需实证校准的先验输入。
 
 ---
 
@@ -132,7 +132,7 @@ b 是 item 参数,标准上需对考生总体积分(MMLE)。但在 fixed-anchor 
 
 4. **慢热四阶段的 CAT/Elo/Fisher-info 借用有成熟文献,LLM 特征抽取的实证 r 比 B1 写的更高。** CAT 的 maximum-information 选题(Lord 1980)、Elo 在教育中的 θ/难度在线估计(Pelánek 2016,Computers & Education,核验)都是定级期刊/经典源;LLM 抽特征 r≈0.87(Razavi & Powers 2025,B1 写 0.78 偏保守)。Elo 阶段「锁 item 难度防方差膨胀」与 Pelánek 2016 的 Elo 变体讨论吻合。
 
-5. **B1 第 41 行「Ulitzsch 2025 当 Bayesian prior」无法核验,必须替换或删除署名;LLM 模拟考生路径的源全是预印本,引用力度要诚实标注。** 净影响:B1 算法骨架(PFA + θ/b 硬轨 + a/c 软轨 + LLM 先验 + 慢热四阶段)的**核心承重点全部有经同行评审的经典/定级文献支撑**;唯一需修补的是「ML 预测当贝叶斯先验」这一具体接法,目前只能靠通用的「贝叶斯 IRT + 先验」原理(MMLE/Bock-Aitkin 的边际似然框架 + 一般贝叶斯 IRT)间接支撑,不能挂在未核实的具体署名上。
+5. **ML 难度预测作为先验只按通用贝叶斯 IRT 原理表述；LLM 模拟考生路径的来源按其正式发表状态标注引用力度。** 净影响:B1 算法骨架(PFA + θ/b 硬轨 + a/c 软轨 + LLM 先验 + 慢热四阶段)的**核心承重点全部有经同行评审的经典/定级文献支撑**;「ML 预测当贝叶斯先验」的正式依据是 MMLE/Bock-Aitkin 的边际似然框架 + 一般贝叶斯 IRT,不再挂靠无法精确溯源的署名。
 
 ---
 
@@ -154,13 +154,12 @@ b 是 item 参数,标准上需对考生总体积分(MMLE)。但在 fixed-anchor 
 | arXiv:2504.08804 | Estimating Item Difficulty Using LLMs and Tree-Based ML Algorithms | Pooya Razavi & Sonya Powers | arXiv(预印本) | 2025 | 低(新) | **预印本未评审** | **确认存在**(摘要逐字核验:r=0.87,N=5170) | 预印本/非学术定级;LLM-特征抽取证据 |
 | arXiv:2507.05129 | SMART: Simulated Students Aligned with IRT for Question Difficulty Prediction | (arXiv,作者未逐一核验) | arXiv(预印本) | 2025 | 低(新) | **预印本未评审** | 列出存在,**未逐字核验作者** | 预印本;LLM-模拟考生证据,引用力度弱 |
 | (Dueñas et al. 2024) | (GPT-3.5 模拟医考生 IRT) | Dueñas et al. | 二手转述(未定位原文) | 2024 | 低 | **无法核实原始 venue** | **无法核实** | 不作正式引用,仅作机制提及 |
-| (Ulitzsch 2025) | (ML 难度预测当 Bayesian IRT prior) | Ulitzsch et al.(声称) | 未知 | 2025(声称) | — | — | **无法核实** | **不可引用** —— 需 owner 补出处或删署名 |
 
 ---
 
 ## 7. Linear 跟进
 
-本任务为纯文献调研/补盘,产出直接回填到 owner 正在编辑的决策总账。发现 3 个 owner 应处理的 B1 文档修补点(均已在净结论第 2/5 条点明),属现有 B1 决策的措辞收紧、不构成新 feature 工作:(a) 「b=β=D」等号降格为「需 linking」;(b) 删除/替换未核实的「Ulitzsch 2025」署名;(c) LLM 模拟考生源标注为预印本。**无需新建 Linear issue** —— 这些是 owner 当前手上 doc 的内联订正,且 B1 第 43 行已有「来源诚实」自标 placeholder,本报告正是填充它的输入,在同一编辑会话内闭环即可。
+本任务为纯文献调研/补盘,产出直接回填到 owner 正在编辑的决策总账。发现 3 个 owner 应处理的 B1 文档修补点(均已在净结论第 2/5 条点明),属现有 B1 决策的措辞收紧、不构成新 feature 工作:(a) 「b=β=D」等号降格为「需 linking」;(b) ML 难度预测接入 IRT 改用通用贝叶斯原理表述;(c) LLM 模拟考生源按正式发表状态标注。**无需新建 Linear issue** —— 这些是 owner 当前手上 doc 的内联订正,且 B1 第 43 行已有「来源诚实」自标 placeholder,本报告正是填充它的输入,在同一编辑会话内闭环即可。
 
 **相关文件(绝对路径):**
 - 决策总账(本报告补盘对象):`/Users/yukoval/yukoval-projects/the-learning-project/docs/design/2026-06-14-product-rethink-decisions-ledger.md`(§1 B1,第 32-49 行;第 43 行「来源诚实」自标即本报告填充点)
@@ -692,7 +691,6 @@ I now have comprehensive verification across all four lanes. Producing the final
 | 12 | arXiv:2502.20663 | Prediction of Item Difficulty...Annotated Item Repository | Kapoor, Truong, Haber, Ruiz-Primo, Domingue (Stanford) | arXiv 预印本 | 2025 | 低 | **预印本** | **确认·修正**（此文是 **penalized regression r=0.77**，非「random forest r=0.87」；n=1 路把 0.87 误挂到此 ID） | 预印本 |
 | 13 | arXiv:2507.05129 | SMART: Simulated Students Aligned with IRT | Scarlatos, Fernandez, Ormerod, Lottridge, Lan (UMass/Cambium) | **EMNLP 2025**（aclanthology 2025.emnlp-main.1274） | 2025 | 低-中 | **是·已正式发表(EMNLP)** | **确认·修正**（IRT 路标「预印本未评审/未逐字核验作者/引用力度弱」**严重低估**——这是 EMNLP 2025 正式 main track，CORE-A NLP 顶会，作者已核） | 高·CORE-A 会议（被错降为预印本） |
 | 14 | (无;转述) | (GPT-3.5 模拟医考生 IRT) | Dueñas et al.(声称) | 未定位 | 2024 | — | — | **无法核实**（核不到任何 Dueñas 2024 匹配；该空间真实论文是 Lu&Wang 2024 / Benedetto 2024 / Liu 2024；IRT 路已自标「不作正式引用」，正确） | 不可引用 |
-| 15 | (声称) | (ML 难度预测当 Bayesian IRT prior) | Ulitzsch(声称) 2025 | 未定位精确 venue | 2025 | — | — | **存疑·部分平反**（确有 Ulitzsch et al. 2025「ML 难度预测整合进 IRT」工作，被 Frontiers in Education 2026 综述引用；但 IRT 路无法钉精确 venue/DOI，且「当 Bayesian prior」这一具体机制未坐实——IRT 路「不可引用、需 owner 补出处」的处置正确，但「疑似 hallucinate」是冤枉它了） | 存在但无法精确引用 |
 | 16 | arXiv:2502.17785 | LLMs for Estimating Reading Comprehension Q Difficulty | Jain, Hollander, He, Tang, Zhang, Sabatini | arXiv 预印本 | 2025 | 低 | **预印本** | **确认**（n=1 路澄清「此文只报 accuracy，不含 r 值，不能当 r≈0 出处」——这是 n=1 路一条高质量的反向自查，正确） | 预印本 |
 | 17 | 10.1111/j.1745-3984.1983.tb00212.x | Rule Space (Q-matrix 开山) | K. K. Tatsuoka | JEM 20(4):345-354 | 1983 | 数千 | 是 | **确认**（ERIC EJ296184；注意同年同刊还有 tb00201 另一篇，CDM 路引对了那篇） | 奠基·最高 |
 | 18 | 10.1177/01466210122032064 | Cognitive Assessment Models...DINA/NIDA | Junker & Sijtsma | Applied Psych. Measurement 25(3):258-272 | 2001 | 千级 | 是 | **确认** | 高 |
@@ -770,7 +768,7 @@ I now have comprehensive verification across all four lanes. Producing the final
 
 **L4. Stocking 1990 不可读成「规定样本量 N」**：KT 路与 n=1 路都已诚实标注 Stocking 讲的是能力**分布/构成**而非样本量阈值。**确认此自查正确**——这是全corpus 最 load-bearing 的源，被两路主动收紧措辞，是诚实加分项。
 
-**L5. Ulitzsch 2025 不是 hallucination、但不可精确引用**：确有 Ulitzsch et al. 2025「ML 难度预测整合进 IRT」工作（Frontiers in Education 2026 综述引之），但钉不到精确 venue/DOI，「当 Bayesian prior」的具体机制未坐实。IRT 路「不可引用、需 owner 补出处」的处置正确；唯一要平反的是别把它当「疑似编造」——它存在，只是 IRT 路没找到精确出处。
+**L5. ML 难度预测进入 IRT 先验的证据边界**：无法精确溯源的工作不作引用；正式论证只落在已核验的 MMLE/Bock-Aitkin 边际似然框架与一般贝叶斯 IRT。具体 ML 预测值属于待校准的先验输入，不据此扩张证据强度。
 
 **L6. RUM/Fusion（DiBello/Stout/Roussos 1995 + Hartz 2002）一手未 fetch**：CDM 路诚实标「部分二手」，载体是论文集章节 + 博士论文（非期刊同评）。保留此标即可，不构成过度声称。
 
