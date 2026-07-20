@@ -75,8 +75,16 @@ export async function isInActivePracticeSession(db: Db): Promise<boolean> {
   return rows.length > 0;
 }
 
+function isUnsupportedAttemptPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const value = payload as {
+    unsupported_judge?: unknown;
+    judge?: { coarse_outcome?: unknown };
+  };
+  return value.unsupported_judge === true || value.judge?.coarse_outcome === 'unsupported';
+}
+
 /**
- * 确定性判定：一个 ingestion 完成事件是否应产生一条主动开口 nudge。
  * 只读——不写任何 event。fire=true 的 NudgeToWrite 交给 handler 写入 + 幂等收口。
  */
 async function evaluateWrongStreak(
@@ -86,7 +94,13 @@ async function evaluateWrongStreak(
   now: Date,
 ): Promise<NudgeDecision> {
   const triggerRows = await db
-    .select({ id: event.id, action: event.action, outcome: event.outcome, payload: event.payload })
+    .select({
+      id: event.id,
+      action: event.action,
+      outcome: event.outcome,
+      payload: event.payload,
+      createdAt: event.created_at,
+    })
     .from(event)
     .where(eq(event.id, input.attempt_event_id))
     .limit(1);
@@ -94,7 +108,7 @@ async function evaluateWrongStreak(
   if (!trigger || (trigger.action !== 'attempt' && trigger.action !== 'review')) {
     return { fire: false, reason: 'attempt_not_found' };
   }
-  if (trigger.outcome !== 'failure' || trigger.payload?.unsupported_judge === true) {
+  if (trigger.outcome !== 'failure' || isUnsupportedAttemptPayload(trigger.payload)) {
     return { fire: false, reason: 'not_failure' };
   }
 
@@ -120,10 +134,10 @@ async function evaluateWrongStreak(
           inArray(event.action, ['attempt', 'review']),
           eq(event.subject_kind, 'question'),
           sql`${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb`,
+          sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
         ),
       )
-      .orderBy(desc(event.created_at), desc(event.id))
-      .limit(100);
+      .orderBy(desc(event.created_at), desc(event.id));
 
     const attemptIds = rows.map((row) => row.id);
     const judges =
@@ -170,15 +184,13 @@ async function evaluateWrongStreak(
         .map((judge) => judge.subjectId),
     );
 
+    const triggerIsContested = contestedAttemptIds.has(trigger.id);
+    if (triggerIsContested) return { fire: false, reason: 'not_failure' };
+
     const tailEventIds: string[] = [];
     for (const row of rows) {
-      if (
-        row.outcome !== 'failure' ||
-        row.payload?.unsupported_judge === true ||
-        contestedAttemptIds.has(row.id)
-      ) {
-        break;
-      }
+      if (row.outcome !== 'failure') break;
+      if (isUnsupportedAttemptPayload(row.payload) || contestedAttemptIds.has(row.id)) continue;
       tailEventIds.push(row.id);
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
@@ -198,6 +210,21 @@ async function evaluateWrongStreak(
   if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
 
   const shadow = !config.enabled;
+  const cooldownRows = await db
+    .select({ one: sql<number>`1` })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, NUDGE_ACTION),
+        eq(event.subject_kind, 'knowledge'),
+        eq(event.subject_id, winner.kcId),
+        sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
+        sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+      ),
+    )
+    .limit(1);
+  if (cooldownRows.length > 0) return { fire: false, reason: 'kc_cooldown' };
+
   if (!shadow) {
     const capRows = await db
       .select({ n: sql<number>`count(*)` })
@@ -210,21 +237,6 @@ async function evaluateWrongStreak(
         ),
       );
     if (Number(capRows[0]?.n ?? 0) >= config.dailyMax) return { fire: false, reason: 'daily_cap' };
-
-    const cooldownRows = await db
-      .select({ one: sql<number>`1` })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, NUDGE_ACTION),
-          eq(event.subject_kind, 'knowledge'),
-          eq(event.subject_id, winner.kcId),
-          sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
-          sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
-        ),
-      )
-      .limit(1);
-    if (cooldownRows.length > 0) return { fire: false, reason: 'kc_cooldown' };
 
     const dismissed = alias(event, 'streak_dismissed');
     const nudge = alias(event, 'streak_nudge');

@@ -21,6 +21,7 @@ async function seedAttempt(opts: {
   at: Date;
   action?: 'attempt' | 'review';
   unsupported?: boolean;
+  nestedUnsupported?: boolean;
 }): Promise<void> {
   await testDb()
     .insert(event)
@@ -35,6 +36,7 @@ async function seedAttempt(opts: {
       payload: {
         referenced_knowledge_ids: opts.knowledgeIds,
         ...(opts.unsupported ? { unsupported_judge: true } : {}),
+        ...(opts.nestedUnsupported ? { judge: { coarse_outcome: 'unsupported' } } : {}),
       },
       created_at: opts.at,
     });
@@ -115,25 +117,41 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
     },
   );
 
-  it('excludes unsupported-judge failures from the streak', async () => {
+  it.each([
+    { label: 'top-level unsupported marker', options: { unsupported: true } },
+    { label: 'nested review judge outcome', options: { nestedUnsupported: true } },
+  ])('skips a historical failure with $label', async ({ options }) => {
+    await seedAttempt({
+      id: 'older_failure',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 4_000),
+    });
     await seedAttempt({
       id: 'unsupported',
       outcome: 'failure',
       knowledgeIds: ['kc_a'],
       at: new Date(NOW.getTime() - 3_000),
-      unsupported: true,
+      action: 'review',
+      ...options,
     });
     const triggerId = await seedWrongTail('kc_a', 2);
 
-    await expect(evaluate(triggerId)).resolves.toEqual({
-      fire: false,
-      reason: 'streak_below_threshold',
-    });
+    const decision = await evaluate(triggerId);
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
   });
 
   it.each(['corrected', 'appealed'] as const)(
     'excludes a %s failure from the streak',
     async (kind) => {
+      await seedAttempt({
+        id: 'older_failure',
+        outcome: 'failure',
+        knowledgeIds: ['kc_a'],
+        at: new Date(NOW.getTime() - 4_000),
+      });
       await seedAttempt({
         id: 'contested_attempt',
         outcome: 'failure',
@@ -202,9 +220,77 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
         );
       const triggerId = await seedWrongTail('kc_a', 2);
 
-      await expect(evaluate(triggerId)).resolves.toEqual({
+      const decision = await evaluate(triggerId);
+      expect(decision.fire).toBe(true);
+      if (!decision.fire) throw new Error('expected fire');
+      expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
+    },
+  );
+
+  it.each(['unsupported', 'corrected', 'appealed'] as const)(
+    'does not fire when the trigger itself is %s',
+    async (kind) => {
+      await seedWrongTail('kc_a', 3);
+      await seedAttempt({
+        id: 'contested_trigger',
+        outcome: 'failure',
+        knowledgeIds: ['kc_a'],
+        at: NOW,
+        unsupported: kind === 'unsupported',
+      });
+      if (kind !== 'unsupported') {
+        await testDb()
+          .insert(event)
+          .values({
+            id: 'trigger_judge',
+            actor_kind: 'agent',
+            actor_ref: 'review_judge',
+            action: 'judge',
+            subject_kind: 'event',
+            subject_id: 'contested_trigger',
+            outcome: 'success',
+            payload: {},
+            caused_by_event_id: 'contested_trigger',
+            created_at: new Date(NOW.getTime() + 1),
+          });
+        await testDb()
+          .insert(event)
+          .values(
+            kind === 'corrected'
+              ? {
+                  id: 'trigger_correction',
+                  actor_kind: 'agent',
+                  actor_ref: 'rejudge',
+                  action: 'correct',
+                  subject_kind: 'event',
+                  subject_id: 'trigger_judge',
+                  outcome: 'success',
+                  payload: {
+                    correction_kind: 'supersede',
+                    reason_md: 'upheld',
+                    replacement_event_id: 'replacement',
+                    affected_refs: [{ kind: 'question', id: 'q_contested_trigger' }],
+                  },
+                  caused_by_event_id: 'trigger_judge',
+                  created_at: new Date(NOW.getTime() + 2),
+                }
+              : {
+                  id: 'trigger_appeal',
+                  actor_kind: 'user',
+                  actor_ref: 'self',
+                  action: 'experimental:appeal_request',
+                  subject_kind: 'event',
+                  subject_id: 'trigger_judge',
+                  payload: { reason_md: 'recheck' },
+                  caused_by_event_id: 'trigger_judge',
+                  created_at: new Date(NOW.getTime() + 2),
+                },
+          );
+      }
+
+      await expect(evaluate('contested_trigger')).resolves.toEqual({
         fire: false,
-        reason: 'streak_below_threshold',
+        reason: 'not_failure',
       });
     },
   );
@@ -312,6 +398,85 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
 
     const decision = await evaluate(nextTriggerId);
     expect(decision.fire).toBe(true);
+  });
+
+  it('applies the KC cooldown to shadow nudges', async () => {
+    const triggerId = await seedWrongTail('kc_a', 3);
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'prior_shadow_nudge',
+        actor_kind: 'agent',
+        actor_ref: 'copilot_nudge_trigger',
+        action: NUDGE_ACTION,
+        subject_kind: 'knowledge',
+        subject_id: 'kc_a',
+        payload: {
+          kind: 'kc_wrong_streak',
+          headline: 'seed',
+          expires_at: NOW.toISOString(),
+          shadow: true,
+          in_active_session: false,
+          evidence: { kc_id: 'kc_a', streak_n: 3 },
+        },
+        caused_by_event_id: 'old_attempt',
+        created_at: new Date(NOW.getTime() - 23 * 3_600_000),
+      });
+
+    await expect(evaluate(triggerId, SHADOW_CFG)).resolves.toEqual({
+      fire: false,
+      reason: 'kc_cooldown',
+    });
+  });
+
+  it('does not let a delayed older trigger observe later attempts', async () => {
+    await seedAttempt({
+      id: 'older_trigger',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 3_000),
+    });
+    await seedAttempt({
+      id: 'later_1',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 2_000),
+    });
+    await seedAttempt({
+      id: 'later_2',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 1_000),
+    });
+
+    await expect(evaluate('older_trigger')).resolves.toEqual({
+      fire: false,
+      reason: 'streak_below_threshold',
+    });
+  });
+
+  it('finds eligible failures behind more than 100 excluded rows', async () => {
+    await seedAttempt({
+      id: 'old_eligible',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 200_000),
+    });
+    for (let i = 0; i < 101; i++) {
+      await seedAttempt({
+        id: `unsupported_${i.toString().padStart(3, '0')}`,
+        outcome: 'failure',
+        knowledgeIds: ['kc_a'],
+        at: new Date(NOW.getTime() - 150_000 + i * 1_000),
+        unsupported: true,
+      });
+    }
+    const triggerId = await seedWrongTail('kc_a', 2);
+
+    const decision = await evaluate(triggerId);
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
   });
 
   it('records active-session state for the existing silent-window read-model backstop', async () => {
