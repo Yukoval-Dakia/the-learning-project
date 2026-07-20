@@ -7,6 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import type { Db } from '@/db/client';
@@ -441,6 +442,8 @@ export async function submitSolveAttempt(
     // submitted → judged, atomic with the writes above (reveal is in the response).
     await Tutor.markJudgedTx(tx, sessionId);
   });
+
+  await enqueueWrongStreakNudge(outcome, attemptEventId);
 
   return {
     attempt_event_id: attemptEventId,

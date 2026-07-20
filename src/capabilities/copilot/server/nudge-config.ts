@@ -15,6 +15,10 @@ export interface NudgeConfig {
   dailyMax: number;
   /** nudge 过期窗（小时）——过期后读模型静默过滤，不删行（A3「可静默消失」）。 */
   expiresHours: number;
+  /** 同 KC 连错达到该次数才触发。 */
+  streakN: number;
+  /** 同 KC streak nudge 冷却窗（小时）。 */
+  kcCooldownHours: number;
 }
 
 function parseIntEnv(raw: string | undefined, fallback: number): number {
@@ -28,5 +32,7 @@ export function loadNudgeConfig(env: NodeJS.ProcessEnv = process.env): NudgeConf
     enabled: parseFlag(env.COPILOT_NUDGE_ENABLED),
     dailyMax: parseIntEnv(env.COPILOT_NUDGE_DAILY_MAX, 3),
     expiresHours: parseIntEnv(env.COPILOT_NUDGE_EXPIRES_HOURS, 24),
+    streakN: parseIntEnv(env.COPILOT_NUDGE_STREAK_N, 3),
+    kcCooldownHours: parseIntEnv(env.COPILOT_NUDGE_KC_COOLDOWN_HOURS, 24),
   };
 }

@@ -8,8 +8,14 @@ import type { NudgeConfig } from './nudge-config';
 import { NUDGE_ACTION, NUDGE_DISMISSED_ACTION, evaluateNudgeTrigger } from './nudge-triggers';
 
 const NOW = new Date('2026-07-07T04:00:00.000Z'); // noon Asia/Shanghai
-const SHADOW_CFG: NudgeConfig = { enabled: false, dailyMax: 3, expiresHours: 24 };
-const LIVE_CFG: NudgeConfig = { enabled: true, dailyMax: 3, expiresHours: 24 };
+const SHADOW_CFG: NudgeConfig = {
+  enabled: false,
+  dailyMax: 3,
+  expiresHours: 24,
+  streakN: 3,
+  kcCooldownHours: 24,
+};
+const LIVE_CFG: NudgeConfig = { ...SHADOW_CFG, enabled: true };
 
 async function seedIngestion(opts: {
   sessionId: string;

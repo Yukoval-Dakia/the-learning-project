@@ -54,6 +54,7 @@ import {
 import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
+import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import { collectMasteryRefineTargets } from './note-refine-targets';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
@@ -1038,6 +1039,9 @@ export async function submitPaperSlot(
       });
     }
   }
+
+  // Best-effort wrong-streak evaluation; only a newly persisted attempt may enqueue.
+  if (wroteNewAttempt) await enqueueWrongStreakNudge(attemptOutcome, attemptEventId);
 
   // YUK-455 inc-E — prereq 诊断「向后传播」producer (dark-ship), 与 solo submit (submit.ts) 对齐。
   // 答错 B（paper/exam 路径）→ 沿 prerequisite 边向上找 B 的 transitive 前置 A，EMIT
