@@ -255,6 +255,19 @@ export function RcDetailPanel({ summary }: { summary: RcSummary }) {
   );
 }
 
+function formatMedianDrift(current: number | null, recomputed: number | null) {
+  const short = (value: number | null) => (value === null ? '暂无' : value.toFixed(2));
+  if (
+    current !== null &&
+    recomputed !== null &&
+    !Object.is(current, recomputed) &&
+    short(current) === short(recomputed)
+  ) {
+    return { current: String(current), recomputed: String(recomputed) };
+  }
+  return { current: short(current), recomputed: short(recomputed) };
+}
+
 /**
  * D2 (#45) — calibration-maturity 卡 · profile 级成熟度对账徽章.
  *
@@ -271,7 +284,7 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
   const firmMatch = summary.dFirm === summary.sFirm;
   const medianMatch = Object.is(summary.dMedian, summary.sMedian);
   const mismatchCount = Number(!firmMatch) + Number(!medianMatch);
-  const formatMedian = (value: number | null) => (value === null ? '暂无' : value.toFixed(2));
+  const medianLabels = formatMedianDrift(summary.sMedian, summary.dMedian);
 
   return (
     <div className={`rc-cal rc-state-${state}`}>
@@ -316,8 +329,8 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
               )}
               {!medianMatch && (
                 <span>
-                  整体判断稳定度：当前概览 <b className="mono">{formatMedian(summary.sMedian)}</b> ·
-                  重新核对 <b className="mono">{formatMedian(summary.dMedian)}</b>
+                  整体判断稳定度：当前概览 <b className="mono">{medianLabels.current}</b> · 重新核对{' '}
+                  <b className="mono">{medianLabels.recomputed}</b>
                 </span>
               )}
               学习记录没有丢失；概览会在下次同步时重新核对。核对过程只读，不会改动记录。 ·{' '}
