@@ -24,7 +24,7 @@
 
 - **dependabot 队列（YUK-671）**：先收 #953（minor/patch group,全量 gate 后合）;四只 major（#954-957）逐只单 lane,`ai`/`@ai-sdk/anthropic` 两只须对照 `src/server/ai/AGENTS.md` 双 provider 机制写迁移笔记。
 - **owner 拍板菜单（本波新增）**：YUK-546 第 1 件（级联 vs guard,备忘推荐级联）+ 第 3 件（partial index,备忘裁 NO-GO 除非三合一）· YUK-736（snapshot 修链 vs 成文）· #968/YUK-735 归属确认。
-- **YUK-737 拓扑门缺口（546 子票）**：supersede accept 分支 + 直连 POST /api/edges 补成环检查,ready-for-agent 形态,下轮可 grab。
+- ~~YUK-737 拓扑门缺口~~：**已于 07-20 08:36 经 #974 合入 Done**（supersede/直连 POST 双路径补门,scaffold 抽共享 edge-topology-write.ts,create 分支同迁）。
 - **YUK-727 jyeoo 图题 figures/R2 glue**：#939 走了「持久化前过滤」路径,完整 asset 管道拆此票;开 JYEOO_FETCH_ENABLED 前非必需。
 - **YUK-354 / YUK-169 umbrella 余项**：按已有形态轴和 redraw brief 继续 slice-by-slice；UI 仍逐刀做 design-doc pre-flight。
 - **YUK-506 教学法脑 runtime 大头**：panel-SELECT / efficacy learning / B5 verification / delivery wiring 全 deferred（#823 只落安全脊）。⚠️ **硬前置 = YUK-505 拓扑 amend**（见 BLOCKED-ON）。
@@ -61,7 +61,7 @@
 - **worktree / 分支存量**:本波 6 只 lane worktree(yuk710/733/734/546/549/cockpit 前五只)已随 merge 清除;`git worktree list` 仍 99 行(含 40 只历史 tlp-wt-* + `.claude/worktrees` 契约残留),**本地遗留分支 ~749 只**(squash-merge 后 `-d` 拒删,git-guard 不 `-D`)——批量清理属 infra 清扫,待 owner 点名。
 - **外部/owner 门控**:YUK-669 历史清洗;GitHub Actions billing 零步失败(YUK-712)——本波每 PR 由 OCR/codex/CodeRabbit(已复活)1-10 轮有效 review 覆盖,merge 证据=本地分段 gate 真实 EXIT 行。
 - **本地工作树**:owner 既有未跟踪文件(`.codex/*`、`AGENTS.md`、jyeoo 设计 doc)未暂存未改写;jyeoo-rs 仓库只读未动;主工作树未 pull(driver 全程 worktree 作业)。
-- **基建注意**:Docker fsync IO 退化持续(S2 全量必四分片);**dev compose 库(:5433/loom)schema 落后于 main**(缺 YUK-221 `ordinal` 等,audit:projection 对 dev 库跑不了——owner 下次 `pnpm dev:local` 迁移即复原)。YUK-724 flake 第 3/4 次已记录,建议并发隔离。
+- **🔴 基建注意(08:30 后升级)**:Docker fsync IO 退化已过悬崖——**单个 S2 分片(61 文件)连 testcontainer setup 都撑不过 10 分钟窗**(两次 setup 期被杀),仅 ~23 文件定向跑可完成(~8 分钟)。**owner 重启 Docker/OrbStack 前,一切需 full-shard db gate 的 merge 实质被阻**(#974 已按定向跑+lane 双源证据如实合入)。dependabot #953 另被供应链 minimumReleaseAge 政策挡到 ~08:40Z(katex 0.18.1 出窗),政策保持不放宽;#954-957 四 major 需 full S2,同被 IO 悬崖顺延。**dev compose 库(:5433/loom)schema 落后于 main**(缺 YUK-221 `ordinal` 等,audit:projection 对 dev 库跑不了——owner 下次 `pnpm dev:local` 迁移即复原)。YUK-724 flake 第 3/4 次已记录,建议并发隔离。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
