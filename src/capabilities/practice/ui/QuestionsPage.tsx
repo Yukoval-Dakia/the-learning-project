@@ -89,11 +89,8 @@ const QDIFF: Record<string, { tone: Tone; word: string }> = {
   4: { tone: 'again', word: '较难' },
   5: { tone: 'again', word: '难' },
 };
-const QDIFF_FALLBACK = { tone: 'hard' as Tone, word: '难度' };
-const lookupDiffMeta = makeLookup(QDIFF, QDIFF_FALLBACK);
 function diffMeta(d: number) {
-  const meta = lookupDiffMeta(String(d));
-  return meta === QDIFF_FALLBACK ? { ...meta, word: `难度 ${d}` } : meta;
+  return QDIFF[String(d)] ?? { tone: 'hard' as Tone, word: `难度 ${d}` };
 }
 
 // subject 派生轴 → label/tone. Label 从注册表派生（subjectDisplayName，alias-aware：
