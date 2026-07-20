@@ -111,6 +111,14 @@ describe('maturity drift detail', () => {
     );
   });
 
+  it('shows round-trip precision when two-decimal labels would hide the drift', () => {
+    renderSettledDrift({ sMedian: 0.4000000000000001 });
+
+    expect(screen.getByText(/整体判断稳定度：当前概览/).textContent).toContain(
+      '0.4000000000000001 · 重新核对 0.4',
+    );
+  });
+
   it('counts and renders both mismatch dimensions', () => {
     renderSettledDrift({ sFirm: 3, sMedian: null });
 
