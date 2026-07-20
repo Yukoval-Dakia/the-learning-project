@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24.0.0"
   },
   "packageManager": "pnpm@11.13.1",
   "scripts": {
     "dev": "tsx scripts/dev-local.ts",
     "dev:local": "tsx scripts/dev-local.ts",
     "build": "pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate",
-    "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --define:process.env.NODE_ENV=\\\"production\\\"",
-    "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:native": "cd crates/calibration-native && pnpm --package=@napi-rs/cli@3.7.2 dlx napi build --release",
     "build:native:wasm": "cd crates/calibration-native && pnpm install --ignore-workspace --prefer-offline && pnpm --package=@napi-rs/cli@3.7.2 dlx napi build --release --target wasm32-wasip1-threads --platform && rm -f calibration-native.wasm32-wasi.debug.wasm",
     "start": "node dist/server.cjs",
@@ -84,7 +84,7 @@
     "rw:api": "RW_WORKER=1 tsx watch server/index.ts",
     "rw:web": "vite --config web/vite.config.ts",
     "rw:web:build": "vite build --config web/vite.config.ts",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\\\"production\\\"",
     "rw:build": "pnpm rw:web:build && pnpm build:server"
   },
   "dependencies": {
@@ -142,7 +142,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/katex": "^0.16.8",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.13.3",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
