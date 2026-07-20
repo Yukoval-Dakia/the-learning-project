@@ -44,9 +44,15 @@ jobs:
           node-version: '24'
           cache: 'pnpm'
 
-      - uses: dtolnay/rust-toolchain@stable
+      # stable @ 2026-07-20; pin third-party actions to immutable commits.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: wasm32-wasip1-threads
+
+      # v2 @ 2026-07-20. Cache Cargo registry/git data and this standalone crate's target.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: crates/calibration-native -> target
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
