@@ -5,11 +5,11 @@ import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { notifyKnowledgeMeshMutation } = vi.hoisted(() => ({
-  notifyKnowledgeMeshMutation: vi.fn(),
+const { enqueueHubAutoSync } = vi.hoisted(() => ({
+  enqueueHubAutoSync: vi.fn(),
 }));
 
-vi.mock('@/server/knowledge-mesh-sync', () => ({ notifyKnowledgeMeshMutation }));
+vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './proposal-decide';
 
@@ -100,7 +100,7 @@ async function decide(id: string, body: unknown) {
 describe('POST /api/knowledge/proposals/[id]', () => {
   beforeEach(async () => {
     await resetDb();
-    notifyKnowledgeMeshMutation.mockReset();
+    enqueueHubAutoSync.mockReset();
   });
 
   it('returns 400 when decision is missing', async () => {
@@ -143,9 +143,9 @@ describe('POST /api/knowledge/proposals/[id]', () => {
     });
 
     expect((await decide('legacy_merge', { decision: 'accept' })).status).toBe(200);
-    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
     expect((await decide('legacy_merge', { decision: 'accept' })).status).toBe(409);
-    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('accepts a pending propose_new proposal', async () => {
@@ -190,7 +190,7 @@ describe('POST /api/knowledge/proposals/[id]', () => {
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p2')));
     expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('dismiss');
-    expect(notifyKnowledgeMeshMutation).not.toHaveBeenCalled();
+    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
   });
 
   it('returns 404 for non-existent proposal', async () => {

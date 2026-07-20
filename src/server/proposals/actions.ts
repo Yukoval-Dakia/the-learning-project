@@ -1,4 +1,4 @@
-import { notifyKnowledgeMeshMutation } from '@/server/knowledge-mesh-sync';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
@@ -523,7 +523,7 @@ export async function decideKnowledgeEdgeProposal(
       }
     });
 
-    await notifyKnowledgeMeshMutation();
+    await enqueueHubAutoSync();
     if (proposal) {
       await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
     }
@@ -666,7 +666,7 @@ export async function decideKnowledgeEdgeProposal(
       },
     );
 
-    await notifyKnowledgeMeshMutation();
+    await enqueueHubAutoSync();
     if (proposal) {
       await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
     }
@@ -783,7 +783,7 @@ export async function decideKnowledgeEdgeProposal(
     { uniqueViolationMessage: `edge already exists: ${fromId} --${relationType}--> ${toId}` },
   );
 
-  await notifyKnowledgeMeshMutation();
+  await enqueueHubAutoSync();
   if (proposal) {
     await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
   }
@@ -880,7 +880,7 @@ async function dispatchAccept(
         );
       }
       const result = await acceptProposal(db, proposalId);
-      if (result.kind === 'merge_applied') await notifyKnowledgeMeshMutation();
+      if (result.kind === 'merge_applied') await enqueueHubAutoSync();
       await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
       return { kind: 'knowledge_mutation', result };
     }

@@ -2,8 +2,8 @@ import { LegacyKnowledgeProposalDecisionBodySchema } from '@/capabilities/knowle
 import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { notifyKnowledgeMeshMutation } from '@/server/knowledge-mesh-sync';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   const response = await handleLegacyKnowledgeDecision(req, params);
@@ -26,7 +26,7 @@ async function handleLegacyKnowledgeDecision(
 
     if (body.decision === 'accept') {
       const result = await acceptProposal(db, id);
-      if (result.kind === 'merge_applied') await notifyKnowledgeMeshMutation();
+      if (result.kind === 'merge_applied') await enqueueHubAutoSync();
       return Response.json(result);
     }
 
