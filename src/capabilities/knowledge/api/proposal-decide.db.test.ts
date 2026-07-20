@@ -117,7 +117,7 @@ describe('POST /api/knowledge/proposals/[id]', () => {
     expect(body.error).toBe('invalid_decision');
   });
 
-  it('enqueues mesh sync after a legacy merge accept but not after rejection or rollback', async () => {
+  it('enqueues mesh sync once after a successful legacy merge accept', async () => {
     await seedKnowledge('legacy_from');
     await seedKnowledge('legacy_into');
     const db = testDb();
