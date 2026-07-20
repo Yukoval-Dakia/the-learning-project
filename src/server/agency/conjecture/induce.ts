@@ -56,40 +56,50 @@ export interface InduceConjectureResult {
 /** Confidence ceiling when ALL evidence is agent-judge (no owner corroboration). */
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 
-/** Parse every balanced JSON object in text, ignoring braces inside JSON strings. */
+/** Parse balanced JSON objects, recovering after malformed prose candidates. */
 function jsonObjectCandidates(text: string): unknown[] {
   const candidates: unknown[] = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf('{', cursor);
+    if (start < 0) break;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
 
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    if (start >= 0 && inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
+    for (let i = start; i < text.length; i += 1) {
+      const char = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{') depth += 1;
+      else if (char === '}') depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+
+    if (end < 0) {
+      // A stray/unbalanced brace in prose must not hide a later valid object.
+      cursor = start + 1;
       continue;
     }
-    if (start >= 0 && char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === '{') {
-      if (depth === 0) start = i;
-      depth += 1;
-      continue;
-    }
-    if (char !== '}' || depth === 0) continue;
-    depth -= 1;
-    if (depth !== 0 || start < 0) continue;
     try {
-      candidates.push(JSON.parse(text.slice(start, i + 1)));
+      candidates.push(JSON.parse(text.slice(start, end + 1)));
+      cursor = end + 1;
     } catch {
-      // Reasoning may contain mathematical braces before the actual JSON object.
+      // Retry from the next opening brace; the failed span may wrap valid JSON.
+      cursor = start + 1;
     }
-    start = -1;
   }
   return candidates;
 }
@@ -117,33 +127,6 @@ function compareLex(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function deterministicMode(values: string[]): string {
-  const counts = new Map<string, number>();
-  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
-  return [...counts.entries()].sort(
-    ([a, aCount], [b, bCount]) => bCount - aCount || compareLex(a, b),
-  )[0][0];
-}
-
-/** Keep the generated probe and its gold reference as one indivisible sample value. */
-function deterministicProbePair(
-  drafts: ConjectureDraftT[],
-): Pick<ConjectureDraftT, 'probe_md' | 'probe_reference_md'> {
-  const pairs = new Map<string, { count: number; draft: ConjectureDraftT }>();
-  for (const draft of drafts) {
-    const key = JSON.stringify([draft.probe_md, draft.probe_reference_md]);
-    const current = pairs.get(key);
-    pairs.set(key, { count: (current?.count ?? 0) + 1, draft: current?.draft ?? draft });
-  }
-  const winner = [...pairs.entries()].sort(
-    ([aKey, a], [bKey, b]) => b.count - a.count || compareLex(aKey, bKey),
-  )[0][1].draft;
-  return {
-    probe_md: winner.probe_md,
-    probe_reference_md: winner.probe_reference_md,
-  };
-}
-
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -152,22 +135,26 @@ function median(values: number[]): number {
 
 /** Aggregate a winning cluster without depending on sample completion/insertion order. */
 function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): ConjectureDraftT {
+  // claim/probe/reference/cause form one semantic sample. Select one complete draft
+  // deterministically; aggregating those fields independently can fabricate a mismatched probe.
   const representative = [...drafts].sort((a, b) => {
     const claimOrder = compareLex(claimKey(a.claim_md), claimKey(b.claim_md));
     if (claimOrder !== 0) return claimOrder;
     const probeOrder = compareLex(a.probe_md, b.probe_md);
     if (probeOrder !== 0) return probeOrder;
-    return a.predicted_p - b.predicted_p;
+    const referenceOrder = compareLex(a.probe_reference_md, b.probe_reference_md);
+    if (referenceOrder !== 0) return referenceOrder;
+    const causeOrder = compareLex(a.cause_category, b.cause_category);
+    if (causeOrder !== 0) return causeOrder;
+    return (
+      a.recurrence_count - b.recurrence_count ||
+      a.predicted_p - b.predicted_p ||
+      Number(a.discriminating) - Number(b.discriminating)
+    );
   })[0];
   const discriminatingVotes = drafts.filter((draft) => draft.discriminating).length;
-  const probePair = deterministicProbePair(drafts);
   return {
     ...representative,
-    claim_md: deterministicMode(drafts.map((draft) => draft.claim_md)),
-    ...probePair,
-    cause_category: deterministicMode(
-      drafts.map((draft) => draft.cause_category),
-    ) as ConjectureDraftT['cause_category'],
     recurrence_count: Math.round(median(drafts.map((draft) => draft.recurrence_count))),
     predicted_p: median(drafts.map((draft) => draft.predicted_p)),
     // A tie is non-discriminating: the conservative, reproducible outcome.

@@ -155,6 +155,16 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.claim_md).toBe('你混淆了集合与元素');
   });
 
+  it('recovers when quoted prose contains an unbalanced opening brace before JSON', async () => {
+    const valid = sample('你把示例文本误当成结构').text;
+    const runTaskFn = vi.fn(async () => ({
+      text: `推理引用了短语 "open {"，随后才输出结果。\n${valid}`,
+    }));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+    expect(result.draft.claim_md).toBe('你把示例文本误当成结构');
+  });
+
   it('runs self-consistency samples concurrently', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
@@ -311,7 +321,7 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.discriminating).toBe(false);
   });
 
-  it('keeps each probe paired with the gold reference generated in the same sample', async () => {
+  it('keeps coupled text fields from one deterministic representative sample', async () => {
     const pairs = [
       ['a probe', 'x reference'],
       ['a probe', 'y reference'],
@@ -348,9 +358,19 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 4, runTaskFn });
 
-    // Independent field modes would synthesize the nonexistent pair (a probe, z reference).
-    expect([result.draft.probe_md, result.draft.probe_reference_md]).toEqual(pairs[0]);
-    expect(pairs).toContainEqual([result.draft.probe_md, result.draft.probe_reference_md]);
+    const resultTuple = [
+      result.draft.claim_md,
+      result.draft.probe_md,
+      result.draft.probe_reference_md,
+    ];
+    const sourceTuples = [
+      ['same semantic claim one', ...pairs[0]],
+      ['same semantic claim two', ...pairs[1]],
+      ['same semantic claim three', ...pairs[2]],
+      ['same semantic claim four', ...pairs[3]],
+    ];
+    expect(resultTuple).toEqual(sourceTuples[3]);
+    expect(sourceTuples).toContainEqual(resultTuple);
   });
 
   it('chooses the lexical claim when equal-sized semantic groups tie', async () => {

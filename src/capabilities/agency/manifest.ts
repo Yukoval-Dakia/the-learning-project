@@ -116,11 +116,11 @@ export const agencyCapability = defineCapability({
       // YUK-406 Phase 0 (关系脑) / YUK-440 (A13) — nightly 教研例会 conjecture
       // proposer. Single proposer of `conjecture` proposals: deterministic 取证 →
       // Opus N=3 self-consistency induction → propose ≤3. queue:'llm' (it runs the
-      // anthropic-sub OAuth Opus lane). At 04:10 it sits between goal_scope (03:50)
-      // and Sunday's coach_weekly (04:30), avoiding the old five-minute collision.
+      // anthropic-sub OAuth Opus lane). At 04:05 it sits between goal_scope (03:50)
+      // and Sunday's coach_weekly (04:30), without colliding with 04:10 verify recovery.
       {
         name: 'research_meeting_nightly',
-        schedule: { cron: '10 4 * * *', tz: 'Asia/Shanghai' },
+        schedule: { cron: '5 4 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () =>
           import('./jobs/research_meeting_nightly').then(
@@ -128,7 +128,7 @@ export const agencyCapability = defineCapability({
           ),
       },
       // YUK-572 — agent-led 教研例会 director (shadow lane, dark-ship). Staggered a HARD
-      // 85min after the deterministic research_meeting (04:10): the ≥60min gap (a hard
+      // 90min after the deterministic research_meeting (04:05): the ≥60min gap (a hard
       // constraint, §3) keeps the two lanes' app-level pending-dedup TOCTOU closed — the
       // deterministic lane has committed its proposals by the time the agent lane reads
       // the pending inbox as its dedup base. Kill switch RESEARCH_MEETING_AGENT_ENABLED
