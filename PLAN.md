@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-20　·　历史头部日志（2026-06-23 ~ 07-19）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-20 · backlog 全量重对账：状态卫生 15 票落地 + YUK-556 TDD PR 修复复审中 + 分类器截断纠偏】** Linear 当前 737 票：Done 615 / Backlog 84 / In Progress 15 / Canceled 15 / Duplicate 8（open 99）。已验证修正：YUK-326/397/407/440/471/585→Done，YUK-255→Canceled，YUK-350/377/386/438/506/572/596→Backlog，YUK-490 原已 Done；YUK-556→In Progress，以严格 RED（4 fail/65 pass）→初轮 GREEN（69/69）落 PR #998；独立 review 抓出 handler DB suite 29/36 回归及 implicit exact/semantic route 绕过后，修复 commit `470539eb` 已推，本地 unit 71/71、handler DB 36/36、typecheck/Biome/diff-check/LSP 全绿，最新 CI/独立复审仍 pending，禁止提前合并。对抗复核另发现初轮分类器虽产 107 rows，却因 27 重复 ID 漏掉另 27 票；A/B/C 三批补扫后已独立证明 expected unique=107 / classified unique=107 / missing=0 / unexpected=0 / duplicate assignments=0，最终分布为 research 65 / quick 9 / active 6 / backlog 15 / close 8 / cancel 3 / conditional-cancel 1。新提议的状态与立单仍待 owner 批准，未擅自写 Linear。旧 cockpit PR #973 内容已实质过期，待本 replacement 建立后关闭不合。
+> **【更新 2026-07-20 · backlog 全量重对账：状态卫生 15 票落地 + YUK-556 TDD PR 复审中 + 分类器截断纠偏】** Linear 当前 737 票：Done 615 / Backlog 84 / In Progress 15 / Canceled 15 / Duplicate 8（open 99）。已验证修正：YUK-326/397/407/440/471/585→Done，YUK-255→Canceled，YUK-350/377/386/438/506/572/596→Backlog，YUK-490 原已 Done；YUK-556→In Progress，以严格 RED（4 fail/65 pass）→初轮 GREEN（69/69）落 PR #998；独立 review 抓出 handler DB suite 29/36 回归及 implicit exact/semantic route 绕过后，修复 `470539eb` 将本地 unit 收至 71/71、handler DB 36/36；随后 OCR 抓出 prompt/effective-route 漂移，`f874655f` 以 targeted RED 1/1 后补齐默认路由说明。当前 typecheck/Biome/diff-check/LSP 绿，最新 CI/独立复审仍 pending，禁止提前合并。对抗复核另发现初轮分类器虽产 107 rows，却因 27 重复 ID 漏掉另 27 票；A/B/C 三批补扫后已独立证明 expected unique=107 / classified unique=107 / missing=0 / unexpected=0 / duplicate assignments=0，最终分布为 research 65 / quick 9 / active 6 / backlog 15 / close 8 / cancel 3 / conditional-cancel 1。新提议的状态与立单仍待 owner 批准，未擅自写 Linear。旧 cockpit PR #973 已由 replacement #999 取代并关闭不合。
 
 ## 🎯 主线方向（当前）
 
@@ -12,7 +12,7 @@
 
 ## NOW（当前 active 线）
 
-- **YUK-556 structured reference solution**：PR #998 open；初轮独立 review 抓出的 handler DB 29/36 回归与 implicit exact/semantic route 绕过，已由 `470539eb` 修复。本地 focused unit 71/71、handler DB 36/36、typecheck/Biome/diff-check/LSP 全绿；最新 CI/独立复审 pending，未获批准前禁止合并。
+- **YUK-556 structured reference solution**：PR #998 open @ `f874655f`；初轮 review 的 DB 29/36 回归与 implicit-route 绕过已修，本地 focused unit 71/71、handler DB 36/36；OCR 的 prompt/effective-route 漂移也已以 RED→GREEN 修复。typecheck/Biome/diff-check/LSP 绿；最新 CI/独立复审 pending，未批准前禁止合并。
 - **backlog-engine 完整性终验已过**：原 107-row 输出只有 80 unique；漏掉 27 票分 A/B/C 三批重扫后，独立验证 expected/classified unique=107、missing/unexpected/duplicate assignments 均 0。最终 107 票分布：research 65 / quick 9 / active 6 / move-backlog 15 / close-done 8 / cancel 3 / conditional-cancel 1。
 - **jyeoo 供给链 dark-ship**：`JYEOO_FETCH_ENABLED` 默认 OFF；开闸前 owner 过目 producer patch 提案。
 - **安全后续 hygiene**：YUK-669 事故处置与历史 refs 清洗已 Done；剩 secret scanning/push protection 与 unreachable-object GC/support hygiene 仍属 owner/operator lane，禁止 agent 自行执行。
@@ -42,7 +42,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞**：#998 YUK-556 open（`470539eb` 本地 focused checks 绿，最新 CI/独立复审 pending，未批准前不合）；#973 stale cockpit（本 replacement 建立后关闭不合）；Dependabot #953-957（#953 gates 失败，#954-957 当前绿）。#968/YUK-735 已合，不再列 In Review。
+- **PR 在飞**：#998 YUK-556 open @ `f874655f`（本地 focused checks 绿，最新 CI/独立复审 pending，未批准前不合）；#999 本 replacement cockpit；Dependabot #953-957（#953 gates 失败，#954-957 当前绿）。#973 已由 #999 取代并关闭不合；#968/YUK-735 已合。
 - **worktree 在飞**：`/private/tmp/loom-yuk556`（YUK-556）· `/private/tmp/loom-cockpit-backlog`（本 replacement）；历史 worktree/branch 存量未清，批量删除仍属 owner-gated infra 清扫。
 - **本地主工作树**：仍有 owner 的 `.codex/*`、`AGENTS.md` 与两份 design doc 未跟踪/修改；本轮未触碰。
 - **基建注意**：Docker fsync IO 退化与 dev compose schema 落后记录沿 #973 保留；需 full DB gate 的 lane 先确认 Docker 状态。
