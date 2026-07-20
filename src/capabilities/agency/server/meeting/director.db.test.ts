@@ -188,6 +188,10 @@ beforeEach(async () => {
 });
 
 describe('evidence scout charter', () => {
+  it('advertises review ids on the detail reader', () => {
+    expect(EVIDENCE_SCOUT_CHARTER).toContain('get_attempt_details（按 attempt/review 事件 id');
+  });
+
   it('permits review events as primary evidence', () => {
     expect(EVIDENCE_SCOUT_CHARTER).toContain('attempt/review/probe/prediction_score');
     expect(EVIDENCE_SCOUT_CHARTER).not.toContain(

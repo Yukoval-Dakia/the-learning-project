@@ -116,6 +116,10 @@ describe('buildEvidenceServer — registration', () => {
     ]);
   });
 
+  it('advertises review ids on the actual detail-reader tool', () => {
+    expect(mockSdk.descriptions.get('get_attempt_details')).toContain('attempt / review event id');
+  });
+
   it('advertises review events as valid report_findings evidence', () => {
     expect(mockSdk.descriptions.get('report_findings')).toContain(
       'attempt / review / probe / prediction_score',

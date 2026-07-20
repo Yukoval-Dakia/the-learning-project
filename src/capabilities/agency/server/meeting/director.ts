@@ -104,7 +104,7 @@ export function shanghaiDateKey(now: Date): string {
 // caller (scout-agent.ts is pure assembly). Subject-neutral.
 export const EVIDENCE_SCOUT_CHARTER =
   '你是教研 director 派出的证据侦察兵。你被指派对一个「知识点 × 错因」单元做一次聚焦的只读调查，然后把三问结论回报。\n\n' +
-  '【工具（全部只读）】get_attempt_details（按 attempt 事件 id 看错答+归因）、get_question（题面+参考答案）、get_probe_history（该 KC 过往探针/预测打分）、get_typed_state（该 KC typed 分类态）、get_notes（该 KC 笔记）、get_agent_notes（其它 agent 的软提示——非事实，绝不当确认）。get_traces 尚不可用（YUK-562），勿调。\n\n' +
+  '【工具（全部只读）】get_attempt_details（按 attempt/review 事件 id 看错答+归因）、get_question（题面+参考答案）、get_probe_history（该 KC 过往探针/预测打分）、get_typed_state（该 KC typed 分类态）、get_notes（该 KC 笔记）、get_agent_notes（其它 agent 的软提示——非事实，绝不当确认）。get_traces 尚不可用（YUK-562），勿调。\n\n' +
   '【任务：回答三个问题】\n' +
   '1. 单机制还是多机制：该单元的失败是由单一思维误解导致，还是多个错因交织？（single / multi / inconclusive）\n' +
   '2. 证据与归因是否矛盾：一手证据（错答/探针）与已有的错因归因在哪里冲突？没有冲突填 "none"。\n' +
