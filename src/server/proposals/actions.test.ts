@@ -220,6 +220,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'edge_live_archive'));
     expect(afterReaccept[0].archived_at?.getTime()).toBe(archivedAtFirst?.getTime());
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('decideKnowledgeEdgeProposal rejects reverse/change_type on an archive proposal', async () => {
@@ -334,6 +335,7 @@ describe('proposal lifecycle owner service', () => {
     expect(corrections).toHaveLength(1);
     expect(corrections[0].actor_kind).toBe('user');
     expect(corrections[0].actor_ref).toBe('self');
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
 
     const replay = await acceptAiProposal(db, 'edge_supersede_p1');
     expect(replay.kind).toBe('knowledge_edge');
@@ -341,6 +343,7 @@ describe('proposal lifecycle owner service', () => {
     expect(replay.idempotent).toBe(true);
     expect(replay.edge_id).toBe(result.edge_id);
     expect(await db.select().from(edge_reconciliation_log)).toHaveLength(1);
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('allows one of two racing archive proposals to append the sole fold-visible archive event', async () => {
@@ -444,6 +447,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'edge_supersede_duplicate'));
     expect(oldEdge.archived_at).toBeNull();
+    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
   });
 
   it('dismissAiProposal leaves an edge_op:supersede proposal unapplied', async () => {
@@ -492,6 +496,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.to_knowledge_id, 'k3'));
     expect(candidate).toHaveLength(0);
+    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
   });
 
   it('acceptAiProposal applies a note_update patch proposal and writes a rate event', async () => {

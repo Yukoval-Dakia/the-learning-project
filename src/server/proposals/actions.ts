@@ -666,6 +666,7 @@ export async function decideKnowledgeEdgeProposal(
       },
     );
 
+    await enqueueHubAutoSync();
     if (proposal) {
       await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
     }

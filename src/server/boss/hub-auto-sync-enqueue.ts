@@ -15,6 +15,6 @@ export async function enqueueHubAutoSync(): Promise<void> {
       },
     );
   } catch (err) {
-    console.warn('[knowledge_edge] failed to enqueue hub_auto_sync', err);
+    console.warn('[hub_auto_sync] failed to enqueue hub_auto_sync', err);
   }
 }
