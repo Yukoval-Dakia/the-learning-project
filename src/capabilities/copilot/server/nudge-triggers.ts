@@ -91,20 +91,23 @@ function getKnowledgeIds(payload: unknown): string[] {
     fsrs_subject_ids?: unknown;
     referenced_knowledge_ids?: unknown;
   };
-  const source =
-    value.fsrs_subject_kind === 'knowledge' && Array.isArray(value.fsrs_subject_ids)
-      ? value.fsrs_subject_ids
-      : value.fsrs_subject_ids !== undefined
-        ? []
-        : Array.isArray(value.referenced_knowledge_ids)
-          ? value.referenced_knowledge_ids
-          : [];
+  let source: unknown[] = [];
+  if (value.fsrs_subject_kind === 'knowledge' && Array.isArray(value.fsrs_subject_ids)) {
+    source = value.fsrs_subject_ids;
+  } else if (
+    value.fsrs_subject_ids === undefined &&
+    Array.isArray(value.referenced_knowledge_ids)
+  ) {
+    source = value.referenced_knowledge_ids;
+  }
   return Array.from(
     new Set(source.filter((id): id is string => typeof id === 'string' && id.length > 0).sort()),
   );
 }
 
 /**
+ * Evaluates a failed attempt against each authoritative KC. Unsupported, corrected, and appealed
+ * history is excluded; the first genuine success/partial ends the streak. Read-only.
  */
 async function evaluateWrongStreak(
   db: Db,
