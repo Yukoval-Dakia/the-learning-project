@@ -15,6 +15,7 @@ import {
   knowledge,
   knowledge_edge,
 } from '@/db/schema';
+import { markArtifactIdleAndFlush } from '@/server/artifacts/editing-session';
 import { buildHubAutoSyncNightlyHandler, runHubAutoSyncNightly } from './hub_auto_sync_nightly';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -311,7 +312,39 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     await resetDb();
   });
 
-  it('skips actively edited hubs for mutation-triggered jobs but nightly still applies', async () => {
+  it('durably defers active hubs for mutation jobs and flushes on blur', async () => {
+    await seedKnowledge('k_hub');
+    await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
+    await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
+    await testDb().insert(editing_presence).values({
+      artifact_id: 'hub1',
+      status: 'editing',
+      last_heartbeat_at: new Date(),
+      editing_started_at: new Date(),
+      pending: [],
+    });
+
+    const result = await runHubAutoSyncNightly(testDb(), { skipActiveHubs: true });
+    expect(result.hubs_deferred_active_edit).toBe(1);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(0);
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(editing_presence)
+          .where(eq(editing_presence.artifact_id, 'hub1'))
+      )[0]?.pending,
+    ).toHaveLength(1);
+
+    await markArtifactIdleAndFlush({ db: testDb(), artifactId: 'hub1' });
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(1);
+  });
+
+  it('preserves source-less nightly apply during active editing', async () => {
     await seedKnowledge('k_hub');
     await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
     await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
@@ -324,11 +357,6 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     });
 
     const handler = buildHubAutoSyncNightlyHandler(testDb());
-    await handler([{ id: 'mutation', data: { source: 'mutation' } } as never]);
-    expect(
-      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
-    ).toHaveLength(0);
-
     await handler([{ id: 'nightly', data: {} } as never]);
     expect(
       await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),

@@ -34,7 +34,7 @@
 // TipTap node already passes `attrs` through (passthrough schema), so no node
 // schema change is required.
 
-import { isArtifactIdle } from '@/server/artifacts/editing-session';
+import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -74,6 +74,7 @@ interface AtomicRow {
 export interface HubAutoSyncResult {
   hubs_considered: number;
   hubs_updated: number;
+  hubs_deferred_active_edit: number;
   hubs_skipped_version_conflict: number;
   // YUK-301: stale auto-zone targets are an expected skip, distinct from an
   // operational failure. The next nightly run retries from the fresh snapshot.
@@ -280,6 +281,7 @@ export async function runHubAutoSyncNightly(
   const result: HubAutoSyncResult = {
     hubs_considered: hubs.length,
     hubs_updated: 0,
+    hubs_deferred_active_edit: 0,
     hubs_skipped_version_conflict: 0,
     hubs_skipped_target_not_found: 0,
     hubs_failed: 0,
@@ -299,8 +301,6 @@ export async function runHubAutoSyncNightly(
 
   for (const hub of hubs) {
     try {
-      if (deps.skipActiveHubs && !(await isArtifactIdle(hub.id, deps.now))) continue;
-
       const suppressed = suppressedArtifactIds(hub.attrs);
       const curated = resolveHubMeshAtomics(
         nodes,
@@ -314,15 +314,23 @@ export async function runHubAutoSyncNightly(
       const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
       if (!patch) continue;
 
-      const applied = await persistNoteRefineApply({
-        db,
-        artifactId: hub.id,
-        patch,
-        actorRef: ACTOR_REF,
-        now: deps.now,
-      });
+      const applied = deps.skipActiveHubs
+        ? await enqueueOrApplyNoteRefinePatch({
+            db,
+            artifactId: hub.id,
+            patch,
+            now: deps.now,
+          })
+        : await persistNoteRefineApply({
+            db,
+            artifactId: hub.id,
+            patch,
+            actorRef: ACTOR_REF,
+            now: deps.now,
+          });
 
-      if (applied.status === 'applied') result.hubs_updated += 1;
+      if (applied.status === 'deferred') result.hubs_deferred_active_edit += 1;
+      else if (applied.status === 'applied') result.hubs_updated += 1;
       else if (applied.status === 'skipped:version_conflict') {
         result.hubs_skipped_version_conflict += 1;
       } else if (applied.status === 'skipped:target_not_found') {
