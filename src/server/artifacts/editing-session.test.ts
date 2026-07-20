@@ -17,13 +17,14 @@ vi.mock('@/server/artifacts/presence/pg', async () => {
   return { PgPresenceStore: mod.InMemoryPresenceStore };
 });
 
-const persistNoteRefineApply = vi.fn(async (args: { artifactId: string }) => ({
+const persistNoteRefineApply = vi.fn(async (args: { artifactId: string; actorRef?: string }) => ({
   status: 'applied' as const,
   artifact_id: args.artifactId,
 }));
 
 vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
-  persistNoteRefineApply: (args: { artifactId: string }) => persistNoteRefineApply(args),
+  persistNoteRefineApply: (args: { artifactId: string; actorRef?: string }) =>
+    persistNoteRefineApply(args),
 }));
 
 import {
