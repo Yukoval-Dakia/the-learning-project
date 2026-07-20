@@ -75,6 +75,24 @@ function twoPartyBarrier() {
   };
 }
 
+const SEMANTIC_REFERENCE_SOLUTION = {
+  expected_signals: ['说明「之」用于主谓之间并取消句子独立性'],
+  final_answer: '「之」用在主谓之间，取消句子独立性。',
+  answer_equivalents: [],
+};
+
+const EXACT_REFERENCE_SOLUTION = {
+  expected_signals: ['选择主谓间助词'],
+  final_answer: '主谓间助词',
+  answer_equivalents: [],
+};
+
+const MATERIAL_REFERENCE_SOLUTION = {
+  expected_signals: ['答出汉朝建立年份'],
+  final_answer: '公元前 202 年',
+  answer_equivalents: ['前 202 年'],
+};
+
 const VALID_OUTPUT = JSON.stringify({
   questions: [
     {
@@ -86,6 +104,7 @@ const VALID_OUTPUT = JSON.stringify({
       rubric_json: {
         criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
         required_points: ['用在主谓之间', '取消句子独立性'],
+        reference_solution: SEMANTIC_REFERENCE_SOLUTION,
       },
       difficulty: 3,
       knowledge_ids: ['k1'],
@@ -107,6 +126,7 @@ const VALID_OUTPUT = JSON.stringify({
       judge_kind_override: 'exact',
       rubric_json: {
         criteria: [{ name: 'correctness', weight: 1, descriptor: '选对选项' }],
+        reference_solution: EXACT_REFERENCE_SOLUTION,
       },
       difficulty: 2,
       knowledge_ids: ['k1'],
@@ -142,6 +162,7 @@ const FORGED_CHECKED_BY_OUTPUT = JSON.stringify({
       rubric_json: {
         criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
         required_points: ['用在主谓之间', '取消句子独立性'],
+        reference_solution: SEMANTIC_REFERENCE_SOLUTION,
       },
       difficulty: 3,
       knowledge_ids: ['k1'],
@@ -186,6 +207,7 @@ const CLOSED_BOOK_OUTPUT = JSON.stringify({
       rubric_json: {
         criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
         required_points: ['用在主谓之间', '取消句子独立性'],
+        reference_solution: SEMANTIC_REFERENCE_SOLUTION,
       },
       difficulty: 3,
       knowledge_ids: ['k1'],
@@ -212,6 +234,7 @@ const MATERIAL_OUTPUT = JSON.stringify({
       rubric_json: {
         criteria: [{ name: 'correctness', weight: 1, descriptor: '答对建立年份' }],
         required_points: ['公元前 202 年'],
+        reference_solution: MATERIAL_REFERENCE_SOLUTION,
       },
       difficulty: 2,
       knowledge_ids: ['k1'],
@@ -333,6 +356,7 @@ describe('runQuizGen', () => {
     expect(q1?.judge_kind_override).toBe('semantic');
     expect(q1?.rubric_json).toMatchObject({
       required_points: ['用在主谓之间', '取消句子独立性'],
+      reference_solution: SEMANTIC_REFERENCE_SOLUTION,
     });
     expect(q1?.created_by).toMatchObject({
       by: 'ai',
@@ -898,6 +922,11 @@ describe('runQuizGen', () => {
         rubric_json: {
           criteria: [{ name: 'correctness', weight: 1, descriptor: '答对都城' }],
           required_points: ['长安'],
+          reference_solution: {
+            expected_signals: ['答出汉朝都城'],
+            final_answer: '长安',
+            answer_equivalents: [],
+          },
         },
       },
     ];
@@ -1092,6 +1121,7 @@ describe('runQuizGen', () => {
           rubric_json: {
             criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
             required_points: ['用在主谓之间', '取消句子独立性'],
+            reference_solution: SEMANTIC_REFERENCE_SOLUTION,
           },
           difficulty: 3,
           knowledge_ids: ['ghost_knowledge_id'],

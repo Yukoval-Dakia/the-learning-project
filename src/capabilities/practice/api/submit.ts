@@ -67,6 +67,7 @@ import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
+import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
 import { scheduleReview } from '../server/fsrs';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { collectMasteryRefineTargets } from '../server/note-refine-targets';
@@ -768,6 +769,8 @@ async function persistSubmit(
       });
     }
   }
+
+  await enqueueWrongStreakNudge(outcome, eventId);
 
   // YUK-455 inc-E — prereq 诊断「向后传播」producer (dark-ship). 答错 B → 沿 KG 的
   // prerequisite 边向上找 B 的 transitive 前置 A，EMIT `experimental:prereq_risk` 观测事件

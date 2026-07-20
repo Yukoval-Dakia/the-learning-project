@@ -20,10 +20,16 @@ import {
 } from '../server/nudge-triggers';
 
 /** job.data 形状（松守边界，判定事实由 evaluate 从 event 表回读——payload 只带定位 id）。 */
-const JobData = z.object({
-  kind: z.literal('ingestion_complete'),
-  session_id: z.string().min(1),
-});
+const JobData = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('ingestion_complete'),
+    session_id: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('attempt_failure'),
+    attempt_event_id: z.string().min(1),
+  }),
+]);
 
 /** postgres.js surfaces unique violations as code '23505' (possibly wrapped); walk the cause chain. */
 function isUniqueViolation(err: unknown): boolean {
@@ -42,12 +48,14 @@ function isUniqueViolation(err: unknown): boolean {
  * 唯一约束照常 throw，故 23505 会到这里）。
  */
 export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput): Promise<void> {
+  const inputRef =
+    input.kind === 'ingestion_complete'
+      ? `session=${input.session_id}`
+      : `attempt=${input.attempt_event_id}`;
   const config = loadNudgeConfig();
   const decision = await evaluateNudgeTrigger(db, input, config);
   if (!decision.fire) {
-    console.log(
-      `[copilot_nudge_evaluate] session=${input.session_id} no-fire reason=${decision.reason}`,
-    );
+    console.log(`[copilot_nudge_evaluate] ${inputRef} no-fire reason=${decision.reason}`);
     return;
   }
 
@@ -67,14 +75,12 @@ export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput)
       ingest_at: new Date(),
     });
     console.log(
-      `[copilot_nudge_evaluate] session=${input.session_id} fired kind=${decision.event.payload.kind} shadow=${decision.event.payload.shadow}`,
+      `[copilot_nudge_evaluate] ${inputRef} fired kind=${decision.event.payload.kind} shadow=${decision.event.payload.shadow}`,
     );
   } catch (err) {
     if (isUniqueViolation(err)) {
       // 并发/重投竞态：同一触发源已写过 nudge —— 幂等跳过。
-      console.log(
-        `[copilot_nudge_evaluate] session=${input.session_id} duplicate (unique index) — skipped`,
-      );
+      console.log(`[copilot_nudge_evaluate] ${inputRef} duplicate (unique index) — skipped`);
       return;
     }
     throw err;

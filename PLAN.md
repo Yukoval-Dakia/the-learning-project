@@ -2,77 +2,52 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-19　·　历史头部日志（2026-06-23 ~ 07-18）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
+> 更新于：2026-07-20　·　历史头部日志（2026-06-23 ~ 07-19）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-19 · 12 小时双线推进：P0F 教研简报闭环 1-5 + jyeoo 供给接入 + 优化七票，agent 17 PR 自主合并】** agent 主线 17 PR 合入（#907-912/915-920/922-923/934/939），owner 并行合入 ~12 个（#921/#929-931/#935-938/#940-947，含消化 agent 当日立的 YUK-720/723/725/726）。三大块：① **P0F 教研简报闭环 P0F/1-5 全落**——契约（YUK-705）→read model（706）→/today 简报 band（707，#918）→幂等 ack 写端（708，#934：9 轮 codex 逐层收紧至「writer 接受集 ≡ reader 交付集」+ 事务内权威判词 + 幂等前置；1 条全局 selection lock 诉求 owner-WONT_FIX 注释化）→confirmed→KC-scoped 练习 CTA（709，#946 已合）；② **jyeoo-rs 确定性供给链 dark-ship**（697，#939：NDJSON adapter + spawn 安全壳 + jyeoo_fetch 一等路由 + 图题/异 host 闸 + canary/kill switch；jyeoo-rs 非 git 只读，producer 加固以 patch 提案 doc 交 owner；与 owner 并行 #938 的 sourcing.ts 完成双边语义调和，jyeoo 顺势接入 cross-KC 合并）；③ **优化扫描七票全清**（YUK-713 诚实失败链 9 轮 + 714/715/716/717/718/719）+ YUK-221 paper ordinal。纪律面：全程分段 gate grep 真实 EXIT 行；Docker IO 退化时 S2 按目录四分片；flake YUK-724 第 3/4 次发生已记录并建议并发隔离。Linear 当日 Done：YUK-697/705-708/711/713-719/721/221；（YUK-709 亦于收尾时随 #946 合入转 Done）；新立 YUK-720/722-727。生产未动（无部署授权）。
+> **【更新 2026-07-20 · backlog 107/107 收口 + 25 项状态修正落地 + 四条研究票入 Linear】** Linear 权威重数 742 票：Done 617 / Backlog 87 / In Progress 13 / Canceled 17 / Duplicate 8（open 100）。107-ID snapshot 已独立证明 classified unique=107 / missing=0 / unexpected=0 / duplicate assignments=0；25 项获批状态修正均已落地回读，YUK-555 仍按 hard-cap acceptance 红线未动。四条 acceptance-ready follow-up 已建为 YUK-738～741 并校正到 Backlog；YUK-679 已扩入 `srtOutcome`、continuous-credit/Fisher、Rust-port/ADR-exemption 与历史 replay compatibility。官方 Linear MCP 在 Business 升级后已通过真实 read/write 验证，后续以官方 `linear` 为主，本地 API-key MCP 仅备用。YUK-556 PR #998 本地与 required gates 绿、独立 review APPROVE、threads=0，但 OCR 因 Codex quota 外部失败，保持 open 不误报全绿；YUK-584 PR #1000 已合，verifier optional hardening 捕获为 YUK-742；YUK-595 已先转 In Progress 再启动 TDD worktree。旧 cockpit PR #973 已由 #999 取代并关闭不合。
 
 ## 🎯 主线方向（当前）
 
-**方向 B = 诊断 payoff（owner 拍定 2026-06-23）。** 头号留存钩子 = 「看到我哪错/哪长」的学习者诊断档案（私人教研团终局）。机械架构基底 + 可用性两条腿现已齐：**day-one 软缺口 YUK-476 档案露出已交付**（#772，/today ProfileBand + /profile 入口），**UH 可用性硬化 program 已全量交付**（真相/恢复/旅程/规模/可达性五结果 + 容器级回归门禁）。冷启 day-one 先验仍是底色（记忆 `feedback_cold_start_first`）。
-
-**两条主 project（B 的地基）**：① 领域模型重构 YUK-203 ② 学习者全面档案 YUK-452 / A1-A15。later-organ 侧（关系脑 YUK-406/440、规划脑 B3 YUK-349）承重代码已 CODE-LIVE（drift 审计 07-16 对账），剩验收/closeout/runtime 接线；**教学法脑 YUK-506 安全脊已落**（#823），runtime 大头未做。
+**方向 B = 诊断 payoff（owner 拍定 2026-06-23）。** 头号留存钩子 = 「看到我哪错/哪长」的学习者诊断档案（私人教研团终局）。两条主 project 仍是：① 领域模型重构 YUK-203 ② 学习者全面档案 YUK-452 / A1-A15。
 
 ## NOW（当前 active 线）
 
-- **P0F/1-5 全部落地（#946 已于收尾窗合入,4cd490f8）**：教研简报闭环只剩 YUK-710 telemetry,已列 NEXT 首位。
-- **jyeoo 供给链已 dark-ship（#939 merged）**：`JYEOO_FETCH_ENABLED` 默认 OFF；开闸前 owner 需过目 `docs/design/2026-07-19-yuk697-producer-patch-proposal.md`（cache TTL + VIP 硬闸 + exit-1 文档化,jyeoo-rs 非 git 未被改动）并自行落 producer patch。
-- **方向 B「可开始用」milestone gate 不变**：冷库零题仍需 owner 上传/生成内容跑首次真实 placement；本轮无部署授权，生产态未改。
-- **安全 owner/operator lane = YUK-669**：历史清洗/force-update 与 secret scanning 仍 owner 门控,禁止 agent 自行执行。
+- **YUK-556 structured reference solution**：PR #998 open @ `f874655f`；初轮 review 的 DB 29/36 回归、implicit-route 绕过与 prompt/effective-route 漂移均已 RED→GREEN 修复。本地 focused unit 71/71、handler DB 36/36、typecheck/Biome/diff-check/LSP 绿；required Node/full gates 绿、独立 review APPROVE、unresolved threads=0。OCR 仅因 Codex quota 外部失败，故保持 open、不误报全绿。
+- **YUK-595 same-KC wrong streak**：已在官方 Linear 转 In Progress 后启动最新 `origin/main` 隔离 worktree，严格 TDD 实施；bounded backend-only（streak reader / producer / evaluator-config / silent-window backstop），不改 UI、不 migration、不翻 flag。
+- **backlog-engine 完整性终验已过**：原 107-row 输出只有 80 unique；漏掉 27 票分 A/B/C 三批重扫后，独立验证 expected/classified unique=107、missing/unexpected/duplicate assignments 均 0。最终 107 票分布：research 65 / quick 9 / active 6 / move-backlog 15 / close-done 8 / cancel 3 / conditional-cancel 1。
+- **jyeoo 供给链 dark-ship**：`JYEOO_FETCH_ENABLED` 默认 OFF；开闸前 owner 过目 producer patch 提案。
+- **安全后续 hygiene**：YUK-669 事故处置与历史 refs 清洗已 Done；剩 secret scanning/push protection 与 unreachable-object GC/support hygiene 仍属 owner/operator lane，禁止 agent 自行执行。
 
 ## NEXT（就绪，排队）
 
-- **YUK-710（P0F/6 简报 telemetry + 两周存活报告）**：P0F 链最后一片,等 #946 合入后独立 grab（brief_seen/primary_action_started append-only + report 脚本）。
-- **YUK-727 jyeoo 图题 figures/R2 glue**：#939 走了「持久化前过滤」路径,完整 asset 管道拆此票;开 JYEOO_FETCH_ENABLED 前非必需。
-- **YUK-354 / YUK-169 umbrella 余项**：按已有形态轴和 redraw brief 继续 slice-by-slice；UI 仍逐刀做 design-doc pre-flight。
-- **YUK-506 教学法脑 runtime 大头**：panel-SELECT / efficacy learning / B5 verification / delivery wiring 全 deferred（#823 只落安全脊）。⚠️ **硬前置 = YUK-505 拓扑 amend**（见 BLOCKED-ON）。
-- **YUK-617 wave 尾巴**：ReviewIntentTask 退役 + 6 处现行文档叙事清理（AGENTS.md/README×2/architecture.md×3）· C6 `/api/review/sessions` sub-route verify · 端点批 OWNER-DECIDE 待决。
-- **YUK-567 尾巴**：edit-claim path（decide route thread `corrected_payload` + mem0 CORE writer 现 no-op）；YUK-616 深读面全集 weakest 已于 #877 完成。
-- **YUK-596 durable-by-default flip（YUK-575 PR2）**：4 条阻断前置不变（#738 终裁评论）；Linear 显 In Progress 与「排队」口径不符，需核。
-- **Wave 3 follow-up 批**：YUK-590（Todo）/594（Backlog）/394（Backlog，OCR 额度耗尽勿重跑）口径对齐；**YUK-595/589/593 七天窗外 unknown 待核**，别当已就绪。
-- **legacy alias 删除弧（YUK-641 尾巴）**：access-log 证据 + owner 批 Sunset 日期 + 跨一个发布窗 + 独立可回滚 PR。
-- **🦀 Rust YUK-495**：YUK-455 已 Done（07-11）；Phase 0+/2 余项仍需 re-ground。
+- **其余新 ground quick lanes 排队**：YUK-392（移除 Step-5 `kindsMatch` 拒收尾巴）· YUK-448（PfPaper per-slot `latency_ms`）· YUK-497（copilot revert route/UI caller）；YUK-366 等 YUK-698 supply-selection，YUK-384 等 edge mutation lane，YUK-460 等 YUK-301 note-refine。
+- **Dependabot 开放 PR 队列（承接票 YUK-671 已 Done）**：#953 minor/patch group 当前 required gates 失败；#954-957 major 当前绿，但仍须逐 lane 验证，AI 两只按双-provider 机制迁移。
+- **YUK-354 umbrella**：保持 active；A3 剩余即 YUK-595，完成或正式收窄 acceptance 后再 close。
 
 ## PARKED（已捕获，不是现在）
 
-- **红线审查 owner 拍板菜单剩 6 项** = `docs/audit/2026-07-07-redline-challenge-audit.md` §5（step9 断言 / P6 到期悬崖 / X2 成本叙事 / A2 执行状态列 / A3 勘误 / /audit-drift 通电）+ sweep 溢出 2 条。
-- **brainstorm 存活 8 条** = `docs/design/2026-07-06-agency-data-brainstorm-portfolio.md`；红线挑战组 3 条未拍板。
-- **🧠 misconception 建模调查 + MISCONCEPTION_PROMOTE flag 设计**（docs 存档 2026-07-01）。
-- **YUK-608 verify 同模型自证盲区**（owner 拍方向；选项①异源 solve/verify 推荐）。
-- **Linear 卫生**：07-18 已复核本轮触及票；YUK-674/683/535/534/332/334/609/211/673/349/328/616 均 Done，YUK-354/YUK-169 deliberate retained-with-gates。其余 07-16 待 owner 复核批（YUK-604/407/351/406/571/405）仍保留，未凭旧叙事擅自改状态。
-- **学科网获取 4 follow-ups（待 owner 拍角度后落 Linear）**：阅读篇父题分组 · 数学/物理 MathType OCR-visual 保真验证 · 全自动认证工程（会话 TTL/下载流/容器化）· P1 落地三件（因果链事件总线 / content_hash 去重门 / intent 标记表）。
-- **stash@{0} 残余证据**：panel JSONs + eval 报告（~17k 行）仍 stash-only；spike 代码 patch（runner.ts +75 / task-prompts.ts 重写 / spike 脚本 +308）= `.remember/tmp/stash0-rescue/stash0-tracked.patch`，续 spike 时从 patch 恢复，**勿整包 `stash pop`**（夹带无关改动）。
-- **周期清单（07-16 执行后）**：✅ audit-drift 20 只（#544→#821）+ 4 僵尸（#590/588/465/466）**已关**；dependabot 10 只由 YUK-670（8 alerts）/671（队列 desaturate，含 #679/678/680 三 major）承接。**infra 清扫仍挂**（不在「三批」授权内，分类器挡）：`.claude/worktrees` 27 只契约残留 · 12 只 `tlp-yuk621-e2e-*` exited 容器 · cloudflared crash-loop（`docker stop` 止噪）· 17 个 stash · tlp-deploy 两空 volume——**待 owner 显式点名或加 Bash 白名单**。
-- **栈瘦身 / Rust tripwire / C7-C10 matcher cleanup / tlp-deploy 空 volumes**（不变）。**Step6 [ops] always-on 部署 = YUK-615 隧道**（cloudflared crash-loop 2456+ 次，fix owner-gated：`.env` TUNNEL_TOKEN + `up -d cloudflared`；不修可先 `docker stop` 止噪）。
+- **研究板终版 65 票**：owner/product/scientific、design preflight、architecture/research、external/ops、data/statistics、large-program 六类；完整 65-ID 清单与动作边界见 `docs/planning/2026-07-20-backlog-reconciliation.md`（107/107 equality 已过）。
+- **补扫新增研究/大项**：YUK-213、YUK-346、YUK-588、YUK-605、YUK-675；YUK-268/287/524/550/685 已回 Backlog，YUK-310/354 keep active；YUK-322 已 Done，YUK-373/532 已 Canceled；YUK-555 仅在 cap acceptance 搬入 YUK-605 后 cancel。
+- **四条研究 follow-up 已入 Linear**：YUK-738 ASR/TTS audio evidence · YUK-739 SubjectProfile rating/cause semantics · YUK-740 LearningRecord single-writer/CAS/transition policy · YUK-741 misconception recurrence batching，均已回读为 Backlog。YUK-679 已扩入 `srtOutcome`、continuous-credit/Fisher 及 Rust port/ADR exemption + replay compatibility；YUK-742 仅承接 YUK-584 verifier 的 optional validator-throw/concurrent retry rollback 测试。
+- **红线审查 / brainstorm / misconception flag / 学科网 follow-ups / stash@{0} rescue / infra 清扫**：沿既有文档与门控保留，不在本轮扩 scope。
 
 ## BLOCKED-ON（在等什么）
 
-- **YUK-505 规划脑 deliberative panel → runtime 前必须先 amend 拓扑**：六月四角色 fan-out 设计与七月 YUK-572「单 director + ≤1 conditional scout」anti-swarm 契约冲突（drift 审计 07-16 Contradicted ②）；须裁「独立 gated planning job vs 单-director 规划模式」，不得隐式扩 YUK-572 spawn 面。
-- **profile P2 翻 flag**（misconceptionRecurrence / B4 answer_class filter）← 需数据 + judge 校准。
-- **matcher 接 live caller** ← 题库规模 + Step2 feeder 验证。
-- **教研团 YUK-405 / 记忆 YUK-322** ← profile 有真实数据 / 交互历史。
-- **A9 step-grading 倍增器（YUK-438，#522 draft 停滞近月）** ← judge 校准数据（YUK-573 report-only 采样中；二期 YUK-589）。
+- **YUK-505 规划脑拓扑裁决**：六月四角色 fan-out vs YUK-572 单 director + ≤1 scout 契约。
+- **profile P2 翻 flag**：misconceptionRecurrence / B4 answer_class filter 需数据 + judge 校准。
+- **A9 step-grading（YUK-438）**：等 YUK-573/YUK-589 judge 校准证据。
+- **YUK-605 supply/ADR drift 批**：YUK-698 前置已 Done，现应重审并拆分；YUK-555 hard-cap acceptance 必须保真迁移后才可 conditional-cancel。
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞：仅本 closeout docs PR #949**(看板,owner 授权后合)。agent 主线 18 PR 已全部合并(2026-07-19,含收尾窗合入的 #946)。
-- **worktree 在飞**:仅 `tlp-wt-closeout`(本看板 PR);其余当日 lane worktree 已全清。**遗留本地分支**(squash-merge 后 `-d` 拒删,按 git-guard 不 `-D`,owner 可批量清理):yuk-718-a11y-semantics-wave / yuk-718-theme-token-sync / yuk-719-server-read-cleanups / yuk-713-silent-mutation-failures / yuk-221-block-ordinal / yuk-715-render-memo / yuk-717-graph-vision-render / yuk-708-brief-probe-outcome / yuk-697-jyeoo-supply / yuk-709-confirmed-practice-cta。
-- **外部/owner 门控**:YUK-669 历史清洗;GitHub Actions billing 零步失败(YUK-712),Cursor/CodeRabbit 配额耗尽——本轮每 PR 由 OCR/codex 1-9 轮有效 review 覆盖,merge 证据=本地分段 gate 真实 EXIT 行。
-- **本地工作树**:owner 既有未跟踪文件(`.codex/*`、`AGENTS.md`、jyeoo 设计 doc)未暂存未改写;jyeoo-rs 仓库只读未动。
-- **基建注意**:今日 ~20 轮全量 DB suite 后 Docker fsync IO 明显退化(TRUNCATE 等 DataFileImmediateSync),S2 曾三次超 10 分钟窗;已用按目录四分片方案绕过。owner 空闲时重启 Docker/OrbStack 可复原(compose 栈在跑,agent 未动)。
+- **PR 在飞**：#998 YUK-556 open @ `f874655f`（本地/required gates/独立 review 绿、threads=0；OCR quota 外部失败，未误合）；#999 本 replacement cockpit；YUK-595 implementation lane 已启动、PR 尚未创建；Dependabot #953-957（#953 gates 失败，#954-957 当前绿）。#1000/YUK-584 已合（详情见最近已落）；#973 已由 #999 取代并关闭不合；#968/YUK-735 已合。
+- **worktree 在飞**：`/private/tmp/loom-yuk556`（YUK-556）· `/private/tmp/loom-cockpit-backlog`（本 replacement）。YUK-584 agent worktree 已完成但仍占本地 branch，留待安全 worktree cleanup；历史 worktree/branch 存量批量删除仍属 owner-gated infra 清扫。
+- **本地主工作树**：仍有 owner 的 `.codex/*`、`AGENTS.md` 与两份 design doc 未跟踪/修改；本轮未触碰。
+- **基建注意**：Docker fsync IO 退化与 dev compose schema 落后记录沿 #973 保留；需 full DB gate 的 lane 先确认 Docker 状态。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
-- **07-19 12 小时双线推进（agent 17 PR + owner 并行 ~12 PR）**：P0F 教研简报闭环 P0F/1-5（契约/read model/简报 band/幂等 ack 写端/练习 CTA 在飞）+ jyeoo-rs 确定性供给 dark-ship（#939,kill switch OFF,producer patch 提案待 owner）+ 优化七票（诚实失败链/两处 render-memo/a11y wave/server 读路径/mathjs async/批量读)+ YUK-221 ordinal。ack 写端沉淀模式:**writer 接受集 ≡ reader 交付集**(单源判词 loadOutcomeBrief 进事务+锁)。gate 纪律新增:S2 超 10 分钟窗时按目录四分片,每片独立 testcontainer。详情见头部【更新】。
-- **07-18 12 小时产品推进（#836/#867-891，26 PR）**：遗留正确性/供给/投影/会话链清扫 + SPA 重分块/重依赖按需加载 + Inbox/Copilot/onboarding/notes/today/record 可用性与 a11y 连续打磨；最终 main `f99e5382`，开放 PR 0，完整验证数字与 issue 状态见头部【更新】。
-- **🔴 YUK-669 凭证泄露事故遏制（2026-07-16，Urgent）**：仓库一度 PUBLIC + tracked `.env.local.bak`（Neon/Postgres · `CLAUDE_CODE_OAUTH_TOKEN` · Tavily · Vercel OIDC 真凭证）。owner 已**轮换全部 4 系统凭证** + 仓库转 PRIVATE（0 forks）；**#827 已合**（`7f17e9ed`，`git rm --cached` + gitignore `.env*.bak`，tip 已除净）。取证：`.env.local.bak` 是唯一真泄露文件，其余 grep 命中全假阳性。**剩 owner 门控**：历史清除（`af4651d9` 在多分支，需 filter-repo + force-push）+ 启用 GitHub secret scanning（当前 DISABLED）。全程零凭证值落地。
-- **backlog-engine 全量 grooming 执行（2026-07-16，「继续三批」）**：43-agent 对抗 grooming → **立单 11（YUK-670~680）+ Linear 卫生 15 + 关 24 PR**，26 次 Linear 写零拦截零失败。产物 `.remember/tmp/backlog-engine-2026-07-16.json`（含未动的 B 段 9 低优 + C 段映射，下轮）。driver+linearscribe(opus) 分工;立单 ground-truth 全核对。
-- **驾驶舱 07-16 re-grounding + stash 孤本抢救（本 PR #826）**：PLAN.md 07-12→16 五波补板（UH/API 两 program + YUK-617/567/476/634/506）+ 生产/在飞实况重建；抢救 1918 行 stash-only 设计稿入 `docs/design/`（供题控制面研究 + Subject Control Plane proposal）。
-- **产品可用性硬化 UH program 全交付（2026-07-13→14，#790 + 26 单 Done）**：U0 真相/恢复（evidence-backed 冷启、401 TokenGate、AI runner preflight、fail-closed mutation、时间预算、KPI 真相）· U1 旅程（hint、false-success 移除、PDF 渲染打包、DOCX 清理、事件证据详情）· U2 规模（观测聚合、learner 语言、题库分页、surface inventory、动态 SubjectProfile）· U3 可达性（drawer/表单语义、时区、a11y、**容器级 usability 回归门禁** + runbook）。部署面：非 root、mem0-init、pdfium.wasm、/api/auth/check。
-- **API 资源契约收敛 YUK-641~668 全交付（2026-07-14→15，#792-797 + #800-820，28 单）**：papers/review-sessions 拆分 → proposal decisions 统一 → ingestion operations 化 → attempt/transition 收敛 → 201/202/Location/cursor 契约 → OpenAPI 生成 + **boot/CI 双 fail-closed**（`audit:api-contracts` 0-legacy 门禁 + runtime `route_contract_violation`）。全程 compatibility-first：legacy alias 全在线、无 Sunset。顺带修真 bug：paper autosave 曾发 `answer_md` 给只读 `content_md`。
-- **YUK-506 教学法安全脊 dark-ship（2026-07-16，#823 `e128f1ab`，未部署）**：src/core/pedagogy 8-method 闭集 palette + 四信号 StateGuard + 确定性 `selectPedagogyCandidates()` + anti-learning-styles 三锁 + `audit:no-learning-styles`（837 文件）进 `pnpm test`；Linear closeout 关 519/531/560、retain 349/351/354/406 带门。runtime 全 deferred。
-- **YUK-617 建成不通电光复 + cleanup 四刀（2026-07-12，#776-781）**：通电 AttemptTimeline 进判定反馈卡 + mode-1 三处接线（ProposalCard tag / 知识树到期徽标 / conjecture-scores admin 第六面）；四刀删 ~1000 行孤儿（MasteryBadge/StatusBadge/corrective-redo/coach-plan/死 route/ReviewIntentBanner/getActiveQuestionState）；**端点批 ground-truth 纠偏救回 C6/C10/C7 活代码**（审计误判死，盲删会砸 live 练习会话链）。
-- **YUK-567 备课台 conjecture 全链通电（2026-07-12→13，#782/783/784）**：/today 夜链 chip 就地展开 ≤3 张猜想卡（anti-guilt 硬约束 8 SSR 单测锁）→ accept 铸 mind_probe → 文本+图片作答（`multimodal_direct` vision judge）→ confirm/refute。#783 补修 CodeRabbit 两 Major（面板卡死 + decide 静默失败）。
-- **YUK-476+614 档案露出（2026-07-11，#772/773）**：/today 冷启带 ProfileBand（coral 区间 + p_l 标记五态）+ workbench/summary 扩 active_goal；服务端全集派生 weakest-by-p(L) 修 20-截断漏真最弱。设计 doc `docs/design/2026-07-11-yuk476-diagnostic-surface.md`（7 决策 LOCKED）。
-- **YUK-634 docx bare 题号修复 + 学科网设计草案（2026-07-14，#787）**：markdown-segment.ts 确定性修复（真卷 21→24 块）+ `docs/design/2026-07-13-question-supply-xueke-acquisition.md`（获取+治理架构，spike/linchpin 发现汇总）。
-- **07-16 部署窗（`287e4e2a`）+ flag 固化**：prod 从 `28dcd67f`（07-13）前滚吃下 32 commits（API 契约批等）；placement go-live 双 flag 固化进 tracked `docker-compose.mac.yml`（07-15 曾因 .env 未拷贝被静默翻回 off 的真事故防复发）→ **#825 收编回 main**。
-- **YUK-597 v3.2 trait 合同实施批全交付 + 收伞（2026-07-11，生产 `2ab3a964`）**：父单 + 全 7 子单 Done；详情见归档【更新】（`docs/planning/2026-07-07-plan-header-log-archive.md`）。
+- **YUK-584 evidence refs 校验（07-20）**：PR #1000 squash-merged `c35ccb20`、Linear Done；merge tree 已核对包含 late-reviewed action allowlist（与 `6276fa48` touched-file tree OID 相等）。最终 unit 30/30、DB 11/11、dark-ship 12/12、typecheck/build/Biome/CI 绿，独立 verifier APPROVE、threads=0；唯一 optional throw/retry rollback 测试已落 YUK-742 Backlog。
+- **Linear 状态卫生批（07-20）**：25 个获批 state correction 均已落地回读；YUK-555 conditional guard 保持未动。
+- **07-19→20 backlog 连清前两波**：P0F/6 telemetry、6-lens 六票、YUK-546 propose 并发锁、YUK-549 oracle 三件均已合；详情见归档头部与对应 PR。
+- **07-19 双线推进 / 07-18 产品收口 / YUK-669 遏制 / UH + API 契约 program**：历史详情见 `docs/planning/2026-07-07-plan-header-log-archive.md`，不在活看板重复展开。
