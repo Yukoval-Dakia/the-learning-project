@@ -1,5 +1,4 @@
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
-import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
@@ -56,12 +55,17 @@ export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // YUK-358 决定7 — unset/empty/unknown falls back to the per-kind default
-  // (verify=OFF, the other real-signal kinds=ON). Explicit shared literals override
-  // that default, preserving both opt-in and opt-out polarity without a second grammar.
-  return parseFlag(env[FLAG_BY_KIND[kind]], {
-    defaultValue: DEFAULT_ENABLED_BY_KIND[kind],
-  });
+  const value = env[FLAG_BY_KIND[kind]];
+  // YUK-358 决定7 — unset/empty falls back to the per-kind default (verify=OFF,
+  // the other 4=ON). When set, an explicit literal wins for EVERY kind: "false"
+  // disables, "true" enables — so verify is a pure opt-in ("true") and the others
+  // keep their kill-switch ("false") semantics. Any other non-empty value keeps
+  // the kind's default (no accidental flip from a typo'd flag).
+  if (value === undefined || value === '') return DEFAULT_ENABLED_BY_KIND[kind];
+  const normalized = value.toLowerCase();
+  if (normalized === 'false') return false;
+  if (normalized === 'true') return true;
+  return DEFAULT_ENABLED_BY_KIND[kind];
 }
 
 export async function enqueueNoteRefineTrigger(input: {
@@ -87,85 +91,70 @@ export async function enqueueNoteRefineTrigger(input: {
     return { status: 'skipped:test_env', artifact_id: input.artifactId, kind: input.kind };
   }
 
-  let claimId: number | undefined;
   try {
     let send = input.bossSend;
     if (!send) {
       const boss = await getStartedBoss();
       send = boss.send.bind(boss);
     }
+    const data = {
+      artifact_id: input.artifactId,
+      trigger: {
+        kind: input.kind,
+        context_md: input.contextMd,
+        evidence_ids: input.evidenceIds,
+        trigger_event_id: input.triggerEventId,
+      },
+    };
+
     if (input.db) {
-      const claimCutoff = new Date(
-        (input.now ?? new Date()).getTime() - NOTE_REFINE_TRIGGER_DEBOUNCE_MS,
-      );
-      const claimed = await input.db.transaction(async (tx) => {
+      const enqueued = await input.db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`note_refine:${key}`}))`);
+        const cutoff = input.now
+          ? sql`${input.now.toISOString()}::timestamptz - ${NOTE_REFINE_TRIGGER_DEBOUNCE_MS} * interval '1 millisecond'`
+          : sql`now() - ${NOTE_REFINE_TRIGGER_DEBOUNCE_MS} * interval '1 millisecond'`;
         const existing = await tx
-          .select({ occurred_at: job_events.occurred_at })
+          .select({ id: job_events.id })
           .from(job_events)
           .where(
             and(
               eq(job_events.business_table, 'note_refine_debounce'),
               eq(job_events.business_id, key),
-              gt(job_events.occurred_at, claimCutoff),
+              gt(job_events.occurred_at, cutoff),
             ),
           )
-          .orderBy(desc(job_events.occurred_at))
           .limit(1);
         if (existing.length > 0) return false;
 
-        const inserted = await tx
-          .insert(job_events)
-          .values({
-            business_table: 'note_refine_debounce',
-            business_id: key,
-            event_type: 'note_refine.enqueued',
-            payload: {},
-            occurred_at: input.now ?? new Date(),
-          })
-          .returning({ id: job_events.id });
-        claimId = inserted[0]?.id;
+        const jobId = await send('note_refine', data);
+        if (jobId === null) return false;
+
+        await tx.insert(job_events).values({
+          business_table: 'note_refine_debounce',
+          business_id: key,
+          event_type: 'note_refine.enqueued',
+          payload: {},
+          ...(input.now ? { occurred_at: input.now } : {}),
+        });
         return true;
       });
-      if (!claimed) {
-        return { status: 'skipped:debounced', artifact_id: input.artifactId, kind: input.kind };
-      }
+      return {
+        status: enqueued ? 'enqueued' : 'skipped:debounced',
+        artifact_id: input.artifactId,
+        kind: input.kind,
+      };
     }
 
-    const jobId = await send(
-      'note_refine',
-      {
-        artifact_id: input.artifactId,
-        trigger: {
-          kind: input.kind,
-          context_md: input.contextMd,
-          evidence_ids: input.evidenceIds,
-          trigger_event_id: input.triggerEventId,
-        },
-      },
-      input.db
-        ? undefined
-        : {
-            singletonKey: key,
-            singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
-          },
-    );
+    const jobId = await send('note_refine', data, {
+      singletonKey: key,
+      singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
+    });
     return {
       status: jobId === null ? 'skipped:debounced' : 'enqueued',
       artifact_id: input.artifactId,
       kind: input.kind,
     };
   } catch (err) {
-    if (claimId !== undefined && input.db) {
-      try {
-        await input.db.delete(job_events).where(eq(job_events.id, claimId));
-      } catch (cleanupErr) {
-        console.warn(
-          `[note_refine:${input.kind}] claim cleanup failed for ${input.artifactId}:`,
-          cleanupErr,
-        );
-      }
-    }
     const error = err instanceof Error ? err.message : String(err);
     console.warn(`[note_refine:${input.kind}] enqueue failed for ${input.artifactId}:`, err);
     return { status: 'failed', artifact_id: input.artifactId, kind: input.kind, error };

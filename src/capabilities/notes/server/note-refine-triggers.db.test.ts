@@ -57,33 +57,72 @@ describe('note refine rolling debounce', () => {
     ).toHaveLength(1);
   });
 
-  it('releases the rolling claim when pg-boss send fails so the trigger can retry', async () => {
+  it('waits behind a failing same-key send, then enqueues without dropping the trigger', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const firstSend = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    let firstSendStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      firstSendStarted = resolve;
+    });
     const bossSend = vi
       .fn()
-      .mockRejectedValueOnce(new Error('boss unavailable'))
-      .mockResolvedValueOnce('job_retry');
-    const now = new Date('2026-05-28T12:30:00.000Z');
+      .mockImplementationOnce(() => {
+        firstSendStarted();
+        return firstSend;
+      })
+      .mockResolvedValueOnce('job_second');
+
+    const first = enqueueNoteRefineTrigger({
+      db: testDb(),
+      artifactId: 'art_concurrent',
+      kind: 'mark_wrong',
+      bossSend,
+    });
+    await started;
+    const second = enqueueNoteRefineTrigger({
+      db: testDb(),
+      artifactId: 'art_concurrent',
+      kind: 'mark_wrong',
+      bossSend,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(bossSend).toHaveBeenCalledTimes(1);
+
+    rejectFirst(new Error('boss unavailable'));
+    await expect(first).resolves.toMatchObject({ status: 'failed', error: 'boss unavailable' });
+    await expect(second).resolves.toMatchObject({ status: 'enqueued' });
+    expect(bossSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves no rolling claim when pg-boss returns null', async () => {
+    const bossSend = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('job_retry');
 
     await expect(
       enqueueNoteRefineTrigger({
         db: testDb(),
-        artifactId: 'art_retry',
+        artifactId: 'art_null',
         kind: 'mark_wrong',
-        now,
         bossSend,
       }),
-    ).resolves.toMatchObject({ status: 'failed', error: 'boss unavailable' });
+    ).resolves.toMatchObject({ status: 'skipped:debounced' });
     await expect(
       enqueueNoteRefineTrigger({
         db: testDb(),
-        artifactId: 'art_retry',
+        artifactId: 'art_null',
         kind: 'mark_wrong',
-        now: new Date(now.getTime() + 1_000),
         bossSend,
       }),
     ).resolves.toMatchObject({ status: 'enqueued' });
 
     expect(bossSend).toHaveBeenCalledTimes(2);
+    expect(
+      await testDb()
+        .select()
+        .from(job_events)
+        .where(eq(job_events.business_id, 'mark_wrong:art_null')),
+    ).toHaveLength(1);
   });
 });
 
