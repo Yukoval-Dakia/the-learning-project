@@ -39,7 +39,7 @@ import { conjectureKey } from '@/server/conjectures/evidence';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { inArray } from 'drizzle-orm';
+import { and, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 // ── Server-side caps + constants (§5 / 附录 A #3) ──────────────────────────────
@@ -139,8 +139,18 @@ type WriteAgentNoteFn = typeof WriteAgentNoteReal;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
 
+const PRIMARY_EVIDENCE_ACTIONS = [
+  'attempt',
+  'experimental:probe_result',
+  'experimental:prediction_score',
+] as const;
+
 async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
-  const rows = await db.select({ id: event.id }).from(event).where(inArray(event.id, refs));
+  if (refs.length === 0) return false;
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(and(inArray(event.id, refs), inArray(event.action, PRIMARY_EVIDENCE_ACTIONS)));
   return rows.length === refs.length;
 }
 
@@ -416,7 +426,10 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             if (!(await evidenceRefsExistFn(db, primaryRefs))) {
               caps.proposeCount -= 1;
               proposedThisRun.delete(key);
-              return textResult({ ok: false, reason: 'evidence_refs 含不存在的事件 id' });
+              return textResult({
+                ok: false,
+                reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
+              });
             }
           } catch (err) {
             caps.proposeCount -= 1;

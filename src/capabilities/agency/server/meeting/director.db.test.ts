@@ -211,6 +211,40 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
   });
 
+  it('rejects an existing event whose action is not primary evidence', async () => {
+    await writeEvent(testDb(), {
+      id: 'existing_non_primary_event',
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:research_meeting_agent_trigger',
+      subject_kind: 'query',
+      subject_id: 'existing_non_primary_event',
+      outcome: 'success',
+      payload: {},
+      created_at: NOW,
+    });
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['att_1', 'existing_non_primary_event'],
+      });
+      return {
+        task_run_id: 'director_run_non_primary_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(String(proposeResult?.reason)).toMatch(/一手|事件/);
+    expect(result.proposals_created).toBe(0);
+  });
+
   it('lands a mind_model conjecture with the agent actor + server baseline snapshot + cost-bearing scan', async () => {
     const result = await runResearchMeetingDirector(testDb(), baseDeps());
 
