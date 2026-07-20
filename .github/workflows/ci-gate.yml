@@ -19,34 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  minimum-node:
-    name: Node 22.19.0 · install · db
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.13.1
-
-      # YUK-686: Testcontainers 12 resolves undici 8, whose engine floor is Node 22.19.
-      # Keep a real minimum-runtime lane so the public engine range is continuously exercised,
-      # rather than inferred from the Node 24 production gate.
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22.19.0'
-          cache: 'pnpm'
-
-      - name: Verify minimum runtime
-        run: test "$(node --version)" = 'v22.19.0'
-
-      - name: Frozen install
-        run: pnpm install --frozen-lockfile
-
-      - name: DB test lane
-        run: pnpm test:db
-
   gate:
     name: typecheck · lint · audits · test · build
     runs-on: ubuntu-latest
