@@ -324,7 +324,7 @@ export async function deleteQuestion(
   } | null;
 
   // 409 confirm_required：约束门（version 校验之前，无写库副作用）→ 回计数给 UI 展示。
-  if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
+  if (res.status === 409 && body?.error === 'confirm_required') {
     const associations = normalizeQuestionAssociationCounts(
       body.associations,
       opts.fallbackChildren ?? 0,
