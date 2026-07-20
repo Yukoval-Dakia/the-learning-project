@@ -141,6 +141,7 @@ type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
 
 const PRIMARY_EVIDENCE_ACTIONS = [
   'attempt',
+  'review',
   'experimental:probe_result',
   'experimental:prediction_score',
 ] as const;
@@ -314,7 +315,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
+        'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
