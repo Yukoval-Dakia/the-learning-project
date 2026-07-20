@@ -8,7 +8,7 @@ import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET, POST, getEdge } from './edges';
 
@@ -312,5 +312,67 @@ describe('POST /api/knowledge/edges', () => {
       folded as Record<string, unknown> | null,
     );
     expect(diffs).toEqual([]);
+  });
+});
+
+// YUK-737 — the direct POST /edges path had NO accept-time topology gate: a direct caller could write
+// a `prerequisite` edge that closes a cycle the proposal-accept fold would reject. These pin the new
+// gate (cycle → clean 409, not a 500) + a legal regression, under the faithful prod flip (ON).
+describe('POST /api/knowledge/edges — YUK-737 topology gate', () => {
+  beforeEach(async () => {
+    await resetDb();
+    // PROJECTION_IS_WRITER=1 is the LIVE prod state: the create projects the edge through the fold,
+    // whose ADR-0034 topology reject THROWS and rolls the write back; runEdgeTopologyGate's
+    // translateReject then surfaces it as a clean 409 (mirrors the accept-path lock suite).
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('409s when a direct create closes a prerequisite cycle (tc_a->tc_b live, tc_b->tc_a rejected)', async () => {
+    const db = testDb();
+    await seedKnowledge(['tc_a', 'tc_b']);
+    // tc_a -> tc_b committed first (via the same POST route).
+    const r1 = await postEdge({
+      from_knowledge_id: 'tc_a',
+      to_knowledge_id: 'tc_b',
+      relation_type: 'prerequisite',
+    });
+    expect(r1.status).toBe(201);
+    // tc_b -> tc_a reverses it. NOTE: distinct UNIQUE(from,to,type) key, so the unique constraint
+    // does NOT catch this — only the ADR-0034 topology gate (fold) does.
+    const r2 = await postEdge({
+      from_knowledge_id: 'tc_b',
+      to_knowledge_id: 'tc_a',
+      relation_type: 'prerequisite',
+    });
+    expect(r2.status).toBe(409);
+    const body = (await r2.json()) as { error: string; message: string };
+    expect(body.error).toMatch(/cycle|direction_contradiction/);
+
+    // No tc_b -> tc_a edge landed (whole tx rolled back); only tc_a -> tc_b is live.
+    const live = (await db.select().from(knowledge_edge)).filter((e) => e.archived_at === null);
+    expect(live).toHaveLength(1);
+    expect(live[0].from_knowledge_id).toBe('tc_a');
+    expect(live[0].to_knowledge_id).toBe('tc_b');
+  });
+
+  it('creates a legal (non-cyclic) prerequisite chain under the gate (201, 201)', async () => {
+    await seedKnowledge(['tl_a', 'tl_b', 'tl_c']);
+    const r1 = await postEdge({
+      from_knowledge_id: 'tl_a',
+      to_knowledge_id: 'tl_b',
+      relation_type: 'prerequisite',
+    });
+    expect(r1.status).toBe(201);
+    // tl_b -> tl_c extends the chain; no cycle, so the gate passes.
+    const r2 = await postEdge({
+      from_knowledge_id: 'tl_b',
+      to_knowledge_id: 'tl_c',
+      relation_type: 'prerequisite',
+    });
+    expect(r2.status).toBe(201);
   });
 });

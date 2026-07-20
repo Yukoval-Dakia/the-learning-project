@@ -84,6 +84,44 @@ async function seedProposeEdgeEvent(opts: {
   return id;
 }
 
+// YUK-737 — a SUPERSEDE propose event (edge_op='supersede' + judged metadata). The supersede accept
+// branch reads all of this off the propose payload, so seeding the event lets us drive the branch
+// through decideKnowledgeEdgeProposal directly (no proposal-inbox row needed, same as
+// seedProposeEdgeEvent above).
+async function seedSupersedeProposeEvent(opts: {
+  newFrom: string;
+  newTo: string;
+  supersededEdgeId: string;
+  relation_type?: string;
+}): Promise<string> {
+  const db = testDb();
+  const id = newId();
+  await writeEvent(db, {
+    id,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'propose',
+    subject_kind: 'knowledge_edge',
+    subject_id: `edge_proposed_${id}`,
+    outcome: 'partial',
+    payload: {
+      edge_op: 'supersede',
+      from_knowledge_id: opts.newFrom,
+      to_knowledge_id: opts.newTo,
+      relation_type: opts.relation_type ?? 'prerequisite',
+      weight: 1,
+      reasoning: 'reconcile supersede candidate',
+      archive_edge_id: opts.supersededEdgeId,
+      supersede_confidence: 0.9,
+      supersede_neighbor_index: 0,
+      supersede_affected_refs: [{ kind: 'question', id: `q_supersede_${id}` }],
+    },
+    caused_by_event_id: null,
+    created_at: new Date(),
+  });
+  return id;
+}
+
 // A resolve-on-demand promise. The holder tx resolves `lockAcquired` after it owns its lock(s); the
 // main flow awaits that before firing the accept, and `release` lets the holder commit on demand.
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -315,4 +353,86 @@ describe('decideKnowledgeEdgeProposal — YUK-546 lock discipline', () => {
     expect(live[0].from_knowledge_id).toBe('m_b');
     expect(live[0].to_knowledge_id).toBe('m_0');
   }, 20000);
+
+  // YUK-737 — the SUPERSEDE accept branch creates a live replacement edge. Before this it had NO
+  // accept-time topology gate, so a replacement that closes a prerequisite cycle would land. These
+  // two pin the new gate (cycle rejected) + a legal regression (a non-cyclic replacement applies).
+  it('supersede accept: a replacement that reverses a live prerequisite is rejected by the topology gate; nothing lands', async () => {
+    const db = testDb();
+    await seedKnowledge(['sc_a', 'sc_b', 'sc_c']);
+    // Live backbone: sc_a -> sc_b. Old edge sc_b -> sc_c is the supersede target.
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'sc_a',
+      to_knowledge_id: 'sc_b',
+      relation_type: 'prerequisite',
+      weight: 1,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      created_at: new Date(),
+    });
+    const oldEdgeId = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'sc_b',
+      to_knowledge_id: 'sc_c',
+      relation_type: 'prerequisite',
+      weight: 1,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      created_at: new Date(),
+    });
+    // Replacement candidate sc_b -> sc_a: touches the old edge (shared sc_b), not a duplicate. Once
+    // sc_b -> sc_c is archived and sc_b -> sc_a created, sc_b -> sc_a reverses the live sc_a -> sc_b.
+    const proposeId = await seedSupersedeProposeEvent({
+      newFrom: 'sc_b',
+      newTo: 'sc_a',
+      supersededEdgeId: oldEdgeId,
+    });
+
+    await expect(
+      decideKnowledgeEdgeProposal(db, proposeId, { decision: 'accept' }),
+    ).rejects.toThrow(/cycle|direction|topology|prerequisite/i);
+
+    // The supersede rolled back: the old edge stays LIVE, no replacement landed, no cycle exists.
+    const live = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
+    const keys = live.map((e) => `${e.from_knowledge_id}->${e.to_knowledge_id}`).sort();
+    expect(keys).toEqual(['sc_a->sc_b', 'sc_b->sc_c']);
+    // No rate / generate events chained off the propose (whole tx rolled back).
+    const chained = await db.select().from(event).where(eq(event.caused_by_event_id, proposeId));
+    expect(chained).toHaveLength(0);
+  });
+
+  it('supersede accept: a legal (non-cyclic) replacement applies — old edge archived, new edge live', async () => {
+    const db = testDb();
+    await seedKnowledge(['sl_a', 'sl_b', 'sl_c', 'sl_d']);
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'sl_a',
+      to_knowledge_id: 'sl_b',
+      relation_type: 'prerequisite',
+      weight: 1,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      created_at: new Date(),
+    });
+    const oldEdgeId = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'sl_b',
+      to_knowledge_id: 'sl_c',
+      relation_type: 'prerequisite',
+      weight: 1,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      created_at: new Date(),
+    });
+    // Replacement sl_b -> sl_d: touches old (sl_b), not a duplicate, no cycle.
+    const proposeId = await seedSupersedeProposeEvent({
+      newFrom: 'sl_b',
+      newTo: 'sl_d',
+      supersededEdgeId: oldEdgeId,
+    });
+
+    const result = await decideKnowledgeEdgeProposal(db, proposeId, { decision: 'accept' });
+    expect(result.edge_id).toBeTruthy();
+
+    const live = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
+    const keys = live.map((e) => `${e.from_knowledge_id}->${e.to_knowledge_id}`).sort();
+    expect(keys).toEqual(['sl_a->sl_b', 'sl_b->sl_d']);
+  });
 });
