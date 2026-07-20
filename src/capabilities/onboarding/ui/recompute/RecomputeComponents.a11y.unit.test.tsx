@@ -97,23 +97,27 @@ describe('maturity drift detail', () => {
     renderSettledDrift({ sFirm: 3 });
 
     expect(screen.getByText(/概览有/).textContent).toContain('1');
-    expect(screen.getByText(/判断较可信：服务端/).textContent).toContain('3 · 本地重导 2');
-    expect(screen.queryByText(/中位 θ̂ SE：服务端/)).toBeNull();
+    expect(screen.getByText(/较可信知识点：当前概览/).textContent).toContain('3 · 重新核对 2');
+    expect(screen.queryByText(/整体判断稳定度：当前概览/)).toBeNull();
   });
 
   it('reports a median-only mismatch instead of showing equal firm counts', () => {
     renderSettledDrift({ sMedian: 0.5 });
 
     expect(screen.getByText(/概览有/).textContent).toContain('1');
-    expect(screen.queryByText(/判断较可信：服务端/)).toBeNull();
-    expect(screen.getByText(/中位 θ̂ SE：服务端/).textContent).toContain('0.50 · 本地重导 0.40');
+    expect(screen.queryByText(/较可信知识点：当前概览/)).toBeNull();
+    expect(screen.getByText(/整体判断稳定度：当前概览/).textContent).toContain(
+      '0.50 · 重新核对 0.40',
+    );
   });
 
   it('counts and renders both mismatch dimensions', () => {
     renderSettledDrift({ sFirm: 3, sMedian: null });
 
     expect(screen.getByText(/概览有/).textContent).toContain('2');
-    expect(screen.getByText(/判断较可信：服务端/)).toBeTruthy();
-    expect(screen.getByText(/中位 θ̂ SE：服务端/).textContent).toContain('暂无 · 本地重导 0.40');
+    expect(screen.getByText(/较可信知识点：当前概览/)).toBeTruthy();
+    expect(screen.getByText(/整体判断稳定度：当前概览/).textContent).toContain(
+      '暂无 · 重新核对 0.40',
+    );
   });
 });

@@ -310,14 +310,14 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
             <div className="rc-cal-sub">
               {!firmMatch && (
                 <span>
-                  判断较可信：服务端 <b className="mono">{summary.sFirm}</b> · 本地重导{' '}
+                  较可信知识点：当前概览 <b className="mono">{summary.sFirm}</b> · 重新核对{' '}
                   <b className="mono">{summary.dFirm}</b>
                 </span>
               )}
               {!medianMatch && (
                 <span>
-                  中位 θ̂ SE：服务端 <b className="mono">{formatMedian(summary.sMedian)}</b> ·
-                  本地重导 <b className="mono">{formatMedian(summary.dMedian)}</b>
+                  整体判断稳定度：当前概览 <b className="mono">{formatMedian(summary.sMedian)}</b> ·
+                  重新核对 <b className="mono">{formatMedian(summary.dMedian)}</b>
                 </span>
               )}
               学习记录没有丢失；概览会在下次同步时重新核对。核对过程只读，不会改动记录。 ·{' '}
