@@ -8,6 +8,7 @@ import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, eq, gt, sql } from 'drizzle-orm';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
+const NOTE_REFINE_DEBOUNCE_TABLE = 'note_refine_debounce';
 
 // M3 (YUK-317, D6)：error_rate 信号已删（内嵌自测链路裁撤）。
 // YUK-358 决定6 (ADR-0040)：dwell 信号已裁（editing presence 不再触发 refine）。
@@ -116,7 +117,7 @@ export async function enqueueNoteRefineTrigger(input: {
           .from(job_events)
           .where(
             and(
-              eq(job_events.business_table, 'note_refine_debounce'),
+              eq(job_events.business_table, NOTE_REFINE_DEBOUNCE_TABLE),
               eq(job_events.business_id, key),
               gt(job_events.occurred_at, cutoff),
             ),
@@ -128,7 +129,7 @@ export async function enqueueNoteRefineTrigger(input: {
         if (jobId === null) return false;
 
         await tx.insert(job_events).values({
-          business_table: 'note_refine_debounce',
+          business_table: NOTE_REFINE_DEBOUNCE_TABLE,
           business_id: key,
           event_type: 'note_refine.enqueued',
           payload: { kind: input.kind, artifact_id: input.artifactId, job_id: jobId },
