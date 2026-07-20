@@ -33,6 +33,7 @@ import {
   type EditingStatus,
   type EnqueueOrApplyInput,
   type EnqueueOrApplyResult,
+  HUB_AUTO_SYNC_ACTOR_REF,
   type MarkIdleAndFlushInput,
   type MarkIdleAndFlushResult,
   type PresenceStore,
@@ -315,7 +316,7 @@ function dropStalePending(
     // Mutation-triggered hub sync opts out of the generic force-apply ceiling,
     // so its durable deferred patch must also survive stale pending pruning.
     if (
-      item.actorRef !== 'hub_auto_sync' &&
+      item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF &&
       now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS
     ) {
       dropped++;

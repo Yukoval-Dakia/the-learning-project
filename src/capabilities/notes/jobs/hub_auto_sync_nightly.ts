@@ -54,12 +54,12 @@ import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { HUB_AUTO_SYNC_ACTOR_REF } from '@/server/artifacts/presence/types';
 
 const HUB_TYPE = 'note_hub';
 const ATOMIC_TYPE = 'note_atomic';
 const AUTO_LINKS_CONTAINER_NODE = 'autoLinksContainer';
 const CROSS_LINK_BLOCK_NODE = 'crossLinkBlock';
-const ACTOR_REF = 'hub_auto_sync';
 
 interface HubRow {
   id: string;
@@ -317,7 +317,7 @@ export async function runHubAutoSyncNightly(
       const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
       if (!patch) {
         if (deps.skipActiveHubs) {
-          await clearPendingByActor({ artifactId: hub.id, actorRef: ACTOR_REF });
+          await clearPendingByActor({ artifactId: hub.id, actorRef: HUB_AUTO_SYNC_ACTOR_REF });
         }
         continue;
       }
@@ -326,12 +326,11 @@ export async function runHubAutoSyncNightly(
         db,
         artifactId: hub.id,
         patch,
-        actorRef: ACTOR_REF,
-        forceApplyAfterTimeout: !deps.skipActiveHubs,
+        actorRef: HUB_AUTO_SYNC_ACTOR_REF,
         now: deps.now,
       };
       const applied = deps.skipActiveHubs
-        ? await enqueueOrApplyNoteRefinePatch(input)
+        ? await enqueueOrApplyNoteRefinePatch({ ...input, forceApplyAfterTimeout: false })
         : await persistNoteRefineApply(input);
 
       if (applied.status === 'deferred') result.hubs_deferred_active_edit += 1;

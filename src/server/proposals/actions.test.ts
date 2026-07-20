@@ -114,6 +114,11 @@ describe('proposal lifecycle owner service', () => {
       dismiss_count: 0,
       acceptance_rate: 1,
     });
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+
+    const reaccept = await acceptAiProposal(db, 'node_p1');
+    expect(reaccept).toMatchObject({ kind: 'knowledge_node', idempotent: true });
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('acceptAiProposal materializes a knowledge_edge proposal through the edge owner service', async () => {

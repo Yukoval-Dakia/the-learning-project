@@ -863,6 +863,7 @@ async function dispatchAccept(
       }
       const result = await acceptProposal(db, proposalId);
       await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+      await enqueueHubAutoSync();
       return { kind: 'knowledge_node', result };
     }
     case 'knowledge_mutation': {

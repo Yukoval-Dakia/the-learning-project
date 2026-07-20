@@ -10,6 +10,7 @@ export const EDITING_HEARTBEAT_TIMEOUT_MS = 30_000;
 // Ceiling on how long an actively-edited artifact can defer an AI patch before
 // it is force-applied anyway.
 export const EDITING_FORCE_APPLY_TIMEOUT_MS = 10 * 60_000;
+export const HUB_AUTO_SYNC_ACTOR_REF = 'hub_auto_sync';
 
 export type EditingStatus = 'editing' | 'idle';
 
