@@ -1,0 +1,70 @@
+name: Rust isomorphic-core parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/rust-parity.yml'
+      - 'crates/calibration-native/**'
+      - 'src/core/poly-exp*.ts'
+      - 'src/server/calibration/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rust-parity.yml'
+      - 'crates/calibration-native/**'
+      - 'src/core/poly-exp*.ts'
+      - 'src/server/calibration/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-parity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: native · WASM · JS bit parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1-threads
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native addon
+        run: pnpm build:native
+
+      - name: Build release WASM addon
+        run: pnpm build:native:wasm
+
+      - name: Require artifacts and run parity suites
+        env:
+          REQUIRE_RUST_PARITY: '1'
+        run: |
+          test -f crates/calibration-native/calibration-native.node
+          test -f crates/calibration-native/calibration-native.wasm32-wasi.wasm
+          test -f crates/calibration-native/calibration-native.wasi.cjs
+          pnpm exec vitest run --config vitest.unit.config.ts \
+            src/server/calibration/native-parity.unit.test.ts \
+            src/server/calibration/wasm-parity.unit.test.ts \
+            src/core/poly-exp-parity.unit.test.ts

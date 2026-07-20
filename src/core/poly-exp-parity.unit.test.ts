@@ -32,6 +32,9 @@ function loadAddon(): PolyAddon | null {
   }
 }
 const addon = loadAddon();
+if (process.env.REQUIRE_RUST_PARITY === '1' && !addon) {
+  throw new Error(`required polynomial parity addon could not be loaded: ${NODE_PATH}`);
+}
 const d = present && addon ? describe : describe.skip;
 
 // A grid that stresses the determinism-sensitive paths:
