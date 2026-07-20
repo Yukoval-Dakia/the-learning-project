@@ -1,3 +1,4 @@
+import { enqueueHubAutoSync } from '@/capabilities/notes/jobs/hub-auto-sync-enqueue';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
@@ -780,6 +781,7 @@ export async function decideKnowledgeEdgeProposal(
     { uniqueViolationMessage: `edge already exists: ${fromId} --${relationType}--> ${toId}` },
   );
 
+  await enqueueHubAutoSync();
   if (proposal) {
     await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
   }
