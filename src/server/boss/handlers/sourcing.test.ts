@@ -1010,6 +1010,29 @@ describe('runSourcing', () => {
     expect(enqueueSourceVerify).toHaveBeenCalledOnce();
   });
 
+  it('rejects a kind mismatch for objective-only calibration supply', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const enqueueSourceVerify = vi.fn(async () => {});
+    await expect(
+      runSourcing({
+        db,
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'choice',
+        objectiveOnly: true,
+        runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr_src_objective_mismatch'),
+        enqueueSourceVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    expect(await db.select().from(question).where(eq(question.source, 'web_sourced'))).toHaveLength(
+      0,
+    );
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
+  });
+
   it('ingests when the sourced question kind matches the requested kind', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });

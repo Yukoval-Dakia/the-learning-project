@@ -77,6 +77,7 @@ import {
 } from '@/server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { kindsMatch } from '@/subjects/question-kind';
 import {
   resolveQuizGenSkills,
   resolveQuizGenSkillsForSubject,
@@ -104,6 +105,7 @@ export interface QuizGenJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
   // into the QuizGenTask input so the agent can target the题型.
   kind?: string;
+  objective_only?: boolean;
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
   // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
@@ -325,6 +327,7 @@ export interface RunQuizGenParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
   kind?: string;
+  objectiveOnly?: boolean;
   supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
@@ -570,6 +573,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       throw new Error(
         `quiz_gen pinned generation_method='${params.generationMethod}' but agent produced '${parsed.generation_method}'`,
       );
+    }
+
+    if (params.objectiveOnly && params.kind) {
+      for (const q of parsed.questions) {
+        if (!kindsMatch(q.kind, params.kind)) {
+          throw new Error(
+            `quiz_gen objective-only kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+          );
+        }
+      }
     }
 
     // requested_kind is answer-class/structure guidance for generation, not a
@@ -1058,6 +1071,7 @@ export function buildQuizGenHandler(
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.objective_only ? { objectiveOnly: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,

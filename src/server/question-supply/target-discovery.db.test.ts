@@ -577,6 +577,41 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
   // FINDING #5 (other direction) — when Tavily is down but the plan has a Tavily-FREE auto
   // route (closed_book quiz_gen), the dispatcher falls THROUGH to it rather than going manual.
+  it('threads objective-only calibration enforcement into producer job data', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    const target = {
+      id: createId(),
+      fingerprint: 'fp-objective-calibration',
+      gapKind: 'diagnostic' as const,
+      subjectId: 'math',
+      knowledgeIds: [kid],
+      kind: 'choice',
+      difficultyBand: 'near' as const,
+      desiredCount: 1,
+      minSourceTier: 3 as const,
+      routePreference: ['sourcing_web'] as SupplyRoute[],
+      priority: 1,
+      reason: 'active-PPI calibration label supply',
+      constraints: { calibrationCandidate: true, objectiveOnly: true },
+    };
+    const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
+
+    await dispatchSupplyTargets(db, [target], {
+      enqueue: async (queue, data) => {
+        enqueued.push({ queue, data });
+        return 'job-objective';
+      },
+      tavilyAvailable: () => true,
+    });
+
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({
+      queue: 'sourcing',
+      data: { kind: 'choice', objective_only: true },
+    });
+  });
+
   it('falls through to a Tavily-free quiz_gen route when Tavily is down', async () => {
     const kid = createId();
     await seedKnowledge(kid);

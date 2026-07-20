@@ -1484,6 +1484,28 @@ describe('runQuizGen', () => {
     expect(enqueueQuizVerify).toHaveBeenCalledOnce();
   });
 
+  it('rejects a kind mismatch for objective-only calibration supply', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'choice',
+        objectiveOnly: true,
+        runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr_objective_mismatch'),
+        enqueueQuizVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
   it('persists when the agent honours the pinned kind (computation↔calculation normalized)', async () => {
     await seedKnowledge({ id: 'k1' });
     // closed_book single short_answer question; pin matches the produced kind.

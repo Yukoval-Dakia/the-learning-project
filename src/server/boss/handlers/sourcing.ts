@@ -74,6 +74,7 @@ import {
 } from '@/server/quiz/content-fingerprint';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
+import { kindsMatch } from '@/subjects/question-kind';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // The trigger surface mirrors quiz_gen: 'knowledge' / 'learning_item' resolve a
@@ -94,6 +95,7 @@ export interface SourcingJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Forwarded
   // into the SourcingTask input's existing `kinds?` field so the agent can target the题型.
   kind?: string;
+  objective_only?: boolean;
   supply_trace?: SupplyTraceV1T;
 }
 
@@ -225,6 +227,7 @@ export interface RunSourcingParams {
   knowledgeId?: string;
   // YUK-226 S2-5b F4 — 题型 hint forwarded into the SourcingTask input (existing `kinds?`).
   kind?: string;
+  objectiveOnly?: boolean;
   supplyTrace?: SupplyTraceV1T;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
@@ -399,6 +402,16 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     });
     taskResult = result;
     const parsed = parseOutput(result.text);
+
+    if (params.objectiveOnly && params.kind) {
+      for (const q of parsed.questions) {
+        if (!kindsMatch(q.kind, params.kind)) {
+          throw new Error(
+            `sourcing objective-only kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+          );
+        }
+      }
+    }
 
     // kinds is answer-class/structure guidance for retrieval, not a whole-output
     // acceptance gate. Persist each schema-valid extracted question and leave quality
@@ -824,6 +837,7 @@ export function buildSourcingHandler(
         // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         ...(data.kind ? { kind: data.kind } : {}),
+        ...(data.objective_only ? { objectiveOnly: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
