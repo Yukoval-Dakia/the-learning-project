@@ -73,4 +73,29 @@ describe('deleteQuestion rolling compatibility (YUK-298)', () => {
       has_associations: false,
     });
   });
+
+  it('preserves a true aggregate flag when a 409 omits association counts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'confirm_required', has_associations: true }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    const result = await deleteQuestion('legacy-associated');
+
+    expect(result.kind).toBe('confirm_required');
+    if (result.kind !== 'confirm_required') throw new Error('expected confirmation gate');
+    expect(result.associations).toEqual({
+      attempts: 0,
+      mistakes: 0,
+      fsrs_cards: 0,
+      paper_refs: 0,
+      children: 0,
+    });
+    expect(result.has_associations).toBe(true);
+  });
 });

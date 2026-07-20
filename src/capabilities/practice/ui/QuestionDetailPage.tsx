@@ -251,6 +251,7 @@ export function DeleteModal({
   stem,
   notation,
   counts,
+  hasAssociations,
   pending,
   onClose,
   onConfirm,
@@ -259,6 +260,8 @@ export function DeleteModal({
   notation: string | null;
   // null = 尚未拿到约束计数（首拍 DELETE 在途）；非 null = 已知约束。
   counts: QuestionAssociationCounts | null;
+  // true + zero detail counts means an older API reported only the conservative aggregate.
+  hasAssociations: boolean | null;
   pending: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -270,7 +273,8 @@ export function DeleteModal({
   const total = counts
     ? counts.attempts + counts.mistakes + counts.fsrs_cards + counts.paper_refs + counts.children
     : 0;
-  const deletable = !!counts && total === 0;
+  const hasUnknownAssociations = hasAssociations === true && total === 0;
+  const deletable = !!counts && total === 0 && !hasUnknownAssociations;
   const constraints = counts
     ? [
         counts.attempts && { n: counts.attempts, label: '条作答记录' },
@@ -326,12 +330,19 @@ export function DeleteModal({
                   : '此题将从题库和练习池移除并转为草稿；既有作答和复习历史会保留。'}
               </p>
               <div className="qb-constraints">
-                {constraints.map((c) => (
-                  <div key={c.label} className="qb-constraint">
+                {constraints.length > 0 ? (
+                  constraints.map((c) => (
+                    <div key={c.label} className="qb-constraint">
+                      <LoomIcon name="alert" size={14} />
+                      <span className="qb-c-n">{c.n}</span> {c.label}
+                    </div>
+                  ))
+                ) : (
+                  <div className="qb-constraint">
                     <LoomIcon name="alert" size={14} />
-                    <span className="qb-c-n">{c.n}</span> {c.label}
+                    存在关联记录，但旧接口未返回分类计数
                   </div>
-                ))}
+                )}
               </div>
               <div className="qb-confirm-field">
                 <div className="field-label">
@@ -436,6 +447,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const [showAddChip, setShowAddChip] = useState(false);
   const [del, setDel] = useState(false);
   const [delCounts, setDelCounts] = useState<QuestionAssociationCounts | null>(null);
+  const [delHasAssociations, setDelHasAssociations] = useState<boolean | null>(null);
   const [toasts, setToasts] = useState<QdToast[]>([]);
   const knowledgeOptionsQ = useQuery({
     queryKey: ['question-knowledge-options'],
@@ -592,12 +604,14 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const openDelete = () => {
     setDel(true);
     setDelCounts(null);
+    setDelHasAssociations(null);
     deleteMut.mutate(
       { confirm: false, fallbackChildren: data.parts.length },
       {
         onSuccess: (res: DeleteQuestionResult) => {
           // 无 confirm 必返 confirm_required（含约束计数）；理论上不会 archived。
           setDelCounts(res.associations);
+          setDelHasAssociations(res.kind === 'confirm_required' ? res.has_associations : null);
         },
       },
     );
@@ -1159,6 +1173,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
           stem={data.prompt_md}
           notation={notation}
           counts={delCounts}
+          hasAssociations={delHasAssociations}
           pending={deleteMut.isPending}
           onClose={() => setDel(false)}
           onConfirm={confirmDelete}
