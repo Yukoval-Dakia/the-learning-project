@@ -816,7 +816,7 @@ structured 树形（StructuredQuestion，二选一）：
 {"kind":"${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
 
 题目要求：
-- 恰好一道题；requested_kind 若出现，将它作为答案类型与题面结构指导，不作字符串闭集目标；kind 从 ${CANONICAL_QUESTION_KINDS} 中选择实际生成题目的结构，并遵循输出的 kind 对应的格式规则。
+- 恰好一道题；objective_only 与 kind_required 均非 true 时，requested_kind 若出现，将它作为答案类型与题面结构指导，不作字符串闭集目标；kind 从 ${CANONICAL_QUESTION_KINDS} 中选择实际生成题目的结构，并遵循输出的 kind 对应的格式规则。
 - requested_difficulty 出现时 difficulty 必须等于它；缺省自定。
 - 每个叶节点（standalone 根 / 每个 sub）**必须**有非空 answers 和/或 analysis——缺答案的题会被整道拒收。
 - choice / true_false：judge_kind_override="exact"，options 给 3–4 个选项，choices_md 同步给选项原文，answers 第一条是正确选项原文。
@@ -981,7 +981,6 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 - choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
-- derivation：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查推导步骤。
 - derivation：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查推导步骤，避免缺少 steps 判分契约。
 - computation：只验最终答案可 exact；验方法要点用 semantic + required_points。
 - knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。

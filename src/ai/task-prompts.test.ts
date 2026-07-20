@@ -40,6 +40,11 @@ describe('getTaskSystemPrompt', () => {
         'derivation：judge_kind_override="semantic"，rubric_json.required_points',
       );
     }
+    expect(sourcingPrompt.match(/^- derivation：/gm)).toHaveLength(1);
+    const authorPrompt = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
+    expect(authorPrompt).toContain(
+      'objective_only 与 kind_required 均非 true 时，requested_kind 若出现',
+    );
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
