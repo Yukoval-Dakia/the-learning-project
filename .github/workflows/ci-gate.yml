@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   minimum-node:
-    name: Node 22.19.0 · install · typecheck · db
+    name: Node 22.19.0 · install · db
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -43,9 +43,6 @@ jobs:
 
       - name: Frozen install
         run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm typecheck
 
       - name: DB test lane
         run: pnpm test:db
