@@ -48,6 +48,7 @@ export const DraftReviewListResponseSchema = z.object({
 export const DraftReviewDetailResponseSchema = z.object({
   id: z.string(),
   subject: z.string().nullable(),
+  notation: z.string().nullable(),
   kind: z.string(),
   source: z.string(),
   created_at: z.string().datetime(),

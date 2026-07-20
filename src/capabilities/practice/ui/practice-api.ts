@@ -169,6 +169,7 @@ export interface QFullTimelineEntry {
 export interface QuestionFullDetail {
   id: string;
   subject: string | null;
+  notation: string | null;
   kind: string;
   prompt_md: string;
   reference_md: string | null;
@@ -468,6 +469,7 @@ export interface QBankQuestion {
   created_at_sec: number; // unix 秒。
   // enrich 路径填（enrich:false 时后端给 null / 非大题默认）。
   subject: string | null; // 派生学科 profile id（'yuwen'|'math'|'eng'|'general'...）。
+  notation: string | null; // server resolvable profile；retired custom 仍保留。
   knowledge_labels: QBankKnowledgeLabel[] | null;
   is_composite: boolean; // 有 question_part 子题（大题）。
   children: QBankQuestion[]; // 大题的有序小题（part_index 序）；非大题为 []。
@@ -614,11 +616,69 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
   };
 }
 
-export const savePaperAnswer = (artifactId: string, input: PaperWriteInput) =>
-  apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`, {
+// keepalive requests share a spec-mandated ~64KB budget across ALL of the page's in-flight
+// keepalive bodies; a body over it makes fetch throw a TypeError synchronously and the draft
+// never leaves. Stay comfortably under it (other keepalive PATCHes count too).
+export const KEEPALIVE_MAX_BODY_BYTES = 60_000;
+
+export function buildPaperAnswerDraftInit(
+  artifactId: string,
+  input: PaperWriteInput,
+  // keepalive lets an exit/pagehide flush outlive the page teardown: a normal fetch is
+  // dropped when the tab closes, but a keepalive PUT (unlike sendBeacon, it still carries
+  // the x-internal-token header) is allowed to finish. Best-effort only.
+  options: { keepalive?: boolean } = {},
+): RequestInit {
+  // Serialize once and reuse for both the size check and the request body (no double work).
+  const body = JSON.stringify(buildPaperAnswerDraftBody(artifactId, input));
+  // Only measure when keepalive is actually requested — `=== true &&` short-circuits the
+  // TextEncoder on the common (non-keepalive) autosave path. An oversized draft falls back to
+  // a normal fetch rather than throwing on keepalive: on an in-app exit the page is still
+  // alive so it lands anyway, and on pagehide a dropped best-effort save is no worse than the
+  // TypeError that would otherwise lose it outright.
+  const keepalive =
+    options.keepalive === true && new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BODY_BYTES;
+  return {
     method: 'POST',
-    body: JSON.stringify(buildPaperAnswerDraftBody(artifactId, input)),
+    body,
+    ...(keepalive ? { keepalive: true } : {}),
+  };
+}
+
+// UTF-8 byte size of the serialized answer-draft body — what the keepalive budget is measured
+// against. Exposed so a batch flush can pre-measure each slot before allocating the budget.
+export function paperAnswerDraftBodyBytes(artifactId: string, input: PaperWriteInput): number {
+  return new TextEncoder().encode(JSON.stringify(buildPaperAnswerDraftBody(artifactId, input)))
+    .length;
+}
+
+// keepalive request bodies share ONE ~64KB budget across the whole page, so a batch flush
+// (pagehide, many slots) must allocate cumulatively: grant keepalive only while the running
+// total stays under the cap, and let the rest fall back to a normal (best-effort) fetch —
+// otherwise the later slots' fetch() throws a TypeError and their drafts are lost outright.
+export function allocateKeepaliveBudget(
+  bodyByteSizes: number[],
+  budget = KEEPALIVE_MAX_BODY_BYTES,
+): boolean[] {
+  let remaining = budget;
+  return bodyByteSizes.map((size) => {
+    if (size <= remaining) {
+      remaining -= size;
+      return true;
+    }
+    return false;
   });
+}
+
+export const savePaperAnswer = (
+  artifactId: string,
+  input: PaperWriteInput,
+  options: { keepalive?: boolean } = {},
+) =>
+  apiJson(
+    `/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`,
+    buildPaperAnswerDraftInit(artifactId, input, options),
+  );
 
 export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>
   apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/submissions`, {
@@ -676,6 +736,7 @@ export interface DraftReviewListPage {
 export interface DraftReviewDetail {
   id: string;
   subject: string | null;
+  notation: string | null;
   kind: string;
   source: string;
   created_at: string;

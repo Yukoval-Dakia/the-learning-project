@@ -21,6 +21,11 @@ import {
   KnowledgeEdgeQuerySchema,
 } from '@/capabilities/knowledge/api/contracts';
 import {
+  acquireEdgeEndpointLocks,
+  runEdgeTopologyGate,
+  withEdgeEndpointLockRetry,
+} from '@/capabilities/knowledge/server/edge-topology-write';
+import {
   createKnowledgeEdge,
   getKnowledgeEdgeById,
   listKnowledgeEdgesPage,
@@ -89,37 +94,56 @@ export async function POST(req: Request): Promise<Response> {
     // intentionally NOT used: created_by is fixed to the manual-user actor {user, self} so the row
     // matches the fold (which derives created_by from the event envelope), not a free-form string.
     const now = new Date();
-    const id = await db.transaction(async (tx) => {
-      const edgeId = await createKnowledgeEdge(tx, {
-        from_knowledge_id: parsed.data.from_knowledge_id,
-        to_knowledge_id: parsed.data.to_knowledge_id,
-        relation_type: parsed.data.relation_type,
-        weight: parsed.data.weight,
-        reasoning: parsed.data.reasoning ?? null,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        created_at: now,
-      });
-      await writeEvent(tx, {
-        id: createId(),
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'generate',
-        subject_kind: 'knowledge_edge',
-        subject_id: edgeId,
-        outcome: 'success',
-        payload: {
-          edge_op: 'create',
-          from_knowledge_id: parsed.data.from_knowledge_id,
-          to_knowledge_id: parsed.data.to_knowledge_id,
-          relation_type: parsed.data.relation_type,
-          weight: parsed.data.weight ?? 1,
-          reasoning: parsed.data.reasoning ?? null,
-        },
-        created_at: now,
-      });
-      return edgeId;
-    });
+    const fromId = parsed.data.from_knowledge_id;
+    const toId = parsed.data.to_knowledge_id;
+    const endpointIds = Array.from(new Set([fromId, toId]));
+    // YUK-737 — the direct edge create is a live-edge writer just like the proposal-accept path, so
+    // it gets the SAME accept-time discipline: endpoint locks + sorted advisory + lock-scoped
+    // revalidation (acquireEdgeEndpointLocks), the whole write wrapped in the bounded NOWAIT retry,
+    // and the ADR-0034 fold topology gate (runEdgeTopologyGate) that rejects a `prerequisite` cycle.
+    // Before this, POST /edges wrote the row + a generate event with NO accept-time cycle check, so a
+    // direct caller could close a cycle the fold would reject. translateReject maps the fold's reject
+    // to a clean Api(409), consistent with the tree_redundancy 409 createKnowledgeEdge already
+    // returns (this route is called directly by UI / tools).
+    const id = await withEdgeEndpointLockRetry(
+      () =>
+        db.transaction(async (tx) => {
+          await acquireEdgeEndpointLocks(tx, fromId, toId, endpointIds);
+          const edgeId = await createKnowledgeEdge(tx, {
+            from_knowledge_id: fromId,
+            to_knowledge_id: toId,
+            relation_type: parsed.data.relation_type,
+            weight: parsed.data.weight,
+            reasoning: parsed.data.reasoning ?? null,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            created_at: now,
+          });
+          await writeEvent(tx, {
+            id: createId(),
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'generate',
+            subject_kind: 'knowledge_edge',
+            subject_id: edgeId,
+            outcome: 'success',
+            payload: {
+              edge_op: 'create',
+              from_knowledge_id: fromId,
+              to_knowledge_id: toId,
+              relation_type: parsed.data.relation_type,
+              weight: parsed.data.weight ?? 1,
+              reasoning: parsed.data.reasoning ?? null,
+            },
+            created_at: now,
+          });
+          await runEdgeTopologyGate(tx, edgeId, { translateReject: true });
+          return edgeId;
+        }),
+      {
+        uniqueViolationMessage: `edge already exists: ${fromId} --${parsed.data.relation_type}--> ${toId}`,
+      },
+    );
     return resourceResponse(
       { id },
       {

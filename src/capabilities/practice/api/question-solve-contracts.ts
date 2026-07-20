@@ -59,6 +59,7 @@ export const QuestionDetailResponseSchema = z
   .object({
     id: z.string(),
     subject: z.string().nullable(),
+    notation: z.string().nullable(),
     kind: z.string(),
     prompt_md: z.string(),
     difficulty: z.number().int(),

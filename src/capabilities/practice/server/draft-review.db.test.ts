@@ -367,6 +367,7 @@ describe('getDraftReviewDetail', () => {
     expect(detail).not.toBeNull();
     expect(detail?.id).toBe(q);
     expect(detail?.subject).toBe('yuwen');
+    expect(detail?.notation).toBeNull();
     expect(detail?.kind).toBe('mcq');
     expect(detail?.source).toBe('quiz_gen');
     expect(detail?.difficulty).toBe(4);
@@ -383,7 +384,10 @@ describe('getDraftReviewDetail', () => {
     await seedKnowledge('k-math', '二次函数', null, 'math');
     const q = await seedQuestion({ draft_status: 'draft', knowledge_ids: ['k-math'] });
 
-    expect((await getDraftReviewDetail(testDb(), q))?.subject).toBe('math');
+    expect(await getDraftReviewDetail(testDb(), q)).toMatchObject({
+      subject: 'math',
+      notation: 'katex',
+    });
   });
 
   it('gives null answer/options/passage when those fields are absent', async () => {

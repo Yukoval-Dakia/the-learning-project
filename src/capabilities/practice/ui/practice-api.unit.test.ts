@@ -8,10 +8,12 @@
 //
 // No-DB unit partition（不 import db/postgres/drizzle）；纯函数，无 DOM 依赖。
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  allocateKeepaliveBudget,
   buildDraftListQuery,
   buildPaperAnswerDraftBody,
+  buildPaperAnswerDraftInit,
   buildPaperSubmissionBody,
   buildPracticeStreamUrl,
   buildQuestionsListQuery,
@@ -148,5 +150,70 @@ describe('paper write resource bodies (YUK-644)', () => {
       part_ref: null,
       answer_md: '我的答案',
     });
+  });
+});
+
+describe('buildPaperAnswerDraftInit — keepalive body-size guard (YUK-732)', () => {
+  const base = { session_id: 'review_1', question_id: 'q1', part_ref: null };
+
+  it('serializes the body once and keeps keepalive for a normal-size draft', () => {
+    const init = buildPaperAnswerDraftInit(
+      'paper_1',
+      { ...base, answer_md: '我的答案' },
+      { keepalive: true },
+    );
+    expect(init.method).toBe('POST');
+    expect(init.keepalive).toBe(true);
+    // Same serialized string used for the size check and the request body — no double work.
+    expect(JSON.parse(init.body as string)).toEqual({
+      paper_id: 'paper_1',
+      question_id: 'q1',
+      part_ref: null,
+      content_md: '我的答案',
+    });
+  });
+
+  it('drops keepalive for an oversized draft but still sends the body', () => {
+    // Over the 60KB keepalive budget → keepalive would make fetch throw and drop the draft,
+    // so it falls back to a normal fetch that still carries the full answer.
+    const huge = 'a'.repeat(61_000);
+    const init = buildPaperAnswerDraftInit(
+      'paper_1',
+      { ...base, answer_md: huge },
+      { keepalive: true },
+    );
+    expect(init.keepalive).toBeUndefined();
+    expect(JSON.parse(init.body as string).content_md).toBe(huge);
+  });
+
+  it('never sets keepalive when it is not requested', () => {
+    const init = buildPaperAnswerDraftInit('paper_1', { ...base, answer_md: '短' });
+    expect(init.keepalive).toBeUndefined();
+  });
+
+  it('does not measure the body when keepalive is not requested (short-circuit)', () => {
+    const spy = vi.spyOn(TextEncoder.prototype, 'encode');
+    buildPaperAnswerDraftInit('paper_1', { ...base, answer_md: '短' });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
+describe('allocateKeepaliveBudget — shared page-level keepalive budget (YUK-732)', () => {
+  it('grants keepalive only while the cumulative total stays under the cap', () => {
+    // Two 40KB bodies exceed the 60KB budget together → only the first fits.
+    expect(allocateKeepaliveBudget([40_000, 40_000])).toEqual([true, false]);
+  });
+
+  it('grants keepalive to every body that collectively fits', () => {
+    expect(allocateKeepaliveBudget([30_000, 30_000])).toEqual([true, true]);
+  });
+
+  it('skips an over-budget body but still allocates a later one that fits the remainder', () => {
+    expect(allocateKeepaliveBudget([70_000, 10_000])).toEqual([false, true]);
+  });
+
+  it('returns an empty allocation for no bodies', () => {
+    expect(allocateKeepaliveBudget([])).toEqual([]);
   });
 });

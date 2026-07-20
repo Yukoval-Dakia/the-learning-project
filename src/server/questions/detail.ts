@@ -24,7 +24,10 @@ import {
   type MasteryDecayBucket,
   masteryDecayBucket,
 } from '@/capabilities/knowledge/server/node-page';
-import { batchResolveSubjectDisplayIds } from '@/capabilities/knowledge/server/subject-resolution';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/capabilities/knowledge/server/subject-resolution';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
@@ -125,6 +128,8 @@ export interface QuestionDetail {
   id: string;
   /** Learner-facing subject id derived from the first knowledge node, or null. */
   subject: string | null;
+  /** Server-resolved render notation; includes retired custom subject profiles. */
+  notation: string | null;
   kind: string;
   prompt_md: string; // full text (list truncates; detail serves whole).
   reference_md: string | null;
@@ -194,6 +199,7 @@ export async function loadQuestionDetail(
   const subjectById = await batchResolveSubjectDisplayIds(db, [
     { id: q.id, knowledge_ids: knowledgeIds },
   ]);
+  const subject = subjectById.get(q.id) ?? null;
 
   // 2. derived source_tier.
   const sourceTier = deriveSourceTier({
@@ -243,7 +249,8 @@ export async function loadQuestionDetail(
 
   return {
     id: q.id,
-    subject: subjectById.get(q.id) ?? null,
+    subject,
+    notation: resolveSubjectRenderNotation(subject),
     kind: q.kind,
     prompt_md: q.prompt_md,
     reference_md: q.reference_md ?? null,

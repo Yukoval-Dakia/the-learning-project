@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import { resolveQualifyingEventSubjects } from './active-subjects';
 import {
+  MAX_BRIEF_REGEN_SCOPES,
   MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
@@ -245,6 +246,192 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.objectContaining({ user_id: 'self' }),
       expect.anything(),
     );
+  });
+
+  // YUK-729 — the PAID, non-idempotent addEventMemory runs before the
+  // affected_scopes brief-regen fan-out and the reconcile enqueue. If either
+  // enqueue rethrew out of the handler, pg-boss would redeliver and re-run the
+  // extraction (duplicate cost + a persistent duplicate mem0 row). Both enqueues
+  // must swallow+log a transient failure, degrading to the sweep backstop.
+  it('YUK-729 — swallows an affected_scopes brief-regen enqueue failure (ingest resolves, extraction not retried)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // boss.send throws only for the brief-regen fan-out; reconcile still succeeds.
+    const send = vi.fn(async (name: string) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE) throw new Error('regen send boom');
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    // The throw must NOT reject the ingest job — a resolved handler is what
+    // prevents redelivery and the re-paid extraction.
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[memory_brief_bridge] affected_scopes brief regen enqueue failed'),
+      // The warn now aggregates the per-scope rejection reasons into an array.
+      expect.arrayContaining([expect.any(Error)]),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('YUK-729 — a first-scope brief-regen failure does not skip the remaining scopes (per-scope allSettled)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The FIRST affected scope's enqueue throws; the later scopes must still enqueue
+    // (a sequential for-loop under one try/catch would have aborted after 'global').
+    const send = vi.fn(async (name: string, data: { scope_key?: string }) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE && data.scope_key === 'global') {
+        throw new Error('first scope boom');
+      }
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global', 'topic:k1', 'topic:k2'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    // Both later scopes were still enqueued despite the first throwing.
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'topic:k1' },
+      expect.anything(),
+    );
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'topic:k2' },
+      expect.anything(),
+    );
+    // Failure is still surfaced, naming the failed scope.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('global'),
+      expect.arrayContaining([expect.any(Error)]),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('YUK-729 — swallows a reconcile enqueue failure, logging at ERROR with compensation context (ingest resolves, extraction not retried)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    // Reconcile has NO cron backstop, so the drop is logged at console.error (not warn)
+    // with enough context to reconcile the affected mem0 rows by hand.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // boss.send throws only for the reconcile enqueue; brief-regen still succeeds.
+    const send = vi.fn(async (name: string) => {
+      if (name === MEMORY_RECONCILE_QUEUE) throw new Error('reconcile send boom');
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_1',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    // ERROR level + carries the event id and the un-reconciled memory id for manual
+    // compensation.
+    const errorArg = errorSpy.mock.calls[0]?.[0] as string;
+    expect(errorArg).toContain('[memory_reconcile] reconcile enqueue FAILED');
+    expect(errorArg).toContain('evt_1');
+    expect(errorArg).toContain('m1');
+    expect(errorSpy.mock.calls[0]?.[1]).toBeInstanceOf(Error);
+    errorSpy.mockRestore();
+  });
+
+  it('YUK-729 — caps the brief-regen fan-out at MAX_BRIEF_REGEN_SCOPES and isolates failures within the cap', async () => {
+    // A bulk / import-style event carrying far more affected scopes than the cap.
+    const scopeCount = MAX_BRIEF_REGEN_SCOPES + 50;
+    const affected = Array.from({ length: scopeCount }, (_, i) => `topic:k${i}`);
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // One scope INSIDE the cap throws; it must not abort the remaining enqueues.
+    const send = vi.fn(async (name: string, data: { scope_key?: string }) => {
+      if (name === MEMORY_BRIEF_REGEN_QUEUE && data.scope_key === 'topic:k0') {
+        throw new Error('one scope boom');
+      }
+      return 'job-1';
+    });
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_bulk',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: affected,
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock({ addEventMemory }),
+    });
+
+    await expect(
+      handler([{ data: { event_id: 'evt_bulk' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    // Fan-out is capped: exactly MAX_BRIEF_REGEN_SCOPES brief-regen enqueues attempted
+    // (not scopeCount) — the failing one still counts as an attempt.
+    const regenSends = send.mock.calls.filter((c) => c[0] === MEMORY_BRIEF_REGEN_QUEUE);
+    expect(regenSends.length).toBe(MAX_BRIEF_REGEN_SCOPES);
+    // A scope beyond the cap was never touched.
+    expect(send).not.toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: `topic:k${MAX_BRIEF_REGEN_SCOPES}` },
+      expect.anything(),
+    );
+    // Truncation surfaced; the in-cap failure did not abort the handler.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES}`),
+    );
+    expect(addEventMemory).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 });
 

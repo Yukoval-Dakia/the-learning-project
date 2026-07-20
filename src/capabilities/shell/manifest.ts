@@ -19,6 +19,8 @@ import {
   SubjectListResponseSchema,
   TeachingBriefAckBodySchema,
   TeachingBriefAckResponseSchema,
+  TeachingBriefInteractionBodySchema,
+  TeachingBriefInteractionResponseSchema,
   TeachingBriefResponseSchema,
   WorkbenchSummaryResponseSchema,
 } from './api/contracts';
@@ -179,6 +181,23 @@ export const shellCapability = defineCapability({
         },
         successStatus: [200, 201],
         load: () => import('./api/teaching-brief-ack').then((m) => m.POST),
+      },
+      // YUK-710 (P0F/6) — append-only teaching-brief interaction ledger (brief_seen /
+      // primary_action_started). Powers the two-week survival report; writes NO derived
+      // status back onto proposal/question/result and opts out of mem0. Deeper path segment
+      // than GET /api/prep-desk/brief, so the two do not collide.
+      {
+        method: 'POST',
+        path: '/api/prep-desk/brief/interaction',
+        operationId: 'recordTeachingBriefInteraction',
+        request: { body: TeachingBriefInteractionBodySchema },
+        responses: {
+          200: TeachingBriefInteractionResponseSchema,
+          201: TeachingBriefInteractionResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/teaching-brief-interaction').then((m) => m.POST),
       },
     ],
   },

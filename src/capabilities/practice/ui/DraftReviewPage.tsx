@@ -14,9 +14,7 @@
 //   • markdown 经 @/ui/lib/math-markdown；notation 由 detail.subject 对应的真实 profile
 //     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
-import { useSubjects } from '@/ui/hooks/useSubjects';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { type SubjectRowLike, subjectNotation } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -188,14 +186,8 @@ function KnowledgeTags({ tags }: { tags: { id: string; label: string }[] }) {
 
 // ── preview pane（DrPreview + DrPreviewBody，split 布局） ──────────
 
-function DrPreviewBody({
-  d,
-  subjectRows,
-}: {
-  d: DraftReviewDetail;
-  subjectRows: readonly SubjectRowLike[];
-}) {
-  const notation = subjectNotation(d.subject, subjectRows);
+function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
+  const notation = d.notation;
   return (
     <>
       {d.passage && (
@@ -277,7 +269,6 @@ interface PreviewProps {
   onEnable: (id: string) => void;
   onForce: (d: DraftReviewDetail) => void;
   onSkip: (id: string) => void;
-  subjectRows: readonly SubjectRowLike[];
 }
 
 function DrPreview({
@@ -288,7 +279,6 @@ function DrPreview({
   onEnable,
   onForce,
   onSkip,
-  subjectRows,
 }: PreviewProps) {
   if (!activeId) {
     return (
@@ -360,7 +350,7 @@ function DrPreview({
       </div>
 
       <div className="dr-pv-body">
-        <DrPreviewBody d={d} subjectRows={subjectRows} />
+        <DrPreviewBody d={d} />
       </div>
 
       <div className="dr-actions">
@@ -410,20 +400,18 @@ const FORCE_REASONS = [
 
 function DrForceModal({
   d,
-  subjectRows,
   pending,
   onClose,
   onConfirm,
 }: {
   d: DraftReviewDetail;
-  subjectRows: readonly SubjectRowLike[];
   pending: boolean;
   onClose: () => void;
   onConfirm: (id: string, reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
   const ok = reason.trim().length >= 4;
-  const notation = subjectNotation(d.subject, subjectRows);
+  const notation = d.notation;
 
   // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
   // 同 CommandPalette）。trap 自带初始聚焦（panel 首个 focusable）、Tab 循环、
@@ -552,7 +540,6 @@ export interface DraftReviewPageProps {
 
 export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
   const qc = useQueryClient();
-  const { subjects: subjectRows } = useSubjects();
 
   // list query：取全量 draft 池（默认 limit=50；后端封顶 200）。source/kind
   // 经 query 透传给后端；搜索/verify-tab 在前端过滤（设计 demo 同：搜索是前端）。
@@ -1095,7 +1082,6 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
               onEnable={enableOne}
               onForce={(d) => setForceDraft(d)}
               onSkip={skipOne}
-              subjectRows={subjectRows}
             />
           </div>
         </>
@@ -1104,7 +1090,6 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
       {forceDraft && (
         <DrForceModal
           d={forceDraft}
-          subjectRows={subjectRows}
           pending={forceMut.isPending}
           onClose={() => setForceDraft(null)}
           onConfirm={confirmForce}

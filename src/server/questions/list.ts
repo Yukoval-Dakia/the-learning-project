@@ -21,7 +21,10 @@
 
 import { type SQL, and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
-import { batchResolveSubjectDisplayIds } from '@/capabilities/knowledge/server/subject-resolution';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/capabilities/knowledge/server/subject-resolution';
 import {
   type SourceTier,
   type SourceTierName,
@@ -133,7 +136,7 @@ export interface QuestionListItem {
   draft_status: string | null;
   created_at_sec: number; // unix seconds — matches全仓 API 时间形 (learning-items/timeline).
   // ── YUK-409 题库面 enrichment (opt-in via `enrich`; null when not requested) ──
-  // 这四项是 loom screen-questions 的真面所需、基础投影没有的派生量。**全部 additive**
+  // 这些字段是 loom screen-questions 的真面所需、基础投影没有的派生量。**全部 additive**
   // （existing list/route 契约与测试只断言 .id / 子属性，从不整对象 toEqual），且仅在
   // `enrich:true`（题库 UI 路径）时计算——tier/family/OOM 路径与 copilot query_questions
   // 工具走 enrich:false，零额外查询、零行为变更。null≡未请求 enrichment。
@@ -141,6 +144,8 @@ export interface QuestionListItem {
   // subject: 派生学科 profile id（batchResolveSubjectIds，knowledge_ids[0] →
   //   effectiveDomain → resolveSubjectProfile.id；绝非 question 列——subject 模型终版）。
   subject: string | null;
+  // notation: 从 server 侧 resolvable registry 取；retired custom 仍保留原渲染语义。
+  notation: string | null;
   // knowledge_labels: knowledge_ids → {id,name}（kchips 显示中文名而非裸 id；
   //   archived/missing 节点从 labels 落选，仅在原 knowledge_ids 保留可追溯）。
   knowledge_labels: { id: string; name: string }[] | null;
@@ -325,6 +330,7 @@ function toListItem(c: DerivedCandidate): QuestionListItem {
     // YUK-409 — enrichment 默认未填（null / 非大题）。仅 enrichItems 在 enrich:true
     // 路径回填 subject / knowledge_labels / is_composite / children。
     subject: null,
+    notation: null,
     knowledge_labels: null,
     is_composite: false,
     children: [],
@@ -645,6 +651,7 @@ async function enrichItems(
   // 就地写回 subject / knowledge_labels（顶层 + children 实例）。
   for (const it of enrichTargets) {
     it.subject = subjectById.get(it.id) ?? null;
+    it.notation = resolveSubjectRenderNotation(it.subject);
     it.knowledge_labels = labelsFor(it.knowledge_ids);
   }
 

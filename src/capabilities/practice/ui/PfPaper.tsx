@@ -15,8 +15,10 @@ import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
   type PaperSlot,
+  allocateKeepaliveBudget,
   endPaperSession,
   getPaperDetail,
+  paperAnswerDraftBodyBytes,
   pausePaperSession,
   savePaperAnswer,
   startPaperSession,
@@ -26,6 +28,11 @@ import {
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
 }
+
+// Bounded wait for an in-flight draft to settle on exit before reporting: past this we treat
+// the save as unsaved rather than hang the exit indefinitely. A late success only over-warns
+// (a conservative, honesty-preserving direction), never a false 「进度保留」.
+const EXIT_FLUSH_TIMEOUT_MS = 3000;
 
 export function PfPaper({
   artifactId,
@@ -72,6 +79,23 @@ export function PfPaper({
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
   // pending save, silently dropping A's last keystrokes while the UI still claims saved.
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Draft saves dispatched but not yet settled (latest promise per slot key). The debounce
+  // timer is deleted the instant it fires, so without this an exit during the in-flight POST
+  // window would see no pending timer and neither await nor keepalive-resend the save — a
+  // slow-net / teardown cancel would then be reported as 「进度保留」. Cleared per paper.
+  const inFlightSaves = useRef<Map<string, Promise<boolean>>>(new Map());
+  // Guards exitPaper against a double-click during its flush/settle window (up to
+  // EXIT_FLUSH_TIMEOUT_MS): the ref blocks re-entry synchronously (so two clicks in one tick
+  // can't both call onExit); `exiting` disables the button so a second click can't even fire.
+  const exitingRef = useRef(false);
+  const [exiting, setExiting] = useState(false);
+  // Mirror of `answers`, updated synchronously on every keystroke. The pagehide/exit flush
+  // reads THIS, not the render-closure `answers` (which can lag the final keystroke by a
+  // frame), so the last typed text is never flushed as a stale/empty value.
+  const answersRef = useRef<Record<string, string>>({});
+  // Mutual exclusion with exitPaper: a submit and an exit must not both fire a terminal
+  // transition (double onSubmitted/onExit). Synchronous, like exitingRef.
+  const submittingRef = useRef(false);
 
   // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
   // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
@@ -83,6 +107,11 @@ export function PfPaper({
     setAnswers({});
     setSaveFailed({});
     setRetrying(false);
+    setExiting(false);
+    setSubmitting(false);
+    exitingRef.current = false;
+    submittingRef.current = false;
+    answersRef.current = {};
     saveSeq.current = {};
     saveGen.current += 1;
     // Drop the previous paper's session so a pre-session autosave on the new paper flags
@@ -93,6 +122,9 @@ export function PfPaper({
       clearTimeout(saveTimers.current[k]);
       delete saveTimers.current[k];
     }
+    // Drop the old paper's in-flight tracking so a new paper's exit can't await A's saves
+    // (their late settle is already a no-op via the bumped saveGen).
+    inFlightSaves.current.clear();
   }, [artifactId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
@@ -139,6 +171,15 @@ export function PfPaper({
       }
       return next;
     });
+    // Seed answersRef from the server backfill (only unset keys, so a keystroke that landed
+    // before this effect isn't clobbered). answersRef is the flush source of truth.
+    for (const s of slots) {
+      const k = slotKey(s);
+      if (answersRef.current[k] === undefined) {
+        answersRef.current[k] =
+          s.slot_state.submission?.answer_md ?? s.slot_state.draft?.content_md ?? '';
+      }
+    }
   }, [slots]);
 
   const pauseCurrentSession = useCallback((keepalive = false) => {
@@ -153,16 +194,216 @@ export function PfPaper({
     });
   }, []);
 
-  usePagehideTransition(() => pauseCurrentSession(true));
+  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。返回本次是否
+  // 落库（true=成功/无需保存，false=失败），供退出/关页 flush 如实计数未保存草稿。
+  // Defined above the early return so the pagehide handler and exitPaper can reach it.
+  const runSave = (
+    key: string,
+    questionId: string,
+    partRef: PaperSlot['part_ref'],
+    v: string,
+    keepalive = false,
+  ): Promise<boolean> => {
+    const gen = saveGen.current;
+    const seq = (saveSeq.current[key] ?? 0) + 1;
+    saveSeq.current[key] = seq;
+    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
+    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
+    // no-op — it can't rewrite the next paper's state.
+    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
+    // Deregister this entry when it settles, unless a newer save has already replaced it.
+    const deregister = (ok: boolean) => {
+      if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
+      return ok;
+    };
+    let done: Promise<boolean>;
+    const sid = sessionRef.current;
+    if (!sid) {
+      // Session still opening or startPaperSession failed — do NOT drop the draft silently.
+      // Flag the slot AND register a failed in-flight result on the SAME track as real saves,
+      // so exit/pagehide accounting sees this failure; a bare `Promise.resolve(false)` here
+      // would be invisible to settleInFlightSaves and (with a stale saveFailed closure) let
+      // exit report 0 — a false 「进度保留」over input that never left the page.
+      if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+      done = Promise.resolve(false).then(deregister);
+    } else {
+      try {
+        done = savePaperAnswer(
+          artifactId,
+          {
+            session_id: sid,
+            question_id: questionId,
+            part_ref: partRef,
+            answer_md: v,
+          },
+          { keepalive },
+        )
+          .then(() => {
+            if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+            return true;
+          })
+          .catch((err) => {
+            console.error('[PfPaper] draft save failed', { key, err });
+            if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+            return false;
+          })
+          .then(deregister);
+      } catch (err) {
+        // savePaperAnswer threw synchronously (e.g. a 401 cleared the token → ApiAuthError
+        // before the fetch even starts). Convert it to a resolved failure so no caller — the
+        // exit/pagehide flush included — can be stranded on an unhandled throw, and flag the
+        // slot so the exit count still records it as unsaved.
+        console.error('[PfPaper] draft save threw', { key, err });
+        if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+        done = Promise.resolve(false).then(deregister);
+      }
+    }
+    // Track as in-flight so an exit/pagehide during the POST window can await or re-send it.
+    inFlightSaves.current.set(key, done);
+    return done;
+  };
 
-  const exitPaper = () => {
+  // Single flush path for exit and pagehide. Fires every not-yet-fired debounce so its draft
+  // joins the in-flight set; with includeInFlight it also re-issues a save for slots whose
+  // POST is still open (pagehide teardown may cancel the original). keepalive keeps the PUT
+  // alive across page teardown. runSave itself is the single-track owner of in-flight state.
+  const flushDirtySlots = (opts: { keepalive?: boolean; includeInFlight?: boolean } = {}) => {
+    const keys = new Set<string>(Object.keys(saveTimers.current));
+    if (opts.includeInFlight) for (const k of inFlightSaves.current.keys()) keys.add(k);
+    // First pass: collect dirty slots and clear their timers, reading the LATEST text from
+    // answersRef (the render-closure `answers` can lag the final keystroke on a fast pagehide).
+    const dirty: {
+      key: string;
+      questionId: string;
+      partRef: PaperSlot['part_ref'];
+      answer: string;
+    }[] = [];
+    for (const key of keys) {
+      if (saveTimers.current[key]) {
+        clearTimeout(saveTimers.current[key]);
+        delete saveTimers.current[key];
+      }
+      const slot = slots.find((s) => slotKey(s) === key);
+      // A submitted (or vanished) slot needs no draft write.
+      if (!slot || slot.slot_state.submission?.submitted) continue;
+      dirty.push({
+        key,
+        questionId: slot.question_id,
+        partRef: slot.part_ref,
+        answer: answersRef.current[key] ?? '',
+      });
+    }
+    // keepalive bodies share ONE page-level budget, so allocate it cumulatively across the
+    // batch: slots that don't fit fall back to a normal (best-effort) fetch rather than
+    // making the later fetch() throw and lose their drafts. Non-keepalive flushes skip this.
+    const keepaliveFlags = opts.keepalive
+      ? allocateKeepaliveBudget(
+          dirty.map((d) =>
+            paperAnswerDraftBodyBytes(artifactId, {
+              session_id: sessionRef.current ?? '',
+              question_id: d.questionId,
+              part_ref: d.partRef,
+              answer_md: d.answer,
+            }),
+          ),
+        )
+      : dirty.map(() => false);
+    dirty.forEach((d, i) => {
+      void runSave(d.key, d.questionId, d.partRef, d.answer, keepaliveFlags[i]);
+    });
+  };
+
+  // Wait (bounded) for every in-flight draft save to settle so the exit count reflects real
+  // outcomes rather than an optimistic timer or a still-open POST. Returns key→saved.
+  const settleInFlightSaves = (): Promise<Map<string, boolean>> => {
+    const entries = [...inFlightSaves.current.entries()];
+    const results = new Map<string, boolean>();
+    if (entries.length === 0) return Promise.resolve(results);
+    return Promise.all(
+      entries.map(
+        ([key, promise]) =>
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              results.set(key, false);
+              resolve();
+            }, EXIT_FLUSH_TIMEOUT_MS);
+            void promise.then(
+              (ok) => {
+                clearTimeout(timer);
+                results.set(key, ok);
+                resolve();
+              },
+              () => {
+                clearTimeout(timer);
+                results.set(key, false);
+                resolve();
+              },
+            );
+          }),
+      ),
+    ).then(() => results);
+  };
+
+  // Hard tab-close / reload: the page is tearing down, so awaiting is useless. Re-send the
+  // latest draft with keepalive for every slot that is either pending (unfired debounce) or
+  // still in flight (a normal POST the teardown may cancel). Idempotent — the draft PUT is
+  // last-write-wins, so re-sending the newest text is safe. Then pause the session.
+  usePagehideTransition(() => {
+    // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
+    // other backstop for a session left open on teardown.
+    try {
+      flushDirtySlots({ keepalive: true, includeInFlight: true });
+    } catch (err) {
+      console.error('[PfPaper] pagehide flush failed', err);
+    }
+    return pauseCurrentSession(true);
+  });
+
+  const exitPaper = async () => {
+    // Reentrancy + mutual exclusion: the flush/settle window below can span up to
+    // EXIT_FLUSH_TIMEOUT_MS, so a double-click (or a click while the button hasn't re-rendered
+    // disabled yet) must not start a second exit and call onExit twice; and an in-flight
+    // submit must not race an exit into a double terminal transition. The ref checks are
+    // synchronous; `exiting`/`submitting` also disable the buttons.
+    if (exitingRef.current || submittingRef.current) return;
+    exitingRef.current = true;
+    setExiting(true);
+    // Fire any not-yet-fired debounce, then wait for ALL in-flight saves — those just fired
+    // AND any POST already open from a debounce that fired moments ago (its timer key is
+    // gone, so only in-flight tracking catches it). The host's 「进度保留」story then reflects
+    // what actually persisted, not an optimistic timer or an unsettled POST.
+    let outcome = new Map<string, boolean>();
+    try {
+      flushDirtySlots();
+      outcome = await settleInFlightSaves();
+    } catch (err) {
+      // Exit must never be blockable by a save error: on any flush failure fall back to an
+      // empty outcome (the count below then leans on the standing 保存失败 flags — a
+      // conservative estimate) and still exit, rather than strand the learner on the page.
+      console.error('[PfPaper] exit flush failed', err);
+    }
     void pauseCurrentSession().catch(() => {});
-    // Count slots whose last draft save failed and that aren't already submitted, so the
-    // host can drop the 「进度保留」promise on exit instead of lying.
-    const unsavedFailures = slots.filter(
-      (s) => saveFailed[slotKey(s)] && !s.slot_state.submission?.submitted,
-    ).length;
-    onExit({ unsavedFailures });
+    // Count slots left genuinely unsaved: a slot that just settled uses its real outcome; an
+    // untouched slot keeps whatever standing 保存失败 flag it had. Submitted slots never count
+    // (submitAll captured their answer regardless of the draft PUT).
+    const unsavedFailures = slots.filter((s) => {
+      if (s.slot_state.submission?.submitted) return false;
+      const k = slotKey(s);
+      const ok = outcome.get(k);
+      return ok === undefined ? (saveFailed[k] ?? false) : !ok;
+    }).length;
+    // Never let a throwing host onExit surface as an unhandled rejection out of this async
+    // handler — the exit work is already done; a bad host callback shouldn't crash it.
+    try {
+      onExit({ unsavedFailures });
+    } catch (err) {
+      console.error('[PfPaper] onExit threw', err);
+      // The host didn't navigate away, so unlock the page (ref + state) to let the learner
+      // retry exiting. The SUCCESS path deliberately does NOT reset: the parent unmounts us,
+      // and resetting would flash the button re-enabled for a frame.
+      exitingRef.current = false;
+      setExiting(false);
+    }
   };
 
   if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
@@ -184,40 +425,6 @@ export function PfPaper({
   );
   const answeredCount = slots.filter((s) => (answers[slotKey(s)] ?? '').trim().length > 0).length;
   const unanswered = slots.length - answeredCount;
-
-  // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。
-  const runSave = (key: string, questionId: string, partRef: PaperSlot['part_ref'], v: string) => {
-    const sid = sessionRef.current;
-    if (!sid) {
-      // Session still opening or startPaperSession failed — do NOT drop the draft
-      // silently. Flag the slot so the honest 「保存失败·重试」chip shows; a retry once
-      // the session lands will go through.
-      setSaveFailed((f) => ({ ...f, [key]: true }));
-      return Promise.resolve();
-    }
-    const gen = saveGen.current;
-    const seq = (saveSeq.current[key] ?? 0) + 1;
-    saveSeq.current[key] = seq;
-    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
-    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
-    // no-op — it can't rewrite the next paper's state.
-    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
-    return savePaperAnswer(artifactId, {
-      session_id: sid,
-      question_id: questionId,
-      part_ref: partRef,
-      answer_md: v,
-    })
-      .then(() => {
-        if (!isLatest()) return;
-        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-      })
-      .catch((err) => {
-        console.error('[PfPaper] draft save failed', { key, err });
-        if (!isLatest()) return;
-        setSaveFailed((f) => ({ ...f, [key]: true }));
-      });
-  };
 
   // A submitted slot's draft no longer needs saving, so a lingering failure flag on it
   // must NOT keep the retry chip lit (submitAll captures the latest answer regardless of
@@ -260,13 +467,23 @@ export function PfPaper({
 
   const setAnswer = (v: string) => {
     setAnswers((a) => ({ ...a, [curKey]: v }));
+    // Mirror synchronously into answersRef so a pagehide/exit flush firing before React
+    // commits this state update still sees the latest keystroke, not a stale value.
+    answersRef.current[curKey] = v;
     // 草稿自动保存（防抖 800ms；已提交的 slot 不再写草稿）。
     if (submittedKeys.has(curKey)) return;
     const key = curKey;
     const questionId = cur.question_id;
     const partRef = cur.part_ref;
     if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
-    saveTimers.current[key] = setTimeout(() => runSave(key, questionId, partRef, v), 800);
+    // Drop the key when the debounce fires so saveTimers.current holds ONLY not-yet-fired
+    // saves. Otherwise an already-autosaved slot stays "pending" and the exit/pagehide
+    // flush re-saves it — a redundant PUT whose transient failure would falsely report
+    // unsavedFailures, the exact opposite of the honesty this fix is for.
+    saveTimers.current[key] = setTimeout(() => {
+      delete saveTimers.current[key];
+      void runSave(key, questionId, partRef, v);
+    }, 800);
   };
 
   const goPos = (n: number) => {
@@ -276,7 +493,10 @@ export function PfPaper({
 
   const submitAll = async () => {
     const sid = sessionRef.current;
-    if (!sid || submitting) return;
+    // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
+    // an exit must not both fire a terminal transition.
+    if (!sid || submittingRef.current || exitingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     // Claim the terminal transition before any network request so pagehide cannot
     // race a completion attempt with a competing pause PATCH.
@@ -308,6 +528,7 @@ export function PfPaper({
       if (!completionCommitted) sessionOpenRef.current = true;
       addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -315,8 +536,14 @@ export function PfPaper({
   return (
     <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`}>
       <div className="pfp-top">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={exitPaper}>
-          {anySaveFailed ? '退出' : '退出 · 进度保留'}
+        <Btn
+          size="sm"
+          variant="ghost"
+          icon="arrowL"
+          onClick={exitPaper}
+          disabled={exiting || submitting}
+        >
+          {exiting ? '保存中…' : anySaveFailed ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
         {anySaveFailed ? (
@@ -380,7 +607,7 @@ export function PfPaper({
                 role="radio"
                 aria-checked={answers[curKey] === c}
                 className={`pfs-opt${answers[curKey] === c ? ' is-sel' : ''}`}
-                disabled={submittedKeys.has(curKey)}
+                disabled={submittedKeys.has(curKey) || exiting}
                 onClick={() => setAnswer(c)}
               >
                 <span className="k mono">{String.fromCharCode(65 + i)}</span>
@@ -394,7 +621,7 @@ export function PfPaper({
               <textarea
                 rows={3}
                 value={answers[curKey] ?? ''}
-                disabled={submittedKeys.has(curKey)}
+                disabled={submittedKeys.has(curKey) || exiting}
                 placeholder="写下你的解答。交卷前都可以改。"
                 onChange={(e) => setAnswer(e.target.value)}
                 aria-label="作答"
@@ -433,7 +660,7 @@ export function PfPaper({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={submitting}
+              disabled={submitting || exiting}
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -447,7 +674,7 @@ export function PfPaper({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={submitting}
+            disabled={submitting || exiting}
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}

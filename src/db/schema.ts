@@ -431,6 +431,10 @@ export const learning_item = pgTable(
     // primary of more than one item). A plain index is kept for owner-lookup reads.
     // See docs/adr/0027-note-artifact-decouple-from-learning-item-ownership.md.
     index('learning_item_primary_artifact_idx').on(t.primary_artifact_id),
+    // YUK-733: indexes the `knowledge_ids @> '["<kc>"]'::jsonb` containment read on the
+    // user-facing note page related-items query (note-page.ts) + KC-merge rewrites.
+    // jsonb_path_ops supports @> and is smaller/faster than the default jsonb_ops.
+    index('learning_item_knowledge_ids_gin').using('gin', sql`${t.knowledge_ids} jsonb_path_ops`),
   ],
 );
 
@@ -471,6 +475,10 @@ export const learning_record = pgTable(
     index('learning_record_question_idx').on(t.question_id),
     index('learning_record_attempt_idx').on(t.attempt_event_id),
     index('learning_record_origin_event_idx').on(t.origin_event_id),
+    // YUK-733: indexes the `knowledge_ids @> '["<kc>"]'::jsonb` containment read on the
+    // query_records AI tool + listLearningRecords over this append-only, never-pruned
+    // evidence log. jsonb_path_ops supports @> and is smaller/faster than jsonb_ops.
+    index('learning_record_knowledge_ids_gin').using('gin', sql`${t.knowledge_ids} jsonb_path_ops`),
   ],
 );
 
@@ -1429,6 +1437,13 @@ export const goal = pgTable(
   (t) => [
     index('goal_status_idx').on(t.status, t.sequence_hint, t.created_at),
     index('goal_subject_idx').on(t.subject_id),
+    // YUK-733: indexes the `scope_knowledge_ids @> '["<kc>"]'::jsonb` containment read on
+    // the KC-merge scope-rewrite path (proposals.ts) + orphan-surface backfill.
+    // jsonb_path_ops supports @> and is smaller/faster than the default jsonb_ops.
+    index('goal_scope_knowledge_ids_gin').using(
+      'gin',
+      sql`${t.scope_knowledge_ids} jsonb_path_ops`,
+    ),
   ],
 );
 

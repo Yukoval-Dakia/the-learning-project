@@ -16,6 +16,7 @@
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
 
+import { learnerLocalDay } from '@/core/learner-day';
 import { scopedPracticeHref } from '@/ui/lib/routes';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -23,7 +24,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ProbeAnswerCard } from './ProbeAnswers';
 import { decideProposal, evidenceReadable } from './inbox-api';
@@ -33,6 +34,7 @@ import {
   ackTeachingBriefOutcome,
   getTeachingBrief,
 } from './teaching-brief-api';
+import { reportBriefInteraction } from './teaching-brief-interaction-api';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
 function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
@@ -71,6 +73,20 @@ async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
   ]);
 }
 
+// YUK-710 — the client-side brief_seen suppression key. It MUST be `brief_id × learner-local day`
+// (the SAME grain as the server's idempotency + the report's funnel), never brief_id alone: a tab
+// left open across the Asia/Shanghai midnight must re-report the SAME brief on the new day (else that
+// day's open is never counted and its action becomes unpaired). Reuses learnerLocalDay so the client
+// never rederives a timezone. Exported pure for unit testing the day-boundary re-fire.
+export function nextBriefSeenState(
+  prevKey: string | null,
+  briefId: string,
+  now: Date,
+): { report: boolean; key: string } {
+  const key = `${briefId}|${learnerLocalDay(now)}`;
+  return { report: key !== prevKey, key };
+}
+
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
@@ -93,6 +109,20 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
   // does not land its failure on the brief the user is now looking at.
   const latestBriefIdRef = useRef<string | null>(null);
+  // YUK-710 — last-reported brief_seen key (brief_id × learner-local day); see nextBriefSeenState.
+  const briefSeenKeyRef = useRef<string | null>(null);
+
+  // YUK-710 — report a "brief opened" once per brief × learner-local day. Shared by the [brief]
+  // effect (mount / swap / same-brief state advance) and the visibilitychange listener (returning
+  // to the tab), so a still-on-screen brief re-counts after the Asia/Shanghai day rolls over. The
+  // key gate makes every extra trigger a no-op within the same day; the server is idempotent too.
+  const fireSeenIfNew = useCallback((b: TeachingBrief) => {
+    const seen = nextBriefSeenState(briefSeenKeyRef.current, b.brief_id, new Date());
+    briefSeenKeyRef.current = seen.key;
+    if (seen.report) {
+      reportBriefInteraction({ type: 'brief_seen', brief_id: b.brief_id, brief_state: b.state });
+    }
+  }, []);
 
   useEffect(() => {
     const prev = prevRef.current;
@@ -113,6 +143,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       prevRef.current = null; // null → reset baseline; never announce.
       return;
     }
+    // YUK-710 — record the "opened a delivered brief" funnel signal (once per brief × learner-local
+    // day; see fireSeenIfNew). Fires on mount / brief swap / same-brief state advance; the day-key
+    // gate suppresses the same-day repeats, and the visibilitychange effect below covers the case of
+    // an idle tab crossing Asia/Shanghai midnight (this [brief] effect alone would not re-run then).
+    fireSeenIfNew(brief);
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
     const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
@@ -120,11 +155,40 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
     (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();
-  }, [brief]);
+  }, [brief, fireSeenIfNew]);
+
+  // YUK-710 — an idle tab crossing Asia/Shanghai midnight never re-runs the [brief] effect, so on
+  // its own the same-brief new-day open would be missed. Returning to the tab (visibilitychange →
+  // visible) IS the moment a "brief opened" should count, so re-evaluate the seen-key then; the
+  // day-key gate keeps a same-day return a no-op.
+  useEffect(() => {
+    if (!brief) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fireSeenIfNew(brief);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [brief, fireSeenIfNew]);
 
   async function decide(decision: 'accept' | 'dismiss') {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
     const targetId = brief.brief_id;
+    // YUK-710 — interacting with the brief PROVES it was opened today, so record the seen first.
+    // This closes the persistently-visible-across-midnight gap: a tab that stays visible over the
+    // Asia/Shanghai day boundary re-runs neither the [brief] effect nor visibilitychange, so without
+    // this the accept would write a new-day action with no matching new-day seen (unpaired + the
+    // prior day left unconverted). The day-key gate makes it a same-day no-op.
+    fireSeenIfNew(brief);
+    // accept starts the "verify this direction" primary action (accept_probe).
+    // dismiss ("不太像") is a proposal decision, already the canonical `rate` event, so it is
+    // NOT re-instrumented here. Fired on click (action STARTED), before the network call.
+    if (decision === 'accept') {
+      reportBriefInteraction({
+        type: 'primary_action_started',
+        brief_id: targetId,
+        action_kind: 'accept_probe',
+      });
+    }
     setDeciding(true);
     setFailed(false);
     try {
@@ -159,6 +223,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       return;
     }
     const targetId = brief.brief_id;
+    // YUK-710 — the ack is counted as an action in the report funnel, so guarantee today's seen
+    // first (same persistently-visible-across-midnight guard as decide; day-key gate = same-day no-op).
+    fireSeenIfNew(brief);
     setAcking(true);
     setAckFailed(false);
     try {
@@ -257,10 +324,27 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 failed={failed}
                 acking={acking}
                 ackFailed={ackFailed}
-                onReveal={() => setRevealed(true)}
+                onReveal={() => {
+                  // YUK-710 — clicking reveal proves the brief was opened today; record the seen
+                  // first (same across-midnight guard as decide/acknowledge; day-key gate = no-op).
+                  fireSeenIfNew(brief);
+                  // The reveal button stays mounted after revealing (it toggles aria-expanded), so
+                  // guard on !revealed: a repeat click must not re-fire the answer_probe POST.
+                  if (revealed) return;
+                  // Revealing the answer card starts the answer_probe primary action.
+                  if (brief.prepared_action.kind === 'answer_probe') {
+                    reportBriefInteraction({
+                      type: 'primary_action_started',
+                      brief_id: brief.brief_id,
+                      action_kind: 'answer_probe',
+                    });
+                  }
+                  setRevealed(true);
+                }}
                 onAccept={() => void decide('accept')}
                 onReject={() => void decide('dismiss')}
                 onAcknowledge={() => void acknowledge()}
+                reportSeen={() => fireSeenIfNew(brief)}
               />
             </section>
 
@@ -324,6 +408,7 @@ function PreparedBlock({
   onAccept,
   onReject,
   onAcknowledge,
+  reportSeen,
 }: {
   brief: TeachingBrief;
   navigate: (to: string) => void;
@@ -336,6 +421,8 @@ function PreparedBlock({
   onAccept: () => void;
   onReject: () => void;
   onAcknowledge: () => void;
+  // YUK-710 — record today's brief_seen before a tracked action (across-midnight guard).
+  reportSeen: () => void;
 }) {
   if (brief.prepared_action.kind === 'review_finding') {
     return (
@@ -411,7 +498,7 @@ function PreparedBlock({
     // "练一组" (a set), never a specific count of pre-built questions — an empty/archived KC
     // degrades honestly on the practice page itself (contract §9 / acceptance 4). The
     // append-only "知道了" ack stays as the secondary dismiss (contract §4.2).
-    const { knowledge_id } = brief.prepared_action;
+    const { knowledge_id, probe_result_event_id } = brief.prepared_action;
     return (
       <>
         <p className="tb-prepared-done">这道判别题已作答，判断得到支持。</p>
@@ -420,7 +507,22 @@ function PreparedBlock({
             size="sm"
             variant="primary"
             icon="review"
-            onClick={() => navigate(scopedPracticeHref(knowledge_id))}
+            onClick={() => {
+              // YUK-710 — clicking proves today's open; record the seen first (across-midnight
+              // guard: a tab visible over the day boundary would otherwise write this new-day action
+              // with no matching new-day seen). The day-key gate makes it a same-day no-op.
+              reportSeen();
+              // Starting KC-scoped practice is the confirmed outcome's primary action.
+              // result_event_id links this start back to its probe_result so the report can
+              // compute the confirmed → scoped-practice rate. Fired before navigating away.
+              reportBriefInteraction({
+                type: 'primary_action_started',
+                brief_id: brief.brief_id,
+                action_kind: 'scoped_practice',
+                result_event_id: probe_result_event_id,
+              });
+              navigate(scopedPracticeHref(knowledge_id));
+            }}
           >
             针对这个点练一组
           </Btn>

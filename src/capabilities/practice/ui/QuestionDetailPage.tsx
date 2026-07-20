@@ -26,10 +26,9 @@
 //   • mcq 正确答案高亮 → 从 reference_md 首字母解析（best-effort），编辑落 reference_md。
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
-import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { subjectNotation } from '@/ui/lib/subject';
+import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -119,8 +118,9 @@ function hasMarkup(s: string | null | undefined): boolean {
 function dateLabel(sec: number): string {
   const d = new Date(sec * 1000);
   if (Number.isNaN(d.getTime())) return '';
-  // demo: created.replace(/-/g, " / ") → YYYY / MM / DD
-  return d.toISOString().slice(0, 10).replace(/-/g, ' / ');
+  // 本地日历日（formatCnDateOnly），不是 UTC 切片——否则「下次复习」到期日与创建日
+  // 会让 UTC+8 学习者整体错一天。demo 形态：YYYY / MM / DD。
+  return formatCnDateOnly(d).replace(/-/g, ' / ');
 }
 
 // 题面文本内嵌 markdown/latex（design QInline → MathMarkdown 单段，同 QuestionsPage）。
@@ -427,7 +427,6 @@ export interface QuestionDetailPageProps {
 
 export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageProps) {
   const qc = useQueryClient();
-  const { subjects: subjectRows } = useSubjects();
   const detailQ = useQuery({
     queryKey: ['question-detail', id],
     queryFn: () => getQuestionFull(id),
@@ -642,7 +641,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const isRoot = data.root_question_id === null && !isPart;
   const variantCount = Math.max(0, data.family.variant_count - 1);
   const answerKey = isMcq ? answerKeyFrom(draft.reference_md) : null;
-  const notation = subjectNotation(data.subject, subjectRows);
+  const notation = data.notation;
 
   // 关联状态计数（side rail）——读 detail 聚合（timeline/backlinks/scheduling）。
   // 与删除约束门的 associations 计数同源不同投影：这里用 detail 聚合，删除 modal 用

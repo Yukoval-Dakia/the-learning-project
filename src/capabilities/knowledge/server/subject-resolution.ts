@@ -17,10 +17,24 @@
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import type { Db, Tx } from '@/db/client';
 import {
+  type SubjectRegistry,
+  getDefaultSubjectRegistry,
   normalizeSubjectKey,
   resolveKnownSubjectId,
   resolveSubjectProfile,
 } from '@/subjects/profile';
+
+/**
+ * Resolve render notation from the server's resolvable registry, not the learner
+ * selectable list. Retired custom subjects remain registered specifically so
+ * historical questions keep their original rendering semantics.
+ */
+export function resolveSubjectRenderNotation(
+  subjectId: string | null,
+  registry: SubjectRegistry = getDefaultSubjectRegistry(),
+): string | null {
+  return registry.resolve(subjectId).renderConfig.notation ?? null;
+}
 
 // T-CS / YUK-168 — batch-resolve each row's learning-subject id from its first
 // knowledge id, deduplicating the parent-chain walk. A naive per-row resolve

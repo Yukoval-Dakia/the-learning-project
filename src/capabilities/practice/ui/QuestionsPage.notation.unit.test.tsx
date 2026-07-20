@@ -1,31 +1,9 @@
-import type { ApiSubject } from '@/ui/hooks/useSubjects';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { QRow } from './QuestionsPage';
 import type { QBankQuestion } from './practice-api';
 
-const SUBJECTS: ApiSubject[] = [
-  {
-    id: 'yuwen',
-    displayName: '语文',
-    aliases: ['wenyan'],
-    renderConfig: { font_family: 'serif-cjk', notation: null, code_highlight: null },
-    causeCategories: [],
-    isGeneralFallback: false,
-    configurationStatus: 'configured',
-  },
-  {
-    id: 'math',
-    displayName: '数学',
-    aliases: [],
-    renderConfig: { font_family: 'system', notation: 'katex', code_highlight: null },
-    causeCategories: [],
-    isGeneralFallback: false,
-    configurationStatus: 'configured',
-  },
-];
-
-function question(subject: string, prompt_md: string): QBankQuestion {
+function question(subject: string, notation: string | null, prompt_md: string): QBankQuestion {
   return {
     id: `q-${subject}`,
     kind: 'choice',
@@ -42,6 +20,7 @@ function question(subject: string, prompt_md: string): QBankQuestion {
     draft_status: null,
     created_at_sec: 1_784_000_000,
     subject,
+    notation,
     knowledge_labels: [],
     is_composite: false,
     children: [],
@@ -52,9 +31,9 @@ describe('QuestionsPage subject notation', () => {
   it('keeps wenyan dollar punctuation literal', () => {
     const html = renderToString(
       <QRow
-        q={question('wenyan', '《史记》标价 $12$，并非公式。')}
+        q={question('yuwen', null, '《史记》标价 $12$，并非公式。')}
         go={vi.fn()}
-        subjectRows={SUBJECTS}
+        subjectRows={[]}
       />,
     );
 
@@ -62,9 +41,13 @@ describe('QuestionsPage subject notation', () => {
     expect(html).toContain('$12$');
   });
 
-  it('renders math with the canonical katex profile notation', () => {
+  it('renders a retired custom math subject from the server-projected notation', () => {
     const html = renderToString(
-      <QRow q={question('math', '计算 $x^2$')} go={vi.fn()} subjectRows={SUBJECTS} />,
+      <QRow
+        q={question('subj_retired_math', 'katex', '计算 $x^2$')}
+        go={vi.fn()}
+        subjectRows={[]}
+      />,
     );
 
     expect(html).toContain('class="katex"');

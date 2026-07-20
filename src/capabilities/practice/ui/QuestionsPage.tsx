@@ -25,12 +25,8 @@
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import {
-  type SubjectRowLike,
-  listSubjectChoices,
-  subjectDisplayName,
-  subjectNotation,
-} from '@/ui/lib/subject';
+import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -147,10 +143,12 @@ export function questionRowAccessibleName(
 }
 
 // created_at_sec（unix 秒）→ 日期标签（与 demo q.created 的 YYYY-MM-DD 同形）。
+// 本地日历日（formatCnDateOnly），不是 UTC 切片——否则 UTC+8 学习者在本地 00:00–08:00
+// 落库的题会显示成前一天。
 function dateLabel(sec: number): string {
   const d = new Date(sec * 1000);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
+  return formatCnDateOnly(d);
 }
 
 // 题号搜索/排序辅助。
@@ -308,7 +306,7 @@ export const QRow = memo(function QRow({
                 大题 · {q.children.length} 小题
               </span>
             )}
-            <QInline text={q.prompt_md} notation={subjectNotation(q.subject, subjectRows)} />
+            <QInline text={q.prompt_md} notation={q.notation} />
           </div>
           <QIndicators q={q} subjectRows={subjectRows} />
         </div>

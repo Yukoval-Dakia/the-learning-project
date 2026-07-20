@@ -1,6 +1,7 @@
 import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
+import { BRIEF_STATES, PRIMARY_ACTION_KINDS } from '@/core/schema/conjecture';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { ProposalEvidenceRef } from '@/core/schema/proposal';
 import { z } from 'zod';
@@ -350,6 +351,66 @@ export const TeachingBriefAckResponseSchema = z
     brief_acknowledgement_event_id: z.string().min(1),
     probe_result_event_id: z.string().min(1),
     brief_id: z.string().min(1),
+    idempotent: z.boolean(),
+  })
+  .strict();
+
+// YUK-710 (P0F/6) — the append-only teaching-brief interaction ledger body. A discriminated
+// union on `type`: a `brief_seen` (opened a delivered brief, idempotent per brief × local day)
+// or a `primary_action_started` (started the prepared action). `brief_id` is the stable brief
+// id (= the conjecture proposal event id). No answer / claim text is ever accepted — only the
+// action kind and the optional confirmed-outcome `result_event_id` (scoped_practice join key).
+export const TeachingBriefInteractionBodySchema = z
+  .discriminatedUnion('type', [
+    z
+      .object({
+        type: z.literal('brief_seen'),
+        brief_id: z.string().min(1),
+        brief_state: z.enum(BRIEF_STATES),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal('primary_action_started'),
+        brief_id: z.string().min(1),
+        action_kind: z.enum(PRIMARY_ACTION_KINDS),
+        // Present only for scoped_practice (the confirmed outcome's probe_result event id) — the
+        // "only scoped_practice may carry it" invariant is enforced by the superRefine below.
+        result_event_id: z.string().min(1).optional(),
+      })
+      .strict(),
+  ])
+  // The result_event_id join key is meaningful ONLY for scoped_practice — and REQUIRED there. A
+  // discriminatedUnion member cannot itself carry a refine (that yields a ZodEffects the union
+  // rejects — mirrors TeachingBriefSchema's own union-level superRefine), so both directions live here:
+  //   - scoped_practice WITHOUT it → reject. The report's confirmed→scoped-practice numerator joins on
+  //     it, and the deterministic event id means a first row written without it could never be
+  //     back-filled (onConflictDoNothing swallows a later retry), so a missing id must fail loudly at
+  //     the boundary rather than silently drop the outcome from the count.
+  //   - any other action WITH it → reject (accept_probe / answer_probe have no probe_result yet).
+  .superRefine((body, ctx) => {
+    if (body.type !== 'primary_action_started') return;
+    if (body.action_kind === 'scoped_practice') {
+      if (body.result_event_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'scoped_practice requires result_event_id',
+          path: ['result_event_id'],
+        });
+      }
+    } else if (body.result_event_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'result_event_id is only allowed for the scoped_practice action',
+        path: ['result_event_id'],
+      });
+    }
+  });
+
+export const TeachingBriefInteractionResponseSchema = z
+  .object({
+    interaction_event_id: z.string().min(1),
+    local_day: z.string().min(1),
     idempotent: z.boolean(),
   })
   .strict();

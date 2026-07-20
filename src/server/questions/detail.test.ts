@@ -195,8 +195,14 @@ describe('loadQuestionDetail', () => {
     const mathQuestion = await seedQuestion({ knowledge_ids: [kMath] });
     const wenyanQuestion = await seedQuestion({ knowledge_ids: [kWenyan] });
 
-    expect((await loadQuestionDetail(testDb(), mathQuestion))?.subject).toBe('math');
-    expect((await loadQuestionDetail(testDb(), wenyanQuestion))?.subject).toBe('yuwen');
+    expect(await loadQuestionDetail(testDb(), mathQuestion)).toMatchObject({
+      subject: 'math',
+      notation: 'katex',
+    });
+    expect(await loadQuestionDetail(testDb(), wenyanQuestion)).toMatchObject({
+      subject: 'yuwen',
+      notation: null,
+    });
   });
 
   it('returns the variant family with is_self marked', async () => {

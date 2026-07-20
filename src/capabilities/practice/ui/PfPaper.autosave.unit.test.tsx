@@ -3,7 +3,7 @@
 // 「进度保留」and offer a retry, instead of the old silent `.catch(() => {})`.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PfPaper } from './PfPaper';
@@ -17,7 +17,12 @@ const mocks = vi.hoisted(() => ({
   submitPaperSlot: vi.fn(),
 }));
 
-vi.mock('./practice-api', () => mocks);
+// Keep the real pure helpers (buildPaperAnswerDraftBody, allocateKeepaliveBudget,
+// paperAnswerDraftBodyBytes) that flushDirtySlots calls; only the network functions are mocked.
+vi.mock('./practice-api', async () => {
+  const actual = await vi.importActual<typeof import('./practice-api')>('./practice-api');
+  return { ...actual, ...mocks };
+});
 
 const textDetail = {
   artifact_id: 'paper_1',
@@ -351,5 +356,310 @@ describe('PfPaper autosave failure (YUK-713)', () => {
     await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled(), { timeout: 2500 });
     // B's autosave carries B's session, never A's stale one.
     expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[1].session_id).toBe('review_B');
+  });
+});
+
+describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
+  it('flushes a pending debounced draft on exit (no lost last-800ms input)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    // Type, then exit immediately — well within the 800ms debounce, so the save timer is
+    // still pending. The exit must flush it, not let it die with the unmount.
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[1]).toMatchObject({
+      question_id: 'question_1',
+      answer_md: '末尾',
+    });
+    // The flush landed → the host hears an honest 「进度保留」(zero unsaved failures).
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+  });
+
+  it('does not re-save an already-autosaved slot on exit (no phantom unsaved failure)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Let the 800ms debounce fire and the autosave land.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    // Exit AFTER the autosave already succeeded: the fired timer's key must be gone, so the
+    // exit flush must NOT re-issue a duplicate save (a redundant PUT whose transient failure
+    // would otherwise falsely report unsavedFailures=1).
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+    expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an unsaved failure when the exit flush itself fails', async () => {
+    mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    // The flush is attempted, and because it fails the host is told the truth instead of a
+    // false 「进度保留」.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
+
+  it('flushes pending drafts with keepalive on pagehide (tab close)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '末尾');
+    // Simulate a hard tab-close before the debounce fires: the pending draft must be sent
+    // with keepalive so the request survives page teardown.
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    expect(mocks.savePaperAnswer.mock.calls.at(-1)?.[2]).toMatchObject({ keepalive: true });
+  });
+
+  it('waits for an in-flight save to settle on exit (no false 进度保留 during the POST window)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The POST stays open until we resolve it, so exit happens squarely in the in-flight
+    // window: the debounce already fired (timer key gone) but the save has not settled.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Let the 800ms debounce fire so the POST is dispatched and left in flight.
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    // Exit must not report until the in-flight save settles.
+    expect(onExit).not.toHaveBeenCalled();
+
+    resolveSave({ ok: true });
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 0 }));
+    // We awaited the existing POST — no duplicate save was issued.
+    expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the in-flight save as unsaved when it rejects after exit', async () => {
+    let rejectSave: (e: unknown) => void = () => {};
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalledTimes(1), { timeout: 2500 });
+
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    expect(onExit).not.toHaveBeenCalled();
+
+    rejectSave(new Error('500'));
+    // The in-flight save failed → the host is told the truth instead of a false 「进度保留」.
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
+
+  it('still exits (never strands the learner) when the flush throws synchronously', async () => {
+    // A synchronous throw — e.g. a 401 clears the token and savePaperAnswer raises
+    // ApiAuthError before the fetch — must not leave the page stuck: onExit still fires, and
+    // the thrown slot is conservatively counted as unsaved rather than claimed 「进度保留」.
+    mocks.savePaperAnswer.mockImplementation(() => {
+      throw new Error('token cleared');
+    });
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Exit within the debounce window so the flush dispatches the throwing save.
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+  });
+
+  it('reports unsaved when exiting before the session is ready (no false 进度保留)', async () => {
+    mocks.getPaperDetail.mockResolvedValue(noSessionDetail);
+    // startPaperSession never resolves → sessionRef stays null through the exit, so the
+    // flush's runSave takes the no-session path.
+    mocks.startPaperSession.mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    // Exit within the debounce window: the flush dispatches runSave, which fails (no session).
+    // That failure must be counted, not swallowed into a false 「进度保留」.
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalledWith({ unsavedFailures: 1 }));
+    // No draft PUT was possible without a session.
+    expect(mocks.savePaperAnswer).not.toHaveBeenCalled();
+  });
+
+  it('exits only once even on a double-click during the flush window', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The save hangs so the first exit is parked in its settle window when the second click
+    // arrives.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onExit } = renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+
+    const exitBtn = screen.getByRole('button', { name: '退出 · 进度保留' });
+    // Two synchronous clicks in one batch: the first begins the flush (and disables the
+    // button); the second must be rejected by the reentrancy guard, not start a second exit.
+    await act(async () => {
+      fireEvent.click(exitBtn);
+      fireEvent.click(exitBtn);
+    });
+    expect(onExit).not.toHaveBeenCalled();
+
+    resolveSave({ ok: true });
+    await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+  });
+
+  it('freezes the composer during the exit flush window (no dropped post-exit input)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    // The save hangs so we stay in the exit settle window while we assert.
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    });
+
+    // Once exiting, the textarea is disabled so a keystroke typed during the up-to-3s settle
+    // window can't schedule a debounce that the unmount would then silently drop.
+    expect((screen.getByLabelText('作答') as HTMLTextAreaElement).disabled).toBe(true);
+
+    resolveSave({ ok: true });
+  });
+
+  it('swallows a throwing host onExit instead of raising an unhandled rejection', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onExit = vi.fn(() => {
+      throw new Error('host boom');
+    });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PfPaper artifactId="paper_1" onExit={onExit} onSubmitted={vi.fn()} addToast={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await user.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+
+    await waitFor(() => expect(onExit).toHaveBeenCalled());
+    // The throw was caught and logged, not left to reject the async exitPaper.
+    expect(errSpy).toHaveBeenCalledWith('[PfPaper] onExit threw', expect.any(Error));
+    // The host didn't navigate away → the page unlocks so the learner can retry exiting.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '退出 · 进度保留' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('pagehide flushes the latest typed text (answersRef, not a stale closure)', async () => {
+    mocks.savePaperAnswer.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    const ta = screen.getByLabelText('作答');
+    await user.type(ta, '第一版');
+    await user.clear(ta);
+    await user.type(ta, '最终版');
+    // Hard tab-close before the debounce fires — the keepalive flush must carry the latest
+    // text, read synchronously from answersRef.
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.savePaperAnswer).toHaveBeenCalled());
+    const last = mocks.savePaperAnswer.mock.calls.at(-1);
+    expect(last?.[1].answer_md).toBe('最终版');
+    expect(last?.[2]).toMatchObject({ keepalive: true });
+  });
+
+  it('disables 交卷 during the exit flush window (no double transition)', async () => {
+    let resolveSave: (v: unknown) => void = () => {};
+    mocks.savePaperAnswer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '退出 · 进度保留' }));
+    });
+
+    // While exiting, submitting is disabled so a submit can't race a second terminal
+    // transition against the pending exit.
+    expect(
+      (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    resolveSave({ ok: true });
+  });
+
+  it('still pauses the session on pagehide even if the flush is problematic', async () => {
+    // A synchronously-throwing save is swallowed per-slot, and the pagehide try/catch is the
+    // backstop — either way the session pause must still fire.
+    mocks.savePaperAnswer.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const user = userEvent.setup();
+    renderPaper();
+
+    await screen.findByText('自动保存测试卷');
+    await user.type(screen.getByLabelText('作答'), '答');
+    window.dispatchEvent(new Event('pagehide'));
+
+    await waitFor(() => expect(mocks.pausePaperSession).toHaveBeenCalled());
   });
 });

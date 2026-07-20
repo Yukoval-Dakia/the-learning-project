@@ -27,7 +27,6 @@ export interface SubjectRowLike {
   id: string;
   displayName: string;
   aliases?: readonly string[];
-  renderConfig?: { notation?: string | null };
   configurationStatus?: SubjectConfigurationStatus;
 }
 
@@ -82,18 +81,6 @@ export function subjectDisplayName(subject: string, rows?: readonly SubjectRowLi
       : displayLabel(matchedRow)
     : undefined;
   return fromRows ?? subjectProfiles[id]?.displayName ?? subject;
-}
-
-/** Resolve the real profile notation for learner content, including runtime custom subjects. */
-export function subjectNotation(
-  subject: string | null,
-  rows?: readonly SubjectRowLike[],
-): string | null {
-  const id = subjectIdentityKey(subject, rows);
-  if (!id) return null;
-  const matchedRow = rows?.find((row) => row.id === id);
-  if (matchedRow?.renderConfig) return matchedRow.renderConfig.notation ?? null;
-  return subjectProfiles[id]?.renderConfig.notation ?? null;
 }
 
 // YUK-598（review-757 P3-2）：双定义收敛——单源 = profile-schema 的
