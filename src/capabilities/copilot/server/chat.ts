@@ -260,7 +260,7 @@ export function extractPrimaryView(
   return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
 }
 
-// YUK-307 — bounded streaming tail-filter. react-markdown v9 (MathMarkdown, no
+// YUK-307 — bounded streaming tail-filter. react-markdown (MathMarkdown, no
 // rehype-raw) renders raw HTML as VISIBLE escaped text — the marker is NOT
 // invisible in the live bubble — so deltas must be filtered server-side: from
 // the first occurrence of the marker-start token onward, nothing is emitted
