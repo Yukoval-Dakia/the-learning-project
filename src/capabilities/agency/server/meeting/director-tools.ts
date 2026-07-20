@@ -194,7 +194,7 @@ const ProposeConjectureShape = {
   probe_reference_md: z.string().min(1),
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
-  // PRIMARY event ids only (attempt / probe / prediction_score) — agent_note ids are
+  // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
   // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
   // blast-radius cap on the tool-return payload). round-4 review MAJOR 0.80 —
@@ -347,14 +347,14 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
 
           // First-hand evidence only (§7 backstop): strip agent_note ids before the
           // database existence gate below. KC-association validation is deliberately not
-          // attempted here: attempt, probe_result, and prediction_score events encode
+          // attempted here: attempt, review, probe_result, and prediction_score events encode
           // their KC linkage through different payload/subject paths, so a uniform check
           // would not be safe or bounded in this handler.
           const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
           if (primaryRefs.length === 0) {
             return textResult({
               ok: false,
-              reason: '需至少一条一手证据（attempt/probe/prediction_score 事件 id）',
+              reason: '需至少一条一手证据（attempt/review/probe/prediction_score 事件 id）',
             });
           }
 

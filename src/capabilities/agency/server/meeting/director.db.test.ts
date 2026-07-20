@@ -45,6 +45,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { runResearchMeetingAgentNightly } from '../../jobs/research_meeting_agent_nightly';
 import {
+  EVIDENCE_SCOUT_CHARTER,
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
   SCOUT_SPAWNED_ACTION,
@@ -184,6 +185,15 @@ beforeEach(async () => {
       })),
     );
   mockSdk.handlers.clear();
+});
+
+describe('evidence scout charter', () => {
+  it('permits review events as primary evidence', () => {
+    expect(EVIDENCE_SCOUT_CHARTER).toContain('attempt/review/probe/prediction_score');
+    expect(EVIDENCE_SCOUT_CHARTER).not.toContain(
+      'evidence_refs 只能是 attempt/probe/prediction_score',
+    );
+  });
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
