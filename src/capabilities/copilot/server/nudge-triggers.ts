@@ -215,7 +215,6 @@ async function evaluateWrongStreak(
 
     const tailEventIds: string[] = [];
     for (const row of rows) {
-      if (row.outcome !== 'failure') break;
       if (
         isUnsupportedAttemptPayload(row.payload) ||
         unsupportedAttemptIds.has(row.id) ||
@@ -223,14 +222,15 @@ async function evaluateWrongStreak(
       ) {
         continue;
       }
+      if (row.outcome !== 'failure') break;
       tailEventIds.push(row.id);
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
   }
 
   candidates.sort((a, b) => b.streak - a.streak || a.kcId.localeCompare(b.kcId));
-  const winner = candidates[0];
-  if (!winner || winner.streak < config.streakN) {
+  const thresholdCandidates = candidates.filter((candidate) => candidate.streak >= config.streakN);
+  if (thresholdCandidates.length === 0) {
     return { fire: false, reason: 'streak_below_threshold' };
   }
 
@@ -242,20 +242,20 @@ async function evaluateWrongStreak(
   if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
 
   const shadow = !config.enabled;
+  const candidateIds = thresholdCandidates.map((candidate) => candidate.kcId);
   const cooldownRows = await db
-    .select({ one: sql<number>`1` })
+    .select({ subjectId: event.subject_id })
     .from(event)
     .where(
       and(
         eq(event.action, NUDGE_ACTION),
         eq(event.subject_kind, 'knowledge'),
-        eq(event.subject_id, winner.kcId),
+        inArray(event.subject_id, candidateIds),
         sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
         sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
       ),
-    )
-    .limit(1);
-  if (cooldownRows.length > 0) return { fire: false, reason: 'kc_cooldown' };
+    );
+  const blockedKcIds = new Set(cooldownRows.map((row) => row.subjectId));
 
   if (!shadow) {
     const capRows = await db
@@ -273,20 +273,24 @@ async function evaluateWrongStreak(
     const dismissed = alias(event, 'streak_dismissed');
     const nudge = alias(event, 'streak_nudge');
     const fusedRows = await db
-      .select({ one: sql<number>`1` })
+      .select({ subjectId: nudge.subject_id })
       .from(dismissed)
       .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
       .where(
         and(
           eq(dismissed.action, NUDGE_DISMISSED_ACTION),
           eq(nudge.subject_kind, 'knowledge'),
-          eq(nudge.subject_id, winner.kcId),
+          inArray(nudge.subject_id, candidateIds),
           sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
           sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
         ),
-      )
-      .limit(1);
-    if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
+      );
+    for (const row of fusedRows) blockedKcIds.add(row.subjectId);
+  }
+
+  const winner = thresholdCandidates.find((candidate) => !blockedKcIds.has(candidate.kcId));
+  if (!winner) {
+    return { fire: false, reason: cooldownRows.length > 0 ? 'kc_cooldown' : 'dismiss_fused' };
   }
 
   const inActiveSession = await isInActivePracticeSession(db);

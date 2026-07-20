@@ -139,9 +139,27 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
   );
 
   it.each([
-    { label: 'top-level unsupported marker', options: { unsupported: true } },
-    { label: 'nested review judge outcome', options: { nestedUnsupported: true } },
-  ])('skips a historical failure with $label', async ({ options }) => {
+    {
+      label: 'top-level unsupported marker',
+      outcome: 'failure' as const,
+      options: { unsupported: true },
+    },
+    {
+      label: 'nested review judge outcome stored as failure',
+      outcome: 'failure' as const,
+      options: { nestedUnsupported: true },
+    },
+    {
+      label: 'nested tutor judge outcome stored as partial',
+      outcome: 'partial' as const,
+      options: { nestedUnsupported: true },
+    },
+    {
+      label: 'nested judge outcome stored as success',
+      outcome: 'success' as const,
+      options: { nestedUnsupported: true },
+    },
+  ])('skips a historical event with $label', async ({ outcome, options }) => {
     await seedAttempt({
       id: 'older_failure',
       outcome: 'failure',
@@ -150,7 +168,7 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
     });
     await seedAttempt({
       id: 'unsupported',
-      outcome: 'failure',
+      outcome,
       knowledgeIds: ['kc_a'],
       at: new Date(NOW.getTime() - 3_000),
       action: 'review',
@@ -426,6 +444,48 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
     if (!decision.fire) throw new Error('expected fire');
     expect(decision.event.subject_id).toBe('kc_a');
     expect(decision.event.caused_by_event_id).toBe('trigger');
+  });
+
+  it('selects an eligible lower-streak KC when the top candidate is cooling down', async () => {
+    await seedAttempt({
+      id: 'a_extra',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 4_000),
+    });
+    for (let i = 0; i < 3; i++) {
+      await seedAttempt({
+        id: `shared_${i}`,
+        outcome: 'failure',
+        knowledgeIds: ['kc_a', 'kc_b'],
+        at: new Date(NOW.getTime() - (3 - i) * 1_000),
+      });
+    }
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'prior_a_nudge',
+        actor_kind: 'agent',
+        actor_ref: 'copilot_nudge_trigger',
+        action: NUDGE_ACTION,
+        subject_kind: 'knowledge',
+        subject_id: 'kc_a',
+        payload: {
+          kind: 'kc_wrong_streak',
+          headline: 'seed',
+          expires_at: NOW.toISOString(),
+          shadow: false,
+          in_active_session: false,
+          evidence: { kc_id: 'kc_a', streak_n: 3 },
+        },
+        caused_by_event_id: 'old_a_attempt',
+        created_at: new Date(NOW.getTime() - 3_600_000),
+      });
+
+    const decision = await evaluate('shared_2');
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.subject_id).toBe('kc_b');
   });
 
   it('applies the 24h cooldown and dismiss fuse per KC', async () => {
