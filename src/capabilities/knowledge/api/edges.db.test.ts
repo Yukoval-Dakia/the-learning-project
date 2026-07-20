@@ -9,6 +9,10 @@ import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projecti
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { enqueueHubAutoSync } = vi.hoisted(() => ({ enqueueHubAutoSync: vi.fn() }));
+
+vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET, POST, getEdge } from './edges';
 
@@ -55,6 +59,7 @@ async function postEdge(body: unknown): Promise<Response> {
 describe('GET /api/knowledge/edges', () => {
   beforeEach(async () => {
     await resetDb();
+    enqueueHubAutoSync.mockReset();
   });
 
   it('returns empty rows when no edges exist', async () => {
@@ -204,6 +209,7 @@ describe('POST /api/knowledge/edges', () => {
     const detailJson = await detail.json();
     KnowledgeEdgeSchema.parse(detailJson);
     expect(detailJson).toMatchObject({ id: body.id, relation_type: 'prerequisite' });
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('accepts experimental:* relation_type', async () => {
@@ -325,6 +331,7 @@ describe('POST /api/knowledge/edges — YUK-737 topology gate', () => {
     // whose ADR-0034 topology reject THROWS and rolls the write back; runEdgeTopologyGate's
     // translateReject then surfaces it as a clean 409 (mirrors the accept-path lock suite).
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    enqueueHubAutoSync.mockReset();
   });
 
   afterEach(() => {
@@ -357,6 +364,7 @@ describe('POST /api/knowledge/edges — YUK-737 topology gate', () => {
     expect(live).toHaveLength(1);
     expect(live[0].from_knowledge_id).toBe('tc_a');
     expect(live[0].to_knowledge_id).toBe('tc_b');
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   it('creates a legal (non-cyclic) prerequisite chain under the gate (201, 201)', async () => {

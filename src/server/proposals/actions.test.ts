@@ -19,6 +19,10 @@ import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { enqueueHubAutoSync } = vi.hoisted(() => ({ enqueueHubAutoSync: vi.fn() }));
+
+vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   acceptAiProposal,
@@ -63,6 +67,7 @@ async function seedKnowledge(ids: string[]): Promise<void> {
 describe('proposal lifecycle owner service', () => {
   beforeEach(async () => {
     await resetDb();
+    enqueueHubAutoSync.mockReset();
   });
 
   it('acceptAiProposal materializes a knowledge_node proposal through the knowledge owner service', async () => {
@@ -146,6 +151,7 @@ describe('proposal lifecycle owner service', () => {
       relation_type: 'prerequisite',
       weight: 0.7,
     });
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
   });
 
   // ADR-0032 D4-E1 (YUK-203) — edge ARCHIVE accept: a knowledge_edge proposal with
@@ -196,6 +202,7 @@ describe('proposal lifecycle owner service', () => {
       .where(eq(knowledge_edge.id, 'edge_live_archive'));
     expect(archivedRows).toHaveLength(1);
     expect(archivedRows[0].archived_at).not.toBeNull();
+    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
 
     // Re-accept is idempotent — no new rate/edge mutation, archived_at unchanged.
     const archivedAtFirst = archivedRows[0].archived_at;

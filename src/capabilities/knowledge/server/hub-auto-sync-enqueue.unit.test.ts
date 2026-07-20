@@ -7,7 +7,7 @@ const { bossSend, getStartedBoss } = vi.hoisted(() => ({
 
 vi.mock('@/server/boss/client', () => ({ getStartedBoss }));
 
-import { enqueueHubAutoSync } from './hub-auto-sync-enqueue';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 
 describe('enqueueHubAutoSync', () => {
   beforeEach(() => {

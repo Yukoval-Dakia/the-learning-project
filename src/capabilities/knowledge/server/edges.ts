@@ -16,7 +16,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { enqueueHubAutoSync } from '@/capabilities/notes/jobs/hub-auto-sync-enqueue';
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
@@ -418,7 +417,6 @@ export async function createKnowledgeEdge(
     throw err;
   }
 
-  await enqueueHubAutoSync();
   return id;
 }
 
@@ -463,10 +461,7 @@ export async function archiveKnowledgeEdge(
     .where(and(eq(knowledge_edge.id, id), isNull(knowledge_edge.archived_at)))
     .returning({ id: knowledge_edge.id });
 
-  if (updated.length > 0) {
-    await enqueueHubAutoSync();
-    return { id, archived: true };
-  }
+  if (updated.length > 0) return { id, archived: true };
 
   // The guarded UPDATE cannot distinguish an idempotent already-archived row from a missing id.
   // Resolve that only after the atomic transition attempt; under READ COMMITTED a contender that

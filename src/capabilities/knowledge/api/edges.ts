@@ -32,6 +32,7 @@ import {
 } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
@@ -144,6 +145,7 @@ export async function POST(req: Request): Promise<Response> {
         uniqueViolationMessage: `edge already exists: ${fromId} --${parsed.data.relation_type}--> ${toId}`,
       },
     );
+    await enqueueHubAutoSync();
     return resourceResponse(
       { id },
       {
