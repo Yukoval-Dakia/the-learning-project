@@ -279,6 +279,10 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('self_copy_safety');
       expect(prompt).toContain('agent_self');
       expect(prompt).toContain('generation_method');
+      // YUK-556 — exact/semantic generated questions must carry judge-ready answers.
+      expect(prompt).toContain('reference_solution');
+      expect(prompt).toContain('final_answer');
+      expect(prompt).toContain('answer_equivalents');
       // Tools referenced by capability (handler resolves names at run time).
       expect(prompt).toContain('tavily_search');
       expect(prompt).toContain('tavily_extract');

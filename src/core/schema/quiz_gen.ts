@@ -12,7 +12,7 @@
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
-import { AgentRef, QuestionKind, Rubric } from './business';
+import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 
 // ---------- §2 persisted metadata.quiz_gen ----------
@@ -195,31 +195,50 @@ const QuizGenChoiceBodies = z
   })
   .transform(normalizeQuizGenChoices);
 
+const QuizGenRubric = Rubric.extend({
+  reference_solution: RubricReferenceSolution.extend({
+    answer_equivalents: z.array(z.string().min(1)),
+  }).optional(),
+});
+
 // Per-question shape. Mirrors the EmbeddedCheck question contract (kind +
 // prompt_md + reference_md + optional choices/judge/rubric) plus QuizGen-only
 // fields: difficulty, knowledge_ids the question targets, and the per-question
 // source_refs the agent self-declares (§0).
-export const QuizGenQuestion = z.object({
-  kind: QuestionKind,
-  prompt_md: z.string().min(1),
-  reference_md: z.string().min(1),
-  choices_md: QuizGenChoiceBodies.nullable().optional(),
-  // Only judge routes a GENERATED question can actually be graded by. The judge
-  // layer's RUNNABLE_ROUTES is { exact, keyword, semantic, steps, unit_dimension },
-  // but 'steps' / 'unit_dimension' are first-class / profile-preferred routes
-  // (math derivation, physics units), never generator overrides, and 'rubric' has
-  // no runner at all. Allowing those here would let a verified question enter the
-  // review pool yet return `unsupported` the moment the learner submits an answer.
-  // The QuizGen handler routes derivation/prose to semantic, choice to exact, etc.
-  judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
-  rubric_json: Rubric.nullable().optional(),
-  difficulty: z.number().int().min(1).max(5),
-  difficulty_evidence: ProducerDifficultyEvidence.optional(),
-  knowledge_ids: z.array(z.string().min(1)),
-  // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
-  // or inspired THIS question.
-  source_refs: z.array(QuizGenSourceRef),
-});
+export const QuizGenQuestion = z
+  .object({
+    kind: QuestionKind,
+    prompt_md: z.string().min(1),
+    reference_md: z.string().min(1),
+    choices_md: QuizGenChoiceBodies.nullable().optional(),
+    // Only judge routes a GENERATED question can actually be graded by. The judge
+    // layer's RUNNABLE_ROUTES is { exact, keyword, semantic, steps, unit_dimension },
+    // but 'steps' / 'unit_dimension' are first-class / profile-preferred routes
+    // (math derivation, physics units), never generator overrides, and 'rubric' has
+    // no runner at all. Allowing those here would let a verified question enter the
+    // review pool yet return `unsupported` the moment the learner submits an answer.
+    // The QuizGen handler routes derivation/prose to semantic, choice to exact, etc.
+    judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
+    rubric_json: QuizGenRubric.nullable().optional(),
+    difficulty: z.number().int().min(1).max(5),
+    difficulty_evidence: ProducerDifficultyEvidence.optional(),
+    knowledge_ids: z.array(z.string().min(1)),
+    // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
+    // or inspired THIS question.
+    source_refs: z.array(QuizGenSourceRef),
+  })
+  .superRefine((question, ctx) => {
+    if (
+      (question.judge_kind_override === 'exact' || question.judge_kind_override === 'semantic') &&
+      !question.rubric_json?.reference_solution
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['rubric_json', 'reference_solution'],
+        message: 'exact and semantic quiz_gen questions require rubric_json.reference_solution',
+      });
+    }
+  });
 export type QuizGenQuestionT = z.infer<typeof QuizGenQuestion>;
 
 export const QuizGenOutput = z

@@ -64,7 +64,14 @@ const validQuestion = {
   reference_md: '公元前 202 年',
   choices_md: ['公元前 202 年', '公元前 221 年', '公元 9 年'],
   judge_kind_override: 'exact' as const,
-  rubric_json: { criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }] },
+  rubric_json: {
+    criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }],
+    reference_solution: {
+      expected_signals: ['选择正确答案'],
+      final_answer: '公元前 202 年',
+      answer_equivalents: ['前 202 年'],
+    },
+  },
   difficulty: 2,
   knowledge_ids: ['k_han'],
   source_refs: [validSourceRef],
@@ -207,6 +214,60 @@ describe('QuizGenOutput', () => {
     expect(parsed.questions[0].knowledge_ids).toEqual(['k_han']);
   });
 
+  it.each(['exact', 'semantic'] as const)(
+    'rejects a %s question without rubric_json.reference_solution',
+    (judge_kind_override) => {
+      const result = QuizGenOutput.safeParse({
+        questions: [
+          {
+            ...validQuestion,
+            judge_kind_override,
+            rubric_json: {
+              criteria: [{ name: 'correctness', weight: 1, descriptor: '答案正确' }],
+            },
+          },
+        ],
+        source_pack: validSourcePack,
+        generation_method: 'search_grounded',
+        self_copy_safety: validCopySafety,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes('reference_solution'))).toBe(
+          true,
+        );
+      }
+    },
+  );
+
+  it('rejects an exact question whose reference solution omits answer_equivalents', () => {
+    const result = QuizGenOutput.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }],
+            reference_solution: {
+              expected_signals: ['选择正确答案'],
+              final_answer: '公元前 202 年',
+            },
+          },
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes('answer_equivalents'))).toBe(
+        true,
+      );
+    }
+  });
+
   it('parses a prose question that omits choices/rubric', () => {
     const parsed = QuizGenOutput.parse({
       questions: [
@@ -312,6 +373,11 @@ describe('QuizGenOutput', () => {
           rubric_json: {
             criteria: [{ name: 'correctness', weight: 1, descriptor: '答对建立年份' }],
             required_points: ['公元前 202 年'],
+            reference_solution: {
+              expected_signals: ['答出汉朝建立年份'],
+              final_answer: '公元前 202 年',
+              answer_equivalents: ['前 202 年'],
+            },
           },
         },
       ],
