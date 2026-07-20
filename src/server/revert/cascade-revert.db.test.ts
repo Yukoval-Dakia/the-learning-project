@@ -30,7 +30,12 @@ import type {
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { enqueueHubAutoSync } = vi.hoisted(() => ({
+  enqueueHubAutoSync: vi.fn(async () => undefined),
+}));
+vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { upsertFsrsState } from '../fsrs/state';
 import { upsertMasteryState } from '../mastery/state';
@@ -232,6 +237,7 @@ async function readEdgeArchivedAt(edgeId: string): Promise<Date | null | undefin
 
 describe('orchestrateCascadeRevert', () => {
   beforeEach(async () => {
+    enqueueHubAutoSync.mockClear();
     await resetDb();
   });
 
@@ -314,6 +320,7 @@ describe('orchestrateCascadeRevert', () => {
     expect(await countCorrectionsFor(snapEvent)).toBe(1);
     expect(await countCorrectionsFor(generateEventId)).toBe(1);
     expect(await countCorrectionsFor(checkpoint)).toBe(1);
+    expect(enqueueHubAutoSync).toHaveBeenCalledTimes(1);
   });
 
   // ── YUK-495 S4: full-precision warm θ̂ round-trips EXACTLY (no false conflict) ──

@@ -25,6 +25,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { writeEvent } from '@/server/events/queries';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
@@ -189,6 +190,7 @@ export async function handleRejudge(
 
   let newJudgeId = '';
   let correctionId = '';
+  let meshMutated = false;
 
   const committed = await db.transaction(async (tx) => {
     await lockAppealResolution(tx, appeal.id);
@@ -265,6 +267,7 @@ export async function handleRejudge(
       now,
     } as const;
     if (revert.ok) {
+      meshMutated = revert.reverted.structuralRowsArchived > 0;
       // happy-path 也写 marker（Q2d）：revert-only 未 re-apply 正确 outcome →
       // 第二实例 worklist 必须含它，否则 happy-path 残留从视野消失。
       await writeReprojectDeferred(tx, {
@@ -301,6 +304,7 @@ export async function handleRejudge(
   });
 
   if (!committed) return { status: 'skipped', reason: 'already_resolved' };
+  if (meshMutated) await enqueueHubAutoSync();
 
   return {
     status: 'overturned',

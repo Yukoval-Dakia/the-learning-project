@@ -8,7 +8,12 @@ import { event, knowledge, mastery_state, question } from '@/db/schema';
 import type { JudgeAnswerResult } from '@/server/ai/judges/question-contract';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { enqueueHubAutoSync } = vi.hoisted(() => ({
+  enqueueHubAutoSync: vi.fn(async () => undefined),
+}));
+vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeAttemptSnapshotBrackets } from '../../practice/server/attempt-snapshot';
 import { POST as appealPost } from '../api/appeal';
@@ -296,6 +301,7 @@ async function seedAppealedJudge(): Promise<{
 
 describe('rejudge job (D15 申诉自动重判)', () => {
   beforeEach(async () => {
+    enqueueHubAutoSync.mockClear();
     await resetDb();
   });
 
@@ -639,6 +645,39 @@ describe('rejudge job (D15 申诉自动重判)', () => {
       expect(markers[0].new_outcome).toBe('incorrect');
     });
   }
+
+  it('enqueues hub sync after an outer transaction commits a structural cascade revert', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 1.2,
+    });
+    const structuralRevert = (async () => ({
+      ok: true as const,
+      checkpointEventId: 'checkpoint',
+      reverted: {
+        snapshotsRestored: 0,
+        structuralRowsArchived: 1,
+        eventLayerCompensated: 0,
+        totalNodes: 1,
+      },
+      compensationEventIds: [],
+    })) as RejudgeDeps['orchestrateRevert'];
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok'), orchestrateRevert: structuralRevert },
+    );
+
+    expect(outcome.status).toBe('overturned');
+    expect(enqueueHubAutoSync).toHaveBeenCalledTimes(1);
+  });
 
   it('atomicity: a transient revert failure rolls back the WHOLE overturn; retry replays cleanly', async () => {
     const db = testDb();

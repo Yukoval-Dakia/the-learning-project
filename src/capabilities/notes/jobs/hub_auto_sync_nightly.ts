@@ -314,21 +314,16 @@ export async function runHubAutoSyncNightly(
       const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
       if (!patch) continue;
 
+      const input = {
+        db,
+        artifactId: hub.id,
+        patch,
+        actorRef: ACTOR_REF,
+        now: deps.now,
+      };
       const applied = deps.skipActiveHubs
-        ? await enqueueOrApplyNoteRefinePatch({
-            db,
-            artifactId: hub.id,
-            patch,
-            actorRef: ACTOR_REF,
-            now: deps.now,
-          })
-        : await persistNoteRefineApply({
-            db,
-            artifactId: hub.id,
-            patch,
-            actorRef: ACTOR_REF,
-            now: deps.now,
-          });
+        ? await enqueueOrApplyNoteRefinePatch(input)
+        : await persistNoteRefineApply(input);
 
       if (applied.status === 'deferred') result.hubs_deferred_active_edit += 1;
       else if (applied.status === 'applied') result.hubs_updated += 1;

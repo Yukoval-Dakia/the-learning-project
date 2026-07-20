@@ -85,6 +85,7 @@ import {
 } from '@/core/schema/event/state-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
+import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, inArray } from 'drizzle-orm';
@@ -495,7 +496,7 @@ export async function orchestrateCascadeRevert(
     throw err;
   }
 
-  return {
+  const result: CascadeRevertResult = {
     ok: true,
     checkpointEventId,
     reverted: {
@@ -506,6 +507,8 @@ export async function orchestrateCascadeRevert(
     },
     compensationEventIds,
   };
+  if ('$client' in db && structuralRowsArchived > 0) await enqueueHubAutoSync();
+  return result;
 }
 
 // ── internals ────────────────────────────────────────────────────────────────
