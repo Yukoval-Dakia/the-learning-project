@@ -257,7 +257,7 @@ describe('propose_conjecture — server-enforced single writer', () => {
       validProposeArgs({ evidence_refs: ['agent_note_abc', 'agent_note_def'] }),
     );
     expect(res.ok).toBe(false);
-    expect(String(res.reason)).toMatch(/一手证据|first-hand|证据/);
+    expect(String(res.reason)).toContain('attempt/review/probe/prediction_score');
     expect(h.proposals).toHaveLength(0);
   });
 

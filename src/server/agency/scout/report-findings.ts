@@ -23,7 +23,7 @@ export const ReportFindingsShape = {
   suggested_probe_angle: z.string().max(800),
   // Human-readable synthesis.
   findings_md: z.string().max(4000),
-  // PRIMARY event ids only (attempt / probe / prediction_score) — NEVER agent_note ids.
+  // PRIMARY event ids only (attempt / review / probe / prediction_score) — NEVER agent_note ids.
   // The structural stop is filterPrimaryEvidenceRefs (below); the .max(12) caps blast radius.
   evidence_refs: z.array(z.string()).max(12),
   // Internal calibration only — NEVER rendered to the user as a number.
@@ -50,8 +50,8 @@ export function createFindingsCapture(): FindingsCapture {
 }
 
 // agent_note ids are minted as `agent_note_<cuid>` (notes.ts writeAgentNote). A
-// primary evidence ref is anything that is NOT an agent_note id — attempt / probe /
-// prediction_score event ids do not carry this prefix.
+// primary evidence ref is anything that is NOT an agent_note id — attempt / review /
+// probe / prediction_score event ids do not carry this prefix.
 const AGENT_NOTE_ID_PREFIX = 'agent_note_';
 
 /** True when `id` is a first-hand (primary) evidence event id, i.e. NOT an agent_note. */

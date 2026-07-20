@@ -45,6 +45,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { runResearchMeetingAgentNightly } from '../../jobs/research_meeting_agent_nightly';
 import {
+  EVIDENCE_SCOUT_CHARTER,
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
   SCOUT_SPAWNED_ACTION,
@@ -186,6 +187,19 @@ beforeEach(async () => {
   mockSdk.handlers.clear();
 });
 
+describe('evidence scout charter', () => {
+  it('advertises review ids on the detail reader', () => {
+    expect(EVIDENCE_SCOUT_CHARTER).toContain('get_attempt_details（按 attempt/review 事件 id');
+  });
+
+  it('permits review events as primary evidence', () => {
+    expect(EVIDENCE_SCOUT_CHARTER).toContain('attempt/review/probe/prediction_score');
+    expect(EVIDENCE_SCOUT_CHARTER).not.toContain(
+      'evidence_refs 只能是 attempt/probe/prediction_score',
+    );
+  });
+});
+
 describe('runResearchMeetingDirector — pipeline', () => {
   it('rejects a proposal when an evidence_ref does not resolve to a real event', async () => {
     let proposeResult: Record<string, unknown> | undefined;
@@ -207,6 +221,153 @@ describe('runResearchMeetingDirector — pipeline', () => {
 
     expect(proposeResult?.ok).toBe(false);
     expect(String(proposeResult?.reason)).toMatch(/不存在|事件/);
+    expect(result.proposals_created).toBe(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+  });
+
+  it('accepts a review event as primary evidence', async () => {
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'review_1',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q_review_1',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'still wrong',
+          answer_image_refs: [],
+          referenced_knowledge_ids: [KC],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: NOW,
+      });
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['review_1'],
+      });
+      return {
+        task_run_id: 'director_run_review_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(true);
+    expect(result.proposals_created).toBe(1);
+    const proposals = await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].payload).toMatchObject({
+      ai_proposal: { evidence_refs: [{ kind: 'event', id: 'review_1' }] },
+    });
+  });
+
+  it('rejects a corrected failed review event as primary evidence', async () => {
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          id: 'review_corrected',
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'review',
+          subject_kind: 'question',
+          subject_id: 'q_review_corrected',
+          outcome: 'failure',
+          payload: {},
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: NOW,
+        },
+        {
+          id: 'correct_review_corrected',
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: 'review_corrected',
+          outcome: 'success',
+          payload: {
+            correction_kind: 'retract',
+            reason_md: 'review was recorded incorrectly',
+            affected_refs: [{ kind: 'question', id: 'q_review_corrected' }],
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: new Date(NOW.getTime() + 1_000),
+        },
+      ]);
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['review_corrected'],
+      });
+      return {
+        task_run_id: 'director_run_corrected_review_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(result.proposals_created).toBe(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+  });
+
+  it('rejects a successful review event as primary evidence', async () => {
+    await testDb().insert(event).values({
+      id: 'review_success',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_review_success',
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: NOW,
+    });
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['review_success'],
+      });
+      return {
+        task_run_id: 'director_run_successful_review_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
     expect(result.proposals_created).toBe(0);
     expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
   });

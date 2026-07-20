@@ -347,6 +347,17 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
     expect(p).toContain('至多');
   });
 
+  it('charter advertises review ids on the detail reader', () => {
+    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    expect(p).toContain('get_attempt_details（按 attempt/review 事件 id');
+  });
+
+  it('charter permits review events as primary evidence', () => {
+    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    expect(p).toContain('attempt/review/probe/prediction_score');
+    expect(p).not.toContain('evidence_refs 只能是 attempt/probe/prediction_score');
+  });
+
   it('charter names the spawn + write tools the orchestrator injects', () => {
     const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
     expect(p).toContain('Task');

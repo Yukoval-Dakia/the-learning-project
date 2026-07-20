@@ -36,10 +36,11 @@ import {
   SPAWN_TOOL_NAME,
 } from '@/server/agency/scout/tool-names';
 import { conjectureKey } from '@/server/conjectures/evidence';
+import { getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 // ── Server-side caps + constants (§5 / 附录 A #3) ──────────────────────────────
@@ -141,6 +142,7 @@ type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
 
 const PRIMARY_EVIDENCE_ACTIONS = [
   'attempt',
+  'review',
   'experimental:probe_result',
   'experimental:prediction_score',
 ] as const;
@@ -148,10 +150,22 @@ const PRIMARY_EVIDENCE_ACTIONS = [
 async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
   if (refs.length === 0) return false;
   const rows = await db
-    .select({ id: event.id })
+    .select({ id: event.id, action: event.action })
     .from(event)
-    .where(and(inArray(event.id, refs), inArray(event.action, PRIMARY_EVIDENCE_ACTIONS)));
-  return rows.length === refs.length;
+    .where(
+      and(
+        inArray(event.id, refs),
+        inArray(event.action, PRIMARY_EVIDENCE_ACTIONS),
+        or(
+          ne(event.action, 'review'),
+          and(eq(event.subject_kind, 'question'), eq(event.outcome, 'failure')),
+        ),
+      ),
+    );
+  if (rows.length !== refs.length) return false;
+  const reviewIds = rows.filter((row) => row.action === 'review').map((row) => row.id);
+  const activeReviews = await Promise.all(reviewIds.map((id) => getFailureAttemptById(db, id)));
+  return activeReviews.every((review) => review !== null);
 }
 
 export interface BuildDirectorServerOpts {
@@ -193,7 +207,7 @@ const ProposeConjectureShape = {
   probe_reference_md: z.string().min(1),
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
-  // PRIMARY event ids only (attempt / probe / prediction_score) — agent_note ids are
+  // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
   // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
   // blast-radius cap on the tool-return payload). round-4 review MAJOR 0.80 —
@@ -314,7 +328,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
+        'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
@@ -346,14 +360,14 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
 
           // First-hand evidence only (§7 backstop): strip agent_note ids before the
           // database existence gate below. KC-association validation is deliberately not
-          // attempted here: attempt, probe_result, and prediction_score events encode
+          // attempted here: attempt, review, probe_result, and prediction_score events encode
           // their KC linkage through different payload/subject paths, so a uniform check
           // would not be safe or bounded in this handler.
           const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
           if (primaryRefs.length === 0) {
             return textResult({
               ok: false,
-              reason: '需至少一条一手证据（attempt/probe/prediction_score 事件 id）',
+              reason: '需至少一条一手证据（attempt/review/probe/prediction_score 事件 id）',
             });
           }
 
