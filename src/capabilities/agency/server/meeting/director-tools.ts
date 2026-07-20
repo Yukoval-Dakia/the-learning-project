@@ -39,7 +39,7 @@ import { conjectureKey } from '@/server/conjectures/evidence';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 // ── Server-side caps + constants (§5 / 附录 A #3) ──────────────────────────────
@@ -151,7 +151,16 @@ async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
   const rows = await db
     .select({ id: event.id })
     .from(event)
-    .where(and(inArray(event.id, refs), inArray(event.action, PRIMARY_EVIDENCE_ACTIONS)));
+    .where(
+      and(
+        inArray(event.id, refs),
+        inArray(event.action, PRIMARY_EVIDENCE_ACTIONS),
+        or(
+          ne(event.action, 'review'),
+          and(eq(event.subject_kind, 'question'), eq(event.outcome, 'failure')),
+        ),
+      ),
+    );
   return rows.length === refs.length;
 }
 

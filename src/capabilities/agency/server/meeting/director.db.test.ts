@@ -273,6 +273,44 @@ describe('runResearchMeetingDirector — pipeline', () => {
     });
   });
 
+  it('rejects a successful review event as primary evidence', async () => {
+    await testDb().insert(event).values({
+      id: 'review_success',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_review_success',
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: NOW,
+    });
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['review_success'],
+      });
+      return {
+        task_run_id: 'director_run_successful_review_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(result.proposals_created).toBe(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+  });
+
   it('rejects an existing event whose action is not primary evidence', async () => {
     await writeEvent(testDb(), {
       id: 'existing_non_primary_event',

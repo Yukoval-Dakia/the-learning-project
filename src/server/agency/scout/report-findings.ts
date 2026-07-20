@@ -50,8 +50,8 @@ export function createFindingsCapture(): FindingsCapture {
 }
 
 // agent_note ids are minted as `agent_note_<cuid>` (notes.ts writeAgentNote). A
-// primary evidence ref is anything that is NOT an agent_note id — attempt / probe /
-// prediction_score event ids do not carry this prefix.
+// primary evidence ref is anything that is NOT an agent_note id — attempt / review /
+// probe / prediction_score event ids do not carry this prefix.
 const AGENT_NOTE_ID_PREFIX = 'agent_note_';
 
 /** True when `id` is a first-hand (primary) evidence event id, i.e. NOT an agent_note. */
