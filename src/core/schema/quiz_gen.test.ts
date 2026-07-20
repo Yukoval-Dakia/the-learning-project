@@ -241,6 +241,34 @@ describe('QuizGenOutput', () => {
     },
   );
 
+  it.each([
+    { kind: 'choice' as const, prompt_md: '汉朝建立于哪一年？' },
+    { kind: 'short_answer' as const, prompt_md: '简述楚汉之争的结果。' },
+  ])('rejects an implicit exact/semantic $kind question without reference_solution', (question) => {
+    const result = QuizGenOutput.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          ...question,
+          judge_kind_override: undefined,
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '答案正确' }],
+          },
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes('reference_solution'))).toBe(
+        true,
+      );
+    }
+  });
+
   it('rejects an exact question whose reference solution omits answer_equivalents', () => {
     const result = QuizGenOutput.safeParse({
       questions: [
@@ -268,13 +296,21 @@ describe('QuizGenOutput', () => {
     }
   });
 
-  it('parses a prose question that omits choices/rubric', () => {
+  it('parses an implicit semantic question with a reference solution', () => {
     const parsed = QuizGenOutput.parse({
       questions: [
         {
           kind: 'short_answer',
           prompt_md: '简述楚汉之争的结果。',
           reference_md: '刘邦击败项羽，建立汉朝。',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '说明战争结果' }],
+            reference_solution: {
+              expected_signals: ['刘邦击败项羽', '刘邦建立汉朝'],
+              final_answer: '刘邦击败项羽，建立汉朝。',
+              answer_equivalents: [],
+            },
+          },
           difficulty: 3,
           knowledge_ids: ['k_chuhan'],
           source_refs: [validSourceRef],

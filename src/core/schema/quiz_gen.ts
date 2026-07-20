@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
+import { defaultJudgeKindForQuestion } from './judge-routing';
 
 // ---------- §2 persisted metadata.quiz_gen ----------
 
@@ -228,8 +229,9 @@ export const QuizGenQuestion = z
     source_refs: z.array(QuizGenSourceRef),
   })
   .superRefine((question, ctx) => {
+    const judgeKind = defaultJudgeKindForQuestion(question);
     if (
-      (question.judge_kind_override === 'exact' || question.judge_kind_override === 'semantic') &&
+      (judgeKind === 'exact' || judgeKind === 'semantic') &&
       !question.rubric_json?.reference_solution
     ) {
       ctx.addIssue({

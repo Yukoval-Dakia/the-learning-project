@@ -356,6 +356,7 @@ describe('runQuizGen', () => {
     expect(q1?.judge_kind_override).toBe('semantic');
     expect(q1?.rubric_json).toMatchObject({
       required_points: ['用在主谓之间', '取消句子独立性'],
+      reference_solution: SEMANTIC_REFERENCE_SOLUTION,
     });
     expect(q1?.created_by).toMatchObject({
       by: 'ai',
