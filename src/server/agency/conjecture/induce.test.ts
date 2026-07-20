@@ -30,14 +30,21 @@ function cell(overrides: Partial<EvidenceCell> = {}): EvidenceCell {
 
 function sample(
   claim: string,
-  extra: { predicted_p?: number; discriminating?: boolean } = {},
+  extra: {
+    predicted_p?: number;
+    discriminating?: boolean;
+    probe_md?: string;
+    probe_reference_md?: string;
+  } = {},
 ): TaskTextResult {
   return {
     text: `reasoning...\n${JSON.stringify({
       claim_md: claim,
-      probe_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
+      probe_md: extra.probe_md ?? "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
       // conjecture-wire #13 — judge gold reference (single-writer, produced with probe).
-      probe_reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式法则：外导 × 内导）。",
+      probe_reference_md:
+        extra.probe_reference_md ??
+        "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式法则：外导 × 内导）。",
       cause_category: 'concept_confusion',
       recurrence_count: 3,
       predicted_p: extra.predicted_p ?? 0.3,
@@ -63,7 +70,7 @@ describe('induceConjecture self-consistency', () => {
 
     expect(result.draft.claim_md).toBe(claim); // 2 of 3 agreed → dominant
     expect(result.draft.agreement_count).toBe(2);
-    expect(result.draft.predicted_p).toBe(0.25); // dominant representative (first in cluster)
+    expect(result.draft.predicted_p).toBe(0.3); // median of the dominant cluster
     expect(result.draft.discriminating).toBe(true);
     // conjecture-wire #13 — judge gold reference flows through safeParse → draft.
     expect(result.draft.probe_reference_md).toContain('cos(x^2)');
@@ -136,6 +143,31 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.claim_md).toBe('你从单一例题过度泛化');
     expect(result.draft.discriminating).toBe(false);
     expect(result.draft.agreement_count).toBe(1);
+  });
+
+  it('finds the valid JSON object after unrelated mathematical braces', async () => {
+    const valid = sample('你混淆了集合与元素').text;
+    const runTaskFn = vi.fn(async () => ({
+      text: `推理先写集合 {x | x > 0}，这不是 JSON。\n${valid}`,
+    }));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+    expect(result.draft.claim_md).toBe('你混淆了集合与元素');
+  });
+
+  it('runs self-consistency samples concurrently', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const runTaskFn = vi.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return sample('同一个稳定结论');
+    });
+
+    await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+    expect(maxInFlight).toBe(3);
   });
 
   it('throws when no sample produces a valid ConjectureDraft (anti-fabrication)', async () => {
@@ -247,6 +279,89 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.agreement_count).toBe(2);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
+  });
+
+  it('uses lexical cluster tie-breaks and aggregates winning fields deterministically', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(
+        sample('zeta claim', {
+          predicted_p: 0.8,
+          discriminating: true,
+          probe_md: 'z probe',
+          probe_reference_md: 'z reference',
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('alpha claim', {
+          predicted_p: 0.2,
+          discriminating: false,
+          probe_md: 'a probe',
+          probe_reference_md: 'a reference',
+        }),
+      )
+      .mockResolvedValueOnce(groupResult([[0, 1]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
+
+    expect(result.draft.claim_md).toBe('alpha claim');
+    expect(result.draft.probe_md).toBe('a probe');
+    expect(result.draft.probe_reference_md).toBe('a reference');
+    expect(result.draft.predicted_p).toBe(0.5);
+    expect(result.draft.discriminating).toBe(false);
+  });
+
+  it('keeps each probe paired with the gold reference generated in the same sample', async () => {
+    const pairs = [
+      ['a probe', 'x reference'],
+      ['a probe', 'y reference'],
+      ['b probe', 'z reference'],
+      ['c probe', 'z reference'],
+    ] as const;
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(
+        sample('same semantic claim one', {
+          probe_md: pairs[0][0],
+          probe_reference_md: pairs[0][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim two', {
+          probe_md: pairs[1][0],
+          probe_reference_md: pairs[1][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim three', {
+          probe_md: pairs[2][0],
+          probe_reference_md: pairs[2][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim four', {
+          probe_md: pairs[3][0],
+          probe_reference_md: pairs[3][1],
+        }),
+      )
+      .mockResolvedValueOnce(groupResult([[0, 1, 2, 3]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 4, runTaskFn });
+
+    // Independent field modes would synthesize the nonexistent pair (a probe, z reference).
+    expect([result.draft.probe_md, result.draft.probe_reference_md]).toEqual(pairs[0]);
+    expect(pairs).toContainEqual([result.draft.probe_md, result.draft.probe_reference_md]);
+  });
+
+  it('chooses the lexical claim when equal-sized semantic groups tie', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('zeta claim'))
+      .mockResolvedValueOnce(sample('alpha claim'))
+      .mockResolvedValueOnce(groupResult([[0], [1]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
+    expect(result.draft.claim_md).toBe('alpha claim');
   });
 
   it('dedup not called when all samples are byte-identical (claimKey unanimous)', async () => {

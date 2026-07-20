@@ -82,7 +82,11 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
     confidence: 0.66,
     confidence_capped: false,
     samples: input.samples,
-    task_run_ids: [`tr_${cell.knowledge_id}`],
+    task_run_ids: [
+      `tr_${cell.knowledge_id}_1`,
+      `tr_${cell.knowledge_id}_2`,
+      `tr_${cell.knowledge_id}_3`,
+    ],
     cost_usd: 0.02,
   };
 }
@@ -195,6 +199,10 @@ describe('runResearchMeetingNightly', () => {
     expect(change.baseline_p_at_induction).toBe(0.42); // snapshot of mastery p(L)
     expect(change.corrected_by_owner).toBe(false);
     expect(change.discriminating).toBe(true);
+    expect(input.task_run_id).toBe('tr_k_a_1');
+    expect(input.event_override?.payload).toEqual({
+      induction_task_run_ids: ['tr_k_a_1', 'tr_k_a_2', 'tr_k_a_3'],
+    });
   });
 
   it('snapshots baseline_p_at_induction to the cold-start neutral 0.5 when no mastery row', async () => {
@@ -247,6 +255,25 @@ describe('runResearchMeetingNightly', () => {
     expect(result.conjectures_created).toBe(1); // one failed, one succeeded
     expect(writeAiProposalFn).toHaveBeenCalledTimes(1);
     expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('induces independent top cells concurrently', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const deps = baseDeps({
+      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Promise.resolve();
+        inFlight -= 1;
+        return fakeInduced(input);
+      }),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+    expect(result.conjectures_created).toBe(3);
+    expect(maxInFlight).toBe(3);
   });
 
   it('proposes nothing when there is no recurring evidence (no failures)', async () => {

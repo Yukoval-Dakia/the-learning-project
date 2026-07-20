@@ -2,7 +2,7 @@
 // (research-meeting) propose handler.
 //
 // Structurally a clone of goal_scope_propose_nightly.ts: a thin candidate-picker +
-// dedup gate + a SEQUENTIAL producer loop (NOT an MCP tool-agent loop). The job is
+// dedup gate + a bounded parallel producer batch (NOT an MCP tool-agent loop). The job is
 // the SINGLE proposer of conjectures. It does NOT use a DomainTool / MCP server —
 // it calls induceConjecture (the Opus self-consistency orchestrator) + writeAiProposal
 // directly, exactly like goal_scope calls runGoalScopeAndWrite. Cloning dreaming_nightly
@@ -178,6 +178,14 @@ function buildConjectureProposalInput(
       cooldown_key: `conjecture:${cell.key}`,
     },
     caused_by_event_id: triggerEventId,
+    // Keep the scalar correlation column for the primary sample, and retain the
+    // complete self-consistency evidence trail in the proposal event payload.
+    event_override: {
+      action: 'experimental:proposal',
+      subject_kind: 'mind_model',
+      subject_id: cell.knowledge_id,
+      payload: { induction_task_run_ids: induced.task_run_ids },
+    },
     task_run_id: induced.task_run_ids[0] ?? null,
     cost_usd: induced.cost_usd,
   };
@@ -266,26 +274,30 @@ export async function runResearchMeetingNightly(
     created_at: now,
   });
 
-  // ── LLM half: one conjecture per top cell (per-cell swallow → partial progress) ──
-  let created = 0;
-  let costUsd = 0;
-  for (const cell of topCells) {
-    try {
-      const induced = await induceConjectureFn({
-        cells: [cell],
-        samples: RESEARCH_MEETING_SAMPLES,
-        runTaskFn,
-      });
-      // Count the Opus induction spend immediately — it was incurred regardless of
-      // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
-      costUsd += induced.cost_usd;
-      await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
-      created += 1;
-    } catch (err) {
-      console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
-      await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
-    }
-  }
+  // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
+  const cellResults = await Promise.all(
+    topCells.map(async (cell): Promise<{ created: number; cost_usd: number }> => {
+      let incurredCostUsd = 0;
+      try {
+        const induced = await induceConjectureFn({
+          cells: [cell],
+          samples: RESEARCH_MEETING_SAMPLES,
+          runTaskFn,
+        });
+        // Count the Opus induction spend immediately — it was incurred regardless of
+        // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
+        incurredCostUsd = induced.cost_usd;
+        await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
+        return { created: 1, cost_usd: incurredCostUsd };
+      } catch (err) {
+        console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
+        await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
+        return { created: 0, cost_usd: incurredCostUsd };
+      }
+    }),
+  );
+  const created = cellResults.reduce((sum, result) => sum + result.created, 0);
+  const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
 
   // Observability scan event — NOT cost-bearing: each conjecture proposal event already
   // carries its own cost_micro_usd via writeAiProposal, so summing the run total here would

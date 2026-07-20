@@ -21,9 +21,9 @@
 //
 // A13 (YUK-440): each sampled ConjectureDraft carries predicted_p (the claim's
 // falsifiable bet — P(owner answers the probe correctly | claim holds)) and
-// `discriminating` (does the probe isolate THIS misconception). The dominant draft's
-// values flow through to the proposal; the loop later scores predicted_p against the
-// cell's baseline_p (scoring + flip DEFERRED per ADR-0046).
+// `discriminating` (does the probe isolate THIS misconception). The dominant cluster's
+// fields are aggregated deterministically before flowing to the proposal; the loop later
+// scores predicted_p against the cell's baseline_p (scoring + flip DEFERRED per ADR-0046).
 
 import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -56,27 +56,124 @@ export interface InduceConjectureResult {
 /** Confidence ceiling when ALL evidence is agent-judge (no owner corroboration). */
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
 
+/** Parse every balanced JSON object in text, ignoring braces inside JSON strings. */
+function jsonObjectCandidates(text: string): unknown[] {
+  const candidates: unknown[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (start >= 0 && inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (start >= 0 && char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (char !== '}' || depth === 0) continue;
+    depth -= 1;
+    if (depth !== 0 || start < 0) continue;
+    try {
+      candidates.push(JSON.parse(text.slice(start, i + 1)));
+    } catch {
+      // Reasoning may contain mathematical braces before the actual JSON object.
+    }
+    start = -1;
+  }
+  return candidates;
+}
+
 function parseSampleDraft(result: TaskTextResult): ConjectureDraftT | null {
   // Three-state dispatch (mirrors variant_verify): prefer the SDK's structured_output
   // (Opus honours outputFormat), else char-scan the text for the JSON object.
   if (result.structured_output !== undefined && result.structured_output !== null) {
     const parsed = ConjectureDraft.safeParse(result.structured_output);
-    return parsed.success ? parsed.data : null;
+    if (parsed.success) return parsed.data;
   }
-  const start = result.text.indexOf('{');
-  const end = result.text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) return null;
-  try {
-    const parsed = ConjectureDraft.safeParse(JSON.parse(result.text.slice(start, end + 1)));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
+  for (const candidate of jsonObjectCandidates(result.text)) {
+    const parsed = ConjectureDraft.safeParse(candidate);
+    if (parsed.success) return parsed.data;
   }
+  return null;
 }
 
 /** Normalize a claim for clustering (case + whitespace insensitive). */
 function claimKey(claim: string): string {
   return claim.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function compareLex(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function deterministicMode(values: string[]): string {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()].sort(
+    ([a, aCount], [b, bCount]) => bCount - aCount || compareLex(a, b),
+  )[0][0];
+}
+
+/** Keep the generated probe and its gold reference as one indivisible sample value. */
+function deterministicProbePair(
+  drafts: ConjectureDraftT[],
+): Pick<ConjectureDraftT, 'probe_md' | 'probe_reference_md'> {
+  const pairs = new Map<string, { count: number; draft: ConjectureDraftT }>();
+  for (const draft of drafts) {
+    const key = JSON.stringify([draft.probe_md, draft.probe_reference_md]);
+    const current = pairs.get(key);
+    pairs.set(key, { count: (current?.count ?? 0) + 1, draft: current?.draft ?? draft });
+  }
+  const winner = [...pairs.entries()].sort(
+    ([aKey, a], [bKey, b]) => b.count - a.count || compareLex(aKey, bKey),
+  )[0][1].draft;
+  return {
+    probe_md: winner.probe_md,
+    probe_reference_md: winner.probe_reference_md,
+  };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/** Aggregate a winning cluster without depending on sample completion/insertion order. */
+function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): ConjectureDraftT {
+  const representative = [...drafts].sort((a, b) => {
+    const claimOrder = compareLex(claimKey(a.claim_md), claimKey(b.claim_md));
+    if (claimOrder !== 0) return claimOrder;
+    const probeOrder = compareLex(a.probe_md, b.probe_md);
+    if (probeOrder !== 0) return probeOrder;
+    return a.predicted_p - b.predicted_p;
+  })[0];
+  const discriminatingVotes = drafts.filter((draft) => draft.discriminating).length;
+  const probePair = deterministicProbePair(drafts);
+  return {
+    ...representative,
+    claim_md: deterministicMode(drafts.map((draft) => draft.claim_md)),
+    ...probePair,
+    cause_category: deterministicMode(
+      drafts.map((draft) => draft.cause_category),
+    ) as ConjectureDraftT['cause_category'],
+    recurrence_count: Math.round(median(drafts.map((draft) => draft.recurrence_count))),
+    predicted_p: median(drafts.map((draft) => draft.predicted_p)),
+    // A tie is non-discriminating: the conservative, reproducible outcome.
+    discriminating: discriminatingVotes > drafts.length / 2,
+    agreement_count: agreement,
+  };
 }
 
 // YUK-538 — GroupSchema: structural output contract for ClaimGroupingTask.
@@ -127,21 +224,11 @@ async function deduplicateClaims(
     return singleton();
   }
 
-  // Parse structured output; fall back to text char-scan on missing structured_output.
-  const raw: unknown =
-    result.structured_output ??
-    (() => {
-      const s = result.text.indexOf('{');
-      const e = result.text.lastIndexOf('}');
-      if (s === -1 || e === -1 || e < s) return null;
-      try {
-        return JSON.parse(result.text.slice(s, e + 1));
-      } catch {
-        return null;
-      }
-    })();
-
-  const parsed = raw ? GroupSchema.safeParse(raw) : { success: false as const };
+  // Parse structured output; then scan balanced JSON objects in the text fallback.
+  const parsed = [result.structured_output, ...jsonObjectCandidates(result.text)]
+    .filter((candidate) => candidate !== undefined && candidate !== null)
+    .map((candidate) => GroupSchema.safeParse(candidate))
+    .find((candidate) => candidate.success) ?? { success: false as const };
   if (!parsed.success) return singleton();
 
   // Coverage guard: verify groups form a complete partition of 0..N-1
@@ -184,17 +271,24 @@ export async function induceConjecture(
   const taskRunIds: string[] = [];
   const sampleErrors: string[] = [];
   let costUsd = 0;
-  for (let i = 0; i < samples; i++) {
-    try {
-      const result = await runTaskFn('MindModelInductionTask', taskInput, {
+  const sampleResults = await Promise.allSettled(
+    Array.from({ length: samples }, () =>
+      runTaskFn('MindModelInductionTask', taskInput, {
         override: { provider: 'anthropic-sub' as const },
         outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
-      });
+      }),
+    ),
+  );
+  for (let i = 0; i < sampleResults.length; i += 1) {
+    const settled = sampleResults[i];
+    if (settled.status === 'fulfilled') {
+      const result = settled.value;
       if (result.task_run_id) taskRunIds.push(result.task_run_id);
       costUsd += result.cost_usd ?? 0;
       const draft = parseSampleDraft(result);
       if (draft) drafts.push(draft);
-    } catch (err) {
+    } else {
+      const err = settled.reason;
       const errorMessage = err instanceof Error ? err.message : String(err);
       sampleErrors.push(`sample ${i + 1}: ${errorMessage.slice(0, 300)}`);
       // Self-consistency samples are independent. A single provider/stream failure
@@ -221,10 +315,9 @@ export async function induceConjecture(
     bucket.push(d);
     clusters.set(key, bucket);
   }
-  let dominant: ConjectureDraftT[] = [];
-  for (const bucket of clusters.values()) {
-    if (bucket.length > dominant.length) dominant = bucket;
-  }
+  let dominant = [...clusters.entries()].sort(
+    ([aKey, aDrafts], [bKey, bDrafts]) => bDrafts.length - aDrafts.length || compareLex(aKey, bKey),
+  )[0][1];
 
   // Semantic dedup: fires whenever samples are not byte-identical unanimous.
   // This is the primary post-fast-path step, not a rare fallback — at temperature > 0
@@ -244,11 +337,16 @@ export async function induceConjecture(
     if (dedup.task_run_id) taskRunIds.push(dedup.task_run_id);
 
     // Re-map groups to draft arrays; pick the largest group as dominant.
-    // Tie-break: smallest minimum index (preserves first-run-first selection
-    // convention, making claim_md selection deterministic on size ties).
+    // Tie-break on the group's normalized lexical claim key, never sample order.
     const groupDrafts = dedup.groups
-      .map((g) => ({ drafts: g.map((i) => drafts[i]), minIdx: Math.min(...g) }))
-      .sort((a, b) => b.drafts.length - a.drafts.length || a.minIdx - b.minIdx);
+      .map((g) => {
+        const groupedDrafts = g.map((i) => drafts[i]);
+        return {
+          drafts: groupedDrafts,
+          key: [...groupedDrafts.map((draft) => claimKey(draft.claim_md))].sort(compareLex)[0],
+        };
+      })
+      .sort((a, b) => b.drafts.length - a.drafts.length || compareLex(a.key, b.key));
     dominant = groupDrafts[0].drafts;
   }
 
@@ -262,9 +360,7 @@ export async function induceConjecture(
   const confidence_capped = allJudgeOnly && confidence > JUDGE_ONLY_CONFIDENCE_CAP;
   if (confidence_capped) confidence = JUDGE_ONLY_CONFIDENCE_CAP;
 
-  // The dominant cluster's representative carries claim/probe/predicted_p/discriminating;
-  // stamp the agreement tally (the model filled 1).
-  const draft: ConjectureDraftT = { ...dominant[0], agreement_count: agreement };
+  const draft = aggregateDominantDraft(dominant, agreement);
 
   return {
     draft,
