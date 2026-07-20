@@ -18,6 +18,7 @@ import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorInput,
   buildSelectionOrchestratorTaskInput,
+  buildSelectionOrchestratorTaskInputWithCandidates,
   parseSelectionOrchestratorOutput,
 } from './selection-orchestrator';
 
@@ -284,5 +285,41 @@ describe('mem0 learner prior advisory block (B3)', () => {
     expect(input.candidates).toContain('refId=q-live');
     expect(input.memoryPrior).toContain('<ADVISORY_ONLY>');
     expect(input.memoryPrior).toContain('FACT: often benefits from an example');
+  });
+
+  it('deterministically preselects and caps candidates by diagnostic then MFI score', () => {
+    const candidates = Array.from({ length: 30 }, (_, index) =>
+      questionSignal({
+        refId: `q-${index.toString().padStart(2, '0')}`,
+        diagnosticScore: index < 2 ? undefined : index / 100,
+        mfiScore: index < 2 ? 1 - index / 10 : 0,
+      }),
+    );
+
+    const first = buildSelectionOrchestratorTaskInputWithCandidates(candidates);
+    const second = buildSelectionOrchestratorTaskInputWithCandidates([...candidates].reverse());
+    const firstLines = first.input.candidates.split('\n');
+
+    expect(firstLines).toHaveLength(24);
+    expect(second).toEqual(first);
+    expect(firstLines[0]).toContain('refId=q-00');
+    expect(firstLines[1]).toContain('refId=q-01');
+    expect(firstLines[2]).toContain('refId=q-29');
+    expect(firstLines).not.toContainEqual(expect.stringContaining('refId=q-02'));
+    expect(first.selectedCandidates.map((candidate) => candidate.refId)).toHaveLength(24);
+  });
+
+  it('uses refId as the deterministic cutoff tie-break for equal scores', () => {
+    const candidates = Array.from({ length: 25 }, (_, index) =>
+      questionSignal({ refId: `tie-${index.toString().padStart(2, '0')}`, diagnosticScore: 0.1 }),
+    );
+
+    const selected = buildSelectionOrchestratorTaskInputWithCandidates(
+      [...candidates].reverse(),
+    ).selectedCandidates;
+
+    expect(selected.map((candidate) => candidate.refId)).toEqual(
+      candidates.slice(0, 24).map((candidate) => candidate.refId),
+    );
   });
 });
