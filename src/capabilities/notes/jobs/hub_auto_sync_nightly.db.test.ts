@@ -7,7 +7,14 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { artifact, artifact_block_ref, event, knowledge, knowledge_edge } from '@/db/schema';
+import {
+  artifact,
+  artifact_block_ref,
+  editing_presence,
+  event,
+  knowledge,
+  knowledge_edge,
+} from '@/db/schema';
 import { buildHubAutoSyncNightlyHandler, runHubAutoSyncNightly } from './hub_auto_sync_nightly';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -302,6 +309,30 @@ describe('runHubAutoSyncNightly', () => {
 describe('buildHubAutoSyncNightlyHandler', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('skips actively edited hubs for mutation-triggered jobs but nightly still applies', async () => {
+    await seedKnowledge('k_hub');
+    await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });
+    await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
+    await testDb().insert(editing_presence).values({
+      artifact_id: 'hub1',
+      status: 'editing',
+      last_heartbeat_at: new Date(),
+      editing_started_at: new Date(),
+      pending: [],
+    });
+
+    const handler = buildHubAutoSyncNightlyHandler(testDb());
+    await handler([{ id: 'mutation', data: { source: 'mutation' } } as never]);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(0);
+
+    await handler([{ id: 'nightly', data: {} } as never]);
+    expect(
+      await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
+    ).toHaveLength(1);
   });
 
   it('runs for each job and applies the auto-zone patch', async () => {

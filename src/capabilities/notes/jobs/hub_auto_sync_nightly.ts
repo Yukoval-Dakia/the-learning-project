@@ -34,6 +34,7 @@
 // TipTap node already passes `attrs` through (passthrough schema), so no node
 // schema change is required.
 
+import { isArtifactIdle } from '@/server/artifacts/editing-session';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -92,6 +93,7 @@ export interface HubAutoSyncDeps {
   loadNodes?: (db: Db) => Promise<KnowledgeNode[]>;
   loadEdges?: (db: Db) => Promise<HubMeshEdge[]>;
   now?: Date;
+  skipActiveHubs?: boolean;
 }
 
 function recordOrEmpty(value: unknown): Record<string, unknown> {
@@ -297,6 +299,8 @@ export async function runHubAutoSyncNightly(
 
   for (const hub of hubs) {
     try {
+      if (deps.skipActiveHubs && !(await isArtifactIdle(hub.id, deps.now))) continue;
+
       const suppressed = suppressedArtifactIds(hub.attrs);
       const curated = resolveHubMeshAtomics(
         nodes,
@@ -336,10 +340,12 @@ export async function runHubAutoSyncNightly(
 
 export function buildHubAutoSyncNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  return async () => {
+): (jobs: Job<{ source?: 'mutation' }>[]) => Promise<void> {
+  return async (jobs) => {
     try {
-      const result = await runHubAutoSyncNightly(db);
+      const result = await runHubAutoSyncNightly(db, {
+        skipActiveHubs: jobs.some((job) => job.data.source === 'mutation'),
+      });
       console.log('[hub_auto_sync_nightly] result', result);
     } catch (err) {
       console.error('[hub_auto_sync_nightly] failed', err);

@@ -7,7 +7,7 @@ export async function enqueueHubAutoSync(): Promise<void> {
     const boss = await getStartedBoss();
     await boss.send(
       'hub_auto_sync_nightly',
-      {},
+      { source: 'mutation' },
       {
         singletonKey: 'hub_auto_sync',
         singletonSeconds: HUB_AUTO_SYNC_SINGLETON_SECONDS,

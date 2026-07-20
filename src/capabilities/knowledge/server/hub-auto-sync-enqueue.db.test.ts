@@ -21,7 +21,7 @@ describe('enqueueHubAutoSync', () => {
 
     expect(bossSend).toHaveBeenCalledWith(
       'hub_auto_sync_nightly',
-      {},
+      { source: 'mutation' },
       {
         singletonKey: 'hub_auto_sync',
         singletonSeconds: 300,
