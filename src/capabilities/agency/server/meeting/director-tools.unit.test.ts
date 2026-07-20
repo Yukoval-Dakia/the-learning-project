@@ -127,6 +127,7 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
       return `agent_note_${notes.length}`;
     },
     getMasteryProjectionFn: async () => new Map<string, MasteryProjection>(),
+    evidenceRefsExistFn: async () => true,
     ...opts,
   });
   return { proposals, notes, caps };
@@ -258,6 +259,35 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(res.ok).toBe(false);
     expect(String(res.reason)).toMatch(/一手证据|first-hand|证据/);
     expect(h.proposals).toHaveLength(0);
+  });
+
+  it('soft-rejects when a surviving evidence_ref does not resolve to a real event', async () => {
+    const h = build({
+      ...({
+        evidenceRefsExistFn: async () => false,
+      } as Partial<BuildDirectorServerOpts>),
+    });
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ evidence_refs: ['att_1', 'missing_event'] }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(String(res.reason)).toMatch(/不存在|事件/);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
+  });
+
+  it('accepts evidence_refs after every cited event is verified to exist', async () => {
+    const evidenceRefsExistFn = vi.fn(async () => true);
+    const h = build({
+      ...({ evidenceRefsExistFn } as Partial<BuildDirectorServerOpts>),
+    });
+    const res = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(res.ok).toBe(true);
+    expect(evidenceRefsExistFn).toHaveBeenCalledWith(expect.anything(), ['att_1', 'att_2']);
+    expect(h.proposals).toHaveLength(1);
   });
 
   it('snapshots baseline_p to the cold-start neutral 0.5 for a KC absent from cells + mastery', async () => {

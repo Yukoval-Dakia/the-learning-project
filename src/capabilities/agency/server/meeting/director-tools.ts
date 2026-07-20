@@ -23,6 +23,7 @@ import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { ConjectureDraft } from '@/core/schema/business';
 import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import {
   filterPrimaryEvidenceRefs,
   isPrimaryEvidenceRef,
@@ -38,6 +39,7 @@ import { conjectureKey } from '@/server/conjectures/evidence';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { and, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 // ── Server-side caps + constants (§5 / 附录 A #3) ──────────────────────────────
@@ -135,6 +137,22 @@ export function createDirectorCaps(): DirectorCaps {
 type WriteAiProposalFn = (db: Db, input: WriteAiProposalInput) => Promise<string>;
 type WriteAgentNoteFn = typeof WriteAgentNoteReal;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
+type EvidenceRefsExistFn = (db: Db, refs: string[]) => Promise<boolean>;
+
+const PRIMARY_EVIDENCE_ACTIONS = [
+  'attempt',
+  'experimental:probe_result',
+  'experimental:prediction_score',
+] as const;
+
+async function evidenceRefsExist(db: Db, refs: string[]): Promise<boolean> {
+  if (refs.length === 0) return false;
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(and(inArray(event.id, refs), inArray(event.action, PRIMARY_EVIDENCE_ACTIONS)));
+  return rows.length === refs.length;
+}
 
 export interface BuildDirectorServerOpts {
   db: Db;
@@ -153,6 +171,7 @@ export interface BuildDirectorServerOpts {
   writeAiProposalFn?: WriteAiProposalFn;
   writeAgentNoteFn?: WriteAgentNoteFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
+  evidenceRefsExistFn?: EvidenceRefsExistFn;
 }
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
@@ -257,6 +276,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   const writeAiProposalFn = opts.writeAiProposalFn ?? writeAiProposal;
   const writeAgentNoteFn = opts.writeAgentNoteFn ?? writeAgentNote;
   const getMasteryProjectionFn = opts.getMasteryProjectionFn ?? getMasteryProjection;
+  const evidenceRefsExistFn = opts.evidenceRefsExistFn ?? evidenceRefsExist;
 
   const proposalIds: string[] = [];
   const noteIds: string[] = [];
@@ -324,15 +344,11 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           }
           const a = parsed.data;
 
-          // First-hand evidence only (§7 backstop): strip agent_note ids. KNOWN GAP
-          // (YUK-584 follow-up, doc'd in the spec §7): filterPrimaryEvidenceRefs only
-          // excludes the agent_note ID SHAPE — it does NOT verify each surviving ref
-          // actually resolves to a real attempt/probe/prediction_score event for THIS
-          // knowledge_id/cause. The LLM's evidence_refs are asserted, not verified.
-          // Blast radius is bounded (propose-only + owner inbox review + reconcile
-          // joins on conjecture_event_id, never on evidence_refs, so settlement can't
-          // be poisoned by a bogus ref) — server-side existence/ownership verification
-          // is scope'd out of this PR as hardening.
+          // First-hand evidence only (§7 backstop): strip agent_note ids before the
+          // database existence gate below. KC-association validation is deliberately not
+          // attempted here: attempt, probe_result, and prediction_score events encode
+          // their KC linkage through different payload/subject paths, so a uniform check
+          // would not be safe or bounded in this handler.
           const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
           if (primaryRefs.length === 0) {
             return textResult({
@@ -400,13 +416,29 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
-          // SYNCHRONOUS reservation (A2 fix) — every check above this line is
-          // synchronous (no await), so this line is reached, for ANY single invocation,
-          // strictly before that invocation's first await. A concurrent second call for
-          // the SAME key, dispatched back-to-back before this call's first await
-          // resolves, sees this reservation already applied.
+          // Keep the cap/dedup reservation immediately before this handler's first await.
+          // Validation failures above remain free; evidence lookup failures below are
+          // rolled back just like write-time failures.
           caps.proposeCount += 1;
           proposedThisRun.add(key);
+
+          try {
+            if (!(await evidenceRefsExistFn(db, primaryRefs))) {
+              caps.proposeCount -= 1;
+              proposedThisRun.delete(key);
+              return textResult({
+                ok: false,
+                reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
+              });
+            }
+          } catch (err) {
+            caps.proposeCount -= 1;
+            proposedThisRun.delete(key);
+            return textResult({
+              ok: false,
+              reason: `evidence_refs 事件校验失败: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
 
           // baseline_p auto-snapshot (§5.4): the cell's value, else the live mastery
           // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.

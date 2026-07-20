@@ -160,10 +160,91 @@ async function conjectureProposalRows(actorRef: string) {
 
 beforeEach(async () => {
   await resetDb();
+  await testDb()
+    .insert(event)
+    .values(
+      ['att_1', 'att_2'].map((id) => ({
+        id,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: `q_${id}`,
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          answer_image_refs: [],
+          referenced_knowledge_ids: [KC],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: NOW,
+      })),
+    );
   mockSdk.handlers.clear();
 });
 
 describe('runResearchMeetingDirector — pipeline', () => {
+  it('rejects a proposal when an evidence_ref does not resolve to a real event', async () => {
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['att_1', 'missing_event'],
+      });
+      return {
+        task_run_id: 'director_run_missing_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(String(proposeResult?.reason)).toMatch(/不存在|事件/);
+    expect(result.proposals_created).toBe(0);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
+  });
+
+  it('rejects an existing event whose action is not primary evidence', async () => {
+    await writeEvent(testDb(), {
+      id: 'existing_non_primary_event',
+      actor_kind: 'system',
+      actor_ref: 'test',
+      action: 'experimental:research_meeting_agent_trigger',
+      subject_kind: 'query',
+      subject_id: 'existing_non_primary_event',
+      outcome: 'success',
+      payload: {},
+      created_at: NOW,
+    });
+    let proposeResult: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      proposeResult = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['att_1', 'existing_non_primary_event'],
+      });
+      return {
+        task_run_id: 'director_run_non_primary_evidence',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(proposeResult?.ok).toBe(false);
+    expect(String(proposeResult?.reason)).toMatch(/一手|事件/);
+    expect(result.proposals_created).toBe(0);
+  });
+
   it('lands a mind_model conjecture with the agent actor + server baseline snapshot + cost-bearing scan', async () => {
     const result = await runResearchMeetingDirector(testDb(), baseDeps());
 
