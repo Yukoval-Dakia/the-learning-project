@@ -22,6 +22,7 @@ async function seedAttempt(opts: {
   action?: 'attempt' | 'review';
   unsupported?: boolean;
   nestedUnsupported?: boolean;
+  authoritativeKnowledgeIds?: string[];
 }): Promise<void> {
   await testDb()
     .insert(event)
@@ -37,6 +38,9 @@ async function seedAttempt(opts: {
         referenced_knowledge_ids: opts.knowledgeIds,
         ...(opts.unsupported ? { unsupported_judge: true } : {}),
         ...(opts.nestedUnsupported ? { judge: { coarse_outcome: 'unsupported' } } : {}),
+        ...(opts.authoritativeKnowledgeIds
+          ? { fsrs_subject_kind: 'knowledge', fsrs_subject_ids: opts.authoritativeKnowledgeIds }
+          : {}),
       },
       created_at: opts.at,
     });
@@ -294,6 +298,40 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       });
     },
   );
+
+  it('uses normalized FSRS knowledge IDs instead of stale raw review evidence', async () => {
+    await seedWrongTail('kc_real', 2);
+    await seedAttempt({
+      id: 'stale_review_trigger',
+      outcome: 'failure',
+      knowledgeIds: ['kc_stale', 'kc_real'],
+      authoritativeKnowledgeIds: ['kc_real'],
+      at: NOW,
+      action: 'review',
+    });
+
+    const decision = await evaluate('stale_review_trigger');
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.subject_id).toBe('kc_real');
+  });
+
+  it('does not use a nonexistent raw KC when normalized review IDs are question-scoped', async () => {
+    await seedWrongTail('kc_stale', 2);
+    await seedAttempt({
+      id: 'question_scoped_trigger',
+      outcome: 'failure',
+      knowledgeIds: ['kc_stale'],
+      authoritativeKnowledgeIds: [],
+      at: NOW,
+      action: 'review',
+    });
+
+    await expect(evaluate('question_scoped_trigger')).resolves.toEqual({
+      fire: false,
+      reason: 'no_knowledge',
+    });
+  });
 
   it('selects the highest streak KC and uses kc id as a deterministic tie-break', async () => {
     await seedAttempt({

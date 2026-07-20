@@ -13,7 +13,7 @@ import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
-import { type AnyColumn, type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgeConfig } from './nudge-config';
 
@@ -84,8 +84,27 @@ function isUnsupportedAttemptPayload(payload: unknown): boolean {
   return value.unsupported_judge === true || value.judge?.coarse_outcome === 'unsupported';
 }
 
+function getKnowledgeIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const value = payload as {
+    fsrs_subject_kind?: unknown;
+    fsrs_subject_ids?: unknown;
+    referenced_knowledge_ids?: unknown;
+  };
+  const source =
+    value.fsrs_subject_kind === 'knowledge' && Array.isArray(value.fsrs_subject_ids)
+      ? value.fsrs_subject_ids
+      : value.fsrs_subject_ids !== undefined
+        ? []
+        : Array.isArray(value.referenced_knowledge_ids)
+          ? value.referenced_knowledge_ids
+          : [];
+  return Array.from(
+    new Set(source.filter((id): id is string => typeof id === 'string' && id.length > 0).sort()),
+  );
+}
+
 /**
- * 只读——不写任何 event。fire=true 的 NudgeToWrite 交给 handler 写入 + 幂等收口。
  */
 async function evaluateWrongStreak(
   db: Db,
@@ -112,16 +131,7 @@ async function evaluateWrongStreak(
     return { fire: false, reason: 'not_failure' };
   }
 
-  const knowledgeIds = Array.from(
-    new Set(
-      (Array.isArray(trigger.payload?.referenced_knowledge_ids)
-        ? trigger.payload.referenced_knowledge_ids
-        : []
-      )
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
-        .sort(),
-    ),
-  );
+  const knowledgeIds = getKnowledgeIds(trigger.payload);
   if (knowledgeIds.length === 0) return { fire: false, reason: 'no_knowledge' };
 
   const candidates: Array<{ kcId: string; streak: number; tailEventIds: string[] }> = [];
@@ -133,7 +143,10 @@ async function evaluateWrongStreak(
         and(
           inArray(event.action, ['attempt', 'review']),
           eq(event.subject_kind, 'question'),
-          sql`${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb`,
+          or(
+            sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
+            sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
+          ),
           sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
         ),
       )
