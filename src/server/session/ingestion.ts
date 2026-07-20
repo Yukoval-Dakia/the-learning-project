@@ -223,6 +223,23 @@ export async function applyExtractionResult(
     );
   }
 
+  // Validate the complete batch before locking the session or writing any block.
+  // This service also accepts a bare Db (not only a transaction), so validating
+  // inside the insert loop could otherwise leave a valid prefix partially persisted.
+  for (const blk of params.blocks) {
+    if (
+      !Number.isFinite(blk.extraction_confidence) ||
+      blk.extraction_confidence < 0 ||
+      blk.extraction_confidence > 1
+    ) {
+      throw new ApiError(
+        'validation_error',
+        'Ingestion.applyExtractionResult: extraction_confidence must be within [0, 1]',
+        400,
+      );
+    }
+  }
+
   const current = await loadSessionForUpdate(tx, params.sessionId);
   if (!current) {
     throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
@@ -245,17 +262,6 @@ export async function applyExtractionResult(
   const now = new Date();
   const insertedBlockIds: string[] = [];
   for (const [ordinal, blk] of params.blocks.entries()) {
-    if (
-      !Number.isFinite(blk.extraction_confidence) ||
-      blk.extraction_confidence < 0 ||
-      blk.extraction_confidence > 1
-    ) {
-      throw new ApiError(
-        'validation_error',
-        'Ingestion.applyExtractionResult: extraction_confidence must be within [0, 1]',
-        400,
-      );
-    }
     const blockId = createId();
     insertedBlockIds.push(blockId);
     const [insertedRow] = await tx
