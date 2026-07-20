@@ -125,7 +125,7 @@ function dateLabel(sec: number): string {
 // 题面文本内嵌 markdown/latex（design QInline → MathMarkdown 单段，同 QuestionsPage）。
 function QInline({ text, notation }: { text: string; notation: string | null }) {
   return (
-    <MathMarkdown notation={notation} className="q-md-inline" style={{ display: 'inline' }}>
+    <MathMarkdown notation={notation} className="q-md-inline qd-inline">
       {text}
     </MathMarkdown>
   );
@@ -287,8 +287,7 @@ export function DeleteModal({
       <button
         type="button"
         aria-label="关闭"
-        className="scrim open"
-        style={{ zIndex: 0, border: 0, padding: 0 }}
+        className="scrim open qd-modal-scrim"
         onClick={onClose}
       />
       <div
@@ -407,9 +406,7 @@ function VariantFamily({
             >
               <div className="qd-fam-t">{m.is_self ? '当前题' : `变体题 ${index + 1}`}</div>
             </button>
-            <span className="badge tone-neutral" style={{ flex: 'none' }}>
-              {km.label}
-            </span>
+            <span className="badge tone-neutral qd-fam-kind">{km.label}</span>
             {m.is_self && <span className="qd-fam-cur">当前</span>}
           </div>
         );
@@ -457,10 +454,10 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   // 管控（见 patchMut.onSuccess），否则 invalidate→refetch→本 effect 会把刚亮起的
   // badge 一闪即逝地抹掉。
   useEffect(() => {
-    if (data) setDraft(draftFrom(data));
+    if (data?.id === id) setDraft(draftFrom(data));
     setEditOptIdx(-1);
     setShowAddChip(false);
-  }, [data]);
+  }, [data, id]);
 
   // dirty 判定：草稿与服务端值逐字段比对。
   const dirty = useMemo(() => {
@@ -600,8 +597,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       {
         onSuccess: (res: DeleteQuestionResult) => {
           // 无 confirm 必返 confirm_required（含约束计数）；理论上不会 archived。
-          if (res.kind === 'confirm_required') setDelCounts(res.associations);
-          else setDelCounts(res.associations); // 兜底（confirm 门总返计数）。
+          setDelCounts(res.associations);
         },
       },
     );
@@ -688,15 +684,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
           </div>
           <div className="hero-cta">
             {saved && !dirty && (
-              <span
-                className="meta"
-                style={{
-                  color: 'var(--good-ink)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
-              >
+              <span className="meta qd-saved">
                 <LoomIcon name="check" size={14} />
                 已保存
               </span>
@@ -717,8 +705,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       {isPart && data.parent_question_id && (
         <button
           type="button"
-          className="qd-sub"
-          style={{ marginBottom: 'var(--s-4)' }}
+          className="qd-sub qd-parent-link"
           onClick={() => navigate(`/questions/${data.parent_question_id}`)}
         >
           <span className="qd-sub-idx">
@@ -762,7 +749,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             </div>
             {/* figure（DEFER：仅显示 figures[0].caption，无 upload）*/}
             {Array.isArray(data.figures) && data.figures.length > 0 && (
-              <div style={{ marginTop: 'var(--s-3)' }}>
+              <div className="qd-figure-space">
                 <QFigure
                   caption={
                     (data.figures[0] as { caption?: string })?.caption ??
@@ -814,7 +801,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                       </button>
                       {editOptIdx === i ? (
                         <input
-                          className="qd-opt-text"
+                          className="qd-opt-text qd-opt-input"
                           // biome-ignore lint/a11y/noAutofocus: 点选项进入编辑态，focus 该输入是预期行为（同 design）
                           autoFocus
                           value={opt}
@@ -829,20 +816,13 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') setEditOptIdx(-1);
                           }}
-                          style={{ borderBottom: '1px solid var(--coral-line)' }}
                         />
                       ) : (
                         <button
                           type="button"
-                          className="qd-opt-text"
+                          className="qd-opt-text qd-opt-trigger"
                           onClick={() => setEditOptIdx(i)}
                           title="点击编辑"
-                          style={{
-                            cursor: 'text',
-                            textAlign: 'left',
-                            background: 'none',
-                            border: 0,
-                          }}
                         >
                           <QInline text={opt} notation={notation} />
                         </button>
@@ -868,12 +848,11 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                 参考答案
               </div>
               <textarea
-                className="qd-textarea"
+                className="qd-textarea qd-answer-input"
                 aria-label="参考答案"
                 value={draft.reference_md}
                 onChange={(e) => edit({ reference_md: e.target.value })}
                 rows={2}
-                style={{ marginBottom: 'var(--s-3)' }}
               />
               {hasMarkup(draft.reference_md) && (
                 <div className="qd-answer">
@@ -997,32 +976,18 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                   <span key={kid} className="qd-chip">
                     <button
                       type="button"
+                      className="qd-chip-btn qd-chip-label"
                       onClick={() => navigate(`/knowledge/${kid}`)}
-                      style={{
-                        background: 'none',
-                        border: 0,
-                        padding: 0,
-                        color: 'inherit',
-                        font: 'inherit',
-                        cursor: 'pointer',
-                      }}
                     >
                       {labelName.get(kid) ?? '未命名知识点'}
                     </button>
                     <button
                       type="button"
+                      className="qd-chip-btn qd-chip-remove"
                       aria-label={`移除知识点 ${labelName.get(kid) ?? '未命名知识点'}`}
                       onClick={() =>
                         edit({ knowledge_ids: draft.knowledge_ids.filter((x) => x !== kid) })
                       }
-                      style={{
-                        background: 'none',
-                        border: 0,
-                        padding: 0,
-                        display: 'inline-flex',
-                        cursor: 'pointer',
-                        color: 'inherit',
-                      }}
                     >
                       <LoomIcon name="close" size={11} />
                     </button>
@@ -1030,7 +995,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                 ))}
                 {showAddChip && knowledgeOptionsQ.data ? (
                   <select
-                    className="qd-chip"
+                    className="qd-chip qd-chip-select"
                     // biome-ignore lint/a11y/noAutofocus: 点「添加」展开选择，focus 是预期。
                     autoFocus
                     value=""
@@ -1043,7 +1008,6 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                       setShowAddChip(false);
                     }}
                     onBlur={() => setShowAddChip(false)}
-                    style={{ minWidth: 100 }}
                   >
                     <option value="">选择知识点…</option>
                     {(knowledgeOptionsQ.data?.rows ?? [])
@@ -1115,7 +1079,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             </div>
           </Card>
 
-          <div className="qd-sec-h" style={{ marginTop: 'var(--s-4)' }}>
+          <div className="qd-sec-h qd-side-heading">
             <LoomIcon name="link" size={14} />
             关联状态
           </div>
@@ -1167,23 +1131,20 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                 variant="ghost"
                 icon="review"
                 block
+                className="qd-review-link"
                 onClick={() => navigate('/practice')}
-                style={{ marginTop: 'var(--s-3)' }}
               >
                 去复习此题
               </Btn>
             )}
           </Card>
 
-          <div className="qd-sec-h" style={{ marginTop: 'var(--s-4)', color: 'var(--again-ink)' }}>
+          <div className="qd-sec-h qd-side-heading qd-danger-heading">
             <LoomIcon name="trash" size={14} />
             删除
           </div>
           <Card pad="default" className="qd-danger">
-            <div
-              className="meta"
-              style={{ marginBottom: 'var(--s-3)', lineHeight: 'var(--lh-prose)' }}
-            >
+            <div className="meta qd-danger-copy">
               删除前会先核对相关记录和挂载小题；既有学习历史仍会保留。
             </div>
             <Btn size="sm" variant="secondary" icon="trash" block onClick={openDelete}>

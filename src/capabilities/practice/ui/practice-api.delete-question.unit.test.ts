@@ -53,4 +53,24 @@ describe('deleteQuestion rolling compatibility (YUK-298)', () => {
     expect(result.associations.children).toBe(2);
     expect(result.has_associations).toBe(true);
   });
+
+  it('returns zero-count confirmation data when a 409 omits associations entirely', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'confirm_required' }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    const result = await deleteQuestion('standalone');
+
+    expect(result).toEqual({
+      kind: 'confirm_required',
+      associations: { attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0, children: 0 },
+      has_associations: false,
+    });
+  });
 });
