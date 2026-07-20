@@ -502,3 +502,64 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
   });
 });
+
+describe('runTask / streamTaskCollecting — caller-owned task run correlation', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('runTask uses the caller id for result and persistence', async () => {
+    const result = await runTask(
+      'CopilotTask',
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, taskRunId: 'copilot_task_owned' },
+    );
+
+    expect(result.task_run_id).toBe('copilot_task_owned');
+    expect(logMock.started).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ id: 'copilot_task_owned' }),
+    );
+    expect(logMock.finished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ id: 'copilot_task_owned' }),
+    );
+    expect(logMock.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ task_run_id: 'copilot_task_owned' }),
+    );
+  });
+
+  it('streamTaskCollecting uses the caller id for result and persistence', async () => {
+    const result = await streamTaskCollecting(
+      'CopilotTask',
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, taskRunId: 'copilot_stream_owned' },
+      () => {},
+    );
+
+    expect(result.task_run_id).toBe('copilot_stream_owned');
+    expect(logMock.started).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ id: 'copilot_stream_owned' }),
+    );
+    expect(logMock.finished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ id: 'copilot_stream_owned' }),
+    );
+    expect(logMock.cost).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ task_run_id: 'copilot_stream_owned' }),
+    );
+  });
+});
