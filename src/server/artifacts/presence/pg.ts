@@ -312,7 +312,12 @@ function dropStalePending(
   const kept: SerializedQueuedPatch[] = [];
   let dropped = 0;
   for (const item of pending) {
-    if (now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS) {
+    // Mutation-triggered hub sync opts out of the generic force-apply ceiling,
+    // so its durable deferred patch must also survive stale pending pruning.
+    if (
+      item.actorRef !== 'hub_auto_sync' &&
+      now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS
+    ) {
       dropped++;
     } else {
       kept.push(item);

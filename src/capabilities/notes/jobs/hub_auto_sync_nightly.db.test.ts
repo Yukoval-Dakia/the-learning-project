@@ -337,7 +337,11 @@ describe('buildHubAutoSyncNightlyHandler', () => {
       await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
     ).toHaveLength(0);
 
-    await markArtifactIdleAndFlush({ db: testDb(), artifactId: 'hub1', now });
+    await markArtifactIdleAndFlush({
+      db: testDb(),
+      artifactId: 'hub1',
+      now: new Date(now.getTime() + EDITING_FORCE_APPLY_TIMEOUT_MS + 1),
+    });
     expect(
       await testDb().select().from(event).where(eq(event.action, 'experimental:note_refine_apply')),
     ).toHaveLength(1);
