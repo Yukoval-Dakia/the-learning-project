@@ -736,7 +736,7 @@ source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；clos
 - kind 只能是 ${canonicalKinds} 之一；不要发明新值；客观题统一用 "choice"。
 - ${profile.promptFragments.checkQuestionPolicy}
 - choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；reference_md 第一行是正确选项原文。
-- judge_kind_override="exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。
+- 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
 - computation：只验最终答案可 exact；验方法要点用 semantic + required_points。

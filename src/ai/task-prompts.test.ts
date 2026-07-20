@@ -283,6 +283,13 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('reference_solution');
       expect(prompt).toContain('final_answer');
       expect(prompt).toContain('answer_equivalents');
+      expect(prompt).toContain('最终判分路由');
+      expect(prompt).toContain('judge_kind_override 省略或为 null');
+      expect(prompt).toContain('choice / true_false');
+      expect(prompt).toContain('fill_blank');
+      expect(prompt).toContain('computation');
+      expect(prompt).toContain('derivation');
+      expect(prompt).toContain('short_answer / reading / translation / essay');
       // Tools referenced by capability (handler resolves names at run time).
       expect(prompt).toContain('tavily_search');
       expect(prompt).toContain('tavily_extract');
