@@ -466,6 +466,8 @@ type RunAgentTaskFn = (
     // is the SDK's Options['mcpServers'].
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
+    /** Caller-owned id shared with the in-process MCP tool log. */
+    taskRunId?: string;
     // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
     // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
     // methodology SKILL.md loads. The underlying RunTaskCtx already declares
@@ -487,6 +489,8 @@ type StreamAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
     signal?: AbortSignal;
+    /** Caller-owned id shared with the in-process MCP tool log. */
+    taskRunId?: string;
     // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
     // runner so the free-form streaming path loads the copilot SKILL.md too.
     skills?: string[];
@@ -991,6 +995,7 @@ async function runCopilotChatImpl(
         db,
         mcpServers,
         allowedTools,
+        taskRunId,
         signal: streaming.signal,
         // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
         // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
@@ -1010,6 +1015,7 @@ async function runCopilotChatImpl(
       db,
       mcpServers,
       allowedTools,
+      taskRunId,
       // YUK-284 (C2) — see streaming branch above (spread-when-present).
       ...(copilotSkills ? { skills: copilotSkills } : {}),
     });
