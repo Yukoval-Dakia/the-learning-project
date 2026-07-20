@@ -6,16 +6,15 @@ import {
   enqueueNoteRefineTrigger,
   enqueueVerifyNoteRefine,
   noteRefineTriggerEnabled,
-  resetNoteRefineTriggerStateForTests,
 } from '@/capabilities/notes/server/note-refine-triggers';
 
 describe('note refine trigger producer', () => {
-  beforeEach(() => {
-    resetNoteRefineTriggerStateForTests();
-  });
-
   it('enqueues enabled triggers and debounces repeated artifact/kind pairs', async () => {
-    const bossSend = vi.fn(async () => undefined);
+    const bossSend = vi
+      .fn()
+      .mockResolvedValueOnce('job_1')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('job_2');
     const now = new Date('2026-05-28T12:00:00.000Z');
 
     await expect(
@@ -44,16 +43,20 @@ describe('note refine trigger producer', () => {
       }),
     ).resolves.toMatchObject({ status: 'enqueued' });
 
-    expect(bossSend).toHaveBeenCalledTimes(2);
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_1',
-      trigger: {
-        kind: 'mark_wrong',
-        context_md: undefined,
-        evidence_ids: undefined,
-        trigger_event_id: 'evt_attempt_1',
+    expect(bossSend).toHaveBeenCalledTimes(3);
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_1',
+        trigger: {
+          kind: 'mark_wrong',
+          context_md: undefined,
+          evidence_ids: undefined,
+          trigger_event_id: 'evt_attempt_1',
+        },
       },
-    });
+      { singletonKey: 'mark_wrong:art_1', singletonSeconds: 3600 },
+    );
   });
 
   it('honors kill switches before touching pg-boss', async () => {
@@ -111,15 +114,19 @@ describe('note refine trigger producer', () => {
     ).resolves.toMatchObject({ status: 'enqueued', artifact_id: 'art_v', kind: 'verify' });
 
     expect(bossSend).toHaveBeenCalledTimes(1);
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_v',
-      trigger: {
-        kind: 'verify',
-        context_md: expect.stringContaining('Verify summary: 例句解释缺少文本证据。'),
-        evidence_ids: ['evt_verify_1'],
-        trigger_event_id: 'evt_verify_1',
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_v',
+        trigger: {
+          kind: 'verify',
+          context_md: expect.stringContaining('Verify summary: 例句解释缺少文本证据。'),
+          evidence_ids: ['evt_verify_1'],
+          trigger_event_id: 'evt_verify_1',
+        },
       },
-    });
+      { singletonKey: 'verify:art_v', singletonSeconds: 3600 },
+    );
   });
 
   // The surviving real-signal kinds stay default-ON: an unset flag still enqueues.
@@ -154,14 +161,18 @@ describe('note refine trigger producer', () => {
       bossSend,
     });
 
-    expect(bossSend).toHaveBeenCalledWith('note_refine', {
-      artifact_id: 'art_1',
-      trigger: expect.objectContaining({
-        kind: 'mark_wrong',
-        context_md: expect.stringContaining('block_id=block_1'),
-        evidence_ids: ['evt_correct_1'],
-        trigger_event_id: 'evt_correct_1',
-      }),
-    });
+    expect(bossSend).toHaveBeenCalledWith(
+      'note_refine',
+      {
+        artifact_id: 'art_1',
+        trigger: expect.objectContaining({
+          kind: 'mark_wrong',
+          context_md: expect.stringContaining('block_id=block_1'),
+          evidence_ids: ['evt_correct_1'],
+          trigger_event_id: 'evt_correct_1',
+        }),
+      },
+      { singletonKey: 'mark_wrong:art_1', singletonSeconds: 3600 },
+    );
   });
 });

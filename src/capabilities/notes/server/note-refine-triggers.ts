@@ -40,9 +40,8 @@ type BossSend = (
       trigger_event_id?: string;
     };
   },
+  options: { singletonKey: string; singletonSeconds: number },
 ) => Promise<unknown>;
-
-const lastEnqueuedAt = new Map<string, number>();
 
 export type NoteRefineTriggerResult =
   | { status: 'enqueued'; artifact_id: string; kind: NoteRefineTriggerKind }
@@ -50,10 +49,6 @@ export type NoteRefineTriggerResult =
   | { status: 'skipped:debounced'; artifact_id: string; kind: NoteRefineTriggerKind }
   | { status: 'skipped:test_env'; artifact_id: string; kind: NoteRefineTriggerKind }
   | { status: 'failed'; artifact_id: string; kind: NoteRefineTriggerKind; error: string };
-
-export function resetNoteRefineTriggerStateForTests(): void {
-  lastEnqueuedAt.clear();
-}
 
 export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
@@ -78,15 +73,10 @@ export async function enqueueNoteRefineTrigger(input: {
   bossSend?: BossSend;
   env?: NodeJS.ProcessEnv;
 }): Promise<NoteRefineTriggerResult> {
-  const now = input.now ?? new Date();
   if (!noteRefineTriggerEnabled(input.kind, input.env ?? process.env)) {
     return { status: 'skipped:disabled', artifact_id: input.artifactId, kind: input.kind };
   }
   const key = `${input.kind}:${input.artifactId}`;
-  const last = lastEnqueuedAt.get(key);
-  if (last !== undefined && now.getTime() - last < NOTE_REFINE_TRIGGER_DEBOUNCE_MS) {
-    return { status: 'skipped:debounced', artifact_id: input.artifactId, kind: input.kind };
-  }
 
   // Same hazard class as YUK-239 (STB-5): a bare VITEST key would silently skip
   // real enqueues if prod ever set it. Route through the central guard (NODE_ENV
@@ -101,17 +91,27 @@ export async function enqueueNoteRefineTrigger(input: {
       const boss = await getStartedBoss();
       send = boss.send.bind(boss);
     }
-    await send('note_refine', {
-      artifact_id: input.artifactId,
-      trigger: {
-        kind: input.kind,
-        context_md: input.contextMd,
-        evidence_ids: input.evidenceIds,
-        trigger_event_id: input.triggerEventId,
+    const jobId = await send(
+      'note_refine',
+      {
+        artifact_id: input.artifactId,
+        trigger: {
+          kind: input.kind,
+          context_md: input.contextMd,
+          evidence_ids: input.evidenceIds,
+          trigger_event_id: input.triggerEventId,
+        },
       },
-    });
-    lastEnqueuedAt.set(key, now.getTime());
-    return { status: 'enqueued', artifact_id: input.artifactId, kind: input.kind };
+      {
+        singletonKey: key,
+        singletonSeconds: NOTE_REFINE_TRIGGER_DEBOUNCE_MS / 1000,
+      },
+    );
+    return {
+      status: jobId === null ? 'skipped:debounced' : 'enqueued',
+      artifact_id: input.artifactId,
+      kind: input.kind,
+    };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.warn(`[note_refine:${input.kind}] enqueue failed for ${input.artifactId}:`, err);
