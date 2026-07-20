@@ -103,7 +103,7 @@
     "@tiptap/react": "^3.26.0",
     "@tiptap/starter-kit": "^3.26.0",
     "@tiptap/suggestion": "^3.26.0",
-    "ai": "^6.0.197",
+    "ai": "^7.0.31",
     "better-sqlite3": "^12.6.2",
     "client-zip": "^2.5.0",
     "cytoscape": "^3.34.0",
