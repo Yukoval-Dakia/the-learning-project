@@ -79,6 +79,11 @@ function loadWasm(): Addon | null {
   }
 }
 const addon: Addon | null = loadWasm();
+if (process.env.REQUIRE_RUST_PARITY === '1' && !addon) {
+  throw new Error(
+    `required WASM parity addon could not be loaded: ${WASM_PATH} via ${WASI_LOADER}`,
+  );
+}
 
 // napi maps Rust Option<f64> None -> JS `undefined`; the JS oracle returns `null`.
 const nn = (x: number | null | undefined): number | null => (x == null ? null : x);
