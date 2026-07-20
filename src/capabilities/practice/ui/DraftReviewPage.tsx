@@ -89,11 +89,8 @@ const DR_DIFF: Record<string, { tone: Tone; word: string }> = {
   4: { tone: 'again', word: '较难' },
   5: { tone: 'again', word: '难' },
 };
-const DR_DIFF_FALLBACK = { tone: 'neutral' as Tone, word: '难度' };
-const lookupDiffMeta = makeLookup(DR_DIFF, DR_DIFF_FALLBACK);
 function diffMeta(d: number) {
-  const meta = lookupDiffMeta(String(d));
-  return meta === DR_DIFF_FALLBACK ? { ...meta, word: `难度 ${d}` } : meta;
+  return DR_DIFF[String(d)] ?? { tone: 'neutral' as Tone, word: `难度 ${d}` };
 }
 
 // verify 状态（data-review.jsx DR_VERIFY）→ label/tone/icon。
