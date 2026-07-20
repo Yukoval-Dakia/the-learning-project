@@ -52,9 +52,8 @@ export function confusableContrastEnabled(): boolean {
 }
 
 // A contrast/discrimination item is naturally OBJECTIVE (present A and B, ask to
-// distinguish) → 'choice'. NB: we do NOT set constraints.objectiveOnly — that branch in
-// planSupplyRoutes diverts to sourcing_web/author_question; the kind hint alone keeps the
-// generated item objective (quiz_gen honours the kind pin via kindsMatch).
+// distinguish) → 'choice'. The objectiveOnly constraint preserves the runtime kind
+// gate; route-planner keeps this gap's explicit quiz_gen-only route preference.
 const CONFUSABLE_CONTRAST_KIND = 'choice';
 
 const GAP_KIND: SupplyGapKind = 'confusable_contrast';
@@ -119,7 +118,7 @@ export async function discoverConfusableContrastTargets(
       // (ND-5 三轴正交). conf only appears as a qualitative tag in the human-readable reason.
       priority: computePriority(GAP_KIND, 0),
       reason: `confusable pair [${knowledgeIds.join(' ↔ ')}] (conf=${pair.conf}) lacks a contrast/discrimination item`,
-      constraints: {},
+      constraints: { objectiveOnly: true },
       context: evidenceDemandToTargetContext(
         buildCoverageEvidenceDemand({
           subjectId,

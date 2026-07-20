@@ -21,7 +21,9 @@ describe('getTaskSystemPrompt', () => {
         'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation',
       );
       expect(prompt).toContain('输出的 kind 对应的格式规则');
-      expect(prompt).not.toContain('硬约束');
+      expect(prompt).toContain('objective_only=true');
+      expect(prompt).toContain('是硬约束');
+      expect(prompt).not.toContain('requested_kind 是上游找题次序**指定**的题型（**硬约束**');
       expect(prompt).not.toContain('整批会被拒收');
       expect(prompt).not.toContain('kind 只能是');
       expect(prompt).not.toContain('question_type —— 从题面判题型');

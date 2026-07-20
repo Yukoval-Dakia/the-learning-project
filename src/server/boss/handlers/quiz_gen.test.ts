@@ -1487,6 +1487,7 @@ describe('runQuizGen', () => {
   it('rejects a kind mismatch for objective-only calibration supply', async () => {
     await seedKnowledge({ id: 'k1' });
     const enqueueQuizVerify = vi.fn(async () => {});
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_objective_mismatch');
     await expect(
       runQuizGen({
         db: testDb(),
@@ -1494,12 +1495,16 @@ describe('runQuizGen', () => {
         refId: 'k1',
         kind: 'choice',
         objectiveOnly: true,
-        runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr_objective_mismatch'),
+        runAgentTaskFn,
         enqueueQuizVerify,
         buildTavilyMcpServerFn: vi.fn(() => null),
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
+      requested_kind: 'choice',
+      objective_only: true,
+    });
     expect(
       await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
     ).toHaveLength(0);

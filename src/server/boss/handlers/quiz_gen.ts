@@ -547,6 +547,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
     // so the agent can target it; absent → the agent free-targets (original behaviour).
     ...(params.kind ? { requested_kind: params.kind } : {}),
+    ...(params.objectiveOnly ? { objective_only: true } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;

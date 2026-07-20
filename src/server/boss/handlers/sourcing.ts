@@ -389,6 +389,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // SourcingTask prompt's existing `kinds?` input (plural — a single hint forwarded as a
     // one-element list) so the agent can target the题型. Absent → the agent free-targets.
     ...(params.kind ? { kinds: [params.kind] } : {}),
+    ...(params.objectiveOnly ? { objective_only: true } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;

@@ -8,6 +8,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
 import { discoverConfusableContrastTargets } from './confusable-contrast-discovery';
+import { planSupplyRoutes } from './route-planner';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -98,8 +99,8 @@ describe('discoverConfusableContrastTargets (YUK-533)', () => {
     expect(t.minSourceTier).toBe(3);
     expect(t.routePreference).toEqual(['quiz_gen']);
     expect(t.desiredCount).toBe(1);
-    // No objectiveOnly constraint (would divert the route planner off quiz_gen).
-    expect(t.constraints.objectiveOnly).toBeUndefined();
+    expect(t.constraints.objectiveOnly).toBe(true);
+    expect(planSupplyRoutes(t)).toEqual(['quiz_gen']);
     // Priority is the fixed gap base demand (edge confidence band never feeds it).
     expect(t.priority).toBeCloseTo(0.6, 5);
     // The qualitative band tags the reason; raw weight never appears.

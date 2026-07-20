@@ -45,6 +45,9 @@ export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
       ? ['jyeoo_fetch', 'sourcing_web', 'ingest_existing', 'author_question']
       : ['sourcing_web', 'ingest_existing', 'author_question'];
   }
+  if (target.gapKind === 'confusable_contrast' && target.routePreference.length > 0) {
+    return target.routePreference;
+  }
   if (target.constraints.objectiveOnly) {
     return jyeoo
       ? ['jyeoo_fetch', 'sourcing_web', 'author_question']

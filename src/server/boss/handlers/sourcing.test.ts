@@ -1014,6 +1014,7 @@ describe('runSourcing', () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
     const enqueueSourceVerify = vi.fn(async () => {});
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_objective_mismatch');
     await expect(
       runSourcing({
         db,
@@ -1021,12 +1022,16 @@ describe('runSourcing', () => {
         refId: 'k1',
         kind: 'choice',
         objectiveOnly: true,
-        runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr_src_objective_mismatch'),
+        runAgentTaskFn,
         enqueueSourceVerify,
         buildTavilyMcpServerFn: vi.fn(() => null),
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
+      kinds: ['choice'],
+      objective_only: true,
+    });
     expect(await db.select().from(question).where(eq(question.source, 'web_sourced'))).toHaveLength(
       0,
     );
