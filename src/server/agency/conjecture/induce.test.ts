@@ -373,6 +373,31 @@ describe('induceConjecture self-consistency', () => {
     expect(sourceTuples).toContainEqual(resultTuple);
   });
 
+  it('chooses the majority coupled tuple over a lexical outlier in one semantic group', async () => {
+    const majority = {
+      probe_md: 'z majority probe',
+      probe_reference_md: 'z majority reference',
+    };
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('z majority claim', majority))
+      .mockResolvedValueOnce(sample('z majority claim', majority))
+      .mockResolvedValueOnce(
+        sample('a lexical outlier', {
+          probe_md: 'a outlier probe',
+          probe_reference_md: 'a outlier reference',
+        }),
+      )
+      .mockResolvedValueOnce(groupResult([[0, 1, 2]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(result.draft.claim_md).toBe('z majority claim');
+    expect(result.draft.probe_md).toBe(majority.probe_md);
+    expect(result.draft.probe_reference_md).toBe(majority.probe_reference_md);
+    expect(result.draft.agreement_count).toBe(3);
+  });
+
   it('chooses the lexical claim when equal-sized semantic groups tie', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
