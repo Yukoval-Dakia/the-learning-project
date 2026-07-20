@@ -36,6 +36,15 @@ import {
   type BlockMergeAcceptResult,
   acceptBlockMergeProposal,
 } from '@/capabilities/ingestion/server/proposal-appliers';
+// YUK-737 — the shared knowledge_edge accept-time write scaffold (lock discipline + ADR-0034
+// topology gate). The create/reverse/change_type branch and the supersede branch both route
+// through these helpers so the lock+gate discipline lives in ONE place (not copy-pasted per path).
+import {
+  acquireEdgeEndpointLocks,
+  assertEdgeEndpointsValid,
+  runEdgeTopologyGate,
+  withEdgeEndpointLockRetry,
+} from '@/capabilities/knowledge/server/edge-topology-write';
 // ADR-0032 D4-E1 (YUK-203) — edge archive accept routes through the single-owner
 // edges module (raw knowledge_edge writes outside it are forbidden).
 import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
@@ -48,7 +57,6 @@ import {
   dismissProposal,
 } from '@/capabilities/knowledge/server/proposals';
 import { applyApprovedEdgeSupersede } from '@/capabilities/knowledge/server/propose_edge';
-import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
   persistNoteRefineApply,
@@ -81,17 +89,9 @@ import {
   learning_item,
   mistake_variant,
 } from '@/db/schema';
-// YUK-546 — shared sorted advisory-lock util (same namespace/ordering the merge-side
-// rewireKnowledgeEdges uses), so the propose-accept live-edge write and the merge rewire
-// serialize on shared endpoints instead of both passing the topology gate then merging to a cycle.
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
-// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
-// the shared edge→snapshot mapper (one definition lives with the edge fold in gather.ts so
-// the assert compares the SAME shape the fold produces).
-import { edgeRowToSnapshot } from '@/server/projections/gather';
 // YUK-471 W2 — goal retract write-through (guarded; projection writes the dormant goal when the
 // per-entity flag is ON).
 import { projectGoalGuarded } from '@/server/projections/goal';
@@ -109,7 +109,6 @@ import { projectMistakeVariantGuarded } from '@/server/projections/mistake_varia
 // YUK-471 W2 — goal retract OFF-branch parity assert + the A1 anchor gate (hasGoalGenesisAnchor).
 import {
   assertGoalParity,
-  assertKnowledgeEdgeParity,
   assertKnowledgeNodeParity,
   assertLearningItemParity,
   assertMistakeVariantParity,
@@ -299,52 +298,6 @@ async function reconcileExistingRateSignal(
 function assertEdgeDecisionInput(input: EdgeProposalDecisionInput): void {
   if (input.decision === 'change_type' && !input.new_relation_type) {
     throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
-  }
-}
-
-/**
- * YUK-546 — the edge-accept endpoint invariants (both endpoints live + not a direct tree pair),
- * factored out (OCR round-2) so the pre-tx fast-fail (on `db`) and the post-lock revalidation
- * (on `tx`, under the row + advisory locks) can never drift in what they enforce. Throws the same
- * ApiError shapes the inline checks used.
- */
-async function assertEdgeEndpointsValid(
-  dbOrTx: Db | Tx,
-  fromId: string,
-  toId: string,
-  endpointIds: string[],
-): Promise<void> {
-  const rows = await dbOrTx
-    .select({
-      id: knowledge.id,
-      parent_id: knowledge.parent_id,
-      archived_at: knowledge.archived_at,
-    })
-    .from(knowledge)
-    .where(inArray(knowledge.id, endpointIds));
-  const active = new Set(rows.filter((r) => r.archived_at === null).map((r) => r.id));
-  const missing = endpointIds.filter((id) => !active.has(id));
-  if (missing.length > 0) {
-    throw new ApiError(
-      'not_found',
-      `unknown or archived knowledge_id(s): ${missing.join(', ')}`,
-      404,
-    );
-  }
-  if (
-    isDirectTreePair(
-      fromId,
-      toId,
-      rows.flatMap((node) =>
-        node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
-      ),
-    )
-  ) {
-    throw new ApiError(
-      'tree_redundancy',
-      `mesh edge repeats direct tree relationship: ${fromId} ↔ ${toId}`,
-      409,
-    );
   }
 }
 
@@ -603,83 +556,113 @@ export async function decideKnowledgeEdgeProposal(
       );
     }
 
-    const applied = await db.transaction(async (tx) => {
-      const oldEdge = (
-        await tx
-          .select()
-          .from(knowledge_edge)
-          .where(eq(knowledge_edge.id, supersededEdgeId))
-          .limit(1)
-          .for('update')
-      )[0];
-      if (!oldEdge || oldEdge.archived_at !== null) {
-        throw new ApiError(
-          'conflict',
-          `superseded knowledge_edge is no longer live: ${supersededEdgeId}`,
-          409,
-        );
-      }
-      const candidateTouchesOld =
-        oldEdge.from_knowledge_id === proposePayload.from_knowledge_id ||
-        oldEdge.to_knowledge_id === proposePayload.from_knowledge_id ||
-        oldEdge.from_knowledge_id === proposePayload.to_knowledge_id ||
-        oldEdge.to_knowledge_id === proposePayload.to_knowledge_id;
-      const candidateIsDuplicate =
-        oldEdge.from_knowledge_id === proposePayload.from_knowledge_id &&
-        oldEdge.to_knowledge_id === proposePayload.to_knowledge_id &&
-        oldEdge.relation_type === proposePayload.relation_type;
-      if (!candidateTouchesOld || candidateIsDuplicate) {
-        throw new ApiError(
-          'validation_error',
-          candidateIsDuplicate
-            ? `supersede candidate duplicates target edge ${supersededEdgeId}`
-            : `supersede candidate does not touch target edge ${supersededEdgeId}`,
-          400,
-        );
-      }
+    // YUK-737 — the supersede accept CREATES a live edge (the replacement candidate) just like
+    // create/reverse/change_type, so it gets the SAME accept-time discipline: endpoint locks +
+    // sorted advisory + lock-scoped revalidation (acquireEdgeEndpointLocks on the NEW edge's
+    // endpoints), the whole accept tx wrapped in the bounded NOWAIT retry, and the ADR-0034 fold
+    // topology gate on the replacement (runEdgeTopologyGate). Before #971/#YUK-737 the supersede
+    // branch had NO accept-time cycle check — the reconcile replacement could close a prerequisite
+    // cycle. translateReject surfaces a clean Api(409) since this decision is reachable via the
+    // proposal-decide route.
+    const newFromId = proposePayload.from_knowledge_id;
+    const newToId = proposePayload.to_knowledge_id;
+    const supersedeEndpointIds = Array.from(new Set([newFromId, newToId]));
 
-      await writeEvent(tx, {
-        id: rateEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'rate',
-        subject_kind: 'knowledge_edge',
-        subject_id: proposeSubjectId,
-        outcome: 'success',
-        payload: {
-          rating: 'accept',
-          edge_op: 'supersede',
-          ...(user_note ? { user_note } : {}),
-        },
-        caused_by_event_id: proposeEventId,
-        created_at: now,
-      });
+    const applied = await withEdgeEndpointLockRetry(
+      () =>
+        db.transaction(async (tx) => {
+          await acquireEdgeEndpointLocks(tx, newFromId, newToId, supersedeEndpointIds);
 
-      return applyApprovedEdgeSupersede(tx, {
-        candidate: {
-          from_knowledge_id: proposePayload.from_knowledge_id,
-          to_knowledge_id: proposePayload.to_knowledge_id,
-          relation_type: proposePayload.relation_type,
-          weight: proposePayload.weight ?? 0.5,
-          reasoning: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
-        },
-        supersededEdgeId,
-        supersededEdge: {
-          from_knowledge_id: oldEdge.from_knowledge_id,
-          to_knowledge_id: oldEdge.to_knowledge_id,
-          relation_type: oldEdge.relation_type,
-        },
-        decision: {
-          action: 'SUPERSEDE',
-          neighbor_index: proposePayload.supersede_neighbor_index ?? null,
-          superseded_edge_id: supersededEdgeId,
-          confidence,
-          reason: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
-        },
-        affectedRefs,
-        proposeEventId,
-      });
-    });
+          // YUK-737 — lock the OLD edge row NOWAIT (was a blocking FOR UPDATE): once the endpoint
+          // locks above are held, blocking here could form a merge-vs-supersede deadlock, so fail
+          // fast (55P03) and let withEdgeEndpointLockRetry roll back + retry, per the NOWAIT doctrine.
+          const oldEdge = (
+            await tx
+              .select()
+              .from(knowledge_edge)
+              .where(eq(knowledge_edge.id, supersededEdgeId))
+              .limit(1)
+              .for('update', { noWait: true })
+          )[0];
+          if (!oldEdge || oldEdge.archived_at !== null) {
+            throw new ApiError(
+              'conflict',
+              `superseded knowledge_edge is no longer live: ${supersededEdgeId}`,
+              409,
+            );
+          }
+          const candidateTouchesOld =
+            oldEdge.from_knowledge_id === proposePayload.from_knowledge_id ||
+            oldEdge.to_knowledge_id === proposePayload.from_knowledge_id ||
+            oldEdge.from_knowledge_id === proposePayload.to_knowledge_id ||
+            oldEdge.to_knowledge_id === proposePayload.to_knowledge_id;
+          const candidateIsDuplicate =
+            oldEdge.from_knowledge_id === proposePayload.from_knowledge_id &&
+            oldEdge.to_knowledge_id === proposePayload.to_knowledge_id &&
+            oldEdge.relation_type === proposePayload.relation_type;
+          if (!candidateTouchesOld || candidateIsDuplicate) {
+            throw new ApiError(
+              'validation_error',
+              candidateIsDuplicate
+                ? `supersede candidate duplicates target edge ${supersededEdgeId}`
+                : `supersede candidate does not touch target edge ${supersededEdgeId}`,
+              400,
+            );
+          }
+
+          await writeEvent(tx, {
+            id: rateEventId,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'rate',
+            subject_kind: 'knowledge_edge',
+            subject_id: proposeSubjectId,
+            outcome: 'success',
+            payload: {
+              rating: 'accept',
+              edge_op: 'supersede',
+              ...(user_note ? { user_note } : {}),
+            },
+            caused_by_event_id: proposeEventId,
+            created_at: now,
+          });
+
+          const result = await applyApprovedEdgeSupersede(tx, {
+            candidate: {
+              from_knowledge_id: proposePayload.from_knowledge_id,
+              to_knowledge_id: proposePayload.to_knowledge_id,
+              relation_type: proposePayload.relation_type,
+              weight: proposePayload.weight ?? 0.5,
+              reasoning: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
+            },
+            supersededEdgeId,
+            supersededEdge: {
+              from_knowledge_id: oldEdge.from_knowledge_id,
+              to_knowledge_id: oldEdge.to_knowledge_id,
+              relation_type: oldEdge.relation_type,
+            },
+            decision: {
+              action: 'SUPERSEDE',
+              neighbor_index: proposePayload.supersede_neighbor_index ?? null,
+              superseded_edge_id: supersededEdgeId,
+              confidence,
+              reason: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
+            },
+            affectedRefs,
+            proposeEventId,
+          });
+
+          // ADR-0034 topology gate on the replacement edge (runs AFTER the old edge is archived, so
+          // the live mesh reflects the post-supersede state). A cycle / direction reject THROWS and
+          // rolls the whole supersede back — nothing lands.
+          await runEdgeTopologyGate(tx, result.edgeId, { translateReject: true });
+
+          return result;
+        }),
+      {
+        uniqueViolationMessage: `edge already exists: ${newFromId} --${proposePayload.relation_type}--> ${newToId}`,
+      },
+    );
 
     if (proposal) {
       await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
@@ -702,58 +685,30 @@ export async function decideKnowledgeEdgeProposal(
 
   const endpointIds = Array.from(new Set([fromId, toId]));
   // Pre-tx fast-fail (no lock): reject an obviously-invalid proposal before opening a tx. The
-  // authoritative re-check runs under the locks inside the tx (assertEdgeEndpointsValid on `tx`).
+  // authoritative re-check runs under the locks inside the tx (acquireEdgeEndpointLocks re-asserts
+  // the same invariant tx-scoped).
   await assertEdgeEndpointsValid(db, fromId, toId, endpointIds);
 
   const edgeId = createId();
   const generateEventId = createId();
-  // YUK-471 W1 PR-B — SoT flip gate. ON: skip the imperative edge INSERT; the projection
-  // writes the edge row from the generate event below.
+  // YUK-471 W1 PR-B — SoT flip gate. ON: skip the imperative edge INSERT; runEdgeTopologyGate
+  // (projectKnowledgeEdgeGuarded) writes the edge row from the generate event below.
   const flip = projectionIsWriter();
 
-  // YUK-546 (codex P1, round-3) — bounded retry around the accept tx. The endpoint row lock inside is
-  // FOR UPDATE NOWAIT; on a contended endpoint it fails fast (55P03) instead of blocking while holding
-  // another lock, so the accept can never be the hold-and-wait edge of a merge-vs-accept cycle. The
-  // structural alternative (widening lockMutationRows to pre-lock rewrite endpoints in one sorted
-  // batch with a tx-level retry-on-stale) is heavier surgery on the shared merge-accept path used by
-  // all five mutation kinds; deferred as a follow-up if a background edge writer ever makes this live.
-  const MAX_LOCK_ATTEMPTS = 6;
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      await db.transaction(async (tx) => {
-        // YUK-546 (codex P1) — take the endpoint knowledge rows FOR UPDATE (id-sorted, mirroring
-        // lockMutationRows' strength + order) BEFORE the advisory, so this path and the merge accept
-        // share one global order (knowledge rows → knowledge_edge advisory) and the round-2 {from,into}
-        // cross can't deadlock. FOR UPDATE (not the FK's KEY SHARE) is required so it conflicts with a
-        // concurrent archive UPDATE (FOR NO KEY UPDATE). NOWAIT (round-3): the merge's row-lock batch
-        // (lockMutationRows) covers only {into_id, from_ids}, but rewireKnowledgeEdges then FK-locks the
-        // REMOTE endpoint Z of each rewritten edge (createKnowledgeEdge(into -> Z) → KEY SHARE on Z). A
-        // blocking FOR UPDATE here could still form a three-node cycle (accept holds Z waits for into;
-        // merge holds into waits for Z). NOWAIT makes the accept fail fast (55P03) on any contended
-        // endpoint instead of waiting while holding one, so it is never the hold-and-wait edge of a
-        // cycle; the outer loop rolls back and retries.
-        await tx
-          .select({ id: knowledge.id })
-          .from(knowledge)
-          .where(inArray(knowledge.id, endpointIds))
-          .orderBy(knowledge.id)
-          .for('update', { noWait: true });
-
-        // YUK-546 — symmetric propose-side advisory lock (mirrors rewireKnowledgeEdges' merge-side
-        // lock: same 'knowledge_edge' namespace + sorted acquisition via acquireSortedAdvisoryLocks).
-        // Acquired before the fold's live-mesh read below (projectKnowledgeEdgeGuarded /
-        // assertKnowledgeEdgeParity → gatherAndFoldKnowledgeEdge, a fresh `archived_at IS NULL` SELECT)
-        // so a concurrent accept of A→B and B→A serializes and the second is rejected by the ADR-0034
-        // topology gate instead of silently completing the cycle.
-        await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
-
-        // YUK-546 (codex P2) — lock-then-revalidate. The pre-tx endpoint/tree checks ran on `db` before
-        // these locks; a merge holding the endpoint row + knowledge_edge advisory can archive an
-        // endpoint + rewire + commit in that window, after which a blind write would land a live edge
-        // pointing at the just-archived node (FK holds on the tombstone; the fold's topology gate does
-        // NOT check endpoint archival). Re-assert both invariants tx-scoped under the locks — a stale
-        // check rejects and rolls the accept back, the same outcome shape as the topology gate.
-        await assertEdgeEndpointsValid(tx, fromId, toId, endpointIds);
+  // YUK-546 (codex P1) / YUK-737 — the accept tx runs inside the shared bounded-retry wrapper. Inside:
+  //   1. acquireEdgeEndpointLocks — endpoint rows FOR UPDATE NOWAIT (id-sorted) + the sorted
+  //      knowledge_edge advisory + a lock-scoped endpoint revalidation, so this path and the merge
+  //      accept share ONE global lock order and a merge that archives an endpoint under the locks is
+  //      caught (codex P2) rather than landing a live edge on a tombstone.
+  //   2. the rate + generate writes (+ the flip-OFF imperative INSERT).
+  //   3. runEdgeTopologyGate — the flip-conditional fold gate that re-runs ADR-0034 topology and
+  //      THROWS (rolls the accept back) on a cycle / direction reject.
+  // The wrapper backs off + retries a NOWAIT lock miss (55P03) and maps a UNIQUE violation (23505,
+  // from the flip-OFF raw INSERT or the flip-ON projection upsert) to a 409.
+  await withEdgeEndpointLockRetry(
+    () =>
+      db.transaction(async (tx) => {
+        await acquireEdgeEndpointLocks(tx, fromId, toId, endpointIds);
 
         await writeEvent(tx, {
           id: rateEventId,
@@ -773,8 +728,8 @@ export async function decideKnowledgeEdgeProposal(
           created_at: now,
         });
 
-        // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; the projection
-        // (projectKnowledgeEdgeGuarded below) writes the edge row from the generate event.
+        // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; runEdgeTopologyGate
+        // (projectKnowledgeEdgeGuarded) writes the edge row from the generate event.
         if (!flip) {
           await tx.insert(knowledge_edge).values({
             id: edgeId,
@@ -815,62 +770,15 @@ export async function decideKnowledgeEdgeProposal(
           created_at: now,
         });
 
-        // YUK-471 W1 PR-B — flip ON: the projection writes the edge row from the generate event
-        // (the imperative INSERT was skipped). Guarded; the fold is non-null here (the generate
-        // event creates the edge) so the delete branch is unreachable, and a topology reject still
-        // propagates to roll back the accept. A unique-tuple (from,to,relation_type) conflict
-        // surfaces 23505 from the upsert and is mapped to 409 by the catch below — same as the
-        // imperative INSERT. Flip OFF: the A2b parity assert — re-project the just-written edge and
-        // deep-compare fold == row (read the row back so the snapshot reflects DB coercion).
-        if (flip) {
-          await projectKnowledgeEdgeGuarded(tx, edgeId);
-        } else {
-          const writtenEdge = (
-            await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
-          )[0];
-          await assertKnowledgeEdgeParity(
-            tx,
-            edgeId,
-            writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
-          );
-        }
-      });
-      break;
-    } catch (err) {
-      const pgCode =
-        (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
-      if (pgCode === '55P03') {
-        // lock_not_available — a concurrent structural writer (e.g. a merge rewiring an edge
-        // endpoint) holds a conflicting endpoint row lock. Nothing was committed; back off and retry
-        // the whole tx. Bounded so a genuinely stuck lock surfaces as a 409 rather than looping.
-        if (attempt >= MAX_LOCK_ATTEMPTS) {
-          throw new ApiError(
-            'conflict',
-            `edge accept could not acquire endpoint locks after ${MAX_LOCK_ATTEMPTS} attempts (a concurrent structural change holds them)`,
-            409,
-          );
-        }
-        // Exponential backoff (25/50/100/200/400ms) + jitter → a ~0.6-1s total retry window across
-        // MAX_LOCK_ATTEMPTS (OCR round-4). A merge accept holding these endpoints runs its row locks +
-        // archive + edge rewrite + 9-surface attribution repair — easily 200ms+ — so the earlier flat
-        // ~150ms window would exhaust mid-merge and 409 spuriously. Jitter decorrelates concurrent
-        // retriers. Cap keeps a single sleep bounded if MAX_LOCK_ATTEMPTS is ever raised.
-        const backoffMs = Math.min(25 * 2 ** (attempt - 1), 500);
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.floor(backoffMs * (0.75 + Math.random() * 0.5))),
-        );
-        continue;
-      }
-      if (pgCode === '23505') {
-        throw new ApiError(
-          'conflict',
-          `edge already exists: ${fromId} --${relationType}--> ${toId}`,
-          409,
-        );
-      }
-      throw err;
-    }
-  }
+        // Flip ON: projectKnowledgeEdgeGuarded writes the edge row from the generate event + re-runs
+        // ADR-0034 topology (a cycle reject THROWS and rolls back). Flip OFF: the read-only parity
+        // assert re-folds the just-written edge (same reject propagates in dev/test). This branch's
+        // raw plain-Error reject propagates unchanged (no translateReject) — the accept-path contract
+        // #971 pinned.
+        await runEdgeTopologyGate(tx, edgeId);
+      }),
+    { uniqueViolationMessage: `edge already exists: ${fromId} --${relationType}--> ${toId}` },
+  );
 
   if (proposal) {
     await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
