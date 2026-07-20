@@ -32,9 +32,9 @@ import {
 } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
-import { enqueueHubAutoSync } from '@/server/boss/hub-auto-sync-enqueue';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { notifyKnowledgeMeshMutation } from '@/server/knowledge-mesh-sync';
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -145,7 +145,7 @@ export async function POST(req: Request): Promise<Response> {
         uniqueViolationMessage: `edge already exists: ${fromId} --${parsed.data.relation_type}--> ${toId}`,
       },
     );
-    await enqueueHubAutoSync();
+    await notifyKnowledgeMeshMutation();
     return resourceResponse(
       { id },
       {

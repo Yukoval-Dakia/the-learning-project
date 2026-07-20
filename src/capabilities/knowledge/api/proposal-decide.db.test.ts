@@ -3,7 +3,13 @@
 import { LegacyKnowledgeProposalDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { notifyKnowledgeMeshMutation } = vi.hoisted(() => ({
+  notifyKnowledgeMeshMutation: vi.fn(),
+}));
+
+vi.mock('@/server/knowledge-mesh-sync', () => ({ notifyKnowledgeMeshMutation }));
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './proposal-decide';
 
@@ -94,6 +100,7 @@ async function decide(id: string, body: unknown) {
 describe('POST /api/knowledge/proposals/[id]', () => {
   beforeEach(async () => {
     await resetDb();
+    notifyKnowledgeMeshMutation.mockReset();
   });
 
   it('returns 400 when decision is missing', async () => {
@@ -108,6 +115,37 @@ describe('POST /api/knowledge/proposals/[id]', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_decision');
+  });
+
+  it('enqueues mesh sync after a legacy merge accept but not after rejection or rollback', async () => {
+    await seedKnowledge('legacy_from');
+    await seedKnowledge('legacy_into');
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'legacy_merge',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'experimental:knowledge_merge',
+      subject_kind: 'knowledge',
+      subject_id: 'legacy_into',
+      outcome: 'partial',
+      payload: {
+        from_ids: ['legacy_from'],
+        into_id: 'legacy_into',
+        expected_versions: { legacy_from: 0, legacy_into: 0 },
+        reasoning: 'merge',
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    expect((await decide('legacy_merge', { decision: 'accept' })).status).toBe(200);
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
+    expect((await decide('legacy_merge', { decision: 'accept' })).status).toBe(409);
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
   });
 
   it('accepts a pending propose_new proposal', async () => {
@@ -152,6 +190,7 @@ describe('POST /api/knowledge/proposals/[id]', () => {
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p2')));
     expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('dismiss');
+    expect(notifyKnowledgeMeshMutation).not.toHaveBeenCalled();
   });
 
   it('returns 404 for non-existent proposal', async () => {

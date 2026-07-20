@@ -20,9 +20,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { enqueueHubAutoSync } = vi.hoisted(() => ({ enqueueHubAutoSync: vi.fn() }));
+const { notifyKnowledgeMeshMutation } = vi.hoisted(() => ({
+  notifyKnowledgeMeshMutation: vi.fn(),
+}));
 
-vi.mock('@/server/boss/hub-auto-sync-enqueue', () => ({ enqueueHubAutoSync }));
+vi.mock('@/server/knowledge-mesh-sync', () => ({ notifyKnowledgeMeshMutation }));
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   acceptAiProposal,
@@ -67,7 +69,7 @@ async function seedKnowledge(ids: string[]): Promise<void> {
 describe('proposal lifecycle owner service', () => {
   beforeEach(async () => {
     await resetDb();
-    enqueueHubAutoSync.mockReset();
+    notifyKnowledgeMeshMutation.mockReset();
   });
 
   it('acceptAiProposal materializes a knowledge_node proposal through the knowledge owner service', async () => {
@@ -151,7 +153,7 @@ describe('proposal lifecycle owner service', () => {
       relation_type: 'prerequisite',
       weight: 0.7,
     });
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
   });
 
   // ADR-0032 D4-E1 (YUK-203) — edge ARCHIVE accept: a knowledge_edge proposal with
@@ -202,7 +204,7 @@ describe('proposal lifecycle owner service', () => {
       .where(eq(knowledge_edge.id, 'edge_live_archive'));
     expect(archivedRows).toHaveLength(1);
     expect(archivedRows[0].archived_at).not.toBeNull();
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
 
     // Re-accept is idempotent — no new rate/edge mutation, archived_at unchanged.
     const archivedAtFirst = archivedRows[0].archived_at;
@@ -220,7 +222,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'edge_live_archive'));
     expect(afterReaccept[0].archived_at?.getTime()).toBe(archivedAtFirst?.getTime());
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
   });
 
   it('decideKnowledgeEdgeProposal rejects reverse/change_type on an archive proposal', async () => {
@@ -335,7 +337,7 @@ describe('proposal lifecycle owner service', () => {
     expect(corrections).toHaveLength(1);
     expect(corrections[0].actor_kind).toBe('user');
     expect(corrections[0].actor_ref).toBe('self');
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
 
     const replay = await acceptAiProposal(db, 'edge_supersede_p1');
     expect(replay.kind).toBe('knowledge_edge');
@@ -343,7 +345,7 @@ describe('proposal lifecycle owner service', () => {
     expect(replay.idempotent).toBe(true);
     expect(replay.edge_id).toBe(result.edge_id);
     expect(await db.select().from(edge_reconciliation_log)).toHaveLength(1);
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
   });
 
   it('allows one of two racing archive proposals to append the sole fold-visible archive event', async () => {
@@ -447,7 +449,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'edge_supersede_duplicate'));
     expect(oldEdge.archived_at).toBeNull();
-    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
+    expect(notifyKnowledgeMeshMutation).not.toHaveBeenCalled();
   });
 
   it('dismissAiProposal leaves an edge_op:supersede proposal unapplied', async () => {
@@ -496,7 +498,7 @@ describe('proposal lifecycle owner service', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.to_knowledge_id, 'k3'));
     expect(candidate).toHaveLength(0);
-    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
+    expect(notifyKnowledgeMeshMutation).not.toHaveBeenCalled();
   });
 
   it('acceptAiProposal applies a note_update patch proposal and writes a rate event', async () => {
@@ -1172,10 +1174,10 @@ describe('proposal lifecycle owner service', () => {
     });
 
     await acceptAiProposal(db, proposalId);
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
 
     await acceptAiProposal(db, proposalId);
-    expect(enqueueHubAutoSync).toHaveBeenCalledOnce();
+    expect(notifyKnowledgeMeshMutation).toHaveBeenCalledOnce();
   });
 
   it('does not enqueue hub sync when a merge accept rolls back', async () => {
@@ -1192,7 +1194,7 @@ describe('proposal lifecycle owner service', () => {
     });
 
     await expect(acceptAiProposal(db, proposalId)).rejects.toThrow(/stale/i);
-    expect(enqueueHubAutoSync).not.toHaveBeenCalled();
+    expect(notifyKnowledgeMeshMutation).not.toHaveBeenCalled();
   });
 
   it('acceptAiProposal materializes a knowledge_mutation proposal through the knowledge owner service', async () => {
