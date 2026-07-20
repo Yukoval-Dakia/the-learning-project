@@ -64,7 +64,14 @@ const validQuestion = {
   reference_md: '公元前 202 年',
   choices_md: ['公元前 202 年', '公元前 221 年', '公元 9 年'],
   judge_kind_override: 'exact' as const,
-  rubric_json: { criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }] },
+  rubric_json: {
+    criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }],
+    reference_solution: {
+      expected_signals: ['选择正确答案'],
+      final_answer: '公元前 202 年',
+      answer_equivalents: ['前 202 年'],
+    },
+  },
   difficulty: 2,
   knowledge_ids: ['k_han'],
   source_refs: [validSourceRef],
@@ -207,13 +214,103 @@ describe('QuizGenOutput', () => {
     expect(parsed.questions[0].knowledge_ids).toEqual(['k_han']);
   });
 
-  it('parses a prose question that omits choices/rubric', () => {
+  it.each(['exact', 'semantic'] as const)(
+    'rejects a %s question without rubric_json.reference_solution',
+    (judge_kind_override) => {
+      const result = QuizGenOutput.safeParse({
+        questions: [
+          {
+            ...validQuestion,
+            judge_kind_override,
+            rubric_json: {
+              criteria: [{ name: 'correctness', weight: 1, descriptor: '答案正确' }],
+            },
+          },
+        ],
+        source_pack: validSourcePack,
+        generation_method: 'search_grounded',
+        self_copy_safety: validCopySafety,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.path.includes('reference_solution'))).toBe(
+          true,
+        );
+      }
+    },
+  );
+
+  it.each([
+    { kind: 'choice' as const, prompt_md: '汉朝建立于哪一年？' },
+    { kind: 'short_answer' as const, prompt_md: '简述楚汉之争的结果。' },
+  ])('rejects an implicit exact/semantic $kind question without reference_solution', (question) => {
+    const result = QuizGenOutput.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          ...question,
+          judge_kind_override: undefined,
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '答案正确' }],
+          },
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes('reference_solution'))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('rejects an exact question whose reference solution omits answer_equivalents', () => {
+    const result = QuizGenOutput.safeParse({
+      questions: [
+        {
+          ...validQuestion,
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '选对即满分' }],
+            reference_solution: {
+              expected_signals: ['选择正确答案'],
+              final_answer: '公元前 202 年',
+            },
+          },
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path.includes('answer_equivalents'))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('parses an implicit semantic question with a reference solution', () => {
     const parsed = QuizGenOutput.parse({
       questions: [
         {
           kind: 'short_answer',
           prompt_md: '简述楚汉之争的结果。',
           reference_md: '刘邦击败项羽，建立汉朝。',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '说明战争结果' }],
+            reference_solution: {
+              expected_signals: ['刘邦击败项羽', '刘邦建立汉朝'],
+              final_answer: '刘邦击败项羽，建立汉朝。',
+              answer_equivalents: [],
+            },
+          },
           difficulty: 3,
           knowledge_ids: ['k_chuhan'],
           source_refs: [validSourceRef],
@@ -312,6 +409,11 @@ describe('QuizGenOutput', () => {
           rubric_json: {
             criteria: [{ name: 'correctness', weight: 1, descriptor: '答对建立年份' }],
             required_points: ['公元前 202 年'],
+            reference_solution: {
+              expected_signals: ['答出汉朝建立年份'],
+              final_answer: '公元前 202 年',
+              answer_equivalents: ['前 202 年'],
+            },
           },
         },
       ],
