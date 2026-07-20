@@ -157,7 +157,7 @@ async function evaluateWrongStreak(
       attemptIds.length === 0
         ? []
         : await db
-            .select({ id: event.id, subjectId: event.subject_id })
+            .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
             .from(event)
             .where(
               and(
@@ -185,6 +185,18 @@ async function evaluateWrongStreak(
                 )
             ).map((row) => row.subjectId),
           );
+    const unsupportedAttemptIds = new Set(
+      judges
+        .filter((judge) => {
+          const payload = judge.payload;
+          return (
+            payload !== null &&
+            typeof payload === 'object' &&
+            payload.coarse_outcome === 'unsupported'
+          );
+        })
+        .map((judge) => judge.subjectId),
+    );
     const contestedAttemptIds = new Set(
       judges
         .filter((judge) => {
@@ -197,13 +209,20 @@ async function evaluateWrongStreak(
         .map((judge) => judge.subjectId),
     );
 
-    const triggerIsContested = contestedAttemptIds.has(trigger.id);
-    if (triggerIsContested) return { fire: false, reason: 'not_failure' };
+    const triggerIsExcluded =
+      unsupportedAttemptIds.has(trigger.id) || contestedAttemptIds.has(trigger.id);
+    if (triggerIsExcluded) return { fire: false, reason: 'not_failure' };
 
     const tailEventIds: string[] = [];
     for (const row of rows) {
       if (row.outcome !== 'failure') break;
-      if (isUnsupportedAttemptPayload(row.payload) || contestedAttemptIds.has(row.id)) continue;
+      if (
+        isUnsupportedAttemptPayload(row.payload) ||
+        unsupportedAttemptIds.has(row.id) ||
+        contestedAttemptIds.has(row.id)
+      ) {
+        continue;
+      }
       tailEventIds.push(row.id);
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });

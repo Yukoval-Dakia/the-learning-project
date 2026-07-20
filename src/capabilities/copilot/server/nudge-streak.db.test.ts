@@ -46,6 +46,23 @@ async function seedAttempt(opts: {
     });
 }
 
+async function seedUnsupportedJudge(attemptId: string, at: Date): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: `judge_${attemptId}`,
+      actor_kind: 'agent',
+      actor_ref: 'review_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: { coarse_outcome: 'unsupported' },
+      caused_by_event_id: attemptId,
+      created_at: at,
+    });
+}
+
 async function seedWrongTail(kcId: string, count: number): Promise<string> {
   let latest = '';
   for (let i = 0; i < count; i++) {
@@ -145,6 +162,44 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
     expect(decision.fire).toBe(true);
     if (!decision.fire) throw new Error('expected fire');
     expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
+  });
+
+  it('skips a paper-shaped failure whose linked judge is unsupported', async () => {
+    await seedAttempt({
+      id: 'older_failure',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 4_000),
+    });
+    await seedAttempt({
+      id: 'paper_unsupported',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: new Date(NOW.getTime() - 3_000),
+    });
+    await seedUnsupportedJudge('paper_unsupported', new Date(NOW.getTime() - 2_900));
+    const triggerId = await seedWrongTail('kc_a', 2);
+
+    const decision = await evaluate(triggerId);
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
+  });
+
+  it('does not fire when the trigger linked judge is unsupported', async () => {
+    await seedWrongTail('kc_a', 3);
+    await seedAttempt({
+      id: 'paper_unsupported_trigger',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: NOW,
+    });
+    await seedUnsupportedJudge('paper_unsupported_trigger', new Date(NOW.getTime() + 1));
+
+    await expect(evaluate('paper_unsupported_trigger')).resolves.toEqual({
+      fire: false,
+      reason: 'not_failure',
+    });
   });
 
   it.each(['corrected', 'appealed'] as const)(
