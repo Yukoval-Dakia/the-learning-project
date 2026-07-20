@@ -3,6 +3,7 @@ import { parseFlag } from '@/core/env-flags';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 
@@ -42,7 +43,11 @@ type BossSend = (
       trigger_event_id?: string;
     };
   },
-  options?: { singletonKey: string; singletonSeconds: number },
+  options?: {
+    singletonKey?: string;
+    singletonSeconds?: number;
+    db?: ReturnType<typeof fromPgBossDrizzleTx>;
+  },
 ) => Promise<string | null>;
 
 export type NoteRefineTriggerResult =
@@ -119,14 +124,14 @@ export async function enqueueNoteRefineTrigger(input: {
           .limit(1);
         if (existing.length > 0) return false;
 
-        const jobId = await send('note_refine', data);
+        const jobId = await send('note_refine', data, { db: fromPgBossDrizzleTx(tx) });
         if (jobId === null) return false;
 
         await tx.insert(job_events).values({
           business_table: 'note_refine_debounce',
           business_id: key,
           event_type: 'note_refine.enqueued',
-          payload: {},
+          payload: { kind: input.kind, artifact_id: input.artifactId, job_id: jobId },
           ...(input.now ? { occurred_at: input.now } : {}),
         });
         return true;

@@ -49,12 +49,17 @@ describe('note refine rolling debounce', () => {
     ).resolves.toMatchObject({ status: 'skipped:debounced' });
 
     expect(bossSend).toHaveBeenCalledTimes(1);
-    expect(
-      await testDb()
-        .select()
-        .from(job_events)
-        .where(eq(job_events.business_id, 'mark_wrong:art_boundary')),
-    ).toHaveLength(1);
+    expect(bossSend.mock.calls[0]?.[2]).toMatchObject({ db: expect.any(Object) });
+    const claims = await testDb()
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, 'mark_wrong:art_boundary'));
+    expect(claims).toHaveLength(1);
+    expect(claims[0]?.payload).toEqual({
+      kind: 'mark_wrong',
+      artifact_id: 'art_boundary',
+      job_id: 'job_1',
+    });
   });
 
   it('waits behind a failing same-key send, then enqueues without dropping the trigger', async () => {
