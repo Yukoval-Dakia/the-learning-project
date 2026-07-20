@@ -39,7 +39,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractObjectBlock } from './lib/ts-tokenize';
+import { analyzeSource, extractObjectBlock } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -203,12 +203,15 @@ function lineOf(src: string, idx: number): number {
  */
 export function scanQuestionInserts(file: string, src: string): InsertSite[] {
   const sites: InsertSite[] = [];
+  const { codeMask } = analyzeSource(src);
   INSERT_HEAD_RE.lastIndex = 0;
   for (const m of src.matchAll(INSERT_HEAD_RE)) {
     const headIdx = m.index ?? 0;
     // the `{` is the last char of the match.
     const braceIdx = headIdx + m[0].length - 1;
-    const block = extractObjectBlock(src, braceIdx);
+    // Regex still sees example text in comments/strings; those are not insert sites.
+    if (codeMask[headIdx] === 0 || codeMask[braceIdx] === 0) continue;
+    const block = extractObjectBlock(src, braceIdx, codeMask);
     const hasDraftStatus = block !== null && DRAFT_STATUS_KEY_RE.test(block);
     sites.push({ file, line: lineOf(src, headIdx), hasDraftStatus });
   }

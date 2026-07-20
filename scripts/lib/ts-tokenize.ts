@@ -22,9 +22,13 @@
  *
  * Exported pure for unit testing (nested metadata objects, strings carrying '}', etc.).
  */
-export function extractObjectBlock(src: string, openIdx: number): string | null {
+export function extractObjectBlock(
+  src: string,
+  openIdx: number,
+  codeMask: Uint8Array = analyzeSource(src).codeMask,
+): string | null {
   if (src[openIdx] !== '{') return null;
-  const { codeMask } = analyzeSource(src);
+  if (codeMask[openIdx] === 0) return null;
   let depth = 0;
   for (let i = openIdx; i < src.length; i += 1) {
     if (codeMask[i] === 0) continue;

@@ -116,6 +116,18 @@ describe('scanQuestionInserts (classification)', () => {
     expect(scanQuestionInserts('f.ts', src)).toHaveLength(0);
   });
 
+  it('ignores complete insert examples inside comments and strings', () => {
+    const src = [
+      '// tx.insert(question).values({ id });',
+      'const example = "tx.insert(question).values({ id })";',
+      'const real = tx.insert(question).values({ id, draft_status: "draft" });',
+    ].join('\n');
+
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ line: 3, hasDraftStatus: true });
+  });
+
   it('does NOT treat draft_status_extra as the draft_status key (word-boundary)', () => {
     const sites = scanQuestionInserts(
       'f.ts',
