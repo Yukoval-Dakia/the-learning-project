@@ -196,6 +196,12 @@ export interface RunTaskCtx {
    * it. It is consumed into maxTurns / the timer and is never an Options key.
    */
   budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  /**
+   * Optional caller-owned correlation id shared with an in-process MCP server.
+   * Omitted callers keep runner-generated ids. `runTask` uses it for the first
+   * attempt; any opt-in transient retry gets a fresh id to preserve row identity.
+   */
+  taskRunId?: string;
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -212,12 +218,6 @@ export type StreamTaskCtx = RunTaskCtx & {
    * follow-up (YUK-238).
    */
   signal?: AbortSignal;
-  /**
-   * Optional caller-owned correlation id for an in-process MCP server that must
-   * log its tool result against the same task run. Omitted callers keep the
-   * runner-generated id.
-   */
-  taskRunId?: string;
   /**
    * Disable the runner's input-only tool log when the in-process MCP owner writes
    * the authoritative input + output log itself. Defaults to true.
@@ -760,7 +760,7 @@ export async function runTask(
 
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const taskRunId = createId();
+    const taskRunId = attempt === 1 ? (ctx.taskRunId ?? createId()) : createId();
     // Invocation-level guard: keep the warning correlated with the first run
     // row, but never repeat it if this task later gains transient retries.
     if (attempt === 1 && def.needsToolCall && !ctx.mcpServers) {
@@ -1164,7 +1164,7 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const taskRunId = createId();
+  const taskRunId = ctx.taskRunId ?? createId();
   const resolved = resolveTaskProvider(kind, ctx.override);
   let stepStartTime = Date.now();
   let iteration = 0;
