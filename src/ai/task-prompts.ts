@@ -975,7 +975,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 {"questions":[SourcedQuestion, ...],"image_candidates":[SourcingImageCandidate, ...](可省略),"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
 
 题目要求：
-- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
+- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离上游 kinds 提示，都必须遵循输出的 kind 对应的格式规则。
 - choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。

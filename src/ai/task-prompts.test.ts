@@ -28,6 +28,10 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).not.toContain('kind 只能是');
       expect(prompt).not.toContain('question_type —— 从题面判题型');
     }
+
+    const sourcingPrompt = getTaskSystemPrompt('SourcingTask', resolveSubjectProfile('math'));
+    expect(sourcingPrompt).toContain('无论是否偏离上游 kinds 提示');
+    expect(sourcingPrompt).not.toContain('无论是否偏离 requested_kind');
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
