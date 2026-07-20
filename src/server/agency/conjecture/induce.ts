@@ -136,22 +136,22 @@ function median(values: number[]): number {
 /** Aggregate a winning cluster without depending on sample completion/insertion order. */
 function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): ConjectureDraftT {
   // claim/probe/reference/cause form one semantic sample. Select one complete draft
-  // deterministically; aggregating those fields independently can fabricate a mismatched probe.
-  const representative = [...drafts].sort((a, b) => {
-    const claimOrder = compareLex(claimKey(a.claim_md), claimKey(b.claim_md));
-    if (claimOrder !== 0) return claimOrder;
-    const probeOrder = compareLex(a.probe_md, b.probe_md);
-    if (probeOrder !== 0) return probeOrder;
-    const referenceOrder = compareLex(a.probe_reference_md, b.probe_reference_md);
-    if (referenceOrder !== 0) return referenceOrder;
-    const causeOrder = compareLex(a.cause_category, b.cause_category);
-    if (causeOrder !== 0) return causeOrder;
-    return (
-      a.recurrence_count - b.recurrence_count ||
-      a.predicted_p - b.predicted_p ||
-      Number(a.discriminating) - Number(b.discriminating)
-    );
-  })[0];
+  // by exact tuple vote, then lexical tie-break. Aggregating fields independently
+  // can fabricate a mismatched probe; lexical-only selection can elevate a 1-vote outlier.
+  const coupled = new Map<string, { count: number; draft: ConjectureDraftT }>();
+  for (const draft of drafts) {
+    const key = JSON.stringify([
+      draft.claim_md,
+      draft.probe_md,
+      draft.probe_reference_md,
+      draft.cause_category,
+    ]);
+    const current = coupled.get(key);
+    coupled.set(key, { count: (current?.count ?? 0) + 1, draft: current?.draft ?? draft });
+  }
+  const representative = [...coupled.entries()].sort(
+    ([aKey, a], [bKey, b]) => b.count - a.count || compareLex(aKey, bKey),
+  )[0][1].draft;
   const discriminatingVotes = drafts.filter((draft) => draft.discriminating).length;
   return {
     ...representative,
