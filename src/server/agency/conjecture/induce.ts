@@ -125,6 +125,25 @@ function deterministicMode(values: string[]): string {
   )[0][0];
 }
 
+/** Keep the generated probe and its gold reference as one indivisible sample value. */
+function deterministicProbePair(
+  drafts: ConjectureDraftT[],
+): Pick<ConjectureDraftT, 'probe_md' | 'probe_reference_md'> {
+  const pairs = new Map<string, { count: number; draft: ConjectureDraftT }>();
+  for (const draft of drafts) {
+    const key = JSON.stringify([draft.probe_md, draft.probe_reference_md]);
+    const current = pairs.get(key);
+    pairs.set(key, { count: (current?.count ?? 0) + 1, draft: current?.draft ?? draft });
+  }
+  const winner = [...pairs.entries()].sort(
+    ([aKey, a], [bKey, b]) => b.count - a.count || compareLex(aKey, bKey),
+  )[0][1].draft;
+  return {
+    probe_md: winner.probe_md,
+    probe_reference_md: winner.probe_reference_md,
+  };
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -141,11 +160,11 @@ function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): 
     return a.predicted_p - b.predicted_p;
   })[0];
   const discriminatingVotes = drafts.filter((draft) => draft.discriminating).length;
+  const probePair = deterministicProbePair(drafts);
   return {
     ...representative,
     claim_md: deterministicMode(drafts.map((draft) => draft.claim_md)),
-    probe_md: deterministicMode(drafts.map((draft) => draft.probe_md)),
-    probe_reference_md: deterministicMode(drafts.map((draft) => draft.probe_reference_md)),
+    ...probePair,
     cause_category: deterministicMode(
       drafts.map((draft) => draft.cause_category),
     ) as ConjectureDraftT['cause_category'],

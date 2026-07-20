@@ -311,6 +311,48 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.discriminating).toBe(false);
   });
 
+  it('keeps each probe paired with the gold reference generated in the same sample', async () => {
+    const pairs = [
+      ['a probe', 'x reference'],
+      ['a probe', 'y reference'],
+      ['b probe', 'z reference'],
+      ['c probe', 'z reference'],
+    ] as const;
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(
+        sample('same semantic claim one', {
+          probe_md: pairs[0][0],
+          probe_reference_md: pairs[0][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim two', {
+          probe_md: pairs[1][0],
+          probe_reference_md: pairs[1][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim three', {
+          probe_md: pairs[2][0],
+          probe_reference_md: pairs[2][1],
+        }),
+      )
+      .mockResolvedValueOnce(
+        sample('same semantic claim four', {
+          probe_md: pairs[3][0],
+          probe_reference_md: pairs[3][1],
+        }),
+      )
+      .mockResolvedValueOnce(groupResult([[0, 1, 2, 3]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 4, runTaskFn });
+
+    // Independent field modes would synthesize the nonexistent pair (a probe, z reference).
+    expect([result.draft.probe_md, result.draft.probe_reference_md]).toEqual(pairs[0]);
+    expect(pairs).toContainEqual([result.draft.probe_md, result.draft.probe_reference_md]);
+  });
+
   it('chooses the lexical claim when equal-sized semantic groups tie', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
