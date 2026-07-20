@@ -73,3 +73,47 @@ describe('recompute rerun controls', () => {
     ).toBe(false);
   });
 });
+
+describe('maturity drift detail', () => {
+  function renderSettledDrift(overrides: Partial<RcMaturitySummary>) {
+    vi.useFakeTimers();
+    render(
+      <RcMaturityBadge
+        summary={{
+          ...maturitySummary,
+          overall: 'drift',
+          dFirm: 2,
+          sFirm: 2,
+          dMedian: 0.4,
+          sMedian: 0.4,
+          ...overrides,
+        }}
+      />,
+    );
+    act(() => vi.advanceTimersByTime(540));
+  }
+
+  it('reports a firm-only mismatch and its two values', () => {
+    renderSettledDrift({ sFirm: 3 });
+
+    expect(screen.getByText(/概览有/).textContent).toContain('1');
+    expect(screen.getByText(/判断较可信：服务端/).textContent).toContain('3 · 本地重导 2');
+    expect(screen.queryByText(/中位 θ̂ SE：服务端/)).toBeNull();
+  });
+
+  it('reports a median-only mismatch instead of showing equal firm counts', () => {
+    renderSettledDrift({ sMedian: 0.5 });
+
+    expect(screen.getByText(/概览有/).textContent).toContain('1');
+    expect(screen.queryByText(/判断较可信：服务端/)).toBeNull();
+    expect(screen.getByText(/中位 θ̂ SE：服务端/).textContent).toContain('0.50 · 本地重导 0.40');
+  });
+
+  it('counts and renders both mismatch dimensions', () => {
+    renderSettledDrift({ sFirm: 3, sMedian: null });
+
+    expect(screen.getByText(/概览有/).textContent).toContain('2');
+    expect(screen.getByText(/判断较可信：服务端/)).toBeTruthy();
+    expect(screen.getByText(/中位 θ̂ SE：服务端/).textContent).toContain('暂无 · 本地重导 0.40');
+  });
+});

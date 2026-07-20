@@ -268,6 +268,10 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
   // Own the verify state machine; settle on the REAL reconciliation outcome.
   const { state, run } = useRecompute({ auto: true, outcome: summary.overall });
   const { dFirm, total } = summary;
+  const firmMatch = summary.dFirm === summary.sFirm;
+  const medianMatch = Object.is(summary.dMedian, summary.sMedian);
+  const mismatchCount = Number(!firmMatch) + Number(!medianMatch);
+  const formatMedian = (value: number | null) => (value === null ? '暂无' : value.toFixed(2));
 
   return (
     <div className={`rc-cal rc-state-${state}`}>
@@ -301,9 +305,21 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
         {state === 'drift' && (
           <>
             <div className="rc-cal-title">
-              概览有 <b className="mono">1</b> 处不同步
+              概览有 <b className="mono">{mismatchCount}</b> 处不同步
             </div>
             <div className="rc-cal-sub">
+              {!firmMatch && (
+                <span>
+                  判断较可信：服务端 <b className="mono">{summary.sFirm}</b> · 本地重导{' '}
+                  <b className="mono">{summary.dFirm}</b>
+                </span>
+              )}
+              {!medianMatch && (
+                <span>
+                  中位 θ̂ SE：服务端 <b className="mono">{formatMedian(summary.sMedian)}</b> ·
+                  本地重导 <b className="mono">{formatMedian(summary.dMedian)}</b>
+                </span>
+              )}
               学习记录没有丢失；概览会在下次同步时重新核对。核对过程只读，不会改动记录。 ·{' '}
               <RcOffline />
             </div>
