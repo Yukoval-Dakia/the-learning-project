@@ -222,9 +222,13 @@ export class PgPresenceStore implements PresenceStore {
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
+    // X5: only sessions within the 30s active window count as 'editing' — same fence as
+    // isArtifactIdle — so an abandoned/zombie heartbeat row (browser crash → no blur, not yet
+    // swept) does not make the snapshot falsely read 'editing'.
     const sessions = await this.db.execute<{ last_heartbeat_at: string | Date }>(sql`
       select last_heartbeat_at from artifact_edit_session
       where artifact_id = ${artifactId}
+        and clock_timestamp() - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
       order by last_heartbeat_at desc
       limit 1
     `);

@@ -137,6 +137,17 @@ describe('PgPresenceStore — session presence (artifact_edit_session)', () => {
     await heartbeatAtDatabaseAge('hub-a', 'A', '31 seconds');
     expect(await store.isArtifactIdle('hub-a')).toBe(true);
   });
+
+  it('X5: getEditingSessionSnapshot reads editing within the 30s window; a zombie row is not falsely editing', async () => {
+    await seedArtifact('art_z');
+    await heartbeatAtDatabaseAge('art_z', 'A', '5 seconds');
+    expect((await store.getEditingSessionSnapshot('art_z'))?.status).toBe('editing');
+    // Age the heartbeat past the 30s window → the zombie row no longer reads as editing.
+    await heartbeatAtDatabaseAge('art_z', 'A', '31 seconds');
+    const zombie = await store.getEditingSessionSnapshot('art_z');
+    // No presence row → null; either way it must NOT read as an active editor.
+    expect(zombie?.status).not.toBe('editing');
+  });
 });
 
 describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)', () => {
