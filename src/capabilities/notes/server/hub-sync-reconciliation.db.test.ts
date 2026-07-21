@@ -13,6 +13,7 @@ import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
+import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -652,6 +653,95 @@ describe('YUK-384 hub-sync fenced apply', () => {
     expect(await state('hub-a')).toMatchObject({
       status: 'retry_wait',
       last_error_class: 'invalid_document',
+    });
+  });
+});
+
+// ── Task 5 (RED Tests 16 & 18): session-qualified editing vs fenced apply ─────
+
+describe('YUK-384 session-qualified editing defers fenced apply', () => {
+  let store: PgPresenceStore;
+
+  beforeEach(async () => {
+    await resetDb();
+    store = new PgPresenceStore(testDb());
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-a',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 'Atomic A',
+    });
+    await seedHub('hub-a', ['kc']);
+  });
+
+  async function preparedClaim(): Promise<{ claim: HubSyncClaim; desired: HubDesiredState }> {
+    const claim = await claimRequired('worker');
+    const desired = await computeHubDesiredState(testDb(), claim);
+    return { claim, desired };
+  }
+
+  async function finalizePrepared(p: { claim: HubSyncClaim; desired: HubDesiredState }) {
+    return finalizeHubSync(testDb(), { claim: p.claim, desired: p.desired, mode: 'apply' });
+  }
+
+  // Holds the per-artifact advisory lock in its own transaction until released,
+  // so a heartbeat / finalize that takes the SAME lock must wait.
+  async function holdHubAdvisoryLock(
+    artifactId: string,
+  ): Promise<{ release: () => void; done: Promise<unknown> }> {
+    const held = createDeferred();
+    const release = createDeferred();
+    const done = rawClient().begin(async (c) => {
+      await c`select pg_advisory_xact_lock(hashtextextended(${artifactId}, 0))`;
+      held.resolve();
+      await release.promise;
+    });
+    await held.promise;
+    return { release: () => release.resolve(), done };
+  }
+
+  async function appliedWhileActive(artifactId: string): Promise<boolean> {
+    return (await state(artifactId)).status === 'acknowledged';
+  }
+
+  async function heartbeatAtDatabaseAge(artifactId: string, sessionId: string, age: string) {
+    await testDb().execute(sql`
+      insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+      values (${artifactId}, ${sessionId}, clock_timestamp(), clock_timestamp() - ${age}::interval)
+      on conflict (artifact_id, session_id)
+      do update set last_heartbeat_at = clock_timestamp() - ${age}::interval
+    `);
+  }
+
+  async function runOneApplyCycle() {
+    return runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 1, mode: 'apply' });
+  }
+
+  it('YUK-384 RED 16: first heartbeat and reconcile serialize an absent-row race', async () => {
+    const prepared = await preparedClaim();
+    // Both the heartbeat and finalize contend for the same advisory lock; the
+    // holder forces the heartbeat to land first, so reconcile observes the
+    // now-present session and defers instead of applying under an active editor.
+    const barrier = await holdHubAdvisoryLock('hub-a');
+    const heartbeat = store.recordEditingHeartbeat({ artifactId: 'hub-a', sessionId: 'A' });
+    barrier.release();
+    await barrier.done;
+    await heartbeat;
+    expect(await finalizePrepared(prepared)).toBe('deferred_editing');
+    expect(await appliedWhileActive('hub-a')).toBe(false);
+  });
+
+  it('YUK-384 RED 18: active editing never increments failure count and missed blur expires into apply', async () => {
+    await heartbeatAtDatabaseAge('hub-a', 'A', '5 seconds');
+    await runOneApplyCycle();
+    expect(await state('hub-a')).toMatchObject({ status: 'pending', consecutive_failure_count: 0 });
+
+    await heartbeatAtDatabaseAge('hub-a', 'A', '31 seconds');
+    await runOneApplyCycle();
+    expect(await state('hub-a')).toMatchObject({
+      status: 'acknowledged',
+      consecutive_failure_count: 0,
     });
   });
 });

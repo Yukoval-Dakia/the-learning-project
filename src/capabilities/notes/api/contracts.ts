@@ -227,12 +227,18 @@ export const DismissHubLinkResponseSchema = z.object({
 
 export const EditingHeartbeatBodySchema = z.object({
   artifact_id: z.string().min(1),
-  status: z.enum(['editing', 'idle']),
+  // YUK-384 — editing presence is session-qualified; one UUID per mounted editor
+  // session so a heartbeat upserts only that session's row.
+  editor_session_id: z.string().uuid(),
+  status: z.enum(['editing', 'idle']).default('editing'),
 });
 
 export const EditingHeartbeatResponseSchema = z.object({ ok: z.literal(true) });
 
-export const EditingBlurBodySchema = z.object({ artifact_id: z.string().min(1) });
+export const EditingBlurBodySchema = z.object({
+  artifact_id: z.string().min(1),
+  editor_session_id: z.string().uuid(),
+});
 
 export const NoteRefineApplyResultSchema = z.object({
   status: z.enum([

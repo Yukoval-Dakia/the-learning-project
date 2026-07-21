@@ -20,7 +20,13 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const body = parsed.data;
-    await recordEditingHeartbeat({ artifactId: body.artifact_id, status: body.status });
+    // YUK-384 — upsert ONLY the caller's editing session. `status` stays in the
+    // wire contract for back-compat; presence is now driven purely by the
+    // per-session heartbeat row.
+    await recordEditingHeartbeat({
+      artifactId: body.artifact_id,
+      sessionId: body.editor_session_id,
+    });
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

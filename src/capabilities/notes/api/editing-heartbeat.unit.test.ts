@@ -36,42 +36,55 @@ function req(body: unknown): Request {
   });
 }
 
-describe('POST /api/editing-session/heartbeat (决定6 dwell retired)', () => {
+const SESSION_ID = '11111111-1111-4111-8111-111111111111';
+
+describe('POST /api/editing-session/heartbeat (决定6 dwell retired; YUK-384 session-qualified)', () => {
   beforeEach(() => {
     recordEditingHeartbeat.mockReset();
     enqueueDwellNoteRefine.mockReset();
   });
 
-  it('records the presence heartbeat on status="editing" and does NOT enqueue a dwell note_refine', async () => {
-    const res = await POST(req({ artifact_id: 'art_1', status: 'editing' }));
+  it('upserts ONLY the caller session on status="editing" and does NOT enqueue a dwell note_refine', async () => {
+    const res = await POST(
+      req({ artifact_id: 'art_1', editor_session_id: SESSION_ID, status: 'editing' }),
+    );
 
     expect(res.status).toBe(200);
     expect(EditingHeartbeatResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(recordEditingHeartbeat).toHaveBeenCalledTimes(1);
+    // YUK-384 — forwards artifactId + the caller's sessionId, never a global status write.
     expect(recordEditingHeartbeat).toHaveBeenCalledWith({
       artifactId: 'art_1',
-      status: 'editing',
+      sessionId: SESSION_ID,
     });
     // 决定6 red line: the dwell trigger is gone — editing presence must never
     // fire a background note_refine job.
     expect(enqueueDwellNoteRefine).not.toHaveBeenCalled();
   });
 
-  it('records the presence heartbeat on status="idle" without enqueueing note_refine', async () => {
-    const res = await POST(req({ artifact_id: 'art_1', status: 'idle' }));
+  it('records the caller session on status="idle" too (status is vestigial in the wire contract)', async () => {
+    const res = await POST(
+      req({ artifact_id: 'art_1', editor_session_id: SESSION_ID, status: 'idle' }),
+    );
 
     expect(res.status).toBe(200);
     expect(recordEditingHeartbeat).toHaveBeenCalledWith({
       artifactId: 'art_1',
-      status: 'idle',
+      sessionId: SESSION_ID,
     });
     expect(enqueueDwellNoteRefine).not.toHaveBeenCalled();
   });
 
   it('rejects a body without artifact_id (400)', async () => {
-    const res = await POST(req({ status: 'editing' }));
+    const res = await POST(req({ editor_session_id: SESSION_ID, status: 'editing' }));
     expect(res.status).toBe(400);
     expect(recordEditingHeartbeat).not.toHaveBeenCalled();
     expect(enqueueDwellNoteRefine).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body without a valid editor_session_id (400)', async () => {
+    const res = await POST(req({ artifact_id: 'art_1', status: 'editing' }));
+    expect(res.status).toBe(400);
+    expect(recordEditingHeartbeat).not.toHaveBeenCalled();
   });
 });

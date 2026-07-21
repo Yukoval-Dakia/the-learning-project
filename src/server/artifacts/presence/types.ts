@@ -3,12 +3,15 @@ import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
 
-// How long a recorded `editing` heartbeat stays "live" before isArtifactIdle
-// flips the session to idle. The Redis store also uses this as the per-artifact
-// key TTL so stale presence self-expires (a missing/expired key reads as idle).
+// YUK-384 — editing presence is session-qualified: one `artifact_edit_session`
+// row per (artifact, editor session). A session is ACTIVE while its last
+// heartbeat is within this window; exactly-30s is still active, only age > 30s
+// expires. There is no 10-minute forced apply — an abandoned session simply
+// expires after this window and its work applies then.
 export const EDITING_HEARTBEAT_TIMEOUT_MS = 30_000;
-// Ceiling on how long an actively-edited artifact can defer an AI patch before
-// it is force-applied anyway.
+// Stale-pending TTL: a note-refine patch that has waited in the defer queue
+// longer than this is dropped at load time (the queue never self-expires the way
+// the old Redis key TTL did). NOT a force-apply-while-editing path.
 export const EDITING_FORCE_APPLY_TIMEOUT_MS = 10 * 60_000;
 
 export type EditingStatus = 'editing' | 'idle';
@@ -44,7 +47,7 @@ export interface EditingSessionSnapshot {
 
 export interface RecordHeartbeatInput {
   artifactId: string;
-  status: EditingStatus;
+  sessionId: string;
   now?: Date;
 }
 
@@ -64,6 +67,9 @@ export type EnqueueOrApplyResult =
 export interface MarkIdleAndFlushInput {
   db: Db;
   artifactId: string;
+  // The blurring editor session. Only this session's row is removed; the
+  // deferred note-refine queue flushes only once NO active session remains.
+  sessionId: string;
   now?: Date;
 }
 
@@ -81,14 +87,16 @@ export interface MarkIdleAndFlushResult {
 // machine (encoded by editing-session.test.ts). All reads/writes are async to
 // accommodate PG I/O; the in-memory impl resolves synchronously.
 export interface PresenceStore {
-  // Record a heartbeat. Stamps editingStartedAt only on the FIRST editing
-  // heartbeat (so the force-apply clock isn't reset by subsequent heartbeats);
-  // clears it on idle.
+  // Upsert the caller's editing session row (keyed by artifact + session), under
+  // the shared per-artifact advisory lock so it serializes with hub-sync
+  // finalization. Never touches other sessions.
   recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void>;
 
-  // Returns true if the artifact is idle. STICKY: an editing session whose last
-  // heartbeat exceeded EDITING_HEARTBEAT_TIMEOUT_MS is transitioned to idle as a
-  // side effect. A never-seen / expired artifact reads as idle (safe default).
+  // True when NO session has heartbeat within EDITING_HEARTBEAT_TIMEOUT_MS.
+  // Evaluated against database time (clock_timestamp) unless `now` is injected.
+  // Exactly-30s counts as active; only age > 30s is idle. A never-seen artifact
+  // reads as idle (safe default). Expired rows may be swept as best-effort
+  // cleanup, but correctness never depends on the sweep.
   isArtifactIdle(artifactId: string, now?: Date): Promise<boolean>;
 
   // Apply the patch immediately when the artifact is idle (or past the
@@ -96,7 +104,9 @@ export interface PresenceStore {
   // write (persistNoteRefineApply) happens outside any atomic section.
   enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult>;
 
-  // Mark the artifact idle and flush all pending patches in FIFO order.
+  // Remove the caller's editing session; if no active session remains, flush all
+  // pending note-refine patches in FIFO order (otherwise leave them queued for
+  // the session still editing).
   markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult>;
 
   // Snapshot of the current session, or null if none recorded.
