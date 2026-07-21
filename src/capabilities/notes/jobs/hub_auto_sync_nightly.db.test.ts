@@ -97,7 +97,10 @@ function autoZoneChildren(bodyBlocks: unknown): Array<Record<string, unknown>> {
 // runHubSyncCycle (nightly_repair): it dirties/cancels cursors and the SAME cycle
 // then converges them under the fenced reconciler. So `runHubAutoSyncNightly`
 // still lands the auto-zone end-to-end (repair + apply), never a direct write.
-const APPLY_ACTION = 'experimental:hub_sync_apply';
+// X1: the reconciler apply now writes a fold-replayable experimental:body_blocks_edit event
+// (actor_ref 'hub_auto_sync'), not the fold-ignored experimental:hub_sync_apply.
+const APPLY_ACTION = 'experimental:body_blocks_edit';
+const HUB_SYNC_ACTOR = 'hub_auto_sync';
 
 async function hubBody(id: string) {
   const [row] = await testDb().select().from(artifact).where(eq(artifact.id, id));
@@ -108,7 +111,13 @@ async function applyEventCount(id: string): Promise<number> {
   const rows = await testDb()
     .select()
     .from(event)
-    .where(and(eq(event.action, APPLY_ACTION), eq(event.subject_id, id)));
+    .where(
+      and(
+        eq(event.action, APPLY_ACTION),
+        eq(event.actor_ref, HUB_SYNC_ACTOR),
+        eq(event.subject_id, id),
+      ),
+    );
   return rows.length;
 }
 

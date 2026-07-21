@@ -703,7 +703,7 @@ PostgreSQL 是权威：`knowledge` / `knowledge_edge` / hub-local `artifact` 拓
 2. 停掉所有旧 worker 进程再部署新 worker——绝不让旧直接-apply nightly 与新 reconciler 并存。
 3. app + worker 同一 build 部署，`HUB_SYNC_MODE=shadow`。
 4. 校验：cursor backfill 数 == live hub 数；查 status 分布、ready/dirty age、desired hash、分类错误、重复 nightly repair key 幂等。
-5. 所有 app/worker 实例一次协调重启切 `HUB_SYNC_MODE=apply`。
+5. 所有 app/worker 实例一次协调重启切 `HUB_SYNC_MODE=apply`。shadow 期观察过、未消费义务的 hub 因 shadow re-observe 退避（2min）留在 pending，切 apply 后 **≤~3min 内经每分钟 recovery 自动收敛**（或立即跑一次 nightly repair 强制收敛）。
 6. 确认每分钟恢复 drain pending、02:45 BJT repair 用同一 `nightly:<date>` key。
 7. apply-mode 校验通过后才退役旧直接-apply nightly 路径。
 8. 回滚 = 设 `HUB_SYNC_MODE=off`；保留 reconciliation 行 + 未 ack 的 generation，义务不丢。**但注意 `off` 不是完整 kill switch**：见下「off 语义」——`off` 只停 reconciler，触发器记账（每次 KG/hub 写 bump generation）仍继续，因为触发器是 migration 起的无条件 DDL。
@@ -725,6 +725,8 @@ DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
 **Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`、`triggers_installed`（provisioning 哨兵，见上 Provisioning 警告）。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
 
 **所有权守卫**：`pnpm audit:hub-sync-writers`（+ `tests/integration/step9-invariant-audit.test.ts`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
+
+**并发注记 — atomic 硬删 vs finalizer 死锁 (X2)**：atomic 硬删事务持 atomic 行锁 → `AFTER DELETE` 触发器 fan-out 要更新 hub cursor；同时 finalizer 持 cursor 锁 → `syncBlockRefsForArtifact` 插 `artifact_block_ref(to_artifact_id=该 atomic)` 需该 atomic 行的 `KEY SHARE` → 两事务互等。这是**可能但收敛安全**的：PostgreSQL 死锁检测（默认 `deadlock_timeout` 1s）解环、abort 一边并抛 `40P01 deadlock_detected`。**finalize 侧**若被 abort，`40P01` 是 5 字符 SQLSTATE → `classifyHubSyncError` 归 `pg_transient` → classified retry → 下一周期自愈（无数据损失，义务不丢）。**删除侧调用方**若被 abort，需容忍并重试该删除（标准写侧重试纪律）。彻底消除方案（如 finalize 先验 refs、或延迟 block-ref fan-out）是 follow-up，非本 PR——单用户规模下死锁窗口极小，PG 解环 + 自愈已足。
 
 **学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
 

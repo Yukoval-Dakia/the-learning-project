@@ -19,6 +19,8 @@ import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 import { sendHubSyncMutationWake } from '@/server/boss/hub-sync-wake';
 
 import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
+import { gatherAndFoldArtifact } from '@/server/projections/gather';
+import { backfillArtifactGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type HubDesiredState,
@@ -1390,9 +1392,55 @@ describe('YUK-384 unified hub-sync cycle', () => {
     ).toMatchObject({ errorClass: 'apply_validation_error', code: 'user_verified_protected' });
     // A genuine 5-char SQLSTATE is still pg_transient.
     expect(classifyHubSyncError({ code: '40001' })).toMatchObject({ errorClass: 'pg_transient' });
+    // X2: 40P01 (deadlock_detected — the atomic hard-delete vs finalizer FK deadlock) is a
+    // 5-char SQLSTATE → pg_transient → classified retry → the finalize side self-heals.
+    expect(classifyHubSyncError({ code: '40P01' })).toMatchObject({ errorClass: 'pg_transient' });
     // A non-SQLSTATE business `.code` is NOT pg_transient (was the bug).
     expect(classifyHubSyncError({ code: 'some_business_code' })).toMatchObject({
       errorClass: 'unknown',
     });
+  });
+
+  it('YUK-384 (X1): a reconciler apply is fold-replayable — fold(events).body_blocks == row.body_blocks', async () => {
+    await seedAppliableHub('hub-a');
+    // Genesis BASE (v0, seed body) so the fold has a base, like the real event-sourced stream.
+    // `NOW` (2026-07-21) < the apply event's real created_at → genesis sorts first.
+    await backfillArtifactGenesis(testDb(), NOW);
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+
+    const rows = await testDb().execute<{ body: unknown; version: number }>(
+      sql`select body_blocks as body, version from artifact where id = 'hub-a'`,
+    );
+    const folded = await gatherAndFoldArtifact(testDb(), 'hub-a');
+    // Pre-fix (experimental:hub_sync_apply, ignored by foldArtifact): the fold stayed at the
+    // genesis body → drift. Post-fix (full-snapshot body_blocks_edit): fold == row.
+    expect(folded).not.toBeNull();
+    expect(folded?.body_blocks).toEqual(rows[0].body);
+    expect(folded?.version).toBe(rows[0].version);
+  });
+
+  it('YUK-384 (X1): the container-heal apply is also fold-replayable (full snapshot, no op-replay throw)', async () => {
+    await seedAppliableHub('hub-a');
+    // A malformed auto-links container (no attrs.id) → the reconciler heals it during apply.
+    const malformed = {
+      type: 'doc',
+      content: [{ type: 'autoLinksContainer', attrs: { title: 'Related' }, content: [] }],
+    };
+    await testDb().execute(
+      sql`update artifact set body_blocks = ${JSON.stringify(malformed)}::jsonb where id = 'hub-a'`,
+    );
+    await backfillArtifactGenesis(testDb(), NOW); // genesis captures the MALFORMED body
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+
+    const rows = await testDb().execute<{ body: unknown }>(
+      sql`select body_blocks as body from artifact where id = 'hub-a'`,
+    );
+    const folded = await gatherAndFoldArtifact(testDb(), 'hub-a');
+    // The full-snapshot event reproduces the HEALED after-body verbatim. An op-replay event
+    // would have thrown target_not_found replaying the container patch on the un-healed
+    // genesis body → fold warn+skip → drift. This is why body_blocks_edit is mandatory here.
+    expect(folded?.body_blocks).toEqual(rows[0].body);
   });
 });

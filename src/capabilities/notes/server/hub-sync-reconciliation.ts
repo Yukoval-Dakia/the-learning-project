@@ -181,7 +181,6 @@ export interface FinalizeHubSyncHooks {
 const HUB_TYPE = 'note_hub';
 const ATOMIC_TYPE = 'note_atomic';
 const ACTOR_REF = 'hub_auto_sync';
-const HUB_SYNC_APPLY_ACTION = 'experimental:hub_sync_apply';
 const LAST_ERROR_MAX_CODE_POINTS = 2048;
 
 export class HubSyncError extends Error {
@@ -420,8 +419,11 @@ export async function finalizeHubSync(
       type: string;
       archived_at: Date | null;
       version: number;
+      // X1: previous body + history for the full-snapshot body_blocks_edit event (below).
+      body_blocks: ArtifactBodyBlocksT;
+      history: unknown[];
     }>(sql`
-      select type, archived_at, version from artifact
+      select type, archived_at, version, body_blocks, history from artifact
       where id = ${claim.artifactId} for update
     `);
     const hub = hubRows[0];
@@ -515,21 +517,29 @@ export async function finalizeHubSync(
     await syncBlockRefsForArtifact(tx, claim.artifactId, desired.bodyBlocks);
 
     await hooks.beforeStage?.('event');
+    // X1: write a FULL-SNAPSHOT body_blocks_edit event (fork #1) so foldArtifact REPLAYS the
+    // hub-sync apply. The op-replay note_refine_apply path is FORBIDDEN for new writes (B4 铁律,
+    // artifact.ts) and would drift on the container-heal case (replaying ops on the un-healed
+    // row body throws target_not_found). The old experimental:hub_sync_apply event was ignored
+    // by the fold → projection rebuild reverted the hub body → fold≠row. Actor is
+    // 'agent'/'hub_auto_sync' (an AI-curated structural write). generation/desiredHash live in
+    // the cursor columns + the NDJSON attempt log (the body_blocks_edit payload is .strict()).
+    // The reconciler UPDATE leaves `history` untouched, so history_after = the pre-apply history.
     await writeEvent(tx, {
       id: randomUUID(),
       session_id: null,
-      actor_kind: 'system',
+      actor_kind: 'agent',
       actor_ref: ACTOR_REF,
-      action: HUB_SYNC_APPLY_ACTION,
+      action: 'experimental:body_blocks_edit',
       subject_kind: 'artifact',
       subject_id: claim.artifactId,
       outcome: 'success',
       payload: {
-        artifact_id: claim.artifactId,
-        generation: claim.generation,
-        desired_hash: desired.desiredHash,
-        reason: 'hub_desired_state_reconciled',
-        applied_artifact_version: appliedVersion,
+        previous_artifact_version: desired.observedArtifactVersion,
+        next_artifact_version: appliedVersion,
+        body_blocks: desired.bodyBlocks,
+        previous_body_blocks: hub.body_blocks,
+        history_after: hub.history,
       },
       caused_by_event_id: null,
       created_at: new Date(),
@@ -627,7 +637,11 @@ async function acknowledgeNoop(
 // dispatch an endless continuation (hasReadyHubSync would stay true forever). A real
 // topology change re-dirties via mark_hub_sync_dirty (next_attempt_at = now), and
 // nightly repair re-dirties everything, so apply-mode convergence is never blocked by it.
-const SHADOW_REOBSERVE_BACKOFF = sql`interval '15 minutes'`;
+// X3: kept at 2min — comfortably ≥ the 1-minute recovery tick (enough to stop the shadow
+// hot loop) yet short enough that flipping shadow→apply converges shadow-observed hubs
+// within ~2–3min (or immediately via one nightly repair / any topology change), so it no
+// longer contradicts the ADR's per-minute recovery-drain cadence.
+const SHADOW_REOBSERVE_BACKOFF = sql`interval '2 minutes'`;
 
 // Shadow mode OBSERVES the desired state (records the hash/version for operators)
 // WITHOUT applying it and, crucially, WITHOUT consuming the obligation: the claim is
