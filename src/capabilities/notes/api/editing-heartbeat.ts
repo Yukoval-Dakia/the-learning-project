@@ -5,7 +5,11 @@
 // 仲裁（决定1 A-track auto-apply 依赖它），不再 enqueue 任何 note_refine。
 
 import { EditingHeartbeatBodySchema } from '@/capabilities/notes/api/contracts';
-import { recordEditingHeartbeat } from '@/server/artifacts/editing-session';
+import { db } from '@/db/client';
+import {
+  markArtifactIdleAndFlush,
+  recordEditingHeartbeat,
+} from '@/server/artifacts/editing-session';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export async function POST(req: Request): Promise<Response> {
@@ -20,13 +24,24 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const body = parsed.data;
-    // YUK-384 — upsert ONLY the caller's editing session. `status` stays in the
-    // wire contract for back-compat; presence is now driven purely by the
-    // per-session heartbeat row.
-    await recordEditingHeartbeat({
-      artifactId: body.artifact_id,
-      sessionId: body.editor_session_id,
-    });
+    // W2 — honour `status`. 'idle' is a BLUR: remove only this editor's session (and flush
+    // the deferred queue only once NO active session remains), matching the /blur route's
+    // old idle=clear-presence semantics. The route previously ignored status and
+    // reverse-upserted an 'idle' request into an ACTIVE session (inverted). 'editing' upserts
+    // the per-session heartbeat row. ('idle' is retained in the wire contract for Task-5
+    // back-compat; new clients only send 'editing'.)
+    if (body.status === 'idle') {
+      await markArtifactIdleAndFlush({
+        db,
+        artifactId: body.artifact_id,
+        sessionId: body.editor_session_id,
+      });
+    } else {
+      await recordEditingHeartbeat({
+        artifactId: body.artifact_id,
+        sessionId: body.editor_session_id,
+      });
+    }
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

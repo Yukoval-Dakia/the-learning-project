@@ -15,8 +15,14 @@ import { EditingHeartbeatResponseSchema } from '@/capabilities/notes/api/contrac
 vi.mock('@/db/client', () => ({ db: {} }));
 
 const recordEditingHeartbeat = vi.fn();
+const markArtifactIdleAndFlush = vi.fn(async (..._args: unknown[]) => ({
+  artifact_id: 'art_1',
+  flushed: 0,
+  results: [],
+}));
 vi.mock('@/server/artifacts/editing-session', () => ({
   recordEditingHeartbeat: (...args: unknown[]) => recordEditingHeartbeat(...args),
+  markArtifactIdleAndFlush: (...args: unknown[]) => markArtifactIdleAndFlush(...args),
 }));
 
 // Spy on every producer this module COULD enqueue, including the soon-deleted
@@ -41,6 +47,11 @@ const SESSION_ID = '11111111-1111-4111-8111-111111111111';
 describe('POST /api/editing-session/heartbeat (决定6 dwell retired; YUK-384 session-qualified)', () => {
   beforeEach(() => {
     recordEditingHeartbeat.mockReset();
+    markArtifactIdleAndFlush.mockReset().mockResolvedValue({
+      artifact_id: 'art_1',
+      flushed: 0,
+      results: [],
+    });
     enqueueDwellNoteRefine.mockReset();
   });
 
@@ -57,21 +68,28 @@ describe('POST /api/editing-session/heartbeat (决定6 dwell retired; YUK-384 se
       artifactId: 'art_1',
       sessionId: SESSION_ID,
     });
+    // W2: 'editing' upserts, never blurs.
+    expect(markArtifactIdleAndFlush).not.toHaveBeenCalled();
     // 决定6 red line: the dwell trigger is gone — editing presence must never
     // fire a background note_refine job.
     expect(enqueueDwellNoteRefine).not.toHaveBeenCalled();
   });
 
-  it('records the caller session on status="idle" too (status is vestigial in the wire contract)', async () => {
+  it('W2: blurs (removes) the caller session on status="idle" — NOT an active-session upsert', async () => {
     const res = await POST(
       req({ artifact_id: 'art_1', editor_session_id: SESSION_ID, status: 'idle' }),
     );
 
     expect(res.status).toBe(200);
-    expect(recordEditingHeartbeat).toHaveBeenCalledWith({
+    // idle = blur semantics: delete this editor's session (flush-if-last), same as /blur.
+    expect(markArtifactIdleAndFlush).toHaveBeenCalledTimes(1);
+    expect(markArtifactIdleAndFlush).toHaveBeenCalledWith({
+      db: expect.anything(),
       artifactId: 'art_1',
       sessionId: SESSION_ID,
     });
+    // Must NOT reverse-upsert the idle request into an ACTIVE session (the inverted bug).
+    expect(recordEditingHeartbeat).not.toHaveBeenCalled();
     expect(enqueueDwellNoteRefine).not.toHaveBeenCalled();
   });
 
