@@ -15,7 +15,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { type HubSyncClaim, claimNextHubSync, renewHubSyncLease } from './hub-sync-reconciliation';
+import {
+  type HubDesiredState,
+  type HubSyncClaim,
+  claimNextHubSync,
+  computeHubDesiredState,
+  finalizeHubSync,
+  renewHubSyncLease,
+  runHubSyncCycle,
+} from './hub-sync-reconciliation';
 
 const NOW = new Date('2026-07-21T00:00:00Z');
 
@@ -124,17 +132,26 @@ async function state(id: string): Promise<{
   acknowledged_generation: string;
   status: string;
   consecutive_failure_count: number;
+  last_error_class: string | null;
+  last_error_code: string | null;
+  last_outcome: string | null;
 }> {
   const rows = await testDb().execute<{
     generation: string;
     acknowledged_generation: string;
     status: string;
     consecutive_failure_count: number;
+    last_error_class: string | null;
+    last_error_code: string | null;
+    last_outcome: string | null;
   }>(sql`
     select generation::text as generation,
            acknowledged_generation::text as acknowledged_generation,
            status,
-           consecutive_failure_count
+           consecutive_failure_count,
+           last_error_class,
+           last_error_code,
+           last_outcome
     from hub_sync_reconciliation where artifact_id = ${id}
   `);
   return rows[0];
@@ -419,5 +436,222 @@ describe('YUK-384 hub-sync claim + renewable lease', () => {
     expect(await renewHubSyncLease(testDb(), claim)).toBe(true);
     await supersedeClaim(claim);
     expect(await renewHubSyncLease(testDb(), claim)).toBe(false);
+  });
+});
+
+// ── Task 4 (RED Tests 10–14): deterministic compute + atomic fenced apply ─────
+
+function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// Pauses finalization at a named point so a competing mutation can race the
+// held cursor lock (RED 11).
+class FinalizeBarrier {
+  private readonly reached = createDeferred();
+  private readonly released = createDeferred();
+  constructor(readonly at: string) {}
+  async hit(): Promise<void> {
+    this.reached.resolve();
+    await this.released.promise;
+  }
+  waitUntilReached(): Promise<void> {
+    return this.reached.promise;
+  }
+  release(): void {
+    this.released.resolve();
+  }
+}
+
+describe('YUK-384 hub-sync fenced apply', () => {
+  let prepared: { claim: HubSyncClaim; desired: HubDesiredState };
+  let snapshotBefore: Record<string, unknown>;
+
+  beforeEach(async () => {
+    await resetDb();
+    // hub-a shares knowledge kc with a live atomic, so compute yields a real
+    // auto-zone change (changed=true). Atomic seeded before the hub so its
+    // fan-out touches zero hubs; hub-a lands at generation 1.
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-a',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 'Atomic A',
+    });
+    await seedHub('hub-a', ['kc']);
+  });
+
+  async function preparedClaim(): Promise<{ claim: HubSyncClaim; desired: HubDesiredState }> {
+    const claim = await claimRequired('worker');
+    const desired = await computeHubDesiredState(testDb(), claim);
+    return { claim, desired };
+  }
+
+  async function finalizePrepared(p: {
+    claim: HubSyncClaim;
+    desired: HubDesiredState;
+  }): Promise<string> {
+    return finalizeHubSync(testDb(), { claim: p.claim, desired: p.desired, mode: 'apply' });
+  }
+
+  async function renameAtomic(id: string, title: string): Promise<void> {
+    await testDb().execute(sql`update artifact set title = ${title} where id = ${id}`);
+  }
+
+  // Bumps artifact.version only (no topology column), so the cursor is NOT
+  // re-dirtied — this exercises the artifact-version CAS defer path, not the
+  // generation fence.
+  async function ownerSaveHub(id: string): Promise<void> {
+    await testDb().execute(
+      sql`update artifact set version = version + 1, updated_at = clock_timestamp() where id = ${id}`,
+    );
+  }
+
+  async function artifactVersionAndEventCount(
+    id: string,
+  ): Promise<{ version: number; events: number }> {
+    const v = await testDb().execute<{ version: number }>(
+      sql`select version from artifact where id = ${id}`,
+    );
+    const e = await testDb().execute<{ count: string }>(
+      sql`select count(*)::text as count from event where subject_id = ${id}`,
+    );
+    return { version: v[0].version, events: Number(e[0].count) };
+  }
+
+  // Suppress the only matching atomic so desired is an empty (unchanged, VALID)
+  // auto-zone. Touches attrs only — no artifact.version bump, no event — so the
+  // caller's before/after counts stay equal across the no-op finalize.
+  async function preparedNoopClaim(): Promise<{ claim: HubSyncClaim; desired: HubDesiredState }> {
+    await testDb().execute(sql`
+      update artifact
+      set attrs = jsonb_set(coalesce(attrs, '{}'::jsonb), '{suppressed_block_refs}',
+                            '[{"artifact_id":"atomic-a"}]'::jsonb)
+      where id = 'hub-a'
+    `);
+    const claim = await claimRequired('worker');
+    const desired = await computeHubDesiredState(testDb(), claim);
+    return { claim, desired };
+  }
+
+  async function corruptHubDocument(id: string): Promise<void> {
+    await testDb().execute(
+      sql`update artifact set body_blocks = '{"not":"a valid doc"}'::jsonb where id = ${id}`,
+    );
+  }
+
+  async function snapshotDurable(): Promise<Record<string, unknown>> {
+    const a = await testDb().execute<{ version: number; body: string }>(
+      sql`select version, body_blocks::text as body from artifact where id = 'hub-a'`,
+    );
+    const refs = await testDb().execute<{ count: string }>(
+      sql`select count(*)::text as count from artifact_block_ref where from_artifact_id = 'hub-a'`,
+    );
+    const events = await testDb().execute<{ count: string }>(
+      sql`select count(*)::text as count from event where subject_id = 'hub-a'`,
+    );
+    const cursor = await state('hub-a');
+    return {
+      version: a[0].version,
+      body: a[0].body,
+      refs: refs[0].count,
+      events: events[0].count,
+      generation: cursor.generation,
+      acknowledged_generation: cursor.acknowledged_generation,
+      status: cursor.status,
+    };
+  }
+
+  // Re-establish a clean prepared claim for the next injected-failure iteration.
+  async function resetPreparedHub(): Promise<void> {
+    await testDb().execute(sql`
+      update hub_sync_reconciliation
+      set status = 'pending', claim_owner = null, claim_token = null, lease_expires_at = null,
+          acknowledged_generation = 0, next_attempt_at = clock_timestamp(), updated_at = clock_timestamp()
+      where artifact_id = 'hub-a'
+    `);
+    await testDb().execute(
+      sql`update artifact set body_blocks = '{"type":"doc","content":[]}'::jsonb where id = 'hub-a'`,
+    );
+    prepared = await preparedClaim();
+    snapshotBefore = await snapshotDurable();
+  }
+
+  async function finalizeWithInjectedFailure(stage: string): Promise<string> {
+    return finalizeHubSync(
+      testDb(),
+      { claim: prepared.claim, desired: prepared.desired, mode: 'apply' },
+      {
+        beforeStage: (s) => {
+          if (s === stage) throw new Error(`inject:${stage}`);
+        },
+      },
+    );
+  }
+
+  it('YUK-384 RED 10: N+1 committed before finalization fences N', async () => {
+    const claimN = await claimRequired('worker');
+    const desiredN = await computeHubDesiredState(testDb(), claimN);
+    await renameAtomic('atomic-a', 'N+1');
+    expect(
+      await finalizeHubSync(testDb(), { claim: claimN, desired: desiredN, mode: 'apply' }),
+    ).toBe('superseded');
+    expect(await state('hub-a')).toMatchObject({
+      generation: '2',
+      acknowledged_generation: '0',
+      status: 'pending',
+    });
+  });
+
+  it('YUK-384 RED 11: N+1 waiting behind final cursor lock leaves newer pending state', async () => {
+    const p = await preparedClaim();
+    const barrier = new FinalizeBarrier('after-reconciliation-lock');
+    const applyN = finalizeHubSync(
+      testDb(),
+      { claim: p.claim, desired: p.desired, mode: 'apply' },
+      { afterCursorLock: () => barrier.hit() },
+    );
+    await barrier.waitUntilReached();
+    const mutateN1 = renameAtomic('atomic-a', 'N+1');
+    barrier.release();
+    await Promise.all([applyN, mutateN1]);
+    expect(await state('hub-a')).toMatchObject({
+      generation: '2',
+      acknowledged_generation: '1',
+      status: 'pending',
+    });
+  });
+
+  it('YUK-384 RED 12: artifact CAS conflict returns pending without failure', async () => {
+    const p = await preparedClaim();
+    await ownerSaveHub('hub-a');
+    expect(await finalizePrepared(p)).toBe('superseded');
+    expect(await state('hub-a')).toMatchObject({ status: 'pending', consecutive_failure_count: 0 });
+  });
+
+  it('YUK-384 RED 13: rollback at each apply stage leaves no partial effects', async () => {
+    for (const stage of ['artifact', 'block_refs', 'event', 'ack'] as const) {
+      await resetPreparedHub();
+      await expect(finalizeWithInjectedFailure(stage)).rejects.toThrow(`inject:${stage}`);
+      expect(await snapshotDurable()).toEqual(snapshotBefore);
+    }
+  });
+
+  it('YUK-384 RED 14: valid no-op acknowledges without churn and invalid document retries', async () => {
+    const before = await artifactVersionAndEventCount('hub-a');
+    expect(await finalizePrepared(await preparedNoopClaim())).toBe('acknowledged_noop');
+    expect(await artifactVersionAndEventCount('hub-a')).toEqual(before);
+
+    await corruptHubDocument('hub-a');
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 1, mode: 'apply' });
+    expect(await state('hub-a')).toMatchObject({
+      status: 'retry_wait',
+      last_error_class: 'invalid_document',
+    });
   });
 });
