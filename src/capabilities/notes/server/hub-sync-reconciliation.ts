@@ -705,18 +705,24 @@ export interface RepairHubSyncHooks {
  */
 export async function repairHubSyncCoverage(
   db: Db,
-  input: { repairKey: string; pageSize: number },
+  input: { repairKey: string; pageSize: number; afterId?: string | null },
   hooks: RepairHubSyncHooks = {},
-): Promise<{ dirtied: number; cancelled: number; hasMore: boolean }> {
+): Promise<{ dirtied: number; cancelled: number; hasMore: boolean; lastId: string | null }> {
   if (!/^nightly:\d{4}-\d{2}-\d{2}$/.test(input.repairKey)) {
     throw new Error(`invalid nightly repair key: ${input.repairKey}`);
   }
+  // KEYSET page: scan strictly past the last id the previous page returned. Without
+  // this the `order by id limit pageSize` scan returns the same head every call, so
+  // hubs beyond pageSize are never dirtied/cancelled and coverage repair is not
+  // convergent. The caller (nightly path) loops pages until hasMore is false.
+  const afterId = input.afterId ?? null;
   const ids = await db.execute<{ id: string }>(sql`
     select id from (
       select artifact_id as id from hub_sync_reconciliation
       union
       select id from artifact where type = ${HUB_TYPE}
     ) coverage
+    where ${afterId === null ? sql`true` : sql`id > ${afterId}`}
     order by id
     limit ${input.pageSize}
   `);
@@ -773,8 +779,14 @@ export async function repairHubSyncCoverage(
     if (outcome === 'dirtied') dirtied += 1;
     else if (outcome === 'cancelled') cancelled += 1;
   }
-  return { dirtied, cancelled, hasMore: ids.length === input.pageSize };
+  const lastId = ids.length > 0 ? ids[ids.length - 1].id : null;
+  return { dirtied, cancelled, hasMore: ids.length === input.pageSize, lastId };
 }
+
+// Bounded guard so a pathological coverage set (or a stuck cursor) can never spin the
+// nightly page loop forever. pageSize is maxArtifacts (default 25); 10_000 pages is
+// ~250k artifacts — orders of magnitude above any real hub population for this tool.
+const MAX_NIGHTLY_REPAIR_PAGES = 10_000;
 
 /**
  * Minimal unified cycle (Task 4 scope): claim → compute → finalize up to
@@ -794,10 +806,19 @@ export async function runHubSyncCycle(
   // claim→compute→finalize loop converges them. No scheduled path applies directly.
   if (options.reason === 'nightly_repair') {
     if (!options.repairKey) throw new Error('nightly_repair requires repairKey');
-    await repairHubSyncCoverage(db, {
-      repairKey: options.repairKey,
-      pageSize: options.maxArtifacts,
-    });
+    // LOOP keyset pages until the coverage set is exhausted, so EVERY live hub is
+    // dirtied/cancelled even when the population exceeds one page. Bounded by
+    // MAX_NIGHTLY_REPAIR_PAGES against runaway.
+    let afterId: string | null = null;
+    for (let page = 0; page < MAX_NIGHTLY_REPAIR_PAGES; page += 1) {
+      const { hasMore, lastId } = await repairHubSyncCoverage(db, {
+        repairKey: options.repairKey,
+        pageSize: options.maxArtifacts,
+        afterId,
+      });
+      if (!hasMore) break;
+      afterId = lastId;
+    }
   }
 
   const owner = options.owner ?? workerOwner();

@@ -907,6 +907,43 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
     await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 100 });
     expect(await generation('hub-a')).toBe(once);
   });
+
+  it('YUK-384: nightly repair pages past pageSize so EVERY live hub is dirtied in one run', async () => {
+    // beforeEach seeds hub-a; add two more → 3 live hubs while pageSize (= maxArtifacts)
+    // is 2, forcing more than one keyset page. The pre-fix single-page scan stamps only
+    // hub-a/hub-b and abandons hub-c; the fix loops pages until hasMore is false.
+    await seedHub('hub-b', ['kc']);
+    await seedHub('hub-c', ['kc']);
+    const key = 'nightly:2026-07-21';
+    await runHubSyncCycle(testDb(), {
+      reason: 'nightly_repair',
+      repairKey: key,
+      maxArtifacts: 2,
+      mode: 'shadow',
+    });
+    for (const id of ['hub-a', 'hub-b', 'hub-c']) {
+      const rows = await testDb().execute<{ last_repair_key: string | null }>(
+        sql`select last_repair_key from hub_sync_reconciliation where artifact_id = ${id}`,
+      );
+      expect(rows[0]?.last_repair_key).toBe(key);
+    }
+  });
+
+  it('YUK-384: keyset repair page returns lastId and does not re-scan the same head every call', async () => {
+    await seedHub('hub-b', ['kc']);
+    await seedHub('hub-c', ['kc']);
+    const key = 'nightly:2026-07-21';
+    const page1 = await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 2 });
+    expect(page1.hasMore).toBe(true);
+    expect(page1.lastId).toBe('hub-b'); // ids ordered: hub-a, hub-b, hub-c
+    const page2 = await repairHubSyncCoverage(testDb(), {
+      repairKey: key,
+      pageSize: 2,
+      afterId: page1.lastId,
+    });
+    expect(page2.hasMore).toBe(false);
+    expect(page2.dirtied).toBe(1); // only hub-c remains past the cursor
+  });
 });
 
 // ── Task 8 (RED Tests 22–24): unified wake / recovery / continuation / retry ──

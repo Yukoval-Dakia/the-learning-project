@@ -83,29 +83,34 @@ export class PgPresenceStore implements PresenceStore {
 
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
     const now = input.now ?? new Date();
-
-    // Decision uses session presence (artifact_edit_session). Idle → apply now.
-    if (await this.isArtifactIdle(input.artifactId, now)) {
-      return persistNoteRefineApply({
-        db: input.db,
-        artifactId: input.artifactId,
-        patch: input.patch,
-        taskResult: input.taskResult,
-        triggerEventId: input.triggerEventId ?? null,
-        now,
-      });
-    }
-
-    // Actively edited → append to the pending bag under a row lock, dropping any
-    // stale entries first (裁决 i). The bag row carries a vestigial status so the
-    // NOT NULL columns are satisfied; no code reads it for the defer decision.
+    const at = PgPresenceStore.stamp(now);
     const item: SerializedQueuedPatch = {
       patch: input.patch,
       taskResult: input.taskResult,
       triggerEventId: input.triggerEventId ?? null,
       queuedAtMs: now.getTime(),
     };
-    await this.db.transaction(async (tx) => {
+
+    // Serialize the idle-decision AND the enqueue under the SAME shared advisory lock
+    // markArtifactIdleAndFlush takes, then re-check idle INSIDE the lock. This closes a
+    // TOCTOU window: a concurrent blur could otherwise drain+idle the artifact between a
+    // "not idle" read and the append, orphaning the patch in a bag nobody will flush
+    // (later dropped after EDITING_FORCE_APPLY_TIMEOUT_MS). If the blur already landed,
+    // the in-lock re-check sees idle and we apply now instead of deferring.
+    const shouldApply = await this.db.transaction(async (tx) => {
+      await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+      const idleRows = await tx.execute<{ idle: boolean }>(sql`
+        select not exists(
+          select 1 from artifact_edit_session
+          where artifact_id = ${input.artifactId}
+            and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+        ) as idle
+      `);
+      if (idleRows[0]?.idle === true) return true;
+
+      // Actively edited → append to the pending bag under a row lock, dropping any
+      // stale entries first (裁决 i). The bag row carries a vestigial status so the
+      // NOT NULL columns are satisfied; no code reads it for the defer decision.
       const [row] = await tx
         .select()
         .from(editing_presence)
@@ -135,7 +140,19 @@ export class PgPresenceStore implements PresenceStore {
           .set({ pending: nextPending, last_heartbeat_at: now })
           .where(eq(editing_presence.artifact_id, input.artifactId));
       }
+      return false;
     });
+
+    if (shouldApply) {
+      return persistNoteRefineApply({
+        db: input.db,
+        artifactId: input.artifactId,
+        patch: input.patch,
+        taskResult: input.taskResult,
+        triggerEventId: input.triggerEventId ?? null,
+        now,
+      });
+    }
     return { status: 'deferred', artifact_id: input.artifactId };
   }
 

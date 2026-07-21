@@ -29,6 +29,14 @@ import { artifact, editing_presence } from '@/db/schema';
 import { PgPresenceStore } from './pg';
 import { EDITING_HEARTBEAT_TIMEOUT_MS } from './types';
 
+function createDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const patch = { ops: [{ kind: 'append_block', block: {} }] } as unknown as NotePatchT;
 const applyDb = {} as never; // apply 走 mock，无需真实 db
 const T0 = new Date('2026-07-21T12:00:00.000Z');
@@ -223,6 +231,48 @@ describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)
     });
     expect(flush.flushed).toBe(0);
     expect(persistNoteRefineApply).not.toHaveBeenCalled();
+  });
+
+  it('YUK-384: a blur that lands between the idle-decision and the enqueue cannot orphan the patch', async () => {
+    // The decision (isArtifactIdle) and the enqueue must be serialized under the SAME
+    // shared advisory lock markArtifactIdleAndFlush takes; otherwise a concurrent blur
+    // can drain+idle the artifact after the "not idle" read but before the append,
+    // leaving the patch in a bag nobody will flush (dropped after the stale timeout).
+    await seedArtifact('art_race');
+    await store.recordEditingHeartbeat({ artifactId: 'art_race', sessionId: 'A', now: T0 });
+
+    // Simulate a blur-flush in progress: hold the advisory lock and (under it) remove
+    // the last session. The delete stays uncommitted until release, so a decision that
+    // reads BEFORE acquiring the lock still sees the session as active.
+    const held = createDeferred();
+    const release = createDeferred();
+    const holder = testDb().transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'art_race'}, 0))`);
+      await tx.execute(sql`delete from artifact_edit_session where artifact_id = 'art_race'`);
+      held.resolve();
+      await release.promise;
+    });
+    await held.promise; // lock held + session-delete staged (uncommitted)
+
+    // Under the fix, enqueue BLOCKS on the advisory lock; the pre-fix code races ahead,
+    // reads the (uncommitted-delete) session as active, and defers into an orphan bag.
+    const enqueue = store.enqueueOrApplyNoteRefinePatch({
+      db: applyDb,
+      artifactId: 'art_race',
+      patch,
+      now: at(1_000),
+    });
+    await new Promise((r) => setTimeout(r, 200)); // let enqueue reach the lock wait
+
+    release.resolve(); // holder commits the session delete + frees the lock
+    await holder;
+    const result = await enqueue;
+
+    // Fix: enqueue reacquires the lock, re-checks idle (session now gone) and APPLIES —
+    // never a silent defer into a bag the blur already abandoned.
+    expect(result.status).toBe('applied');
+    expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
+    expect((await store.getEditingSessionSnapshot('art_race'))?.pending_patches ?? 0).toBe(0);
   });
 });
 
