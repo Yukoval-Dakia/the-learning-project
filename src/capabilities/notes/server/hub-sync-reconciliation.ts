@@ -28,7 +28,7 @@ import {
   normalizeMalformedAutoZoneContainer,
   suppressedArtifactIds,
 } from '@/capabilities/notes/server/hub-auto-zone';
-import { applyNotePatch } from '@/core/blocks/apply-note-patch';
+import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/server/events/queries';
@@ -210,8 +210,17 @@ export function classifyHubSyncError(err: unknown): ClassifiedHubSyncError {
   if (err instanceof HubSyncError) {
     return { errorClass: err.errorClass, code: err.code, message: err.message };
   }
+  // NoteRefineApplyError carries a BUSINESS code ('target_not_found' /
+  // 'invalid_body_blocks' / 'user_verified_protected'), not a SQLSTATE. It was being
+  // swept into pg_transient by the `.code` duck-type below, polluting the classification
+  // taxonomy. Map it to a dedicated apply-validation class.
+  if (err instanceof NoteRefineApplyError) {
+    return { errorClass: 'apply_validation_error', code: err.code, message: err.message };
+  }
+  // Only a genuine Postgres error shape (5-char SQLSTATE, e.g. '40001') is pg_transient —
+  // not any object that happens to expose a string `.code`.
   const pgCode = (err as { code?: unknown } | null)?.code;
-  if (typeof pgCode === 'string' && pgCode.length > 0) {
+  if (typeof pgCode === 'string' && /^[0-9A-Z]{5}$/.test(pgCode)) {
     return {
       errorClass: 'pg_transient',
       code: pgCode,
@@ -342,8 +351,14 @@ export async function computeHubDesiredState(
   // desired body against the healed doc.
   const healed = normalizeMalformedAutoZoneContainer(hub.body_blocks, hub.id);
   const patch = buildAutoZonePatch(healed.bodyBlocks, hub.id, curated);
+  // The reconciler IS the auto-zone owner (this is the system's own automatic region), so
+  // it must be able to replace the auto-links container even if it carries user_verified
+  // attrs — otherwise replace_block throws 'user_verified_protected' → permanent poison.
+  // The guard defends USER-authored edits from AI refine jobs, a different caller.
   const bodyBlocks = (
-    patch ? applyNotePatch(healed.bodyBlocks, patch) : healed.bodyBlocks
+    patch
+      ? applyNotePatch(healed.bodyBlocks, patch, { enforceUserVerifiedGuard: false })
+      : healed.bodyBlocks
   ) as ArtifactBodyBlocksT;
 
   return {
@@ -356,30 +371,21 @@ export async function computeHubDesiredState(
   };
 }
 
-// CROSS-transaction fence: generation + token + active-status + UNEXPIRED lease. Used by
-// writes that do NOT hold the cursor row lock (recordHubSyncRetry), where the lease guards
-// against clobbering a cursor another worker may reclaim.
-function claimFence(claim: HubSyncClaim) {
-  return sql`
-    artifact_id = ${claim.artifactId}
-    and generation = ${claim.generation}::bigint
-    and claim_token = ${claim.claimToken}
-    and status in ('claimed', 'applying')
-    and lease_expires_at >= clock_timestamp()
-  `;
-}
-
-// IN-transaction fence for finalize's writes AFTER it has taken the cursor row lock (FOR
-// UPDATE) and passed the initial lease-checked superseded decision. It deliberately DROPS
-// the lease-not-expired condition: holding the row lock is exclusive (a concurrent reclaim
-// would need the lock, which we hold, and would in any case change the token — caught by
-// the token check), so whether the lease expires MID-transaction is irrelevant to
-// correctness. Keeping the lease check here caused a poison loop: a big-hub/slow-DB apply
-// (block-ref sync + event write) that outran the ~2min lease made the final ack match 0
-// rows (the background renewer is blocked on the same row lock) → ACK_FENCE_LOST rollback →
-// re-claim → long apply → expire → rollback, forever. Cross-transaction claim/renew/retry
-// keep the lease semantics (claimFence + the initial fence above).
-function heldClaimFence(claim: HubSyncClaim) {
+// Ownership fence: generation + token + active-status, NO lease predicate. The per-claim
+// token (a fresh randomUUID minted by claimNextHubSync on every claim/reclaim) is what
+// actually proves ownership — a worker that reclaimed this cursor changed the token, so a
+// stale writer matches 0 rows. Used by EVERY post-claim cursor write:
+//   • finalize's in-transaction writes — additionally exclusive under the cursor row lock;
+//   • recordHubSyncRetry — cross-transaction, protected by token rotation alone.
+// The lease is deliberately NOT checked here. It is a CLAIM-ELIGIBILITY concept (which
+// cursors claimNextHubSync may reclaim) and gates the INITIAL post-lock superseded decision
+// — it is not a write-time guard. Checking it on writes caused two poison loops on a
+// big-hub / slow-DB (degraded fsync): (1) finalize's apply (block-ref sync + event write)
+// outran the ~2min lease → the ack matched 0 rows (the renewer is blocked on the same row
+// lock) → ACK_FENCE_LOST rollback → re-claim → repeat; (2) after finalize threw, the
+// lease-fenced recordHubSyncRetry matched 0 rows → no backoff / failure_count / last_error
+// written → the reclaim arm saw only an expired lease → hot loop with blind alerts.
+function claimTokenFence(claim: HubSyncClaim) {
   return sql`
     artifact_id = ${claim.artifactId}
     and generation = ${claim.generation}::bigint
@@ -450,7 +456,7 @@ export async function finalizeHubSync(
         update hub_sync_reconciliation
         set status = 'cancelled', claim_owner = null, claim_token = null, lease_expires_at = null,
             last_outcome = 'cancelled', updated_at = clock_timestamp()
-        where ${heldClaimFence(claim)}
+        where ${claimTokenFence(claim)}
       `);
       return 'cancelled';
     }
@@ -473,7 +479,7 @@ export async function finalizeHubSync(
     await tx.execute(sql`set local app.hub_sync_internal_apply = '1'`);
     const applyingRows = await tx.execute<{ artifact_id: string }>(sql`
       update hub_sync_reconciliation set status = 'applying', updated_at = clock_timestamp()
-      where ${heldClaimFence(claim)}
+      where ${claimTokenFence(claim)}
       returning artifact_id
     `);
     if (applyingRows.length !== 1) {
@@ -547,7 +553,7 @@ export async function finalizeHubSync(
           last_observed_artifact_version = ${desired.observedArtifactVersion},
           last_applied_artifact_version = ${appliedVersion},
           updated_at = clock_timestamp()
-      where ${heldClaimFence(claim)}
+      where ${claimTokenFence(claim)}
       returning artifact_id
     `);
     if (ackRows.length !== 1) {
@@ -571,12 +577,21 @@ async function deferClaimedCursor(
   reason: 'active_editor' | 'artifact_version_changed',
 ): Promise<FinalizeOutcome> {
   // Release the claim back to pending WITHOUT touching consecutive_failure_count
-  // (deferral and CAS conflict are non-failures).
+  // (deferral and CAS conflict are non-failures). For an ACTIVE EDITOR, back next_attempt_at
+  // off by 30s — symmetric with the 30s active-session window — so an in-progress edit does
+  // not trigger a tight ~100ms reclaim → full-KG reload → back-to-back continuation churn
+  // loop; convergence still follows within ≤30s of the editor going idle.
+  // artifact_version_changed stays `now`: it is a one-shot CAS condition and the body-change
+  // trigger already re-dirtied the cursor, so an immediate re-claim converges the new body.
+  const nextAttempt =
+    reason === 'active_editor'
+      ? sql`clock_timestamp() + interval '30 seconds'`
+      : sql`clock_timestamp()`;
   await tx.execute(sql`
     update hub_sync_reconciliation
     set status = 'pending', claim_owner = null, claim_token = null, lease_expires_at = null,
-        next_attempt_at = clock_timestamp(), last_outcome = ${reason}, updated_at = clock_timestamp()
-    where ${heldClaimFence(claim)}
+        next_attempt_at = ${nextAttempt}, last_outcome = ${reason}, updated_at = clock_timestamp()
+    where ${claimTokenFence(claim)}
   `);
   return reason === 'active_editor' ? 'deferred_editing' : 'superseded';
 }
@@ -601,7 +616,7 @@ async function acknowledgeNoop(
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
         updated_at = clock_timestamp()
-    where ${heldClaimFence(claim)}
+    where ${claimTokenFence(claim)}
   `);
   return outcome;
 }
@@ -642,7 +657,7 @@ async function observeShadowNoApply(
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
         updated_at = clock_timestamp()
-    where ${heldClaimFence(claim)}
+    where ${claimTokenFence(claim)}
   `);
   return 'shadowed';
 }
@@ -688,16 +703,20 @@ async function hasReadyHubSync(db: Db): Promise<boolean> {
   return rows[0]?.ready === true;
 }
 
-async function recordHubSyncRetry(
+export async function recordHubSyncRetry(
   db: Db,
   claim: HubSyncClaim,
   classified: ClassifiedHubSyncError,
-): Promise<void> {
+): Promise<number> {
   // Backoff = min(5s * 2^(newFailureCount - 1), 15m) + 0–20% jitter. The SET
   // expression reads the pre-increment count, so exponent = old count = new-1.
   // `now()` (statement-stable) anchors BOTH next_attempt_at and last_error_at so
   // their difference is exactly the scheduled delay (deterministic for tests).
-  await db.execute(sql`
+  // Fenced on token (NOT lease): finalize may throw AFTER a long apply expired the lease,
+  // and this write runs post-rollback; the token still proves we own the claim (a reclaim
+  // would have rotated it). Returns the rowcount so the caller only tallies a scheduled
+  // retry when the write actually landed.
+  const rows = await db.execute<{ artifact_id: string }>(sql`
     update hub_sync_reconciliation
     set status = 'retry_wait',
         consecutive_failure_count = consecutive_failure_count + 1,
@@ -710,8 +729,10 @@ async function recordHubSyncRetry(
         last_error_at = now(),
         last_outcome = 'retry',
         updated_at = clock_timestamp()
-    where ${claimFence(claim)}
+    where ${claimTokenFence(claim)}
+    returning artifact_id
   `);
+  return rows.length;
 }
 
 function tallyOutcome(result: HubSyncCycleResult, outcome: FinalizeOutcome): void {
@@ -801,8 +822,15 @@ async function reconcileClaim(
     errorClass = classified.errorClass;
     outcome = 'retry_wait';
     try {
-      await recordHubSyncRetry(db, claim, classified);
-      result.retry_scheduled += 1;
+      const scheduled = await recordHubSyncRetry(db, claim, classified);
+      if (scheduled > 0) {
+        result.retry_scheduled += 1;
+      } else {
+        // The claim was superseded (token rotated by a reclaim) before we could record the
+        // retry — a non-failure supersession, not a scheduled retry. Do not over-count.
+        outcome = 'superseded';
+        result.superseded += 1;
+      }
     } catch (retryErr) {
       // Recording the retry is itself a DB write and can fail transiently. It must NOT
       // escape reconcileClaim — otherwise the cycle's for-loop (which has no per-claim

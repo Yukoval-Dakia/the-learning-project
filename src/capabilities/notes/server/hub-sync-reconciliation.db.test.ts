@@ -20,13 +20,16 @@ import { readHubSyncHealth } from '@/capabilities/observability/server/hub-sync'
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 
+import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type HubDesiredState,
   type HubSyncClaim,
   claimNextHubSync,
+  classifyHubSyncError,
   computeHubDesiredState,
   finalizeHubSync,
+  recordHubSyncRetry,
   renewHubSyncLease,
   repairHubSyncCoverage,
   runHubSyncCycle,
@@ -774,6 +777,12 @@ describe('YUK-384 session-qualified editing defers fenced apply', () => {
     expect(await state('hub-a')).toMatchObject({ status: 'pending', consecutive_failure_count: 0 });
 
     await heartbeatAtDatabaseAge('hub-a', 'A', '31 seconds');
+    // F2: the active-editor defer backs next_attempt_at off by 30s (avoids a tight reclaim
+    // loop during editing). Simulate that window elapsing so the post-blur cycle re-claims —
+    // in production the 30s simply passes.
+    await testDb().execute(
+      sql`update hub_sync_reconciliation set next_attempt_at = clock_timestamp() where artifact_id = 'hub-a'`,
+    );
     await runOneApplyCycle();
     expect(await state('hub-a')).toMatchObject({
       status: 'acknowledged',
@@ -1291,5 +1300,105 @@ describe('YUK-384 unified hub-sync cycle', () => {
     const healed = await readHubSyncHealth(testDb());
     expect(healed.invalid_document_count).toBe(0);
     expect(healed.max_consecutive_failure_count).toBe(0);
+  });
+
+  it('YUK-384 (F1): recordHubSyncRetry records the backoff even when the lease already expired (token still owns the claim)', async () => {
+    await seedAppliableHub('hub-a');
+    const token = 'tok-expired-lease';
+    // A claimed cursor whose lease EXPIRED but whose token still matches — a slow worker
+    // whose renewer was blocked on the row lock. Pre-fix the lease-fenced retry matched 0
+    // rows → no backoff / failure_count / last_error → reclaim arm saw only an expired lease.
+    await testDb().execute(sql`
+      update hub_sync_reconciliation
+      set status = 'claimed', claim_owner = 'w1', claim_token = ${token},
+          lease_expires_at = clock_timestamp() - interval '1 minute', consecutive_failure_count = 0
+      where artifact_id = 'hub-a'
+    `);
+    const gen = await generation('hub-a');
+    const affected = await recordHubSyncRetry(
+      testDb(),
+      {
+        artifactId: 'hub-a',
+        generation: gen,
+        claimToken: token,
+        claimOwner: 'w1',
+        leaseExpiresAt: new Date(),
+      },
+      { errorClass: 'apply_validation_error', code: 'X', message: 'x' },
+    );
+    expect(affected).toBe(1);
+    const s = await state('hub-a');
+    expect(s.status).toBe('retry_wait');
+    expect(s.consecutive_failure_count).toBe(1);
+    expect(s.last_error_class).toBe('apply_validation_error');
+    expect(await retryDelayMs('hub-a')).toBeGreaterThanOrEqual(5_000);
+
+    // But a rotated token (a genuine reclaim) must STILL be fenced out — 0 rows, no clobber.
+    const zero = await recordHubSyncRetry(
+      testDb(),
+      {
+        artifactId: 'hub-a',
+        generation: gen,
+        claimToken: 'stale-token',
+        claimOwner: 'w0',
+        leaseExpiresAt: new Date(),
+      },
+      { errorClass: 'apply_validation_error', code: 'X', message: 'x' },
+    );
+    expect(zero).toBe(0);
+  });
+
+  it('YUK-384 (F2): an active-editor defer backs next_attempt_at off by ~30s (no tight reclaim loop)', async () => {
+    await seedAppliableHub('hub-a');
+    await testDb().execute(sql`
+      insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+      values ('hub-a', 'editor', clock_timestamp(), clock_timestamp())
+    `);
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+
+    const s = await state('hub-a');
+    expect(s.status).toBe('pending');
+    expect(s.last_outcome).toBe('active_editor');
+    const rows = await testDb().execute<{ secs: string }>(sql`
+      select extract(epoch from (next_attempt_at - clock_timestamp())) as secs
+      from hub_sync_reconciliation where artifact_id = 'hub-a'
+    `);
+    // ~30s backoff (pre-fix this was ~0 → tight ~100ms reclaim loop during editing).
+    expect(Number(rows[0].secs)).toBeGreaterThan(20);
+    expect(Number(rows[0].secs)).toBeLessThanOrEqual(30);
+  });
+
+  it('YUK-384 (F3a): a hub whose auto-links container is user_verified still applies (reconciler owns the auto-zone) — no poison', async () => {
+    await seedAppliableHub('hub-a');
+    // An auto-links container the user marked verified. Pre-fix replace_block threw
+    // user_verified_protected → NoteRefineApplyError → (F3b) misclassified pg_transient →
+    // infinite retry. The reconciler is the auto-zone owner, so the guard must be off here.
+    const doc = {
+      type: 'doc',
+      content: [
+        {
+          type: 'autoLinksContainer',
+          attrs: { id: 'hub-a__auto_links', user_verified: true },
+          content: [],
+        },
+      ],
+    };
+    await testDb().execute(
+      sql`update artifact set body_blocks = ${JSON.stringify(doc)}::jsonb where id = 'hub-a'`,
+    );
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_outcome: 'applied' });
+  });
+
+  it('YUK-384 (F3b): classifyHubSyncError maps NoteRefineApplyError to apply_validation_error, not pg_transient', () => {
+    expect(
+      classifyHubSyncError(new NoteRefineApplyError('user_verified_protected', 'm')),
+    ).toMatchObject({ errorClass: 'apply_validation_error', code: 'user_verified_protected' });
+    // A genuine 5-char SQLSTATE is still pg_transient.
+    expect(classifyHubSyncError({ code: '40001' })).toMatchObject({ errorClass: 'pg_transient' });
+    // A non-SQLSTATE business `.code` is NOT pg_transient (was the bug).
+    expect(classifyHubSyncError({ code: 'some_business_code' })).toMatchObject({
+      errorClass: 'unknown',
+    });
   });
 });
