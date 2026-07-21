@@ -25,6 +25,7 @@ import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs
 // runHubSyncCycle from here — depend on them without a cycle.
 import {
   buildAutoZonePatch,
+  normalizeMalformedAutoZoneContainer,
   suppressedArtifactIds,
 } from '@/capabilities/notes/server/hub-auto-zone';
 import { applyNotePatch } from '@/core/blocks/apply-note-patch';
@@ -270,6 +271,22 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
   }));
 }
 
+// The per-cycle-shared graph inputs (tree/edges/atomics). Preloaded ONCE per cycle and
+// passed into computeHubDesiredState so each hub does not reload the whole graph.
+export type HubMeshGraphInputs = {
+  nodes: Awaited<ReturnType<typeof loadTreeSnapshot>>;
+  edges: Awaited<ReturnType<typeof loadEdgeInputs>>;
+  atomics: Awaited<ReturnType<typeof loadAtomicInputs>>;
+};
+
+async function loadHubMeshGraphInputs(db: Db): Promise<HubMeshGraphInputs> {
+  return {
+    nodes: await loadTreeSnapshot(db),
+    edges: await loadEdgeInputs(db),
+    atomics: await loadAtomicInputs(db),
+  };
+}
+
 /**
  * Recompute the hub's desired body deterministically, OUTSIDE any row/advisory
  * lock, reusing the retained `resolveHubMeshAtomics` + `buildAutoZonePatch` +
@@ -280,6 +297,7 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
 export async function computeHubDesiredState(
   db: Db,
   claim: HubSyncClaim,
+  graph?: HubMeshGraphInputs,
 ): Promise<HubDesiredState> {
   const rows = await db.execute<HubComputeRow>(sql`
     select id, type, archived_at, version, body_blocks, knowledge_ids, attrs
@@ -294,9 +312,18 @@ export async function computeHubDesiredState(
     );
   }
 
-  const nodes = await loadTreeSnapshot(db);
-  const edges = await loadEdgeInputs(db);
-  const atomics = await loadAtomicInputs(db);
+  // The tree/edges/atomics graph is IDENTICAL for every hub in a cycle (the loaders
+  // take no hub-specific args). A caller processing many hubs preloads it ONCE per cycle
+  // and passes it in — avoiding up to maxArtifacts× redundant full-graph reloads and the
+  // lease-expiry risk they add mid-compute. A cycle-start snapshot is safe: a mid-cycle
+  // topology change bumps the hub's generation via the trigger, so the claim fence fails
+  // → superseded → reclaimed next cycle with a fresh graph (same semantics as the old
+  // load-once nightly). Direct callers (tests) omit it and load fresh per call.
+  const { nodes, edges, atomics } = graph ?? {
+    nodes: await loadTreeSnapshot(db),
+    edges: await loadEdgeInputs(db),
+    atomics: await loadAtomicInputs(db),
+  };
 
   const suppressed = suppressedArtifactIds(hub.attrs);
   const curated = resolveHubMeshAtomics(
@@ -306,9 +333,14 @@ export async function computeHubDesiredState(
     atomics,
   ).filter((candidate) => !suppressed.has(candidate.artifact_id));
 
-  const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
+  // Poison-pill guard: heal a malformed auto-links container (missing/non-string id)
+  // BEFORE building the patch, so the replace_block always targets an existing block
+  // instead of throwing target_not_found → infinite retry. Compute the patch and the
+  // desired body against the healed doc.
+  const healed = normalizeMalformedAutoZoneContainer(hub.body_blocks, hub.id);
+  const patch = buildAutoZonePatch(healed.bodyBlocks, hub.id, curated);
   const bodyBlocks = (
-    patch ? applyNotePatch(hub.body_blocks, patch) : hub.body_blocks
+    patch ? applyNotePatch(healed.bodyBlocks, patch) : healed.bodyBlocks
   ) as ArtifactBodyBlocksT;
 
   return {
@@ -316,7 +348,8 @@ export async function computeHubDesiredState(
     observedArtifactVersion: hub.version,
     bodyBlocks,
     desiredHash: createHash('sha256').update(stableStringify(bodyBlocks)).digest('hex'),
-    changed: patch !== null,
+    // `healed` counts as a change so the id fix is persisted on the next apply.
+    changed: patch !== null || healed.healed,
   };
 }
 
@@ -411,7 +444,7 @@ export async function finalizeHubSync(
       );
     }
     if (!desired.changed) return acknowledgeNoop(tx, claim, desired, 'acknowledged_noop');
-    if (mode === 'shadow') return acknowledgeNoop(tx, claim, desired, 'shadowed');
+    if (mode === 'shadow') return observeShadowNoApply(tx, claim, desired);
 
     // Apply. The reconciler-owned body write MUST NOT self-dirty.
     await tx.execute(sql`set local app.hub_sync_internal_apply = '1'`);
@@ -524,7 +557,7 @@ async function acknowledgeNoop(
   tx: Tx,
   claim: HubSyncClaim,
   desired: HubDesiredState,
-  outcome: 'acknowledged_noop' | 'shadowed',
+  outcome: 'acknowledged_noop',
 ): Promise<FinalizeOutcome> {
   await tx.execute(sql`
     update hub_sync_reconciliation
@@ -540,6 +573,39 @@ async function acknowledgeNoop(
     where ${claimFence(claim)}
   `);
   return outcome;
+}
+
+// Shadow re-observe backoff: after a shadow observation the claim is released back to
+// pending but pushed OUT of the immediately-ready window by this interval. Without it a
+// shadow cycle would re-claim the same never-draining hub every loop iteration and
+// dispatch an endless continuation (hasReadyHubSync would stay true forever). A real
+// topology change re-dirties via mark_hub_sync_dirty (next_attempt_at = now), and
+// nightly repair re-dirties everything, so apply-mode convergence is never blocked by it.
+const SHADOW_REOBSERVE_BACKOFF = sql`interval '15 minutes'`;
+
+// Shadow mode OBSERVES the desired state (records the hash/version for operators)
+// WITHOUT applying it and, crucially, WITHOUT consuming the obligation: the claim is
+// released back to pending with acknowledged_generation UNCHANGED. Advancing ack in
+// shadow (the old acknowledgeNoop path) meant a shadow-period change was never applied
+// after flipping to apply — recovery only claims pending/retry_wait, so the acknowledged
+// cursor was skipped until the next topology change. Leaving it pending lets apply mode
+// re-claim and converge it.
+async function observeShadowNoApply(
+  tx: Tx,
+  claim: HubSyncClaim,
+  desired: HubDesiredState,
+): Promise<FinalizeOutcome> {
+  await tx.execute(sql`
+    update hub_sync_reconciliation
+    set status = 'pending', claim_owner = null, claim_token = null, lease_expires_at = null,
+        next_attempt_at = clock_timestamp() + ${SHADOW_REOBSERVE_BACKOFF},
+        last_outcome = 'shadowed',
+        last_desired_hash = ${desired.desiredHash},
+        last_observed_artifact_version = ${desired.observedArtifactVersion},
+        updated_at = clock_timestamp()
+    where ${claimFence(claim)}
+  `);
+  return 'shadowed';
 }
 
 function readHubSyncMode(): HubSyncMode {
@@ -626,9 +692,17 @@ function tallyOutcome(result: HubSyncCycleResult, outcome: FinalizeOutcome): voi
 function startLeaseRenewal(db: Db, claim: HubSyncClaim): { lost: () => boolean; stop: () => void } {
   let lost = false;
   const timer = setInterval(() => {
-    void renewHubSyncLease(db, claim).then((ok) => {
-      if (!ok) lost = true;
-    });
+    void renewHubSyncLease(db, claim)
+      .then((ok) => {
+        if (!ok) lost = true;
+      })
+      .catch(() => {
+        // A rejected renewal query (transient DB error) must NOT surface as an
+        // unhandled promise rejection — under `--unhandled-rejections=throw` that
+        // crashes the worker. Treat a failed renewal as a lost lease: compute/finalize
+        // aborts and another worker reclaims after the lease expires.
+        lost = true;
+      });
   }, 30_000);
   (timer as { unref?: () => void }).unref?.();
   return { lost: () => lost, stop: () => clearInterval(timer) };
@@ -655,13 +729,14 @@ async function reconcileClaim(
   reason: HubSyncReason,
   mode: HubSyncMode,
   result: HubSyncCycleResult,
+  graph?: HubMeshGraphInputs,
 ): Promise<void> {
   const renewal = startLeaseRenewal(db, claim);
   const startedAt = Date.now();
   let outcome = 'lost_lease';
   let errorClass: string | null = null;
   try {
-    const desired = await computeHubDesiredState(db, claim);
+    const desired = await computeHubDesiredState(db, claim, graph);
     if (renewal.lost()) return; // lost lease is a non-failure; another worker reclaims after expiry
     outcome = await finalizeHubSync(db, { claim, desired, mode });
     tallyOutcome(result, outcome as FinalizeOutcome);
@@ -669,8 +744,24 @@ async function reconcileClaim(
     const classified = classifyHubSyncError(err);
     errorClass = classified.errorClass;
     outcome = 'retry_wait';
-    await recordHubSyncRetry(db, claim, classified);
-    result.retry_scheduled += 1;
+    try {
+      await recordHubSyncRetry(db, claim, classified);
+      result.retry_scheduled += 1;
+    } catch (retryErr) {
+      // Recording the retry is itself a DB write and can fail transiently. It must NOT
+      // escape reconcileClaim — otherwise the cycle's for-loop (which has no per-claim
+      // guard) aborts and every OTHER claimed hub is abandoned until its lease expires.
+      // Log and move on; this hub's lease expires and another worker reclaims it.
+      outcome = 'retry_record_failed';
+      console.error(
+        JSON.stringify({
+          event: 'hub_sync_retry_record_failed',
+          artifact_id: claim.artifactId,
+          generation: claim.generation,
+          error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        }),
+      );
+    }
   } finally {
     renewal.stop();
     logHubSyncAttempt({
@@ -822,11 +913,30 @@ export async function runHubSyncCycle(
   }
 
   const owner = options.owner ?? workerOwner();
+  // Preload the shared tree/edges/atomics graph ONCE per cycle and reuse it for every
+  // hub — the loaders take no hub-specific args, so reloading per hub was up to
+  // maxArtifacts× redundant I/O (and lease-expiry risk mid-compute). Loaded lazily on the
+  // first claim so an empty cycle pays nothing.
+  let graph: HubMeshGraphInputs | undefined;
   for (let index = 0; index < options.maxArtifacts; index += 1) {
     const claim = await claimNextHubSync(db, { owner });
     if (!claim) break;
     result.claimed += 1;
-    await reconcileClaim(db, claim, options.reason, mode, result);
+    if (!graph) graph = await loadHubMeshGraphInputs(db);
+    try {
+      await reconcileClaim(db, claim, options.reason, mode, result, graph);
+    } catch (err) {
+      // Defense-in-depth: reconcileClaim handles its own errors, but one hub's
+      // unexpected throw must never abort the whole cycle and abandon the rest.
+      // Worst case is this hub's lease expiring and being reclaimed — not a cycle abort.
+      console.error(
+        JSON.stringify({
+          event: 'hub_sync_reconcile_uncaught',
+          artifact_id: claim.artifactId,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
   result.continuation_needed = await hasReadyHubSync(db);
   return result;

@@ -131,3 +131,37 @@ export function buildAutoZonePatch(
   };
   return { ops: [{ kind: 'append_block', block: container }] };
 }
+
+/**
+ * Poison-pill guard: if the doc already has an auto-links container whose `attrs.id`
+ * is missing/non-string, a `replace_block` targeting the canonical fallback id
+ * (`<hub>__auto_links`) can never match it (blockIdOf → undefined) → applyNotePatch
+ * throws target_not_found → the reconciler classifies it retryable → the hub wedges
+ * in INFINITE retry. Stamp the canonical id so the reconciler's replace patch targets
+ * it and the container is permanently healed on the next apply. Returns the (possibly
+ * rewritten) body plus whether anything changed, so the caller can force `changed`.
+ * A body that fails to parse, or a container that already has a valid id, is returned
+ * untouched (`healed: false`).
+ */
+export function normalizeMalformedAutoZoneContainer(
+  bodyBlocks: unknown,
+  hubArtifactId: string,
+): { bodyBlocks: unknown; healed: boolean } {
+  const parsed = ArtifactBodyBlocks.safeParse(bodyBlocks);
+  if (!parsed.success) return { bodyBlocks, healed: false };
+  const content = parsed.data.content ?? [];
+  const idx = content.findIndex((n) => n.type === AUTO_LINKS_CONTAINER_NODE);
+  if (idx < 0) return { bodyBlocks, healed: false };
+
+  const container = content[idx] as Record<string, unknown>;
+  const attrs = recordOrEmpty(container.attrs);
+  if (typeof attrs.id === 'string') return { bodyBlocks, healed: false };
+
+  const fallbackId = `${hubArtifactId}__auto_links`;
+  const nextContent = content.map((node, i) =>
+    i === idx
+      ? { ...(node as Record<string, unknown>), attrs: { ...attrs, id: fallbackId } }
+      : node,
+  );
+  return { bodyBlocks: { ...parsed.data, content: nextContent }, healed: true };
+}

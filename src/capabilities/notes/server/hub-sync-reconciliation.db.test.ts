@@ -1066,4 +1066,76 @@ describe('YUK-384 unified hub-sync cycle', () => {
     expect(await retryDelayMs(ids[1])).toBeGreaterThanOrEqual(5_000);
     expect(await retryDelayMs(ids[1])).toBeLessThanOrEqual(6_000);
   });
+
+  it('YUK-384: a hub with a malformed auto-links container self-heals instead of wedging in infinite retry', async () => {
+    await seedAppliableHub('hub-a');
+    // Poison pill: an auto-links container node with NO attrs.id. A replace_block
+    // targeting the canonical fallback id would miss → target_not_found → the pre-fix
+    // reconciler classifies it retryable and the hub wedges forever.
+    const malformed = {
+      type: 'doc',
+      content: [{ type: 'autoLinksContainer', attrs: { title: 'Related' }, content: [] }],
+    };
+    await testDb().execute(
+      sql`update artifact set body_blocks = ${JSON.stringify(malformed)}::jsonb where id = 'hub-a'`,
+    );
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+
+    // Converged (acknowledged), NOT stuck in retry_wait.
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_outcome: 'applied' });
+    // The container was healed with the canonical id so it renders/updates thereafter.
+    const rows = await testDb().execute<{ body: { content?: { attrs?: { id?: unknown } }[] } }>(
+      sql`select body_blocks as body from artifact where id = 'hub-a'`,
+    );
+    const container = rows[0].body.content?.find(
+      (n) => (n as { type?: string }).type === 'autoLinksContainer',
+    );
+    expect((container as { attrs?: { id?: unknown } }).attrs?.id).toBe('hub-a__auto_links');
+  });
+
+  it('YUK-384: a recordHubSyncRetry failure on one hub does not abort the cycle', async () => {
+    await seedAppliableHub('hub-a');
+    await seedAppliableHub('hub-b');
+    await seedAppliableHub('hub-c');
+    // All three fail finalize (invalid desired doc) → each enters the retry path.
+    await injectDesiredStateFailureFor('hub-a');
+    await injectDesiredStateFailureFor('hub-b');
+    await injectDesiredStateFailureFor('hub-c');
+    // Poison ONLY hub-b's retry-record: int4 max consecutive_failure_count overflows on
+    // the +1 inside recordHubSyncRetry → its UPDATE throws for hub-b alone.
+    await testDb().execute(
+      sql`update hub_sync_reconciliation set consecutive_failure_count = 2147483647 where artifact_id = 'hub-b'`,
+    );
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 25, mode: 'apply' });
+
+    // hub-c is claimed AFTER hub-b (artifact_id order). Pre-fix, hub-b's retry-record
+    // throw escaped reconcileClaim and aborted the for-loop, abandoning hub-c.
+    expect(await state('hub-a')).toMatchObject({ status: 'retry_wait' });
+    expect(await state('hub-c')).toMatchObject({ status: 'retry_wait' });
+  });
+
+  it('YUK-384: shadow mode observes without consuming the obligation (stays pending, ack unchanged)', async () => {
+    await seedAppliableHub('hub-a');
+    const before = await state('hub-a');
+    expect(before.acknowledged_generation).toBe('0');
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'shadow' });
+
+    const shadowed = await state('hub-a');
+    // NOT consumed: stays pending with acknowledged_generation UNCHANGED (the old
+    // acknowledgeNoop path advanced ack + set status=acknowledged → apply mode skipped it).
+    expect(shadowed.status).toBe('pending');
+    expect(shadowed.acknowledged_generation).toBe('0');
+    expect(shadowed.last_outcome).toBe('shadowed');
+
+    // The obligation survives → apply mode re-claims and converges (the shadow re-observe
+    // backoff having elapsed, simulated by resetting next_attempt_at).
+    await testDb().execute(
+      sql`update hub_sync_reconciliation set next_attempt_at = clock_timestamp() where artifact_id = 'hub-a'`,
+    );
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_outcome: 'applied' });
+  });
 });
