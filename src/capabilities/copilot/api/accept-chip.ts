@@ -31,10 +31,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 
-import { wakeHubSyncAfterCommit } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { SuggestionKind } from '@/kernel/capability-contract-schemas';
+import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { acceptAiProposal } from '@/server/proposals/actions';
@@ -186,8 +186,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     if (parsed.data.proposal_id) {
       await acceptAiProposal(db, parsed.data.proposal_id);
       // YUK-384 — a chip-driven proposal accept is a topology mutation; best-effort
-      // hub-sync wake AFTER commit (coalesced; never affects this response).
-      await wakeHubSyncAfterCommit();
+      // hub-sync wake AFTER commit. Fire-and-forget (`void`, W1) — never binds this
+      // response to pg-boss availability/latency; the seam double-swallows its own errors.
+      void wakeHubSyncAfterCommit();
     }
 
     await writeEvent(db, {

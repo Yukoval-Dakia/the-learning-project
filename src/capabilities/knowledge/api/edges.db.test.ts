@@ -213,7 +213,9 @@ describe('POST /api/knowledge/edges', () => {
       relation_type: 'prerequisite',
     });
     expect(res.status).toBe(201);
-    expect(bossMock.send).toHaveBeenCalledTimes(1);
+    // W1: the wake is fire-and-forget (`void`), so the send lands after the response
+    // returns — await it instead of asserting synchronously.
+    await vi.waitFor(() => expect(bossMock.send).toHaveBeenCalledTimes(1));
     expect(bossMock.send).toHaveBeenCalledWith(
       'hub_sync_mutation_wake',
       {},
@@ -237,6 +239,9 @@ describe('POST /api/knowledge/edges', () => {
     // The edge is durably committed regardless of the failed wake.
     const rows = await testDb().select().from(knowledge_edge);
     expect(rows).toHaveLength(1);
+    // Let the fire-and-forget wake settle (its rejection is swallowed) so it does not
+    // leak into the next test.
+    await vi.waitFor(() => expect(bossMock.send).toHaveBeenCalled());
   });
 
   it('creates an edge with 201 + { id }', async () => {

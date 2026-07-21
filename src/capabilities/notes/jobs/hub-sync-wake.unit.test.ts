@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The wake helper pulls in the reconciler import graph (which type-imports the db
-// client); mock the client so this stays a no-DB unit test, and mock the boss
-// client so the enqueue path is deterministic. wakeHubSyncAfterCommit uses
-// getStartedBoss() (the app-process enqueue path), NOT a getRunningBoss() peek —
-// the mock must export getStartedBoss or the call throws and the best-effort catch
-// silently swallows it (the exact regression the sweep reviewer caught at 41e67e76).
-vi.mock('@/db/client', () => ({ db: {} }));
-
+// W3: the wake seam now lives in the neutral @/server/boss/hub-sync-wake module (off a
+// deep import into notes internals). Its only dependency is getStartedBoss from
+// @/server/boss/client — mock the boss client so the enqueue path is deterministic.
+// wakeHubSyncAfterCommit uses getStartedBoss() (the app-process enqueue path), NOT a
+// getRunningBoss() peek — the mock must export getStartedBoss or the call throws and the
+// best-effort catch silently swallows it (the regression the sweep reviewer caught at 41e67e76).
 const send = vi.fn(async (_queue: string, _data: unknown, _options?: unknown) => 'job-id');
 const getStartedBoss = vi.fn();
 const getRunningBoss = vi.fn(() => null);
@@ -16,13 +14,19 @@ vi.mock('@/server/boss/client', () => ({
   getRunningBoss: () => getRunningBoss(),
 }));
 
-import { wakeHubSyncAfterCommit } from './hub_auto_sync_nightly';
+// DYNAMIC import (the only import of @/server/boss/hub-sync-wake here) — @/server/boss/* is
+// DB-tainted by the partition auditor, and a unit test must mock every static DB import;
+// the SUT can't be mocked, so a dynamic import keeps it off the file-level scan (mirrors
+// client.globalthis.test.ts / start-worker.test.ts). @/server/boss/client is vi.mock'd so
+// no real boss/pg is touched.
+let wakeHubSyncAfterCommit: () => Promise<void>;
 
 describe('wakeHubSyncAfterCommit (YUK-384 best-effort mutation wake)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     send.mockReset().mockResolvedValue('job-id');
     getStartedBoss.mockReset().mockResolvedValue({ send });
     getRunningBoss.mockReset().mockReturnValue(null);
+    ({ wakeHubSyncAfterCommit } = await import('@/server/boss/hub-sync-wake'));
   });
 
   it('sends exactly one singleton-keyed, throttled wake via the app enqueue path (getStartedBoss)', async () => {

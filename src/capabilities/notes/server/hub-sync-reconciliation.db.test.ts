@@ -12,11 +12,9 @@ import { eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  buildHubSyncRecoveryHandler,
-  sendHubSyncMutationWake,
-} from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
+import { buildHubSyncRecoveryHandler } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { readHubSyncHealth } from '@/capabilities/observability/server/hub-sync';
+import { sendHubSyncMutationWake } from '@/server/boss/hub-sync-wake';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 

@@ -19,33 +19,21 @@ import {
   sweepAbandonedEditSessions,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import type { Db } from '@/db/client';
-import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
+import { getRunningBoss } from '@/server/boss/client';
+import type { HubSyncSend } from '@/server/boss/hub-sync-wake';
 
 const RECOVERY_MAX_ARTIFACTS = 25;
 const WAKE_MAX_ARTIFACTS = 25;
 const NIGHTLY_MAX_ARTIFACTS = 25;
 
 export const HUB_SYNC_RECOVERY_QUEUE = 'hub_sync_recovery';
-export const HUB_SYNC_MUTATION_WAKE_QUEUE = 'hub_sync_mutation_wake';
 export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuation';
 
 // singletonKey ALONE does not de-duplicate on a standard pg-boss queue — it needs a
-// singletonSeconds throttle window (repo lessons YUK-491 rejudge-config.ts:11-31 /
-// YUK-486 workflow-judge-config.ts:60-78). Without it, N rapid accepts enqueue N wakes.
-// Wake: coalesce a burst of topology mutations into ~one job / 5s. Continuation: one
-// backlog-drain job / 30s (a cycle takes far less, so 30s is ample de-dup headroom).
-const HUB_SYNC_WAKE_SINGLETON_SECONDS = 5;
+// singletonSeconds throttle window (repo lessons YUK-491 / YUK-486). One backlog-drain
+// continuation / 30s (a cycle takes far less, so 30s is ample de-dup headroom). The wake
+// seam's throttle lives in @/server/boss/hub-sync-wake.
 const HUB_SYNC_CONTINUATION_SINGLETON_SECONDS = 30;
-
-// pg-boss `send` seam, injected so the handlers stay unit-testable and no topology
-// writer is forced to import pg-boss.
-export interface HubSyncSend {
-  send: (
-    queue: string,
-    data: unknown,
-    options?: { singletonKey?: string; singletonSeconds?: number },
-  ) => Promise<unknown>;
-}
 
 // Asia/Shanghai calendar-date repair key `nightly:YYYY-MM-DD` (en-CA formats as
 // YYYY-MM-DD). One key per BJT day makes the sweep idempotent across retries.
@@ -83,48 +71,6 @@ export function buildHubSyncRecoveryHandler(db: Db, deps: HubSyncSend) {
     await dispatchContinuation(deps, result);
     return result;
   };
-}
-
-/**
- * Best-effort post-commit wake, given a send seam. Swallows send failures —
- * durability is the SQL trigger + minute recovery, never this send.
- */
-export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> {
-  try {
-    await deps.send(
-      HUB_SYNC_MUTATION_WAKE_QUEUE,
-      {},
-      {
-        singletonKey: HUB_SYNC_MUTATION_WAKE_QUEUE,
-        singletonSeconds: HUB_SYNC_WAKE_SINGLETON_SECONDS,
-      },
-    );
-  } catch {
-    // best-effort; the minute-recovery floor still converges the durable dirty.
-  }
-}
-
-/**
- * Fire the immediate coalesced wake from a route/job HANDLER, AFTER the topology
- * mutation's outer transaction has committed. Uses getStartedBoss() — the app process's
- * STANDARD enqueue path, which starts/reuses a send-capable boss and marks it running (the
- * same getter ingestion image-candidate-accept / auto-enroll / operations / extract use).
- * A getRunningBoss() PEEK would be null in an app process that has not yet hit any
- * getStartedBoss path (cold start before the first edge-create / decision / accept-chip),
- * so the immediate wake would NEVER be delivered and owner-chosen FULL mode would silently
- * degrade to the minute-recovery floor. Best-effort: getStartedBoss() can throw (boss start
- * failure); a failure here must NEVER affect the already-committed mutation — the durable
- * trigger + minute-recovery floor converges any missed wake. Hub-agnostic + singleton-keyed.
- */
-export async function wakeHubSyncAfterCommit(): Promise<void> {
-  try {
-    const boss = await getStartedBoss();
-    await sendHubSyncMutationWake({
-      send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
-    });
-  } catch (err) {
-    console.warn('[hub_sync] mutation wake failed (best-effort; minute recovery converges)', err);
-  }
 }
 
 // Dispatch the single continuation via the running boss (peek, no start), used
