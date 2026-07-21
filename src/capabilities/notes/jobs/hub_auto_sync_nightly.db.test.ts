@@ -247,6 +247,7 @@ describe('YUK-384 production continuation dispatch (buildHubSyncRecoveryJobHandl
       {},
       {
         singletonKey: 'hub_sync_recovery_continuation',
+        singletonSeconds: 30,
       },
     );
   });

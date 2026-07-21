@@ -11,13 +11,21 @@ import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-// YUK-384 — the POST handler fires a best-effort hub-sync wake via the running
-// boss. Peek getRunningBoss so we control it; default null (no-op) so every other
-// test is unaffected.
-const bossMock = vi.hoisted(() => ({ getRunningBoss: vi.fn(), send: vi.fn() }));
+// YUK-384 — the POST handler fires a best-effort hub-sync wake via getStartedBoss (the
+// app-process enqueue path, P2-b). Mock it so we control the boss; default REJECT (boss
+// unavailable → wake swallows → no-op) so every other test is unaffected.
+const bossMock = vi.hoisted(() => ({
+  getStartedBoss: vi.fn(),
+  getRunningBoss: vi.fn(),
+  send: vi.fn(),
+}));
 vi.mock('@/server/boss/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/boss/client')>();
-  return { ...actual, getRunningBoss: () => bossMock.getRunningBoss() };
+  return {
+    ...actual,
+    getStartedBoss: () => bossMock.getStartedBoss(),
+    getRunningBoss: () => bossMock.getRunningBoss(),
+  };
 });
 
 import { GET, POST, getEdge } from './edges';
@@ -192,11 +200,12 @@ describe('POST /api/knowledge/edges', () => {
   beforeEach(async () => {
     await resetDb();
     bossMock.getRunningBoss.mockReset();
+    bossMock.getStartedBoss.mockReset().mockRejectedValue(new Error('no boss in test'));
     bossMock.send.mockReset().mockResolvedValue('job-id');
   });
 
   it('YUK-384: fires exactly one hub_sync_mutation_wake after the edge commit', async () => {
-    bossMock.getRunningBoss.mockReturnValue({ send: bossMock.send });
+    bossMock.getStartedBoss.mockResolvedValue({ send: bossMock.send });
     await seedKnowledge(['k1', 'k2']);
     const res = await postEdge({
       from_knowledge_id: 'k1',
@@ -210,12 +219,13 @@ describe('POST /api/knowledge/edges', () => {
       {},
       {
         singletonKey: 'hub_sync_mutation_wake',
+        singletonSeconds: 5,
       },
     );
   });
 
   it('YUK-384: a wake send rejection does NOT affect the committed edge (201)', async () => {
-    bossMock.getRunningBoss.mockReturnValue({ send: bossMock.send });
+    bossMock.getStartedBoss.mockResolvedValue({ send: bossMock.send });
     bossMock.send.mockRejectedValue(new Error('boss unavailable'));
     await seedKnowledge(['k1', 'k2']);
     const res = await postEdge({

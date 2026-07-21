@@ -28,10 +28,22 @@ export const HUB_SYNC_RECOVERY_QUEUE = 'hub_sync_recovery';
 export const HUB_SYNC_MUTATION_WAKE_QUEUE = 'hub_sync_mutation_wake';
 export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuation';
 
+// singletonKey ALONE does not de-duplicate on a standard pg-boss queue — it needs a
+// singletonSeconds throttle window (repo lessons YUK-491 rejudge-config.ts:11-31 /
+// YUK-486 workflow-judge-config.ts:60-78). Without it, N rapid accepts enqueue N wakes.
+// Wake: coalesce a burst of topology mutations into ~one job / 5s. Continuation: one
+// backlog-drain job / 30s (a cycle takes far less, so 30s is ample de-dup headroom).
+const HUB_SYNC_WAKE_SINGLETON_SECONDS = 5;
+const HUB_SYNC_CONTINUATION_SINGLETON_SECONDS = 30;
+
 // pg-boss `send` seam, injected so the handlers stay unit-testable and no topology
 // writer is forced to import pg-boss.
 export interface HubSyncSend {
-  send: (queue: string, data: unknown, options?: { singletonKey?: string }) => Promise<unknown>;
+  send: (
+    queue: string,
+    data: unknown,
+    options?: { singletonKey?: string; singletonSeconds?: number },
+  ) => Promise<unknown>;
 }
 
 // Asia/Shanghai calendar-date repair key `nightly:YYYY-MM-DD` (en-CA formats as
@@ -53,7 +65,10 @@ async function dispatchContinuation(deps: HubSyncSend, result: HubSyncCycleResul
     await deps.send(
       HUB_SYNC_RECOVERY_QUEUE,
       {},
-      { singletonKey: HUB_SYNC_RECOVERY_CONTINUATION_KEY },
+      {
+        singletonKey: HUB_SYNC_RECOVERY_CONTINUATION_KEY,
+        singletonSeconds: HUB_SYNC_CONTINUATION_SINGLETON_SECONDS,
+      },
     );
   }
 }
@@ -78,7 +93,10 @@ export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> 
     await deps.send(
       HUB_SYNC_MUTATION_WAKE_QUEUE,
       {},
-      { singletonKey: HUB_SYNC_MUTATION_WAKE_QUEUE },
+      {
+        singletonKey: HUB_SYNC_MUTATION_WAKE_QUEUE,
+        singletonSeconds: HUB_SYNC_WAKE_SINGLETON_SECONDS,
+      },
     );
   } catch {
     // best-effort; the minute-recovery floor still converges the durable dirty.
