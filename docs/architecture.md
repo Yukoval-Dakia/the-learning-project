@@ -681,6 +681,37 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 - `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
 - `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
 
+### 十.1 Durable hub-sync reconciliation (YUK-384)
+
+PostgreSQL 是权威：`knowledge` / `knowledge_edge` / hub-local `artifact` 拓扑写触发 `drizzle/0071` 的 `mark_hub_sync_dirty` / `fanout_hub_sync_dirty` 触发器，在**写方的同一事务内**推进每个 live hub 的 `hub_sync_reconciliation.generation`（bigint，跨 TS 边界恒为十进制字符串）。收敛由 `runHubSyncCycle`（`src/capabilities/notes/server/hub-sync-reconciliation.ts`）承担：`FOR UPDATE SKIP LOCKED` 一次领一个 generation → lock-free `computeHubDesiredState`（复用 `resolveHubMeshAtomics` + `buildAutoZonePatch`，中立模块 `server/hub-auto-zone.ts`）→ `finalizeHubSync` 在固定锁序（advisory → artifact → cursor → edit-session）+ generation/token/lease/version/editor 栅栏下原子 apply（body + block-refs + event + ack），apply 走 `SET LOCAL app.hub_sync_internal_apply='1'` 不自 dirty。
+
+**三个 job（全部经 `runHubSyncCycle`，无 scheduled 路径直接 apply）**（`src/capabilities/notes/jobs/hub_auto_sync_nightly.ts` + `capabilities/notes/manifest.ts`）：
+
+| queue | 调度 | 作用 |
+|---|---|---|
+| `hub_sync_mutation_wake` | 按需（无 cron） | 拓扑提交后的**即时合并唤醒**（latency 优化，best-effort） |
+| `hub_sync_recovery` | `* * * * *` | **每分钟恢复地板**——drain 就绪游标，≤60s 收敛下限 |
+| `hub_auto_sync_nightly` | `45 2 * * *` Asia/Shanghai | 覆盖**修复扫描**（`nightly:<BJT-date>` key，幂等），never direct apply |
+
+**耐久性契约**：耐久性 = SQL 触发器（记录 dirty，事务内）+ 每分钟恢复地板。immediate wake 是纯 latency 优化、best-effort，**从不是耐久性依赖**——漏发/失败由恢复地板兜底。有 backlog 时 recovery/nightly handler peek 已启动的 boss（`getRunningBoss`，不启动 boss）投递恰一个 singleton-keyed continuation，一个 cron tick 内 drain 完。
+
+**FULL wake 接线（哪些即时唤醒 vs 靠恢复收敛）**：wake 在 boss-available 的 HANDLER 边界、外层事务提交后发**一个合并的 hub-agnostic 信号**（不 per-hub、不进 13 个 KG leaf writer）。已接线（即时唤醒）：`POST /api/knowledge/edges`（建边）、`POST /api/proposals/[id]/decisions`（KC/边提案 accept）、`POST /api/teaching-sessions/[id]/accept-chip`（chip 驱动 accept，直调 acceptAiProposal）。因 wake 合并，这三个覆盖交互常路；其余靠恢复地板：已弃用的 proposal decide/retract 代理路由、learning_intent 编排者（agency applier job）、rejudge 翻案 job、projection fold-appliers（回放期/休眠）、bootstrap 写（seed / ensure-subject-root / subject-control-write）。tag-knowledge 委托、无直接写，无需 wake。
+
+**Rollout mode `HUB_SYNC_MODE = off | shadow | apply`**（`off` 短路 cycle；`shadow` 计算+ack 不写 body；`apply` 全量）。off→shadow→apply→rollback 八步序：
+
+1. 部署 migration/backfill，`HUB_SYNC_MODE=off`。
+2. 停掉所有旧 worker 进程再部署新 worker——绝不让旧直接-apply nightly 与新 reconciler 并存。
+3. app + worker 同一 build 部署，`HUB_SYNC_MODE=shadow`。
+4. 校验：cursor backfill 数 == live hub 数；查 status 分布、ready/dirty age、desired hash、分类错误、重复 nightly repair key 幂等。
+5. 所有 app/worker 实例一次协调重启切 `HUB_SYNC_MODE=apply`。
+6. 确认每分钟恢复 drain pending、02:45 BJT repair 用同一 `nightly:<date>` key。
+7. apply-mode 校验通过后才退役旧直接-apply nightly 路径。
+8. 回滚 = 设 `HUB_SYNC_MODE=off`；保留 reconciliation 行 + 未 ack 的 generation，义务不丢。
+
+**Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
+
+**所有权守卫**：`pnpm audit:hub-sync-writers`（+ `tests/integration/step9-invariant-audit.test.ts`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
+
 **学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
 
 `learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。
