@@ -205,11 +205,15 @@ export const notesCapability = defineCapability({
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncRecoveryJobHandler),
       },
       {
-        // YUK-384：immediate mutation-wake queue（链式/按需，无 cron）。纯归属元数据——
-        // 目前无 production topology writer 生产该 wake（immediacy 靠 recovery 兜底）；
-        // writer→sendHubSyncMutationWake 接线是 scoped follow-up。
+        // YUK-384：immediate mutation-wake queue（链式/按需，无 cron）。生产者 = 三个
+        // 已接线的拓扑 handler（POST /api/knowledge/edges、/api/proposals/[id]/decisions、
+        // /api/teaching-sessions/[id]/accept-chip）经 wakeHubSyncAfterCommit 提交后best-effort
+        // 发一个合并 wake；消费者 = 本 handler 跑 runHubSyncCycle({reason:'mutation_wake'})，
+        // 即时收敛（不再只靠每分钟 recovery 兜底）。
         name: 'hub_sync_mutation_wake',
         queue: 'llm',
+        load: () =>
+          import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncMutationWakeJobHandler),
       },
       {
         // Wave 6 / T-88 P4-A (YUK-127)：Living Note refine。链式/按需（触发器投递），无 cron。

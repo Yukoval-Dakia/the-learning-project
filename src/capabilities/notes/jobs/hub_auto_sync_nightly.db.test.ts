@@ -4,7 +4,7 @@
 // artifact_block_ref row appears (Lane-0 sync), suppressed atomics are skipped,
 // and a second unchanged run writes no new event (idempotent).
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifact, artifact_block_ref, event, knowledge } from '@/db/schema';
@@ -19,6 +19,7 @@ vi.mock('@/server/boss/client', async (importOriginal) => {
 
 import {
   buildHubAutoSyncNightlyHandler,
+  buildHubSyncMutationWakeJobHandler,
   buildHubSyncRecoveryJobHandler,
   runHubAutoSyncNightly,
 } from './hub_auto_sync_nightly';
@@ -269,5 +270,25 @@ describe('YUK-384 production continuation dispatch (buildHubSyncRecoveryJobHandl
 
     await buildHubSyncRecoveryJobHandler(testDb())([{ id: 'job-1' }] as never);
     expect(bossMock.send).not.toHaveBeenCalled();
+  });
+
+  it('the mutation-wake queue consumer actually drives a cycle (converges a ready hub)', async () => {
+    bossMock.getRunningBoss.mockReturnValue(null);
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-shared',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 's',
+    });
+    await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['kc'] });
+
+    // A produced wake job runs runHubSyncCycle({reason:'mutation_wake'}) → applies.
+    await buildHubSyncMutationWakeJobHandler(testDb())([{ id: 'wake-1' }] as never);
+
+    const rows = await testDb().execute<{ status: string }>(
+      sql`select status from hub_sync_reconciliation where artifact_id = 'hub1'`,
+    );
+    expect(rows[0]?.status).toBe('acknowledged');
   });
 });

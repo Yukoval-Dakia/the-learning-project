@@ -660,6 +660,33 @@ describe('YUK-384 hub-sync fenced apply', () => {
       last_error_class: 'invalid_document',
     });
   });
+
+  it('YUK-384: an ack fence lost to lease expiry mid-apply rolls back — never a silent applied', async () => {
+    const prepared = await preparedClaim();
+    // Shrink the lease so it expires DURING the artificially-delayed apply: the top
+    // fence + markApplying still pass (lease valid), the body version-CAS commits,
+    // but the ack fence (lease_expires_at >= clock_timestamp) then matches 0 rows.
+    await testDb().execute(
+      sql`update hub_sync_reconciliation set lease_expires_at = clock_timestamp() + interval '200 milliseconds' where artifact_id = 'hub-a'`,
+    );
+    const before = await snapshotDurable();
+
+    await expect(
+      finalizeHubSync(
+        testDb(),
+        { claim: prepared.claim, desired: prepared.desired, mode: 'apply' },
+        {
+          beforeStage: async (stage) => {
+            if (stage === 'artifact') await new Promise((resolve) => setTimeout(resolve, 500));
+          },
+        },
+      ),
+    ).rejects.toThrow(/fence lost/);
+
+    // The whole apply (body + block-refs + event + applying-set) rolled back — the
+    // reconciler never returns 'applied' without acknowledging.
+    expect(await snapshotDurable()).toEqual(before);
+  });
 });
 
 // ── Task 5 (RED Tests 16 & 18): session-qualified editing vs fenced apply ─────

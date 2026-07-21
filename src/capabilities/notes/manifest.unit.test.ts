@@ -25,10 +25,13 @@ describe('notes capability — hub-sync job family (YUK-384)', () => {
     expect(recovery?.load).toBeInstanceOf(Function);
   });
 
-  it('registers the on-demand mutation-wake queue (no cron)', () => {
+  it('registers the on-demand mutation-wake queue with a consumer (no cron)', () => {
     const wake = byName.get('hub_sync_mutation_wake');
     expect(wake).toBeDefined();
     expect(wake?.schedule).toBeUndefined();
+    // The queue MUST have a load handler — a produced wake with no consumer would
+    // be an inert dead queue, silently degrading immediacy to the recovery cron.
+    expect(wake?.load).toBeInstanceOf(Function);
   });
 
   it('registers all three hub-sync job-family members', () => {

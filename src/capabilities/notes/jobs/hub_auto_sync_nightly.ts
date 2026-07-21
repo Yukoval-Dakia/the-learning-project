@@ -184,3 +184,15 @@ export function buildHubSyncRecoveryJobHandler(db: Db): (jobs: Job[]) => Promise
     await dispatchContinuationViaRunningBoss(result);
   };
 }
+
+// Consumer for the hub_sync_mutation_wake queue: a produced wake job drives one
+// bounded cycle so the immediate wake actually converges (not just the cron).
+export function buildHubSyncMutationWakeJobHandler(db: Db): (jobs: Job[]) => Promise<void> {
+  return async () => {
+    const result = await runHubSyncCycle(db, {
+      reason: 'mutation_wake',
+      maxArtifacts: WAKE_MAX_ARTIFACTS,
+    });
+    await dispatchContinuationViaRunningBoss(result);
+  };
+}

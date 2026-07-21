@@ -415,10 +415,21 @@ export async function finalizeHubSync(
 
     // Apply. The reconciler-owned body write MUST NOT self-dirty.
     await tx.execute(sql`set local app.hub_sync_internal_apply = '1'`);
-    await tx.execute(sql`
+    const applyingRows = await tx.execute<{ artifact_id: string }>(sql`
       update hub_sync_reconciliation set status = 'applying', updated_at = clock_timestamp()
       where ${claimFence(claim)}
+      returning artifact_id
     `);
+    if (applyingRows.length !== 1) {
+      // The claim fence (generation/token/status/unexpired-lease) was lost between
+      // the cursor lock and here (e.g. lease expired by database time). Roll the
+      // whole apply back into a classified retry rather than proceeding.
+      throw new HubSyncError(
+        'apply_validation_error',
+        'APPLYING_FENCE_LOST',
+        'claim fence lost before applying',
+      );
+    }
 
     await hooks.beforeStage?.('artifact');
     const appliedRows = await tx.execute<{ version: number }>(sql`
@@ -463,7 +474,7 @@ export async function finalizeHubSync(
     });
 
     await hooks.beforeStage?.('ack');
-    await tx.execute(sql`
+    const ackRows = await tx.execute<{ artifact_id: string }>(sql`
       update hub_sync_reconciliation
       set status = 'acknowledged',
           acknowledged_generation = generation,
@@ -476,7 +487,19 @@ export async function finalizeHubSync(
           last_applied_artifact_version = ${appliedVersion},
           updated_at = clock_timestamp()
       where ${claimFence(claim)}
+      returning artifact_id
     `);
+    if (ackRows.length !== 1) {
+      // Defense-in-depth: under a pathological >90s mid-transaction lease expiry the
+      // body version-CAS can commit while the ack matches 0 rows. Throwing here rolls
+      // the ENTIRE apply (body + block-refs + event + applying-set) back and reclassifies
+      // as a retry, so we never return 'applied' without actually acknowledging.
+      throw new HubSyncError(
+        'apply_validation_error',
+        'ACK_FENCE_LOST',
+        'claim fence lost before ack (lease expiry mid-apply)',
+      );
+    }
     return 'applied';
   });
 }
