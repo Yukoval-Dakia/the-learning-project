@@ -11,6 +11,7 @@ import {
   AdminRunsQuerySchema,
   AdminRunsResponseSchema,
   CostTodayResponseSchema,
+  HubSyncHealthResponseSchema,
 } from './api/admin-observability-contracts';
 import {
   BackupArchiveBodySchema,
@@ -116,6 +117,17 @@ export const observabilityCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/admin-failures').then((m) => m.GET),
+      },
+      {
+        // YUK-384 — durable hub-sync reconciler health snapshot.
+        method: 'GET',
+        path: '/api/admin/hub-sync',
+        operationId: 'getHubSyncHealth',
+        request: {},
+        responses: { 200: HubSyncHealthResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/admin-hub-sync').then((m) => m.GET),
       },
       {
         method: 'GET',

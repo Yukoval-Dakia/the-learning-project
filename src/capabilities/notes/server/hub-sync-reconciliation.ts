@@ -611,23 +611,55 @@ function startLeaseRenewal(db: Db, claim: HubSyncClaim): { lost: () => boolean; 
   return { lost: () => lost, stop: () => clearInterval(timer) };
 }
 
+// One structured line per attempt for operators — ids + metadata ONLY, never
+// document bodies. NDJSON on stdout so the worker log ships it verbatim.
+function logHubSyncAttempt(entry: {
+  artifact_id: string;
+  generation: string;
+  claim_token: string;
+  reason: HubSyncReason;
+  mode: HubSyncMode;
+  outcome: string;
+  duration_ms: number;
+  error_class: string | null;
+}): void {
+  console.log(JSON.stringify({ event: 'hub_sync_attempt', ...entry }));
+}
+
 async function reconcileClaim(
   db: Db,
   claim: HubSyncClaim,
+  reason: HubSyncReason,
   mode: HubSyncMode,
   result: HubSyncCycleResult,
 ): Promise<void> {
   const renewal = startLeaseRenewal(db, claim);
+  const startedAt = Date.now();
+  let outcome = 'lost_lease';
+  let errorClass: string | null = null;
   try {
     const desired = await computeHubDesiredState(db, claim);
     if (renewal.lost()) return; // lost lease is a non-failure; another worker reclaims after expiry
-    const outcome = await finalizeHubSync(db, { claim, desired, mode });
-    tallyOutcome(result, outcome);
+    outcome = await finalizeHubSync(db, { claim, desired, mode });
+    tallyOutcome(result, outcome as FinalizeOutcome);
   } catch (err) {
-    await recordHubSyncRetry(db, claim, classifyHubSyncError(err));
+    const classified = classifyHubSyncError(err);
+    errorClass = classified.errorClass;
+    outcome = 'retry_wait';
+    await recordHubSyncRetry(db, claim, classified);
     result.retry_scheduled += 1;
   } finally {
     renewal.stop();
+    logHubSyncAttempt({
+      artifact_id: claim.artifactId,
+      generation: claim.generation,
+      claim_token: claim.claimToken,
+      reason,
+      mode,
+      outcome,
+      duration_ms: Date.now() - startedAt,
+      error_class: errorClass,
+    });
   }
 }
 
@@ -750,7 +782,7 @@ export async function runHubSyncCycle(
     const claim = await claimNextHubSync(db, { owner });
     if (!claim) break;
     result.claimed += 1;
-    await reconcileClaim(db, claim, mode, result);
+    await reconcileClaim(db, claim, options.reason, mode, result);
   }
   result.continuation_needed = await hasReadyHubSync(db);
   return result;
