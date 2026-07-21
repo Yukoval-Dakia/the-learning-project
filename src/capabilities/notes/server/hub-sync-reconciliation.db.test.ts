@@ -16,6 +16,7 @@ import {
   buildHubSyncRecoveryHandler,
   sendHubSyncMutationWake,
 } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
+import { readHubSyncHealth } from '@/capabilities/observability/server/hub-sync';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 
@@ -1226,5 +1227,35 @@ describe('YUK-384 unified hub-sync cycle', () => {
     const container = rows[0].body.content?.find((n) => n.type === 'autoLinksContainer');
     const childArtifactIds = (container?.content ?? []).map((c) => c.attrs?.artifact_id);
     expect(childArtifactIds).toContain('atomic-mid');
+  });
+
+  it('YUK-384 (codex P2): a recovered invalid_document hub clears last_error_* on success ack so health stops counting it', async () => {
+    await seedAppliableHub('hub-a'); // valid body → finalize will apply
+
+    // Simulate a hub that PREVIOUSLY failed invalid_document and sits in retry_wait, whose
+    // doc/code is now fixed. Set the error + retry_wait state DIRECTLY (no re-dirty): this is
+    // the code-fix recovery path — the cursor is reclaimed via retry backoff, NOT a fresh
+    // topology dirty (which would go through mark_hub_sync_dirty and reset the cursor). The
+    // only thing that can clear last_error_* on this path is the success ack.
+    await testDb().execute(sql`
+      update hub_sync_reconciliation
+      set status = 'retry_wait', consecutive_failure_count = 1,
+          last_error_class = 'invalid_document', last_error_code = 'INVALID_DOCUMENT',
+          last_error = 'desired hub document is invalid',
+          last_error_at = clock_timestamp() - interval '120 seconds',
+          next_attempt_at = clock_timestamp()
+      where artifact_id = 'hub-a'
+    `);
+    const sick = await readHubSyncHealth(testDb());
+    expect(sick.invalid_document_count).toBe(1);
+    expect(sick.oldest_invalid_age_seconds).not.toBeNull();
+
+    // Reclaim + finalize (valid body → applies) → the success ack must clear last_error_*.
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
+
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_error_class: null });
+    const healed = await readHubSyncHealth(testDb());
+    expect(healed.invalid_document_count).toBe(0);
+    expect(healed.oldest_invalid_age_seconds).toBeNull();
   });
 });

@@ -517,6 +517,11 @@ export async function finalizeHubSync(
           acknowledged_at = clock_timestamp(),
           claim_owner = null, claim_token = null, lease_expires_at = null,
           consecutive_failure_count = 0,
+          -- Success convergence: clear the last_error_* so they mean "most recent STILL-
+          -- UNRESOLVED failure". Otherwise a hub that recovered from invalid_document (or
+          -- any error) keeps last_error_class set forever → permanent false invalid_document
+          -- backlog gauges / operator alerts.
+          last_error_class = null, last_error_code = null, last_error = null, last_error_at = null,
           last_outcome = 'applied',
           last_desired_hash = ${desired.desiredHash},
           last_observed_artifact_version = ${desired.observedArtifactVersion},
@@ -569,6 +574,9 @@ async function acknowledgeNoop(
         acknowledged_at = clock_timestamp(),
         claim_owner = null, claim_token = null, lease_expires_at = null,
         consecutive_failure_count = 0,
+        -- Success convergence (valid no-op): clear last_error_* so a recovered hub stops
+        -- being counted as a live failure (see the apply-success ack for the full rationale).
+        last_error_class = null, last_error_code = null, last_error = null, last_error_at = null,
         last_outcome = ${outcome},
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
