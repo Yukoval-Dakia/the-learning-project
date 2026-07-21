@@ -160,39 +160,37 @@ export class PgPresenceStore implements PresenceStore {
     const now = input.now ?? new Date();
     const at = PgPresenceStore.stamp(input.now);
 
-    // Remove exactly this session; flush only if no active session remains. Both
-    // happen inside the shared advisory lock so a concurrent heartbeat/finalize
-    // observes a consistent session set.
-    const idleAfterBlur = await this.db.transaction(async (tx) => {
+    // ONE advisory-locked transaction covers the blur, the idle-decision, AND the drain
+    // — closing a TOCTOU window where a concurrent heartbeat (which takes the SAME
+    // advisory lock) could re-activate the artifact between a separate decision txn and
+    // a separate drain txn, so the drain flushed over an active editor. We ALSO re-check
+    // active sessions AFTER taking the pending-row lock (defense against any writer that
+    // bypasses the advisory lock) and skip the flush if newly active. `null` = still
+    // active → no flush; an array (possibly empty) = idle → drained.
+    const drained = await this.db.transaction(async (tx) => {
       await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+      // Remove exactly this session.
       await tx.execute(sql`
         delete from artifact_edit_session
         where artifact_id = ${input.artifactId} and session_id = ${input.sessionId}
       `);
-      const rows = await tx.execute<{ active: boolean }>(sql`
-        select exists(
-          select 1 from artifact_edit_session
-          where artifact_id = ${input.artifactId}
-            and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
-        ) as active
-      `);
-      return rows[0]?.active !== true;
-    });
-
-    if (!idleAfterBlur) {
-      // Another session is still editing — leave the queue intact.
-      return { artifact_id: input.artifactId, flushed: 0, results: [] };
-    }
-
-    // Drain the pending bag (drop stale) under a row lock, then apply outside the
-    // transaction in FIFO order (types.ts contract).
-    const drained = await this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()
         .from(editing_presence)
         .where(eq(editing_presence.artifact_id, input.artifactId))
         .for('update')
         .limit(1);
+      // Flush ONLY if no active session remains — re-checked here holding both the
+      // advisory lock and the pending-row lock, so a session that (re)appeared after the
+      // blur can never be flushed over.
+      const activeRows = await tx.execute<{ active: boolean }>(sql`
+        select exists(
+          select 1 from artifact_edit_session
+          where artifact_id = ${input.artifactId}
+            and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+        ) as active
+      `);
+      if (activeRows[0]?.active === true) return null;
       if (!row) return [] as SerializedQueuedPatch[];
       const fresh = dropStalePending(row.pending, now, input.artifactId);
       await tx
@@ -201,6 +199,11 @@ export class PgPresenceStore implements PresenceStore {
         .where(eq(editing_presence.artifact_id, input.artifactId));
       return fresh.kept;
     });
+
+    if (drained === null) {
+      // Another session is still editing — leave the queue intact.
+      return { artifact_id: input.artifactId, flushed: 0, results: [] };
+    }
 
     const results: PersistNoteRefineApplyResult[] = [];
     for (const queued of drained) {

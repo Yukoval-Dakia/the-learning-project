@@ -274,6 +274,56 @@ describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)
     expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
     expect((await store.getEditingSessionSnapshot('art_race'))?.pending_patches ?? 0).toBe(0);
   });
+
+  it('YUK-384: a heartbeat that lands between the blur decision and the drain cannot flush over an active editor', async () => {
+    await seedArtifact('art_flush');
+    await store.recordEditingHeartbeat({ artifactId: 'art_flush', sessionId: 'A', now: T0 });
+    // Queue a patch while A is active → deferred into the pending bag.
+    await store.enqueueOrApplyNoteRefinePatch({
+      db: applyDb,
+      artifactId: 'art_flush',
+      patch,
+      now: at(1_000),
+    });
+    expect((await store.getEditingSessionSnapshot('art_flush'))?.pending_patches).toBe(1);
+
+    // Hold the pending-row lock so the flush's drain BLOCKS there — opening the window a
+    // concurrent heartbeat exploited in the pre-fix two-transaction structure (the
+    // idle-decision committed in txn1, releasing the advisory lock, before txn2 drained).
+    const held = createDeferred();
+    const release = createDeferred();
+    const holder = testDb().transaction(async (tx) => {
+      await tx.execute(
+        sql`select 1 from editing_presence where artifact_id = 'art_flush' for update`,
+      );
+      held.resolve();
+      await release.promise;
+    });
+    await held.promise;
+
+    // Blur A (real clock, so the active-check window matches B's live heartbeat).
+    const flushP = store.markArtifactIdleAndFlush({
+      db: applyDb,
+      artifactId: 'art_flush',
+      sessionId: 'A',
+    });
+    await new Promise((r) => setTimeout(r, 200)); // let the flush reach the row-lock wait
+
+    // A NEW session B starts editing (direct insert, committing while the flush is
+    // blocked) — re-activating the artifact inside the blur→drain window.
+    await testDb().execute(sql`
+      insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+      values ('art_flush', 'B', clock_timestamp(), clock_timestamp())
+    `);
+    release.resolve();
+    await holder;
+    const flush = await flushP;
+
+    // Fix: the drain re-checks active sessions under the lock, sees B, and does NOT flush.
+    expect(flush.flushed).toBe(0);
+    expect(persistNoteRefineApply).not.toHaveBeenCalled();
+    expect((await store.getEditingSessionSnapshot('art_flush'))?.pending_patches).toBe(1);
+  });
 });
 
 describe('PgPresenceStore — 跨进程语义 (两实例共享同一 PG)', () => {
