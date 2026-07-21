@@ -235,8 +235,12 @@ describe('export constants', () => {
 
   it('BACKUP_EXCLUDED_TABLES holds only transient/operational tables', () => {
     expect([...BACKUP_EXCLUDED_TABLES].sort()).toEqual([
+      // YUK-384: ephemeral editor presence + operational reconciliation cursor,
+      // both re-established on restore (see constants.ts rationale).
+      'artifact_edit_session',
       'echo_jobs',
       'editing_presence',
+      'hub_sync_reconciliation',
       'job_events',
     ]);
   });
