@@ -662,31 +662,34 @@ describe('YUK-384 hub-sync fenced apply', () => {
     });
   });
 
-  it('YUK-384: an ack fence lost to lease expiry mid-apply rolls back — never a silent applied', async () => {
+  it('YUK-384 (P2-a): a lease that expires mid-apply while holding the cursor lock still commits — no poison rollback', async () => {
     const prepared = await preparedClaim();
-    // Shrink the lease so it expires DURING the artificially-delayed apply: the top
-    // fence + markApplying still pass (lease valid), the body version-CAS commits,
-    // but the ack fence (lease_expires_at >= clock_timestamp) then matches 0 rows.
+    // Shrink the lease so it expires DURING the artificially-delayed apply. finalize holds
+    // the cursor row lock (exclusive — a concurrent reclaim would need the lock and would
+    // change the token), so mid-transaction lease expiry is irrelevant: the apply must
+    // COMMIT + ack, not roll back into a claim→long-apply→expire→rollback poison loop. The
+    // background renewer can't help here (it is blocked on the same row lock), which is
+    // exactly the reachable big-hub / slow-DB failure.
     await testDb().execute(
       sql`update hub_sync_reconciliation set lease_expires_at = clock_timestamp() + interval '200 milliseconds' where artifact_id = 'hub-a'`,
     );
     const before = await snapshotDurable();
 
-    await expect(
-      finalizeHubSync(
-        testDb(),
-        { claim: prepared.claim, desired: prepared.desired, mode: 'apply' },
-        {
-          beforeStage: async (stage) => {
-            if (stage === 'artifact') await new Promise((resolve) => setTimeout(resolve, 500));
-          },
+    const outcome = await finalizeHubSync(
+      testDb(),
+      { claim: prepared.claim, desired: prepared.desired, mode: 'apply' },
+      {
+        beforeStage: async (stage) => {
+          if (stage === 'artifact') await new Promise((resolve) => setTimeout(resolve, 500));
         },
-      ),
-    ).rejects.toThrow(/fence lost/);
+      },
+    );
 
-    // The whole apply (body + block-refs + event + applying-set) rolled back — the
-    // reconciler never returns 'applied' without acknowledging.
-    expect(await snapshotDurable()).toEqual(before);
+    // Committed, not rolled back: applied outcome, body version bumped, cursor acked.
+    expect(outcome).toBe('applied');
+    const after = await snapshotDurable();
+    expect(after.version).toBe((before.version as number) + 1);
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_outcome: 'applied' });
   });
 });
 

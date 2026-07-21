@@ -356,8 +356,9 @@ export async function computeHubDesiredState(
   };
 }
 
-// The exact generation + token + active-status + unexpired-lease predicate every
-// cursor write must carry so a stale/superseded claim can never win a race.
+// CROSS-transaction fence: generation + token + active-status + UNEXPIRED lease. Used by
+// writes that do NOT hold the cursor row lock (recordHubSyncRetry), where the lease guards
+// against clobbering a cursor another worker may reclaim.
 function claimFence(claim: HubSyncClaim) {
   return sql`
     artifact_id = ${claim.artifactId}
@@ -365,6 +366,25 @@ function claimFence(claim: HubSyncClaim) {
     and claim_token = ${claim.claimToken}
     and status in ('claimed', 'applying')
     and lease_expires_at >= clock_timestamp()
+  `;
+}
+
+// IN-transaction fence for finalize's writes AFTER it has taken the cursor row lock (FOR
+// UPDATE) and passed the initial lease-checked superseded decision. It deliberately DROPS
+// the lease-not-expired condition: holding the row lock is exclusive (a concurrent reclaim
+// would need the lock, which we hold, and would in any case change the token — caught by
+// the token check), so whether the lease expires MID-transaction is irrelevant to
+// correctness. Keeping the lease check here caused a poison loop: a big-hub/slow-DB apply
+// (block-ref sync + event write) that outran the ~2min lease made the final ack match 0
+// rows (the background renewer is blocked on the same row lock) → ACK_FENCE_LOST rollback →
+// re-claim → long apply → expire → rollback, forever. Cross-transaction claim/renew/retry
+// keep the lease semantics (claimFence + the initial fence above).
+function heldClaimFence(claim: HubSyncClaim) {
+  return sql`
+    artifact_id = ${claim.artifactId}
+    and generation = ${claim.generation}::bigint
+    and claim_token = ${claim.claimToken}
+    and status in ('claimed', 'applying')
   `;
 }
 
@@ -430,7 +450,7 @@ export async function finalizeHubSync(
         update hub_sync_reconciliation
         set status = 'cancelled', claim_owner = null, claim_token = null, lease_expires_at = null,
             last_outcome = 'cancelled', updated_at = clock_timestamp()
-        where ${claimFence(claim)}
+        where ${heldClaimFence(claim)}
       `);
       return 'cancelled';
     }
@@ -453,7 +473,7 @@ export async function finalizeHubSync(
     await tx.execute(sql`set local app.hub_sync_internal_apply = '1'`);
     const applyingRows = await tx.execute<{ artifact_id: string }>(sql`
       update hub_sync_reconciliation set status = 'applying', updated_at = clock_timestamp()
-      where ${claimFence(claim)}
+      where ${heldClaimFence(claim)}
       returning artifact_id
     `);
     if (applyingRows.length !== 1) {
@@ -527,7 +547,7 @@ export async function finalizeHubSync(
           last_observed_artifact_version = ${desired.observedArtifactVersion},
           last_applied_artifact_version = ${appliedVersion},
           updated_at = clock_timestamp()
-      where ${claimFence(claim)}
+      where ${heldClaimFence(claim)}
       returning artifact_id
     `);
     if (ackRows.length !== 1) {
@@ -556,7 +576,7 @@ async function deferClaimedCursor(
     update hub_sync_reconciliation
     set status = 'pending', claim_owner = null, claim_token = null, lease_expires_at = null,
         next_attempt_at = clock_timestamp(), last_outcome = ${reason}, updated_at = clock_timestamp()
-    where ${claimFence(claim)}
+    where ${heldClaimFence(claim)}
   `);
   return reason === 'active_editor' ? 'deferred_editing' : 'superseded';
 }
@@ -581,7 +601,7 @@ async function acknowledgeNoop(
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
         updated_at = clock_timestamp()
-    where ${claimFence(claim)}
+    where ${heldClaimFence(claim)}
   `);
   return outcome;
 }
@@ -622,7 +642,7 @@ async function observeShadowNoApply(
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
         updated_at = clock_timestamp()
-    where ${claimFence(claim)}
+    where ${heldClaimFence(claim)}
   `);
   return 'shadowed';
 }
