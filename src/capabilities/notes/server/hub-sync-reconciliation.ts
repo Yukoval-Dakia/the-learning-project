@@ -631,10 +631,100 @@ async function reconcileClaim(
   }
 }
 
+// Test-only seam: pause each per-hub repair transaction right before it takes
+// the artifact lock, so a lifecycle mutation can commit and be re-checked under
+// lock (RED 20). Production callers omit it.
+export interface RepairHubSyncHooks {
+  beforeArtifactLock?: () => void | Promise<void>;
+}
+
+/**
+ * Bounded, idempotent coverage repair (Task 7). Pages hub IDs ascending — every
+ * cursor UNION every note_hub artifact, so cursors whose artifact was archived or
+ * lost the hub type are also reconsidered. For each ID it takes the artifact
+ * advisory lock, reloads the artifact and cursor under lock (never trusting the
+ * page-scan snapshot), and — only when `last_repair_key IS DISTINCT FROM
+ * repairKey` — dirties a live hub or cancels a non-live one, stamping the repair
+ * key in the SAME write so a duplicate key is a no-op (RED 21). It NEVER computes
+ * or applies desired body state; it only advances/cancels cursors.
+ */
+export async function repairHubSyncCoverage(
+  db: Db,
+  input: { repairKey: string; pageSize: number },
+  hooks: RepairHubSyncHooks = {},
+): Promise<{ dirtied: number; cancelled: number; hasMore: boolean }> {
+  if (!/^nightly:\d{4}-\d{2}-\d{2}$/.test(input.repairKey)) {
+    throw new Error(`invalid nightly repair key: ${input.repairKey}`);
+  }
+  const ids = await db.execute<{ id: string }>(sql`
+    select id from (
+      select artifact_id as id from hub_sync_reconciliation
+      union
+      select id from artifact where type = ${HUB_TYPE}
+    ) coverage
+    order by id
+    limit ${input.pageSize}
+  `);
+
+  let dirtied = 0;
+  let cancelled = 0;
+  for (const { id } of ids) {
+    const outcome = await db.transaction(async (tx) => {
+      await hooks.beforeArtifactLock?.();
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`);
+      const hubRows = await tx.execute<{ type: string; archived_at: Date | null }>(sql`
+        select type, archived_at from artifact where id = ${id} for update
+      `);
+      const hub = hubRows[0];
+      const cursorRows = await tx.execute<{ last_repair_key: string | null }>(sql`
+        select last_repair_key from hub_sync_reconciliation where artifact_id = ${id} for update
+      `);
+      const cursor = cursorRows[0];
+
+      // Idempotent: this run already processed the ID.
+      if (cursor && cursor.last_repair_key === input.repairKey) return 'skip' as const;
+
+      const isLiveHub = hub !== undefined && hub.type === HUB_TYPE && hub.archived_at === null;
+      if (isLiveHub) {
+        await tx.execute(sql`
+          insert into hub_sync_reconciliation (
+            artifact_id, generation, status, next_attempt_at, last_dirty_at, updated_at, last_repair_key
+          )
+          values (${id}, 1, 'pending', clock_timestamp(), clock_timestamp(), clock_timestamp(), ${input.repairKey})
+          on conflict (artifact_id) do update set
+            generation = hub_sync_reconciliation.generation + 1,
+            status = 'pending',
+            claim_owner = null, claim_token = null, lease_expires_at = null,
+            consecutive_failure_count = 0,
+            next_attempt_at = clock_timestamp(), last_dirty_at = clock_timestamp(),
+            updated_at = clock_timestamp(),
+            last_repair_key = ${input.repairKey}
+        `);
+        return 'dirtied' as const;
+      }
+
+      if (cursor) {
+        await tx.execute(sql`
+          update hub_sync_reconciliation set
+            generation = generation + 1, status = 'cancelled',
+            claim_owner = null, claim_token = null, lease_expires_at = null,
+            updated_at = clock_timestamp(), last_repair_key = ${input.repairKey}
+          where artifact_id = ${id}
+        `);
+        return 'cancelled' as const;
+      }
+      return 'skip' as const;
+    });
+    if (outcome === 'dirtied') dirtied += 1;
+    else if (outcome === 'cancelled') cancelled += 1;
+  }
+  return { dirtied, cancelled, hasMore: ids.length === input.pageSize };
+}
+
 /**
  * Minimal unified cycle (Task 4 scope): claim → compute → finalize up to
  * `maxArtifacts`, recording retries and continuation. Immediate wake, recovery,
- * and nightly repair all route here; Tasks 7–8 extend it with repair coverage
+ * and nightly repair all route here; Task 8 extends it with repair coverage
  * and continuation dispatch.
  */
 export async function runHubSyncCycle(

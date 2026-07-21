@@ -23,6 +23,7 @@ import {
   computeHubDesiredState,
   finalizeHubSync,
   renewHubSyncLease,
+  repairHubSyncCoverage,
   runHubSyncCycle,
 } from './hub-sync-reconciliation';
 
@@ -743,5 +744,136 @@ describe('YUK-384 session-qualified editing defers fenced apply', () => {
       status: 'acknowledged',
       consecutive_failure_count: 0,
     });
+  });
+});
+
+// ── Task 7 (RED Tests 19–21): race closure across hub lifecycle ───────────────
+
+describe('YUK-384 hub-sync lifecycle race closure', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-a',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 'Atomic A',
+    });
+    await seedHub('hub-a', ['kc']);
+  });
+
+  async function preparedClaim(): Promise<{ claim: HubSyncClaim; desired: HubDesiredState }> {
+    const claim = await claimRequired('worker');
+    const desired = await computeHubDesiredState(testDb(), claim);
+    return { claim, desired };
+  }
+
+  function isDeadlock(err: unknown): boolean {
+    const anyErr = err as
+      | { message?: string; code?: string; cause?: { code?: string } }
+      | undefined;
+    return (
+      anyErr?.code === '40P01' ||
+      anyErr?.cause?.code === '40P01' ||
+      /deadlock/i.test(String(anyErr?.message ?? err))
+    );
+  }
+
+  const HUB_MUTATIONS: Record<string, (c: postgres.TransactionSql) => Promise<unknown>> = {
+    archive: (c) => c`update artifact set archived_at = clock_timestamp() where id = 'hub-a'`,
+    restore: async (c) => {
+      await c`update artifact set archived_at = clock_timestamp() where id = 'hub-a'`;
+      await c`update artifact set archived_at = null where id = 'hub-a'`;
+    },
+    suppression: (c) =>
+      c`update artifact set attrs = jsonb_set(coalesce(attrs,'{}'::jsonb), '{suppressed_block_refs}', '[{"artifact_id":"atomic-a"}]'::jsonb) where id = 'hub-a'`,
+    body_save: (c) =>
+      c`update artifact set version = version + 1, body_blocks = '{"type":"doc","content":[{"type":"paragraph"}]}'::jsonb where id = 'hub-a'`,
+    hard_delete: (c) => c`delete from artifact where id = 'hub-a'`,
+  };
+
+  async function raceFinalizeAgainstHubMutation(
+    mutation: string,
+    opts: { statementTimeoutMs: number },
+  ): Promise<{ deadlocked: boolean }> {
+    const prepared = await preparedClaim();
+    const results = await Promise.allSettled([
+      (async () => {
+        try {
+          return await finalizeHubSync(testDb(), {
+            claim: prepared.claim,
+            desired: prepared.desired,
+            mode: 'apply',
+          });
+        } catch (err) {
+          if (isDeadlock(err)) throw err;
+          return 'finalize-error';
+        }
+      })(),
+      withStatementTimeout(opts.statementTimeoutMs, (c) => HUB_MUTATIONS[mutation](c)),
+    ]);
+    const deadlocked = results.some(
+      (r) => r.status === 'rejected' && isDeadlock((r as PromiseRejectedResult).reason),
+    );
+    return { deadlocked };
+  }
+
+  async function reconciliationMatchesCurrentHub(artifactId: string): Promise<boolean> {
+    const hubRows = await testDb().execute<{ type: string; archived_at: Date | null }>(
+      sql`select type, archived_at from artifact where id = ${artifactId}`,
+    );
+    const cursorRows = await testDb().execute<{ status: string }>(
+      sql`select status from hub_sync_reconciliation where artifact_id = ${artifactId}`,
+    );
+    const hub = hubRows[0];
+    const cursor = cursorRows[0];
+    if (!hub) return cursor === undefined; // hard delete cascades the cursor away
+    const live = hub.type === 'note_hub' && hub.archived_at === null;
+    return live
+      ? cursor !== undefined && cursor.status !== 'cancelled'
+      : cursor === undefined || cursor.status === 'cancelled';
+  }
+
+  function repairWithBarrier(key: string, _at: string) {
+    const barrier = new FinalizeBarrier(_at);
+    const done = repairHubSyncCoverage(
+      testDb(),
+      { repairKey: key, pageSize: 100 },
+      { beforeArtifactLock: () => barrier.hit() },
+    );
+    return { barrier, done };
+  }
+
+  async function archiveThenRestoreHub(id: string) {
+    await testDb().execute(
+      sql`update artifact set archived_at = clock_timestamp() where id = ${id}`,
+    );
+    await testDb().execute(sql`update artifact set archived_at = null where id = ${id}`);
+  }
+
+  it.each(['archive', 'restore', 'suppression', 'body_save', 'hard_delete'] as const)(
+    'YUK-384 RED 19: %s racing finalization cannot deadlock or leave stale cancellation',
+    async (mutation) => {
+      const result = await raceFinalizeAgainstHubMutation(mutation, { statementTimeoutMs: 2_000 });
+      expect(result.deadlocked).toBe(false);
+      expect(await reconciliationMatchesCurrentHub('hub-a')).toBe(true);
+    },
+  );
+
+  it('YUK-384 RED 20: nightly repair rechecks archive and restore under artifact lock', async () => {
+    const repair = repairWithBarrier('nightly:2026-07-21', 'before-artifact-lock');
+    await repair.barrier.waitUntilReached();
+    await archiveThenRestoreHub('hub-a');
+    repair.barrier.release();
+    await repair.done;
+    expect(await state('hub-a')).toMatchObject({ status: 'pending' });
+  });
+
+  it('YUK-384 RED 21: duplicate nightly repair key increments each hub at most once', async () => {
+    const key = 'nightly:2026-07-21';
+    await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 100 });
+    const once = await generation('hub-a');
+    await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 100 });
+    expect(await generation('hub-a')).toBe(once);
   });
 });
