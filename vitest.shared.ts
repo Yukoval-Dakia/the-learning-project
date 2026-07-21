@@ -148,6 +148,12 @@ export const fastTestInclude = [
   // and the boss handed in is a plain capture fake. src/server/boss/** has no
   // unit glob (client.globalthis.test.ts precedent), so this MUST be listed.
   'src/server/boss/queue-config.test.ts',
+  // YUK-384 — worker boss-start marks the running boss (getRunningBoss) so the FULL
+  // mutation-wake + continuation dispatch work in the worker. Pure no-DB: pg-boss AND
+  // every startBossWorker dependency (@/capabilities, handlers, register-capability-jobs,
+  // subjects/hydrate, ai_task_run_reconcile) is vi.mock'd. Same explicit-listing reason
+  // as client.globalthis.test.ts (src/server/boss/** has no unit glob).
+  'src/server/boss/start-worker.test.ts',
   // YUK-361 Phase 5 (Task 10) — 家族级 b_personalized 纯函数单测（shrinkage /
   // family_key / 客观路由分类 / 隐含难度残差 / effectiveFamilyB）。Pure no-DB: imports
   // 仅 ./personalized-difficulty（其 @/db/client import 是 type-only/erased，@/db/schema

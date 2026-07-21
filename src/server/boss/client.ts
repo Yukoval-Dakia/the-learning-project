@@ -159,6 +159,18 @@ export function getRunningBoss(): PgBoss | null {
 }
 
 /**
+ * Record an already-started boss as the running instance so getRunningBoss() can peek
+ * it. getStartedBoss() (the app-process enqueue path) sets this itself; the WORKER
+ * process starts boss via startBossWorker()/createBoss().start() instead, so without
+ * this call getRunningBoss() would return null IN THE WORKER — making the YUK-384 FULL
+ * hub-sync mutation wake + continuation dispatch inert exactly where they must run.
+ * Idempotent; the caller passes the boss it just started.
+ */
+export function markBossStarted(boss: PgBoss): void {
+  bossState.started = boss;
+}
+
+/**
  * Reset the singleton —— **test-only**.
  *
  * Production code must never call this; the singleton's lifecycle is tied to
