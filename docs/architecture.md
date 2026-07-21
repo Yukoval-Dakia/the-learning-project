@@ -681,6 +681,53 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 - `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
 - `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
 
+### 十.1 Durable hub-sync reconciliation (YUK-384)
+
+PostgreSQL 是权威：`knowledge` / `knowledge_edge` / hub-local `artifact` 拓扑写触发 `drizzle/0071` 的 `mark_hub_sync_dirty` / `fanout_hub_sync_dirty` 触发器，在**写方的同一事务内**推进每个 live hub 的 `hub_sync_reconciliation.generation`（bigint，跨 TS 边界恒为十进制字符串）。收敛由 `runHubSyncCycle`（`src/capabilities/notes/server/hub-sync-reconciliation.ts`）承担：`FOR UPDATE SKIP LOCKED` 一次领一个 generation → lock-free `computeHubDesiredState`（复用 `resolveHubMeshAtomics` + `buildAutoZonePatch`，中立模块 `server/hub-auto-zone.ts`）→ `finalizeHubSync` 在固定锁序（advisory → artifact → cursor → edit-session）+ generation/token/lease/version/editor 栅栏下原子 apply（body + block-refs + event + ack），apply 走 `SET LOCAL app.hub_sync_internal_apply='1'` 不自 dirty。
+
+**三个 job（全部经 `runHubSyncCycle`，无 scheduled 路径直接 apply）**（`src/capabilities/notes/jobs/hub_auto_sync_nightly.ts` + `capabilities/notes/manifest.ts`）：
+
+| queue | 调度 | 作用 |
+|---|---|---|
+| `hub_sync_mutation_wake` | 按需（无 cron） | 拓扑提交后的**即时合并唤醒**（latency 优化，best-effort） |
+| `hub_sync_recovery` | `* * * * *` | **每分钟恢复地板**——drain 就绪游标，≤60s 收敛下限 |
+| `hub_auto_sync_nightly` | `45 2 * * *` Asia/Shanghai | 覆盖**修复扫描**（`nightly:<BJT-date>` key，幂等），never direct apply |
+
+**耐久性契约**：耐久性 = SQL 触发器（记录 dirty，事务内）+ 每分钟恢复地板。immediate wake 是纯 latency 优化、best-effort，**从不是耐久性依赖**——漏发/失败由恢复地板兜底。有 backlog 时 recovery/nightly handler peek 已启动的 boss（`getRunningBoss`，不启动 boss）投递恰一个 singleton-keyed continuation，一个 cron tick 内 drain 完。
+
+**FULL wake 接线（哪些即时唤醒 vs 靠恢复收敛）**：wake 在 boss-available 的 HANDLER 边界、外层事务提交后发**一个合并的 hub-agnostic 信号**（不 per-hub、不进 13 个 KG leaf writer）。已接线（即时唤醒）：`POST /api/knowledge/edges`（建边）、`POST /api/proposals/[id]/decisions`（KC/边提案 accept）、`POST /api/teaching-sessions/[id]/accept-chip`（chip 驱动 accept，直调 acceptAiProposal）。因 wake 合并，这三个覆盖交互常路；其余靠恢复地板：已弃用的 proposal decide/retract 代理路由、learning_intent 编排者（agency applier job）、rejudge 翻案 job、projection fold-appliers（回放期/休眠）、bootstrap 写（seed / ensure-subject-root / subject-control-write）。tag-knowledge 委托、无直接写，无需 wake。
+
+**Rollout mode `HUB_SYNC_MODE = off | shadow | apply`**（`off` 短路 cycle；`shadow` 计算+ack 不写 body；`apply` 全量）。off→shadow→apply→rollback 八步序：
+
+1. 部署 migration/backfill，`HUB_SYNC_MODE=off`。
+2. 停掉所有旧 worker 进程再部署新 worker——绝不让旧直接-apply nightly 与新 reconciler 并存。
+3. app + worker 同一 build 部署，`HUB_SYNC_MODE=shadow`。
+4. 校验：cursor backfill 数 == live hub 数；查 status 分布、ready/dirty age、desired hash、分类错误、重复 nightly repair key 幂等。
+5. 所有 app/worker 实例一次协调重启切 `HUB_SYNC_MODE=apply`。shadow 期观察过、未消费义务的 hub 因 shadow re-observe 退避（2min）留在 pending，切 apply 后 **≤~3min 内经每分钟 recovery 自动收敛**（或立即跑一次 nightly repair 强制收敛）。
+6. 确认每分钟恢复 drain pending、02:45 BJT repair 用同一 `nightly:<date>` key。
+7. apply-mode 校验通过后才退役旧直接-apply nightly 路径。
+8. 回滚 = 设 `HUB_SYNC_MODE=off`；保留 reconciliation 行 + 未 ack 的 generation，义务不丢。**但注意 `off` 不是完整 kill switch**：见下「off 语义」——`off` 只停 reconciler，触发器记账（每次 KG/hub 写 bump generation）仍继续，因为触发器是 migration 起的无条件 DDL。
+
+> **⚠️ Provisioning：必须 `pnpm db:migrate`，`db:push` 不支持（R1）。** 本 feature 的触发器 / 函数（`mark_hub_sync_dirty` / `fanout_hub_sync_dirty`）、partial index、backfill **只在手写的 `drizzle/0071` SQL 里**。`drizzle-kit push` 只 diff `schema.ts`，会 bootstrap 出**有表无触发器**的死库（整个 durable-dirty 机制静默缺席、hub 永不收敛），且对已 migrate 的库跑 push 还会**提议 DROP** 那几个 partial index。`readHubSyncHealth` 的 `triggers_installed: boolean`（查 `pg_trigger` 三个 `hub_sync_*` 触发器名）是这条的运行时哨兵——`false` = 触发器缺失、reconciler 形同虚设，务必用 db:migrate 重新 provision。（repo 级 db:push 防护挂 Linear follow-up，不在本 PR。）
+
+**`off` 语义（不是完整 kill switch，R2）**：`HUB_SYNC_MODE=off` 只让 `runHubSyncCycle` 短路（不 claim / 不 apply）；**触发器的 generation 记账继续**——每次 `knowledge` / `knowledge_edge` / hub-local `artifact` 写仍在写方事务内 bump generation（单用户规模开销可忽略）。所以若回滚原因**正是触发器本身**（perf / lock 争用），`off` 不缓解。真正的紧急停用 = DROP 三个触发器：
+
+```sql
+DROP TRIGGER IF EXISTS hub_sync_artifact_dirty ON artifact;
+DROP TRIGGER IF EXISTS hub_sync_knowledge_dirty ON knowledge;
+DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
+```
+
+重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 影响**——它在 nightly 的 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 控制。
+
+**Restore 语义（R3）**：`hub_sync_reconciliation` 走 `BACKUP_EXCLUDED_TABLES`（非 FK_ORDER）——restore 重插 `artifact` 时 `hub_sync_artifact_dirty` 逐行 fan-out 重建每个 live hub 的 pending 游标（`O(atomics×hubs)` 的一次性 churn，单用户规模可忽略），nightly repair 兜底 coverage；故 restore 后无需手工补游标。
+
+**Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`、`triggers_installed`（provisioning 哨兵，见上 Provisioning 警告）。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
+
+**所有权守卫**：`pnpm audit:hub-sync-writers`（+ `tests/integration/step9-invariant-audit.test.ts`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
+
+**并发注记 — atomic 硬删 vs finalizer 死锁 (X2)**：atomic 硬删事务持 atomic 行锁 → `AFTER DELETE` 触发器 fan-out 要更新 hub cursor；同时 finalizer 持 cursor 锁 → `syncBlockRefsForArtifact` 插 `artifact_block_ref(to_artifact_id=该 atomic)` 需该 atomic 行的 `KEY SHARE` → 两事务互等。这是**可能但收敛安全**的：PostgreSQL 死锁检测（默认 `deadlock_timeout` 1s）解环、abort 一边并抛 `40P01 deadlock_detected`。**finalize 侧**若被 abort，`40P01` 是 5 字符 SQLSTATE → `classifyHubSyncError` 归 `pg_transient` → classified retry → 下一周期自愈（无数据损失，义务不丢）。**删除侧调用方**若被 abort，需容忍并重试该删除（标准写侧重试纪律）。彻底消除方案（如 finalize 先验 refs、或延迟 block-ref fan-out）是 follow-up，非本 PR——单用户规模下死锁窗口极小，PG 解环 + 自愈已足。
+
 **学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
 
 `learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。

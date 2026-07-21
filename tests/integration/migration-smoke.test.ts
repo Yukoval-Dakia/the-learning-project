@@ -592,3 +592,141 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await db.execute(sql`DELETE FROM misconception_edge WHERE id = 'mce_ok'`);
   });
 });
+
+// YUK-384 — durable hub-sync migration must backfill a reconciliation cursor for
+// every live hub that already existed BEFORE the migration ran. This describe
+// spins its own testcontainer and migrates ONLY through the frozen baseline
+// (0070) so it can seed a pre-0071 live hub, then applies the pending migration
+// (0071) and asserts the exact schema/triggers/indexes plus the live-hub backfill.
+describe('migration smoke — YUK-384 durable hub sync backfill', () => {
+  // Frozen baseline: the last migration on main before 0071. `beforeAll` stops
+  // here so the old-schema fixture is seeded before the durable-cursor DDL runs.
+  const BASELINE_TAG = '0070_yuk736_snapshot_baseline';
+
+  let container: StartedPostgreSqlContainer;
+  let oldSchemaSql: ReturnType<typeof postgres>;
+
+  function orderedMigrations(): { tag: string; sql: string }[] {
+    const journal = JSON.parse(
+      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+    ) as { entries: { idx: number; tag: string }[] };
+    return [...journal.entries]
+      .sort((a, b) => a.idx - b.idx)
+      .map((entry) => ({
+        tag: entry.tag,
+        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+      }));
+  }
+
+  // Apply one migration file the way drizzle's migrator does: split on the
+  // statement-breakpoint marker and run each top-level statement on its own
+  // (plpgsql `$$` bodies never contain the marker, so they stay intact).
+  async function applyMigrationFile(client: ReturnType<typeof postgres>, fileSql: string) {
+    for (const chunk of fileSql.split('--> statement-breakpoint')) {
+      const statement = chunk.trim();
+      if (statement.length === 0) continue;
+      await client.unsafe(statement);
+    }
+  }
+
+  // Applies every migration AFTER the frozen baseline. During RED (before 0071
+  // exists) this is a no-op, so the later `hub_sync_reconciliation` query fails
+  // with "relation does not exist"; once 0071 lands it installs the durable
+  // schema and backfills the already-seeded live hub.
+  async function applyPendingMigrations(client: ReturnType<typeof postgres>) {
+    let seenBaseline = false;
+    for (const migration of orderedMigrations()) {
+      if (seenBaseline) await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) seenBaseline = true;
+    }
+  }
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    oldSchemaSql = postgres(container.getConnectionUri(), { max: 1 });
+
+    let reachedBaseline = false;
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(oldSchemaSql, migration.sql);
+      if (migration.tag === BASELINE_TAG) {
+        reachedBaseline = true;
+        break;
+      }
+    }
+    if (!reachedBaseline) {
+      throw new Error(`baseline migration ${BASELINE_TAG} not found in journal`);
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await oldSchemaSql?.end();
+    await container?.stop();
+  });
+
+  it('YUK-384 RED 01: installs exact durable hub-sync schema, triggers, indexes, and backfills live hubs', async () => {
+    // Grounding (2026-07-21): `artifact.knowledge_ids` is jsonb (seed `'[]'::jsonb`,
+    // never `text[]`), `body_blocks` is the ArtifactBodyBlocksT doc shape, and
+    // `intent_source`/`source`/`created_at`/`updated_at` are NOT NULL without
+    // defaults, so the fixture must supply them for the insert to reach the
+    // durable-schema assertions below.
+    await oldSchemaSql`
+      insert into artifact (
+        id, type, title, body_blocks, attrs, knowledge_ids,
+        intent_source, source, created_at, updated_at, version
+      )
+      values (
+        'hub-existing', 'note_hub', 'Hub', '{"type":"doc","content":[]}'::jsonb,
+        '{}'::jsonb, '[]'::jsonb, 'system', 'system', now(), now(), 1
+      )
+    `;
+    await applyPendingMigrations(oldSchemaSql);
+
+    const rows = await oldSchemaSql<
+      {
+        artifact_id: string;
+        generation: string;
+        acknowledged_generation: string;
+        status: string;
+      }[]
+    >`
+      select artifact_id, generation::text, acknowledged_generation::text, status
+      from hub_sync_reconciliation
+    `;
+    expect(rows).toEqual([
+      {
+        artifact_id: 'hub-existing',
+        generation: '1',
+        acknowledged_generation: '0',
+        status: 'pending',
+      },
+    ]);
+
+    const indexes = await oldSchemaSql<{ indexname: string }[]>`
+      select indexname from pg_indexes
+      where tablename in ('hub_sync_reconciliation', 'artifact_edit_session')
+      order by indexname
+    `;
+    expect(indexes.map((row) => row.indexname)).toEqual(
+      expect.arrayContaining([
+        'hub_sync_reconciliation_pkey',
+        'hub_sync_ready_idx',
+        'hub_sync_expired_idx',
+        'hub_sync_dirty_age_idx',
+        'artifact_edit_session_pkey',
+        'artifact_edit_session_recent_idx',
+      ]),
+    );
+
+    const triggers = await oldSchemaSql<{ tgname: string }[]>`
+      select tgname from pg_trigger
+      where not tgisinternal and tgname like 'hub_sync_%'
+      order by tgname
+    `;
+    expect(triggers.map((row) => row.tgname)).toEqual([
+      'hub_sync_artifact_dirty',
+      'hub_sync_knowledge_dirty',
+      'hub_sync_knowledge_edge_dirty',
+    ]);
+  });
+});

@@ -489,5 +489,221 @@
       "ref": "YUK-601 rollback 端点落地（rolled_back_from 随 rollback 行实写）",
       "expected_by": "2026-09-30"
     }
+  },
+  "hub_sync_reconciliation.artifact_id": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.actor_ref": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.generation": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.acknowledged_generation": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.status": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.claim_owner": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.claim_token": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.lease_expires_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.claim_count": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.consecutive_failure_count": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.next_attempt_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_dirty_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_claimed_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_error_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.acknowledged_at": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_outcome": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_error_class": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_error_code": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_error": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_desired_hash": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_repair_key": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_observed_artifact_version": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "hub_sync_reconciliation.last_applied_artifact_version": {
+    "reason": "YUK-384 durable hub-sync reconciliation cursor. Topology columns (generation/status/last_dirty_at/next_attempt_at/actor_ref/artifact_id) are written by the PostgreSQL mark_hub_sync_dirty trigger + live-hub backfill in drizzle/0071 — audit:schema is TS-only and cannot see SQL trigger writes. The claim/lease/finalize/retry columns receive their TypeScript write paths in YUK-384 Tasks 3-8 (src/capabilities/notes/server/hub-sync-reconciliation.ts).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 hub-sync-reconciliation.ts claim/finalize/retry write paths (Tasks 3-8) + audit:hub-sync-writers ownership guard (Task 9)",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "artifact_edit_session.artifact_id": {
+    "reason": "YUK-384 session-qualified editing presence. Rows are written by the advisory-locked PgPresenceStore session upsert/delete landing in YUK-384 Task 5 (src/server/artifacts/presence/pg.ts); Task 1 ships schema + migration only.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "artifact_edit_session.session_id": {
+    "reason": "YUK-384 session-qualified editing presence. Rows are written by the advisory-locked PgPresenceStore session upsert/delete landing in YUK-384 Task 5 (src/server/artifacts/presence/pg.ts); Task 1 ships schema + migration only.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "artifact_edit_session.started_at": {
+    "reason": "YUK-384 session-qualified editing presence. Rows are written by the advisory-locked PgPresenceStore session upsert/delete landing in YUK-384 Task 5 (src/server/artifacts/presence/pg.ts); Task 1 ships schema + migration only.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
+      "expected_by": "2027-01-31"
+    }
+  },
+  "artifact_edit_session.last_heartbeat_at": {
+    "reason": "YUK-384 session-qualified editing presence. Rows are written by the advisory-locked PgPresenceStore session upsert/delete landing in YUK-384 Task 5 (src/server/artifacts/presence/pg.ts); Task 1 ships schema + migration only.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
+      "expected_by": "2027-01-31"
+    }
   }
 }

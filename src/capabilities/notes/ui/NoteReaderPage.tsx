@@ -14,7 +14,7 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './note-reader.css';
 
 import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
@@ -101,16 +101,26 @@ export default function NoteReaderPage({
   // 保存成功 / 换笔记 / 卸载）blur——服务端置 idle 并 FIFO flush 被 defer 的
   // patch。best-effort：presence 失败不打断编辑（与旧 ArtifactBlockTree 等价），
   // 兜底是 30s 心跳超时 sticky idle + PATCH 乐观锁。
+  // YUK-384 — one editor_session_id per mounted edit session, so the server keys
+  // presence by (artifact, session). Minted lazily on the first heartbeat and
+  // reused for every heartbeat; the blur reuses the same value, then it clears so
+  // a later edit session (or remount) mints a fresh id.
+  const editorSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (mode !== 'edit') return;
+    if (editorSessionIdRef.current === null) {
+      editorSessionIdRef.current = crypto.randomUUID();
+    }
+    const sessionId = editorSessionIdRef.current;
     const sendHeartbeat = () => {
-      void editingHeartbeat(id).catch(() => {});
+      void editingHeartbeat(id, sessionId).catch(() => {});
     };
     sendHeartbeat();
     const timer = window.setInterval(sendHeartbeat, 5000);
     return () => {
       window.clearInterval(timer);
-      void editingBlur(id).catch(() => {});
+      void editingBlur(id, sessionId).catch(() => {});
+      editorSessionIdRef.current = null;
     };
   }, [mode, id]);
 

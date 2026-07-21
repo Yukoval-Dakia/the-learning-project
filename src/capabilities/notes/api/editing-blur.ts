@@ -17,7 +17,11 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
-    const result = await markArtifactIdleAndFlush({ db, artifactId: parsed.data.artifact_id });
+    const result = await markArtifactIdleAndFlush({
+      db,
+      artifactId: parsed.data.artifact_id,
+      sessionId: parsed.data.editor_session_id,
+    });
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);

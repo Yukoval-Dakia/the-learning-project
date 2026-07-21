@@ -243,6 +243,23 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // 存储非业务实体". A restore starts from an empty presence backend — heartbeats are
   // re-established live, so persisting them would resurrect stale lock state.
   'editing_presence',
+  // YUK-384: session-qualified editor presence (peer of editing_presence). 30s-expiry
+  // heartbeat rows keyed (artifact_id, session_id); a restore starts from an empty
+  // presence backend and sessions re-register live — persisting them resurrects stale
+  // lock state. FK → artifact ON DELETE cascade, so the artifact wipe clears them.
+  'artifact_edit_session',
+  // YUK-384: the durable hub-sync reconciliation cursor. It is a reconciler-PROGRESS
+  // ledger over DERIVED desired hub state (computed from the backed-up authored
+  // atomics/knowledge), NOT authored or slow-accumulated data — operational, so it
+  // belongs here rather than FK_ORDER. It is RE-ESTABLISHED automatically on restore:
+  // the FK → artifact is ON DELETE cascade (the artifact wipe clears stale cursors),
+  // and re-inserting the artifact table fires the `hub_sync_artifact_dirty` AFTER
+  // INSERT trigger → mark_hub_sync_dirty → a fresh pending cursor per live hub; the
+  // paginated nightly coverage repair is a further backstop. Backing it up in FK_ORDER
+  // would be futile — that same AFTER INSERT trigger re-dirties every hub during
+  // restore and the `on conflict do nothing` restore insert would drop the archived
+  // rows anyway. (Excluded, not FK_ORDER → no SCHEMA_VERSION bump.)
+  'hub_sync_reconciliation',
 ]);
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────

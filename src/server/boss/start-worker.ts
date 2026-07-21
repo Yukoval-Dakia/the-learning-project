@@ -8,7 +8,7 @@ import type { PgBoss } from 'pg-boss';
 
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
-import { createBoss, isQueueCreateRace } from '@/server/boss/client';
+import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
@@ -77,6 +77,11 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
       '[worker] boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
     );
   }
+  // Mark this started boss as the running instance so getRunningBoss() can peek it in
+  // the worker — otherwise the YUK-384 FULL mutation-wake + continuation dispatch are
+  // inert here (the worker never calls getStartedBoss, which is what app processes use
+  // to record the running boss). Both branches above leave `boss` usable.
+  markBossStarted(boss);
   await registerHandlers(boss, db);
   // M4-T3 (YUK-319)：渐缩簿之后挂载各 capability manifest 声明的 job（建队 +
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标

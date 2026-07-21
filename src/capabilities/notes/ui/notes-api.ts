@@ -145,21 +145,25 @@ export interface AiChangeRow {
   undone: boolean;
 }
 
-// ── editing presence（M5 全分支 review H2 接线） ─────────────────
-// 写侧契约与被 T5c 拆除的 ArtifactBlockTree 等价：编辑中每 5s 心跳
-// { artifact_id, status: 'editing' }；离开编辑态 blur { artifact_id }（服务端
-// markArtifactIdleAndFlush 顺带 FIFO apply 编辑期被 defer 的 AI patch）。
-// 读侧 = worker note-refine 经 PgPresenceStore 判 idle（ADR-0023 M5 迁移注）。
-export const editingHeartbeat = (artifactId: string) =>
+// ── editing presence（M5 全分支 review H2 接线；YUK-384 session-qualified） ─────
+// 写侧契约：编辑中每 5s 心跳 { artifact_id, editor_session_id, status: 'editing' }；
+// 离开编辑态 blur { artifact_id, editor_session_id }（服务端 markArtifactIdleAndFlush
+// 只删该 session，末个 session 走后才 FIFO apply 被 defer 的 AI patch）。
+// editor_session_id = 每个挂载编辑会话一个 UUID（NoteReaderPage 侧 ref 生成）。
+export const editingHeartbeat = (artifactId: string, editorSessionId: string) =>
   apiJson<{ ok: boolean }>('/api/editing-session/heartbeat', {
     method: 'POST',
-    body: JSON.stringify({ artifact_id: artifactId, status: 'editing' }),
+    body: JSON.stringify({
+      artifact_id: artifactId,
+      editor_session_id: editorSessionId,
+      status: 'editing',
+    }),
   });
 
-export const editingBlur = (artifactId: string) =>
+export const editingBlur = (artifactId: string, editorSessionId: string) =>
   apiJson('/api/editing-session/blur', {
     method: 'POST',
-    body: JSON.stringify({ artifact_id: artifactId }),
+    body: JSON.stringify({ artifact_id: artifactId, editor_session_id: editorSessionId }),
   });
 
 export const getAiChanges = (artifactId: string) =>

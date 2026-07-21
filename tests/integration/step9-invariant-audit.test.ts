@@ -496,4 +496,21 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       `Unexpected question_block writers. Every writer must pair its row mutation with the canonical event-source seam (question_block_create / question_block_lifecycle) or be the projection writer — see YUK-471 W3-D. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
     ).toEqual([]);
   });
+
+  // YUK-384 — hub-sync writer ownership. Locks all four invariants: every
+  // knowledge/knowledge_edge topology writer is inventoried (trigger-owned
+  // correctness); hub_sync_reconciliation + the app.hub_sync_internal_apply GUC
+  // are written ONLY by the reconciler; no direct actorRef:'hub_auto_sync' apply.
+  it('hub-sync writer ownership: topology inventoried + cursor/marker/actor single-owned (YUK-384)', async () => {
+    const { auditHubSyncWriters, loadAllowlist } = await import(
+      '../../scripts/audit-hub-sync-writers'
+    );
+    const findings = await auditHubSyncWriters({ root: REPO_ROOT, allowlist: loadAllowlist() });
+    expect(
+      findings,
+      `Hub-sync writer ownership violated (YUK-384). Every knowledge/knowledge_edge writer must be inventoried in scripts/audit-hub-sync-writers-allowlist.json; hub_sync_reconciliation + app.hub_sync_internal_apply are owned solely by hub-sync-reconciliation.ts; direct actorRef:'hub_auto_sync' apply is forbidden. Found:\n  ${findings
+        .map((f) => `${f.rule} ${f.file}:${f.line}`)
+        .join('\n  ')}`,
+    ).toEqual([]);
+  });
 });

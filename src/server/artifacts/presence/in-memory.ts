@@ -5,7 +5,6 @@ import {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
   EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingSessionSnapshot,
-  type EditingStatus,
   type EnqueueOrApplyInput,
   type EnqueueOrApplyResult,
   type MarkIdleAndFlushInput,
@@ -15,78 +14,57 @@ import {
   type RecordHeartbeatInput,
 } from './types';
 
-interface EditingSessionState {
-  artifactId: string;
-  status: EditingStatus;
-  lastHeartbeatAt: Date;
-  editingStartedAt: Date | null;
-  pending: QueuedPatch[];
-}
-
-function cloneDate(date: Date): Date {
-  return new Date(date.getTime());
-}
-
-// Process-local presence store. This is the original editing-session.ts Map
-// behavior, preserved verbatim — it is the DEFAULT for dev + the fast unit
-// suite (unit suite mocks presence/pg to InMemoryPresenceStore). It is intentionally NOT cross-process; the Redis
-// store is what makes presence shared between the web + worker processes.
+// Process-local presence store — the DEFAULT for dev + the fast unit suite
+// (which vi.mock's presence/pg to this). YUK-384: observably equivalent to
+// PgPresenceStore for session rows — sessions are keyed by (artifactId,
+// sessionId), a session is active while its last heartbeat is within
+// EDITING_HEARTBEAT_TIMEOUT_MS, and the note-refine defer queue is per-artifact.
+// Intentionally NOT cross-process (the PG store is what shares state).
 export class InMemoryPresenceStore implements PresenceStore {
-  private readonly sessions = new Map<string, EditingSessionState>();
+  private readonly sessions = new Map<string, Map<string, Date>>();
+  private readonly pending = new Map<string, QueuedPatch[]>();
 
-  private currentState(artifactId: string, now: Date): EditingSessionState {
-    const existing = this.sessions.get(artifactId);
-    if (existing) return existing;
-    const state: EditingSessionState = {
-      artifactId,
-      status: 'idle',
-      lastHeartbeatAt: cloneDate(now),
-      editingStartedAt: null,
-      pending: [],
-    };
-    this.sessions.set(artifactId, state);
-    return state;
+  private sessionMap(artifactId: string): Map<string, Date> {
+    let map = this.sessions.get(artifactId);
+    if (!map) {
+      map = new Map();
+      this.sessions.set(artifactId, map);
+    }
+    return map;
   }
 
-  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
-    const now = input.now ?? new Date();
-    const state = this.currentState(input.artifactId, now);
-    state.status = input.status;
-    state.lastHeartbeatAt = cloneDate(now);
-    state.editingStartedAt =
-      input.status === 'editing' ? (state.editingStartedAt ?? cloneDate(now)) : null;
-  }
-
-  async isArtifactIdle(artifactId: string, now = new Date()): Promise<boolean> {
-    const state = this.sessions.get(artifactId);
-    if (!state) return true;
-    if (state.status === 'idle') return true;
-    if (now.getTime() - state.lastHeartbeatAt.getTime() > EDITING_HEARTBEAT_TIMEOUT_MS) {
-      state.status = 'idle';
-      state.editingStartedAt = null;
-      return true;
+  private hasActiveSession(artifactId: string, now: Date): boolean {
+    const map = this.sessions.get(artifactId);
+    if (!map) return false;
+    for (const lastHeartbeat of map.values()) {
+      if (now.getTime() - lastHeartbeat.getTime() <= EDITING_HEARTBEAT_TIMEOUT_MS) return true;
     }
     return false;
   }
 
-  private shouldForceApply(state: EditingSessionState, now: Date): boolean {
-    return (
-      state.status === 'editing' &&
-      state.editingStartedAt !== null &&
-      now.getTime() - state.editingStartedAt.getTime() >= EDITING_FORCE_APPLY_TIMEOUT_MS
-    );
+  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
+    const now = input.now ?? new Date();
+    this.sessionMap(input.artifactId).set(input.sessionId, new Date(now.getTime()));
+  }
+
+  async isArtifactIdle(artifactId: string, now = new Date()): Promise<boolean> {
+    return !this.hasActiveSession(artifactId, now);
   }
 
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
     const now = input.now ?? new Date();
-    const state = this.currentState(input.artifactId, now);
-    if (!(await this.isArtifactIdle(input.artifactId, now)) && !this.shouldForceApply(state, now)) {
-      state.pending.push({
+    if (this.hasActiveSession(input.artifactId, now)) {
+      const queue = this.pending.get(input.artifactId) ?? [];
+      const fresh = queue.filter(
+        (item) => now.getTime() - item.queuedAt.getTime() <= EDITING_FORCE_APPLY_TIMEOUT_MS,
+      );
+      fresh.push({
         patch: input.patch,
         taskResult: input.taskResult,
         triggerEventId: input.triggerEventId ?? null,
-        queuedAt: cloneDate(now),
+        queuedAt: new Date(now.getTime()),
       });
+      this.pending.set(input.artifactId, fresh);
       return { status: 'deferred', artifact_id: input.artifactId };
     }
 
@@ -102,38 +80,55 @@ export class InMemoryPresenceStore implements PresenceStore {
 
   async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {
     const now = input.now ?? new Date();
-    const state = this.currentState(input.artifactId, now);
-    state.status = 'idle';
-    state.lastHeartbeatAt = cloneDate(now);
-    state.editingStartedAt = null;
-    const pending = state.pending.splice(0);
-    const results: PersistNoteRefineApplyResult[] = [];
-    for (const item of pending) {
-      const result = await persistNoteRefineApply({
-        db: input.db,
-        artifactId: input.artifactId,
-        patch: item.patch,
-        taskResult: item.taskResult,
-        triggerEventId: item.triggerEventId ?? null,
-        now,
-      });
-      results.push(result);
+    this.sessions.get(input.artifactId)?.delete(input.sessionId);
+    if (this.hasActiveSession(input.artifactId, now)) {
+      return { artifact_id: input.artifactId, flushed: 0, results: [] };
     }
-    return { artifact_id: input.artifactId, flushed: pending.length, results };
+
+    const queue = this.pending.get(input.artifactId) ?? [];
+    const fresh = queue.filter(
+      (item) => now.getTime() - item.queuedAt.getTime() <= EDITING_FORCE_APPLY_TIMEOUT_MS,
+    );
+    this.pending.set(input.artifactId, []);
+    const results: PersistNoteRefineApplyResult[] = [];
+    for (const item of fresh) {
+      results.push(
+        await persistNoteRefineApply({
+          db: input.db,
+          artifactId: input.artifactId,
+          patch: item.patch,
+          taskResult: item.taskResult,
+          triggerEventId: item.triggerEventId ?? null,
+          now,
+        }),
+      );
+    }
+    return { artifact_id: input.artifactId, flushed: fresh.length, results };
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
-    const state = this.sessions.get(artifactId);
-    if (!state) return null;
+    const map = this.sessions.get(artifactId);
+    const pending = this.pending.get(artifactId) ?? [];
+    // Parity with PgPresenceStore: a drained pending bag (the row/entry still
+    // exists) reports pending_patches: 0 rather than vanishing to null.
+    if ((!map || map.size === 0) && !this.pending.has(artifactId)) return null;
+    const heartbeats = map ? [...map.values()] : [];
+    const latest = heartbeats.reduce<Date | null>(
+      (acc, d) => (acc === null || d.getTime() > acc.getTime() ? d : acc),
+      null,
+    );
     return {
       artifact_id: artifactId,
-      status: state.status,
-      last_heartbeat_at: state.lastHeartbeatAt.toISOString(),
-      pending_patches: state.pending.length,
+      // Existence-based (informational): any live session row reads as editing.
+      // isArtifactIdle is the load-bearing windowed check.
+      status: heartbeats.length > 0 ? 'editing' : 'idle',
+      last_heartbeat_at: (latest ?? new Date()).toISOString(),
+      pending_patches: pending.length,
     };
   }
 
   async reset(): Promise<void> {
     this.sessions.clear();
+    this.pending.clear();
   }
 }

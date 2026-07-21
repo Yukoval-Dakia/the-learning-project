@@ -273,7 +273,7 @@ describe('runNoteRefine', () => {
     const db = testDb();
     await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
     const start = new Date('2026-05-28T12:00:00Z');
-    await recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now: start });
+    await recordEditingHeartbeat({ artifactId: 'a1', sessionId: 'A', now: start });
 
     const first = await runNoteRefine({
       db,
@@ -319,6 +319,7 @@ describe('runNoteRefine', () => {
     const flushed = await markArtifactIdleAndFlush({
       db,
       artifactId: 'a1',
+      sessionId: 'A',
       now: new Date(start.getTime() + 3_000),
     });
     expect(flushed.results).toMatchObject([
@@ -658,7 +659,7 @@ describe('runNoteRefine', () => {
   it('mutator path defers while the artifact is actively edited and flushes on idle', async () => {
     await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
     const now = new Date('2026-05-28T12:00:00Z');
-    await recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now });
+    await recordEditingHeartbeat({ artifactId: 'a1', sessionId: 'A', now });
     const runTaskFn = vi.fn(async () => ({
       text: refinePayload([{ kind: 'append_block', block: paragraphBlock('b_deferred', 'x') }]),
     }));
@@ -678,6 +679,7 @@ describe('runNoteRefine', () => {
     const flush = await markArtifactIdleAndFlush({
       db: testDb(),
       artifactId: 'a1',
+      sessionId: 'A',
       now: new Date('2026-05-28T12:00:10Z'),
     });
 

@@ -53,11 +53,20 @@ export function isQueueCreateRace(err: unknown): boolean {
 // module cache alone suffices and we never write to globalThis there —
 // behaviour unchanged. The PR #340 getStartedBoss catch semantics are preserved
 // below, only retargeted to clear bossState.startPromise. (YUK-274)
-type BossState = { instance: PgBoss | null; startPromise: Promise<PgBoss> | null };
+// `started` holds the boss ONLY once boss.start() has fully resolved — it is what
+// getRunningBoss() peeks so a caller can send a best-effort job WITHOUT starting
+// boss itself (YUK-384 hub-sync mutation wake: no-op when boss isn't running,
+// e.g. tests / cold start, so it never triggers a real pg-boss start).
+type BossState = {
+  instance: PgBoss | null;
+  startPromise: Promise<PgBoss> | null;
+  started: PgBoss | null;
+};
 const globalForBoss = globalThis as typeof globalThis & { __loomBossState?: BossState };
 const bossState: BossState = globalForBoss.__loomBossState ?? {
   instance: null,
   startPromise: null,
+  started: null,
 };
 if (process.env.NODE_ENV !== 'production') {
   globalForBoss.__loomBossState = bossState;
@@ -103,11 +112,18 @@ export function createBoss(): PgBoss {
  * pg-boss is "started" here.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
+  // X4: if the boss is ALREADY started (e.g. the RW_WORKER=1 single-process path started it
+  // via startBossWorker → markBossStarted, which sets `started` but not `startPromise`),
+  // return it — never call boss.start() a second time on a running instance.
+  if (bossState.started) return bossState.started;
   if (!bossState.startPromise) {
     const boss = createBoss();
     bossState.startPromise = boss
       .start()
-      .then(() => boss)
+      .then(() => {
+        bossState.started = boss;
+        return boss;
+      })
       .catch((err) => {
         // YUK-259: pg-boss's own `boss.start()` directly awaits the timekeeper
         // creating its internal `__pgboss__send-it` queue (pg-boss index.js
@@ -126,6 +142,7 @@ export async function getStartedBoss(): Promise<PgBoss> {
           console.warn(
             '[boss] getStartedBoss(): boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
           );
+          bossState.started = boss;
           return boss;
         }
         bossState.startPromise = null;
@@ -133,6 +150,28 @@ export async function getStartedBoss(): Promise<PgBoss> {
       });
   }
   return bossState.startPromise;
+}
+
+/**
+ * Peek at the already-started boss WITHOUT starting one. Returns null when boss
+ * has not been started (tests, cold start) — callers use this for best-effort
+ * fire-and-forget sends (e.g. YUK-384 hub-sync mutation wake) that must never
+ * become a boss-lifecycle driver nor a durability dependency.
+ */
+export function getRunningBoss(): PgBoss | null {
+  return bossState.started;
+}
+
+/**
+ * Record an already-started boss as the running instance so getRunningBoss() can peek
+ * it. getStartedBoss() (the app-process enqueue path) sets this itself; the WORKER
+ * process starts boss via startBossWorker()/createBoss().start() instead, so without
+ * this call getRunningBoss() would return null IN THE WORKER — making the YUK-384 FULL
+ * hub-sync mutation wake + continuation dispatch inert exactly where they must run.
+ * Idempotent; the caller passes the boss it just started.
+ */
+export function markBossStarted(boss: PgBoss): void {
+  bossState.started = boss;
 }
 
 /**
@@ -145,4 +184,5 @@ export async function getStartedBoss(): Promise<PgBoss> {
 export function _resetBossForTests(): void {
   bossState.instance = null;
   bossState.startPromise = null;
+  bossState.started = null;
 }

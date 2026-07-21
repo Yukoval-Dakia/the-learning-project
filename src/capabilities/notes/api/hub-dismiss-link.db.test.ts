@@ -227,10 +227,15 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
     // Sanity: removed from the container.
     expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
 
-    // Run the nightly sync — it must NOT re-add the suppressed atomic.
-    const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
-    expect(result.cross_links_desired_total).toBe(0);
-    expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
+    // Run the nightly repair+reconcile sweep (YUK-384) in apply mode — the
+    // reconciler must NOT re-add the suppressed atomic.
+    process.env.HUB_SYNC_MODE = 'apply';
+    try {
+      await runHubAutoSyncNightly(testDb(), { now: NOW });
+      expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
+    } finally {
+      process.env.HUB_SYNC_MODE = 'off';
+    }
   });
 
   it('rejects dismiss on a non-hub artifact', async () => {

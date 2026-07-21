@@ -32,6 +32,7 @@ import {
 } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
+import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
@@ -144,6 +145,11 @@ export async function POST(req: Request): Promise<Response> {
         uniqueViolationMessage: `edge already exists: ${fromId} --${parsed.data.relation_type}--> ${toId}`,
       },
     );
+    // YUK-384 — best-effort immediate hub-sync wake AFTER commit (the trigger
+    // already dirtied every live hub durably; this just shortcuts the ≤60s
+    // recovery floor). Fire-and-forget (`void`, W1) so the response is never bound
+    // to pg-boss availability/latency; the seam double-swallows its own errors.
+    void wakeHubSyncAfterCommit();
     return resourceResponse(
       { id },
       {

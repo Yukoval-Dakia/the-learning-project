@@ -159,3 +159,28 @@ export const CostTodayResponseSchema = z.object({
     ),
   }),
 });
+
+// YUK-384 — durable hub-sync reconciler health (GET /api/admin/hub-sync).
+export const HubSyncHealthResponseSchema = z.object({
+  by_status: z.object({
+    pending: z.number().int().nonnegative(),
+    claimed: z.number().int().nonnegative(),
+    applying: z.number().int().nonnegative(),
+    retry_wait: z.number().int().nonnegative(),
+    acknowledged: z.number().int().nonnegative(),
+    cancelled: z.number().int().nonnegative(),
+  }),
+  dirty_count: z.number().int().nonnegative(),
+  ready_count: z.number().int().nonnegative(),
+  expired_lease_count: z.number().int().nonnegative(),
+  invalid_document_count: z.number().int().nonnegative(),
+  oldest_dirty_age_seconds: z.number().nullable(),
+  oldest_invalid_age_seconds: z.number().nullable(),
+  max_consecutive_failure_count: z.number().int().nonnegative(),
+  max_generation_lag: z.string(),
+  last_acknowledged_at: z.string().nullable(),
+  last_repair_key: z.string().nullable(),
+  // False = the 0071 durable-dirty triggers are absent (db:push bootstrap) → reconciler
+  // inert despite the tables existing. Provision with db:migrate. See rollout doc.
+  triggers_installed: z.boolean(),
+});

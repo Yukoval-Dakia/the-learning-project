@@ -1,35 +1,30 @@
-// Postgres-backed editing presence store (YUK-321 M5 gate 选项 b 前置子任务)。
+// Postgres-backed editing presence store (YUK-321 M5 gate 选项 b；YUK-384 起
+// session-qualified)。
 //
-// 设计差异 vs RedisPresenceStore（YUK-171 fail-safe 不移植）：PG 即业务库——
-// `persistNoteRefineApply` 同样经 PG 写入，PG 不可用时 apply 也写不进去，故对
-// presence 决策做 idle 包装降级无意义（降级后的 apply 仍会 fail）。错误直接抛，
-// 与仓库其它 db 路径一致；heartbeat/blur 路由的 try/catch 仍兜 500，但不会把
-// 「不可达」伪装成「idle」。子计划 §3 明文不做 fail-safe 降级。
+// 两张表、两个关注点：
+//   1. `artifact_edit_session`（YUK-384）—— 每 (artifact, editor session) 一行的
+//      心跳表，驱动「有人在编辑吗」判定（isArtifactIdle）。心跳/blur 在共享
+//      per-artifact advisory lock 内 upsert/delete，与 hub-sync finalize 串行化。
+//      活跃 = 最近心跳 ≤ 30s（恰 30s 仍活跃，> 30s 过期）。无 10 分钟强制 apply：
+//      被遗弃的会话 30s 后自然过期，其排队工作随即 flush。
+//   2. `editing_presence.pending`（NON-HUB note-refine defer 队列，保留）—— AI
+//      mutator patch 在编辑期入队、会话全空时 FIFO flush。是否 defer 的判定改由
+//      session presence（上表）驱动；pending 存储仍在本表。陈旧项（> 10min）在
+//      load 时丢弃并 warn，对齐旧 Redis 键 TTL 语义。
 //
-// 行堆积：一 artifact 一行（upsert 不增行），单用户量级可忽略——不做清理 job
-// （YAGNI）。陈旧 pending（§4 裁决 i：超 EDITING_FORCE_APPLY_TIMEOUT_MS 的项）
-// 在 enqueue/flush load 时丢弃并 console.warn 留痕，对齐 Redis 键 30s TTL 的
-// 「放弃的编辑会话 pending 自然蒸发」语义。
-//
-// 原子性：决策（load→判定→入队/写回）在 `SELECT … FOR UPDATE` 行锁事务内；
-// `persistNoteRefineApply` 一律在事务外（types.ts L82-83 契约）。镜像 redis.ts
-// 「Lua 内决策、JS 外 apply」的分工。
-//
-// 铁律（YUK-324 教训）：jsonb 列经 drizzle 读出已是解析好的数组——对 `pending`
-// 一律直接使用，禁止 JSON.parse。
+// 原子性：note-refine apply（persistNoteRefineApply）一律在事务外（types.ts 契约）。
+// 铁律（YUK-324）：jsonb `pending` 经 drizzle 读出已是数组，禁止 JSON.parse。
 
 import { eq, sql } from 'drizzle-orm';
 
 import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
 import type { Db } from '@/db/client';
-import { editing_presence } from '@/db/schema';
+import { artifact_edit_session, editing_presence } from '@/db/schema';
 
 import {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
-  EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingSessionSnapshot,
-  type EditingStatus,
   type EnqueueOrApplyInput,
   type EnqueueOrApplyResult,
   type MarkIdleAndFlushInput,
@@ -40,14 +35,7 @@ import {
   type SerializedQueuedPatch,
 } from './types';
 
-// DB row shape — drizzle reads timestamptz as Date, jsonb as parsed array.
-interface PresenceRow {
-  artifact_id: string;
-  status: EditingStatus;
-  last_heartbeat_at: Date;
-  editing_started_at: Date | null;
-  pending: SerializedQueuedPatch[];
-}
+const ACTIVE_SESSION_INTERVAL = sql`interval '30 seconds'`;
 
 export class PgPresenceStore implements PresenceStore {
   private readonly db: Db;
@@ -56,61 +44,46 @@ export class PgPresenceStore implements PresenceStore {
     this.db = db;
   }
 
-  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
-    const now = input.now ?? new Date();
-    const initialStartedAt = input.status === 'editing' ? now : null;
-    // Single upsert — atomic. editing_started_at 语义（types.ts L71-73）：
-    // editing 时 COALESCE(旧值, 新值)——首戳不重置；idle 时置 null。
-    // `EXCLUDED` 引用待插入行（PG ON CONFLICT 习惯），表列引用旧值。
-    await this.db
-      .insert(editing_presence)
-      .values({
-        artifact_id: input.artifactId,
-        status: input.status,
-        last_heartbeat_at: now,
-        editing_started_at: initialStartedAt,
-        pending: [],
-      })
-      .onConflictDoUpdate({
-        target: editing_presence.artifact_id,
-        set: {
-          status: input.status,
-          last_heartbeat_at: now,
-          editing_started_at: sql`CASE
-            WHEN EXCLUDED.status = 'editing'
-              THEN COALESCE(${editing_presence.editing_started_at}, EXCLUDED.editing_started_at)
-            ELSE NULL
-          END`,
-        },
-      });
+  // Shared per-artifact advisory lock — the SAME key hub-sync finalization takes,
+  // so first-heartbeat/reconcile races serialize (YUK-384 RED 16).
+  private static advisoryLock(artifactId: string) {
+    return sql`select pg_advisory_xact_lock(hashtextextended(${artifactId}, 0))`;
   }
 
-  async isArtifactIdle(artifactId: string, now = new Date()): Promise<boolean> {
-    // Sticky idle 转换在行锁事务内做：editing 心跳超 30s → 副作用写回 idle。
-    return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(editing_presence)
-        .where(eq(editing_presence.artifact_id, artifactId))
-        .for('update')
-        .limit(1);
-      // 无行 = 从未见过——安全默认 idle（不创建状态，镜像 redis IDLE_CHECK_LUA）。
-      if (!row) return true;
-      if (row.status === 'idle') return true;
-      const ageMs = now.getTime() - row.last_heartbeat_at.getTime();
-      if (ageMs > EDITING_HEARTBEAT_TIMEOUT_MS) {
-        await tx
-          .update(editing_presence)
-          .set({ status: 'idle', editing_started_at: null })
-          .where(eq(editing_presence.artifact_id, artifactId));
-        return true;
-      }
-      return false;
+  // A raw Date can't bind as an untyped parameter inside a raw SQL template, so
+  // inject an explicitly-cast ISO string; absent `now` uses database time.
+  private static stamp(now?: Date) {
+    return now === undefined ? sql`clock_timestamp()` : sql`${now.toISOString()}::timestamptz`;
+  }
+
+  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
+    const at = PgPresenceStore.stamp(input.now);
+    await this.db.transaction(async (tx) => {
+      await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+      await tx.execute(sql`
+        insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+        values (${input.artifactId}, ${input.sessionId}, ${at}, ${at})
+        on conflict (artifact_id, session_id)
+        do update set last_heartbeat_at = ${at}
+      `);
     });
+  }
+
+  async isArtifactIdle(artifactId: string, now?: Date): Promise<boolean> {
+    const at = PgPresenceStore.stamp(now);
+    const rows = await this.db.execute<{ idle: boolean }>(sql`
+      select not exists(
+        select 1 from artifact_edit_session
+        where artifact_id = ${artifactId}
+          and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+      ) as idle
+    `);
+    return rows[0]?.idle === true;
   }
 
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
     const now = input.now ?? new Date();
+    const at = PgPresenceStore.stamp(now);
     const item: SerializedQueuedPatch = {
       patch: input.patch,
       taskResult: input.taskResult,
@@ -118,170 +91,176 @@ export class PgPresenceStore implements PresenceStore {
       queuedAtMs: now.getTime(),
     };
 
-    // 决策段：行锁事务内 load（无行插初始 idle 行，镜像 in-memory currentState）
-    // → 陈旧 pending 丢弃（裁决 i）→ JS 判定 idle（含 sticky 写回）+ force-apply
-    // → 不 idle 且不 force：pending 追加写回 commit 返回 deferred；否则 commit
-    // 后由事务外 apply。
+    // Serialize the idle-decision AND the enqueue under the SAME shared advisory lock
+    // markArtifactIdleAndFlush takes, then re-check idle INSIDE the lock. This closes a
+    // TOCTOU window: a concurrent blur could otherwise drain+idle the artifact between a
+    // "not idle" read and the append, orphaning the patch in a bag nobody will flush
+    // (later dropped after EDITING_FORCE_APPLY_TIMEOUT_MS). If the blur already landed,
+    // the in-lock re-check sees idle and we apply now instead of deferring.
     const shouldApply = await this.db.transaction(async (tx) => {
-      let [row] = await tx
-        .select()
-        .from(editing_presence)
-        .where(eq(editing_presence.artifact_id, input.artifactId))
-        .for('update')
-        .limit(1);
-      if (!row) {
-        // 插初始 idle 行——与 in-memory currentState「未见过的 artifact 视作 idle」
-        // 等价（idle ⇒ 此分支必然走 apply，初始行仅占位）。
-        // 竞插防护（M5 全分支 review L1）：select 无行 ⇒ FOR UPDATE 没锁到任何
-        // 东西，并发 heartbeat upsert / 另一 enqueue 可能抢先落行——裸 insert 会
-        // 撞 PK。onConflictDoNothing 后若没插成，重读拿对方提交的真实状态
-        //（可能已是 editing + 有 pending），不能假定 idle。
-        const initial = {
-          artifact_id: input.artifactId,
-          status: 'idle' as EditingStatus,
-          last_heartbeat_at: now,
-          editing_started_at: null as Date | null,
-          pending: [] as SerializedQueuedPatch[],
-        };
-        const inserted = await tx
-          .insert(editing_presence)
-          .values(initial)
-          .onConflictDoNothing()
-          .returning();
-        if (inserted.length > 0) {
-          row = initial as PresenceRow;
-        } else {
-          [row] = await tx
-            .select()
-            .from(editing_presence)
-            .where(eq(editing_presence.artifact_id, input.artifactId))
-            .for('update')
-            .limit(1);
-          // ON CONFLICT DO NOTHING 等待竞争事务落定：没插成 ⇒ 行已提交存在，
-          // 此重读必命中；空结果只剩「行又被删」的病理路径，按占位语义兜底。
-          row ??= initial as PresenceRow;
-        }
-      }
+      await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+      const idleRows = await tx.execute<{ idle: boolean }>(sql`
+        select not exists(
+          select 1 from artifact_edit_session
+          where artifact_id = ${input.artifactId}
+            and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+        ) as idle
+      `);
+      if (idleRows[0]?.idle === true) return true;
 
-      // 裁决 i：丢弃陈旧 pending（超 force-apply 上限的项）。
-      const freshPending = dropStalePending(row.pending, now, input.artifactId);
-      if (freshPending.dropped > 0) {
-        await tx
-          .update(editing_presence)
-          .set({ pending: freshPending.kept })
-          .where(eq(editing_presence.artifact_id, input.artifactId));
-      }
-
-      // JS 判定（镜像 in-memory L60-69 + shouldForceApply L72-78）。
-      let isIdle = false;
-      if (row.status === 'idle') {
-        isIdle = true;
-      } else if (now.getTime() - row.last_heartbeat_at.getTime() > EDITING_HEARTBEAT_TIMEOUT_MS) {
-        // Sticky idle 写回——跨进程可见。
-        await tx
-          .update(editing_presence)
-          .set({ status: 'idle', editing_started_at: null })
-          .where(eq(editing_presence.artifact_id, input.artifactId));
-        isIdle = true;
-      }
-      if (isIdle) return true;
-
-      const forceApply =
-        row.editing_started_at !== null &&
-        now.getTime() - row.editing_started_at.getTime() >= EDITING_FORCE_APPLY_TIMEOUT_MS;
-      if (forceApply) return true;
-
-      // 不 idle 不 force：入队，写回 commit。
-      await tx
-        .update(editing_presence)
-        .set({ pending: [...freshPending.kept, item] })
-        .where(eq(editing_presence.artifact_id, input.artifactId));
-      return false;
-    });
-
-    if (!shouldApply) {
-      return { status: 'deferred', artifact_id: input.artifactId };
-    }
-
-    // 事务外 apply（types.ts L82-83）：persistNoteRefineApply 一律用 input.db，
-    // 镜像 redis.ts 分工（presence 用构造器 Db，apply 用 input.db）。
-    return persistNoteRefineApply({
-      db: input.db,
-      artifactId: input.artifactId,
-      patch: input.patch,
-      taskResult: input.taskResult,
-      triggerEventId: input.triggerEventId ?? null,
-      now,
-    });
-  }
-
-  async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {
-    const now = input.now ?? new Date();
-
-    // 决策段：行锁事务内 drain（陈旧丢弃 + 读余下 + 置 idle/清空）commit。
-    const drained = await this.db.transaction(async (tx) => {
+      // Actively edited → append to the pending bag under a row lock, dropping any
+      // stale entries first (裁决 i). The bag row carries a vestigial status so the
+      // NOT NULL columns are satisfied; no code reads it for the defer decision.
       const [row] = await tx
         .select()
         .from(editing_presence)
         .where(eq(editing_presence.artifact_id, input.artifactId))
         .for('update')
         .limit(1);
-      if (!row) return [] as SerializedQueuedPatch[];
-
-      const freshPending = dropStalePending(row.pending, now, input.artifactId);
-
-      await tx
-        .update(editing_presence)
-        .set({
-          status: 'idle',
-          last_heartbeat_at: now,
-          editing_started_at: null,
-          pending: [],
-        })
-        .where(eq(editing_presence.artifact_id, input.artifactId));
-
-      return freshPending.kept;
+      const existing = row?.pending ?? [];
+      const fresh = dropStalePending(existing, now, input.artifactId);
+      const nextPending = [...fresh.kept, item];
+      if (!row) {
+        await tx
+          .insert(editing_presence)
+          .values({
+            artifact_id: input.artifactId,
+            status: 'editing',
+            last_heartbeat_at: now,
+            editing_started_at: null,
+            pending: nextPending,
+          })
+          .onConflictDoUpdate({
+            target: editing_presence.artifact_id,
+            set: { pending: nextPending, last_heartbeat_at: now },
+          });
+      } else {
+        await tx
+          .update(editing_presence)
+          .set({ pending: nextPending, last_heartbeat_at: now })
+          .where(eq(editing_presence.artifact_id, input.artifactId));
+      }
+      return false;
     });
 
-    // 事务外 FIFO apply（types.ts L82-83）。
-    const results: PersistNoteRefineApplyResult[] = [];
-    for (const item of drained) {
-      const result = await persistNoteRefineApply({
+    if (shouldApply) {
+      return persistNoteRefineApply({
         db: input.db,
         artifactId: input.artifactId,
-        patch: item.patch as QueuedPatch['patch'],
-        taskResult: item.taskResult as QueuedPatch['taskResult'],
-        triggerEventId: item.triggerEventId ?? null,
+        patch: input.patch,
+        taskResult: input.taskResult,
+        triggerEventId: input.triggerEventId ?? null,
         now,
       });
-      results.push(result);
+    }
+    return { status: 'deferred', artifact_id: input.artifactId };
+  }
+
+  async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {
+    const now = input.now ?? new Date();
+    const at = PgPresenceStore.stamp(input.now);
+
+    // ONE advisory-locked transaction covers the blur, the idle-decision, AND the drain
+    // — closing a TOCTOU window where a concurrent heartbeat (which takes the SAME
+    // advisory lock) could re-activate the artifact between a separate decision txn and
+    // a separate drain txn, so the drain flushed over an active editor. We ALSO re-check
+    // active sessions AFTER taking the pending-row lock (defense against any writer that
+    // bypasses the advisory lock) and skip the flush if newly active. `null` = still
+    // active → no flush; an array (possibly empty) = idle → drained.
+    const drained = await this.db.transaction(async (tx) => {
+      await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+      // Remove exactly this session.
+      await tx.execute(sql`
+        delete from artifact_edit_session
+        where artifact_id = ${input.artifactId} and session_id = ${input.sessionId}
+      `);
+      const [row] = await tx
+        .select()
+        .from(editing_presence)
+        .where(eq(editing_presence.artifact_id, input.artifactId))
+        .for('update')
+        .limit(1);
+      // Flush ONLY if no active session remains — re-checked here holding both the
+      // advisory lock and the pending-row lock, so a session that (re)appeared after the
+      // blur can never be flushed over.
+      const activeRows = await tx.execute<{ active: boolean }>(sql`
+        select exists(
+          select 1 from artifact_edit_session
+          where artifact_id = ${input.artifactId}
+            and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+        ) as active
+      `);
+      if (activeRows[0]?.active === true) return null;
+      if (!row) return [] as SerializedQueuedPatch[];
+      const fresh = dropStalePending(row.pending, now, input.artifactId);
+      await tx
+        .update(editing_presence)
+        .set({ status: 'idle', last_heartbeat_at: now, editing_started_at: null, pending: [] })
+        .where(eq(editing_presence.artifact_id, input.artifactId));
+      return fresh.kept;
+    });
+
+    if (drained === null) {
+      // Another session is still editing — leave the queue intact.
+      return { artifact_id: input.artifactId, flushed: 0, results: [] };
+    }
+
+    const results: PersistNoteRefineApplyResult[] = [];
+    for (const queued of drained) {
+      results.push(
+        await persistNoteRefineApply({
+          db: input.db,
+          artifactId: input.artifactId,
+          patch: queued.patch as QueuedPatch['patch'],
+          taskResult: queued.taskResult as QueuedPatch['taskResult'],
+          triggerEventId: queued.triggerEventId ?? null,
+          now,
+        }),
+      );
     }
     return { artifact_id: input.artifactId, flushed: drained.length, results };
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
-    const [row] = await this.db
+    // X5: only sessions within the 30s active window count as 'editing' — same fence as
+    // isArtifactIdle — so an abandoned/zombie heartbeat row (browser crash → no blur, not yet
+    // swept) does not make the snapshot falsely read 'editing'.
+    const sessions = await this.db.execute<{ last_heartbeat_at: string | Date }>(sql`
+      select last_heartbeat_at from artifact_edit_session
+      where artifact_id = ${artifactId}
+        and clock_timestamp() - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+      order by last_heartbeat_at desc
+      limit 1
+    `);
+    const [presence] = await this.db
       .select()
       .from(editing_presence)
       .where(eq(editing_presence.artifact_id, artifactId))
       .limit(1);
-    if (!row) return null;
+
+    if (sessions.length === 0 && !presence) return null;
+    // Raw execute() returns timestamptz as a string; the drizzle select returns a
+    // Date. Coerce so toISOString() is safe for either source.
+    const latestRaw = sessions[0]?.last_heartbeat_at ?? presence?.last_heartbeat_at ?? new Date();
+    const latest = latestRaw instanceof Date ? latestRaw : new Date(latestRaw);
     return {
       artifact_id: artifactId,
-      status: row.status,
-      last_heartbeat_at: row.last_heartbeat_at.toISOString(),
-      pending_patches: row.pending?.length ?? 0,
+      // Existence-based (informational): any live session row reads as editing.
+      // isArtifactIdle is the load-bearing windowed check.
+      status: sessions.length > 0 ? 'editing' : 'idle',
+      last_heartbeat_at: latest.toISOString(),
+      pending_patches: presence?.pending?.length ?? 0,
     };
   }
 
   async reset(): Promise<void> {
+    await this.db.delete(artifact_edit_session);
     await this.db.delete(editing_presence);
   }
 }
 
 // 裁决 i：丢弃 queuedAtMs 距 now 超过 EDITING_FORCE_APPLY_TIMEOUT_MS(10min) 的项。
-// Redis 键带 30s TTL，被放弃的编辑会话 pending 自然蒸发；PG 行不过期，故在 load
-// 时显式丢弃以保 prod 现行语义。console.warn 带丢弃计数与 artifactId 留痕。
+// PG 行不过期，故 load 时显式丢弃以保旧语义。console.warn 带丢弃计数与 artifactId。
 function dropStalePending(
   pending: SerializedQueuedPatch[],
   now: Date,

@@ -187,12 +187,33 @@ export const notesCapability = defineCapability({
     // YUK-358 决定3：note_verify→embedded_check_generate 链已删（孤儿链真删）。
     handlers: [
       {
-        // Wave 7 / YUK-95 P5 Lane-C：nightly hub auto-sync（BJT 02:45，edge propose 后 15min）。
+        // YUK-384：nightly hub-sync COVERAGE REPAIR sweep（BJT 02:45）——不再直接 apply，
+        // 只 dirty/cancel 游标，靠 reconciler 收敛（never direct apply）。
         name: 'hub_auto_sync_nightly',
         schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () =>
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubAutoSyncNightlyHandler),
+      },
+      {
+        // YUK-384：every-minute recovery floor——drain 就绪游标（≤60s 收敛下限），
+        // 是 durable convergence 的兜底（immediate wake 失败也靠它收口）。
+        name: 'hub_sync_recovery',
+        schedule: { cron: '* * * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncRecoveryJobHandler),
+      },
+      {
+        // YUK-384：immediate mutation-wake queue（链式/按需，无 cron）。生产者 = 三个
+        // 已接线的拓扑 handler（POST /api/knowledge/edges、/api/proposals/[id]/decisions、
+        // /api/teaching-sessions/[id]/accept-chip）经 wakeHubSyncAfterCommit 提交后best-effort
+        // 发一个合并 wake；消费者 = 本 handler 跑 runHubSyncCycle({reason:'mutation_wake'})，
+        // 即时收敛（不再只靠每分钟 recovery 兜底）。
+        name: 'hub_sync_mutation_wake',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncMutationWakeJobHandler),
       },
       {
         // Wave 6 / T-88 P4-A (YUK-127)：Living Note refine。链式/按需（触发器投递），无 cron。
