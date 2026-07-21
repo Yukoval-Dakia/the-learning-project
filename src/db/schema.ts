@@ -579,6 +579,97 @@ export const artifact_block_ref = pgTable(
   ],
 );
 
+// YUK-384 — durable, PostgreSQL-authoritative hub-sync reconciliation cursor.
+// Exactly one row per hub artifact (`type='note_hub'`), keyed by `artifact_id`.
+// PostgreSQL topology triggers advance `generation` (bigint, crosses the TS
+// boundary as a decimal string, never JS `number`) inside the writer's real
+// transaction; `runHubSyncCycle` claims one generation at a time and finalizes
+// behind advisory-lock / generation-token-lease / artifact-version / editing
+// fences. The partial indexes, trigger functions, triggers, and live-hub
+// backfill live in the hand-amended drizzle/0071_yuk384_durable_hub_sync.sql
+// (drizzle-kit does not emit partial-index WHERE predicates or plpgsql).
+export const hub_sync_reconciliation = pgTable(
+  'hub_sync_reconciliation',
+  {
+    artifact_id: text('artifact_id')
+      .primaryKey()
+      .references(() => artifact.id, { onDelete: 'cascade' }),
+    actor_ref: text('actor_ref').notNull().default('hub_auto_sync'),
+    // Defaults are declared as SQL literals (not `1n`/`0n`) because drizzle-kit
+    // cannot JSON-serialize BigInt literal defaults into its snapshot; runtime
+    // reads still use `mode: 'bigint'`.
+    generation: bigint('generation', { mode: 'bigint' }).notNull().default(sql`1`),
+    acknowledged_generation: bigint('acknowledged_generation', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    status: text('status').notNull().default('pending'),
+    claim_owner: text('claim_owner'),
+    claim_token: text('claim_token'),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    claim_count: integer('claim_count').notNull().default(0),
+    consecutive_failure_count: integer('consecutive_failure_count').notNull().default(0),
+    next_attempt_at: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    last_dirty_at: timestamp('last_dirty_at', { withTimezone: true }).notNull().defaultNow(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    last_claimed_at: timestamp('last_claimed_at', { withTimezone: true }),
+    last_error_at: timestamp('last_error_at', { withTimezone: true }),
+    acknowledged_at: timestamp('acknowledged_at', { withTimezone: true }),
+    last_outcome: text('last_outcome'),
+    last_error_class: text('last_error_class'),
+    last_error_code: text('last_error_code'),
+    last_error: text('last_error'),
+    last_desired_hash: text('last_desired_hash'),
+    last_repair_key: text('last_repair_key'),
+    last_observed_artifact_version: integer('last_observed_artifact_version'),
+    last_applied_artifact_version: integer('last_applied_artifact_version'),
+  },
+  (table) => [
+    check('hub_sync_actor_check', sql`${table.actor_ref} = 'hub_auto_sync'`),
+    check('hub_sync_generation_check', sql`${table.generation} > 0`),
+    check(
+      'hub_sync_ack_generation_check',
+      sql`${table.acknowledged_generation} >= 0 and ${table.acknowledged_generation} <= ${table.generation}`,
+    ),
+    check(
+      'hub_sync_status_check',
+      sql`${table.status} in ('pending','claimed','applying','retry_wait','acknowledged','cancelled')`,
+    ),
+    check(
+      'hub_sync_claim_shape_check',
+      sql`((${table.status} in ('claimed','applying')) = (${table.claim_owner} is not null and ${table.claim_token} is not null and ${table.lease_expires_at} is not null))`,
+    ),
+  ],
+);
+
+// YUK-384 — session-qualified editing presence. One row per (artifact, editor
+// session); `last_heartbeat_at` drives the 30-second active/expired boundary the
+// hub-sync finalizer consults under the shared advisory lock. Replaces the old
+// single-`artifact_id` presence key so blur for session A never clears session B.
+export const artifact_edit_session = pgTable(
+  'artifact_edit_session',
+  {
+    artifact_id: text('artifact_id')
+      .notNull()
+      .references(() => artifact.id, { onDelete: 'cascade' }),
+    session_id: text('session_id').notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    last_heartbeat_at: timestamp('last_heartbeat_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Named explicitly so the backing PK index is the conventional
+    // `artifact_edit_session_pkey` (drizzle would otherwise emit a verbose
+    // `_artifact_id_session_id_pk` composite name).
+    primaryKey({
+      name: 'artifact_edit_session_pkey',
+      columns: [table.artifact_id, table.session_id],
+    }),
+  ],
+);
+
 // U5 (YUK-203) — `answer` revived as the paper answer-sheet draft layer
 // (ADR-0029 决定 #3: 既有原语复用, NOT a new table — RL2). Link columns are
 // loose-coupled plain text refs (no FK — matches event.task_run_id /
