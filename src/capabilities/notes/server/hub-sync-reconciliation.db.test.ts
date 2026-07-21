@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { type HubSyncClaim, claimNextHubSync, renewHubSyncLease } from './hub-sync-reconciliation';
 
 const NOW = new Date('2026-07-21T00:00:00Z');
 
@@ -295,5 +296,128 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     ]);
     expect([left.status, right.status]).toEqual(['fulfilled', 'fulfilled']);
     expect(await generations(['hub-a', 'hub-z'])).toEqual([3n, 3n]);
+  });
+});
+
+// ── Task 3 (RED Tests 7–9): one-at-a-time claim + renewable lease ──────────────
+// Deterministic time control: instead of sleeping on a real clock, lease/attempt
+// stamps are moved directly. Ready hubs are seeded per-test (no shared beforeEach
+// seed) so RED 07's exact claimed/pending counts hold.
+
+async function seedReadyHubs(n: number): Promise<void> {
+  for (let i = 1; i <= n; i += 1) {
+    await seedHub(`ready-hub-${i}`, []);
+  }
+}
+
+async function countByStatus(status: string): Promise<number> {
+  const rows = await testDb().execute<{ count: string }>(sql`
+    select count(*)::text as count from hub_sync_reconciliation where status = ${status}
+  `);
+  return Number(rows[0]?.count ?? '0');
+}
+
+async function claimRequired(owner: string): Promise<HubSyncClaim> {
+  const claim = await claimNextHubSync(testDb(), { owner });
+  if (!claim) throw new Error(`expected a claim for ${owner}`);
+  return claim;
+}
+
+async function expireClaim(claim: HubSyncClaim): Promise<void> {
+  await testDb().execute(sql`
+    update hub_sync_reconciliation
+    set lease_expires_at = clock_timestamp() - interval '1 second'
+    where artifact_id = ${claim.artifactId}
+  `);
+}
+
+// Models wall-clock passage by moving lease/next-attempt stamps earlier, so
+// renewal-vs-expiry is deterministic (no real sleep).
+async function advanceDatabaseClockBy(interval: string): Promise<void> {
+  await testDb().execute(sql`
+    update hub_sync_reconciliation
+    set lease_expires_at = lease_expires_at - ${interval}::interval,
+        next_attempt_at = next_attempt_at - ${interval}::interval
+    where lease_expires_at is not null
+  `);
+}
+
+// Mimics a fresh topology dirty landing on the claimed row (generation bump +
+// claim reset), so the old token/generation no longer match.
+async function supersedeClaim(claim: HubSyncClaim): Promise<void> {
+  await testDb().execute(sql`
+    update hub_sync_reconciliation
+    set generation = generation + 1,
+        status = 'pending',
+        claim_owner = null,
+        claim_token = null,
+        lease_expires_at = null,
+        next_attempt_at = clock_timestamp()
+    where artifact_id = ${claim.artifactId}
+  `);
+}
+
+// Apply / ack / fail (Task 4 finalization) are all token + generation + lease
+// fenced writes. An old/superseded token must match zero rows for every one.
+async function expectOldTokenOperations(
+  claim: HubSyncClaim,
+): Promise<{ apply: boolean; ack: boolean; fail: boolean }> {
+  const fenced = async (nextStatus: string): Promise<boolean> => {
+    const rows = await testDb().execute<{ artifact_id: string }>(sql`
+      update hub_sync_reconciliation
+      set status = ${nextStatus}, updated_at = clock_timestamp()
+      where artifact_id = ${claim.artifactId}
+        and generation = ${claim.generation}::bigint
+        and claim_token = ${claim.claimToken}
+        and status in ('claimed', 'applying')
+        and lease_expires_at >= clock_timestamp()
+      returning artifact_id
+    `);
+    return rows.length === 1;
+  };
+  return {
+    apply: await fenced('applying'),
+    ack: await fenced('acknowledged'),
+    fail: await fenced('retry_wait'),
+  };
+}
+
+describe('YUK-384 hub-sync claim + renewable lease', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('YUK-384 RED 07: claims one generation once and does not lease a batch tail', async () => {
+    await seedReadyHubs(3);
+    const db = testDb();
+    const [a, b] = await Promise.all([
+      claimNextHubSync(db, { owner: 'worker-a' }),
+      claimNextHubSync(db, { owner: 'worker-b' }),
+    ]);
+    expect(a?.artifactId).not.toBe(b?.artifactId);
+    expect(await countByStatus('claimed')).toBe(2);
+    expect(await countByStatus('pending')).toBe(1);
+  });
+
+  it('YUK-384 RED 08: expired claim is reclaimed and old token is powerless', async () => {
+    await seedReadyHubs(1);
+    const oldClaim = await claimRequired('worker-old');
+    await expireClaim(oldClaim);
+    const newClaim = await claimRequired('worker-new');
+    expect(newClaim.claimToken).not.toBe(oldClaim.claimToken);
+    await expect(expectOldTokenOperations(oldClaim)).resolves.toEqual({
+      apply: false,
+      ack: false,
+      fail: false,
+    });
+  });
+
+  it('YUK-384 RED 09: renewal extends long compute and zero-row renewal aborts it', async () => {
+    await seedReadyHubs(1);
+    const claim = await claimRequired('worker-a');
+    await advanceDatabaseClockBy('90 seconds');
+    expect(await renewHubSyncLease(testDb(), claim)).toBe(true);
+    await supersedeClaim(claim);
+    expect(await renewHubSyncLease(testDb(), claim)).toBe(false);
   });
 });
