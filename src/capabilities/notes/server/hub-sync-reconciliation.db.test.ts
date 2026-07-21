@@ -1191,4 +1191,40 @@ describe('YUK-384 unified hub-sync cycle', () => {
     );
     expect(rows.map((r) => r.session_id)).toEqual(['fresh']);
   });
+
+  it('YUK-384 (item-8 revert): a hub claimed at a mid-cycle-bumped generation reconciles against a graph current as of its claim (no stale-graph apply)', async () => {
+    await seedAppliableHub('hub-a');
+    await seedAppliableHub('hub-b');
+
+    // After reconciling the first hub, add a NEW atomic sharing kc. The trigger dirties
+    // every live hub, so hub-b is re-claimed at the bumped generation — the write-side
+    // generation/token/lease fence passes (the claim was taken AT the new generation). A
+    // per-cycle graph snapshot (loaded before the injection) would compute hub-b's body
+    // WITHOUT the new cross-link and ack the bump anyway: the read-side stale-win the fence
+    // cannot catch. Loading the graph fresh per claim is the fix.
+    let injected = false;
+    await runHubSyncCycle(testDb(), {
+      reason: 'recovery',
+      maxArtifacts: 25,
+      mode: 'apply',
+      afterReconcile: async () => {
+        if (injected) return;
+        injected = true;
+        await seedArtifact({
+          id: 'atomic-mid',
+          type: 'note_atomic',
+          knowledgeIds: ['kc'],
+          title: 'Mid-cycle atomic',
+        });
+      },
+    });
+
+    // hub-b's applied body must include the mid-cycle atomic's cross-link.
+    const rows = await testDb().execute<{
+      body: { content?: { type?: string; content?: { attrs?: { artifact_id?: unknown } }[] }[] };
+    }>(sql`select body_blocks as body from artifact where id = 'hub-b'`);
+    const container = rows[0].body.content?.find((n) => n.type === 'autoLinksContainer');
+    const childArtifactIds = (container?.content ?? []).map((c) => c.attrs?.artifact_id);
+    expect(childArtifactIds).toContain('atomic-mid');
+  });
 });

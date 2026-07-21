@@ -136,6 +136,11 @@ export interface HubSyncCycleOptions {
   repairKey?: string;
   mode?: HubSyncMode;
   owner?: string;
+  // Test-only seam: fired after each per-claim reconcile so a test can commit a topology
+  // mutation MID-cycle (e.g. between two claims) and assert the next hub reconciles
+  // against a graph current as of ITS claim — not a stale cycle-start snapshot. Production
+  // callers omit it.
+  afterReconcile?: (claim: HubSyncClaim) => void | Promise<void>;
 }
 
 export interface HubSyncCycleResult {
@@ -277,21 +282,15 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
   }));
 }
 
-// The per-cycle-shared graph inputs (tree/edges/atomics). Preloaded ONCE per cycle and
-// passed into computeHubDesiredState so each hub does not reload the whole graph.
+// The tree/edges/atomics graph inputs. computeHubDesiredState loads these fresh per call
+// by default; the optional param exists ONLY so a direct test can inject a controlled
+// graph. runHubSyncCycle never passes it — each claim reloads fresh (see the revert of the
+// per-cycle snapshot in runHubSyncCycle for why a shared snapshot was a stale-win).
 export type HubMeshGraphInputs = {
   nodes: Awaited<ReturnType<typeof loadTreeSnapshot>>;
   edges: Awaited<ReturnType<typeof loadEdgeInputs>>;
   atomics: Awaited<ReturnType<typeof loadAtomicInputs>>;
 };
-
-async function loadHubMeshGraphInputs(db: Db): Promise<HubMeshGraphInputs> {
-  return {
-    nodes: await loadTreeSnapshot(db),
-    edges: await loadEdgeInputs(db),
-    atomics: await loadAtomicInputs(db),
-  };
-}
 
 /**
  * Recompute the hub's desired body deterministically, OUTSIDE any row/advisory
@@ -318,13 +317,11 @@ export async function computeHubDesiredState(
     );
   }
 
-  // The tree/edges/atomics graph is IDENTICAL for every hub in a cycle (the loaders
-  // take no hub-specific args). A caller processing many hubs preloads it ONCE per cycle
-  // and passes it in — avoiding up to maxArtifacts× redundant full-graph reloads and the
-  // lease-expiry risk they add mid-compute. A cycle-start snapshot is safe: a mid-cycle
-  // topology change bumps the hub's generation via the trigger, so the claim fence fails
-  // → superseded → reclaimed next cycle with a fresh graph (same semantics as the old
-  // load-once nightly). Direct callers (tests) omit it and load fresh per call.
+  // Load the tree/edges/atomics graph FRESH (unless a test injects one) so the desired
+  // state reflects topology as of THIS claim. A shared per-cycle snapshot was a stale-win:
+  // a hub claimed at a mid-cycle-bumped generation would pass the write-side fence yet
+  // compute from an older graph and apply a stale body (see runHubSyncCycle). The `graph`
+  // param exists only for direct tests; runHubSyncCycle never passes it.
   const { nodes, edges, atomics } = graph ?? {
     nodes: await loadTreeSnapshot(db),
     edges: await loadEdgeInputs(db),
@@ -747,14 +744,14 @@ async function reconcileClaim(
   reason: HubSyncReason,
   mode: HubSyncMode,
   result: HubSyncCycleResult,
-  graph?: HubMeshGraphInputs,
 ): Promise<void> {
   const renewal = startLeaseRenewal(db, claim);
   const startedAt = Date.now();
   let outcome = 'lost_lease';
   let errorClass: string | null = null;
   try {
-    const desired = await computeHubDesiredState(db, claim, graph);
+    // Load fresh per claim (NOT a per-cycle snapshot) — see runHubSyncCycle for why.
+    const desired = await computeHubDesiredState(db, claim);
     if (renewal.lost()) {
       // Lost lease is a non-failure; another worker reclaims after expiry. Count it so
       // `claimed` reconciles (we already incremented claimed but produce no finalize outcome).
@@ -962,18 +959,20 @@ export async function runHubSyncCycle(
   }
 
   const owner = options.owner ?? workerOwner();
-  // Preload the shared tree/edges/atomics graph ONCE per cycle and reuse it for every
-  // hub — the loaders take no hub-specific args, so reloading per hub was up to
-  // maxArtifacts× redundant I/O (and lease-expiry risk mid-compute). Loaded lazily on the
-  // first claim so an empty cycle pays nothing.
-  let graph: HubMeshGraphInputs | undefined;
   for (let index = 0; index < options.maxArtifacts; index += 1) {
     const claim = await claimNextHubSync(db, { owner });
     if (!claim) break;
     result.claimed += 1;
-    if (!graph) graph = await loadHubMeshGraphInputs(db);
+    // Each claim reloads the tree/edges/atomics graph fresh inside computeHubDesiredState.
+    // A per-cycle snapshot was a MEDIUM stale-win: a hub claimed at a generation bumped by a
+    // mid-cycle topology commit passes the write-side generation/token/lease fence (its claim
+    // was taken at the new generation) yet computes its body from the STALE cycle-start graph
+    // → applies a stale body and acks the bump (GUC suppression prevents self-dirty),
+    // persisting staleness until the ≤24h nightly. The fence guards the write side, not
+    // read-side graph freshness. Reloading per claim keeps the desired state consistent with
+    // the topology as of the claim (the exact stale-win this reconciler exists to prevent).
     try {
-      await reconcileClaim(db, claim, options.reason, mode, result, graph);
+      await reconcileClaim(db, claim, options.reason, mode, result);
     } catch (err) {
       // Defense-in-depth: reconcileClaim handles its own errors, but one hub's
       // unexpected throw must never abort the whole cycle and abandon the rest.
@@ -986,6 +985,7 @@ export async function runHubSyncCycle(
         }),
       );
     }
+    await options.afterReconcile?.(claim);
   }
   result.continuation_needed = await hasReadyHubSync(db);
   return result;
