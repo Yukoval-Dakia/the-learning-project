@@ -1138,4 +1138,57 @@ describe('YUK-384 unified hub-sync cycle', () => {
     await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'apply' });
     expect(await state('hub-a')).toMatchObject({ status: 'acknowledged', last_outcome: 'applied' });
   });
+
+  it('YUK-384 (minor A): shadow observations increment the shadowed cycle counter', async () => {
+    await seedAppliableHub('hub-a');
+    const result = await runHubSyncCycle(testDb(), {
+      reason: 'recovery',
+      maxArtifacts: 5,
+      mode: 'shadow',
+    });
+    // The 'shadowed' switch case used to be empty → shadow cycles were unobservable.
+    expect(result.claimed).toBe(1);
+    expect(result.shadowed).toBe(1);
+    expect(result.applied).toBe(0);
+  });
+
+  it('YUK-384 (minor B): continuation_needed sees claimed/applying cursors with expired leases', async () => {
+    await seedAppliableHub('hub-a');
+    // A worker died mid-claim: the cursor is 'claimed' with an EXPIRED lease (reclaimable).
+    await testDb().execute(sql`
+      update hub_sync_reconciliation
+      set status = 'claimed', claim_owner = 'dead', claim_token = 't',
+          lease_expires_at = clock_timestamp() - interval '1 minute'
+      where artifact_id = 'hub-a'
+    `);
+    // maxArtifacts 0 → claim nothing; only the end-of-cycle hasReadyHubSync runs.
+    const result = await runHubSyncCycle(testDb(), {
+      reason: 'recovery',
+      maxArtifacts: 0,
+      mode: 'apply',
+    });
+    // Pre-fix hasReadyHubSync only counted pending/retry_wait → this backlog of dead-lease
+    // cursors under-reported and no continuation was dispatched to drain it.
+    expect(result.continuation_needed).toBe(true);
+  });
+
+  it('YUK-384 (minor G): nightly repair sweeps abandoned editor sessions past the TTL, keeps fresh', async () => {
+    await seedAppliableHub('hub-a');
+    await testDb().execute(sql`
+      insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+      values
+        ('hub-a', 'abandoned', clock_timestamp() - interval '2 hours', clock_timestamp() - interval '2 hours'),
+        ('hub-a', 'fresh', clock_timestamp(), clock_timestamp())
+    `);
+    await runHubSyncCycle(testDb(), {
+      reason: 'nightly_repair',
+      repairKey: 'nightly:2026-07-21',
+      maxArtifacts: 5,
+      mode: 'apply',
+    });
+    const rows = await testDb().execute<{ session_id: string }>(
+      sql`select session_id from artifact_edit_session where artifact_id = 'hub-a' order by session_id`,
+    );
+    expect(rows.map((r) => r.session_id)).toEqual(['fresh']);
+  });
 });

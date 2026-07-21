@@ -148,6 +148,12 @@ export interface HubSyncCycleResult {
   superseded: number;
   retry_scheduled: number;
   cancelled: number;
+  shadowed: number;
+  // Claimed but not processed to a finalize outcome: the lease was lost before finalize
+  // (lost_lease) or recording the classified retry itself failed (retry_record_failed).
+  // Counting them keeps `claimed` reconcilable with the sum of outcome buckets.
+  lost_lease: number;
+  retry_record_failed: number;
   continuation_needed: boolean;
 }
 
@@ -624,15 +630,26 @@ function emptyCycleResult(reason: HubSyncReason, mode: HubSyncMode): HubSyncCycl
     superseded: 0,
     retry_scheduled: 0,
     cancelled: 0,
+    shadowed: 0,
+    lost_lease: 0,
+    retry_record_failed: 0,
     continuation_needed: false,
   };
 }
 
 async function hasReadyHubSync(db: Db): Promise<boolean> {
+  // Mirror claimNextHubSync's eligibility EXACTLY: pending/retry_wait past their
+  // next_attempt_at OR claimed/applying whose lease has expired (reclaimable). Missing
+  // the expired-lease arm made continuation_needed under-report a backlog of dead-lease
+  // cursors, so a stuck batch would not trigger the continuation that drains it.
   const rows = await db.execute<{ ready: boolean }>(sql`
     select exists(
       select 1 from hub_sync_reconciliation
-      where status in ('pending', 'retry_wait') and next_attempt_at <= clock_timestamp()
+      where (
+        status in ('pending', 'retry_wait') and next_attempt_at <= clock_timestamp()
+      ) or (
+        status in ('claimed', 'applying') and lease_expires_at < clock_timestamp()
+      )
     ) as ready
   `);
   return rows[0]?.ready === true;
@@ -682,6 +699,7 @@ function tallyOutcome(result: HubSyncCycleResult, outcome: FinalizeOutcome): voi
       result.cancelled += 1;
       break;
     case 'shadowed':
+      result.shadowed += 1;
       break;
   }
 }
@@ -737,7 +755,12 @@ async function reconcileClaim(
   let errorClass: string | null = null;
   try {
     const desired = await computeHubDesiredState(db, claim, graph);
-    if (renewal.lost()) return; // lost lease is a non-failure; another worker reclaims after expiry
+    if (renewal.lost()) {
+      // Lost lease is a non-failure; another worker reclaims after expiry. Count it so
+      // `claimed` reconciles (we already incremented claimed but produce no finalize outcome).
+      result.lost_lease += 1;
+      return;
+    }
     outcome = await finalizeHubSync(db, { claim, desired, mode });
     tallyOutcome(result, outcome as FinalizeOutcome);
   } catch (err) {
@@ -753,6 +776,7 @@ async function reconcileClaim(
       // guard) aborts and every OTHER claimed hub is abandoned until its lease expires.
       // Log and move on; this hub's lease expires and another worker reclaims it.
       outcome = 'retry_record_failed';
+      result.retry_record_failed += 1;
       console.error(
         JSON.stringify({
           event: 'hub_sync_retry_record_failed',
@@ -879,6 +903,11 @@ export async function repairHubSyncCoverage(
 // ~250k artifacts — orders of magnitude above any real hub population for this tool.
 const MAX_NIGHTLY_REPAIR_PAGES = 10_000;
 
+// Abandoned editor sessions older than this are swept by the nightly cycle. Far larger
+// than the 30s active-session window so a session merely between heartbeats is never
+// deleted; only genuinely abandoned rows (browser crash → no blur) are reaped.
+const ABANDONED_EDIT_SESSION_TTL = sql`interval '1 hour'`;
+
 /**
  * Minimal unified cycle (Task 4 scope): claim → compute → finalize up to
  * `maxArtifacts`, recording retries and continuation. Immediate wake, recovery,
@@ -909,6 +938,26 @@ export async function runHubSyncCycle(
       });
       if (!hasMore) break;
       afterId = lastId;
+    }
+    // Presence hygiene (bounded, best-effort): the reconciler already inspects
+    // artifact_edit_session for the active-editor defer; abandoned sessions (browser
+    // crash → no blur) are never deleted and bloat the table forever. The 30s active
+    // window keeps them from reading as active, so this is cleanup-only. Sweep rows whose
+    // last heartbeat is older than a safe TTL (>> the 30s window) once per nightly cycle.
+    // A sweep failure must never abort the repair cycle. (Runs only while hub-sync is not
+    // 'off' — acceptable: with the reconciler disabled there is no nightly sweep at all.)
+    try {
+      await db.execute(sql`
+        delete from artifact_edit_session
+        where last_heartbeat_at < clock_timestamp() - ${ABANDONED_EDIT_SESSION_TTL}
+      `);
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: 'hub_sync_abandoned_session_sweep_failed',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     }
   }
 
