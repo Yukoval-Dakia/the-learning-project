@@ -1,349 +1,153 @@
-// YUK-95 P5 Lane-C (Wave 7) — nightly hub auto-sync worker (ADR-0020 §9).
+// YUK-384 — hub-sync job family. The nightly job is NO LONGER a direct auto-zone
+// applier; it is one member of a family that all route through `runHubSyncCycle`:
+//   - hub_sync_mutation_wake — best-effort immediate wake after a topology commit
+//   - hub_sync_recovery       — every-minute recovery floor (drains ready cursors)
+//   - hub_auto_sync_nightly   — 02:45 BJT coverage repair sweep
+// The deterministic auto-zone compute (buildAutoZonePatch + resolveHubMeshAtomics)
+// is RETAINED but now runs INSIDE the reconciler's fenced apply, never here — no
+// scheduled path applies directly (ADR-0020 §9 preserved via the reconciler).
 //
-// For every `type='note_hub'` artifact, maintain its `AutoLinksContainer`
-// auto-zone with curated cross_links to related atomic notes per the
-// "iii-curated" mesh rules (see `src/server/knowledge/hub-mesh.ts`). This is the
-// AI-maintained counterpart to Lane-A's manual cross_link picker.
-//
-// Scheduling (Wave 7 D5): runs at BJT 02:45, AFTER knowledge_edge_propose_nightly
-// (02:30) so it sees the same-night fresh edges. The user is asleep, so this job
-// deliberately bypasses editing-session presence（M5 起 presence 在 PG 表
-// editing_presence，跨进程可见——「worker 看不见 Next 进程内存」的旧限制已不存在，
-// 但夜间无人编辑，读 presence 不值得）. Concurrency is handled purely by
-// `persistNoteRefineApply`'s optimistic version lock: a concurrent user edit just
-// makes the nightly apply a no-op via version conflict, and we retry next night.
-//
-// WRITE boundary (XC-3): the worker READS knowledge_edge (the mesh) to decide
-// what to link, but WRITES only body_blocks (one replace_block / append_block on
-// the AutoLinksContainer). The L2 artifact_block_ref index is kept in sync
-// automatically by `syncBlockRefsForArtifact`, which runs inside
-// `persistNoteRefineApply` (Lane-0) — this worker never touches the index or
-// knowledge_edge directly.
-//
-// Idempotency: the desired children set is diffed against the current container
-// children; when nothing changed we emit NO patch and NO event, so a second run
-// over an unchanged mesh is a true no-op.
-//
-// ── ADR-0022 attr extension note (deviation, documented in the Lane-C report) ──
-// crossLinkBlock per ADR-0022 carries flat `attrs = { id, artifact_id, block_id?,
-// title? }`. Auto-links add two provenance attrs: `auto: true` (marks the link as
-// system-maintained vs user-inserted) and `relation: <HubMeshRelation>` (so
-// Lane-D renders the "via 子主题 / via prerequisite / via 派生 / via 对比" chip).
-// These are additive flat attrs on the same node; they do not change the L2
-// index shape (block-refs.ts reads only id / artifact_id / block_id). The
-// TipTap node already passes `attrs` through (passthrough schema), so no node
-// schema change is required.
+// Durability is the PostgreSQL topology trigger (records the dirty) + the
+// minute-recovery floor (≤60s convergence). The immediate mutation wake is a
+// pure latency optimization and best-effort.
 
-import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import {
-  type CuratedAtomic,
-  type HubMeshAtomicInput,
-  type HubMeshEdge,
-  resolveHubMeshAtomics,
-} from '@/capabilities/knowledge/server/hub-mesh';
-import { type KnowledgeNode, loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
-import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
-import { ArtifactBodyBlocks } from '@/core/schema/business';
-import type { NotePatchT } from '@/core/schema/note-patch';
+  type HubSyncCycleResult,
+  runHubSyncCycle,
+} from '@/capabilities/notes/server/hub-sync-reconciliation';
 import type { Db } from '@/db/client';
-import { artifact } from '@/db/schema';
 
-const HUB_TYPE = 'note_hub';
-const ATOMIC_TYPE = 'note_atomic';
-const AUTO_LINKS_CONTAINER_NODE = 'autoLinksContainer';
-const CROSS_LINK_BLOCK_NODE = 'crossLinkBlock';
-const ACTOR_REF = 'hub_auto_sync';
+const RECOVERY_MAX_ARTIFACTS = 25;
+const WAKE_MAX_ARTIFACTS = 25;
+const NIGHTLY_MAX_ARTIFACTS = 25;
 
-interface HubRow {
-  id: string;
-  knowledge_ids: string[];
-  body_blocks: unknown;
-  attrs: Record<string, unknown> | null;
+export const HUB_SYNC_RECOVERY_QUEUE = 'hub_sync_recovery';
+export const HUB_SYNC_MUTATION_WAKE_QUEUE = 'hub_sync_mutation_wake';
+export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuation';
+
+// pg-boss `send` seam, injected so the handlers stay unit-testable and no topology
+// writer is forced to import pg-boss.
+export interface HubSyncSend {
+  send: (queue: string, data: unknown, options?: { singletonKey?: string }) => Promise<unknown>;
 }
 
-interface AtomicRow {
-  id: string;
-  title: string;
-  knowledge_ids: string[];
+// Asia/Shanghai calendar-date repair key `nightly:YYYY-MM-DD` (en-CA formats as
+// YYYY-MM-DD). One key per BJT day makes the sweep idempotent across retries.
+export function nightlyRepairKey(now = new Date()): string {
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  return `nightly:${ymd}`;
 }
 
-export interface HubAutoSyncResult {
-  hubs_considered: number;
-  hubs_updated: number;
-  hubs_skipped_version_conflict: number;
-  // YUK-301: stale auto-zone targets are an expected skip, distinct from an
-  // operational failure. The next nightly run retries from the fresh snapshot.
-  hubs_skipped_target_not_found: number;
-  // FIX 4 (YUK-95 P5 review): hubs whose per-hub work throws unexpectedly.
-  // Tallied + logged, not propagated, so one bad hub can't abort the batch.
-  hubs_failed: number;
-  // review 2026-05-29: counts the DESIRED curated cross-links per hub, summed
-  // across every hub considered — including hubs whose patch was a no-op or hit a
-  // version_conflict and never wrote. This is the intended-link tally, NOT the
-  // count of links actually persisted this run.
-  cross_links_desired_total: number;
-}
-
-export interface HubAutoSyncDeps {
-  /** Inject pre-loaded snapshots for unit-style overrides; defaults load from db. */
-  loadNodes?: (db: Db) => Promise<KnowledgeNode[]>;
-  loadEdges?: (db: Db) => Promise<HubMeshEdge[]>;
-  now?: Date;
-}
-
-function recordOrEmpty(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-/**
- * Read the hub's `attrs.suppressed_block_refs` — the list of `{ artifact_id }`
- * the user has dismissed from the auto-zone (ADR-0020 §9 dismiss). Returns the
- * set of suppressed target artifact_ids. Tolerant of legacy/partial shapes.
- */
-export function suppressedArtifactIds(attrs: Record<string, unknown> | null): Set<string> {
-  const raw = recordOrEmpty(attrs).suppressed_block_refs;
-  if (!Array.isArray(raw)) return new Set();
-  const out = new Set<string>();
-  for (const entry of raw) {
-    const artifactId = recordOrEmpty(entry).artifact_id;
-    if (typeof artifactId === 'string' && artifactId.length > 0) out.add(artifactId);
+// When a bounded cycle leaves ready work, enqueue exactly ONE singleton-keyed
+// continuation so a backlog drains fairly without piling up duplicate jobs.
+async function dispatchContinuation(deps: HubSyncSend, result: HubSyncCycleResult): Promise<void> {
+  if (result.continuation_needed) {
+    await deps.send(
+      HUB_SYNC_RECOVERY_QUEUE,
+      {},
+      { singletonKey: HUB_SYNC_RECOVERY_CONTINUATION_KEY },
+    );
   }
-  return out;
 }
 
-/**
- * Build the desired `crossLinkBlock` child for one curated atomic. The block id
- * is deterministic (`<container_id>__<atomic_artifact_id>`) so reorder/idempotent
- * diffs are stable across runs. Provenance attrs (`auto`, `relation`) feed the
- * Lane-D chip.
- */
-function desiredChild(containerId: string, atomic: CuratedAtomic) {
-  return {
-    type: CROSS_LINK_BLOCK_NODE,
-    attrs: {
-      id: `${containerId}__${atomic.artifact_id}`,
-      artifact_id: atomic.artifact_id,
-      block_id: null,
-      title: atomic.title,
-      auto: true,
-      relation: atomic.relation,
-    },
+export function buildHubSyncRecoveryHandler(db: Db, deps: HubSyncSend) {
+  return async (): Promise<HubSyncCycleResult> => {
+    const result = await runHubSyncCycle(db, {
+      reason: 'recovery',
+      maxArtifacts: RECOVERY_MAX_ARTIFACTS,
+    });
+    await dispatchContinuation(deps, result);
+    return result;
   };
 }
 
-// Compare two child lists ignoring order (the user may reorder; reorder-only is
-// not a content change). Two sets are equal when the same crossLinkBlock
-// (artifact_id + relation + title) appears in both, regardless of position.
-function childSignature(child: Record<string, unknown>): string {
-  const attrs = recordOrEmpty(child.attrs);
-  return JSON.stringify({
-    type: child.type,
-    artifact_id: attrs.artifact_id ?? null,
-    relation: attrs.relation ?? null,
-    title: attrs.title ?? null,
-    auto: attrs.auto ?? null,
+export function buildHubSyncMutationWakeHandler(db: Db, deps: HubSyncSend) {
+  return async (): Promise<HubSyncCycleResult> => {
+    const result = await runHubSyncCycle(db, {
+      reason: 'mutation_wake',
+      maxArtifacts: WAKE_MAX_ARTIFACTS,
+    });
+    await dispatchContinuation(deps, result);
+    return result;
+  };
+}
+
+export function buildHubSyncNightlyRepairHandler(db: Db, deps: HubSyncSend) {
+  return async (): Promise<HubSyncCycleResult> => {
+    const result = await runHubSyncCycle(db, {
+      reason: 'nightly_repair',
+      maxArtifacts: NIGHTLY_MAX_ARTIFACTS,
+      repairKey: nightlyRepairKey(),
+    });
+    await dispatchContinuation(deps, result);
+    return result;
+  };
+}
+
+/**
+ * Best-effort post-commit wake a topology writer MAY call after committing a
+ * mutation. Swallows send failures — durability is the SQL trigger + minute
+ * recovery, never this send.
+ *
+ * YUK-384 NOTE: no production topology writer calls this yet; immediacy currently
+ * rests on the every-minute recovery floor (≤60s). Wiring writers to fire this is
+ * a scoped follow-up.
+ */
+export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> {
+  try {
+    await deps.send(
+      HUB_SYNC_MUTATION_WAKE_QUEUE,
+      {},
+      { singletonKey: HUB_SYNC_MUTATION_WAKE_QUEUE },
+    );
+  } catch {
+    // best-effort; the minute-recovery floor still converges the durable dirty.
+  }
+}
+
+// Thin nightly wrapper retained for existing callers: a repair sweep, never a
+// direct apply. Returns the cycle result.
+export async function runHubAutoSyncNightly(
+  db: Db,
+  opts: { now?: Date } = {},
+): Promise<HubSyncCycleResult> {
+  return runHubSyncCycle(db, {
+    reason: 'nightly_repair',
+    maxArtifacts: NIGHTLY_MAX_ARTIFACTS,
+    repairKey: nightlyRepairKey(opts.now),
   });
 }
 
-function sameChildSet(a: Record<string, unknown>[], b: Record<string, unknown>[]): boolean {
-  if (a.length !== b.length) return false;
-  const countA = new Map<string, number>();
-  for (const child of a)
-    countA.set(childSignature(child), (countA.get(childSignature(child)) ?? 0) + 1);
-  for (const child of b) {
-    const key = childSignature(child);
-    const n = countA.get(key);
-    if (!n) return false;
-    countA.set(key, n - 1);
-  }
-  return [...countA.values()].every((n) => n === 0);
-}
-
-/**
- * Compute the NotePatch (0 or 1 op) that brings the hub's auto-zone in line with
- * the curated set. Returns `null` when no change is needed (idempotent no-op).
- *
- * Pure given the parsed doc + curated atomics — split out so the diff logic is
- * directly testable.
- */
-export function buildAutoZonePatch(
-  bodyBlocks: unknown,
-  hubArtifactId: string,
-  curated: CuratedAtomic[],
-): NotePatchT | null {
-  const parsed = ArtifactBodyBlocks.safeParse(bodyBlocks);
-  if (!parsed.success) return null;
-  const content = parsed.data.content ?? [];
-
-  // Find the existing AutoLinksContainer (top-level only — §9 auto-zone is a
-  // single doc-root container after the manual zone).
-  const existingIndex = content.findIndex((n) => n.type === AUTO_LINKS_CONTAINER_NODE);
-  const existing = existingIndex >= 0 ? (content[existingIndex] as Record<string, unknown>) : null;
-
-  const containerId =
-    existing && typeof recordOrEmpty(existing.attrs).id === 'string'
-      ? (recordOrEmpty(existing.attrs).id as string)
-      : `${hubArtifactId}__auto_links`;
-
-  const desiredChildren = curated.map((c) => desiredChild(containerId, c));
-
-  if (existing) {
-    const currentChildren = (Array.isArray(existing.content) ? existing.content : []).filter(
-      (c): c is Record<string, unknown> => c !== null && typeof c === 'object',
-    );
-    // No-op when the set is unchanged (order-insensitive: user reorders are kept).
-    if (sameChildSet(currentChildren, desiredChildren)) return null;
-
-    const existingAttrs = recordOrEmpty(existing.attrs);
-    const replacement = {
-      type: AUTO_LINKS_CONTAINER_NODE,
-      attrs: { ...existingAttrs, id: containerId },
-      content: desiredChildren,
-    };
-    return { ops: [{ kind: 'replace_block', target_block_id: containerId, block: replacement }] };
-  }
-
-  // No container yet. If there's nothing to add, do nothing (don't create an
-  // empty container and churn an event).
-  if (desiredChildren.length === 0) return null;
-
-  const container = {
-    type: AUTO_LINKS_CONTAINER_NODE,
-    attrs: { id: containerId, title: 'Related' },
-    content: desiredChildren,
-  };
-  // Append after the manual zone (§9: 自动区在手动区之后).
-  return { ops: [{ kind: 'append_block', block: container }] };
-}
-
-async function loadHubs(db: Db): Promise<HubRow[]> {
-  const rows = await db
-    .select({
-      id: artifact.id,
-      knowledge_ids: artifact.knowledge_ids,
-      body_blocks: artifact.body_blocks,
-      attrs: artifact.attrs,
-    })
-    .from(artifact)
-    .where(and(eq(artifact.type, HUB_TYPE), isNull(artifact.archived_at)));
-  return rows.map((r) => ({
-    id: r.id,
-    knowledge_ids: r.knowledge_ids ?? [],
-    body_blocks: r.body_blocks,
-    attrs: (r.attrs as Record<string, unknown> | null) ?? null,
-  }));
-}
-
-async function loadAtomics(db: Db): Promise<AtomicRow[]> {
-  const rows = await db
-    .select({
-      id: artifact.id,
-      title: artifact.title,
-      knowledge_ids: artifact.knowledge_ids,
-    })
-    .from(artifact)
-    .where(and(eq(artifact.type, ATOMIC_TYPE), isNull(artifact.archived_at)));
-  return rows.map((r) => ({ id: r.id, title: r.title, knowledge_ids: r.knowledge_ids ?? [] }));
-}
-
-async function defaultLoadEdges(db: Db): Promise<HubMeshEdge[]> {
-  // Non-archived edges only (listKnowledgeEdges defaults includeArchived:false).
-  const rows = await listKnowledgeEdges(db);
-  return rows.map((r) => ({
-    from_knowledge_id: r.from_knowledge_id,
-    to_knowledge_id: r.to_knowledge_id,
-    relation_type: r.relation_type,
-  }));
-}
-
-/**
- * Scan every hub, recompute its curated auto-zone, and apply a single
- * replace_block / append_block patch when (and only when) it changed.
- *
- * 0 hubs → no-op. Expected persistence races surface as statuses (including
- * version_conflict and YUK-301's target_not_found skip). FIX 4 (P5 review): wrap
- * each hub in try/catch so an unexpected thrown hub is logged + tallied
- * (`hubs_failed`) and the loop continues instead of aborting the whole batch.
- */
-export async function runHubAutoSyncNightly(
-  db: Db,
-  deps: HubAutoSyncDeps = {},
-): Promise<HubAutoSyncResult> {
-  const hubs = await loadHubs(db);
-  const result: HubAutoSyncResult = {
-    hubs_considered: hubs.length,
-    hubs_updated: 0,
-    hubs_skipped_version_conflict: 0,
-    hubs_skipped_target_not_found: 0,
-    hubs_failed: 0,
-    cross_links_desired_total: 0,
-  };
-  if (hubs.length === 0) return result;
-
-  const nodes = await (deps.loadNodes ?? loadTreeSnapshot)(db);
-  const edges = await (deps.loadEdges ?? defaultLoadEdges)(db);
-  const atomics = await loadAtomics(db);
-
-  const atomicInputs: HubMeshAtomicInput[] = atomics.map((a) => ({
-    artifact_id: a.id,
-    title: a.title,
-    knowledge_ids: a.knowledge_ids,
-  }));
-
-  for (const hub of hubs) {
-    try {
-      const suppressed = suppressedArtifactIds(hub.attrs);
-      const curated = resolveHubMeshAtomics(
-        nodes,
-        edges,
-        { hub_artifact_id: hub.id, knowledge_ids: hub.knowledge_ids },
-        atomicInputs,
-      ).filter((c) => !suppressed.has(c.artifact_id));
-
-      result.cross_links_desired_total += curated.length;
-
-      const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
-      if (!patch) continue;
-
-      const applied = await persistNoteRefineApply({
-        db,
-        artifactId: hub.id,
-        patch,
-        actorRef: ACTOR_REF,
-        now: deps.now,
-      });
-
-      if (applied.status === 'applied') result.hubs_updated += 1;
-      else if (applied.status === 'skipped:version_conflict') {
-        result.hubs_skipped_version_conflict += 1;
-      } else if (applied.status === 'skipped:target_not_found') {
-        result.hubs_skipped_target_not_found += 1;
-      }
-    } catch (err) {
-      // One bad hub must not kill the batch: log, tally, continue.
-      result.hubs_failed += 1;
-      console.error('[hub_auto_sync_nightly] hub failed', { hub_id: hub.id, error: err });
-    }
-  }
-
-  return result;
-}
+// ── Manifest-loaded factories (JobHandlerFactory: (db) => (jobs) => Promise<void>) ──
+// The manifest loader passes only `db` (no boss), so these converge via the cron
+// floor and do NOT dispatch a boss continuation; the every-minute recovery cron
+// picks up any remainder. The {send}-taking builders above are the full versions
+// (used where a boss handle is available, e.g. handlers.ts).
 
 export function buildHubAutoSyncNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
-    try {
-      const result = await runHubAutoSyncNightly(db);
-      console.log('[hub_auto_sync_nightly] result', result);
-    } catch (err) {
-      console.error('[hub_auto_sync_nightly] failed', err);
-      throw err;
+    const result = await runHubAutoSyncNightly(db);
+    console.log('[hub_auto_sync_nightly] repair cycle', result);
+  };
+}
+
+export function buildHubSyncRecoveryJobHandler(db: Db): (jobs: Job[]) => Promise<void> {
+  return async () => {
+    const result = await runHubSyncCycle(db, {
+      reason: 'recovery',
+      maxArtifacts: RECOVERY_MAX_ARTIFACTS,
+    });
+    if (result.continuation_needed) {
+      console.log('[hub_sync_recovery] continuation pending; next minute cron will resume');
     }
   };
 }

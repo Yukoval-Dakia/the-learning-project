@@ -10,8 +10,12 @@
 
 import { eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  buildHubSyncRecoveryHandler,
+  sendHubSyncMutationWake,
+} from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
 import { PgPresenceStore } from '@/server/artifacts/presence/pg';
 
@@ -875,5 +879,127 @@ describe('YUK-384 hub-sync lifecycle race closure', () => {
     const once = await generation('hub-a');
     await repairHubSyncCoverage(testDb(), { repairKey: key, pageSize: 100 });
     expect(await generation('hub-a')).toBe(once);
+  });
+});
+
+// ── Task 8 (RED Tests 22–24): unified wake / recovery / continuation / retry ──
+
+describe('YUK-384 unified hub-sync cycle', () => {
+  beforeEach(async () => {
+    await resetDb();
+    process.env.HUB_SYNC_MODE = 'apply';
+    await seedKnowledge('kc');
+    // One live atomic sharing kc so every seeded hub computes a real auto-zone
+    // change (changed=true → applies).
+    await seedArtifact({
+      id: 'atomic-shared',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 'Shared',
+    });
+  });
+
+  afterEach(() => {
+    process.env.HUB_SYNC_MODE = 'off';
+  });
+
+  async function seedAppliableHub(id: string) {
+    await seedArtifact({ id, type: 'note_hub', knowledgeIds: ['kc'] });
+  }
+
+  async function seedReadyHubs(n: number): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const id = `hub-${String(i).padStart(3, '0')}`;
+      await seedAppliableHub(id);
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  async function injectDesiredStateFailureFor(id: string): Promise<void> {
+    // An invalid body makes the desired document invalid → finalize throws a
+    // classified (retryable) failure.
+    await testDb().execute(
+      sql`update artifact set body_blocks = '{"bad":true}'::jsonb where id = ${id}`,
+    );
+  }
+
+  async function readyCount(): Promise<number> {
+    const rows = await testDb().execute<{ count: string }>(sql`
+      select count(*)::text as count from hub_sync_reconciliation
+      where status in ('pending', 'retry_wait') and next_attempt_at <= clock_timestamp()
+    `);
+    return Number(rows[0]?.count ?? '0');
+  }
+
+  async function claimCounts(): Promise<number[]> {
+    const rows = await testDb().execute<{ claim_count: number }>(
+      sql`select claim_count from hub_sync_reconciliation`,
+    );
+    return rows.map((r) => Number(r.claim_count));
+  }
+
+  async function retryDelayMs(id: string): Promise<number> {
+    const rows = await testDb().execute<{ ms: string }>(sql`
+      select extract(epoch from (next_attempt_at - last_error_at)) * 1000 as ms
+      from hub_sync_reconciliation where artifact_id = ${id}
+    `);
+    return Number(rows[0]?.ms);
+  }
+
+  async function topologyMutationWithWake(deps: {
+    send: (queue: string, data: unknown, options?: { singletonKey?: string }) => Promise<unknown>;
+  }): Promise<void> {
+    // A real topology commit dirties every live hub via the trigger…
+    await testDb().execute(sql`update knowledge set name = 'woken' where id = 'kc'`);
+    // …then a best-effort post-commit wake (which may fail — durability is the
+    // trigger + minute recovery, never this send).
+    await sendHubSyncMutationWake(deps);
+  }
+
+  it('YUK-384 RED 22: failed immediate send converges through minute recovery', async () => {
+    await seedAppliableHub('hub-a');
+    await topologyMutationWithWake({
+      send: vi.fn().mockRejectedValue(new Error('boss unavailable')),
+    });
+    expect(await state('hub-a')).toMatchObject({ status: 'pending' });
+
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 25, mode: 'apply' });
+    expect(await state('hub-a')).toMatchObject({ status: 'acknowledged' });
+  });
+
+  it('YUK-384 RED 23: bounded cycle emits one continuation and drains fairly', async () => {
+    await seedReadyHubs(30);
+    const send = vi.fn().mockResolvedValue('job-id');
+    const db = testDb();
+
+    const first = await buildHubSyncRecoveryHandler(db, { send })();
+    expect(first.claimed).toBe(25);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(first.continuation_needed).toBe(true);
+
+    await buildHubSyncRecoveryHandler(db, { send })();
+    expect(await readyCount()).toBe(0);
+    const counts = await claimCounts();
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+  });
+
+  it('YUK-384 RED 24: one hub failure schedules durable retry and later hubs continue', async () => {
+    const ids = await seedReadyHubs(3);
+    await injectDesiredStateFailureFor(ids[1]);
+
+    const result = await runHubSyncCycle(testDb(), {
+      reason: 'recovery',
+      maxArtifacts: 3,
+      mode: 'apply',
+    });
+    expect(result).toMatchObject({ claimed: 3, applied: 2, retry_scheduled: 1 });
+    expect(await state(ids[1])).toMatchObject({
+      status: 'retry_wait',
+      consecutive_failure_count: 1,
+    });
+    expect(await retryDelayMs(ids[1])).toBeGreaterThanOrEqual(5_000);
+    expect(await retryDelayMs(ids[1])).toBeLessThanOrEqual(6_000);
   });
 });

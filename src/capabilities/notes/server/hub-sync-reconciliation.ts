@@ -19,16 +19,14 @@ import {
   resolveHubMeshAtomics,
 } from '@/capabilities/knowledge/server/hub-mesh';
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
-// Auto-zone builder + suppression reader are reused verbatim from the nightly
-// path (plan Task 4: "Consumes … existing auto-zone builder logic from
-// hub_auto_sync_nightly.ts"). The functions are called at runtime only, so the
-// forward reference Task 8 will add (nightly → runHubSyncCycle) stays a benign
-// ESM cycle; if it ever bites, lift these two helpers into a shared module.
+import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
+// Auto-zone builder + suppression reader live in a neutral module (YUK-384 Task 8
+// ESM-cycle lift) so both the reconciler and the nightly job — which now imports
+// runHubSyncCycle from here — depend on them without a cycle.
 import {
   buildAutoZonePatch,
   suppressedArtifactIds,
-} from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
-import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
+} from '@/capabilities/notes/server/hub-auto-zone';
 import { applyNotePatch } from '@/core/blocks/apply-note-patch';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
@@ -557,18 +555,20 @@ async function recordHubSyncRetry(
   classified: ClassifiedHubSyncError,
 ): Promise<void> {
   // Backoff = min(5s * 2^(newFailureCount - 1), 15m) + 0–20% jitter. The SET
-  // expression reads the pre-increment count, so exponent = old count.
+  // expression reads the pre-increment count, so exponent = old count = new-1.
+  // `now()` (statement-stable) anchors BOTH next_attempt_at and last_error_at so
+  // their difference is exactly the scheduled delay (deterministic for tests).
   await db.execute(sql`
     update hub_sync_reconciliation
     set status = 'retry_wait',
         consecutive_failure_count = consecutive_failure_count + 1,
-        next_attempt_at = clock_timestamp()
+        next_attempt_at = now()
           + (least(5.0 * power(2.0, consecutive_failure_count), 900.0) * (1 + random() * 0.2)) * interval '1 second',
         claim_owner = null, claim_token = null, lease_expires_at = null,
         last_error_class = ${classified.errorClass},
         last_error_code = ${classified.code},
         last_error = ${truncateCodePoints(classified.message, LAST_ERROR_MAX_CODE_POINTS)},
-        last_error_at = clock_timestamp(),
+        last_error_at = now(),
         last_outcome = 'retry',
         updated_at = clock_timestamp()
     where ${claimFence(claim)}
@@ -734,6 +734,16 @@ export async function runHubSyncCycle(
   const mode = options.mode ?? readHubSyncMode();
   const result = emptyCycleResult(options.reason, mode);
   if (mode === 'off') return result;
+
+  // Nightly repair sweeps coverage FIRST (dirties/cancels cursors), then the same
+  // claim→compute→finalize loop converges them. No scheduled path applies directly.
+  if (options.reason === 'nightly_repair') {
+    if (!options.repairKey) throw new Error('nightly_repair requires repairKey');
+    await repairHubSyncCoverage(db, {
+      repairKey: options.repairKey,
+      pageSize: options.maxArtifacts,
+    });
+  }
 
   const owner = options.owner ?? workerOwner();
   for (let index = 0; index < options.maxArtifacts; index += 1) {
