@@ -86,6 +86,7 @@ describe('readHubSyncHealth', () => {
       max_generation_lag: '4',
       last_acknowledged_at: expect.any(String),
       last_repair_key: 'nightly:2026-07-21',
+      triggers_installed: true,
     });
   });
 
@@ -136,6 +137,25 @@ describe('readHubSyncHealth', () => {
       max_generation_lag: '0',
       last_acknowledged_at: null,
       last_repair_key: null,
+      triggers_installed: true,
     });
+  });
+
+  it('YUK-384 (R1): triggers_installed reflects whether the durable-dirty triggers exist (db:migrate vs db:push)', async () => {
+    // The migrated testcontainer has all three 0071 triggers.
+    expect((await readHubSyncHealth(testDb())).triggers_installed).toBe(true);
+    // Simulate a db:push bootstrap (tables, but a hand-written trigger absent). resetDb only
+    // truncates data, so the DDL change persists in the shared fork DB — restore it in
+    // finally so sibling tests still see the durable-dirty trigger.
+    await testDb().execute(sql`drop trigger if exists hub_sync_artifact_dirty on artifact`);
+    try {
+      expect((await readHubSyncHealth(testDb())).triggers_installed).toBe(false);
+    } finally {
+      await testDb().execute(sql`
+        create trigger hub_sync_artifact_dirty
+          after insert or update or delete on artifact
+          for each row execute function fanout_hub_sync_dirty()
+      `);
+    }
   });
 });

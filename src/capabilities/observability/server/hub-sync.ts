@@ -31,6 +31,12 @@ export interface HubSyncHealth {
   max_generation_lag: string;
   last_acknowledged_at: string | null;
   last_repair_key: string | null;
+  // False iff the durable-dirty topology triggers are NOT installed — the load-bearing
+  // fingerprint of a `drizzle-kit push` bootstrap (which diffs schema.ts only and silently
+  // omits the hand-written 0071 triggers/functions/partial indexes). A false here means the
+  // whole reconciler is inert (hubs never re-dirty) despite the tables existing. See the
+  // rollout doc: this feature MUST be provisioned with `pnpm db:migrate`, never db:push.
+  triggers_installed: boolean;
 }
 
 type HealthRow = {
@@ -53,6 +59,14 @@ type HealthRow = {
 };
 
 export async function readHubSyncHealth(db: Db): Promise<HubSyncHealth> {
+  // Provisioning fingerprint: all THREE durable-dirty triggers present iff the hand-written
+  // 0071 migration ran (db:migrate). A db:push bootstrap creates the tables but not these.
+  const trig = await db.execute<{ installed: boolean }>(sql`
+    select (
+      select count(*) from pg_trigger
+      where tgname in ('hub_sync_artifact_dirty', 'hub_sync_knowledge_dirty', 'hub_sync_knowledge_edge_dirty')
+    ) = 3 as installed
+  `);
   const rows = await db.execute<HealthRow>(sql`
     select
       count(*) filter (where status = 'pending')       as pending,
@@ -117,5 +131,6 @@ export async function readHubSyncHealth(db: Db): Promise<HubSyncHealth> {
       ? new Date(r.last_acknowledged_at).toISOString()
       : null,
     last_repair_key: r.last_repair_key ?? null,
+    triggers_installed: trig[0]?.installed === true,
   };
 }

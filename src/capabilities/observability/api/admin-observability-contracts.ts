@@ -180,4 +180,7 @@ export const HubSyncHealthResponseSchema = z.object({
   max_generation_lag: z.string(),
   last_acknowledged_at: z.string().nullable(),
   last_repair_key: z.string().nullable(),
+  // False = the 0071 durable-dirty triggers are absent (db:push bootstrap) → reconciler
+  // inert despite the tables existing. Provision with db:migrate. See rollout doc.
+  triggers_installed: z.boolean(),
 });
