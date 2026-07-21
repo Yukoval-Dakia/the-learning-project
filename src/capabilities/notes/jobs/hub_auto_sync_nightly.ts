@@ -69,29 +69,6 @@ export function buildHubSyncRecoveryHandler(db: Db, deps: HubSyncSend) {
   };
 }
 
-export function buildHubSyncMutationWakeHandler(db: Db, deps: HubSyncSend) {
-  return async (): Promise<HubSyncCycleResult> => {
-    const result = await runHubSyncCycle(db, {
-      reason: 'mutation_wake',
-      maxArtifacts: WAKE_MAX_ARTIFACTS,
-    });
-    await dispatchContinuation(deps, result);
-    return result;
-  };
-}
-
-export function buildHubSyncNightlyRepairHandler(db: Db, deps: HubSyncSend) {
-  return async (): Promise<HubSyncCycleResult> => {
-    const result = await runHubSyncCycle(db, {
-      reason: 'nightly_repair',
-      maxArtifacts: NIGHTLY_MAX_ARTIFACTS,
-      repairKey: nightlyRepairKey(),
-    });
-    await dispatchContinuation(deps, result);
-    return result;
-  };
-}
-
 /**
  * Best-effort post-commit wake, given a send seam. Swallows send failures —
  * durability is the SQL trigger + minute recovery, never this send.
@@ -119,13 +96,11 @@ export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> 
 export async function wakeHubSyncAfterCommit(): Promise<void> {
   const boss = getRunningBoss();
   if (!boss) return;
-  try {
-    await sendHubSyncMutationWake({
-      send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
-    });
-  } catch (err) {
-    console.warn('[hub_sync] mutation wake failed (best-effort; minute recovery converges)', err);
-  }
+  // No try/catch here: sendHubSyncMutationWake already swallows send failures internally
+  // (best-effort; the durable trigger + minute-recovery floor converges any missed wake).
+  await sendHubSyncMutationWake({
+    send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
+  });
 }
 
 // Dispatch the single continuation via the running boss (peek, no start), used

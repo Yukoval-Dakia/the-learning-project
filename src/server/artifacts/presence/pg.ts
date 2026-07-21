@@ -226,6 +226,7 @@ export class PgPresenceStore implements PresenceStore {
       select last_heartbeat_at from artifact_edit_session
       where artifact_id = ${artifactId}
       order by last_heartbeat_at desc
+      limit 1
     `);
     const [presence] = await this.db
       .select()

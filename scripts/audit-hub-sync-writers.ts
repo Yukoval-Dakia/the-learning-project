@@ -146,9 +146,18 @@ export async function auditHubSyncWriters(input: {
 }
 
 export function loadAllowlist(): AllowlistEntry[] {
-  const raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8')) as {
-    writers?: AllowlistEntry[];
-  };
+  let raw: { writers?: AllowlistEntry[] };
+  try {
+    raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8')) as { writers?: AllowlistEntry[] };
+  } catch (err) {
+    // This is a CI gate — a missing/corrupt allowlist must fail with a clear, actionable
+    // message, not a raw ENOENT/SyntaxError stack.
+    throw new Error(
+      `audit:hub-sync-writers: cannot read/parse allowlist at ${ALLOWLIST_PATH}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
   return raw.writers ?? [];
 }
 
