@@ -31,6 +31,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 
+import { wakeHubSyncAfterCommit } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { SuggestionKind } from '@/kernel/capability-contract-schemas';
@@ -184,6 +185,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // excluded on either path (ND-SK-4).
     if (parsed.data.proposal_id) {
       await acceptAiProposal(db, parsed.data.proposal_id);
+      // YUK-384 — a chip-driven proposal accept is a topology mutation; best-effort
+      // hub-sync wake AFTER commit (coalesced; never affects this response).
+      await wakeHubSyncAfterCommit();
     }
 
     await writeEvent(db, {

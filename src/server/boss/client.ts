@@ -53,11 +53,20 @@ export function isQueueCreateRace(err: unknown): boolean {
 // module cache alone suffices and we never write to globalThis there —
 // behaviour unchanged. The PR #340 getStartedBoss catch semantics are preserved
 // below, only retargeted to clear bossState.startPromise. (YUK-274)
-type BossState = { instance: PgBoss | null; startPromise: Promise<PgBoss> | null };
+// `started` holds the boss ONLY once boss.start() has fully resolved — it is what
+// getRunningBoss() peeks so a caller can send a best-effort job WITHOUT starting
+// boss itself (YUK-384 hub-sync mutation wake: no-op when boss isn't running,
+// e.g. tests / cold start, so it never triggers a real pg-boss start).
+type BossState = {
+  instance: PgBoss | null;
+  startPromise: Promise<PgBoss> | null;
+  started: PgBoss | null;
+};
 const globalForBoss = globalThis as typeof globalThis & { __loomBossState?: BossState };
 const bossState: BossState = globalForBoss.__loomBossState ?? {
   instance: null,
   startPromise: null,
+  started: null,
 };
 if (process.env.NODE_ENV !== 'production') {
   globalForBoss.__loomBossState = bossState;
@@ -107,7 +116,10 @@ export async function getStartedBoss(): Promise<PgBoss> {
     const boss = createBoss();
     bossState.startPromise = boss
       .start()
-      .then(() => boss)
+      .then(() => {
+        bossState.started = boss;
+        return boss;
+      })
       .catch((err) => {
         // YUK-259: pg-boss's own `boss.start()` directly awaits the timekeeper
         // creating its internal `__pgboss__send-it` queue (pg-boss index.js
@@ -126,6 +138,7 @@ export async function getStartedBoss(): Promise<PgBoss> {
           console.warn(
             '[boss] getStartedBoss(): boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
           );
+          bossState.started = boss;
           return boss;
         }
         bossState.startPromise = null;
@@ -133,6 +146,16 @@ export async function getStartedBoss(): Promise<PgBoss> {
       });
   }
   return bossState.startPromise;
+}
+
+/**
+ * Peek at the already-started boss WITHOUT starting one. Returns null when boss
+ * has not been started (tests, cold start) — callers use this for best-effort
+ * fire-and-forget sends (e.g. YUK-384 hub-sync mutation wake) that must never
+ * become a boss-lifecycle driver nor a durability dependency.
+ */
+export function getRunningBoss(): PgBoss | null {
+  return bossState.started;
 }
 
 /**
@@ -145,4 +168,5 @@ export async function getStartedBoss(): Promise<PgBoss> {
 export function _resetBossForTests(): void {
   bossState.instance = null;
   bossState.startPromise = null;
+  bossState.started = null;
 }

@@ -1,3 +1,4 @@
+import { wakeHubSyncAfterCommit } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { ProposalDecisionInput } from '@/core/schema/proposal';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -20,6 +21,10 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const resource = await createProposalDecision(db, id, parsed.data);
+    // YUK-384 — best-effort hub-sync wake AFTER the decision commits (an accepted
+    // KC/edge proposal is a topology mutation; the trigger already dirtied every
+    // live hub durably). Coalesced + best-effort; never affects this response.
+    await wakeHubSyncAfterCommit();
     const headers = new Headers({
       Location: `/api/events/${encodeURIComponent(resource.decision_event_id)}`,
     });

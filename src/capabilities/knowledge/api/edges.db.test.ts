@@ -10,6 +10,16 @@ import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+// YUK-384 — the POST handler fires a best-effort hub-sync wake via the running
+// boss. Peek getRunningBoss so we control it; default null (no-op) so every other
+// test is unaffected.
+const bossMock = vi.hoisted(() => ({ getRunningBoss: vi.fn(), send: vi.fn() }));
+vi.mock('@/server/boss/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/boss/client')>();
+  return { ...actual, getRunningBoss: () => bossMock.getRunningBoss() };
+});
+
 import { GET, POST, getEdge } from './edges';
 
 const KNOWLEDGE_BASE = {
@@ -181,6 +191,42 @@ describe('GET /api/knowledge/edges', () => {
 describe('POST /api/knowledge/edges', () => {
   beforeEach(async () => {
     await resetDb();
+    bossMock.getRunningBoss.mockReset();
+    bossMock.send.mockReset().mockResolvedValue('job-id');
+  });
+
+  it('YUK-384: fires exactly one hub_sync_mutation_wake after the edge commit', async () => {
+    bossMock.getRunningBoss.mockReturnValue({ send: bossMock.send });
+    await seedKnowledge(['k1', 'k2']);
+    const res = await postEdge({
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'prerequisite',
+    });
+    expect(res.status).toBe(201);
+    expect(bossMock.send).toHaveBeenCalledTimes(1);
+    expect(bossMock.send).toHaveBeenCalledWith(
+      'hub_sync_mutation_wake',
+      {},
+      {
+        singletonKey: 'hub_sync_mutation_wake',
+      },
+    );
+  });
+
+  it('YUK-384: a wake send rejection does NOT affect the committed edge (201)', async () => {
+    bossMock.getRunningBoss.mockReturnValue({ send: bossMock.send });
+    bossMock.send.mockRejectedValue(new Error('boss unavailable'));
+    await seedKnowledge(['k1', 'k2']);
+    const res = await postEdge({
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'prerequisite',
+    });
+    expect(res.status).toBe(201);
+    // The edge is durably committed regardless of the failed wake.
+    const rows = await testDb().select().from(knowledge_edge);
+    expect(rows).toHaveLength(1);
   });
 
   it('creates an edge with 201 + { id }', async () => {

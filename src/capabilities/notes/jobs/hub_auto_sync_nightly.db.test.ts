@@ -5,10 +5,23 @@
 // and a second unchanged run writes no new event (idempotent).
 
 import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifact, artifact_block_ref, event, knowledge } from '@/db/schema';
-import { buildHubAutoSyncNightlyHandler, runHubAutoSyncNightly } from './hub_auto_sync_nightly';
+
+// YUK-384 — the manifest-registered handlers dispatch their continuation via the
+// running boss. Peek getRunningBoss so we control it; default unset (no-op).
+const bossMock = vi.hoisted(() => ({ getRunningBoss: vi.fn(), send: vi.fn() }));
+vi.mock('@/server/boss/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/boss/client')>();
+  return { ...actual, getRunningBoss: () => bossMock.getRunningBoss() };
+});
+
+import {
+  buildHubAutoSyncNightlyHandler,
+  buildHubSyncRecoveryJobHandler,
+  runHubAutoSyncNightly,
+} from './hub_auto_sync_nightly';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -192,5 +205,69 @@ describe('buildHubAutoSyncNightlyHandler', () => {
     const handler = buildHubAutoSyncNightlyHandler(testDb());
     await handler([{ id: 'job-1' }] as never);
     expect(autoZoneChildren(await hubBody('hub1'))).toHaveLength(1);
+  });
+});
+
+describe('YUK-384 production continuation dispatch (buildHubSyncRecoveryJobHandler)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    process.env.HUB_SYNC_MODE = 'apply';
+    bossMock.getRunningBoss.mockReset();
+    bossMock.send.mockReset().mockResolvedValue('job-id');
+  });
+
+  afterEach(() => {
+    process.env.HUB_SYNC_MODE = 'off';
+  });
+
+  it('dispatches exactly ONE singleton-keyed continuation when the backlog exceeds one cycle', async () => {
+    bossMock.getRunningBoss.mockReturnValue({ send: bossMock.send });
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-shared',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 's',
+    });
+    for (let i = 0; i < 30; i += 1) {
+      await seedArtifact({
+        id: `hub-${String(i).padStart(3, '0')}`,
+        type: 'note_hub',
+        knowledgeIds: ['kc'],
+      });
+    }
+
+    const handler = buildHubSyncRecoveryJobHandler(testDb());
+    await handler([{ id: 'job-1' }] as never);
+
+    expect(bossMock.send).toHaveBeenCalledTimes(1);
+    expect(bossMock.send).toHaveBeenCalledWith(
+      'hub_sync_recovery',
+      {},
+      {
+        singletonKey: 'hub_sync_recovery_continuation',
+      },
+    );
+  });
+
+  it('does NOT dispatch a continuation when boss is not running (no-op)', async () => {
+    bossMock.getRunningBoss.mockReturnValue(null);
+    await seedKnowledge('kc');
+    await seedArtifact({
+      id: 'atomic-shared',
+      type: 'note_atomic',
+      knowledgeIds: ['kc'],
+      title: 's',
+    });
+    for (let i = 0; i < 30; i += 1) {
+      await seedArtifact({
+        id: `hub-${String(i).padStart(3, '0')}`,
+        type: 'note_hub',
+        knowledgeIds: ['kc'],
+      });
+    }
+
+    await buildHubSyncRecoveryJobHandler(testDb())([{ id: 'job-1' }] as never);
+    expect(bossMock.send).not.toHaveBeenCalled();
   });
 });

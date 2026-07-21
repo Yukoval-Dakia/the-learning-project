@@ -18,6 +18,7 @@ import {
   runHubSyncCycle,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import type { Db } from '@/db/client';
+import { getRunningBoss } from '@/server/boss/client';
 
 const RECOVERY_MAX_ARTIFACTS = 25;
 const WAKE_MAX_ARTIFACTS = 25;
@@ -92,13 +93,8 @@ export function buildHubSyncNightlyRepairHandler(db: Db, deps: HubSyncSend) {
 }
 
 /**
- * Best-effort post-commit wake a topology writer MAY call after committing a
- * mutation. Swallows send failures — durability is the SQL trigger + minute
- * recovery, never this send.
- *
- * YUK-384 NOTE: no production topology writer calls this yet; immediacy currently
- * rests on the every-minute recovery floor (≤60s). Wiring writers to fire this is
- * a scoped follow-up.
+ * Best-effort post-commit wake, given a send seam. Swallows send failures —
+ * durability is the SQL trigger + minute recovery, never this send.
  */
 export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> {
   try {
@@ -109,6 +105,43 @@ export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> 
     );
   } catch {
     // best-effort; the minute-recovery floor still converges the durable dirty.
+  }
+}
+
+/**
+ * Fire the immediate coalesced wake from a route/job HANDLER, AFTER the topology
+ * mutation's outer transaction has committed. Peeks the ALREADY-running boss (no
+ * start), so it is a pure no-op when boss is not running (tests, cold start) and
+ * never becomes a boss-lifecycle driver. Errors are swallowed: this is a latency
+ * optimization only — the durable trigger + minute-recovery floor converges any
+ * missed/failed wake. Hub-agnostic + singleton-keyed (one send, not per-hub).
+ */
+export async function wakeHubSyncAfterCommit(): Promise<void> {
+  const boss = getRunningBoss();
+  if (!boss) return;
+  try {
+    await sendHubSyncMutationWake({
+      send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
+    });
+  } catch (err) {
+    console.warn('[hub_sync] mutation wake failed (best-effort; minute recovery converges)', err);
+  }
+}
+
+// Dispatch the single continuation via the running boss (peek, no start), used
+// by the manifest-registered handlers so a backlog drains within one cron tick
+// in production. No-op when boss is not running (tests).
+async function dispatchContinuationViaRunningBoss(result: HubSyncCycleResult): Promise<void> {
+  if (!result.continuation_needed) return;
+  const boss = getRunningBoss();
+  if (!boss) return;
+  try {
+    await dispatchContinuation(
+      { send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options) },
+      result,
+    );
+  } catch (err) {
+    console.warn('[hub_sync] continuation dispatch failed (best-effort)', err);
   }
 }
 
@@ -126,10 +159,11 @@ export async function runHubAutoSyncNightly(
 }
 
 // ── Manifest-loaded factories (JobHandlerFactory: (db) => (jobs) => Promise<void>) ──
-// The manifest loader passes only `db` (no boss), so these converge via the cron
-// floor and do NOT dispatch a boss continuation; the every-minute recovery cron
-// picks up any remainder. The {send}-taking builders above are the full versions
-// (used where a boss handle is available, e.g. handlers.ts).
+// The manifest loader passes only `db`, so these obtain the send handle by peeking
+// the ALREADY-running boss (getRunningBoss, no start) and dispatch exactly one
+// singleton-keyed continuation when the bounded cycle leaves a backlog — draining
+// it within one cron tick instead of one hub-batch per minute. The {send}-taking
+// builders above are the explicit-injection versions (tests / direct callers).
 
 export function buildHubAutoSyncNightlyHandler(
   db: Db,
@@ -137,6 +171,7 @@ export function buildHubAutoSyncNightlyHandler(
   return async () => {
     const result = await runHubAutoSyncNightly(db);
     console.log('[hub_auto_sync_nightly] repair cycle', result);
+    await dispatchContinuationViaRunningBoss(result);
   };
 }
 
@@ -146,8 +181,6 @@ export function buildHubSyncRecoveryJobHandler(db: Db): (jobs: Job[]) => Promise
       reason: 'recovery',
       maxArtifacts: RECOVERY_MAX_ARTIFACTS,
     });
-    if (result.continuation_needed) {
-      console.log('[hub_sync_recovery] continuation pending; next minute cron will resume');
-    }
+    await dispatchContinuationViaRunningBoss(result);
   };
 }
