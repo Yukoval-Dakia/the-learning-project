@@ -706,9 +706,23 @@ PostgreSQL 是权威：`knowledge` / `knowledge_edge` / hub-local `artifact` 拓
 5. 所有 app/worker 实例一次协调重启切 `HUB_SYNC_MODE=apply`。
 6. 确认每分钟恢复 drain pending、02:45 BJT repair 用同一 `nightly:<date>` key。
 7. apply-mode 校验通过后才退役旧直接-apply nightly 路径。
-8. 回滚 = 设 `HUB_SYNC_MODE=off`；保留 reconciliation 行 + 未 ack 的 generation，义务不丢。
+8. 回滚 = 设 `HUB_SYNC_MODE=off`；保留 reconciliation 行 + 未 ack 的 generation，义务不丢。**但注意 `off` 不是完整 kill switch**：见下「off 语义」——`off` 只停 reconciler，触发器记账（每次 KG/hub 写 bump generation）仍继续，因为触发器是 migration 起的无条件 DDL。
 
-**Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
+> **⚠️ Provisioning：必须 `pnpm db:migrate`，`db:push` 不支持（R1）。** 本 feature 的触发器 / 函数（`mark_hub_sync_dirty` / `fanout_hub_sync_dirty`）、partial index、backfill **只在手写的 `drizzle/0071` SQL 里**。`drizzle-kit push` 只 diff `schema.ts`，会 bootstrap 出**有表无触发器**的死库（整个 durable-dirty 机制静默缺席、hub 永不收敛），且对已 migrate 的库跑 push 还会**提议 DROP** 那几个 partial index。`readHubSyncHealth` 的 `triggers_installed: boolean`（查 `pg_trigger` 三个 `hub_sync_*` 触发器名）是这条的运行时哨兵——`false` = 触发器缺失、reconciler 形同虚设，务必用 db:migrate 重新 provision。（repo 级 db:push 防护挂 Linear follow-up，不在本 PR。）
+
+**`off` 语义（不是完整 kill switch，R2）**：`HUB_SYNC_MODE=off` 只让 `runHubSyncCycle` 短路（不 claim / 不 apply）；**触发器的 generation 记账继续**——每次 `knowledge` / `knowledge_edge` / hub-local `artifact` 写仍在写方事务内 bump generation（单用户规模开销可忽略）。所以若回滚原因**正是触发器本身**（perf / lock 争用），`off` 不缓解。真正的紧急停用 = DROP 三个触发器：
+
+```sql
+DROP TRIGGER IF EXISTS hub_sync_artifact_dirty ON artifact;
+DROP TRIGGER IF EXISTS hub_sync_knowledge_dirty ON knowledge;
+DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
+```
+
+重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 影响**——它在 nightly 的 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 控制。
+
+**Restore 语义（R3）**：`hub_sync_reconciliation` 走 `BACKUP_EXCLUDED_TABLES`（非 FK_ORDER）——restore 重插 `artifact` 时 `hub_sync_artifact_dirty` 逐行 fan-out 重建每个 live hub 的 pending 游标（`O(atomics×hubs)` 的一次性 churn，单用户规模可忽略），nightly repair 兜底 coverage；故 restore 后无需手工补游标。
+
+**Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`、`triggers_installed`（provisioning 哨兵，见上 Provisioning 警告）。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
 
 **所有权守卫**：`pnpm audit:hub-sync-writers`（+ `tests/integration/step9-invariant-audit.test.ts`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
 
