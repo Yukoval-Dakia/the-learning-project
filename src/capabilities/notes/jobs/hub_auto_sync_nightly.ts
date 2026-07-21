@@ -18,7 +18,7 @@ import {
   runHubSyncCycle,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import type { Db } from '@/db/client';
-import { getRunningBoss } from '@/server/boss/client';
+import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
 
 const RECOVERY_MAX_ARTIFACTS = 25;
 const WAKE_MAX_ARTIFACTS = 25;
@@ -87,20 +87,25 @@ export async function sendHubSyncMutationWake(deps: HubSyncSend): Promise<void> 
 
 /**
  * Fire the immediate coalesced wake from a route/job HANDLER, AFTER the topology
- * mutation's outer transaction has committed. Peeks the ALREADY-running boss (no
- * start), so it is a pure no-op when boss is not running (tests, cold start) and
- * never becomes a boss-lifecycle driver. Errors are swallowed: this is a latency
- * optimization only — the durable trigger + minute-recovery floor converges any
- * missed/failed wake. Hub-agnostic + singleton-keyed (one send, not per-hub).
+ * mutation's outer transaction has committed. Uses getStartedBoss() — the app process's
+ * STANDARD enqueue path, which starts/reuses a send-capable boss and marks it running (the
+ * same getter ingestion image-candidate-accept / auto-enroll / operations / extract use).
+ * A getRunningBoss() PEEK would be null in an app process that has not yet hit any
+ * getStartedBoss path (cold start before the first edge-create / decision / accept-chip),
+ * so the immediate wake would NEVER be delivered and owner-chosen FULL mode would silently
+ * degrade to the minute-recovery floor. Best-effort: getStartedBoss() can throw (boss start
+ * failure); a failure here must NEVER affect the already-committed mutation — the durable
+ * trigger + minute-recovery floor converges any missed wake. Hub-agnostic + singleton-keyed.
  */
 export async function wakeHubSyncAfterCommit(): Promise<void> {
-  const boss = getRunningBoss();
-  if (!boss) return;
-  // No try/catch here: sendHubSyncMutationWake already swallows send failures internally
-  // (best-effort; the durable trigger + minute-recovery floor converges any missed wake).
-  await sendHubSyncMutationWake({
-    send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
-  });
+  try {
+    const boss = await getStartedBoss();
+    await sendHubSyncMutationWake({
+      send: (queue, data, options) => boss.send(queue, (data ?? {}) as object, options),
+    });
+  } catch (err) {
+    console.warn('[hub_sync] mutation wake failed (best-effort; minute recovery converges)', err);
+  }
 }
 
 // Dispatch the single continuation via the running boss (peek, no start), used
