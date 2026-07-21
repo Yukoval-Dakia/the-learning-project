@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-20　·　历史头部日志（2026-06-23 ~ 07-19）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
+> 更新于：2026-07-21　·　历史头部日志（2026-06-23 ~ 07-19）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-20 · 快速 lane 收口 + 最终 cockpit 对账】** YUK-595 / PR #1002 已 squash-merge `d0b5a9e9`，YUK-744 / PR #1004 已 squash-merge `ca0f2cd7`，YUK-686 / PR #1003 已在 owner 授权删除 Node 22 后完成 Node 24 全合同迁移并 squash-merge `f6b6ad0b`；三票均为 Done。#1002 exact-head CI 与独立验证通过，但 OCR 在 10:13:03 新发两条性能 thread，合并于 10:13:49 发生，driver 未让新增 thread 数阻断命令；两条随后回复并 resolve，性能债完整捕获为 YUK-745。#1003 最终 exact head `7eba3ee6` 的完整 CI、Rust parity、OCR 与独立复审通过，current-main 依赖 resolution 保持，late OCR minimum-floor thread 已回复并 resolve。Docs-only cockpit PR #1005 已 merge `57c5edde`。Docker 已清理：images 22.7 GB → 461.2 MB、build cache 31.27 GB → 0；volumes 未清理。官方 Linear MCP 的 priority 分区结果被证明严重截断（仅 137 票且漏 YUK-745、错误返回无下一页），因此不发布伪精确总数；当前只保留早先全量快照与已知变更推导作 sanity check。
+> **【更新 2026-07-21 · 快速收票终局：4 票 Done，YUK-384 停止错误 quick-fix】** 本轮原票 YUK-366/#1011、YUK-584/#1008、YUK-460/#1007、YUK-392/#1010 已合并并回读 Linear Done，renewed pass 新建 issue = 0。YUK-384/#1009 在 12 个 pushed head 后经 13 席闭世界 grounding 判定 `REDESIGN_REQUIRED`：旧 deferred patch 可覆盖较新 nightly apply、flush 先清队列会丢失败项/后缀、resident coalescing 无法约束 drained/in-flight 旧 actor work、scheduled sync 绕过 fresh presence、PG/in-memory 状态机不等价，且无统一 durable reconciliation obligation。#1009 已关闭未合并，6 个未提交实验修改已丢弃；YUK-384 已保留完整失败矩阵并退回 Backlog，不创建 successor。当前开放 PR 仅 #1012-1016 Dependabot；主工作树 owner/concurrent 修改未触碰。
 
 ## 🎯 主线方向（当前）
 
@@ -12,38 +12,40 @@
 
 ## NOW（当前 active 线）
 
-- **本轮实现 lane 已收口**：PR #1003 / YUK-686 已 merge，YUK-686 已读回为 Done；driver 不再启动新实现线。
-- **Backlog 净额已对清**：起点 open 106；截至最后可信全量快照 744/open101，毛关闭/取消 12、同期新建 Backlog 7，净减 5。快照后已知 YUK-744/YUK-595/YUK-686 Done（−3）与 YUK-745 新建（+1），无其他并发变更时推导 open 99，即本轮毛关闭/取消 15、新建 8、净减 7。MOVE_BACKLOG 与 In Progress→Backlog 只做状态卫生，不减少 open。
-- **owner 工作树保护**：主工作树 `.codex/*`、`AGENTS.md` 与两份未跟踪 design doc 不 stage、不改写、不清理。
+- **快速收票实现线已结束**：YUK-366、YUK-584、YUK-460、YUK-392 均已 merge + Linear Done；YUK-384 经闭世界 grounding 退回 Backlog，PR #1009 关闭未合并。当前不再启动该 quick-fix 的实现轮。
+- **Backlog 净额口径**：起点 open 106；此前已推导净减 7，renewed pass 再关闭 4 张原票且新建 0，故无其他并发变更时 sanity estimate 为 open 95、累计净减 11。Linear 全局 list 已证实截断，以上不是权威精确总数。
+- **owner 工作树保护**：主工作树 `.codex/*`、`AGENTS.md`、并发源码修改与两份未跟踪 design doc 不 stage、不改写、不清理。
 
 ## NEXT（就绪，排队）
 
-- **驾驶舱已落 main**：PR #1005 merge `57c5edde`；本 closeout 只就地消除 #1003 的过期 blocker/在飞记录并记录最终 merge，不开新实现线。
+- **YUK-384 redesign（原票保留）**：闭世界失败矩阵已写回 Linear。下一次开工必须先设计 durable claim/ack/retry、per-actor generation fence、统一 editor-safe ordering boundary、PG/in-memory parity 与 centralized dirty/outbox；不得从 #1009 分支继续堆 enqueue/presence 补丁。
 - **YUK-354 umbrella**：A3 的 YUK-595 已完成；后续是否 close/收窄须按剩余 acceptance 重新 ground，不在本轮代判。
 - **研究板作为完整入口**：继续以 `docs/planning/2026-07-20-backlog-reconciliation.md` 承载需要研究、设计或 owner judgment 的票，不从 cockpit 临时开新实现线。
 
 ## PARKED（已捕获，不是现在）
 
-- **YUK-392**：已 ground 为移除 QuizGen/sourcing whole-batch `kindsMatch` 拒收并修正文案的 bounded lane；是否同时移除更新的 Jyeoo per-row filter 需要 owner 判断，决定前不实施。
+- **YUK-384**：闭世界 grounding 已证明现有 quick-fix 协议不成立；完整反例与 redesign invariants 保留在原票，退回 Backlog，下一轮先设计后实现。
 - **YUK-745**：wrong-streak reader 的 semantics-safe 性能优化；keyset pagination/early stop、批量或有界并发 metadata reads、trigger-time bound、提前 `already_nudged`。不得改变 arbitrary `STREAK_N`、exclusion-before-break、cooldown、deterministic winner 与 unsupported/correction/appeal 语义。
 - **YUK-555**：hard-cap acceptance 未保真迁入 YUK-605 或命名 successor 前不得取消或改写。
 - **研究板其余项目**：owner/product/scientific、design preflight、architecture/research、external/ops、data/statistics 与 large-program 六类继续 parked，见 backlog reconciliation 文档。
 
 ## BLOCKED-ON（在等什么）
 
-- **YUK-392 Jyeoo 边界**：等 owner 判断是否把带显式 telemetry/acceptance 的新 Jyeoo per-row filter 纳入同一行为变更。
+- **YUK-384 / hub sync**：等待重设计证明 durable ownership、generation ordering、editor isolation、adapter parity 与 durable reconciliation；#1009 的旧实现不再作为起点。
 - **YUK-605 supply/ADR drift 批**：YUK-555 hard-cap acceptance 必须保真迁移后才可 conditional-cancel。
 - **profile P2 / A9 step-grading**：仍分别等待 misconception/judge 数据校准证据。
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **实现 PR 在飞：0；docs closeout 在飞：1**：#1003 merge `f6b6ad0b`，#1005 merge `57c5edde`；当前仅本 `PLAN.md` closeout PR #1006 在飞，无残留 implementation PR。
-- **遗留 worktree**：`/Users/yuqi/yukoval-projects/the-learning-project/.claude/worktrees/pr1000-ci-dedup` 仍可能被另一 session 持有；#1003 已 merge，但未经持有者确认不得删除或复用。Harness 临时 agent worktree由其自行清理。
+- **实现 PR 在飞：0**：YUK-384 PR #1009 已关闭未合并；当前开放 PR #1012-1016 均为 Dependabot。此 cockpit closeout branch 尚未开 PR。
+- **保留 worktree**：YUK-384 专用 worktree `agent-a6c6cadc778410ba4` / branch `yuk-384-hub-auto-sync-mutation-enqueue` 已清理为 clean，仅保留未合并历史供追溯，不得作为 redesign 起点。Cockpit closeout branch 为 `cockpit-yuk384-redesign-closeout`。
 - **本地主工作树保护清单**：`.codex/hooks.json`、`AGENTS.md`、`.codex/hooks/codex-remember-session-start.sh`、`.codex/hooks/codex-remember-stop.sh`、`.codex/hooks/codex_extract.py`、`.codex/hooks/resolve-remember-plugin.sh`、`docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`、`docs/design/2026-07-19-evidence-supply-v2-architecture.md`。
 - **Docker 当前轻量快照**：2 images / 461.2 MB、build cache 0；containers 0；volumes 5 / 542 MB。此前运行中的测试容器已退出；volumes 仍按指令未清理。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
+- **快速收票 renewed pass**：YUK-366/#1011、YUK-584/#1008、YUK-460/#1007、YUK-392/#1010 均 merged + Linear Done；本 pass 关闭原票 4、新建 0。
+- **YUK-384 redesign stop（PR #1009）**：13 席闭世界 grounding 判定 `REDESIGN_REQUIRED`；PR 已关闭未合并，6 个实验修改已丢弃，原票保留失败矩阵并退回 Backlog。
 - **YUK-686 Node 24 runtime contract（PR #1003）**：merged `f6b6ad0b`、Linear Done；最终 exact head `7eba3ee6` 保持 current-main 依赖 resolution，frozen install、完整 CI、Rust parity、OCR 与独立 verifier 通过，threads=0；未恢复 Node 22 lane。
 - **Cockpit 对账（PR #1005）**：merged `57c5edde`；记录 Linear MCP 截断、backlog 毛/净额与 owner Node 24 决策。
 - **YUK-595 same-KC wrong-streak（PR #1002）**：merged `d0b5a9e9`、Linear Done；focused TDD unit 8/8、DB 34/34、streak DB 24/24，exact-head required CI 与独立 verifier 通过。合并前 46 秒新增 performance threads 未被 gate 正确阻断是已记录的 driver 错误；最终 threads=0，follow-up 为 YUK-745。
