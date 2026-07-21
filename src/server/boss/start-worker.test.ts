@@ -55,4 +55,20 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     expect(getRunningBoss()).toBe(boss);
     expect(getRunningBoss()).not.toBeNull();
   });
+
+  it('X4: after markBossStarted, getStartedBoss() returns the running boss WITHOUT a second start()', async () => {
+    const { startBossWorker } = await import('./start-worker');
+    const { getStartedBoss, _resetBossForTests } = await import('./client');
+    _resetBossForTests();
+
+    const boss = (await startBossWorker({} as never)) as unknown as MockPgBoss;
+    expect(boss.start).toHaveBeenCalledTimes(1); // startBossWorker started it once
+
+    // A same-process route enqueue (RW_WORKER=1) goes through getStartedBoss. Pre-fix it saw
+    // startPromise=null (markBossStarted only set `started`) → created a fresh boss + called
+    // start() again on the already-running instance.
+    const viaGetter = await getStartedBoss();
+    expect(viaGetter).toBe(boss);
+    expect(boss.start).toHaveBeenCalledTimes(1); // NOT re-started
+  });
 });

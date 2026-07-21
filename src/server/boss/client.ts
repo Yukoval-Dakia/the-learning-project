@@ -112,6 +112,10 @@ export function createBoss(): PgBoss {
  * pg-boss is "started" here.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
+  // X4: if the boss is ALREADY started (e.g. the RW_WORKER=1 single-process path started it
+  // via startBossWorker → markBossStarted, which sets `started` but not `startPromise`),
+  // return it — never call boss.start() a second time on a running instance.
+  if (bossState.started) return bossState.started;
   if (!bossState.startPromise) {
     const boss = createBoss();
     bossState.startPromise = boss
