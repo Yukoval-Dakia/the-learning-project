@@ -26,6 +26,18 @@
 - Classified retries use `min(5s * 2^(failure_count - 1), 15m) + 0–20% jitter`; there is no terminal discard.
 - All file paths, commands, and commits below are repository-relative. Do not modify `.omc/plans/**`.
 
+## Grounding Addendum (2026-07-21, post-rebase onto origin/main `71c5a4e1`)
+
+Verified against current `origin/main` before execution; these override any stale earlier notes:
+
+- Next free migration slot is **`0071`** (main is at `0070_yuk736_snapshot_baseline`). The earlier "use 0067" correction is obsolete — 0067–0070 are taken. `migration-smoke` chains from the current populated baseline, not 0066→0067.
+- `knowledge_ids` is `jsonb(...).$type<string[]>().notNull().default([])` (`src/db/schema.ts:314`); fixtures seed `'[]'::jsonb`, never `text[]`.
+- Body payloads use the real `ArtifactBodyBlocksT` doc shape `{"type":"doc","content":[]}` (`src/core/schema/business`); empty body is `{type:'doc',content:[]}`.
+- `suppressed_block_refs` is **not a column** — it lives in `artifact.attrs.suppressed_block_refs[]` (see `src/capabilities/notes/api/hub-dismiss-link.ts`). `computeHubDesiredState` must honor suppression exactly as the current nightly path does.
+- Reuse the real block-ref primitive `syncBlockRefsForArtifact` (`src/capabilities/notes/server/block-refs.ts:141`), not a reinvented one; `note-refine-apply.ts` exposes the atomic apply used by fenced finalization while retaining non-hub callers.
+- `src/server/artifacts/presence/{pg.ts,in-memory.ts}` both already exist. Preserve `editing_presence.pending` **non-hub** refine-queue semantics and the existing `editingHeartbeat`/`editingBlur` interfaces; only remove durable hub-patch arbitration from presence, and keep PG and in-memory observably equivalent for the session rows.
+- The mutation wake producer is new: the current job is `hub_auto_sync_nightly` (`src/capabilities/notes/manifest.ts:191`). Add the `hub_sync_mutation_wake` producer path and register minute-recovery + nightly-repair on the same `runHubSyncCycle` handler family.
+
 ---
 
 ## File Map
