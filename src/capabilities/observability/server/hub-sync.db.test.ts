@@ -89,6 +89,33 @@ describe('readHubSyncHealth', () => {
     });
   });
 
+  it('YUK-384: a cancelled cursor is terminal — excluded from dirty_count, oldest_dirty_age, and max_generation_lag', async () => {
+    await seedArtifact('h-cancel');
+    await seedArtifact('h-live');
+    await testDb().execute(sql`
+      insert into hub_sync_reconciliation (
+        artifact_id, generation, acknowledged_generation, status, consecutive_failure_count,
+        next_attempt_at, last_dirty_at, updated_at, created_at
+      )
+      values
+        -- Cancelled with a huge gen/ack gap and the oldest dirty age. The coverage-repair
+        -- cancel bumps generation past ack and never acks, so acknowledged_generation <
+        -- generation holds forever — but it is TERMINAL, not backlog, so it must NOT count.
+        ('h-cancel', 99, 0, 'cancelled', 0,
+         clock_timestamp(), clock_timestamp() - interval '9000 seconds',
+         clock_timestamp(), clock_timestamp()),
+        -- One genuinely dirty live cursor: the only thing the metrics should reflect.
+        ('h-live', 5, 3, 'pending', 0,
+         clock_timestamp(), clock_timestamp() - interval '300 seconds',
+         clock_timestamp(), clock_timestamp())
+    `);
+    const health = await readHubSyncHealth(testDb());
+    expect(health.by_status.cancelled).toBe(1);
+    expect(health.dirty_count).toBe(1); // only h-live
+    expect(health.oldest_dirty_age_seconds).toBe(300); // h-live's 300s, not h-cancel's 9000s
+    expect(health.max_generation_lag).toBe('2'); // h-live 5-3, not h-cancel 99-0
+  });
+
   it('returns a zeroed snapshot on an empty cursor table', async () => {
     expect(await readHubSyncHealth(testDb())).toEqual({
       by_status: {

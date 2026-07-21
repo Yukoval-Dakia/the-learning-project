@@ -61,7 +61,14 @@ export async function readHubSyncHealth(db: Db): Promise<HubSyncHealth> {
       count(*) filter (where status = 'retry_wait')    as retry_wait,
       count(*) filter (where status = 'acknowledged')  as acknowledged,
       count(*) filter (where status = 'cancelled')     as cancelled,
-      count(*) filter (where acknowledged_generation < generation) as dirty_count,
+      -- 'cancelled' is TERMINAL: the coverage-repair cancel bumps generation past
+      -- acknowledged_generation and never acks, so a cancelled cursor keeps
+      -- acknowledged_generation < generation forever. Excluding it from the dirty/lag
+      -- metrics stops every archived hub from permanently inflating the backlog gauges
+      -- and firing operator alerts.
+      count(*) filter (
+        where acknowledged_generation < generation and status <> 'cancelled'
+      ) as dirty_count,
       count(*) filter (
         where status in ('pending', 'retry_wait') and next_attempt_at <= clock_timestamp()
       ) as ready_count,
@@ -70,13 +77,17 @@ export async function readHubSyncHealth(db: Db): Promise<HubSyncHealth> {
       ) as expired_lease_count,
       count(*) filter (where last_error_class = 'invalid_document') as invalid_document_count,
       floor(extract(epoch from (
-        clock_timestamp() - min(last_dirty_at) filter (where acknowledged_generation < generation)
+        clock_timestamp() - min(last_dirty_at) filter (
+          where acknowledged_generation < generation and status <> 'cancelled'
+        )
       )))::bigint as oldest_dirty_age_seconds,
       floor(extract(epoch from (
         clock_timestamp() - min(last_error_at) filter (where last_error_class = 'invalid_document')
       )))::bigint as oldest_invalid_age_seconds,
       coalesce(max(consecutive_failure_count), 0) as max_consecutive_failure_count,
-      coalesce(max(generation - acknowledged_generation), 0)::text as max_generation_lag,
+      coalesce(
+        max(generation - acknowledged_generation) filter (where status <> 'cancelled'), 0
+      )::text as max_generation_lag,
       max(acknowledged_at) as last_acknowledged_at,
       max(last_repair_key) as last_repair_key
     from hub_sync_reconciliation
