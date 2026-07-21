@@ -1258,4 +1258,35 @@ describe('YUK-384 unified hub-sync cycle', () => {
     expect(healed.invalid_document_count).toBe(0);
     expect(healed.oldest_invalid_age_seconds).toBeNull();
   });
+
+  it('YUK-384 (shadow gauge): observeShadowNoApply clears diagnostic state so a recovered hub is not counted under shadow', async () => {
+    await seedAppliableHub('hub-a'); // valid + changed body → shadow observes (not applies)
+
+    // Prior failure state, now recovered (doc valid). Set directly (code-fix recovery path).
+    await testDb().execute(sql`
+      update hub_sync_reconciliation
+      set status = 'retry_wait', consecutive_failure_count = 3,
+          last_error_class = 'invalid_document', last_error_code = 'INVALID_DOCUMENT',
+          last_error = 'desired hub document is invalid',
+          last_error_at = clock_timestamp() - interval '120 seconds',
+          next_attempt_at = clock_timestamp()
+      where artifact_id = 'hub-a'
+    `);
+    const sick = await readHubSyncHealth(testDb());
+    expect(sick.invalid_document_count).toBe(1);
+    expect(sick.max_consecutive_failure_count).toBe(3);
+
+    // Reclaim under SHADOW → observeShadowNoApply (doc valid + changed → observed, not applied).
+    await runHubSyncCycle(testDb(), { reason: 'recovery', maxArtifacts: 5, mode: 'shadow' });
+
+    // Obligation intact (still pending, ack unchanged) but diagnostic state cleared.
+    const s = await state('hub-a');
+    expect(s.status).toBe('pending');
+    expect(s.last_outcome).toBe('shadowed');
+    expect(s.last_error_class).toBeNull();
+    expect(s.consecutive_failure_count).toBe(0);
+    const healed = await readHubSyncHealth(testDb());
+    expect(healed.invalid_document_count).toBe(0);
+    expect(healed.max_consecutive_failure_count).toBe(0);
+  });
 });

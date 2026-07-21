@@ -610,6 +610,14 @@ async function observeShadowNoApply(
     update hub_sync_reconciliation
     set status = 'pending', claim_owner = null, claim_token = null, lease_expires_at = null,
         next_attempt_at = clock_timestamp() + ${SHADOW_REOBSERVE_BACKOFF},
+        -- Shadow observation happens AFTER the validity check, so the desired doc is proven
+        -- valid here. Clear the diagnostic state symmetrically with the two success acks: a
+        -- hub that previously failed (e.g. invalid_document) but now computes a valid doc must
+        -- not keep inflating invalid_document_count / max_consecutive_failure_count while in
+        -- shadow. The obligation is untouched (acknowledged_generation unchanged, status still
+        -- pending); if apply mode later fails, recordHubSyncRetry re-flags it.
+        consecutive_failure_count = 0,
+        last_error_class = null, last_error_code = null, last_error = null, last_error_at = null,
         last_outcome = 'shadowed',
         last_desired_hash = ${desired.desiredHash},
         last_observed_artifact_version = ${desired.observedArtifactVersion},
