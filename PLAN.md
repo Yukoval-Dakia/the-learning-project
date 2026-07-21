@@ -38,7 +38,7 @@
 ## 在飞（PRs / workflows / worktrees）
 
 - **实现 PR 在飞：0**：YUK-384 PR #1009 已关闭未合并；当前开放 PR #1012-1016 均为 Dependabot。此 cockpit closeout branch 尚未开 PR。
-- **保留 worktree**：YUK-384 专用 worktree `/Users/yuqi/yukoval-projects/the-learning-project/.claude/worktrees/agent-a6c6cadc778410ba4` / branch `yuk-384-hub-auto-sync-mutation-enqueue` 已清理为 clean，仅保留未合并历史供追溯，不得作为 redesign 起点。本 closeout 位于 `/private/tmp/loom-yuk384-redesign-closeout` / `cockpit-yuk384-redesign-closeout`。
+- **保留 worktree**：YUK-384 专用 worktree `agent-a6c6cadc778410ba4` / branch `yuk-384-hub-auto-sync-mutation-enqueue` 已清理为 clean，仅保留未合并历史供追溯，不得作为 redesign 起点。Cockpit closeout branch 为 `cockpit-yuk384-redesign-closeout`。
 - **本地主工作树保护清单**：`.codex/hooks.json`、`AGENTS.md`、`.codex/hooks/codex-remember-session-start.sh`、`.codex/hooks/codex-remember-stop.sh`、`.codex/hooks/codex_extract.py`、`.codex/hooks/resolve-remember-plugin.sh`、`docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`、`docs/design/2026-07-19-evidence-supply-v2-architecture.md`。
 - **Docker 当前轻量快照**：2 images / 461.2 MB、build cache 0；containers 0；volumes 5 / 542 MB。此前运行中的测试容器已退出；volumes 仍按指令未清理。
 
