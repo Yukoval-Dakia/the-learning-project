@@ -16,6 +16,7 @@ import type { Job } from 'pg-boss';
 import {
   type HubSyncCycleResult,
   runHubSyncCycle,
+  sweepAbandonedEditSessions,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import type { Db } from '@/db/client';
 import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
@@ -149,6 +150,10 @@ export async function runHubAutoSyncNightly(
   db: Db,
   opts: { now?: Date } = {},
 ): Promise<HubSyncCycleResult> {
+  // Presence hygiene runs UNCONDITIONALLY — before the mode-gated cycle — so abandoned
+  // artifact_edit_session rows are reaped even when HUB_SYNC_MODE=off (runHubSyncCycle
+  // returns early on 'off'). It is not reconciler work, so it must not be reconciler-gated.
+  await sweepAbandonedEditSessions(db);
   return runHubSyncCycle(db, {
     reason: 'nightly_repair',
     maxArtifacts: NIGHTLY_MAX_ARTIFACTS,

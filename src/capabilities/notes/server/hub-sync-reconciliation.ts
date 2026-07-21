@@ -964,10 +964,34 @@ export async function repairHubSyncCoverage(
 // ~250k artifacts — orders of magnitude above any real hub population for this tool.
 const MAX_NIGHTLY_REPAIR_PAGES = 10_000;
 
-// Abandoned editor sessions older than this are swept by the nightly cycle. Far larger
+// Abandoned editor sessions older than this are swept by the nightly job. Far larger
 // than the 30s active-session window so a session merely between heartbeats is never
 // deleted; only genuinely abandoned rows (browser crash → no blur) are reaped.
 const ABANDONED_EDIT_SESSION_TTL = sql`interval '1 hour'`;
+
+/**
+ * Presence hygiene (bounded, best-effort): abandoned artifact_edit_session rows (browser
+ * crash → no blur) are never deleted and bloat the table. The 30s active window keeps them
+ * from reading as active, so this is cleanup-only. Runs from the NIGHTLY JOB, NOT gated by
+ * HUB_SYNC_MODE — presence hygiene must continue even when the reconciler is 'off' or rolled
+ * back, or zombie rows grow unbounded exactly in the disabled state. A sweep failure must
+ * never abort the caller.
+ */
+export async function sweepAbandonedEditSessions(db: Db): Promise<void> {
+  try {
+    await db.execute(sql`
+      delete from artifact_edit_session
+      where last_heartbeat_at < clock_timestamp() - ${ABANDONED_EDIT_SESSION_TTL}
+    `);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: 'hub_sync_abandoned_session_sweep_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
 
 /**
  * Minimal unified cycle (Task 4 scope): claim → compute → finalize up to
@@ -999,26 +1023,6 @@ export async function runHubSyncCycle(
       });
       if (!hasMore) break;
       afterId = lastId;
-    }
-    // Presence hygiene (bounded, best-effort): the reconciler already inspects
-    // artifact_edit_session for the active-editor defer; abandoned sessions (browser
-    // crash → no blur) are never deleted and bloat the table forever. The 30s active
-    // window keeps them from reading as active, so this is cleanup-only. Sweep rows whose
-    // last heartbeat is older than a safe TTL (>> the 30s window) once per nightly cycle.
-    // A sweep failure must never abort the repair cycle. (Runs only while hub-sync is not
-    // 'off' — acceptable: with the reconciler disabled there is no nightly sweep at all.)
-    try {
-      await db.execute(sql`
-        delete from artifact_edit_session
-        where last_heartbeat_at < clock_timestamp() - ${ABANDONED_EDIT_SESSION_TTL}
-      `);
-    } catch (err) {
-      console.error(
-        JSON.stringify({
-          event: 'hub_sync_abandoned_session_sweep_failed',
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
     }
   }
 

@@ -33,6 +33,7 @@ import {
   renewHubSyncLease,
   repairHubSyncCoverage,
   runHubSyncCycle,
+  sweepAbandonedEditSessions,
 } from './hub-sync-reconciliation';
 
 const NOW = new Date('2026-07-21T00:00:00Z');
@@ -1185,7 +1186,7 @@ describe('YUK-384 unified hub-sync cycle', () => {
     expect(result.continuation_needed).toBe(true);
   });
 
-  it('YUK-384 (minor G): nightly repair sweeps abandoned editor sessions past the TTL, keeps fresh', async () => {
+  it('YUK-384 (minor G): sweepAbandonedEditSessions reaps rows past the TTL, keeps fresh', async () => {
     await seedAppliableHub('hub-a');
     await testDb().execute(sql`
       insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
@@ -1193,12 +1194,7 @@ describe('YUK-384 unified hub-sync cycle', () => {
         ('hub-a', 'abandoned', clock_timestamp() - interval '2 hours', clock_timestamp() - interval '2 hours'),
         ('hub-a', 'fresh', clock_timestamp(), clock_timestamp())
     `);
-    await runHubSyncCycle(testDb(), {
-      reason: 'nightly_repair',
-      repairKey: 'nightly:2026-07-21',
-      maxArtifacts: 5,
-      mode: 'apply',
-    });
+    await sweepAbandonedEditSessions(testDb());
     const rows = await testDb().execute<{ session_id: string }>(
       sql`select session_id from artifact_edit_session where artifact_id = 'hub-a' order by session_id`,
     );

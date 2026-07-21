@@ -127,6 +127,29 @@ describe('runHubAutoSyncNightly — repair sweep + reconcile (YUK-384)', () => {
     expect(result).toMatchObject({ reason: 'nightly_repair', claimed: 0, applied: 0 });
   });
 
+  it('YUK-384 (R2b): sweeps abandoned editor sessions even when HUB_SYNC_MODE=off', async () => {
+    // off is NOT a kill switch for presence hygiene — the sweep runs before the mode gate,
+    // so zombie rows are reaped even in the disabled/rolled-back state.
+    process.env.HUB_SYNC_MODE = 'off';
+    await seedKnowledge('kc');
+    await seedArtifact({ id: 'hub-a', type: 'note_hub', knowledgeIds: ['kc'] });
+    await testDb().execute(sql`
+      insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
+      values
+        ('hub-a', 'abandoned', clock_timestamp() - interval '2 hours', clock_timestamp() - interval '2 hours'),
+        ('hub-a', 'fresh', clock_timestamp(), clock_timestamp())
+    `);
+
+    const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
+
+    // off → the reconciler cycle short-circuited, but the sweep still ran.
+    expect(result.mode).toBe('off');
+    const rows = await testDb().execute<{ session_id: string }>(
+      sql`select session_id from artifact_edit_session where artifact_id = 'hub-a' order by session_id`,
+    );
+    expect(rows.map((r) => r.session_id)).toEqual(['fresh']);
+  });
+
   it('same-topic atomic → AutoLinksContainer subtopic cross_link + L2 block-ref row', async () => {
     await seedKnowledge('k_hub');
     await seedArtifact({
