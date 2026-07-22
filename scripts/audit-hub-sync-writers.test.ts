@@ -459,6 +459,34 @@ describe('auditHubSyncWriters', () => {
 
   it.each([
     [
+      'function-valued class field',
+      "import { db } from '@/db/client'; export class Writer { run = () => db.insert(knowledge).values({}); }",
+    ],
+    [
+      'exported callback array',
+      "import { db } from '@/db/client'; export const jobs = [() => db.update(knowledge_edge).set({})];",
+    ],
+    [
+      'registered callback array',
+      "import { db } from '@/db/client'; const jobs = [() => db.delete(knowledge).where(ok)]; register(jobs);",
+    ],
+    [
+      'assigned static raw SQL',
+      "import { db } from '@/db/client'; let stmt; stmt = sql.raw('delete from knowledge'); db.execute(stmt);",
+    ],
+    [
+      'assigned static tagged SQL',
+      "import { db } from '@/db/client'; let stmt; stmt = sql`update knowledge_edge set source_id = 1`; db.execute(stmt);",
+    ],
+    [
+      'nested dependency object member',
+      "import { db } from '@/db/client'; const ctx = { deps: { db } }; ctx.deps.db.insert(knowledge).values({});",
+    ],
+    [
+      'nested dependency object destructuring',
+      "import { db } from '@/db/client'; const ctx = { deps: { client: db } }; const { deps: { client } } = ctx; client.update(knowledge).set({});",
+    ],
+    [
       'dependency object shorthand property',
       "import { db } from '@/db/client'; const deps = { db }; deps.db.insert(knowledge).values({});",
     ],
@@ -493,6 +521,31 @@ describe('auditHubSyncWriters', () => {
     [
       'foreign dependency object property',
       'const deps = { db: cache }; deps.db.insert(knowledge).values({});',
+    ],
+    [
+      'nonfunction class field',
+      "import { db } from '@/db/client'; export class Writer { run = cache.insert(knowledge).values({}); }",
+    ],
+    ['foreign callback array', 'export const jobs = [() => cache.insert(knowledge).values({})];'],
+    [
+      'callback array never escapes',
+      "import { db } from '@/db/client'; let client = cache; const jobs = [() => client.update(knowledge).set({})]; client = db;",
+    ],
+    [
+      'assigned raw SQL overwritten before execute',
+      "import { db } from '@/db/client'; let stmt; stmt = sql.raw('delete from knowledge'); stmt = safe; db.execute(stmt);",
+    ],
+    [
+      'execute before assigned tagged SQL',
+      "import { db } from '@/db/client'; let stmt; db.execute(stmt); stmt = sql`update knowledge set name = 1`;",
+    ],
+    [
+      'foreign nested dependency object',
+      'const ctx = { deps: { db: cache } }; ctx.deps.db.insert(knowledge).values({});',
+    ],
+    [
+      'nested dependency overwritten before use',
+      "import { db } from '@/db/client'; const ctx = { deps: { db } }; ctx.deps = safe; ctx.deps.db.delete(knowledge).where(ok);",
     ],
     [
       'destructuring assignment overwritten before use',

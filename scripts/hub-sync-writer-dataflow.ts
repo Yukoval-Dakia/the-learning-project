@@ -48,6 +48,7 @@ type PositionalValue = {
   elementValues?: readonly PositionalValue[];
   elementsExact?: boolean;
   properties?: ReadonlyMap<string, Binding>;
+  functions?: readonly AstNode[];
 };
 type EvalResult = {
   normal?: PositionalValue & { state: State };
@@ -251,6 +252,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const objectFunctions = new Map<Binding, Map<string, AstNode>>();
   const objectPropertyBindings = new Map<Binding, Map<string, Binding>>();
   const objectPropertyCache = new WeakMap<AstNode, Map<string, Binding>>();
+  const arrayFunctions = new Map<Binding, readonly AstNode[]>();
   const escapedFunctions = new Set<AstNode>();
   const returnedFunctions = new WeakMap<AstNode, Set<AstNode>>();
   const staticStrings = new Map<Binding, string>();
@@ -358,6 +360,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const binding = resolveBinding(candidate.name as string, scope);
     for (const propertyFunction of binding ? (objectFunctions.get(binding)?.values() ?? []) : [])
       escapedFunctions.add(propertyFunction);
+    for (const arrayFunction of binding ? (arrayFunctions.get(binding) ?? []) : [])
+      escapedFunctions.add(arrayFunction);
   };
 
   const invalidateCallable = (targetValue: unknown, scope: Scope): void => {
@@ -370,6 +374,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         functionBindings.delete(binding);
         objectFunctions.delete(binding);
         objectPropertyBindings.delete(binding);
+        arrayFunctions.delete(binding);
       }
       return;
     }
@@ -1003,7 +1008,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           ? T
           : U;
     return {
-      normal: { state: result.normal.state, value },
+      normal: {
+        state: result.normal.state,
+        value,
+        properties: propertyBinding ? objectPropertyBindings.get(propertyBinding) : undefined,
+      },
       throws: joinState(result.throws, result.normal.state),
     };
   };
@@ -1079,6 +1088,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               afterKey,
               declarationScope,
               trustedBindings,
+              undefined,
+              propertyBinding ? objectPropertyBindings.get(propertyBinding) : undefined,
             ),
           );
         });
@@ -1274,6 +1285,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           properties.set(propertyName, propertyBinding);
           objectPropertyBindings.set(objectBinding, properties);
         }
+        if (propertyBinding) {
+          if (properties) objectPropertyBindings.set(propertyBinding, new Map(properties));
+          else objectPropertyBindings.delete(propertyBinding);
+        }
         return { normal: { state: store(propertyBinding, value, input), value } };
       }
       if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
@@ -1285,6 +1300,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (operator === '=') {
       const target = unwrapExpression(left) ?? left;
       const functionValue = unwrapExpression(right);
+      const assignedSqlText = staticSqlTextValue(right, ctx.scope);
       const rhs = evalExpr(right, ctx, reference.normal.state);
       if (!rhs.normal) return { throws: joinState(reference.throws, rhs.throws) };
       const stored = assign(
@@ -1295,6 +1311,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       );
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
+        if (binding && assignedSqlText !== undefined) staticSqlTexts.set(binding, assignedSqlText);
         const assignedFunction = resolveCallable(functionValue, ctx.scope);
         if (binding && assignedFunction) functionBindings.set(binding, assignedFunction);
         if (
@@ -1551,6 +1568,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         let result: EvalResult = { normal: { state, value: U } };
         const elements: Trust[] = [];
         const elementValues: PositionalValue[] = [];
+        const functions: AstNode[] = [];
         let elementsExact = true;
         for (const rawElement of Array.isArray(candidate.elements) ? candidate.elements : []) {
           const element = node(rawElement);
@@ -1567,9 +1585,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               if (element.type !== 'SpreadElement') {
                 elements.push(evaluated.normal.value);
                 elementValues.push(evaluated.normal);
+                const functionValue = resolveCallable(element, ctx.scope);
+                if (functionValue) functions.push(functionValue);
+                functions.push(...(evaluated.normal.functions ?? []));
               } else if (evaluated.normal.elementsExact && evaluated.normal.elementValues) {
                 elements.push(...(evaluated.normal.elements ?? []));
                 elementValues.push(...evaluated.normal.elementValues);
+                functions.push(...(evaluated.normal.functions ?? []));
               } else {
                 elementsExact = false;
               }
@@ -1585,6 +1607,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
                 elements,
                 elementValues,
                 elementsExact,
+                functions,
               },
               throws: result.throws,
             }
@@ -1615,7 +1638,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               const propertyName = property.computed
                 ? staticComputedPropertyName(property.key)
                 : identifierName(property.key);
-              if (propertyName && current.normal && current.normal.value & (T | N)) {
+              if (
+                propertyName &&
+                current.normal &&
+                (current.normal.value & (T | N) || current.normal.properties)
+              ) {
+                const propertyProperties = current.normal.properties;
                 const binding =
                   properties.get(propertyName) ??
                   ({
@@ -1632,6 +1660,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
                   throws: current.throws,
                 };
                 properties.set(propertyName, binding);
+                if (propertyProperties)
+                  objectPropertyBindings.set(binding, new Map(propertyProperties));
               }
             }
             if (['ObjectMethod'].includes(property.type) && current.normal)
@@ -1674,7 +1704,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       case 'FunctionExpression':
       case 'ArrowFunctionExpression':
         functionParents.set(candidate, ctx.scope);
-        return { normal: { state, value: U } };
+        return { normal: { state, value: U, functions: [candidate] } };
       case 'ClassExpression':
         return evalClass(candidate, ctx, state);
       case 'MetaProperty':
@@ -1979,6 +2009,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const value = node(element.value);
         if (value)
           current = sequenceEval(current, (after) => evalExpr(value, { scope: classScope }, after));
+        const fieldFunction = value ? resolveCallable(value, classScope) : undefined;
+        if (fieldFunction && current.normal)
+          visitFunction(fieldFunction, classScope, current.normal.state, false);
         if (['ClassMethod', 'ClassPrivateMethod'].includes(element.type) && current.normal)
           visitFunction(element, classScope, current.normal.state, false);
         if (element.type === 'StaticBlock' && current.normal)
@@ -2229,6 +2262,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           const binding = resolveBinding(simpleName, targetScope);
           if (binding && evaluated.normal.properties)
             objectPropertyBindings.set(binding, new Map(evaluated.normal.properties));
+          if (binding && evaluated.normal.functions)
+            arrayFunctions.set(binding, evaluated.normal.functions);
         }
         return { normal: bound.normal, throws: joinState(evaluated.throws, bound.throws) };
       });
