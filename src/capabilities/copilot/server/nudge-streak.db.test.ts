@@ -1,5 +1,5 @@
 import { event, learning_session } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { NudgeConfig } from './nudge-config';
 import { NUDGE_ACTION, NUDGE_DISMISSED_ACTION, evaluateNudgeTrigger } from './nudge-triggers';
@@ -606,6 +606,35 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       fire: false,
       reason: 'streak_below_threshold',
     });
+  });
+
+  it('short-circuits duplicate delivery before reading per-KC history', async () => {
+    const triggerId = await seedWrongTail('kc_a', 3);
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'existing_nudge',
+        actor_kind: 'system',
+        actor_ref: 'copilot_nudge',
+        action: NUDGE_ACTION,
+        subject_kind: 'knowledge',
+        subject_id: 'kc_a',
+        caused_by_event_id: triggerId,
+        payload: { kind: 'kc_wrong_streak' },
+        created_at: NOW,
+      });
+    const db = testDb();
+    const selectSpy = vi.spyOn(db, 'select');
+
+    const decision = await evaluateNudgeTrigger(
+      db,
+      { kind: 'attempt_failure', attempt_event_id: triggerId },
+      LIVE_CFG,
+      NOW,
+    );
+
+    expect(decision).toEqual({ fire: false, reason: 'already_nudged' });
+    expect(selectSpy).toHaveBeenCalledTimes(2);
   });
 
   it('finds eligible failures behind more than 100 excluded rows', async () => {

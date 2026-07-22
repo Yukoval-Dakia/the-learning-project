@@ -134,99 +134,131 @@ async function evaluateWrongStreak(
     return { fire: false, reason: 'not_failure' };
   }
 
+  const duplicateRows = await db
+    .select({ one: sql<number>`1` })
+    .from(event)
+    .where(and(eq(event.action, NUDGE_ACTION), eq(event.caused_by_event_id, trigger.id)))
+    .limit(1);
+  if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
+
   const knowledgeIds = getKnowledgeIds(trigger.payload);
   if (knowledgeIds.length === 0) return { fire: false, reason: 'no_knowledge' };
 
   const candidates: Array<{ kcId: string; streak: number; tailEventIds: string[] }> = [];
   for (const kcId of knowledgeIds) {
-    const rows = await db
-      .select({ id: event.id, outcome: event.outcome, payload: event.payload })
-      .from(event)
-      .where(
-        and(
-          inArray(event.action, ['attempt', 'review']),
-          eq(event.subject_kind, 'question'),
-          or(
-            sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
-            sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
-          ),
-          sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
-        ),
-      )
-      .orderBy(desc(event.created_at), desc(event.id));
-
-    const attemptIds = rows.map((row) => row.id);
-    const judges =
-      attemptIds.length === 0
-        ? []
-        : await db
-            .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
-            .from(event)
-            .where(
-              and(
-                eq(event.action, 'judge'),
-                eq(event.subject_kind, 'event'),
-                inArray(event.subject_id, attemptIds),
-              ),
-            );
-    const judgeIds = judges.map((judge) => judge.id);
-    const correctionStatuses = await getCorrectionStatuses(db, judgeIds);
-    const appealedJudgeIds =
-      judgeIds.length === 0
-        ? new Set<string>()
-        : new Set(
-            (
-              await db
-                .select({ subjectId: event.subject_id })
-                .from(event)
-                .where(
-                  and(
-                    eq(event.action, 'experimental:appeal_request'),
-                    eq(event.subject_kind, 'event'),
-                    inArray(event.subject_id, judgeIds),
-                  ),
-                )
-            ).map((row) => row.subjectId),
-          );
-    const unsupportedAttemptIds = new Set(
-      judges
-        .filter((judge) => {
-          const payload = judge.payload;
-          return (
-            payload !== null &&
-            typeof payload === 'object' &&
-            payload.coarse_outcome === 'unsupported'
-          );
-        })
-        .map((judge) => judge.subjectId),
-    );
-    const contestedAttemptIds = new Set(
-      judges
-        .filter((judge) => {
-          const correction = correctionStatuses.get(judge.id);
-          return (
-            appealedJudgeIds.has(judge.id) ||
-            (correction !== undefined && correction.state !== 'active')
-          );
-        })
-        .map((judge) => judge.subjectId),
-    );
-
-    const triggerIsExcluded =
-      unsupportedAttemptIds.has(trigger.id) || contestedAttemptIds.has(trigger.id);
-    if (triggerIsExcluded) return { fire: false, reason: 'not_failure' };
-
     const tailEventIds: string[] = [];
-    for (const row of rows) {
+    let cursor: { id: string; createdAt: Date } | undefined;
+    let streakEnded = false;
+
+    while (!streakEnded) {
+      const rows = await db
+        .select({
+          id: event.id,
+          outcome: event.outcome,
+          payload: event.payload,
+          createdAt: event.created_at,
+        })
+        .from(event)
+        .where(
+          and(
+            inArray(event.action, ['attempt', 'review']),
+            eq(event.subject_kind, 'question'),
+            or(
+              sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
+              sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
+            ),
+            sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
+            cursor
+              ? sql`(${event.created_at}, ${event.id}) < (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id})`
+              : undefined,
+          ),
+        )
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(100);
+      if (rows.length === 0) break;
+
+      const attemptIds = rows.map((row) => row.id);
+      const judges = await db
+        .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'judge'),
+            eq(event.subject_kind, 'event'),
+            inArray(event.subject_id, attemptIds),
+          ),
+        );
+      const judgeIds = judges.map((judge) => judge.id);
+      const correctionStatuses = await getCorrectionStatuses(db, judgeIds);
+      const appealedJudgeIds =
+        judgeIds.length === 0
+          ? new Set<string>()
+          : new Set(
+              (
+                await db
+                  .select({ subjectId: event.subject_id })
+                  .from(event)
+                  .where(
+                    and(
+                      eq(event.action, 'experimental:appeal_request'),
+                      eq(event.subject_kind, 'event'),
+                      inArray(event.subject_id, judgeIds),
+                    ),
+                  )
+              ).map((row) => row.subjectId),
+            );
+      const unsupportedAttemptIds = new Set(
+        judges
+          .filter((judge) => {
+            const payload = judge.payload;
+            return (
+              payload !== null &&
+              typeof payload === 'object' &&
+              payload.coarse_outcome === 'unsupported'
+            );
+          })
+          .map((judge) => judge.subjectId),
+      );
+      const contestedAttemptIds = new Set(
+        judges
+          .filter((judge) => {
+            const correction = correctionStatuses.get(judge.id);
+            return (
+              appealedJudgeIds.has(judge.id) ||
+              (correction !== undefined && correction.state !== 'active')
+            );
+          })
+          .map((judge) => judge.subjectId),
+      );
+
       if (
-        isUnsupportedAttemptPayload(row.payload) ||
-        unsupportedAttemptIds.has(row.id) ||
-        contestedAttemptIds.has(row.id)
+        rows.some(
+          (row) =>
+            row.id === trigger.id &&
+            (unsupportedAttemptIds.has(row.id) || contestedAttemptIds.has(row.id)),
+        )
       ) {
-        continue;
+        return { fire: false, reason: 'not_failure' };
       }
-      if (row.outcome !== 'failure') break;
-      tailEventIds.push(row.id);
+
+      for (const row of rows) {
+        if (
+          isUnsupportedAttemptPayload(row.payload) ||
+          unsupportedAttemptIds.has(row.id) ||
+          contestedAttemptIds.has(row.id)
+        ) {
+          continue;
+        }
+        if (row.outcome !== 'failure') {
+          streakEnded = true;
+          break;
+        }
+        tailEventIds.push(row.id);
+      }
+
+      const last = rows.at(-1);
+      if (!last || rows.length < 100) break;
+      cursor = { id: last.id, createdAt: last.createdAt };
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
   }
@@ -236,13 +268,6 @@ async function evaluateWrongStreak(
   if (thresholdCandidates.length === 0) {
     return { fire: false, reason: 'streak_below_threshold' };
   }
-
-  const duplicateRows = await db
-    .select({ one: sql<number>`1` })
-    .from(event)
-    .where(and(eq(event.action, NUDGE_ACTION), eq(event.caused_by_event_id, trigger.id)))
-    .limit(1);
-  if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
 
   const shadow = !config.enabled;
   const candidateIds = thresholdCandidates.map((candidate) => candidate.kcId);
