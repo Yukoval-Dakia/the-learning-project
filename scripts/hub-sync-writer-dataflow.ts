@@ -1278,7 +1278,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
         invalidateCallable(target, ctx.scope);
-        return evalPattern(target, value, ctx, input, undefined, undefined, elements);
+        return evalPattern(target, value, ctx, input, undefined, undefined, elements, properties);
       }
       return { normal: { state: input, value } };
     };
@@ -2284,15 +2284,21 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               ? staticComputedPropertyName(left.property)
               : identifierName(left.property)
             : undefined;
+        const exportObject =
+          left?.type === 'MemberExpression' ? unwrapExpression(left.object) : undefined;
+        const moduleIsGlobal = !resolveBinding('module', ctx.scope);
+        const exportsIsGlobal = !resolveBinding('exports', ctx.scope);
         if (
           assignment &&
-          ((objectName === 'module' && propertyName === 'exports') ||
-            objectName === 'exports' ||
-            (left?.type === 'MemberExpression' &&
-              identifierName(unwrapExpression(left.object)?.object) === 'module' &&
-              (unwrapExpression(left.object)?.computed
-                ? staticComputedPropertyName(unwrapExpression(left.object)?.property) === 'exports'
-                : identifierName(unwrapExpression(left.object)?.property) === 'exports')))
+          ((objectName === 'module' && moduleIsGlobal && propertyName === 'exports') ||
+            (objectName === 'exports' && exportsIsGlobal && propertyName !== undefined) ||
+            (propertyName !== undefined &&
+              exportObject?.type === 'MemberExpression' &&
+              identifierName(exportObject.object) === 'module' &&
+              moduleIsGlobal &&
+              (exportObject.computed
+                ? staticComputedPropertyName(exportObject.property) === 'exports'
+                : identifierName(exportObject.property) === 'exports')))
         )
           escapeValue(assignment.right, ctx.scope);
         const evaluated = expression

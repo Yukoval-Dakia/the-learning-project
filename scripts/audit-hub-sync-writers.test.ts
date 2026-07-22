@@ -471,6 +471,10 @@ describe('auditHubSyncWriters', () => {
       "import { db } from '@/db/client'; const deps = { client: db }; const alias = deps; alias.client.delete(knowledge).where(ok);",
     ],
     [
+      'dependency object destructuring assignment',
+      "import { db } from '@/db/client'; const deps = { db }; let client; ({ db: client } = deps); client.delete(knowledge).where(ok);",
+    ],
+    [
       'dependency property assigned before use',
       "import { db } from '@/db/client'; const deps = { client: cache }; deps.client = db; deps.client.insert(knowledge).values({});",
     ],
@@ -489,6 +493,26 @@ describe('auditHubSyncWriters', () => {
     [
       'foreign dependency object property',
       'const deps = { db: cache }; deps.db.insert(knowledge).values({});',
+    ],
+    [
+      'destructuring assignment overwritten before use',
+      "import { db } from '@/db/client'; const deps = { db }; let client; ({ db: client } = deps); client = cache; client.update(knowledge).set({});",
+    ],
+    [
+      'destructuring assignment used before trusted assignment',
+      "import { db } from '@/db/client'; const deps = { db }; let client = cache; client.delete(knowledge).where(ok); ({ db: client } = deps);",
+    ],
+    [
+      'dynamic CommonJS outer export property',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.insert(knowledge).values({}); client = db; module.exports[key] = writer;",
+    ],
+    [
+      'shadowed module export property',
+      "import { db } from '@/db/client'; function publish(module) { let client = cache; const writer = () => client.insert(knowledge).values({}); client = db; module.exports.writer = writer; }",
+    ],
+    [
+      'shadowed exports property',
+      "import { db } from '@/db/client'; function publish(exports) { let client = cache; const writer = () => client.update(knowledge).set({}); client = db; exports.writer = writer; }",
     ],
     [
       'CommonJS module exports property follows final safe state',
