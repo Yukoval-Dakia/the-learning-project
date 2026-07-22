@@ -22,6 +22,10 @@
 // record_promotion's pendingProposalWithCooldown.
 
 import { createId } from '@paralleldrive/cuid2';
+import type { z } from 'zod';
+
+import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import type { ToolContext } from '@/server/ai/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
@@ -65,6 +69,63 @@ export type RunQuestionAuthorResult =
   | { status: 'proposed'; proposalId: string; questionId: string }
   | { status: 'skipped:knowledge_not_found' };
 
+async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) {
+  if (seed.seed_mode === 'material' && !seed.material_body_md?.trim()) {
+    throw new Error("question_author seed_mode 'material' requires material_body_md");
+  }
+
+  const wanted = [...new Set(seed.knowledge_ids)];
+  const nodes = wanted.length
+    ? await db
+        .select({ id: knowledge.id, name: knowledge.name })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, wanted), isNull(knowledge.archived_at)))
+    : [];
+  if (nodes.length === 0) return null;
+
+  const validIds = nodes.map((node) => node.id);
+  const validIdSet = new Set(validIds);
+  const firstValidId = wanted.find((id) => validIdSet.has(id)) ?? validIds[0];
+  let effectiveDomain: string | null = null;
+  try {
+    effectiveDomain = await getEffectiveDomain(db, firstValidId);
+  } catch {
+    effectiveDomain = null;
+  }
+  const requestedKind = seed.requested_kind
+    ? (normalizeToCanonicalKind(seed.requested_kind) ?? undefined)
+    : undefined;
+
+  return {
+    input: {
+      seed_mode: seed.seed_mode,
+      knowledge_context: nodes.map((node) => ({ id: node.id, name: node.name })),
+      ...(requestedKind ? { requested_kind: requestedKind } : {}),
+      ...(seed.difficulty !== undefined ? { requested_difficulty: seed.difficulty } : {}),
+      ...(seed.material_body_md
+        ? {
+            material: {
+              body_md: seed.material_body_md,
+              ...(seed.material_title ? { title: seed.material_title } : {}),
+            },
+          }
+        : {}),
+    },
+    ctx: { subjectProfile: resolveSubjectProfile(effectiveDomain) },
+    validIds,
+    validIdSet,
+  };
+}
+
+export async function prepareQuestionAuthorTask(
+  ctx: ToolContext,
+  seed: z.infer<typeof QuestionAuthorIntentSchema>,
+) {
+  const prepared = await buildQuestionAuthorPreparation(ctx.db, seed);
+  if (!prepared) throw new Error('QuestionAuthorTask knowledge not found');
+  return { input: prepared.input, ctx: prepared.ctx };
+}
+
 // brace-slice + Zod parse for the raw text output (照 quiz_gen parseOutput).
 // Throws on no-JSON / JSON.parse failure / schema mismatch — the tool wrapper
 // (authorQuestionExecute) converts the throw to status:'failed'.
@@ -104,72 +165,11 @@ export async function runQuestionAuthor(
 ): Promise<RunQuestionAuthorResult> {
   const { db } = deps;
 
-  // material seed requires the body — the single-shot task has no fetch tool, so
-  // a URL-only seed would hallucinate the passage (critic #5). The DomainTool
-  // boundary (validateAuthorQuestionInput) enforces this too; this guard covers
-  // direct callers.
-  if (seed.seed_mode === 'material' && !seed.material_body_md?.trim()) {
-    throw new Error("question_author seed_mode 'material' requires material_body_md");
-  }
+  const prepared = await buildQuestionAuthorPreparation(db, seed);
+  if (!prepared) return { status: 'skipped:knowledge_not_found' };
+  const { input, ctx: runCtx, validIds, validIdSet } = prepared;
 
-  // Validate the seed knowledge ids against live (non-archived) nodes. All
-  // invalid → soft-skip; partial → intersect (salvage, quiz_gen policy).
-  const wanted = [...new Set(seed.knowledge_ids)];
-  const nodes = wanted.length
-    ? await db
-        .select({ id: knowledge.id, name: knowledge.name })
-        .from(knowledge)
-        .where(and(inArray(knowledge.id, wanted), isNull(knowledge.archived_at)))
-    : [];
-  if (nodes.length === 0) {
-    return { status: 'skipped:knowledge_not_found' };
-  }
-  const validIds = nodes.map((n) => n.id);
-  const validIdSet = new Set(validIds);
-
-  // Subject profile via the first valid node's EFFECTIVE domain (科目是视角:
-  // child nodes usually carry domain=null and inherit from an ancestor, so the
-  // raw column would mis-resolve to the default profile; getEffectiveDomain is
-  // the derivation owner). "First" follows the SEED's original order — `nodes`
-  // row order is DB-arbitrary (no ORDER BY), which would make the prompt voice
-  // nondeterministic for mixed-subject seeds (review LOW). The profile only
-  // shapes the prompt VOICE, so a degenerate tree (root with null domain —
-  // invariant violation in legacy / fixture data) degrades to the default
-  // profile instead of failing the run.
-  const firstValidId = wanted.find((id) => validIdSet.has(id)) ?? validIds[0];
-  let effectiveDomain: string | null = null;
-  try {
-    effectiveDomain = await getEffectiveDomain(db, firstValidId);
-  } catch {
-    effectiveDomain = null;
-  }
-  const subjectProfile = resolveSubjectProfile(effectiveDomain);
-
-  // Normalize requested_kind through the single-authority kind vocabulary
-  // (image_candidate accept precedent): an unrecognized hint degrades to "no
-  // pin" instead of confusing the prompt with an unknown word.
-  const requestedKind = seed.requested_kind
-    ? (normalizeToCanonicalKind(seed.requested_kind) ?? undefined)
-    : undefined;
-
-  const input = {
-    seed_mode: seed.seed_mode,
-    knowledge_context: nodes.map((n) => ({ id: n.id, name: n.name })),
-    ...(requestedKind ? { requested_kind: requestedKind } : {}),
-    ...(seed.difficulty !== undefined ? { requested_difficulty: seed.difficulty } : {}),
-    ...(seed.material_body_md
-      ? {
-          material: {
-            body_md: seed.material_body_md,
-            ...(seed.material_title ? { title: seed.material_title } : {}),
-          },
-        }
-      : {}),
-  };
-
-  const result = await deps.runTaskFn('QuestionAuthorTask', input, {
-    subjectProfile,
-  });
+  const result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
   const draft = parseQuestionAuthorOutput(result.text);
 
   // Hallucinated-id discipline: intersect the echoed knowledge_ids with the

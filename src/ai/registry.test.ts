@@ -17,6 +17,24 @@ import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with 
 import { type TaskDef, tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
+describe('copilot task dispatch declarations', () => {
+  it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
+    const invocable = Object.values(tasks).filter(
+      (task) => 'copilot' in task && task.copilot?.invocable === true,
+    );
+    expect(invocable.map((task) => task.kind).sort()).toEqual([
+      'GoalScopeTask',
+      'QuestionAuthorTask',
+    ]);
+    for (const task of invocable) {
+      if (!('copilot' in task) || !task.copilot) throw new Error(task.kind);
+      expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
+      expect(task.copilot.prepare).toBeTypeOf('function');
+    }
+    expect(Object.keys(tasks)).toHaveLength(42);
+  });
+});
+
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
     expect(Object.keys(tasks)).toHaveLength(42);
