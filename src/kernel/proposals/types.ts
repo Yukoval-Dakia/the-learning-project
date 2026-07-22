@@ -21,7 +21,7 @@ export type ProposalAcceptInput = {
 
 export interface ProposalAcceptResult {
   kind: string;
-  result?: unknown;
+  result: unknown;
   idempotent?: boolean;
 }
 

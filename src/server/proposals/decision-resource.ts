@@ -129,9 +129,14 @@ export async function createProposalDecision(
         new_relation_type: input.new_relation_type,
         user_note: input.user_note,
       });
+    } else if (input.decision === 'accept') {
+      result = await acceptAiProposal(db, proposalId, {
+        decision: 'accept',
+        user_note: input.user_note,
+      });
     } else {
       result = await acceptAiProposal(db, proposalId, {
-        decision: input.decision,
+        decision: 'reverse',
         user_note: input.user_note,
       });
     }

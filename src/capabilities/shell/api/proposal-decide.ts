@@ -42,11 +42,13 @@ async function handleLegacyDecision(
         await acceptAiProposal(db, id, { decision, new_relation_type, user_note }),
       );
     }
-    const result =
-      decision === 'dismiss'
-        ? await dismissAiProposal(db, id, { user_note })
-        : await acceptAiProposal(db, id, { decision, user_note });
-    return Response.json(result);
+    if (decision === 'dismiss') {
+      return Response.json(await dismissAiProposal(db, id, { user_note }));
+    }
+    if (decision === 'reverse') {
+      return Response.json(await acceptAiProposal(db, id, { decision, user_note }));
+    }
+    return Response.json(await acceptAiProposal(db, id, { decision, user_note }));
   } catch (err) {
     return errorResponse(err);
   }

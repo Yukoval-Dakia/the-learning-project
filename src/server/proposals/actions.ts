@@ -2,7 +2,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { capabilities } from '@/capabilities';
-import { createProposalAcceptRegistry, getProposalAcceptDecl } from '@/kernel/proposals';
+import {
+  type ProposalAcceptResult,
+  createProposalAcceptRegistry,
+  getProposalAcceptDecl,
+} from '@/kernel/proposals';
 
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept applier lives in the
@@ -55,6 +59,7 @@ import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 // the created node via the single-owner applyArchive (archived_at + version+1), mirroring
 // the imperative archive accept path so fold(create + archive)==row(archived).
 import {
+  type AcceptResult as KnowledgeAcceptResult,
   acceptProposal,
   applyArchive,
   dismissProposal,
@@ -185,7 +190,7 @@ export interface KnowledgeEdgeProposalDecisionResult {
 export type AcceptAiProposalResult =
   | {
       kind: 'knowledge_node';
-      result: Awaited<ReturnType<typeof acceptProposal>> | null;
+      result: KnowledgeAcceptResult | null;
       idempotent?: boolean;
     }
   | {
@@ -841,6 +846,20 @@ function isDismissedEdgeResult(result: AcceptAiProposalResult): boolean {
   );
 }
 
+function isKnowledgeAcceptResult(result: unknown): result is KnowledgeAcceptResult | null {
+  if (result === null) return true;
+  if (typeof result !== 'object' || !('kind' in result) || typeof result.kind !== 'string') {
+    return false;
+  }
+  return [
+    'propose_new_applied',
+    'reparent_applied',
+    'merge_applied',
+    'split_applied',
+    'archive_applied',
+  ].includes(result.kind);
+}
+
 async function dispatchAccept(
   db: Db,
   proposalId: string,
@@ -850,16 +869,50 @@ async function dispatchAccept(
   const registered = getProposalAcceptDecl(proposalAcceptRegistry, proposal.payload.kind);
   if (registered) {
     const applier = await registered.load();
-    return (await applier(db, {
-      proposalId,
-      proposal: {
-        id: proposal.id,
-        payload: proposal.payload,
-        status: proposal.status,
-        actor_ref: proposal.actor_ref,
-      },
-      ...opts,
-    })) as AcceptAiProposalResult;
+    const proposalInput = {
+      id: proposal.id,
+      payload: proposal.payload,
+      status: proposal.status,
+      actor_ref: proposal.actor_ref,
+    };
+    const result: ProposalAcceptResult =
+      opts.decision === 'change_type'
+        ? await applier(db, {
+            proposalId,
+            proposal: proposalInput,
+            decision: opts.decision,
+            new_relation_type: opts.new_relation_type,
+            user_note: opts.user_note,
+          })
+        : opts.decision === 'reverse'
+          ? await applier(db, {
+              proposalId,
+              proposal: proposalInput,
+              decision: opts.decision,
+              user_note: opts.user_note,
+            })
+          : await applier(db, {
+              proposalId,
+              proposal: proposalInput,
+              decision: opts.decision,
+              user_note: opts.user_note,
+            });
+    if (
+      proposal.payload.kind === 'knowledge_node' &&
+      result.kind === 'knowledge_node' &&
+      isKnowledgeAcceptResult(result.result)
+    ) {
+      return {
+        kind: 'knowledge_node',
+        result: result.result,
+        idempotent: result.idempotent,
+      };
+    }
+    throw new ApiError(
+      'invalid_proposal_accept_result',
+      `accept applier for ${proposal.payload.kind} returned ${result.kind}`,
+      500,
+    );
   }
 
   switch (proposal.payload.kind) {

@@ -109,7 +109,7 @@ describe('proposal lifecycle owner service', () => {
     });
 
     const replay = await acceptAiProposal(db, 'node_p1');
-    expect(replay).toMatchObject({ kind: 'knowledge_node', idempotent: true });
+    expect(replay).toEqual({ kind: 'knowledge_node', result: null, idempotent: true });
     expect(await db.select().from(knowledge).where(eq(knowledge.name, '通假字'))).toHaveLength(1);
     expect(await db.select().from(proposal_signals)).toHaveLength(1);
   });

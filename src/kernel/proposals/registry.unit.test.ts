@@ -5,12 +5,16 @@ import type { ProposalAcceptApplier, ProposalAcceptInput } from './types';
 
 const applier: ProposalAcceptApplier = async (_db, { proposal }) => ({
   kind: proposal.payload.kind,
+  result: null,
 });
 
 describe('proposal accept registry', () => {
   it('uses payload as the only proposal identity and discriminates decision options', () => {
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('kind');
     expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('target');
+    expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('enqueueVariantVerify');
+    expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('imageCandidateDeps');
+    expectTypeOf<ProposalAcceptInput>().not.toHaveProperty('corrected_payload');
     expectTypeOf<Extract<ProposalAcceptInput, { decision: 'change_type' }>>()
       .toHaveProperty('new_relation_type')
       .toEqualTypeOf<string>();
