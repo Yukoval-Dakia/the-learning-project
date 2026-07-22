@@ -1,5 +1,7 @@
+import { capabilities } from '@/capabilities';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
 import type { DomainTool, ToolContext } from './types';
 
@@ -116,6 +118,19 @@ describe('buildMcpServerFromRegistry', () => {
     expect(mockAgentSdk.toolDefs.map((t) => t.name)).toEqual(['demo_a', 'demo_b']);
     // Raw shape, not a ZodObject — SDK contract.
     expect((mockAgentSdk.toolDefs[0].schema as Record<string, unknown>).q).toBeDefined();
+  });
+
+  it('constructs the production MCP server with run_task included', async () => {
+    await registerCapabilityTools(capabilities);
+
+    expect(() =>
+      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['run_task'] }),
+    ).not.toThrow();
+    expect(mockAgentSdk.toolDefs).toHaveLength(1);
+    expect(mockAgentSdk.toolDefs[0].name).toBe('run_task');
+    const schema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
+    expect(schema.task_kind).toBeDefined();
+    expect(schema.intent).toBeDefined();
   });
 
   it('handler invokes tool + writes tool_call_log + returns MCP content shape', async () => {

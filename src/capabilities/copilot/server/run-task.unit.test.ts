@@ -24,6 +24,22 @@ describe('run_task', () => {
     expect(() => runTaskTool.inputSchema.parse({ task_kind: 'GoalScopeTask' })).toThrow();
   });
 
+  it('rejects task/intent mismatches through the registry-selected strict schema', async () => {
+    await expect(
+      executeRaw({
+        task_kind: 'GoalScopeTask',
+        intent: { seed_mode: 'knowledge', knowledge_ids: ['k1'] },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      executeRaw({
+        task_kind: 'QuestionAuthorTask',
+        intent: { goal_title: 'Learn' },
+      }),
+    ).rejects.toThrow();
+    expect(runTask).not.toHaveBeenCalled();
+  });
+
   it('publishes exactly the two legal task names and their intent fields', () => {
     expect(
       runTaskTool.inputSchema.parse({

@@ -6,12 +6,12 @@ import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { DomainTool } from '@/server/ai/tools/types';
 
-export const RunTaskInputSchema = z.discriminatedUnion('task_kind', [
-  z.object({ task_kind: z.literal('GoalScopeTask'), intent: GoalScopeIntentSchema }).strict(),
-  z
-    .object({ task_kind: z.literal('QuestionAuthorTask'), intent: QuestionAuthorIntentSchema })
-    .strict(),
-]);
+export const RunTaskInputSchema = z
+  .object({
+    task_kind: z.enum(['GoalScopeTask', 'QuestionAuthorTask']),
+    intent: z.union([GoalScopeIntentSchema, QuestionAuthorIntentSchema]),
+  })
+  .strict();
 
 export const RunTaskOutputSchema = z.object({
   task_kind: z.string(),
