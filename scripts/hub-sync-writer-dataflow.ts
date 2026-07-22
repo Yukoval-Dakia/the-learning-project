@@ -54,6 +54,13 @@ function identifierName(value: unknown): string | undefined {
   return candidate?.type === 'Identifier' ? (candidate.name as string) : undefined;
 }
 
+function staticComputedPropertyName(value: unknown): string | undefined {
+  const candidate = node(value);
+  return candidate?.type === 'StringLiteral' && typeof candidate.value === 'string'
+    ? candidate.value
+    : undefined;
+}
+
 function unwrapExpression(expression: unknown): AstNode | undefined {
   let candidate = node(expression);
   while (
@@ -572,6 +579,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       if (calleeResult.normal) receiver = calleeResult.normal.value;
       if (member.computed) {
         const property = node(member.property);
+        method = staticComputedPropertyName(property);
         if (property)
           calleeResult = sequenceEval(calleeResult, (next) => evalExpr(property, ctx, next));
       } else method = identifierName(member.property);

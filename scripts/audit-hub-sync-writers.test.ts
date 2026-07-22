@@ -836,6 +836,9 @@ describe('auditHubSyncWriters', () => {
         'union nullish default',
         'type A<T = typeof db | undefined> = T; function f(client: A){ client?.insert(knowledge).values({}); }',
       ],
+      ['computed string insert', "db['insert'](knowledge).values({});"],
+      ['computed string update', "db['update'](knowledge_edge).set({});"],
+      ['computed string delete', "db['delete'](knowledge_edge).where(condition);"],
     ] as const;
 
     it.each(positiveCases)('detects %s', async (_name, body) => {
@@ -949,6 +952,9 @@ describe('auditHubSyncWriters', () => {
         'namespace shadow',
         "import type * as Repository from '@/db/client'; function f<Repository>(client: Repository.Tx){ client.insert(knowledge).values({}); }",
       ],
+      ['foreign computed string insert', "cache['insert'](knowledge).values({});"],
+      ['foreign computed string update', "cache['update'](knowledge_edge).set({});"],
+      ['foreign computed string delete', "cache['delete'](knowledge_edge).where(condition);"],
     ] as const;
 
     it.each(negativeCases)('ignores %s', async (_name, body) => {
