@@ -80,12 +80,6 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
-function hasDb(ctx: unknown): boolean {
-  return (
-    typeof ctx === 'object' && ctx !== null && 'db' in ctx && (ctx as { db?: unknown }).db != null
-  );
-}
-
 /**
  * Runs the MistakeEnrollTask. Returns a validated draft with the cause clamped to
  * the subject taxonomy. Deterministic guarantees regardless of model output: a

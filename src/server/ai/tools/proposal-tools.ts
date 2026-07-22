@@ -112,15 +112,6 @@ function edgeCooldownKeys(fromId: string, toId: string, relationType: string): s
   ];
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<TaskTextRunFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  return await runTask(kind as never, input, ctx as never);
-}
-
 async function getKnowledgeNode(
   db: Db,
   id: string,
@@ -959,6 +950,7 @@ async function attributeMistakeExecute(
   );
 
   let attributionTaskRan = false;
+  const runTaskFn = makeRunTaskFn(ctx.db);
   await runAttributionAndWriteJudgeEvent({
     db: ctx.db,
     attemptEventId: input.attempt_event_id,
@@ -974,7 +966,7 @@ async function attributeMistakeExecute(
     },
     runTaskFn: (kind, taskInput, taskCtx) => {
       attributionTaskRan = true;
-      return defaultRunTaskFn(kind, taskInput, { ...(taskCtx as object), db: ctx.db });
+      return runTaskFn(kind, taskInput, taskCtx);
     },
     subjectProfile,
     referencedKnowledgeIds: failure.referenced_knowledge_ids,
