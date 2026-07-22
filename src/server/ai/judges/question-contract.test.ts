@@ -161,7 +161,7 @@ describe('M1 §C: semanticInput threads subjectProfile into LLM payload', () => 
 });
 
 describe('YUK-36 regression: unit_dimension LLM fallback uses registered task with runtime ctx', () => {
-  it('passes UnitDimensionFallback through judgeAnswer with db + subjectProfile ctx', async () => {
+  it('passes UnitDimensionFallback through judgeAnswer with subjectProfile and no public db', async () => {
     const captured: { kind: string; input: unknown; ctx: unknown }[] = [];
     const runTaskFn = async (kind: string, input: unknown, ctx: unknown) => {
       captured.push({ kind, input, ctx });
@@ -200,9 +200,9 @@ describe('YUK-36 regression: unit_dimension LLM fallback uses registered task wi
       text: expect.stringContaining('三十米每秒'),
     });
     expect(captured[0].ctx).toMatchObject({
-      db: mockDb,
       subjectProfile: { id: 'physics' },
     });
+    expect(captured[0].ctx).not.toHaveProperty('db');
   });
 });
 
