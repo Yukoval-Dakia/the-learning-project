@@ -142,7 +142,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(writeCostLedger).not.toHaveBeenCalled();
   });
 
-  it('records success+is_error as a graceful partial failure without cost ledger', async () => {
+  it('records success+is_error usage and cost as a graceful partial failure without success accounting', async () => {
     mockSdk.messages = [
       assistant('partial chunk'),
       {
@@ -152,8 +152,13 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         api_error_status: 429,
         result: 'rate limited',
         stop_reason: 'end_turn',
-        total_cost_usd: 0,
-        usage: { input_tokens: 1, output_tokens: 0 },
+        total_cost_usd: 0.25,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 3,
+          cache_read_input_tokens: 4,
+          cache_creation_input_tokens: 2,
+        },
       },
     ];
 
@@ -168,19 +173,48 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       text: 'partial chunk',
       finishReason: 'error',
       partial: true,
+      usage: { inputTokens: 14, outputTokens: 3 },
+      cost_usd: 0.25,
       error: expect.stringContaining('api_error_result http=429'),
     });
 
     const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
+    expect(writeAiTaskRunFinished).toHaveBeenCalledTimes(1);
     expect(writeAiTaskRunFinished).toHaveBeenCalledWith(
       fakeDb,
       expect.objectContaining({
         status: 'failure',
         finish_reason: 'error',
+        usage: { inputTokens: 14, outputTokens: 3 },
+        cost_usd: 0.25,
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
     expect(writeCostLedger).not.toHaveBeenCalled();
+  });
+
+  it('does not add an empty error detail when success+is_error omits result', async () => {
+    mockSdk.messages = [
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        api_error_status: 500,
+        total_cost_usd: 0.1,
+        usage: { input_tokens: 2, output_tokens: 1 },
+      },
+    ];
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb },
+      () => {},
+    );
+
+    expect(result.error).toBe(
+      '[AttributionTask] Agent SDK errored: subtype=api_error_result http=500',
+    );
   });
 
   it('degrades gracefully: resolves partial text when the SDK throws mid-stream', async () => {

@@ -1264,15 +1264,6 @@ export async function streamTaskCollecting(
         }
         stepStartTime = Date.now();
       } else if (msg.type === 'result') {
-        if (isApiErrorSuccessResult(msg)) {
-          throw new AgentRunError({
-            kind,
-            taskRunId,
-            subtype: 'api_error_result',
-            apiErrorStatus: msg.api_error_status ?? null,
-            errors: [msg.result ?? ''],
-          });
-        }
         if (msg.subtype === 'success') {
           const u = msg.usage;
           usage = {
@@ -1286,6 +1277,15 @@ export async function streamTaskCollecting(
             cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
           };
           cost_usd = msg.total_cost_usd;
+          if (isApiErrorSuccessResult(msg)) {
+            throw new AgentRunError({
+              kind,
+              taskRunId,
+              subtype: 'api_error_result',
+              apiErrorStatus: msg.api_error_status ?? null,
+              errors: msg.result ? [msg.result] : [],
+            });
+          }
           stopReason = msg.stop_reason ?? 'stop';
           sawTerminalResult = true;
         } else {
