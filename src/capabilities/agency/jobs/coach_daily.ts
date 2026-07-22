@@ -4,6 +4,7 @@
 // allowlist MCP bridge, runs `CoachTask`, and writes trigger + scan events
 // (`experimental:trigger_coach_scan` / `experimental:coach_scan`).
 
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
@@ -21,6 +22,7 @@ import {
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
+import type { WriteEventInput } from '@/kernel/events';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -33,7 +35,6 @@ import {
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
 // Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
 // (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due

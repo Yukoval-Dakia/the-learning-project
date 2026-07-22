@@ -5,7 +5,7 @@ import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { enrollFsrsStateIfAbsent } from '@/server/fsrs/state';
 
 // Bumping this version rewrites the canonical string, so every persisted

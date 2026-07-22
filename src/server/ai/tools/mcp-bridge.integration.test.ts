@@ -5,7 +5,7 @@
 
 import { capabilities } from '@/capabilities';
 import { event, memory_brief_note, tool_call_log } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

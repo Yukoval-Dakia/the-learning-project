@@ -21,8 +21,8 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
+import { writeEvent } from '@/kernel/events';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
-import { writeEvent } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';

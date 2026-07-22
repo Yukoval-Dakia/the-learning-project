@@ -6,7 +6,7 @@ import {
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
-import { getCorrectionStatuses } from '@/server/events/corrections';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import {
   type ProposalPresentation,

@@ -7,7 +7,8 @@
 // scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
 
 import { event } from '@/db/schema';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
+import type { WriteEventInput } from '@/kernel/events';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { writeAiProposal } from '@/server/proposals/writer';

@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, materialized_id_index, question_block } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { backfillQuestionBlockGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldQuestionBlock } from './gather';

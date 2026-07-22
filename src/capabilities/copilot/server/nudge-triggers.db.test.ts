@@ -1,6 +1,6 @@
 import { newId } from '@/core/ids';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 // YUK-577 — evaluateNudgeTrigger determinism (cut-1 ingestion). design §3.1/§3.2/§3.7.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

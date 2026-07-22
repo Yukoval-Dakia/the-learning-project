@@ -33,7 +33,7 @@ import {
   prereqRiskFromAttempt,
 } from '@/core/prereq-risk';
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;

@@ -40,8 +40,8 @@ import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validat
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
-import { writeEvent } from '@/server/events/queries';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
 
 export const QUESTION_PART_KIND = 'question_part' as const;

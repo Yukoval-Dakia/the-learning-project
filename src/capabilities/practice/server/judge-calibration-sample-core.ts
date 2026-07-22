@@ -33,8 +33,8 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/s
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { judgeAnswer } from '@/server/ai/judges/question-contract';
-import { writeEvent } from '@/server/events/queries';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 

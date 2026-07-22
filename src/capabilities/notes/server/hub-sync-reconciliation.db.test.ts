@@ -276,6 +276,66 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     }
   });
 
+  it('YUK-746: atomic-to-hub applies both atomic fan-out and hub type-gain effects', async () => {
+    await seedHub('hub-b', ['k2']);
+    const before = await generations(['hub-a', 'hub-b']);
+
+    await testDb().execute(sql`update artifact set type = 'note_hub' where id = 'atomic-a'`);
+
+    expect(await generations(['hub-a', 'hub-b'])).toEqual(before.map((value) => value + 1n));
+    expect(await generation('atomic-a')).toBe('1');
+  });
+
+  it('YUK-746: hub-to-atomic applies both hub type-loss and atomic fan-out effects', async () => {
+    await seedHub('hub-b', ['k2']);
+    const before = await generations(['hub-a', 'hub-b']);
+
+    await testDb().execute(sql`update artifact set type = 'note_atomic' where id = 'hub-a'`);
+
+    expect(await generations(['hub-a', 'hub-b'])).toEqual(before.map((value) => value + 1n));
+    expect(await state('hub-a')).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('YUK-746: concurrent hub-to-atomic transitions share one global cursor lock order', async () => {
+    await seedHub('hub-b', ['k2']);
+    const before = await generations(['hub-a', 'hub-b']);
+    const blockerReady = createDeferred();
+    const releaseBlocker = createDeferred();
+    const blocker = rawClient().begin(async (c) => {
+      await c`select id from artifact where id in ('hub-a', 'hub-b') order by id for update`;
+      blockerReady.resolve(undefined);
+      await releaseBlocker.promise;
+    });
+    await blockerReady.promise;
+
+    const leftPromise = withStatementTimeout(
+      2_000,
+      (c) => c`update artifact set type = 'note_atomic' where id = 'hub-a'`,
+    );
+    const rightPromise = withStatementTimeout(
+      2_000,
+      (c) => c`update artifact set type = 'note_atomic' where id = 'hub-b'`,
+    );
+    await rawClient()`select pg_sleep(0.1)`;
+    releaseBlocker.resolve(undefined);
+    await blocker;
+
+    const [left, right] = await Promise.allSettled([leftPromise, rightPromise]);
+
+    expect([left.status, right.status]).toEqual(['fulfilled', 'fulfilled']);
+    expect(await generations(['hub-a', 'hub-b'])).toEqual(before.map((value) => value + 2n));
+    const transitioned = await testDb()
+      .select({ id: artifact.id, type: artifact.type })
+      .from(artifact)
+      .where(sql`${artifact.id} in ('hub-a', 'hub-b')`);
+    expect(transitioned).toEqual(
+      expect.arrayContaining([
+        { id: 'hub-a', type: 'note_atomic' },
+        { id: 'hub-b', type: 'note_atomic' },
+      ]),
+    );
+  });
+
   it('YUK-384 RED 05: hub-local changes dirty or cancel one hub and internal apply does not self-dirty', async () => {
     await seedHub('hub-b', ['k2']);
 

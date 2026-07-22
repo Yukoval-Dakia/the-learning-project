@@ -20,7 +20,7 @@ import { newId } from '@/core/ids';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import type { question_block } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 type QuestionBlockRow = typeof question_block.$inferSelect;
 

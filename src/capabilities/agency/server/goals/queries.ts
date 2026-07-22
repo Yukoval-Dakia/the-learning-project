@@ -18,7 +18,7 @@ import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/doma
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 // YUK-471 W2 — goal status/scope events make these transitions fold-visible. These helpers have
 // NO live caller today, but per defer-flip-not-build the event path + write-through are wired now
 // so the moment a caller appears the goal fold already models the transition. The per-entity flag

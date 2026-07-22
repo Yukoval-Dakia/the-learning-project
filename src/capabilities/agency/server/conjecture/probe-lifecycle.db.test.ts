@@ -23,7 +23,7 @@ import {
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 

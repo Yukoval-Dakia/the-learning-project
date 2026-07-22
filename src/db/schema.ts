@@ -526,30 +526,38 @@ export const memory_brief_note = pgTable(
 // （body-blocks-edit.ts）用户编辑 / persistNoteRefineApply（note-refine-apply.ts）AI
 // Living Note patch / persistHubLinkDismiss（hub-dismiss.ts）。单 owner 写入约束见
 // tests/integration/step9-invariant-audit.ts allowlist。
-export const artifact = pgTable('artifact', {
-  id: text('id').primaryKey(),
-  type: text('type').notNull(),
-  title: text('title').notNull(),
-  parent_artifact_id: text('parent_artifact_id'),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  intent_source: text('intent_source').notNull(),
-  source: text('source').notNull(),
-  source_ref: text('source_ref'),
-  body_blocks: jsonb('body_blocks').$type<ArtifactBodyBlocksT>(),
-  attrs: jsonb('attrs').$type<JsonObject>().notNull().default({}),
-  tool_kind: text('tool_kind'),
-  tool_state: jsonb('tool_state').$type<ToolStateT>(),
-  generation_status: text('generation_status').notNull().default('pending'),
-  verification_status: text('verification_status').notNull().default('not_required'),
-  verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
-  generated_by: jsonb('generated_by').$type<AgentRefT>(),
-  verified_by: jsonb('verified_by').$type<AgentRefT>(),
-  history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
-  archived_at: timestamp('archived_at', { withTimezone: true }),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+export const artifact = pgTable(
+  'artifact',
+  {
+    id: text('id').primaryKey(),
+    type: text('type').notNull(),
+    title: text('title').notNull(),
+    parent_artifact_id: text('parent_artifact_id'),
+    knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
+    intent_source: text('intent_source').notNull(),
+    source: text('source').notNull(),
+    source_ref: text('source_ref'),
+    body_blocks: jsonb('body_blocks').$type<ArtifactBodyBlocksT>(),
+    attrs: jsonb('attrs').$type<JsonObject>().notNull().default({}),
+    tool_kind: text('tool_kind'),
+    tool_state: jsonb('tool_state').$type<ToolStateT>(),
+    generation_status: text('generation_status').notNull().default('pending'),
+    verification_status: text('verification_status').notNull().default('not_required'),
+    verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
+    generated_by: jsonb('generated_by').$type<AgentRefT>(),
+    verified_by: jsonb('verified_by').$type<AgentRefT>(),
+    history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    index('artifact_live_note_hub_idx')
+      .on(t.id)
+      .where(sql`${t.type} = 'note_hub' AND ${t.archived_at} IS NULL`),
+  ],
+);
 
 export const artifact_block_ref = pgTable(
   'artifact_block_ref',

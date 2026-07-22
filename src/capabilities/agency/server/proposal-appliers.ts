@@ -20,7 +20,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import {
   type LearningIntentMaterializeResult,

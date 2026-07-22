@@ -15,6 +15,7 @@
 //
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
@@ -56,14 +57,14 @@ import {
 // free-form run input reuses it to assemble conversation_history (防循环 ①: history
 // = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
 // YUK-307 — CopilotPrimaryView (+ the ephemeral_html cap) lives in turns.ts (the
-// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts,
-// never back). The zod parse schema lives HERE at the extraction point.
+// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts, // never back). The zod parse schema lives HERE at the extraction point.
 import {
   type CopilotPrimaryView,
   EPHEMERAL_HTML_REF_MAX_CHARS,
   getRecentCopilotTurns,
 } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
+import type { WriteEventInput } from '@/kernel/events';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
 // the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
@@ -87,7 +88,6 @@ import {
 import { resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays

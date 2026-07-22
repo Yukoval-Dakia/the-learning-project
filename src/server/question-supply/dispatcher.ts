@@ -24,8 +24,8 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
-import { writeEvent } from '@/server/events/queries';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';

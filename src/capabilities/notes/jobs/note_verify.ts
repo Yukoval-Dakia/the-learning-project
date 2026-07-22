@@ -18,10 +18,10 @@ import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/sch
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
-import { writeEvent } from '@/server/events/queries';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

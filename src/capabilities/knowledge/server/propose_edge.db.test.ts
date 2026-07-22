@@ -1,6 +1,6 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
-import { tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import {
   cost_ledger,
@@ -10,9 +10,10 @@ import {
   knowledge_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus } from '@/kernel/events';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
-import { getCorrectionStatus } from '@/server/events/corrections';
-import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -22,7 +23,7 @@ import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
 
 describe('KnowledgeEdgeProposeTask system prompt', () => {
   it('talks edge vocabulary', () => {
-    const p = tasks.KnowledgeEdgeProposeTask.systemPrompt;
+    const p = getTaskSystemPrompt('KnowledgeEdgeProposeTask');
     expect(p).toContain('knowledge_edge');
     expect(p).toContain('relation_type');
     expect(p).toContain('prerequisite');

@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import type { MistakeVariantRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, materialized_id_index, mistake_variant } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillMistakeVariantGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';

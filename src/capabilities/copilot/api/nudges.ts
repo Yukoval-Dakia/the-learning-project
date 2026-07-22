@@ -12,7 +12,7 @@
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { and, eq, sql } from 'drizzle-orm';
 import { loadActiveNudges } from '../server/nudge-read';

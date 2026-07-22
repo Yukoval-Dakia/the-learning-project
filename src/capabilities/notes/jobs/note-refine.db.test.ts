@@ -13,13 +13,13 @@ import {
 } from '@/capabilities/notes/server/note-refine-breaker';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { artifact, event, knowledge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import * as eventQueries from '@/kernel/events';
 import {
   markArtifactIdleAndFlush,
   recordEditingHeartbeat,
   resetEditingSessionStateForTests,
 } from '@/server/artifacts/editing-session';
-import * as eventQueries from '@/server/events/queries';
-import { writeEvent } from '@/server/events/queries';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildNoteRefineHandler, parseNoteRefineOutput, runNoteRefine } from './note-refine';

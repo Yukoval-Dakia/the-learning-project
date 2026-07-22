@@ -1,7 +1,7 @@
 // YUK-379 (B1) — census + backfill for silently-lost attribution.
 
 import { question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { censusLostAttributions, runLostAttributionBackfill } from './lost-attribution-backfill';

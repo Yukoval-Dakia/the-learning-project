@@ -1,12 +1,12 @@
 # src/kernel — 内核契约
 
-> capability 架构的契约层。只声明 manifest 结构、组合期校验和薄 facade；**无业务逻辑、无 IO、不 import pg-boss/drizzle 运行时类型**。
+> capability 架构的契约层。manifest 保持声明式；`events/` 是明确边界内的事件 envelope 存储本体，可依赖 core event schema、db 与 Drizzle。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
-| `events.ts` | P1 薄 facade：包装 `writeEvent`，kernel 侧不暴露具体 schema |
+| `events/` | event envelope 的完整读写 API、修正投影和 deterministic scope tagging；唯一 event INSERT owner |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
 | `manifest.unit.test.ts` / `composition.unit.test.ts` | 契约与组合唯一性校验 |
 
@@ -17,7 +17,7 @@
 - `RouteHandler` 形态兼容有参与无参：`(req, params) => Promise<Response>`，无参 handler 可忽略 `params`。
 
 ## ANTI-PATTERNS
-- 禁止在 kernel 里放业务逻辑或 DB 调用。
+- manifest 代码禁止业务逻辑或 DB 调用；`events/` 仅允许 event envelope 所需的 `@/core/schema/event`、`@/db/*` 与 `drizzle-orm`，不得 import `@/server/*` 或 `@/capabilities/*`。
 - 禁止 capability 包之间深层 import；包间走 manifest 公共接口。
 - 禁止新增契约字段而没有真实使用方（反框架护栏）。
-- 禁止在 kernel 里 import `@/db/client`、`@/server/*` 等运行时依赖（`http.ts` 等纯公共件除外）。
+- 禁止在 kernel 的 manifest/http 公共件 import `@/db/client`、`@/server/*` 等运行时依赖；`events/` 适用上方窄化依赖契约。

@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { event, job_events, learning_session } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { Conversation } from '@/server/session';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';

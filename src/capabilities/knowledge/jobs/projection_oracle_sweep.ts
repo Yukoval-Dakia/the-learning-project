@@ -41,7 +41,7 @@ import type { Job } from 'pg-boss';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import {
   type ProjectionAllowlist,
   type SymmetricRecord,

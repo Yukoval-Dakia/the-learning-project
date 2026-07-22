@@ -2,7 +2,7 @@
 
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';

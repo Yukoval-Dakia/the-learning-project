@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeAffectedScopes } from './scope_tagger';
+import { computeAffectedScopes } from './scope-tagger';
 
 describe('computeAffectedScopes', () => {
   it('always includes global and tags referenced knowledge ids as topic scopes', () => {

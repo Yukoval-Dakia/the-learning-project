@@ -19,7 +19,7 @@ import { acceptGoalScopeProposal } from '@/capabilities/agency/server/goals/acce
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, goal, materialized_id_index } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { retractAiProposal } from '@/server/proposals/actions';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';

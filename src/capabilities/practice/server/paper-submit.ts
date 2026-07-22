@@ -31,7 +31,7 @@ import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db as defaultDb } from '@/db/client';
 import type { Db, Tx } from '@/db/client';
 import { answer, event, learning_session, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { checkRateLimit } from '@/server/http/rate-limit';

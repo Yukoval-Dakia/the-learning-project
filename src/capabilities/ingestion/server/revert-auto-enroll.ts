@@ -20,7 +20,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
 import { learning_record, question_block } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { archiveLearningRecord } from '@/server/records/queries';

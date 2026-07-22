@@ -11,7 +11,7 @@
 // 闭包 walk 形状与 learnable-frontier.db.test.ts 同源——复用其 seed 范式。
 
 import { event, knowledge, knowledge_edge } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';

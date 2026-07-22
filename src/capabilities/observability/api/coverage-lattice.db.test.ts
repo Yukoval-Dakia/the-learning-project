@@ -16,7 +16,7 @@ import type { z } from 'zod';
 
 import { db } from '@/db/client';
 import { event, item_calibration, knowledge, learning_item, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/server/question-supply/dispatcher';
 import { targetFingerprint } from '@/server/question-supply/target-discovery';
 import { resetDb } from '../../../../tests/helpers/db';

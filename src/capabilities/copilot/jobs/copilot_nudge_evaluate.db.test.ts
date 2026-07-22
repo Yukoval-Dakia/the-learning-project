@@ -1,6 +1,6 @@
 import { newId } from '@/core/ids';
 import { event, question_block, source_document } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 // YUK-577 — copilot_nudge_evaluate handler: write + idempotency + shadow + red-line. design §3.3/§3.7.
 import { eq, ne } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

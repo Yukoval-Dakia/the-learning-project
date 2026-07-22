@@ -6,7 +6,7 @@
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import { knowledge, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {

@@ -22,7 +22,7 @@ import {
   subject_trait,
   subject_trait_binding,
 } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { acquireControlPlaneLockSql } from '@/server/subjects/control-plane-lock';
 import { subjectRootId } from '@/server/subjects/ensure-subject-root';
 import {

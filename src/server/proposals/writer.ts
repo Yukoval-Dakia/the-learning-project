@@ -5,8 +5,8 @@ import {
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
+import { writeEvent } from '@/kernel/events';
 import { costUsdToMicroUsd } from '@/server/ai/provenance';
-import { writeEvent } from '@/server/events/queries';
 // YUK-15 — record→proposal evidence loop: flip records cited as evidence
 // from raw → linked in the same DbLike scope as the propose event so the
 // projection stays consistent (caller can pass a tx to make this atomic).

@@ -10,18 +10,80 @@
 // reasonable copy edits. The risk this catches is "someone reverted the spec",
 // not "wording was tweaked".
 
+import { createHash } from 'node:crypto';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+import promptHashOracle from './fixtures/task-prompt-hashes.4cb5b966.json' with { type: 'json' };
 import { type TaskDef, tasks } from './registry';
+import { getTaskSystemPrompt } from './task-prompts';
+
+describe('task prompt definitions', () => {
+  it('defines one non-empty inline or profile prompt for every task', () => {
+    expect(Object.keys(tasks)).toHaveLength(42);
+
+    for (const task of Object.values(tasks)) {
+      switch (task.prompt.kind) {
+        case 'inline':
+          expect(task.prompt.text.trim(), task.kind).not.toBe('');
+          break;
+        case 'profile':
+          expect(task.prompt.build, task.kind).toBeTypeOf('function');
+          break;
+        default: {
+          const unhandled: never = task.prompt;
+          throw new Error(`Unhandled prompt kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
+    }
+  });
+
+  it('resolves every task without sentinel or duplicate fallback storage', () => {
+    for (const [kind, task] of Object.entries(tasks)) {
+      const resolved = getTaskSystemPrompt(kind as keyof typeof tasks);
+      expect(resolved.trim(), kind).not.toBe('');
+      expect(resolved, kind).not.toContain('see getTaskSystemPrompt');
+      expect(Object.hasOwn(task, 'systemPrompt'), kind).toBe(false);
+    }
+  });
+
+  it('matches every prompt byte-for-byte with the exact pre-refactor oracle', () => {
+    expect(promptHashOracle.baseCommit).toBe('4cb5b9669e9343f5bf4a21385626edc5ed9ad257');
+    expect(promptHashOracle.algorithm).toBe('sha256');
+    expect(promptHashOracle.taskCount).toBe(42);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(126);
+
+    for (const profileId of promptHashOracle.profiles) {
+      const profile = resolveSubjectProfile(profileId);
+      for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
+        const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
+        const actualHash = createHash('sha256')
+          .update(getTaskSystemPrompt(task, profile), 'utf8')
+          .digest('hex');
+        expect(actualHash, key).toBe(promptHashOracle.prompts[key]);
+      }
+    }
+  });
+
+  it('keeps inline prompts profile-independent', () => {
+    for (const [kind, task] of Object.entries(tasks)) {
+      if (task.prompt.kind !== 'inline') continue;
+      const taskKind = kind as keyof typeof tasks;
+      expect(getTaskSystemPrompt(taskKind, resolveSubjectProfile('math')), kind).toBe(
+        getTaskSystemPrompt(taskKind, resolveSubjectProfile('yuwen')),
+      );
+    }
+  });
+});
 
 describe('AttributionTask.systemPrompt', () => {
   it('emits Lane B field name analysis_md (not legacy ai_analysis_md)', () => {
-    const p = tasks.AttributionTask.systemPrompt;
+    const p = getTaskSystemPrompt('AttributionTask');
     expect(p).toContain('analysis_md');
     expect(p).not.toContain('ai_analysis_md');
   });
 
   it('frames input as attempt event with judge event downstream', () => {
-    const p = tasks.AttributionTask.systemPrompt;
+    const p = getTaskSystemPrompt('AttributionTask');
     expect(p).toContain('attempt event');
     expect(p).toContain('judge event');
     expect(p).toContain('caused_by_event_id');
@@ -32,7 +94,7 @@ describe('AttributionTask.systemPrompt', () => {
   // referenced `event.payload.answer_md`, which doesn't match what runtime
   // actually sends, leaving the LLM guessing.
   it('references the flat AttributionInput field names (wrong_answer_md, not payload.answer_md)', () => {
-    const p = tasks.AttributionTask.systemPrompt;
+    const p = getTaskSystemPrompt('AttributionTask');
     expect(p).toContain('wrong_answer_md');
     expect(p).not.toContain('payload.answer_md');
     expect(p).not.toContain('event.payload.answer_md');
@@ -44,14 +106,14 @@ describe('AttributionTask.systemPrompt', () => {
 
 describe('KnowledgeReviewTask.systemPrompt', () => {
   it('mentions attempt events + propose_knowledge_edge + relation_type', () => {
-    const p = tasks.KnowledgeReviewTask.systemPrompt;
+    const p = getTaskSystemPrompt('KnowledgeReviewTask');
     expect(p).toContain('attempt event');
     expect(p).toContain('propose_knowledge_edge');
     expect(p).toContain('relation_type');
   });
 
   it('keeps tree-shape mutations enumerated', () => {
-    const p = tasks.KnowledgeReviewTask.systemPrompt;
+    const p = getTaskSystemPrompt('KnowledgeReviewTask');
     expect(p).toContain('propose_new');
     expect(p).toContain('reparent');
     expect(p).toContain('merge');
@@ -60,7 +122,7 @@ describe('KnowledgeReviewTask.systemPrompt', () => {
   });
 
   it('lists the 5 core relation_type enums', () => {
-    const p = tasks.KnowledgeReviewTask.systemPrompt;
+    const p = getTaskSystemPrompt('KnowledgeReviewTask');
     for (const r of [
       'prerequisite',
       'related_to',
@@ -86,7 +148,7 @@ describe('UnitDimensionFallback registry entry', () => {
     expect(tasks.UnitDimensionFallback.needsToolCall).toBe(false);
     expect(tasks.UnitDimensionFallback.isMultimodal).toBe(false);
     expect(tasks.UnitDimensionFallback.allowedTools).toEqual([]);
-    expect(tasks.UnitDimensionFallback.systemPrompt).toContain('量纲');
+    expect(getTaskSystemPrompt('UnitDimensionFallback')).toContain('量纲');
   });
 });
 
@@ -226,7 +288,7 @@ describe('SelectionOrchestratorTask registry entry', () => {
 // history-preference prompt edit cannot silently regress.
 describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
   it('primes the model to prefer conversation_history over a redundant DomainTool read', () => {
-    const p = tasks.CopilotTask.systemPrompt;
+    const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('conversation_history');
     // The history-preference instruction keyword (Chinese copy may evolve, but the
     // field name + the "prefer history / avoid redundant tool read" intent stays).
@@ -234,7 +296,7 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
   });
 
   it('explains ambient_context (current route + focused_entity)', () => {
-    const p = tasks.CopilotTask.systemPrompt;
+    const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('ambient_context');
     expect(p).toContain('focused_entity');
   });
@@ -246,7 +308,7 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
 // 末尾/最后 placement wording is load-bearing, not copy.
 describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)', () => {
   it('pins the marker syntax and the end-of-reply placement', () => {
-    const p = tasks.CopilotTask.systemPrompt;
+    const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('<!--primary_view:');
     // Placement contract: end of reply, the very last output.
     expect(p).toMatch(/末尾/);
@@ -254,7 +316,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
   });
 
   it('pins the three ruled sources and the default-no-hero criterion', () => {
-    const p = tasks.CopilotTask.systemPrompt;
+    const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('tool_result');
     expect(p).toContain('artifact');
     expect(p).toContain('ephemeral_html');
@@ -269,7 +331,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
     // model must be told the bound up front. Literal mirrors
     // EPHEMERAL_HTML_REF_MAX_CHARS in src/capabilities/copilot/server/turns.ts (32_000);
     // change them together.
-    const p = tasks.CopilotTask.systemPrompt;
+    const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toMatch(/32000 字符/);
   });
 });
@@ -281,7 +343,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
 // 同文件头注释的口径：抓「合同被回退」，不抓措辞微调）。
 describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数组合同 (YUK-600)', () => {
   it('describes the entry shape and the display_name-classify / id-verbatim split', () => {
-    const p = tasks.ColdStartPlacementBridgeTask.systemPrompt;
+    const p = getTaskSystemPrompt('ColdStartPlacementBridgeTask');
     expect(p).toContain('known_subjects');
     expect(p).toContain('display_name');
     expect(p).toContain('aliases');
@@ -291,7 +353,7 @@ describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数
   });
 
   it('no longer references the retired known_subject_ids string-array key', () => {
-    expect(tasks.ColdStartPlacementBridgeTask.systemPrompt).not.toContain('known_subject_ids');
+    expect(getTaskSystemPrompt('ColdStartPlacementBridgeTask')).not.toContain('known_subject_ids');
   });
 });
 
@@ -310,7 +372,7 @@ describe('MindModelInductionTask registry entry', () => {
   });
 
   it('prompts for the A13 accountability fields (predicted_p + discriminating) and the 2nd-person framing', () => {
-    const p = tasks.MindModelInductionTask.systemPrompt;
+    const p = getTaskSystemPrompt('MindModelInductionTask');
     expect(p).toContain('predicted_p');
     expect(p).toContain('discriminating');
     expect(p).toContain('第二人称');
@@ -336,7 +398,7 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
   });
 
   it('charter pins the three hard boundaries (propose-only / no-settlement / scout ≤1)', () => {
-    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
     // 1. propose-only red line.
     expect(p).toContain('propose-only');
     // 2. never touches settlement (θ̂ / mastery / FSRS).
@@ -348,18 +410,18 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
   });
 
   it('charter advertises review ids on the detail reader', () => {
-    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
     expect(p).toContain('get_attempt_details（按 attempt/review 事件 id');
   });
 
   it('charter permits review events as primary evidence', () => {
-    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
     expect(p).toContain('attempt/review/probe/prediction_score');
     expect(p).not.toContain('evidence_refs 只能是 attempt/probe/prediction_score');
   });
 
   it('charter names the spawn + write tools the orchestrator injects', () => {
-    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    const p = getTaskSystemPrompt('ResearchMeetingDirectorTask');
     expect(p).toContain('Task');
     expect(p).toContain('evidence-scout');
     expect(p).toContain('propose_conjecture');

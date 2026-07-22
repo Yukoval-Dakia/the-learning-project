@@ -4,7 +4,7 @@ import {
   type CorrectionStatus,
   activeCorrectionStatus,
   getCorrectionStatuses,
-} from '@/server/events/corrections';
+} from '@/kernel/events';
 import { inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;

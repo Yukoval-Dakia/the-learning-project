@@ -7,7 +7,7 @@ import {
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
 } from '@/capabilities/agency/server/meeting/director';
-import type { WriteEventInput } from '@/server/events/queries';
+import type { WriteEventInput } from '@/kernel/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

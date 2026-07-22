@@ -597,7 +597,8 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 // every live hub that already existed BEFORE the migration ran. This describe
 // spins its own testcontainer and migrates ONLY through the frozen baseline
 // (0070) so it can seed a pre-0071 live hub, then applies the pending migration
-// (0071) and asserts the exact schema/triggers/indexes plus the live-hub backfill.
+// (0071) and the forward trigger-function fix (0072), then asserts the exact
+// schema/triggers/functions plus the live-hub backfill.
 describe('migration smoke — YUK-384 durable hub sync backfill', () => {
   // Frozen baseline: the last migration on main before 0071. `beforeAll` stops
   // here so the old-schema fixture is seeded before the durable-cursor DDL runs.
@@ -727,6 +728,55 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
       'hub_sync_artifact_dirty',
       'hub_sync_knowledge_dirty',
       'hub_sync_knowledge_edge_dirty',
+    ]);
+
+    const triggerFunctions = await oldSchemaSql<{ proname: string; definition: string }[]>`
+      select p.proname, pg_get_functiondef(p.oid) as definition
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname in ('fanout_hub_sync_dirty', 'mark_hub_sync_dirty')
+      order by p.proname
+    `;
+    expect(triggerFunctions.map((row) => row.proname)).toEqual([
+      'fanout_hub_sync_dirty',
+      'mark_hub_sync_dirty',
+    ]);
+    expect(triggerFunctions[0]?.definition).toContain('ORDER BY target_artifact_id');
+    expect(triggerFunctions[0]?.definition).toContain('id <> NEW.id');
+    expect(triggerFunctions[0]?.definition).not.toContain(
+      "ELSIF OLD.type = 'note_atomic' OR NEW.type = 'note_atomic'",
+    );
+
+    const liveHubIndexes = await oldSchemaSql<
+      {
+        index_name: string;
+        table_name: string;
+        definition: string;
+        predicate: string;
+      }[]
+    >`
+      select
+        index_class.relname as index_name,
+        table_class.relname as table_name,
+        pg_get_indexdef(pg_index.indexrelid) as definition,
+        pg_get_expr(pg_index.indpred, pg_index.indrelid) as predicate
+      from pg_index
+      join pg_class index_class on index_class.oid = pg_index.indexrelid
+      join pg_class table_class on table_class.oid = pg_index.indrelid
+      join pg_namespace table_namespace on table_namespace.oid = table_class.relnamespace
+      where table_namespace.nspname = 'public'
+        and index_class.relname = 'artifact_live_note_hub_idx'
+    `;
+
+    expect(liveHubIndexes).toEqual([
+      {
+        index_name: 'artifact_live_note_hub_idx',
+        table_name: 'artifact',
+        definition:
+          "CREATE INDEX artifact_live_note_hub_idx ON public.artifact USING btree (id) WHERE ((type = 'note_hub'::text) AND (archived_at IS NULL))",
+        predicate: "((type = 'note_hub'::text) AND (archived_at IS NULL))",
+      },
     ]);
   });
 });

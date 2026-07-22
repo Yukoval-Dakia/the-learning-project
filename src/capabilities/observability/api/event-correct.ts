@@ -4,8 +4,8 @@
 
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
+import { getEventById, writeEvent } from '@/kernel/events';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
-import { getEventById, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { EventCorrectionBodySchema, EventParamsSchema } from './event-contracts';
 
