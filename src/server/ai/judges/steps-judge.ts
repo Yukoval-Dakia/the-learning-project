@@ -3,6 +3,7 @@ import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
+import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
@@ -88,10 +89,10 @@ export async function defaultImageFetch(
 async function defaultRunTaskFn(
   kind: string,
   input: unknown,
-  ctx: unknown,
+  ctx: RunTaskCtx,
 ): Promise<{ text: string }> {
   const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
+  const result = await runTask(kind, input, ctx);
   return { text: result.text };
 }
 

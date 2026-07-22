@@ -235,8 +235,6 @@ export async function runEdgeProposeAndWrite(
     };
 
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {
-      db: params.db,
-      env: params.env,
       subjectProfile: params.subjectProfile,
     });
     const parsed = parseEdgeProposeOutput(result.text);

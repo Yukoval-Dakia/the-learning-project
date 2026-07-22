@@ -33,6 +33,7 @@ import { z } from 'zod';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { writeBlockMergeProposal } from '@/server/proposals/producers';
 
 // ---------- BlockAssemblyOutput schema (the model's structured output) ----------
@@ -104,9 +105,11 @@ export interface BlockAssemblyInput {
 
 export interface RunBlockAssemblyTaskParams {
   input: BlockAssemblyInput;
+  /** Database bound by the production runner; tests may inject runTaskFn instead. */
+  db?: Db | Tx;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: BlockAssemblyRunTaskFn;
-  /** Forwarded to runTask ctx (db / subjectProfile). */
+  /** Forwarded to runTask ctx (subjectProfile only). */
   ctx?: unknown;
 }
 
@@ -123,16 +126,6 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 /**
  * Runs the BlockAssemblyTask. Returns a validated `BlockAssemblyOutput`. Throws
  * `BlockAssemblyTaskError` on provider failure / unparseable output so the
@@ -141,7 +134,14 @@ async function defaultRunTaskFn(
 export async function runBlockAssemblyTask(
   params: RunBlockAssemblyTaskParams,
 ): Promise<BlockAssemblyOutputT> {
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  if (params.runTaskFn === undefined && params.db === undefined) {
+    throw new BlockAssemblyTaskError(
+      'runBlockAssemblyTask requires db when using the default runner',
+    );
+  }
+  // The session entry accepts Db | Tx for proposal writes. AI task audit writes require the
+  // root Db; production passes Db here, while transactional callers must inject runTaskFn.
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
   try {
     const result = await runTaskFn('BlockAssemblyTask', params.input, params.ctx ?? {});
@@ -326,6 +326,7 @@ export async function runBlockAssemblyForSession(
 
   const output = await runBlockAssemblyTask({
     input,
+    db,
     runTaskFn: params.runTaskFn,
     ctx: params.ctx,
   });

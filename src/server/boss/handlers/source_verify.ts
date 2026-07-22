@@ -37,7 +37,8 @@ import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextResult, aiAgentRef } from '@/server/ai/provenance';
+import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
@@ -58,20 +59,11 @@ export interface SourceVerifyJobData {
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
 // { text, task_run_id?, cost_usd? }. DB tests inject a vi.fn() returning a JSON
 // string; production resolves runTask lazily.
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>;
+export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<TaskTextResult> {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-}
 
 // Dedup threshold: a sourced question whose prompt n-gram overlap with an existing
 // ACTIVE pool question (sharing a knowledge point) is at/above this is treated as a
@@ -636,7 +628,7 @@ export function buildSourceVerifyHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<SourceVerifyJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const questionIds = job.data?.question_ids;

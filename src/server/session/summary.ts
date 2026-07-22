@@ -12,13 +12,14 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export interface RunSessionSummaryParams {
   db: Db;
@@ -171,7 +172,6 @@ export async function runSessionSummary(
   };
 
   const result = await runTaskFn('SessionSummaryTask', input, {
-    db,
     subjectProfile: resolveSubjectProfile(firstDomain),
   });
   // Trim + soft-cap to 240 chars (allows ~120 Chinese chars; prompt asks for

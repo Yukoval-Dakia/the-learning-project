@@ -55,6 +55,7 @@ import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { ApiError } from '@/server/http/errors';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {
@@ -486,21 +487,6 @@ async function defaultFetchImageBytes(
   throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string; task_run_id?: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  // FIX-4 (verification round) — forward task_run_id so the accept path can correlate
-  // the sourcing_image_extract ledger row with the REAL VisionExtractTask run. Dropping
-  // it here left visionTaskRunId null in production, silently degrading the correlation
-  // row to registry-default zeros (test seams return only { text } and exercise the
-  // fallback branch on purpose).
-  return { text: result.text, task_run_id: result.task_run_id };
-}
-
 /**
  * FIX-5 — concurrency claim. Inside one tx, advisory-lock the proposal id (auto-released
  * at tx boundary, no UNIQUE index → no migration; mirrors make-paper.ts:177), then under
@@ -695,7 +681,7 @@ export async function acceptImageCandidateProposal(
     const fetchImageBytes =
       deps.fetchImageBytesFn ?? ((sourceUrl) => defaultFetchImageBytes(sourceUrl, deps.lookupFn));
     const r2 = deps.r2 ?? getR2();
-    const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+    const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
 
     // ── 1+2. download + persist the asset ───────────────────────────────────────
@@ -741,10 +727,9 @@ export async function acceptImageCandidateProposal(
       imageBytes: bytes.buffer as ArrayBuffer,
       pageIndex: 0,
       runTaskFn: async (_kind, input, ctx) => {
-        // Merge the runner-supplied ctx (vision passes {}) with the real db ctx so the
-        // production runner can write its audit rows. A test seam ignores ctx entirely.
-        const realCtx =
-          ctx && typeof ctx === 'object' ? { ...(ctx as Record<string, unknown>), db } : { db };
+        // Preserve the vision-supplied call context; the production runner already has db bound.
+        // Test seams may ignore the context entirely.
+        const realCtx = ctx && typeof ctx === 'object' ? { ...ctx } : {};
         const out = await runTaskFn(IMAGE_EXTRACT_TASK_KIND, input, realCtx);
         // The production runTaskFn result carries task_run_id; the test seam returns just
         // { text }. Capture it when present so step 5's ledger row串联s the real run.

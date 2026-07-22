@@ -31,6 +31,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
@@ -63,16 +64,6 @@ export type RunTaskFn = TaskTextRunFn;
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 const VariantOutputSchema = z.object({
   prompt_md: z.string().min(1).max(2000),
@@ -245,7 +236,6 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   };
 
   const result = await runTaskFn('VariantGenTask', input, {
-    db,
     subjectProfile,
   });
   const parsed = parseVariantOutput(result.text);
@@ -352,7 +342,7 @@ export function buildVariantGenHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<VariantGenJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const attemptEventId = job.data?.attempt_event_id;

@@ -27,6 +27,7 @@ import type { Db } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
 import { knowledge } from '@/db/schema';
 import { embedText } from '@/server/ai/embed';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import {
@@ -162,18 +163,10 @@ export interface MatcherDeps {
     questionId: string;
     runTaskFn: RunTaskFn;
   }) => Promise<MatcherVerifyResult>;
-  /** 透传给 verify → 被转调 run 函数的 task runner seam. 默认 lazy-import runTask (与
-   *  quiz_verify/source_verify 的 defaultRunTaskFn 同款). db 测试注 vi.fn() (不应被调，因 verify 也被 fake). */
+  /** 透传给 verify 的 task runner seam；默认绑定当前 db，测试可注入 vi.fn()。 */
   runTaskFn?: RunTaskFn;
   /** Observe-only event seam. It must not enqueue supply work or alter selection. */
   emitSelectionMiss?: (db: Db, miss: SelectionMissV1) => Promise<unknown>;
-}
-
-// 默认 runTaskFn — lazy-import runTask (mirror quiz_verify/source_verify defaultRunTaskFn).
-// 仅在 caller 不注入 runTaskFn 且走真实 verifyAndPromote 时执行；db 测试 fake 掉 verify 不触发.
-async function defaultRunTaskFn(kind: string, input: unknown, ctx: unknown) {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
 }
 
 /**
@@ -567,7 +560,7 @@ export async function matcher(
   // §3.2 逐候选仲裁循环. rankPool 后 (kind 过滤 + tier 排序) 逐候选——active 直接用、draft lazy
   // verify-promote. 凑够 limit 停 (loop break = slice-after-sort)；耗尽仍不足 → 下面残余补差.
   const verify = deps.verify ?? verifyAndPromote;
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const used: MatchedQuestion[] = [];
   for (const r of ranked) {
     if (used.length >= demand.limit) break;

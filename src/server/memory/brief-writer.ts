@@ -18,6 +18,7 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { KNOWLEDGE_EXCERPT_MAX } from '@/server/ai/tools/budgets'; // I-3 — payload excerpt cap
 import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 
@@ -126,9 +127,7 @@ export async function runBriefWriter(params: {
   events: BriefEvent[];
   facts: BriefFact[];
   now: string; // 3A: real-clock ISO anchor for the 7d/3mo/long_term buckets
-  // db/env passthrough handed to runTaskFn; the third arg of TaskTextRunFn is
-  // `unknown`, so we keep this loose (no exported TaskRunCtx to lean on).
-  ctx?: { db?: Db; env?: unknown };
+  ctx?: import('@/server/ai/runner-fn').RunTaskCallCtx;
 }): Promise<BriefDraft> {
   const { runTaskFn, scopeKey, template, events, facts, now } = params;
 
@@ -185,8 +184,7 @@ export async function runBriefWriter(params: {
   };
 }
 
-// Prod factory: builds the GenerateBrief closure injected at handlers.ts:50.
-// Lazy-imports the real runTask (Pattern B) so tests never reach the SDK.
+// Production factory: binds the DB-backed runner once; injected test runners remain untouched.
 //
 // 3A note: GenerateBrief's signature (brief.ts:46-51) carries NO `now`, and
 // regenerateMemoryBrief computes its own `now` at brief.ts:252 but does not
@@ -196,7 +194,7 @@ export async function runBriefWriter(params: {
 // the host `now` through GenerateBrief, prefer that; for this station the
 // fresh-clock stamp is within milliseconds of brief.ts:252 and is sufficient.)
 export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn }): GenerateBrief {
-  const runTaskFn: TaskTextRunFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn: TaskTextRunFn = deps.runTaskFn ?? makeRunTaskFn(deps.db);
   return async ({ scopeKey, template, events, facts }) =>
     runBriefWriter({
       runTaskFn,
@@ -205,17 +203,5 @@ export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn })
       events,
       facts,
       now: new Date().toISOString(), // 3A — real-clock bucket anchor
-      ctx: { db: deps.db },
     });
-}
-
-// Pattern B (mirror knowledge_propose_nightly.ts:104-112): lazy-import the real
-// runner so tests that inject a stub never pull the AI SDK / ANTHROPIC_API_KEY.
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): ReturnType<TaskTextRunFn> {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
 }

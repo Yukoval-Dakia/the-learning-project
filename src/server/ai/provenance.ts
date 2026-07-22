@@ -1,3 +1,5 @@
+import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
+
 export interface TaskTextResult {
   text: string;
   task_run_id?: string;
@@ -13,7 +15,11 @@ export interface TaskTextResult {
   structured_output?: unknown;
 }
 
-export type TaskTextRunFn = (kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>;
+export type TaskTextRunFn = (
+  kind: string,
+  input: unknown,
+  ctx?: RunTaskCallCtx,
+) => Promise<TaskTextResult>;
 
 export function costUsdToMicroUsd(costUsd: number | undefined): number | null {
   return costUsd === undefined ? null : Math.round(costUsd * 1_000_000);

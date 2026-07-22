@@ -20,6 +20,7 @@ import {
 } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { and, inArray, isNull, or } from 'drizzle-orm';
 
 /**
@@ -84,16 +85,6 @@ function extractJsonObject(text: string): unknown {
   } catch (err) {
     throw new TaggingTaskError('TaggingTask output was not valid JSON', { cause: err });
   }
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: TaggingInputT,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
 }
 
 /** Loads active knowledge nodes (optionally scoped to one effective domain). */
@@ -178,10 +169,10 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
     grid,
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   let llmText: string;
   try {
-    const result = await runTaskFn('TaggingTask', input, params.ctx ?? { db: params.db });
+    const result = await runTaskFn('TaggingTask', input, params.ctx ?? {});
     llmText = result.text;
   } catch (err) {
     throw new TaggingTaskError('TaggingTask LLM call failed', { cause: err });

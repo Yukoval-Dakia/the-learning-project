@@ -20,6 +20,7 @@ import {
   type ColdStartBridgeOutputT,
 } from '@/core/schema/cold-start-bridge';
 import type { Db } from '@/db/client';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 /** Thrown when the bridge cannot produce a usable result (provider down, unparseable, or out-of-vocabulary subject). */
 export class ColdStartBridgeError extends Error {
@@ -68,16 +69,6 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: ColdStartBridgeInputT,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 /**
  * Runs the ColdStartPlacementBridgeTask. Returns a validated output whose
  * `subject_id` is GUARANTEED to be one of `knownSubjects` (an out-of-vocabulary
@@ -96,14 +87,10 @@ export async function runColdStartBridge(
     known_subjects: [...knownSubjects],
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   let llmText: string;
   try {
-    const result = await runTaskFn(
-      'ColdStartPlacementBridgeTask',
-      input,
-      params.ctx ?? { db: params.db },
-    );
+    const result = await runTaskFn('ColdStartPlacementBridgeTask', input, params.ctx ?? {});
     llmText = result.text;
   } catch (err) {
     throw new ColdStartBridgeError('ColdStartPlacementBridgeTask LLM call failed', { cause: err });

@@ -1,7 +1,11 @@
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
-import { type RunTaskFn, runLlmFallback } from './unit_dimension/llm-fallback';
+import {
+  type RunTaskFn,
+  type UnitDimensionRunTaskCtx,
+  runLlmFallback,
+} from './unit_dimension/llm-fallback';
 import { composeScore } from './unit_dimension/score';
 import type { LlmFallbackOutputT } from './unit_dimension/types';
 
@@ -38,7 +42,7 @@ const CAPABILITY_REF = { id: manifest.id, version: VERSION };
 
 interface RunDeps {
   runTaskFn?: RunTaskFn;
-  runTaskCtx?: unknown;
+  runTaskCtx?: UnitDimensionRunTaskCtx;
 }
 
 interface UnitDimensionMetadata {

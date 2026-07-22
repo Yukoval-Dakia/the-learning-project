@@ -38,6 +38,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -100,16 +101,6 @@ type DepsOverride = {
   // deterministically without seeding a full window.
   countRecentAutoApplies?: (input: { now: Date }) => Promise<number>;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 export interface ParsedNoteRefineOutput {
   patch: NotePatchT;
@@ -234,7 +225,6 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
 
   const subjectProfile = resolveSubjectProfile(kNode?.domain);
   const taskResult = await runTaskFn('NoteRefineTask', input, {
-    db,
     subjectProfile,
     skills: await resolveNoteSkill(subjectProfile.id),
   });
@@ -407,7 +397,7 @@ export function buildNoteRefineHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<NoteRefineJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const gate = deps.gate ?? defaultGate;
   const onPropose = deps.onPropose;
   const countRecentAutoAppliesOverride = deps.countRecentAutoApplies;

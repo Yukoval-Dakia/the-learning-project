@@ -21,6 +21,7 @@ import { artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import type { TaskTextResult } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -60,16 +61,6 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
   onPassed?: (artifactId: string) => Promise<void>;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 function parseVerificationOutput(text: string): NoteVerificationResultT {
   const start = text.indexOf('{');
@@ -334,7 +325,6 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
   try {
     const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteVerifyTask', input, {
-      db,
       subjectProfile,
       skills: await resolveNoteSkill(subjectProfile.id),
     });
@@ -431,7 +421,7 @@ export function buildNoteVerifyHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<NoteVerifyJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const { onPassed } = deps;
   return async (jobs) => {
     for (const job of jobs) {

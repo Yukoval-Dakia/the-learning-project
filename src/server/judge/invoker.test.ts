@@ -128,8 +128,9 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'SemanticJudgeTask',
       expect.objectContaining({ answer: { content: '覆盖 p1' } }),
-      expect.objectContaining({ db: mockDb, subjectProfile: yuwenProfile }),
+      expect.objectContaining({ subjectProfile: yuwenProfile }),
     );
+    expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
   });
 
   // YUK-212 + YUK-484(B) critic §6b — the C1 leak proof at the INVOKER layer.
@@ -255,6 +256,7 @@ describe('JudgeInvoker', () => {
   });
 
   it('dispatches steps route through the server runner', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'xiaomi');
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({
         extracted_steps: [{ idx: 0, content: 'x=1', verdict: 'correct', comment: 'ok' }],
@@ -295,8 +297,13 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'StepsJudgeTask',
       expect.objectContaining({ images: [] }),
-      expect.objectContaining({ db: mockDb, subjectProfile: mathProfile }),
+      expect.objectContaining({
+        subjectProfile: mathProfile,
+        override: expect.any(Object),
+        enableTransientRetry: true,
+      }),
     );
+    expect(runTaskFn.mock.calls[0]?.[2]).toHaveProperty('db', mockDb);
   });
 
   // YUK-573 (MF6) — imageFetchFn threading through the two vision dispatches.
@@ -448,11 +455,13 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'UnitDimensionFallback',
       expect.objectContaining({ text: expect.stringContaining('三十米每秒') }),
-      expect.objectContaining({ db: mockDb, subjectProfile: physicsProfile }),
+      expect.objectContaining({ subjectProfile: physicsProfile }),
     );
+    expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
   });
 
   it('dispatches multimodal_direct route through the server runner', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'xiaomi');
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({
         coarse_outcome: 'correct',
@@ -498,7 +507,12 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'MultimodalDirectJudgeTask',
       expect.objectContaining({ images: [] }),
-      expect.objectContaining({ db: mockDb, subjectProfile: physicsProfile }),
+      expect.objectContaining({
+        subjectProfile: physicsProfile,
+        override: expect.any(Object),
+        enableTransientRetry: true,
+      }),
     );
+    expect(runTaskFn.mock.calls[0]?.[2]).toHaveProperty('db', mockDb);
   });
 });

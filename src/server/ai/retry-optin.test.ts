@@ -43,6 +43,15 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('enableTransientRetry opt-in enforcement (YUK-576 R6)', () => {
+  it('has no Parameters<typeof runTask>[2] casts anywhere in src/', () => {
+    const castFiles = walk(SRC_ROOT)
+      .filter((file) => readFileSync(file, 'utf8').includes('Parameters<typeof runTask>[2]'))
+      .map((file) => relative(process.cwd(), file))
+      .sort();
+
+    expect(castFiles).toEqual([]);
+  });
+
   it('exactly the two vision-judge modules opt in — nowhere else in src/', () => {
     const optInFiles = walk(SRC_ROOT)
       .filter((file) => /enableTransientRetry:\s*true/.test(readFileSync(file, 'utf8')))

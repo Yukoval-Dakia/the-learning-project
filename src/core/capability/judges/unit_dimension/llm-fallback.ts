@@ -1,9 +1,14 @@
+import type { SubjectProfile } from '@/subjects/profile-schema';
 import { LlmFallbackOutput, type LlmFallbackOutputT } from './types';
+
+export interface UnitDimensionRunTaskCtx {
+  subjectProfile?: SubjectProfile;
+}
 
 export type RunTaskFn = (
   kind: string,
   input: { text: string },
-  ctx: unknown,
+  ctx?: UnitDimensionRunTaskCtx,
 ) => Promise<{ text: string }>;
 
 export interface LlmFallbackParams {
@@ -11,7 +16,7 @@ export interface LlmFallbackParams {
   reference: { value: number; unit: string };
   question_context_md?: string;
   runTaskFn?: RunTaskFn;
-  runTaskCtx?: unknown;
+  runTaskCtx?: UnitDimensionRunTaskCtx;
 }
 
 const PROMPT_TEMPLATE = `你是物理单位与量纲分析助手。给定学生答案 + 参考答案，输出 JSON：

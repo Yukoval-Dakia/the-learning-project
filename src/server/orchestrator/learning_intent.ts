@@ -307,7 +307,6 @@ export async function planLearningIntent(
   };
 
   const result = await runTaskFn('LearningIntentOutlineTask', input, {
-    db,
     subjectProfile: resolveSubjectProfile(node?.domain),
   });
   const outline = parseLearningIntentOutline(result.text);

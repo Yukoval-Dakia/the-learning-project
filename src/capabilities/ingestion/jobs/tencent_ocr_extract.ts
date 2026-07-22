@@ -417,7 +417,8 @@ async function processOneOcrJob(
         tencentHintMd: ocrHintMd,
         pageCount: assetIds.length,
         preFigures: preFiguresMeta.length > 0 ? preFiguresMeta : undefined,
-        ctx: { db: deps.db, r2: deps.r2 },
+        db: deps.db,
+        ctx: { r2: deps.r2 },
       });
     } catch (err) {
       if (!(err instanceof StructureTaskError)) throw err;

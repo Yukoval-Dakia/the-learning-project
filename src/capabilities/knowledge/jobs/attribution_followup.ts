@@ -26,6 +26,7 @@ import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface AttributionFollowupJobData {
@@ -48,16 +49,6 @@ async function defaultEnqueueVariantGen(attemptEventId: string): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
   await boss.send('variant_gen', { attempt_event_id: attemptEventId });
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
 }
 
 export interface RunAttributionFollowupParams {
@@ -181,7 +172,7 @@ export function buildAttributionFollowupHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<AttributionFollowupJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const enqueueVariantGen = deps.enqueueVariantGen ?? defaultEnqueueVariantGen;
   return async (jobs) => {
     for (const job of jobs) {

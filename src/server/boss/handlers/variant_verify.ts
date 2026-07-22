@@ -31,6 +31,7 @@ import {
   aiAgentRef,
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById } from '@/server/events/queries';
 // YUK-471 W2 — mistake_variant verify (E3) write-through. verify already writes the
@@ -78,16 +79,6 @@ export interface RunVariantVerifyResult {
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 function parseVariantVerifyOutput(text: string): VariantVerificationResultT {
   const start = text.indexOf('{');
@@ -277,7 +268,6 @@ export async function runVariantVerify(
   // falls back to the char-scan path when structured_output is absent, so this is
   // a zero-loss opt-in. The Zod second-pass still enforces business constraints.
   const result = await runTaskFn('VariantVerifyTask', input, {
-    db,
     subjectProfile,
     outputFormat: zodToJsonSchemaOutputFormat(VariantVerificationResult),
   });
@@ -411,7 +401,7 @@ export function buildVariantVerifyHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<VariantVerifyJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const mistakeVariantId = job.data?.mistake_variant_id;

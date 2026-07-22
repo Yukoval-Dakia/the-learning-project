@@ -10,17 +10,9 @@
 // internal-token middleware.
 
 import { db } from '@/db/client';
-import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
-
-// Default run seam — lazy-import runTask (mirror quiz_verify/source_verify/matcher
-// defaultRunTaskFn). The verify handler funnels the actual AI call through it; the
-// owner enable path is the only route that may trigger a (paid) verify.
-async function defaultRunTaskFn(kind: string, input: unknown, ctx: unknown) {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-}
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -32,7 +24,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     const result = await verifyAndPromote({
       db,
       questionId: id,
-      runTaskFn: defaultRunTaskFn as RunTaskFn,
+      runTaskFn: makeRunTaskFn(db),
       actor: { kind: 'user', ref: 'self' },
     });
 

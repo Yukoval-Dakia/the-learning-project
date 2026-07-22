@@ -598,7 +598,10 @@ describe('Wave 3 proposal/action DomainTools', () => {
       cost_usd: 0,
     });
 
-    const written = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
+    const toolCtx = ctx();
+    const written = await attributeMistakeTool.execute(toolCtx, {
+      attempt_event_id: 'att_failure',
+    });
     expect(written.status).toBe('written');
     expect(written.cause?.primary_category).toBe('concept');
     const [taskKind, taskInput, taskCtx] = mockRunner.runTask.mock.calls[0];
@@ -607,7 +610,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
     // still flow through (candidates is added on top, so toMatchObject passes).
     expect(taskKind).toBe('AttributionRerankTask');
     expect(taskInput).toMatchObject({ wrong_answer_md: '代词' });
-    expect(taskCtx).toHaveProperty('db');
+    expect(taskCtx).toMatchObject({ db: toolCtx.db, subjectProfile: expect.any(Object) });
+    expect(taskCtx).not.toHaveProperty('enableTransientRetry');
 
     const skipped = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
     expect(skipped.status).toBe('skipped:existing_judge');

@@ -8,6 +8,7 @@
 import { db } from '@/db/client';
 import type { Db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import type { RunTaskFn } from '@/server/orchestrator/learning_intent';
 import { LearningIntentError, planLearningIntent } from '@/server/orchestrator/learning_intent';
@@ -17,15 +18,6 @@ import { CreateLearningIntentBodySchema, LearningIntentProposalResponseSchema } 
 export interface CreateLearningIntentHandlerDeps {
   database?: Db;
   runTaskFn?: RunTaskFn;
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
 }
 
 export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandlerDeps = {}) {
@@ -75,7 +67,7 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
         const proposal = await planLearningIntent({
           db: database,
           topic: parsed.data.topic,
-          runTaskFn: deps.runTaskFn ?? defaultRunTaskFn,
+          runTaskFn: deps.runTaskFn ?? makeRunTaskFn(database),
         });
         return Response.json(proposal);
       } catch (err) {

@@ -14,6 +14,7 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   type GenerateReferenceSolutionResult,
   type SolutionGenerateRunTaskFn,
@@ -119,16 +120,6 @@ export interface PlanSolveHintResult {
   text_md: string;
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 // AF S4 / YUK-203 U6 (OQ6, Cross-统合 §4.3) — the pure, session-FREE seed body
 // extracted from planSolveHint (was solve.ts:189-206) so the Copilot solve-skill
 // reuses the SAME TeachingTurnTask input rather than the tutor-session-bound
@@ -200,7 +191,7 @@ export function parseHintTurn(text: string): PlanSolveHintResult {
 
 export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSolveHintResult> {
   const { db, sessionId, hintIndex } = params;
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(db);
 
   const { questionId, status } = await Tutor.getTutorQuestionId(db, sessionId);
   if (!questionId) {
@@ -232,7 +223,7 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
   const input = buildSolveHintInput(q, hintIndex);
-  const { text } = await runTaskFn('TeachingTurnTask', input, { db, subjectProfile });
+  const { text } = await runTaskFn('TeachingTurnTask', input, { subjectProfile });
   return parseHintTurn(text);
 }
 

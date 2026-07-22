@@ -32,6 +32,7 @@ import type { SourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 
 // ---------- check identifiers ----------
 //
@@ -100,11 +101,7 @@ export function checksForTier(tier: SourceTier): readonly VerifyCheck[] {
 // the runner, plus — EFF-1 (YUK-554 review) — OPTIONAL task_run_id / cost_usd when the
 // runner reports them (production TaskTextResult does; { text }-only test mocks still
 // satisfy the type), so solve-check cost is answerable from the verify event.
-export type SolveCheckRunTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-) => Promise<{ text: string; task_run_id?: string; cost_usd?: number }>;
+export type SolveCheckRunTaskFn = TaskTextRunFn;
 
 // The minimal subject-profile shape solve-check threads to the solver / judge. We
 // keep this loose (not the full SubjectProfile import) so the check stays a leaf —
@@ -684,11 +681,7 @@ export async function runSolveCheck(
 // Loose run seam (mirrors SolveCheckRunTaskFn): the check consumes { text } from the runner,
 // plus OPTIONAL task_run_id / cost_usd when the runner reports them (production TaskTextResult
 // does; { text }-only test mocks still satisfy the type).
-export type TeachingQualityRunTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-) => Promise<{ text: string; task_run_id?: string; cost_usd?: number }>;
+export type TeachingQualityRunTaskFn = TaskTextRunFn;
 
 // The minimal read-only question shape the check needs — pure 题面数据, zero runtime data.
 export interface TeachingQualityQuestion {
