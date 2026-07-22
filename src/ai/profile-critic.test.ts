@@ -52,8 +52,8 @@ describe('ProfileCriticTask prompt (subject-neutral pass-through, Q3)', () => {
     const a = getTaskSystemPrompt('ProfileCriticTask', yuwenProfile);
     const b = getTaskSystemPrompt('ProfileCriticTask', physicsProfile);
     expect(a).toBe(b);
-    // The pass-through returns the registry-inline systemPrompt verbatim (the SoT).
-    expect(a).toBe(tasks.ProfileCriticTask.systemPrompt);
+    // The inline registry prompt is profile-independent.
+    expect(a).toBe(getTaskSystemPrompt('ProfileCriticTask'));
   });
 });
 

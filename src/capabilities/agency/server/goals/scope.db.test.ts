@@ -4,7 +4,7 @@
 // Covers: parser, runGoalScopeAndWrite proposal write + inbox surfacing, and the
 // accept round-trip that materializes the `goal` row (evidence chain).
 
-import { tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { event, goal, knowledge } from '@/db/schema';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
@@ -16,8 +16,9 @@ import { parseGoalScopeOutput, runGoalScopeAndWrite } from './scope';
 
 describe('GoalScopeTask system prompt', () => {
   it('talks goal-scope vocabulary and forbids inventing nodes', () => {
-    const p = tasks.GoalScopeTask.systemPrompt;
-    expect(p).toContain('知识网格');
+    const p = getTaskSystemPrompt('GoalScopeTask');
+    expect(p).toContain('scope_knowledge_ids');
+    expect(p).toContain('禁止发明节点');
   });
 });
 

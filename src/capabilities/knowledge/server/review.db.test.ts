@@ -14,6 +14,7 @@
 //      streamTask wrapper is built with the right MCP server.
 
 import { tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
 import {
@@ -76,7 +77,7 @@ import { runWriteProposal, streamReviewTask } from './review';
 
 describe('KnowledgeReviewTask system prompt', () => {
   it('speaks attempt-event vocabulary + lists propose_knowledge_edge', () => {
-    const prompt = tasks.KnowledgeReviewTask.systemPrompt;
+    const prompt = getTaskSystemPrompt('KnowledgeReviewTask');
     expect(prompt).toContain('attempt event');
     expect(prompt).toContain('propose_knowledge_edge');
     expect(prompt).toContain('relation_type');
