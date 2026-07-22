@@ -142,6 +142,47 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(writeCostLedger).not.toHaveBeenCalled();
   });
 
+  it('records success+is_error as a graceful partial failure without cost ledger', async () => {
+    mockSdk.messages = [
+      assistant('partial chunk'),
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        api_error_status: 429,
+        result: 'rate limited',
+        stop_reason: 'end_turn',
+        total_cost_usd: 0,
+        usage: { input_tokens: 1, output_tokens: 0 },
+      },
+    ];
+
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { q: 'x' },
+      { db: fakeDb },
+      () => {},
+    );
+
+    expect(result).toMatchObject({
+      text: 'partial chunk',
+      finishReason: 'error',
+      partial: true,
+      error: expect.stringContaining('api_error_result http=429'),
+    });
+
+    const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
+    expect(writeAiTaskRunFinished).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        status: 'failure',
+        finish_reason: 'error',
+        error_message: expect.stringContaining('api_error_result http=429'),
+      }),
+    );
+    expect(writeCostLedger).not.toHaveBeenCalled();
+  });
+
   it('degrades gracefully: resolves partial text when the SDK throws mid-stream', async () => {
     // Yield one delta, then throw before the result message.
     mockSdk.messages = [assistant('partial chunk'), resultMsg];
