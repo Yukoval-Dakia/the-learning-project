@@ -458,6 +458,64 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    [
+      'inline object callback registrar',
+      "import { db } from '@/db/client'; let client = cache; register({ run: () => client.insert(knowledge).values({}) }); client = db;",
+    ],
+    [
+      'inline array callback registrar',
+      "import { db } from '@/db/client'; let client = cache; register([() => client.update(knowledge).set({})]); client = db;",
+    ],
+    [
+      'returned closure from exported factory',
+      "import { db } from '@/db/client'; let client = cache; export function factory() { return () => client.delete(knowledge_edge).where(ok); } client = db;",
+    ],
+    [
+      'TypeScript export assignment',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.insert(knowledge).values({}); client = db; export = writer;",
+    ],
+    [
+      'CommonJS module exports',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.update(knowledge).set({}); client = db; module.exports = writer;",
+    ],
+    [
+      'CommonJS named exports',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.delete(knowledge_edge).where(ok); client = db; exports.writer = writer;",
+    ],
+  ])('YUK-746 remaining escapes: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/remaining-escape-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'static computed property reassignment',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; writer['run'] = safe; client = db; writer.run();",
+    ],
+    [
+      'assignment destructuring invalidates callback',
+      "import { db } from '@/db/client'; let writer = (tx) => tx.update(knowledge).set({}); ({ writer } = safe); db.transaction(writer);",
+    ],
+    [
+      'array assignment destructuring invalidates callback',
+      "import { db } from '@/db/client'; let writer = (tx) => tx.delete(knowledge_edge).where(ok); [writer] = safe; db.transaction(writer);",
+    ],
+    [
+      'update expression invalidates callback',
+      "import { db } from '@/db/client'; let writer = (tx) => tx.insert(knowledge).values({}); writer++; db.transaction(writer);",
+    ],
+    [
+      'nonexported factory returned closure stays precise',
+      "import { db } from '@/db/client'; let client = cache; function factory() { return () => client.update(knowledge).set({}); } factory(); client = db;",
+    ],
+  ])('YUK-746 remaining invalidation: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/remaining-invalidation-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
     ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
     [
       'fake line comment import',

@@ -289,13 +289,6 @@ export async function auditHubSyncWriters(input: {
     const drizzleWrites = drizzleAudit.writes;
     const lines = sourceText.split('\n');
     const findingKeys = new Set<string>();
-    const occurrenceForWrite = (index: number, table: string): string => {
-      const write = drizzleWrites.find(
-        (candidate) =>
-          candidate.table === table && candidate.index <= index && index < candidate.end,
-      );
-      return write ? `${write.index}:${write.end}:${write.table}` : `${index}:${table}`;
-    };
     const addFinding = (rule: HubSyncAuditRule, index: number, occurrence = String(index)) => {
       const line = code.slice(0, index).split('\n').length;
       const key = `${rule}:${rel}:${occurrence}`;

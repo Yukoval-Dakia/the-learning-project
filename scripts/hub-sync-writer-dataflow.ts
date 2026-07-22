@@ -31,6 +31,7 @@ type Scope = {
   trustedTypeNamespaces: Set<string>;
   shadowedTypes: Set<string>;
   functionScope: Scope;
+  functionNode?: AstNode;
 };
 type State = ReadonlyMap<Binding, Trust>;
 type CompletionMap = Map<string | null, State>;
@@ -248,6 +249,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const functionBindings = new Map<Binding, AstNode>();
   const objectFunctions = new Map<Binding, Map<string, AstNode>>();
   const escapedFunctions = new Set<AstNode>();
+  const returnedFunctions = new WeakMap<AstNode, Set<AstNode>>();
   const staticStrings = new Map<Binding, string>();
   const staticSqlTexts = new Map<Binding, string>();
   const staticStringWriteKeys = new Map<Binding, Set<string>>();
@@ -280,7 +282,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       shadowedTypes: new Set(),
       functionScope: parent.functionScope,
     };
-    if (isFunction) scope.functionScope = scope;
+    if (isFunction) {
+      scope.functionScope = scope;
+      scope.functionNode = owner;
+    }
     scopeCache.set(owner, scope);
     return scope;
   };
@@ -304,15 +309,26 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const resolveCallable = (value: unknown, scope: Scope): AstNode | undefined => {
     const candidate = unwrapExpression(value);
     if (!candidate) return undefined;
-    if (['FunctionExpression', 'ArrowFunctionExpression'].includes(candidate.type))
+    if (
+      ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
+        candidate.type,
+      )
+    )
       return candidate;
     if (candidate.type === 'Identifier') {
       const binding = resolveBinding(candidate.name as string, scope);
       return binding ? functionBindings.get(binding) : undefined;
     }
-    if (candidate.type === 'MemberExpression' && !candidate.computed) {
+    if (
+      candidate.type === 'MemberExpression' &&
+      (candidate.computed
+        ? staticComputedPropertyName(candidate.property)
+        : identifierName(candidate.property))
+    ) {
       const objectName = identifierName(candidate.object);
-      const propertyName = identifierName(candidate.property);
+      const propertyName = candidate.computed
+        ? staticComputedPropertyName(candidate.property)
+        : identifierName(candidate.property);
       const binding = objectName ? resolveBinding(objectName, scope) : undefined;
       return binding && propertyName ? objectFunctions.get(binding)?.get(propertyName) : undefined;
     }
@@ -321,12 +337,60 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
 
   const escapeValue = (value: unknown, scope: Scope): void => {
     const callable = resolveCallable(value, scope);
-    if (callable) escapedFunctions.add(callable);
+    if (callable) {
+      escapedFunctions.add(callable);
+      for (const returned of returnedFunctions.get(callable) ?? []) escapedFunctions.add(returned);
+    }
     const candidate = unwrapExpression(value);
-    if (candidate?.type !== 'Identifier') return;
+    if (!candidate) return;
+    if (candidate.type === 'ObjectExpression') {
+      for (const property of childNodes(candidate.properties))
+        escapeValue(property.value ?? property.argument, scope);
+      return;
+    }
+    if (candidate.type === 'ArrayExpression') {
+      for (const element of childNodes(candidate.elements))
+        escapeValue(element.type === 'SpreadElement' ? element.argument : element, scope);
+      return;
+    }
+    if (candidate.type !== 'Identifier') return;
     const binding = resolveBinding(candidate.name as string, scope);
     for (const propertyFunction of binding ? (objectFunctions.get(binding)?.values() ?? []) : [])
       escapedFunctions.add(propertyFunction);
+  };
+
+  const invalidateCallable = (targetValue: unknown, scope: Scope): void => {
+    const target = unwrapPattern(targetValue) ?? unwrapExpression(targetValue);
+    if (!target) return;
+    if (target.type === 'Identifier') {
+      const binding = resolveBinding(target.name as string, scope);
+      invalidateStaticString(binding);
+      if (binding) {
+        functionBindings.delete(binding);
+        objectFunctions.delete(binding);
+      }
+      return;
+    }
+    if (target.type === 'ObjectPattern') {
+      for (const property of childNodes(target.properties))
+        invalidateCallable(
+          property.type === 'RestElement' ? property.argument : property.value,
+          scope,
+        );
+      return;
+    }
+    if (target.type === 'ArrayPattern') {
+      for (const element of childNodes(target.elements)) invalidateCallable(element, scope);
+      return;
+    }
+    if (target.type === 'MemberExpression') {
+      const objectName = identifierName(target.object);
+      const propertyName = target.computed
+        ? staticComputedPropertyName(target.property)
+        : identifierName(target.property);
+      const binding = objectName ? resolveBinding(objectName, scope) : undefined;
+      if (binding && propertyName) objectFunctions.get(binding)?.delete(propertyName);
+    }
   };
 
   const declarePattern = (pattern: unknown, scope: Scope): void => {
@@ -1105,7 +1169,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     let argumentsResult: EvalResult = calleeResult;
     const invocationArguments: InvocationArgument[] = [];
     const args = childNodes(candidate.arguments);
-    for (const [index, argument] of args.entries()) {
+    for (const argument of args) {
       argumentsResult = sequenceEval(argumentsResult, (next) => {
         const callback = unwrapExpression(argument);
         const callbackName = identifierName(callback);
@@ -1169,11 +1233,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const target = unwrapExpression(left) ?? left;
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
-        invalidateStaticString(binding);
-        if (binding) {
-          functionBindings.delete(binding);
-          objectFunctions.delete(binding);
-        }
+        invalidateCallable(target, ctx.scope);
         return {
           normal: {
             state: store(binding, value, input),
@@ -1181,14 +1241,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           },
         };
       }
-      if (target.type === 'MemberExpression' && !target.computed) {
-        const objectName = identifierName(target.object);
-        const propertyName = identifierName(target.property);
-        const binding = objectName ? resolveBinding(objectName, ctx.scope) : undefined;
-        if (binding && propertyName) objectFunctions.get(binding)?.delete(propertyName);
-      }
-      if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern')
+      if (target.type === 'MemberExpression') invalidateCallable(target, ctx.scope);
+      if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
+        invalidateCallable(target, ctx.scope);
         return evalPattern(target, value, ctx, input, undefined, undefined, elements);
+      }
       return { normal: { state: input, value } };
     };
     if (operator === '=') {
@@ -1355,13 +1412,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const reference = evalReference(argument, ctx, state);
         if (!reference.normal) return reference;
         const target = unwrapExpression(argument) ?? argument;
+        invalidateCallable(target, ctx.scope);
         const next =
           target.type === 'Identifier'
-            ? (() => {
-                const binding = resolveBinding(target.name as string, ctx.scope);
-                invalidateStaticString(binding);
-                return store(binding, U, reference.normal.state);
-              })()
+            ? store(resolveBinding(target.name as string, ctx.scope), U, reference.normal.state)
             : reference.normal.state;
         return { normal: { state: next, value: U }, throws: reference.throws };
       }
@@ -2124,9 +2178,33 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       case 'StaticBlock':
       case 'TSModuleBlock':
         return execBlock(candidate, ctx.scope, state);
-      case 'ExpressionStatement':
+      case 'ExpressionStatement': {
+        const expression = node(candidate.expression);
+        const assignment = expression?.type === 'AssignmentExpression' ? expression : undefined;
+        const left = assignment ? unwrapExpression(assignment.left) : undefined;
+        const objectName =
+          left?.type === 'MemberExpression' ? identifierName(left.object) : undefined;
+        const propertyName =
+          left?.type === 'MemberExpression'
+            ? left.computed
+              ? staticComputedPropertyName(left.property)
+              : identifierName(left.property)
+            : undefined;
+        if (
+          assignment &&
+          ((objectName === 'module' && propertyName === 'exports') || objectName === 'exports')
+        )
+          escapeValue(assignment.right, ctx.scope);
+        const evaluated = expression
+          ? evalExpr(expression, ctx, state)
+          : { normal: { state, value: U } };
+        const flow = emptyFlow(evaluated.normal?.state);
+        flow.throws = evaluated.throws;
+        return flow;
+      }
       case 'TSExportAssignment': {
         const expression = node(candidate.expression);
+        if (expression) escapeValue(expression, ctx.scope);
         const evaluated = expression
           ? evalExpr(expression, ctx, state)
           : { normal: { state, value: U } };
@@ -2200,6 +2278,17 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       case 'ReturnStatement':
       case 'ThrowStatement': {
         const argument = node(candidate.argument);
+        if (candidate.type === 'ReturnStatement') {
+          const owner = ctx.scope.functionScope.functionNode;
+          const returned = resolveCallable(argument, ctx.scope);
+          if (owner && returned) {
+            const values = returnedFunctions.get(owner) ?? new Set<AstNode>();
+            values.add(returned);
+            returnedFunctions.set(owner, values);
+            if (escapedFunctions.has(owner)) escapedFunctions.add(returned);
+          }
+          if (owner && escapedFunctions.has(owner)) escapeValue(argument, ctx.scope);
+        }
         const evaluated = argument
           ? evalExpr(argument, ctx, state)
           : { normal: { state, value: U } };
@@ -2291,6 +2380,15 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           escapeValue(declaration, ctx.scope);
           const evaluated = evalExpr(declaration, ctx, state);
           return emptyFlow(evaluated.normal?.state);
+        }
+        if (
+          ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
+            declaration.type,
+          )
+        ) {
+          const flow = execStmt(declaration, ctx, state);
+          escapeValue(declaration, ctx.scope);
+          return flow;
         }
         return execStmt(declaration, ctx, state);
       }
