@@ -730,6 +730,12 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       });
     const db = testDb();
     const transactionSpy = vi.spyOn(db, 'transaction');
+    const queries: Array<{ query: string; parameters: unknown[] }> = [];
+    const client = db.$client;
+    const previousDebug = client.options.debug;
+    client.options.debug = (_connection, query, parameters) => {
+      queries.push({ query, parameters });
+    };
 
     try {
       const decision = await evaluateNudgeTrigger(
@@ -741,12 +747,23 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
 
       expect(decision).toEqual({ fire: false, reason: 'already_nudged' });
       expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(queries.filter(({ parameters }) => parameters.length > 0)).toHaveLength(2);
+      expect(
+        queries.some(({ parameters }) =>
+          parameters.some((parameter) =>
+            ['review', 'judge', 'correct', 'experimental:appeal_request'].includes(
+              String(parameter),
+            ),
+          ),
+        ),
+      ).toBe(false);
     } finally {
+      client.options.debug = previousDebug;
       transactionSpy.mockRestore();
     }
   });
 
-  it('chunks correction and appeal reads when a page has many judges per attempt', async () => {
+  it('caps parameters across history, judge, correction, and appeal reads', async () => {
     const triggerId = await seedWrongTail('kc_a', 3);
     const judges = Array.from({ length: 201 }, (_, i) => ({
       id: `judge_many_${i.toString().padStart(3, '0')}`,
@@ -775,15 +792,55 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       client.options.debug = previousDebug;
     }
 
-    const relatedReads = queries.filter(
-      ({ parameters }) =>
-        parameters.includes('experimental:appeal_request') || parameters.includes('correct'),
-    );
-    expect(relatedReads).toHaveLength(6);
-    expect(relatedReads.every(({ parameters }) => parameters.length <= 102)).toBe(true);
+    expect(queries.every(({ parameters }) => parameters.length <= 104)).toBe(true);
   });
 
-  it('keeps paging through more than 100 rows sharing one millisecond', async () => {
+  it('chunks cooldown and dismiss-fuse reads across many candidate KCs', async () => {
+    const candidateIds = Array.from(
+      { length: 201 },
+      (_, i) => `kc_many_${i.toString().padStart(3, '0')}`,
+    );
+    await seedAttempts(
+      Array.from({ length: 3 }, (_, i) => ({
+        id: `attempt_many_kcs_${i}`,
+        outcome: 'failure' as const,
+        knowledgeIds: candidateIds,
+        at: new Date(NOW.getTime() - (3 - i) * 1_000),
+      })),
+    );
+
+    const queries: Array<{ query: string; parameters: unknown[] }> = [];
+    const client = testDb().$client;
+    const previousDebug = client.options.debug;
+    client.options.debug = (_connection, query, parameters) => {
+      queries.push({ query, parameters });
+    };
+    try {
+      const decision = await evaluate('attempt_many_kcs_2');
+      expect(decision.fire).toBe(true);
+    } finally {
+      client.options.debug = previousDebug;
+    }
+
+    const candidateIdSet = new Set(candidateIds);
+    const cooldownReads = queries.filter(
+      ({ parameters }) =>
+        parameters.includes(NUDGE_ACTION) &&
+        parameters.some((parameter) => candidateIdSet.has(String(parameter))),
+    );
+    const dismissReads = queries.filter(
+      ({ parameters }) =>
+        parameters.includes(NUDGE_DISMISSED_ACTION) &&
+        parameters.some((parameter) => candidateIdSet.has(String(parameter))),
+    );
+    expect(cooldownReads).toHaveLength(3);
+    expect(dismissReads).toHaveLength(3);
+    expect(
+      [...cooldownReads, ...dismissReads].every(({ parameters }) => parameters.length <= 104),
+    ).toBe(true);
+  });
+
+  it('keeps paging through more than 100 rows sharing one JavaScript millisecond', async () => {
     const sharedMillisecond = new Date(NOW.getTime() - 10_000);
     const rows = Array.from({ length: 101 }, (_, i) => ({
       id: `unsupported_same_ms_${i.toString().padStart(3, '0')}`,
@@ -800,6 +857,19 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       unsupported: false,
     });
     await seedAttempts(rows);
+    await testDb().$client.unsafe(`
+      UPDATE event
+      SET created_at = CASE id
+        ${rows
+          .map(({ id }, i) => {
+            const micros = (i === rows.length - 1 ? 1 : i + 2).toString().padStart(6, '0');
+            return `WHEN '${id}' THEN TIMESTAMPTZ '2026-07-20 03:59:50.${micros}+00'`;
+          })
+          .join('\n        ')}
+        ELSE created_at
+      END
+      WHERE id IN (${rows.map(({ id }) => `'${id}'`).join(', ')})
+    `);
     const triggerId = await seedWrongTail('kc_a', 2);
 
     const decision = await evaluate(triggerId);

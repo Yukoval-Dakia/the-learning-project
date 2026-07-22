@@ -282,18 +282,23 @@ async function evaluateWrongStreakInSnapshot(
 
   const shadow = !config.enabled;
   const candidateIds = thresholdCandidates.map((candidate) => candidate.kcId);
-  const cooldownRows = await db
-    .select({ subjectId: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, NUDGE_ACTION),
-        eq(event.subject_kind, 'knowledge'),
-        inArray(event.subject_id, candidateIds),
-        sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
-        sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
-      ),
-    );
+  const cooldownRows: Array<{ subjectId: string }> = [];
+  for (let offset = 0; offset < candidateIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+    const candidateIdChunk = candidateIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+    const chunkRows = await db
+      .select({ subjectId: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, NUDGE_ACTION),
+          eq(event.subject_kind, 'knowledge'),
+          inArray(event.subject_id, candidateIdChunk),
+          sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
+          sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+        ),
+      );
+    cooldownRows.push(...chunkRows);
+  }
   const blockedKcIds = new Set(cooldownRows.map((row) => row.subjectId));
 
   if (!shadow) {
@@ -311,20 +316,23 @@ async function evaluateWrongStreakInSnapshot(
 
     const dismissed = alias(event, 'streak_dismissed');
     const nudge = alias(event, 'streak_nudge');
-    const fusedRows = await db
-      .select({ subjectId: nudge.subject_id })
-      .from(dismissed)
-      .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
-      .where(
-        and(
-          eq(dismissed.action, NUDGE_DISMISSED_ACTION),
-          eq(nudge.subject_kind, 'knowledge'),
-          inArray(nudge.subject_id, candidateIds),
-          sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
-          sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
-        ),
-      );
-    for (const row of fusedRows) blockedKcIds.add(row.subjectId);
+    for (let offset = 0; offset < candidateIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+      const candidateIdChunk = candidateIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+      const fusedRows = await db
+        .select({ subjectId: nudge.subject_id })
+        .from(dismissed)
+        .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
+        .where(
+          and(
+            eq(dismissed.action, NUDGE_DISMISSED_ACTION),
+            eq(nudge.subject_kind, 'knowledge'),
+            inArray(nudge.subject_id, candidateIdChunk),
+            sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
+            sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+          ),
+        );
+      for (const row of fusedRows) blockedKcIds.add(row.subjectId);
+    }
   }
 
   const winner = thresholdCandidates.find((candidate) => !blockedKcIds.has(candidate.kcId));
