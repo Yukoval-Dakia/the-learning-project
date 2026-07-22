@@ -10,11 +10,7 @@ import {
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import {
-  type CorrectionStatus,
-  activeCorrectionStatus,
-  getCorrectionStatuses,
-} from '@/kernel/events';
+import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
 import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;

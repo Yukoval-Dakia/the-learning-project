@@ -558,6 +558,15 @@ describe('getEvents', () => {
     expect(results).toHaveLength(2);
   });
 
+  it('clamps nonpositive limits to one event', async () => {
+    const db = testDb();
+    await seedAttemptEvent({ question_id: 'q1' });
+    await seedAttemptEvent({ question_id: 'q2' });
+
+    await expect(getEvents(db, { limit: 0 })).resolves.toHaveLength(1);
+    await expect(getEvents(db, { limit: -1 })).resolves.toHaveLength(1);
+  });
+
   it('combines filters with AND', async () => {
     const db = testDb();
     const a1 = await seedAttemptEvent({

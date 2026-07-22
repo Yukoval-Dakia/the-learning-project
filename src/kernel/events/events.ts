@@ -101,7 +101,7 @@ export async function getEvents(
   db: DbLike,
   filter: GetEventsFilter = {},
 ): Promise<EnvelopedEvent[]> {
-  const limit = Math.min(filter.limit ?? DEFAULT_EVENTS_LIMIT, MAX_EVENTS_LIMIT);
+  const limit = Math.min(Math.max(filter.limit ?? DEFAULT_EVENTS_LIMIT, 1), MAX_EVENTS_LIMIT);
   const conditions = [];
   if (filter.action) conditions.push(eq(event.action, filter.action));
   if (filter.subject_kind) conditions.push(eq(event.subject_kind, filter.subject_kind));
@@ -134,17 +134,14 @@ export type EventChain = {
 };
 
 export async function getEventChain(db: DbLike, id: string): Promise<EventChain> {
-  const focal = await getEventById(db, id);
+  const focalRows = await db.select().from(event).where(eq(event.id, id)).limit(1);
+  const focal = (await rowsToEnvelopedEvents(db, focalRows))[0] ?? null;
   if (focal === null) {
     throw new Error(`event ${id} not found`);
   }
 
-  // Forward link: caused_by_event_id (envelope field; not on parsed EventT)
-  const focalRows = await db
-    .select({ caused_by_event_id: event.caused_by_event_id })
-    .from(event)
-    .where(eq(event.id, id))
-    .limit(1);
+  // Forward link: caused_by_event_id is a DB-envelope field, so retain it from
+  // the focal row used above rather than querying the same event a second time.
   const caused_by_event_id = focalRows[0]?.caused_by_event_id ?? null;
 
   const caused_by = caused_by_event_id ? await getEventById(db, caused_by_event_id) : null;
