@@ -5,10 +5,11 @@ import {
   MetacogFlag,
   getDefaultMetaCause,
 } from '@/core/schema/business';
+import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { ToolContext } from '@/server/ai/tools/types';
 import type { SubjectProfile } from '@/subjects/profile';
-import { GoalScopeIntentSchema, QuestionAuthorIntentSchema } from './task-intents';
+import { QuestionAuthorIntentSchema } from './task-intents';
 
 // AI Task 注册表（Phase 1 骨架）。
 //

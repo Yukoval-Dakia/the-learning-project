@@ -1,12 +1,17 @@
 import { z } from 'zod';
 
 import { tasks } from '@/ai/registry';
+import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { DomainTool } from '@/server/ai/tools/types';
 
-export const RunTaskInputSchema = z
-  .object({ task_kind: z.string().min(1), intent: z.record(z.unknown()) })
-  .strict();
+export const RunTaskInputSchema = z.discriminatedUnion('task_kind', [
+  z.object({ task_kind: z.literal('GoalScopeTask'), intent: GoalScopeIntentSchema }).strict(),
+  z
+    .object({ task_kind: z.literal('QuestionAuthorTask'), intent: QuestionAuthorIntentSchema })
+    .strict(),
+]);
 
 export const RunTaskOutputSchema = z.object({
   task_kind: z.string(),
@@ -22,7 +27,7 @@ type RunTaskOutput = z.infer<typeof RunTaskOutputSchema>;
 export const runTaskTool: DomainTool<RunTaskInput, RunTaskOutput> = {
   name: 'run_task',
   description:
-    'Run one registry-approved generation task and return audited generation output only. This never persists drafts or proposals; use author_question when the user wants a retained question draft/proposal.',
+    'Run one approved generation-only task: GoalScopeTask accepts intent { goal_title, subject_id? }; QuestionAuthorTask accepts intent { seed_mode, knowledge_ids, requested_kind?, difficulty?, material_body_md?, material_title? }. Returns audited generation output only and never persists drafts or proposals; use author_question for a retained question draft/proposal.',
   effect: 'read',
   inputSchema: RunTaskInputSchema,
   outputSchema: RunTaskOutputSchema,

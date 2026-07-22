@@ -13,6 +13,8 @@ const ctx = {
   callerActor: { kind: 'agent' as const, ref: 'agent:copilot' },
 };
 
+const executeRaw = (input: unknown) => runTaskTool.execute(ctx, input as never);
+
 describe('run_task', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -22,20 +24,42 @@ describe('run_task', () => {
     expect(() => runTaskTool.inputSchema.parse({ task_kind: 'GoalScopeTask' })).toThrow();
   });
 
+  it('publishes exactly the two legal task names and their intent fields', () => {
+    expect(
+      runTaskTool.inputSchema.parse({
+        task_kind: 'GoalScopeTask',
+        intent: { goal_title: 'Learn', subject_id: 'math' },
+      }),
+    ).toEqual({
+      task_kind: 'GoalScopeTask',
+      intent: { goal_title: 'Learn', subject_id: 'math' },
+    });
+    expect(
+      runTaskTool.inputSchema.parse({
+        task_kind: 'QuestionAuthorTask',
+        intent: { seed_mode: 'knowledge', knowledge_ids: ['k1'], difficulty: 3 },
+      }),
+    ).toEqual({
+      task_kind: 'QuestionAuthorTask',
+      intent: { seed_mode: 'knowledge', knowledge_ids: ['k1'], difficulty: 3 },
+    });
+    expect(() => runTaskTool.inputSchema.parse({ task_kind: 'CopilotTask', intent: {} })).toThrow();
+  });
+
   it('rejects unknown and known non-invocable tasks', async () => {
-    await expect(
-      runTaskTool.execute(ctx, { task_kind: 'MissingTask', intent: {} }),
-    ).rejects.toThrow('unknown task kind');
-    await expect(
-      runTaskTool.execute(ctx, { task_kind: 'CopilotTask', intent: {} }),
-    ).rejects.toThrow('not invocable');
+    await expect(executeRaw({ task_kind: 'MissingTask', intent: {} })).rejects.toThrow(
+      'unknown task kind',
+    );
+    await expect(executeRaw({ task_kind: 'CopilotTask', intent: {} })).rejects.toThrow(
+      'not invocable',
+    );
     expect(runTask).not.toHaveBeenCalled();
   });
 
   it('validates intent before loading prepare', async () => {
     const load = vi.spyOn(tasks.QuestionAuthorTask.copilot, 'prepare');
     await expect(
-      runTaskTool.execute(ctx, {
+      executeRaw({
         task_kind: 'QuestionAuthorTask',
         intent: { seed_mode: 'knowledge', knowledge_ids: [], db: 'inject' },
       }),
@@ -53,7 +77,7 @@ describe('run_task', () => {
       { task_run_id: 'injected' },
     ]) {
       await expect(
-        runTaskTool.execute(ctx, {
+        executeRaw({
           task_kind: 'GoalScopeTask',
           intent: { goal_title: 'Learn', ...injected },
         }),
