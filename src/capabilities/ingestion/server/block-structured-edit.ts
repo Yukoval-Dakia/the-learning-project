@@ -31,7 +31,7 @@ import type { QuestionKind } from '@/core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 // YUK-471 W3-C3 — the per-entity SoT-flip wiring for question_block. ON → the projection write-through
 // is the row writer; OFF (default) → the imperative UPDATE stays the SoT + the parity assert catches

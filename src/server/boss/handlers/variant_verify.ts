@@ -15,6 +15,7 @@
 // (action='experimental:variant_verify', subject_id=variant_question_id),
 // the handler short-circuits without calling the LLM. pg-boss retry is safe.
 
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -32,7 +33,7 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
+import { getFailureAttemptById } from '@/server/events/queries';
 // YUK-471 W2 — mistake_variant verify (E3) write-through. verify already writes the
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on

@@ -20,7 +20,7 @@ import {
 import { acknowledgeTeachingBriefOutcome } from '@/capabilities/shell/server/teaching-brief-ack';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, count, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

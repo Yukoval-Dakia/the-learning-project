@@ -85,8 +85,8 @@ import {
 } from '@/core/schema/event/state-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
-import { writeEvent } from '@/server/events/queries';
 import { and, eq, inArray } from 'drizzle-orm';
 import { restoreStateSnapshot } from './restore-snapshot';
 

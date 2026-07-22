@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resetDb } from '../../../tests/helpers/db';
 import {
   VERIFY_DISPATCH_COMPLETE_ACTION,

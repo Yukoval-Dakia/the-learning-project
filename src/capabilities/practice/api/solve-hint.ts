@@ -6,8 +6,8 @@
 import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
+import { writeEvent } from '@/kernel/events';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { HintRequestBodySchema } from './question-solve-contracts';
 

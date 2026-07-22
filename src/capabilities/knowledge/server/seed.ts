@@ -1,7 +1,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { KNOWN_SUBJECT_IDS, subjectProfiles } from '@/subjects/profile';

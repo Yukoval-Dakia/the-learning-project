@@ -52,6 +52,7 @@ import {
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
@@ -60,7 +61,6 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {

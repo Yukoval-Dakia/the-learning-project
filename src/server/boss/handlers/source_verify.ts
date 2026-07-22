@@ -36,9 +36,9 @@ import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {

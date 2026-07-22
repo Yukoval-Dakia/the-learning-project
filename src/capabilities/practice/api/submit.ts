@@ -41,13 +41,13 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import {
   ApiError,
   canonicalResourceResponse,
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';

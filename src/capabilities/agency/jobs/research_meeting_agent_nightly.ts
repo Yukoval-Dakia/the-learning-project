@@ -69,6 +69,7 @@
 //
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
+import { writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
 import {
@@ -83,7 +84,7 @@ import { parseFlag } from '@/core/env-flags';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+import type { WriteEventInput } from '@/kernel/events';
 import { and, eq, sql } from 'drizzle-orm';
 
 /** Opt-in dark-ship flag. Handler uses the shared runtime-flag grammar. */

@@ -3,7 +3,7 @@
 // + 当前熔断快照透传。
 
 import { learning_item } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

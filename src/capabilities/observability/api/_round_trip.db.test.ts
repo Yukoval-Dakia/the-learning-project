@@ -13,7 +13,7 @@ import {
   mastery_state,
   selection_observation,
 } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

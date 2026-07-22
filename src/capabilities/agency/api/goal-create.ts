@@ -28,8 +28,8 @@ import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
-import { writeEvent } from '@/server/events/queries';
 // YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
 // only originating event is a genesis seed: the tx always writes the genesis event + the
 // materialized_id_index anchor (the event log + anchor is the source of truth), then the

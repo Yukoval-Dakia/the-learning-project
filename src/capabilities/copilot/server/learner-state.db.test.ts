@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, goal, knowledge } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
   LEARNER_STATE_HEADER_ACTION,

@@ -13,7 +13,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { learnerLocalDay } from '@/core/learner-day';
 import { BRIEF_SEEN_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';

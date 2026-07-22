@@ -21,7 +21,7 @@ import { newId } from '@/core/ids';
 import type { ArtifactRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Tx } from '@/db/client';
 import type { artifact } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 // Tx (not Db|Tx): the create event MUST run on the caller's transaction so a parseEvent throw rolls
 // back the paired INSERT. Narrowing to Tx type-enforces the atomic double-write at every call site.

@@ -36,10 +36,10 @@ import { filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
 import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
-import { writeEvent } from '@/server/events/queries';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

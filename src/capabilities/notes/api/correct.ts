@@ -4,8 +4,8 @@ import { enqueueMarkWrongNoteRefine } from '@/capabilities/notes/server/note-ref
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
 

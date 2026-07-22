@@ -28,6 +28,7 @@
 // ADR-0046). The proposal only SNAPSHOTS predicted_p (the claim's bet) +
 // baseline_p_at_induction (the number to beat); it does not move any number.
 
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
@@ -37,12 +38,7 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import type { EvidenceCell } from '@/server/conjectures/evidence';
-import {
-  type FailureAttempt,
-  type WriteEventInput,
-  getFailureAttempts,
-  writeEvent,
-} from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';

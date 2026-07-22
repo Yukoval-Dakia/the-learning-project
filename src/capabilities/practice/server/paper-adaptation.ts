@@ -16,7 +16,7 @@
 
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 type DbLike = Db | Tx;
 

@@ -8,7 +8,7 @@
 // `id` / `created_at` (pg columns on `event`, src/db/schema.ts:698-737, not Zod
 // fields). The parsed Event is RECONSTRUCTED per-branch inside each reducer via
 // safeParse, mirroring corrections.ts rowToCorrectEventInput
-// (src/server/events/corrections.ts:19-32): the reducer builds the parse input
+// (src/kernel/events/corrections.ts:19-32): the reducer builds the parse input
 // from these flat columns and feeds the dedicated Zod schema for the branch it is
 // handling, so a malformed payload is rejected at the reducer boundary instead of
 // being trusted.

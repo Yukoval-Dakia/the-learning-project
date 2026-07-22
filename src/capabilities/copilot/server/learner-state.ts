@@ -27,6 +27,7 @@
 // so the mem0 outbox NEVER ingests it — the projection reads mem0-derived signals
 // (the memory brief), so ingesting the header back would be circular injection.
 
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 
@@ -43,12 +44,7 @@ import {
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/server/ai/tools/budgets';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
-import {
-  type FailureAttempt,
-  type WriteEventInput,
-  getFailureAttempts,
-  writeEvent,
-} from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { type MasteryProjection, getMasteryProjection } from '@/server/mastery/state';
 import {
   type ProposalFeedbackCell,

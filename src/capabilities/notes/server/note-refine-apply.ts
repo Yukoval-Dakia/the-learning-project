@@ -21,8 +21,8 @@ import { applyNotePatch, filterMissingNotePatchTargets } from '@/core/blocks/app
 import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { writeEvent } from '@/server/events/queries';
 
 type DbLike = Db | Tx;
 

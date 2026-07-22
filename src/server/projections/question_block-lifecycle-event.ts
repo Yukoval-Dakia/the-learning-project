@@ -27,7 +27,7 @@
 import { newId } from '@/core/ids';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 export interface WriteQuestionBlockLifecycleEventParams {
   /** The mutated block's id (= the event subject_id). */

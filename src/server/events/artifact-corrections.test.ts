@@ -1,4 +1,5 @@
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -6,7 +7,6 @@ import {
   getArtifactCorrectionState,
   getArtifactCorrectionStates,
 } from './artifact-corrections';
-import { writeEvent } from './queries';
 
 const BASE_TIME = new Date('2026-05-26T00:00:00Z');
 

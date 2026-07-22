@@ -8,11 +8,11 @@ import { newId } from '@/core/ids';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
 // genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
