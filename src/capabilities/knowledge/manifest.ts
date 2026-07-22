@@ -331,7 +331,15 @@ export const knowledgeCapability = defineCapability({
             ),
         },
       },
-      { kind: 'knowledge_mutation' },
+      {
+        kind: 'knowledge_mutation',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (m) => m.knowledgeMutationProposalAcceptApplier,
+            ),
+        },
+      },
       { kind: 'knowledge_edge' },
       { kind: 'archive' },
     ],
