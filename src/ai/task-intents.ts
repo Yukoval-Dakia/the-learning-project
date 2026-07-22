@@ -6,7 +6,7 @@ export const QuestionAuthorIntentSchema = z
     knowledge_ids: z.array(z.string().min(1)).min(1),
     requested_kind: z.string().min(1).optional(),
     difficulty: z.number().min(0).max(1).optional(),
-    material_body_md: z.string().min(1).optional(),
+    material_body_md: z.string().min(1).max(20_000).optional(),
     material_title: z.string().min(1).optional(),
   })
   .strict()
