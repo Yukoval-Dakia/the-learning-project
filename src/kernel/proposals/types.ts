@@ -1,31 +1,32 @@
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
 
 export interface ProposalAcceptProposal {
   id: string;
-  kind: AiProposalPayloadT['kind'];
-  target: AiProposalPayloadT['target'];
   payload: AiProposalPayloadT;
   status: 'pending' | 'accepted' | 'dismissed' | 'stale' | 'rubric_rejected';
   actor_ref: string;
 }
 
-export interface ProposalAcceptInput {
+type ProposalAcceptDecision =
+  | { decision?: 'accept'; new_relation_type?: never }
+  | { decision: 'reverse'; new_relation_type?: never }
+  | { decision: 'change_type'; new_relation_type: RelationTypeSchemaT };
+
+export type ProposalAcceptInput = {
   proposalId: string;
   proposal: ProposalAcceptProposal;
-  decision?: 'accept' | 'reverse' | 'change_type';
-  new_relation_type?: RelationTypeSchemaT;
   user_note?: string;
-}
+} & ProposalAcceptDecision;
 
 export interface ProposalAcceptResult {
   kind: string;
+  result?: unknown;
   idempotent?: boolean;
 }
 
 export type ProposalAcceptApplier = (
-  db: Db,
+  db: unknown,
   input: ProposalAcceptInput,
 ) => Promise<ProposalAcceptResult>;
 

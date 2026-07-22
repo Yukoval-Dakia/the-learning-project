@@ -34,10 +34,18 @@ async function handleLegacyDecision(
       );
     }
     const { decision, new_relation_type, user_note } = parsed.data;
+    if (decision === 'change_type') {
+      if (!new_relation_type) {
+        throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+      }
+      return Response.json(
+        await acceptAiProposal(db, id, { decision, new_relation_type, user_note }),
+      );
+    }
     const result =
       decision === 'dismiss'
         ? await dismissAiProposal(db, id, { user_note })
-        : await acceptAiProposal(db, id, { decision, new_relation_type, user_note });
+        : await acceptAiProposal(db, id, { decision, user_note });
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);

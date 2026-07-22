@@ -107,6 +107,58 @@ describe('proposal lifecycle owner service', () => {
       dismiss_count: 0,
       acceptance_rate: 1,
     });
+
+    const replay = await acceptAiProposal(db, 'node_p1');
+    expect(replay).toMatchObject({ kind: 'knowledge_node', idempotent: true });
+    expect(await db.select().from(knowledge).where(eq(knowledge.name, '通假字'))).toHaveLength(1);
+    expect(await db.select().from(proposal_signals)).toHaveLength(1);
+  });
+
+  it('rejects a non-accept knowledge_node decision before mutation', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_invalid']);
+    await writeAiProposal(db, {
+      id: 'node_invalid_decision',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'New node evidence',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '不应创建',
+          parent_id: 'parent_invalid',
+        },
+      },
+    });
+
+    await expect(
+      acceptAiProposal(db, 'node_invalid_decision', { decision: 'reverse' }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 400 });
+    expect(await db.select().from(knowledge).where(eq(knowledge.name, '不应创建'))).toHaveLength(0);
+  });
+
+  it('keeps unsupported declared-only kinds on the legacy 400 fallback', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'archive_unsupported',
+      payload: {
+        kind: 'archive',
+        target: { subject_kind: 'knowledge', subject_id: 'k_archive' },
+        reason_md: 'Duplicate',
+        evidence_refs: [],
+        proposed_change: {
+          subject_kind: 'knowledge',
+          subject_id: 'k_archive',
+          reason_md: 'Duplicate',
+        },
+      },
+    });
+
+    await expect(acceptAiProposal(db, 'archive_unsupported')).rejects.toMatchObject({
+      code: 'unsupported_proposal_kind',
+      status: 400,
+    });
   });
 
   it('acceptAiProposal materializes a knowledge_edge proposal through the edge owner service', async () => {

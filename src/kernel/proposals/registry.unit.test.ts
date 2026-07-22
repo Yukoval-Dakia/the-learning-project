@@ -1,11 +1,24 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { defineCapability } from '../manifest';
 import { createProposalAcceptRegistry, getProposalAcceptDecl } from './registry';
-import type { ProposalAcceptApplier } from './types';
+import type { ProposalAcceptApplier, ProposalAcceptInput } from './types';
 
-const applier: ProposalAcceptApplier = async (_db, { proposal }) => ({ kind: proposal.kind });
+const applier: ProposalAcceptApplier = async (_db, { proposal }) => ({
+  kind: proposal.payload.kind,
+});
 
 describe('proposal accept registry', () => {
+  it('uses payload as the only proposal identity and discriminates decision options', () => {
+    expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('kind');
+    expectTypeOf<ProposalAcceptInput['proposal']>().not.toHaveProperty('target');
+    expectTypeOf<Extract<ProposalAcceptInput, { decision: 'change_type' }>>()
+      .toHaveProperty('new_relation_type')
+      .toEqualTypeOf<string>();
+    expectTypeOf<
+      Extract<ProposalAcceptInput, { decision?: 'accept' }>['new_relation_type']
+    >().toEqualTypeOf<undefined>();
+  });
+
   it('indexes only proposal kinds with accept loaders without invoking them', () => {
     const load = vi.fn(async () => applier);
     const registry = createProposalAcceptRegistry([

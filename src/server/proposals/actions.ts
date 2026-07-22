@@ -1,6 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
+import { capabilities } from '@/capabilities';
+import { createProposalAcceptRegistry, getProposalAcceptDecl } from '@/kernel/proposals';
+
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept applier lives in the
 // agency package (the 例会 sleep job is the proposer); this shell only routes.
@@ -149,6 +152,7 @@ import {
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
 const SUPERSEDE_DEFAULT_REASON = 'accepted reconcile supersede';
+const proposalAcceptRegistry = createProposalAcceptRegistry(capabilities);
 
 // M4-T4 (YUK-319) — actions.ts is the proposal-lifecycle DISPATCH SHELL: each
 // kind's accept case delegates to its owning capability package's applier
@@ -226,9 +230,7 @@ export interface RetractAiProposalResult {
   correction_event_id: string;
 }
 
-export interface AcceptAiProposalOpts {
-  decision?: Exclude<EdgeProposalDecision, 'dismiss'>;
-  new_relation_type?: RelationTypeSchemaT;
+export type AcceptAiProposalOpts = {
   user_note?: string;
   // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
@@ -243,7 +245,11 @@ export interface AcceptAiProposalOpts {
   // the corrected_by_owner branch (→ mem0 CORE write). The 备课台 route/UI wiring
   // that populates this is a neighboring task; this shell only consumes it.
   corrected_payload?: { claim_md?: string; cause_category?: string; knowledge_id?: string };
-}
+} & (
+  | { decision?: 'accept'; new_relation_type?: never }
+  | { decision: 'reverse'; new_relation_type?: never }
+  | { decision: 'change_type'; new_relation_type: RelationTypeSchemaT }
+);
 
 export interface DismissAiProposalOpts {
   user_note?: string;
@@ -841,26 +847,22 @@ async function dispatchAccept(
   proposal: ProposalInboxRow,
   opts: AcceptAiProposalOpts,
 ): Promise<AcceptAiProposalResult> {
-  switch (proposal.kind) {
-    case 'knowledge_node': {
-      if (proposal.status !== 'pending') {
-        // Idempotent re-accept: acceptAiProposal already confirmed the prior decision was
-        // 'accept' and refreshed the decision signal; return without re-applying (a second
-        // acceptProposal would re-run the knowledge mutation). YUK-681 P2: previously the
-        // decision-resource short-circuit hid this path from the HTTP route.
-        return { kind: 'knowledge_node', result: null, idempotent: true };
-      }
-      if (opts.decision && opts.decision !== 'accept') {
-        throw new ApiError(
-          'validation_error',
-          `knowledge_node proposal only supports accept, got ${opts.decision}`,
-          400,
-        );
-      }
-      const result = await acceptProposal(db, proposalId);
-      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-      return { kind: 'knowledge_node', result };
-    }
+  const registered = getProposalAcceptDecl(proposalAcceptRegistry, proposal.payload.kind);
+  if (registered) {
+    const applier = await registered.load();
+    return (await applier(db, {
+      proposalId,
+      proposal: {
+        id: proposal.id,
+        payload: proposal.payload,
+        status: proposal.status,
+        actor_ref: proposal.actor_ref,
+      },
+      ...opts,
+    })) as AcceptAiProposalResult;
+  }
+
+  switch (proposal.payload.kind) {
     case 'knowledge_mutation': {
       if (proposal.status !== 'pending') {
         // Idempotent re-accept — see knowledge_node above. A second acceptProposal would
@@ -940,7 +942,7 @@ async function dispatchAccept(
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
-        `accept is not implemented for proposal kind ${proposal.kind}; YUK-44 owns remaining producer semantics`,
+        `accept is not implemented for proposal kind ${proposal.payload.kind}; YUK-44 owns remaining producer semantics`,
         400,
       );
   }

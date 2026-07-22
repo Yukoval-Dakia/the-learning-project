@@ -322,7 +322,15 @@ export const knowledgeCapability = defineCapability({
   // （./server/review.ts 在产），无 accept applier——壳层 default throw 注 YUK-44。
   proposals: {
     kinds: [
-      { kind: 'knowledge_node' },
+      {
+        kind: 'knowledge_node',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (m) => m.knowledgeNodeProposalAcceptApplier,
+            ),
+        },
+      },
       { kind: 'knowledge_mutation' },
       { kind: 'knowledge_edge' },
       { kind: 'archive' },

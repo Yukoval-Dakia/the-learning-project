@@ -1,9 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { createProposalAcceptRegistry, getProposalAcceptDecl } from '@/kernel/proposals';
+import { describe, expect, it, vi } from 'vitest';
 import { capabilities } from './index';
 
 const LEGACY_ACCEPT_FALLBACK_KINDS = ['record_links', 'record_promotion'];
 
 describe('proposal accept compatibility fallback', () => {
+  it('registers exactly the live knowledge_node loader without loading it eagerly', async () => {
+    const declaration = capabilities
+      .flatMap((capability) => capability.proposals?.kinds ?? [])
+      .find((candidate) => candidate.kind === 'knowledge_node');
+    if (!declaration?.accept) throw new Error('knowledge_node accept declaration missing');
+    const load = vi.spyOn(declaration.accept, 'load');
+
+    const registry = createProposalAcceptRegistry(capabilities);
+    expect([...registry.keys()]).toEqual(['knowledge_node']);
+    expect(load).not.toHaveBeenCalled();
+
+    await getProposalAcceptDecl(registry, 'knowledge_node')?.load();
+    expect(load).toHaveBeenCalledOnce();
+    load.mockRestore();
+  });
+
   it('keeps only the two D11 tombstones outside capability ownership', () => {
     const declaredKinds = new Set(
       capabilities.flatMap((capability) =>

@@ -120,10 +120,18 @@ export async function createProposalDecision(
       });
     } else if (input.decision === 'dismiss') {
       result = await dismissAiProposal(db, proposalId, { user_note: input.user_note });
-    } else {
+    } else if (input.decision === 'change_type') {
+      if (!input.new_relation_type) {
+        throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+      }
       result = await acceptAiProposal(db, proposalId, {
         decision: input.decision,
         new_relation_type: input.new_relation_type,
+        user_note: input.user_note,
+      });
+    } else {
+      result = await acceptAiProposal(db, proposalId, {
+        decision: input.decision,
         user_note: input.user_note,
       });
     }
