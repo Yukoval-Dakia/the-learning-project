@@ -63,6 +63,7 @@ import {
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -282,7 +283,7 @@ export async function runFrontierFillAndWrite(
   //    is inside try/catch: an LLM/key/runner/parse fault → proposed:0, logged,
   //    NEVER throws out (mirror goal_scope / edge-propose).
   try {
-    const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+    const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const taskResult = await runTaskFn(
       'FrontierPrerequisiteTask',
       {
@@ -297,7 +298,7 @@ export async function runFrontierFillAndWrite(
         kcs_lacking_prereq: candidateIds,
         domain,
       },
-      { db, env: process.env, subjectProfile: resolveSubjectProfile(domain) },
+      { subjectProfile: resolveSubjectProfile(domain) },
     );
 
     const parsed = parseFrontierProposals(taskResult.text);
@@ -421,16 +422,6 @@ function dominantDomain(
     }
   }
   return best;
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<TaskTextRunFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
 }
 
 export function buildFrontierFillNightlyHandler(

@@ -83,8 +83,6 @@ export async function runGoalScopeAndWrite(
     };
 
     const result = await params.runTaskFn('GoalScopeTask', input, {
-      db: params.db,
-      env: params.env,
       subjectProfile: params.subjectProfile,
     });
     const parsed = parseGoalScopeOutput(result.text);

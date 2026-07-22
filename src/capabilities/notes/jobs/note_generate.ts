@@ -28,6 +28,7 @@ import {
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   emitArtifactBodyBlocksEditEvent,
   emitArtifactLifecycleEvent,
@@ -45,16 +46,6 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
   onReady?: (artifactId: string) => Promise<void>;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 const SectionsOutputSchema = z.object({
   sections: z.array(NoteSection).min(1).max(10),
@@ -205,7 +196,6 @@ export async function runNoteGenerate(
   try {
     const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteGenerateTask', input, {
-      db,
       subjectProfile,
       skills: await resolveNoteSkill(subjectProfile.id),
     });
@@ -346,7 +336,7 @@ export function buildNoteGenerateHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<NoteGenerateJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const onReady = deps.onReady;
   return async (jobs) => {
     for (const job of jobs) {

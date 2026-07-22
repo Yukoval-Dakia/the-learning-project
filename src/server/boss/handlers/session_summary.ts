@@ -7,6 +7,7 @@
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type RunTaskFn, runSessionSummary } from '@/server/session/summary';
 
 export interface SessionSummaryJobData {
@@ -17,21 +18,11 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 export function buildSessionSummaryHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<SessionSummaryJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskTextFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const sessionId = job.data?.session_id;

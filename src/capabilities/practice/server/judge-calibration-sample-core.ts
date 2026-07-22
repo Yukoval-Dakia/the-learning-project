@@ -34,6 +34,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { judgeAnswer } from '@/server/ai/judges/question-contract';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -200,17 +201,6 @@ export async function writeJudgeCalibrationSampleEvent(
   }
 }
 
-async function defaultRunTaskInner(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ task_run_id?: string; text: string }> {
-  // Lazy import (S1: direct runTask, NOT defaultRunTaskFn — the {text}-only
-  // contract fold would drop task_run_id, and the observation row needs it).
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-}
-
 /** Fisher–Yates — the TS-side ORDER BY random() (MF4③ Q4 ruling). */
 function shuffleInPlace<T>(items: T[]): T[] {
   for (let i = items.length - 1; i > 0; i--) {
@@ -241,7 +231,7 @@ export async function runJudgeCalibrationSample(
 ): Promise<JudgeCalibrationSampleResult> {
   const now = deps.now?.() ?? new Date();
   const judgeFn = deps.judgeFn ?? judgeAnswer;
-  const runTaskInner = deps.runTaskInner ?? defaultRunTaskInner;
+  const runTaskInner = deps.runTaskInner ?? makeRunTaskFn(db);
 
   const result: JudgeCalibrationSampleResult = {
     sampled: 0,
@@ -380,7 +370,12 @@ export async function runJudgeCalibrationSample(
           ...(ctx as Record<string, unknown>),
           // AFTER ...ctx on purpose (S5): the vision routes inject their own
           // override into ctx at the call site — the second lane must win.
-          override: { provider: cfg.rejudgeProvider, model: cfg.rejudgeModel },
+          override: {
+            provider: cfg.rejudgeProvider as NonNullable<
+              import('@/server/ai/runner-fn').BoundRunTaskCtx['override']
+            >['provider'],
+            model: cfg.rejudgeModel,
+          },
         });
         slot.taskRunId = inner.task_run_id ?? null;
         slot.rawText = inner.text;

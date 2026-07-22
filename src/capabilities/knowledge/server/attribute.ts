@@ -213,7 +213,7 @@ export async function runAttributionAndWriteJudgeEvent(
     result = await params.runTaskFn(
       'AttributionRerankTask',
       { ...params.input, candidates },
-      { env: params.env, subjectProfile: profile },
+      { subjectProfile: profile },
     );
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);

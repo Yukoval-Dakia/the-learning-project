@@ -4,6 +4,7 @@ import {
 } from '@/core/capability/judges/multimodal_direct';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeQuestionRow } from './question-contract';
@@ -49,10 +50,10 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
 async function defaultRunTaskFn(
   kind: string,
   input: unknown,
-  ctx: unknown,
+  ctx: RunTaskCtx,
 ): Promise<{ text: string }> {
   const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
+  const result = await runTask(kind, input, ctx);
   return { text: result.text };
 }
 

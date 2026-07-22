@@ -25,6 +25,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -224,7 +225,7 @@ export async function runKnowledgeEdgeProposeNightly(
     };
   }
 
-  const runTaskFn: RunTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn: RunTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const { ok, ...stats } = await runEdgeProposeAndWrite({
     db,
     recentFailures: attempts,
@@ -252,16 +253,6 @@ export async function runKnowledgeEdgeProposeNightly(
   }
 
   return { ...stats, attempts_considered: attempts.length };
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<RunTaskFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
 }
 
 export function buildKnowledgeEdgeProposeNightlyHandler(

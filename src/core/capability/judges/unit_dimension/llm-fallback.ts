@@ -1,10 +1,7 @@
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { LlmFallbackOutput, type LlmFallbackOutputT } from './types';
 
-export type RunTaskFn = (
-  kind: string,
-  input: { text: string },
-  ctx: unknown,
-) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export interface LlmFallbackParams {
   student_answer: string;

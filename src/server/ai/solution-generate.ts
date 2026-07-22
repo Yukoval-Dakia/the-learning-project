@@ -18,6 +18,7 @@ import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 // `RubricT` is not exported from business.ts (it's a private alias inside
 // db/schema.ts). Derive the type locally from the single-source-of-truth Rubric
@@ -45,16 +46,6 @@ export type GenerateReferenceSolutionResult =
   | { status: 'skipped_not_found' }
   | { status: 'skipped_error'; reason: string };
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 function extractJsonObject(text: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -73,7 +64,7 @@ export async function generateReferenceSolution(
   params: GenerateReferenceSolutionParams,
 ): Promise<GenerateReferenceSolutionResult> {
   const { db, questionId } = params;
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(db);
 
   const [row] = await db
     .select({
@@ -113,7 +104,7 @@ export async function generateReferenceSolution(
 
   let parsed: ReturnType<typeof SolutionGenerateOutput.parse>;
   try {
-    const { text } = await runTaskFn('SolutionGenerateTask', input, { db, subjectProfile });
+    const { text } = await runTaskFn('SolutionGenerateTask', input, { subjectProfile });
     parsed = SolutionGenerateOutput.parse(extractJsonObject(text));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

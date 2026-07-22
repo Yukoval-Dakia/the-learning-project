@@ -81,10 +81,9 @@ async function main() {
   const { and, asc, eq, inArray } = await import('drizzle-orm');
   const { runQuizGen } = await import('@/server/boss/handlers/quiz_gen');
   const { runQuizVerify } = await import('@/server/boss/handlers/quiz_verify');
-  const { runTask } = await import('@/server/ai/runner');
+  const { makeRunTaskFn } = await import('@/server/ai/runner-fn');
 
-  const runTaskFn = async (kind: string, input: unknown, ctx: unknown) =>
-    runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
+  const runTaskFn = makeRunTaskFn(db);
 
   // ---------- spike KC bootstrap（幂等，形状照 knowledge/server/seed.ts） ----------
   async function ensureSpikeKcs() {

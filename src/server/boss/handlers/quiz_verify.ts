@@ -53,7 +53,13 @@ import {
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
@@ -77,21 +83,11 @@ export interface QuizVerifyJobData {
 // Loose run seam (mirrors variant_verify): the handler only consumes
 // { text, task_run_id?, cost_usd? }. DB tests inject a vi.fn() returning a JSON
 // string; production resolves runTask lazily.
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>;
+export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<TaskTextResult> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return result;
-}
 
 function parseQuizVerifyOutput(text: string): QuizVerificationResultT {
   // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
@@ -338,7 +334,6 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   let taskResult: TaskTextResult | null = null;
   try {
     const result = await runTaskFn('QuizVerifyTask', input, {
-      db,
       subjectProfile,
       ...(verifySkills ? { skills: verifySkills } : {}),
     });
@@ -887,7 +882,7 @@ export function buildQuizVerifyHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<QuizVerifyJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const questionIds = job.data?.question_ids;

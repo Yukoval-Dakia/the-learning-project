@@ -29,6 +29,7 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { LayoutQuality } from './tencent_mark_parser';
 
 // ---------- VLM output schema (id-less; ids assigned post-parse) ----------
@@ -289,16 +290,6 @@ export type RunStructureTaskParams = {
   ctx?: unknown;
 };
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: { text: string; images: Array<{ data: string; mediaType: string }> },
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 /**
  * Runs the VLM StructureTask. Returns a normalized question tree (ids assigned)
  * shaped for `Ingestion.applyExtractionResult`. Throws `StructureTaskError` on
@@ -319,7 +310,9 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn =
+    params.runTaskFn ??
+    makeRunTaskTextFn((params.ctx as { db: Parameters<typeof makeRunTaskTextFn>[0] }).db);
   let llmText: string;
   try {
     const result = await runTaskFn(

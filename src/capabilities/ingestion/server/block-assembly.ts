@@ -33,6 +33,7 @@ import { z } from 'zod';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { writeBlockMergeProposal } from '@/server/proposals/producers';
 
 // ---------- BlockAssemblyOutput schema (the model's structured output) ----------
@@ -123,16 +124,6 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 /**
  * Runs the BlockAssemblyTask. Returns a validated `BlockAssemblyOutput`. Throws
  * `BlockAssemblyTaskError` on provider failure / unparseable output so the
@@ -141,7 +132,7 @@ async function defaultRunTaskFn(
 export async function runBlockAssemblyTask(
   params: RunBlockAssemblyTaskParams,
 ): Promise<BlockAssemblyOutputT> {
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn((params.ctx as { db: Db }).db);
   let llmText: string;
   try {
     const result = await runTaskFn('BlockAssemblyTask', params.input, params.ctx ?? {});

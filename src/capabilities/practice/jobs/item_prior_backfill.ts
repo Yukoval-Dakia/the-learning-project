@@ -19,6 +19,7 @@ import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { inArray } from 'drizzle-orm';
 
@@ -72,7 +73,7 @@ export async function runItemPriorBackfill(
   result.considered = candidates.length;
   if (candidates.length === 0) return result;
 
-  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
 
   // Resolve knowledge names once for the union of all candidate knowledge ids.
   const allKnowledgeIds = Array.from(new Set(candidates.flatMap((c) => c.knowledge_ids ?? [])));
@@ -98,7 +99,7 @@ export async function runItemPriorBackfill(
         kind: c.kind,
         knowledge_context: knowledgeContext,
       };
-      const runResult = await runTaskFn('ItemPriorTask', input, { db, subjectProfile });
+      const runResult = await runTaskFn('ItemPriorTask', input, { subjectProfile });
       const draft = parseItemPriorOutput(runResult.text);
       await applyItemPrior(db, { questionId: c.id, draft });
       result.calibrated++;
@@ -111,15 +112,6 @@ export async function runItemPriorBackfill(
   }
 
   return result;
-}
-
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<Awaited<ReturnType<TaskTextRunFn>>> {
-  const { runTask } = await import('@/server/ai/runner');
-  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
 }
 
 export function buildItemPriorBackfillHandler(

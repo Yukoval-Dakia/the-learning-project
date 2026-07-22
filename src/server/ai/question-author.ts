@@ -168,7 +168,6 @@ export async function runQuestionAuthor(
   };
 
   const result = await deps.runTaskFn('QuestionAuthorTask', input, {
-    db,
     subjectProfile,
   });
   const draft = parseQuestionAuthorOutput(result.text);

@@ -34,6 +34,7 @@ import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/a
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import type { EvidenceCell } from '@/server/conjectures/evidence';
 import {
@@ -128,13 +129,7 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
  * testable); the job is the seam that binds db (same role as runGoalScopeAndWrite).
  */
 function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
-  return async (kind, input, ctx) => {
-    const { runTask } = await import('@/server/ai/runner');
-    return runTask(kind, input, {
-      ...(ctx as Record<string, unknown>),
-      db,
-    } as Parameters<typeof runTask>[2]);
-  };
+  return makeRunTaskFn(db);
 }
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */

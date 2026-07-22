@@ -35,6 +35,8 @@ import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInputWithCandidates,
@@ -67,7 +69,7 @@ type DbLike = Db | Tx;
 // ───────────────────────────────────────────────────────────────────────────
 
 /** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 /** Read-only learner-memory prior loader. One invocation per L2 orchestration at most. */
 export type LoadMemoryPriorFn = () => Promise<readonly string[]>;
@@ -566,8 +568,8 @@ async function tryLlmOrchestration(
     const memories = await loadMemoryPriorFailSoft(loadMemoryPrior);
     const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
     const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
-    const fn = runTaskFn ?? (await defaultRunTaskFn());
-    const result = await fn('SelectionOrchestratorTask', taskInput, { db });
+    const fn = runTaskFn ?? (await defaultRunTaskFn(db as Db));
+    const result = await fn('SelectionOrchestratorTask', taskInput, {});
     const refIds = selectedCandidates.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
@@ -631,9 +633,8 @@ const defaultLoadMemoryPrior: LoadMemoryPriorFn = async () => {
 };
 
 /** 默认 production runTask（动态 import 避免 server-only 模块进 unit graph）。 */
-async function defaultRunTaskFn(): Promise<RunTaskFn> {
-  const { runTask } = await import('@/server/ai/runner');
-  return (kind, input, ctx) => runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
+async function defaultRunTaskFn(db: Db): Promise<RunTaskFn> {
+  return makeRunTaskTextFn(db);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

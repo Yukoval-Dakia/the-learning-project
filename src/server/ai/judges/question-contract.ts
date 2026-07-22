@@ -4,6 +4,8 @@ import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 // F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
 // leaf `@/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
@@ -78,7 +80,7 @@ export interface JudgeAnswerParams {
    */
   student_image_refs?: string[];
   subjectProfile: SubjectProfile;
-  runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+  runTaskFn?: TaskTextRunFn;
   /**
    * YUK-573 (MF6) — optional image fetcher for the two vision routes
    * (steps / multimodal_direct). Structurally identical to the runners' own
@@ -237,18 +239,12 @@ function normalizeSemanticResult(output: SemanticJudgeOutputT): JudgeResultV2T {
   };
 }
 
-export async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+export function defaultRunTaskFn(db: Db): TaskTextRunFn {
+  return makeRunTaskTextFn(db);
 }
 
 export async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV2T> {
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn(params.db);
   try {
     const result = await runTaskFn(
       'SemanticJudgeTask',
@@ -259,7 +255,6 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
         ...(params.appeal_context ? { appeal: params.appeal_context } : {}),
       },
       {
-        db: params.db,
         subjectProfile: params.subjectProfile,
       },
     );

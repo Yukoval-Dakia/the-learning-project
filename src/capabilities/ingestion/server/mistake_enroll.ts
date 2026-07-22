@@ -26,6 +26,7 @@ import {
   MistakeEnrollOutput,
   type MistakeEnrollOutputT,
 } from '@/core/schema/mistake_enroll';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 /**
  * Thrown when the MistakeEnrollTask cannot produce a usable draft (provider
@@ -82,16 +83,6 @@ function hasDb(ctx: unknown): boolean {
   );
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: MistakeEnrollInputT,
-  ctx: unknown,
-): Promise<{ text: string }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
-}
-
 /**
  * Runs the MistakeEnrollTask. Returns a validated draft with the cause clamped to
  * the subject taxonomy. Deterministic guarantees regardless of model output: a
@@ -131,7 +122,9 @@ export async function runMistakeEnrollTask(
     );
   }
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn =
+    params.runTaskFn ??
+    makeRunTaskTextFn((params.ctx as { db: Parameters<typeof makeRunTaskTextFn>[0] }).db);
   let llmText: string;
   try {
     const result = await runTaskFn('MistakeEnrollTask', input, params.ctx ?? {});
