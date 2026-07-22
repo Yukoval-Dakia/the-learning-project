@@ -5,10 +5,7 @@ import type {
   ProposalAcceptResult,
 } from '@/kernel/proposals';
 import { ApiError } from '@/server/http/errors';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/signals';
+import { recordProposalDecisionSignal } from '@/server/proposals/signals';
 import { acceptProposal } from './proposals';
 
 async function acceptKnowledgeNode(
@@ -32,7 +29,6 @@ async function acceptKnowledgeNode(
   }
   const signalProposal = { ...proposal, kind: proposal.payload.kind };
   if (proposal.status !== 'pending') {
-    await ensureProposalDecisionSignal(db, signalProposal, 'accept', input.user_note);
     return { kind: 'knowledge_node', result: null, idempotent: true };
   }
 

@@ -1061,6 +1061,14 @@ export type AcceptResult =
   | { kind: 'split_applied'; archived_id: string; new_node_ids: string[] }
   | { kind: 'archive_applied'; node_id: string };
 
+export const ACCEPT_RESULT_KINDS: Record<AcceptResult['kind'], true> = {
+  propose_new_applied: true,
+  reparent_applied: true,
+  merge_applied: true,
+  split_applied: true,
+  archive_applied: true,
+};
+
 interface ProposeEventRow {
   id: string;
   action: string;

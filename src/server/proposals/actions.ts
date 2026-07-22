@@ -59,6 +59,7 @@ import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 // the created node via the single-owner applyArchive (archived_at + version+1), mirroring
 // the imperative archive accept path so fold(create + archive)==row(archived).
 import {
+  ACCEPT_RESULT_KINDS,
   type AcceptResult as KnowledgeAcceptResult,
   acceptProposal,
   applyArchive,
@@ -851,13 +852,7 @@ function isKnowledgeAcceptResult(result: unknown): result is KnowledgeAcceptResu
   if (typeof result !== 'object' || !('kind' in result) || typeof result.kind !== 'string') {
     return false;
   }
-  return [
-    'propose_new_applied',
-    'reparent_applied',
-    'merge_applied',
-    'split_applied',
-    'archive_applied',
-  ].includes(result.kind);
+  return result.kind in ACCEPT_RESULT_KINDS;
 }
 
 async function dispatchAccept(
@@ -875,28 +870,23 @@ async function dispatchAccept(
       status: proposal.status,
       actor_ref: proposal.actor_ref,
     };
-    const result: ProposalAcceptResult =
-      opts.decision === 'change_type'
-        ? await applier(db, {
-            proposalId,
-            proposal: proposalInput,
-            decision: opts.decision,
-            new_relation_type: opts.new_relation_type,
-            user_note: opts.user_note,
-          })
-        : opts.decision === 'reverse'
-          ? await applier(db, {
-              proposalId,
-              proposal: proposalInput,
-              decision: opts.decision,
-              user_note: opts.user_note,
-            })
-          : await applier(db, {
-              proposalId,
-              proposal: proposalInput,
-              decision: opts.decision,
-              user_note: opts.user_note,
-            });
+    let result: ProposalAcceptResult;
+    if (opts.decision === 'change_type') {
+      result = await applier(db, {
+        proposalId,
+        proposal: proposalInput,
+        decision: opts.decision,
+        new_relation_type: opts.new_relation_type,
+        user_note: opts.user_note,
+      });
+    } else {
+      result = await applier(db, {
+        proposalId,
+        proposal: proposalInput,
+        decision: opts.decision,
+        user_note: opts.user_note,
+      });
+    }
     if (
       proposal.payload.kind === 'knowledge_node' &&
       result.kind === 'knowledge_node' &&

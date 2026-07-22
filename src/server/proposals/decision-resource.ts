@@ -134,11 +134,13 @@ export async function createProposalDecision(
         decision: 'accept',
         user_note: input.user_note,
       });
-    } else {
+    } else if (input.decision === 'reverse') {
       result = await acceptAiProposal(db, proposalId, {
         decision: 'reverse',
         user_note: input.user_note,
       });
+    } else {
+      throw new ApiError('validation_error', 'unsupported proposal decision', 400);
     }
   } catch (err) {
     normalizeDomainError(err);

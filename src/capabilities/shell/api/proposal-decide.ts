@@ -45,9 +45,6 @@ async function handleLegacyDecision(
     if (decision === 'dismiss') {
       return Response.json(await dismissAiProposal(db, id, { user_note }));
     }
-    if (decision === 'reverse') {
-      return Response.json(await acceptAiProposal(db, id, { decision, user_note }));
-    }
     return Response.json(await acceptAiProposal(db, id, { decision, user_note }));
   } catch (err) {
     return errorResponse(err);
