@@ -10,9 +10,9 @@
 // 纯 additive 挂进本 evaluate 的 kind 分支。
 
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
-import { getCorrectionStatuses } from '@/server/events/corrections';
+import { type CorrectionStatus, getCorrectionStatuses } from '@/server/events/corrections';
 import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgeConfig } from './nudge-config';
@@ -20,6 +20,9 @@ import type { NudgeConfig } from './nudge-config';
 export const NUDGE_ACTION = 'experimental:copilot_nudge';
 export const NUDGE_DISMISSED_ACTION = 'experimental:copilot_nudge_dismissed';
 export const NUDGE_OPENED_ACTION = 'experimental:copilot_nudge_opened';
+
+const HISTORY_PAGE_SIZE = 100;
+const RELATED_EVENT_QUERY_CHUNK_SIZE = 100;
 
 // 静默窗读模型 backstop（§3.2 / Q7）：这些 kind 在「正答题/正练习中」由 GET /nudges 延迟呈现
 // （练习结束后自然重现）。cut-1 的 ingestion_complete **非** interrupt-sensitive（录入完成时用户
@@ -62,7 +65,7 @@ function sameShanghaiDay(col: AnyColumn | SQL, now: Date): SQL {
 }
 
 /** 当前是否有 open practice session（per-type open 态白名单）——写进 payload 供读模型静默窗 backstop（§3.2）。 */
-export async function isInActivePracticeSession(db: Db): Promise<boolean> {
+export async function isInActivePracticeSession(db: Db | Tx): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
     .from(learning_session)
@@ -109,8 +112,8 @@ function getKnowledgeIds(payload: unknown): string[] {
  * Evaluates a failed attempt against each authoritative KC. Unsupported, corrected, and appealed
  * history is excluded; the first genuine success/partial ends the streak. Read-only.
  */
-async function evaluateWrongStreak(
-  db: Db,
+async function evaluateWrongStreakInSnapshot(
+  db: Db | Tx,
   input: Extract<NudgeEvaluateInput, { kind: 'attempt_failure' }>,
   config: NudgeConfig,
   now: Date,
@@ -147,7 +150,7 @@ async function evaluateWrongStreak(
   const candidates: Array<{ kcId: string; streak: number; tailEventIds: string[] }> = [];
   for (const kcId of knowledgeIds) {
     const tailEventIds: string[] = [];
-    let cursor: { id: string; createdAt: Date } | undefined;
+    let cursorId: string | undefined;
     let streakEnded = false;
 
     while (!streakEnded) {
@@ -167,14 +170,22 @@ async function evaluateWrongStreak(
               sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
               sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
             ),
-            sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
-            cursor
-              ? sql`(${event.created_at}, ${event.id}) < (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id})`
+            sql`(${event.created_at}, ${event.id}) <= (
+              SELECT trigger_boundary.created_at, trigger_boundary.id
+              FROM event AS trigger_boundary
+              WHERE trigger_boundary.id = ${trigger.id}
+            )`,
+            cursorId
+              ? sql`(${event.created_at}, ${event.id}) < (
+                  SELECT cursor_boundary.created_at, cursor_boundary.id
+                  FROM event AS cursor_boundary
+                  WHERE cursor_boundary.id = ${cursorId}
+                )`
               : undefined,
           ),
         )
         .orderBy(desc(event.created_at), desc(event.id))
-        .limit(100);
+        .limit(HISTORY_PAGE_SIZE);
       if (rows.length === 0) break;
 
       const attemptIds = rows.map((row) => row.id);
@@ -189,24 +200,24 @@ async function evaluateWrongStreak(
           ),
         );
       const judgeIds = judges.map((judge) => judge.id);
-      const correctionStatuses = await getCorrectionStatuses(db, judgeIds);
-      const appealedJudgeIds =
-        judgeIds.length === 0
-          ? new Set<string>()
-          : new Set(
-              (
-                await db
-                  .select({ subjectId: event.subject_id })
-                  .from(event)
-                  .where(
-                    and(
-                      eq(event.action, 'experimental:appeal_request'),
-                      eq(event.subject_kind, 'event'),
-                      inArray(event.subject_id, judgeIds),
-                    ),
-                  )
-              ).map((row) => row.subjectId),
-            );
+      const correctionStatuses = new Map<string, CorrectionStatus>();
+      const appealedJudgeIds = new Set<string>();
+      for (let offset = 0; offset < judgeIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+        const judgeIdChunk = judgeIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+        const chunkStatuses = await getCorrectionStatuses(db, judgeIdChunk);
+        for (const [judgeId, status] of chunkStatuses) correctionStatuses.set(judgeId, status);
+        const appealRows = await db
+          .select({ subjectId: event.subject_id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:appeal_request'),
+              eq(event.subject_kind, 'event'),
+              inArray(event.subject_id, judgeIdChunk),
+            ),
+          );
+        for (const row of appealRows) appealedJudgeIds.add(row.subjectId);
+      }
       const unsupportedAttemptIds = new Set(
         judges
           .filter((judge) => {
@@ -257,8 +268,8 @@ async function evaluateWrongStreak(
       }
 
       const last = rows.at(-1);
-      if (!last || rows.length < 100) break;
-      cursor = { id: last.id, createdAt: last.createdAt };
+      if (!last || rows.length < HISTORY_PAGE_SIZE) break;
+      cursorId = last.id;
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
   }
@@ -342,6 +353,18 @@ async function evaluateWrongStreak(
       },
     },
   };
+}
+
+async function evaluateWrongStreak(
+  db: Db,
+  input: Extract<NudgeEvaluateInput, { kind: 'attempt_failure' }>,
+  config: NudgeConfig,
+  now: Date,
+): Promise<NudgeDecision> {
+  return db.transaction((tx) => evaluateWrongStreakInSnapshot(tx, input, config, now), {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
 }
 
 export async function evaluateNudgeTrigger(
