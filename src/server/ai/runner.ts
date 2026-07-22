@@ -1278,6 +1278,12 @@ export async function streamTaskCollecting(
           };
           cost_usd = msg.total_cost_usd;
           if (isApiErrorSuccessResult(msg)) {
+            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
             throw new AgentRunError({
               kind,
               taskRunId,
