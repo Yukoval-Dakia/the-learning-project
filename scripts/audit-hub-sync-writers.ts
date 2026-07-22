@@ -21,13 +21,14 @@
  *   pnpm audit:hub-sync-writers          # exit 0 clean, exit 1 with findings
  *   pnpm audit:hub-sync-writers --json   # JSON findings
  *
- * Scans tracked `.ts` / `.tsx` under `src/` and `scripts/` (test files and the
- * audit scripts themselves — which carry table-name marker strings — excluded).
+ * Scans tracked `.ts` / `.tsx` under `src/` and `scripts/` (test files and this
+ * audit's own source — which necessarily carries rule marker strings — excluded).
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectDrizzleWrites } from './hub-sync-writer-dataflow';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -61,21 +62,185 @@ function normalizePath(p: string): string {
   return p.split('\\').join('/');
 }
 
-// A source line stripped of its comment portion, or null if the whole line is a
-// comment (so table names inside comments never register as writes).
-function codePortion(line: string): string | null {
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return null;
-  const commentIdx = line.indexOf('//');
-  return commentIdx === -1 ? line : line.slice(0, commentIdx);
-}
+function codeText(source: string): string {
+  const out: string[] = Array.from({ length: source.length }, (_, index) =>
+    source[index] === '\n' ? '\n' : ' ',
+  );
+  const structural: string[] = [...out];
 
-function writesTable(code: string, table: string): boolean {
-  // Drizzle form: .update(table) / .insert(table) / .delete(table)
-  const drizzle = new RegExp(`\\.(update|insert|delete)\\(\\s*${table}\\b`);
-  // Raw SQL: update table / insert into table / delete from table
-  const raw = new RegExp(`\\b(update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`, 'i');
-  return drizzle.test(code) || raw.test(code);
+  const copy = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) out[index] = source[index];
+  };
+  const copyStructural = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) structural[index] = source[index];
+  };
+  const previousWord = (index: number): string => {
+    let cursor = index - 1;
+    while (/\s/.test(structural[cursor] ?? '')) cursor -= 1;
+    const end = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    return structural.slice(cursor + 1, end).join('');
+  };
+  const previousSignificantIndex = (index: number): number => {
+    let cursor = index - 1;
+    while (/\s/.test(structural[cursor] ?? '')) cursor -= 1;
+    return cursor;
+  };
+  const isSqlRawArgument = (index: number): boolean => {
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== '(') return false;
+    cursor = previousSignificantIndex(cursor);
+    const rawEnd = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    if (structural.slice(cursor + 1, rawEnd).join('') !== 'raw') return false;
+    cursor = previousSignificantIndex(cursor + 1);
+    if (structural[cursor] !== '.') return false;
+    return previousWord(cursor) === 'sql';
+  };
+  const isActorRefValue = (index: number): boolean => {
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== ':') return false;
+    cursor = previousSignificantIndex(cursor);
+    if (structural[cursor] === '"' || structural[cursor] === "'") cursor -= 1;
+    const end = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    return structural.slice(cursor + 1, end).join('') === 'actorRef';
+  };
+  const followsControlCondition = (index: number): boolean => {
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== ')') return false;
+
+    let depth = 1;
+    cursor -= 1;
+    while (cursor >= 0 && depth > 0) {
+      if (structural[cursor] === ')') depth += 1;
+      else if (structural[cursor] === '(') depth -= 1;
+      cursor -= 1;
+    }
+    return depth === 0 && ['if', 'while', 'for', 'with'].includes(previousWord(cursor + 1));
+  };
+  const startsRegex = (index: number): boolean => {
+    const cursor = previousSignificantIndex(index);
+    if (cursor < 0 || followsControlCondition(index)) return true;
+    if (/[([{=,:;!&|?+*%^~<>-]/.test(structural[cursor])) return true;
+    return [
+      'return',
+      'throw',
+      'case',
+      'delete',
+      'void',
+      'typeof',
+      'instanceof',
+      'in',
+      'of',
+      'yield',
+      'await',
+    ].includes(previousWord(index));
+  };
+
+  const scanCode = (start: number, stopAtBrace: boolean): number => {
+    let index = start;
+    let braces = 0;
+    while (index < source.length) {
+      const char = source[index];
+      const next = source[index + 1];
+
+      if (stopAtBrace && char === '}' && braces === 0) return index + 1;
+      if (char === '{') braces += 1;
+      else if (char === '}' && braces > 0) braces -= 1;
+
+      if (char === '/' && next === '/') {
+        const end = source.indexOf('\n', index + 2);
+        index = end === -1 ? source.length : end;
+        continue;
+      }
+      if (char === '/' && next === '*') {
+        const end = source.indexOf('*/', index + 2);
+        index = end === -1 ? source.length : end + 2;
+        continue;
+      }
+      if (char === '/' && startsRegex(index)) {
+        let cursor = index + 1;
+        let escaped = false;
+        let inClass = false;
+        while (cursor < source.length) {
+          const current = source[cursor];
+          if (!escaped && current === '[') inClass = true;
+          else if (!escaped && current === ']') inClass = false;
+          else if (!escaped && current === '/' && !inClass) {
+            cursor += 1;
+            while (/[a-z]/i.test(source[cursor] ?? '')) cursor += 1;
+            break;
+          }
+          escaped = !escaped && current === '\\';
+          cursor += 1;
+        }
+        index = cursor;
+        continue;
+      }
+      if (char === "'" || char === '"') {
+        const quote = char;
+        const literalStart = index;
+        let cursor = index + 1;
+        let escaped = false;
+        while (cursor < source.length) {
+          const current = source[cursor];
+          if (!escaped && current === quote) {
+            cursor += 1;
+            break;
+          }
+          escaped = !escaped && current === '\\';
+          cursor += 1;
+        }
+        const actorRefValue = isActorRefValue(literalStart);
+        const literalText = source.slice(literalStart + 1, cursor - 1);
+        let afterLiteral = cursor;
+        while (/\s/.test(source[afterLiteral] ?? '')) afterLiteral += 1;
+        const actorRefKey = literalText === 'actorRef' && source[afterLiteral] === ':';
+        if (actorRefValue || isSqlRawArgument(literalStart) || actorRefKey) {
+          copy(literalStart, cursor);
+        }
+        if (actorRefValue || actorRefKey) copyStructural(literalStart, cursor);
+        index = cursor;
+        continue;
+      }
+      if (char === '`') {
+        const sqlTemplate = previousWord(index) === 'sql' || isSqlRawArgument(index);
+        let cursor = index + 1;
+        if (sqlTemplate) copy(index, index + 1);
+        while (cursor < source.length) {
+          if (source[cursor] === '\\') {
+            if (sqlTemplate) copy(cursor, Math.min(cursor + 2, source.length));
+            cursor += 2;
+            continue;
+          }
+          if (source[cursor] === '`') {
+            if (sqlTemplate) copy(cursor, cursor + 1);
+            cursor += 1;
+            break;
+          }
+          if (source[cursor] === '$' && source[cursor + 1] === '{') {
+            copy(cursor, cursor + 2);
+            cursor = scanCode(cursor + 2, true);
+            copy(cursor - 1, cursor);
+            continue;
+          }
+          if (sqlTemplate) copy(cursor, cursor + 1);
+          cursor += 1;
+        }
+        index = cursor;
+        continue;
+      }
+
+      structural[index] = char;
+      out[index] = char;
+      index += 1;
+    }
+    return index;
+  };
+
+  scanCode(0, false);
+  return out.join('');
 }
 
 function listSourceFiles(root: string): string[] {
@@ -92,8 +257,8 @@ function listSourceFiles(root: string): string[] {
       }
       if (!/\.(ts|tsx)$/.test(entry)) continue;
       if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(entry)) continue;
-      // Audit scripts carry table-name marker strings; never scan them.
-      if (/(^|\/)audit-[^/]*\.ts$/.test(normalizePath(abs))) continue;
+      // This audit's own source contains rule marker strings and synthetic patterns.
+      if (normalizePath(relative(root, abs)) === 'scripts/audit-hub-sync-writers.ts') continue;
       out.push(abs);
     }
   };
@@ -118,29 +283,54 @@ export async function auditHubSyncWriters(input: {
   for (const abs of listSourceFiles(input.root)) {
     const rel = normalizePath(relative(input.root, abs));
     const isReconciler = rel === RECONCILER_PATH;
-    const lines = readFileSync(abs, 'utf8').split('\n');
+    const sourceText = readFileSync(abs, 'utf8');
+    const code = codeText(sourceText);
+    const drizzleAudit = collectDrizzleWrites(sourceText, rel);
+    const drizzleWrites = drizzleAudit.writes;
+    const lines = sourceText.split('\n');
+    const findingKeys = new Set<string>();
+    const addFinding = (rule: HubSyncAuditRule, index: number, occurrence = String(index)) => {
+      const line = code.slice(0, index).split('\n').length;
+      const key = `${rule}:${rel}:${occurrence}`;
+      if (findingKeys.has(key)) return;
+      findingKeys.add(key);
+      findings.push({ rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
+    };
 
-    lines.forEach((rawLine, index) => {
-      const code = codePortion(rawLine);
-      if (code === null) return;
-      const line = index + 1;
-      const excerpt = rawLine.trim();
-
-      if (!isReconciler && writesTable(code, 'hub_sync_reconciliation')) {
-        findings.push({ rule: 'RECONCILIATION_OWNER_BYPASS', file: rel, line, excerpt });
-      }
-      if (!isReconciler && /app\.hub_sync_internal_apply/.test(code)) {
-        findings.push({ rule: 'INTERNAL_APPLY_MARKER_BYPASS', file: rel, line, excerpt });
-      }
-      if (/actorRef\s*:\s*['"]hub_auto_sync['"]/.test(code)) {
-        findings.push({ rule: 'DIRECT_HUB_ACTOR_APPLY', file: rel, line, excerpt });
-      }
-      for (const table of TOPOLOGY_TABLES) {
-        if (writesTable(code, table) && !allowByPath.get(rel)?.has(table)) {
-          findings.push({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER', file: rel, line, excerpt });
+    if (!isReconciler) {
+      for (const write of drizzleWrites) {
+        if (write.table === 'hub_sync_reconciliation') {
+          addFinding(
+            'RECONCILIATION_OWNER_BYPASS',
+            write.index,
+            `${write.index}:${write.end}:${write.table}`,
+          );
         }
       }
-    });
+      for (const marker of drizzleAudit.internalApplyMarkers) {
+        addFinding(
+          'INTERNAL_APPLY_MARKER_BYPASS',
+          marker.index,
+          `${marker.index}:${marker.end}:internal-marker`,
+        );
+      }
+    }
+    for (const match of code.matchAll(
+      /(?:actorRef|['"]actorRef['"])\s*:\s*['"]hub_auto_sync['"]/g,
+    )) {
+      addFinding('DIRECT_HUB_ACTOR_APPLY', match.index);
+    }
+    for (const table of TOPOLOGY_TABLES) {
+      if (allowByPath.get(rel)?.has(table)) continue;
+      for (const write of drizzleWrites) {
+        if (write.table === table)
+          addFinding(
+            'UNINVENTORIED_TOPOLOGY_WRITER',
+            write.index,
+            `${write.index}:${write.end}:${write.table}`,
+          );
+      }
+    }
   }
   return findings;
 }
@@ -178,6 +368,6 @@ async function main(): Promise<void> {
 }
 
 // Run as CLI only (not when imported by the test).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void main();
 }
