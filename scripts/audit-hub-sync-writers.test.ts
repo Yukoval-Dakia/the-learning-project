@@ -701,6 +701,26 @@ describe('auditHubSyncWriters', () => {
         'function f(){ client = db; var client; client.insert(knowledge).values({}); }',
       ],
       [
+        'uninitialized let is definitely undefined after declaration',
+        'let client; ((value = db) => value.insert(knowledge).values({}))(client);',
+      ],
+      [
+        'uninitialized var is definitely undefined after declaration',
+        'var client; ((value = db) => value.insert(knowledge).values({}))(client);',
+      ],
+      [
+        'hoisted var is definitely undefined before declaration',
+        '((value = db) => value.insert(knowledge).values({}))(client); var client;',
+      ],
+      [
+        'later var initializer replaces hoisted undefined',
+        'var client = db; client.insert(knowledge).values({});',
+      ],
+      [
+        'conditional assignment joins hoisted undefined with trust',
+        'var client; if (condition) client = db; client?.insert(knowledge).values({});',
+      ],
+      [
         'callee snapshot before argument reassignment',
         'let client = db; client.insert((client = cache, knowledge)).values({});',
       ],
@@ -917,6 +937,10 @@ describe('auditHubSyncWriters', () => {
       [
         'nested shadow',
         'let client = db; { let client = cache; client.insert(knowledge).values({}); }',
+      ],
+      [
+        'assignment after uninitialized let replaces undefined',
+        'let client; client = cache; client.insert(knowledge).values({});',
       ],
       [
         'reassignment clears trust',

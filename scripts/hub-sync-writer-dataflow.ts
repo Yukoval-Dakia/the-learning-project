@@ -335,7 +335,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     }
   };
 
-  const predeclareVars = (value: unknown, functionScope: Scope): void => {
+  const predeclareVars = (value: unknown, functionScope: Scope, state: State): State => {
+    let initialized = state;
     for (const candidate of childNodes(value)) {
       if (
         [
@@ -351,14 +352,20 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       )
         continue;
       if (candidate.type === 'VariableDeclaration' && candidate.kind === 'var') {
-        for (const declaration of childNodes(candidate.declarations))
+        for (const declaration of childNodes(candidate.declarations)) {
+          const existingBindings = new Set(functionScope.bindings.values());
           declarePattern(declaration.id, functionScope);
+          for (const binding of functionScope.bindings.values()) {
+            if (!existingBindings.has(binding)) initialized = store(binding, D, initialized);
+          }
+        }
       }
       for (const [key, child] of Object.entries(candidate)) {
         if (key === 'loc' || key === 'start' || key === 'end') continue;
-        predeclareVars(child, functionScope);
+        initialized = predeclareVars(child, functionScope, initialized);
       }
     }
+    return initialized;
   };
 
   type Substitutions = Map<string, AstNode | undefined>;
@@ -1317,8 +1324,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     if (ownName) ensureBinding(ownName, scope, candidate);
     const parameters = childNodes(candidate.params);
     for (const parameter of parameters) declarePattern(parameter, scope);
-    predeclareVars(candidate.body, scope);
-    let initialized: EvalResult = { normal: { state: captured, value: U } };
+    const hoisted = predeclareVars(candidate.body, scope, captured);
+    let initialized: EvalResult = { normal: { state: hoisted, value: U } };
     for (const [index, parameter] of parameters.entries()) {
       initialized = sequenceEval(initialized, (next) => {
         const argument = arguments_[index] ?? {
@@ -1393,8 +1400,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     if (ownName) ensureBinding(ownName, scope, candidate);
     const parameters = childNodes(candidate.params);
     for (const parameter of parameters) declarePattern(parameter, scope);
-    predeclareVars(candidate.body, scope);
-    let state = widened;
+    let state = predeclareVars(candidate.body, scope, widened);
     for (const [index, parameter] of parameters.entries()) {
       const normalized = unwrapPattern(parameter);
       const annotation = normalized?.typeAnnotation ?? parameter.typeAnnotation;
@@ -1446,7 +1452,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
           functionParents.set(functionValue, ctx.scope);
           deferFunction(functionValue, ctx.scope, next);
         }
-        const evaluated = init ? evalExpr(init, ctx, next) : { normal: { state: next, value: U } };
+        const evaluated = init ? evalExpr(init, ctx, next) : { normal: { state: next, value: D } };
         if (!evaluated.normal) return evaluated;
         const id = node(declaration.id);
         const annotated = trustedType(id?.typeAnnotation, ctx.scope);
@@ -1469,7 +1475,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     switch (candidate.type) {
       case 'Program':
         predeclareImmediate(candidate.body, ctx.scope);
-        predeclareVars(candidate.body, ctx.scope);
+        initialState = predeclareVars(candidate.body, ctx.scope, initialState);
         for (const statement of childNodes(candidate.body)) {
           if (statement.type !== 'FunctionDeclaration') continue;
           const name = identifierName(statement.id);
