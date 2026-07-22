@@ -120,12 +120,27 @@ export async function createProposalDecision(
       });
     } else if (input.decision === 'dismiss') {
       result = await dismissAiProposal(db, proposalId, { user_note: input.user_note });
-    } else {
+    } else if (input.decision === 'change_type') {
+      if (!input.new_relation_type) {
+        throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+      }
       result = await acceptAiProposal(db, proposalId, {
         decision: input.decision,
         new_relation_type: input.new_relation_type,
         user_note: input.user_note,
       });
+    } else if (input.decision === 'accept') {
+      result = await acceptAiProposal(db, proposalId, {
+        decision: 'accept',
+        user_note: input.user_note,
+      });
+    } else if (input.decision === 'reverse') {
+      result = await acceptAiProposal(db, proposalId, {
+        decision: 'reverse',
+        user_note: input.user_note,
+      });
+    } else {
+      throw new ApiError('validation_error', 'unsupported proposal decision', 400);
     }
   } catch (err) {
     normalizeDomainError(err);

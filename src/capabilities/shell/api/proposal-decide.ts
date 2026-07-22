@@ -34,11 +34,19 @@ async function handleLegacyDecision(
       );
     }
     const { decision, new_relation_type, user_note } = parsed.data;
-    const result =
-      decision === 'dismiss'
-        ? await dismissAiProposal(db, id, { user_note })
-        : await acceptAiProposal(db, id, { decision, new_relation_type, user_note });
-    return Response.json(result);
+    if (decision === 'change_type') {
+      // superRefine enforces this at runtime but does not narrow the inferred field type.
+      if (!new_relation_type) {
+        throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
+      }
+      return Response.json(
+        await acceptAiProposal(db, id, { decision, new_relation_type, user_note }),
+      );
+    }
+    if (decision === 'dismiss') {
+      return Response.json(await dismissAiProposal(db, id, { user_note }));
+    }
+    return Response.json(await acceptAiProposal(db, id, { decision, user_note }));
   } catch (err) {
     return errorResponse(err);
   }
