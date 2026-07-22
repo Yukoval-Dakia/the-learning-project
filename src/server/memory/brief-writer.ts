@@ -127,7 +127,7 @@ export async function runBriefWriter(params: {
   events: BriefEvent[];
   facts: BriefFact[];
   now: string; // 3A: real-clock ISO anchor for the 7d/3mo/long_term buckets
-  ctx?: import('@/server/ai/runner-fn').BoundRunTaskCtx;
+  ctx?: import('@/server/ai/runner-fn').RunTaskCallCtx;
 }): Promise<BriefDraft> {
   const { runTaskFn, scopeKey, template, events, facts, now } = params;
 

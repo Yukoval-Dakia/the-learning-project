@@ -1,4 +1,4 @@
-import type { BoundRunTaskCtx } from '@/server/ai/runner-fn';
+import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 
 export interface TaskTextResult {
   text: string;
@@ -18,7 +18,7 @@ export interface TaskTextResult {
 export type TaskTextRunFn = (
   kind: string,
   input: unknown,
-  ctx?: BoundRunTaskCtx,
+  ctx?: RunTaskCallCtx,
 ) => Promise<TaskTextResult>;
 
 export function costUsdToMicroUsd(costUsd: number | undefined): number | null {

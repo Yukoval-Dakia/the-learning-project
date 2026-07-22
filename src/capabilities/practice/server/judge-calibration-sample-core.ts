@@ -372,7 +372,7 @@ export async function runJudgeCalibrationSample(
           // override into ctx at the call site — the second lane must win.
           override: {
             provider: cfg.rejudgeProvider as NonNullable<
-              import('@/server/ai/runner-fn').BoundRunTaskCtx['override']
+              import('@/server/ai/runner-fn').RunTaskCallCtx['override']
             >['provider'],
             model: cfg.rejudgeModel,
           },
