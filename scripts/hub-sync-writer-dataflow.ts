@@ -33,6 +33,11 @@ type Flow = {
   continues: CompletionMap;
 };
 type EvalResult = { normal?: { state: State; value: Trust }; throws?: State };
+type InvocationArgument = {
+  value: Trust;
+  supplied: boolean;
+  undefinedness: 'definite' | 'maybe' | 'no';
+};
 type EvalCtx = { scope: Scope };
 type DrizzleWrite = { index: number; table: string };
 
@@ -662,6 +667,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     reportRawExecute(candidate, receiver, method, ctx.scope);
     const callFrontier = calleeResult.normal.state;
     let argumentsResult: EvalResult = calleeResult;
+    const invocationArguments: InvocationArgument[] = [];
     const args = childNodes(candidate.arguments);
     for (const [index, argument] of args.entries()) {
       argumentsResult = sequenceEval(argumentsResult, (next) => {
@@ -673,9 +679,28 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
           ['ArrowFunctionExpression', 'FunctionExpression'].includes(callback.type)
         ) {
           visitFunction(callback, ctx.scope, next, true);
+          invocationArguments.push({ value: U, supplied: true, undefinedness: 'no' });
           return { normal: { state: next, value: U } };
         }
-        return evalExpr(argument, ctx, next);
+        const evaluated = evalExpr(argument, ctx, next);
+        if (evaluated.normal) {
+          const expression = unwrapExpression(argument);
+          const undefinedness =
+            expression?.type === 'Identifier' && expression.name === 'undefined'
+              ? 'definite'
+              : expression?.type === 'UnaryExpression' && expression.operator === 'void'
+                ? 'definite'
+                : expression &&
+                    ['ConditionalExpression', 'LogicalExpression'].includes(expression.type)
+                  ? 'maybe'
+                  : 'no';
+          invocationArguments.push({
+            value: evaluated.normal.value,
+            supplied: true,
+            undefinedness,
+          });
+        }
+        return evaluated;
       });
       if (!argumentsResult.normal) break;
       if (index === args.length - 1) break;
@@ -683,7 +708,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     if (!argumentsResult.normal) return argumentsResult;
     const after = argumentsResult.normal.state;
     if (directFunction) {
-      const invoked = invokeDirectFunction(directFunction, ctx.scope, after);
+      const invoked = invokeDirectFunction(directFunction, ctx.scope, after, invocationArguments);
       return {
         normal: invoked.normal && { state: invoked.normal.state, value: U },
         throws: joinState(argumentsResult.throws, invoked.throws),
@@ -1280,7 +1305,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
   const functionBindingsScope = (candidate: AstNode): Scope =>
     functionParents.get(candidate) ?? root;
 
-  function invokeDirectFunction(candidate: AstNode, parent: Scope, captured: State): EvalResult {
+  function invokeDirectFunction(
+    candidate: AstNode,
+    parent: Scope,
+    captured: State,
+    arguments_: InvocationArgument[],
+  ): EvalResult {
     functionParents.set(candidate, parent);
     const scope = makeScope(candidate, parent, true);
     for (const parameter of childNodes(node(candidate.typeParameters)?.params)) {
@@ -1293,10 +1323,44 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     for (const parameter of parameters) declarePattern(parameter, scope);
     predeclareVars(candidate.body, scope);
     let initialized: EvalResult = { normal: { state: captured, value: U } };
-    for (const parameter of parameters) {
-      initialized = sequenceEval(initialized, (next) =>
-        evalPattern(parameter, U, { scope }, next, scope),
-      );
+    for (const [index, parameter] of parameters.entries()) {
+      initialized = sequenceEval(initialized, (next) => {
+        const argument = arguments_[index] ?? {
+          value: U,
+          supplied: false,
+          undefinedness: 'definite' as const,
+        };
+        if (parameter.type === 'AssignmentPattern') {
+          const explicit =
+            argument.supplied && argument.undefinedness !== 'definite'
+              ? evalPattern(parameter.left, argument.value, { scope }, next, scope)
+              : undefined;
+          if (argument.undefinedness === 'no') return explicit as EvalResult;
+          const fallback = node(parameter.right);
+          const evaluated = fallback
+            ? evalExpr(fallback, { scope }, next)
+            : { normal: { state: next, value: U } };
+          const defaulted = sequenceEval(evaluated, (afterDefault) =>
+            evalPattern(
+              parameter.left,
+              evaluated.normal?.value ?? U,
+              { scope },
+              afterDefault,
+              scope,
+            ),
+          );
+          if (!explicit) return defaulted;
+          return {
+            normal: explicit.normal &&
+              defaulted.normal && {
+                state: joinState(explicit.normal.state, defaulted.normal.state) as State,
+                value: trustJoin(explicit.normal.value, defaulted.normal.value),
+              },
+            throws: joinState(explicit.throws, defaulted.throws),
+          };
+        }
+        return evalPattern(parameter, argument.value, { scope }, next, scope);
+      });
     }
     if (!initialized.normal) return initialized;
     const body = node(candidate.body);

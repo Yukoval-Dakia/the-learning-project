@@ -860,10 +860,27 @@ describe('auditHubSyncWriters', () => {
       ['computed string update', "db['update'](knowledge_edge).set({});"],
       ['computed string delete', "db['delete'](knowledge_edge).where(condition);"],
       ['inline arrow invocation', '(()=>db.insert(knowledge).values({}))();'],
+      ['inline arrow positional argument', '((client)=>client.insert(knowledge).values({}))(db);'],
+      [
+        'inline function positional argument',
+        '(function(client){ client.insert(knowledge).values({}); })(db);',
+      ],
       ['inline function invocation', '(function(){ db.update(knowledge_edge).set({}); })();'],
       [
         'inline default parameter',
         '((client = db) => client.delete(knowledge).where(condition))();',
+      ],
+      [
+        'explicit undefined takes trusted default',
+        '((client = db) => client.insert(knowledge).values({}))(undefined);',
+      ],
+      [
+        'maybe undefined joins trusted default',
+        '((client = db) => client.insert(knowledge).values({}))(condition ? cache : undefined);',
+      ],
+      [
+        'inline argument side effect before invocation',
+        'let client = cache; ((value)=>client.insert(knowledge).values({}))((client = db));',
       ],
       [
         'dynamic repo db import',
@@ -996,6 +1013,14 @@ describe('auditHubSyncWriters', () => {
       ['foreign computed string update', "cache['update'](knowledge_edge).set({});"],
       ['foreign computed string delete', "cache['delete'](knowledge_edge).where(condition);"],
       ['foreign inline arrow invocation', '(()=>cache.insert(knowledge).values({}))();'],
+      [
+        'foreign argument suppresses trusted default',
+        '((client=db)=>client.insert(knowledge).values({}))(cache);',
+      ],
+      [
+        'throwing argument stops IIFE body',
+        '((client)=>db.insert(knowledge).values({}))((()=>{ throw error; })());',
+      ],
       [
         'foreign inline function invocation',
         '(function(){ cache.update(knowledge_edge).set({}); })();',
