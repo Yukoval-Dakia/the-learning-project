@@ -325,6 +325,8 @@ describe('Foundation D M2 read tools', () => {
       // ADR-0032 D9 / YUK-304 — questions catalog reader (wraps the YUK-280 list reader).
       'query_questions',
       'query_records',
+      // YUK-756 — generation-only registry dispatcher is a read-effect DomainTool.
+      'run_task',
       'search_memory_facts',
     ]);
   });
