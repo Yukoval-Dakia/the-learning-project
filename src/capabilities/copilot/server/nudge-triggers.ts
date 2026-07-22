@@ -10,9 +10,9 @@
 // 纯 additive 挂进本 evaluate 的 kind 分支。
 
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
-import { getCorrectionStatuses } from '@/server/events/corrections';
+import { type CorrectionStatus, getCorrectionStatuses } from '@/server/events/corrections';
 import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgeConfig } from './nudge-config';
@@ -20,6 +20,9 @@ import type { NudgeConfig } from './nudge-config';
 export const NUDGE_ACTION = 'experimental:copilot_nudge';
 export const NUDGE_DISMISSED_ACTION = 'experimental:copilot_nudge_dismissed';
 export const NUDGE_OPENED_ACTION = 'experimental:copilot_nudge_opened';
+
+const HISTORY_PAGE_SIZE = 100;
+const RELATED_EVENT_QUERY_CHUNK_SIZE = 100;
 
 // 静默窗读模型 backstop（§3.2 / Q7）：这些 kind 在「正答题/正练习中」由 GET /nudges 延迟呈现
 // （练习结束后自然重现）。cut-1 的 ingestion_complete **非** interrupt-sensitive（录入完成时用户
@@ -62,7 +65,7 @@ function sameShanghaiDay(col: AnyColumn | SQL, now: Date): SQL {
 }
 
 /** 当前是否有 open practice session（per-type open 态白名单）——写进 payload 供读模型静默窗 backstop（§3.2）。 */
-export async function isInActivePracticeSession(db: Db): Promise<boolean> {
+export async function isInActivePracticeSession(db: Db | Tx): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
     .from(learning_session)
@@ -109,8 +112,8 @@ function getKnowledgeIds(payload: unknown): string[] {
  * Evaluates a failed attempt against each authoritative KC. Unsupported, corrected, and appealed
  * history is excluded; the first genuine success/partial ends the streak. Read-only.
  */
-async function evaluateWrongStreak(
-  db: Db,
+async function evaluateWrongStreakInSnapshot(
+  db: Db | Tx,
   input: Extract<NudgeEvaluateInput, { kind: 'attempt_failure' }>,
   config: NudgeConfig,
   now: Date,
@@ -134,99 +137,139 @@ async function evaluateWrongStreak(
     return { fire: false, reason: 'not_failure' };
   }
 
+  const duplicateRows = await db
+    .select({ one: sql<number>`1` })
+    .from(event)
+    .where(and(eq(event.action, NUDGE_ACTION), eq(event.caused_by_event_id, trigger.id)))
+    .limit(1);
+  if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
+
   const knowledgeIds = getKnowledgeIds(trigger.payload);
   if (knowledgeIds.length === 0) return { fire: false, reason: 'no_knowledge' };
 
   const candidates: Array<{ kcId: string; streak: number; tailEventIds: string[] }> = [];
   for (const kcId of knowledgeIds) {
-    const rows = await db
-      .select({ id: event.id, outcome: event.outcome, payload: event.payload })
-      .from(event)
-      .where(
-        and(
-          inArray(event.action, ['attempt', 'review']),
-          eq(event.subject_kind, 'question'),
-          or(
-            sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
-            sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
-          ),
-          sql`(${event.created_at}, ${event.id}) <= (${trigger.createdAt.toISOString()}::timestamptz, ${trigger.id})`,
-        ),
-      )
-      .orderBy(desc(event.created_at), desc(event.id));
-
-    const attemptIds = rows.map((row) => row.id);
-    const judges =
-      attemptIds.length === 0
-        ? []
-        : await db
-            .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
-            .from(event)
-            .where(
-              and(
-                eq(event.action, 'judge'),
-                eq(event.subject_kind, 'event'),
-                inArray(event.subject_id, attemptIds),
-              ),
-            );
-    const judgeIds = judges.map((judge) => judge.id);
-    const correctionStatuses = await getCorrectionStatuses(db, judgeIds);
-    const appealedJudgeIds =
-      judgeIds.length === 0
-        ? new Set<string>()
-        : new Set(
-            (
-              await db
-                .select({ subjectId: event.subject_id })
-                .from(event)
-                .where(
-                  and(
-                    eq(event.action, 'experimental:appeal_request'),
-                    eq(event.subject_kind, 'event'),
-                    inArray(event.subject_id, judgeIds),
-                  ),
-                )
-            ).map((row) => row.subjectId),
-          );
-    const unsupportedAttemptIds = new Set(
-      judges
-        .filter((judge) => {
-          const payload = judge.payload;
-          return (
-            payload !== null &&
-            typeof payload === 'object' &&
-            payload.coarse_outcome === 'unsupported'
-          );
-        })
-        .map((judge) => judge.subjectId),
-    );
-    const contestedAttemptIds = new Set(
-      judges
-        .filter((judge) => {
-          const correction = correctionStatuses.get(judge.id);
-          return (
-            appealedJudgeIds.has(judge.id) ||
-            (correction !== undefined && correction.state !== 'active')
-          );
-        })
-        .map((judge) => judge.subjectId),
-    );
-
-    const triggerIsExcluded =
-      unsupportedAttemptIds.has(trigger.id) || contestedAttemptIds.has(trigger.id);
-    if (triggerIsExcluded) return { fire: false, reason: 'not_failure' };
-
     const tailEventIds: string[] = [];
-    for (const row of rows) {
-      if (
-        isUnsupportedAttemptPayload(row.payload) ||
-        unsupportedAttemptIds.has(row.id) ||
-        contestedAttemptIds.has(row.id)
-      ) {
-        continue;
+    let cursorId: string | undefined;
+    let streakEnded = false;
+
+    while (!streakEnded) {
+      const rows = await db
+        .select({
+          id: event.id,
+          outcome: event.outcome,
+          payload: event.payload,
+          createdAt: event.created_at,
+        })
+        .from(event)
+        .where(
+          and(
+            inArray(event.action, ['attempt', 'review']),
+            eq(event.subject_kind, 'question'),
+            or(
+              sql`(${event.payload} ? 'fsrs_subject_ids' AND ${event.payload}->'fsrs_subject_ids' @> ${JSON.stringify([kcId])}::jsonb)`,
+              sql`(NOT (${event.payload} ? 'fsrs_subject_ids') AND ${event.payload} @> ${JSON.stringify({ referenced_knowledge_ids: [kcId] })}::jsonb)`,
+            ),
+            sql`(${event.created_at}, ${event.id}) <= (
+              SELECT trigger_boundary.created_at, trigger_boundary.id
+              FROM event AS trigger_boundary
+              WHERE trigger_boundary.id = ${trigger.id}
+            )`,
+            cursorId
+              ? sql`(${event.created_at}, ${event.id}) < (
+                  SELECT cursor_boundary.created_at, cursor_boundary.id
+                  FROM event AS cursor_boundary
+                  WHERE cursor_boundary.id = ${cursorId}
+                )`
+              : undefined,
+          ),
+        )
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(HISTORY_PAGE_SIZE);
+      if (rows.length === 0) break;
+
+      const attemptIds = rows.map((row) => row.id);
+      const judges = await db
+        .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'judge'),
+            eq(event.subject_kind, 'event'),
+            inArray(event.subject_id, attemptIds),
+          ),
+        );
+      const judgeIds = judges.map((judge) => judge.id);
+      const correctionStatuses = new Map<string, CorrectionStatus>();
+      const appealedJudgeIds = new Set<string>();
+      for (let offset = 0; offset < judgeIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+        const judgeIdChunk = judgeIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+        const chunkStatuses = await getCorrectionStatuses(db, judgeIdChunk);
+        for (const [judgeId, status] of chunkStatuses) correctionStatuses.set(judgeId, status);
+        const appealRows = await db
+          .select({ subjectId: event.subject_id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:appeal_request'),
+              eq(event.subject_kind, 'event'),
+              inArray(event.subject_id, judgeIdChunk),
+            ),
+          );
+        for (const row of appealRows) appealedJudgeIds.add(row.subjectId);
       }
-      if (row.outcome !== 'failure') break;
-      tailEventIds.push(row.id);
+      const unsupportedAttemptIds = new Set(
+        judges
+          .filter((judge) => {
+            const payload = judge.payload;
+            return (
+              payload !== null &&
+              typeof payload === 'object' &&
+              payload.coarse_outcome === 'unsupported'
+            );
+          })
+          .map((judge) => judge.subjectId),
+      );
+      const contestedAttemptIds = new Set(
+        judges
+          .filter((judge) => {
+            const correction = correctionStatuses.get(judge.id);
+            return (
+              appealedJudgeIds.has(judge.id) ||
+              (correction !== undefined && correction.state !== 'active')
+            );
+          })
+          .map((judge) => judge.subjectId),
+      );
+
+      if (
+        rows.some(
+          (row) =>
+            row.id === trigger.id &&
+            (unsupportedAttemptIds.has(row.id) || contestedAttemptIds.has(row.id)),
+        )
+      ) {
+        return { fire: false, reason: 'not_failure' };
+      }
+
+      for (const row of rows) {
+        if (
+          isUnsupportedAttemptPayload(row.payload) ||
+          unsupportedAttemptIds.has(row.id) ||
+          contestedAttemptIds.has(row.id)
+        ) {
+          continue;
+        }
+        if (row.outcome !== 'failure') {
+          streakEnded = true;
+          break;
+        }
+        tailEventIds.push(row.id);
+      }
+
+      const last = rows.at(-1);
+      if (!last || rows.length < HISTORY_PAGE_SIZE) break;
+      cursorId = last.id;
     }
     candidates.push({ kcId, streak: tailEventIds.length, tailEventIds });
   }
@@ -237,27 +280,25 @@ async function evaluateWrongStreak(
     return { fire: false, reason: 'streak_below_threshold' };
   }
 
-  const duplicateRows = await db
-    .select({ one: sql<number>`1` })
-    .from(event)
-    .where(and(eq(event.action, NUDGE_ACTION), eq(event.caused_by_event_id, trigger.id)))
-    .limit(1);
-  if (duplicateRows.length > 0) return { fire: false, reason: 'already_nudged' };
-
   const shadow = !config.enabled;
   const candidateIds = thresholdCandidates.map((candidate) => candidate.kcId);
-  const cooldownRows = await db
-    .select({ subjectId: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, NUDGE_ACTION),
-        eq(event.subject_kind, 'knowledge'),
-        inArray(event.subject_id, candidateIds),
-        sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
-        sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
-      ),
-    );
+  const cooldownRows: Array<{ subjectId: string }> = [];
+  for (let offset = 0; offset < candidateIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+    const candidateIdChunk = candidateIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+    const chunkRows = await db
+      .select({ subjectId: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, NUDGE_ACTION),
+          eq(event.subject_kind, 'knowledge'),
+          inArray(event.subject_id, candidateIdChunk),
+          sql`${event.payload}->>'kind' = 'kc_wrong_streak'`,
+          sql`${event.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+        ),
+      );
+    cooldownRows.push(...chunkRows);
+  }
   const blockedKcIds = new Set(cooldownRows.map((row) => row.subjectId));
 
   if (!shadow) {
@@ -275,20 +316,23 @@ async function evaluateWrongStreak(
 
     const dismissed = alias(event, 'streak_dismissed');
     const nudge = alias(event, 'streak_nudge');
-    const fusedRows = await db
-      .select({ subjectId: nudge.subject_id })
-      .from(dismissed)
-      .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
-      .where(
-        and(
-          eq(dismissed.action, NUDGE_DISMISSED_ACTION),
-          eq(nudge.subject_kind, 'knowledge'),
-          inArray(nudge.subject_id, candidateIds),
-          sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
-          sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
-        ),
-      );
-    for (const row of fusedRows) blockedKcIds.add(row.subjectId);
+    for (let offset = 0; offset < candidateIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+      const candidateIdChunk = candidateIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE);
+      const fusedRows = await db
+        .select({ subjectId: nudge.subject_id })
+        .from(dismissed)
+        .innerJoin(nudge, eq(nudge.id, dismissed.caused_by_event_id))
+        .where(
+          and(
+            eq(dismissed.action, NUDGE_DISMISSED_ACTION),
+            eq(nudge.subject_kind, 'knowledge'),
+            inArray(nudge.subject_id, candidateIdChunk),
+            sql`${nudge.payload}->>'kind' = 'kc_wrong_streak'`,
+            sql`${dismissed.created_at} >= ${now.toISOString()}::timestamptz - (${config.kcCooldownHours} * interval '1 hour')`,
+          ),
+        );
+      for (const row of fusedRows) blockedKcIds.add(row.subjectId);
+    }
   }
 
   const winner = thresholdCandidates.find((candidate) => !blockedKcIds.has(candidate.kcId));
@@ -317,6 +361,18 @@ async function evaluateWrongStreak(
       },
     },
   };
+}
+
+async function evaluateWrongStreak(
+  db: Db,
+  input: Extract<NudgeEvaluateInput, { kind: 'attempt_failure' }>,
+  config: NudgeConfig,
+  now: Date,
+): Promise<NudgeDecision> {
+  return db.transaction((tx) => evaluateWrongStreakInSnapshot(tx, input, config, now), {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
 }
 
 export async function evaluateNudgeTrigger(

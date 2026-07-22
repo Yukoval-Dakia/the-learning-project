@@ -1,5 +1,5 @@
 import { event, learning_session } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { NudgeConfig } from './nudge-config';
 import { NUDGE_ACTION, NUDGE_DISMISSED_ACTION, evaluateNudgeTrigger } from './nudge-triggers';
@@ -46,6 +46,35 @@ async function seedAttempt(opts: {
     });
 }
 
+async function seedAttempts(
+  attempts: Array<{
+    id: string;
+    outcome: 'success' | 'failure' | 'partial';
+    knowledgeIds: string[];
+    at: Date;
+    unsupported?: boolean;
+  }>,
+): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values(
+      attempts.map((attempt) => ({
+        id: attempt.id,
+        actor_kind: 'user' as const,
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question' as const,
+        subject_id: `q_${attempt.id}`,
+        outcome: attempt.outcome,
+        payload: {
+          referenced_knowledge_ids: attempt.knowledgeIds,
+          ...(attempt.unsupported ? { unsupported_judge: true } : {}),
+        },
+        created_at: attempt.at,
+      })),
+    );
+}
+
 async function seedUnsupportedJudge(attemptId: string, at: Date): Promise<void> {
   await testDb()
     .insert(event)
@@ -61,6 +90,59 @@ async function seedUnsupportedJudge(attemptId: string, at: Date): Promise<void> 
       caused_by_event_id: attemptId,
       created_at: at,
     });
+}
+
+async function seedContestedJudge(
+  attemptId: string,
+  kind: 'corrected' | 'appealed',
+  at: Date,
+): Promise<void> {
+  const judgeId = `judge_${kind}_${attemptId}`;
+  await testDb()
+    .insert(event)
+    .values([
+      {
+        id: judgeId,
+        actor_kind: 'agent',
+        actor_ref: 'review_judge',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptId,
+        outcome: 'success',
+        payload: { coarse_outcome: 'incorrect' },
+        caused_by_event_id: attemptId,
+        created_at: at,
+      },
+      kind === 'corrected'
+        ? {
+            id: `correction_${attemptId}`,
+            actor_kind: 'agent',
+            actor_ref: 'rejudge',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: judgeId,
+            outcome: 'success',
+            payload: {
+              correction_kind: 'supersede',
+              reason_md: 'upheld',
+              replacement_event_id: `replacement_${attemptId}`,
+              affected_refs: [{ kind: 'question', id: `q_${attemptId}` }],
+            },
+            caused_by_event_id: judgeId,
+            created_at: new Date(at.getTime() + 1),
+          }
+        : {
+            id: `appeal_${attemptId}`,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'experimental:appeal_request',
+            subject_kind: 'event',
+            subject_id: judgeId,
+            payload: { reason_md: 'recheck' },
+            caused_by_event_id: judgeId,
+            created_at: new Date(at.getTime() + 1),
+          },
+    ]);
 }
 
 async function seedWrongTail(kcId: string, count: number): Promise<string> {
@@ -607,6 +689,260 @@ describe('evaluateNudgeTrigger — same-KC wrong streak', () => {
       reason: 'streak_below_threshold',
     });
   });
+
+  it('evaluates the complete reader in a read-only repeatable-read snapshot', async () => {
+    const triggerId = await seedWrongTail('kc_a', 3);
+    const db = testDb();
+    const transactionSpy = vi.spyOn(db, 'transaction');
+
+    try {
+      const decision = await evaluateNudgeTrigger(
+        db,
+        { kind: 'attempt_failure', attempt_event_id: triggerId },
+        LIVE_CFG,
+        NOW,
+      );
+
+      expect(decision.fire).toBe(true);
+      expect(transactionSpy).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'repeatable read',
+        accessMode: 'read only',
+      });
+    } finally {
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it('short-circuits duplicate delivery before reading per-KC history', async () => {
+    const triggerId = await seedWrongTail('kc_a', 3);
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'existing_nudge',
+        actor_kind: 'system',
+        actor_ref: 'copilot_nudge',
+        action: NUDGE_ACTION,
+        subject_kind: 'knowledge',
+        subject_id: 'kc_a',
+        caused_by_event_id: triggerId,
+        payload: { kind: 'kc_wrong_streak' },
+        created_at: NOW,
+      });
+    const db = testDb();
+    const transactionSpy = vi.spyOn(db, 'transaction');
+    const queries: Array<{ query: string; parameters: unknown[] }> = [];
+    const client = db.$client;
+    const previousDebug = client.options.debug;
+    client.options.debug = (_connection, query, parameters) => {
+      queries.push({ query, parameters });
+    };
+
+    try {
+      const decision = await evaluateNudgeTrigger(
+        db,
+        { kind: 'attempt_failure', attempt_event_id: triggerId },
+        LIVE_CFG,
+        NOW,
+      );
+
+      expect(decision).toEqual({ fire: false, reason: 'already_nudged' });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(queries.filter(({ parameters }) => parameters.length > 0)).toHaveLength(2);
+      expect(
+        queries.some(({ parameters }) =>
+          parameters.some((parameter) =>
+            ['review', 'judge', 'correct', 'experimental:appeal_request'].includes(
+              String(parameter),
+            ),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      client.options.debug = previousDebug;
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it('caps parameters across history, judge, correction, and appeal reads', async () => {
+    const triggerId = await seedWrongTail('kc_a', 3);
+    const judges = Array.from({ length: 201 }, (_, i) => ({
+      id: `judge_many_${i.toString().padStart(3, '0')}`,
+      actor_kind: 'agent' as const,
+      actor_ref: 'review_judge',
+      action: 'judge',
+      subject_kind: 'event' as const,
+      subject_id: triggerId,
+      outcome: 'success' as const,
+      payload: { coarse_outcome: 'incorrect' },
+      caused_by_event_id: triggerId,
+      created_at: new Date(NOW.getTime() + i + 1),
+    }));
+    await testDb().insert(event).values(judges);
+
+    const queries: Array<{ query: string; parameters: unknown[] }> = [];
+    const client = testDb().$client;
+    const previousDebug = client.options.debug;
+    client.options.debug = (_connection, query, parameters) => {
+      queries.push({ query, parameters });
+    };
+    try {
+      const decision = await evaluate(triggerId);
+      expect(decision.fire).toBe(true);
+    } finally {
+      client.options.debug = previousDebug;
+    }
+
+    expect(queries.every(({ parameters }) => parameters.length <= 104)).toBe(true);
+  });
+
+  it('chunks cooldown and dismiss-fuse reads across many candidate KCs', async () => {
+    const candidateIds = Array.from(
+      { length: 201 },
+      (_, i) => `kc_many_${i.toString().padStart(3, '0')}`,
+    );
+    await seedAttempts(
+      Array.from({ length: 3 }, (_, i) => ({
+        id: `attempt_many_kcs_${i}`,
+        outcome: 'failure' as const,
+        knowledgeIds: candidateIds,
+        at: new Date(NOW.getTime() - (3 - i) * 1_000),
+      })),
+    );
+
+    const queries: Array<{ query: string; parameters: unknown[] }> = [];
+    const client = testDb().$client;
+    const previousDebug = client.options.debug;
+    client.options.debug = (_connection, query, parameters) => {
+      queries.push({ query, parameters });
+    };
+    try {
+      const decision = await evaluate('attempt_many_kcs_2');
+      expect(decision.fire).toBe(true);
+    } finally {
+      client.options.debug = previousDebug;
+    }
+
+    const candidateIdSet = new Set(candidateIds);
+    const cooldownReads = queries.filter(
+      ({ parameters }) =>
+        parameters.includes(NUDGE_ACTION) &&
+        parameters.some((parameter) => candidateIdSet.has(String(parameter))),
+    );
+    const dismissReads = queries.filter(
+      ({ parameters }) =>
+        parameters.includes(NUDGE_DISMISSED_ACTION) &&
+        parameters.some((parameter) => candidateIdSet.has(String(parameter))),
+    );
+    expect(cooldownReads).toHaveLength(3);
+    expect(dismissReads).toHaveLength(3);
+    expect(
+      [...cooldownReads, ...dismissReads].every(({ parameters }) => parameters.length <= 104),
+    ).toBe(true);
+  });
+
+  it('keeps paging through more than 100 rows sharing one JavaScript millisecond', async () => {
+    const sharedMillisecond = new Date(NOW.getTime() - 10_000);
+    const rows = Array.from({ length: 101 }, (_, i) => ({
+      id: `unsupported_same_ms_${i.toString().padStart(3, '0')}`,
+      outcome: 'failure' as const,
+      knowledgeIds: ['kc_a'],
+      at: sharedMillisecond,
+      unsupported: true,
+    }));
+    rows.push({
+      id: 'eligible_same_ms_older_id',
+      outcome: 'failure',
+      knowledgeIds: ['kc_a'],
+      at: sharedMillisecond,
+      unsupported: false,
+    });
+    await seedAttempts(rows);
+    await testDb().$client.unsafe(`
+      UPDATE event
+      SET created_at = CASE id
+        ${rows
+          .map(({ id }, i) => {
+            const micros = (i === rows.length - 1 ? 1 : i + 2).toString().padStart(6, '0');
+            return `WHEN '${id}' THEN TIMESTAMPTZ '2026-07-20 03:59:50.${micros}+00'`;
+          })
+          .join('\n        ')}
+        ELSE created_at
+      END
+      WHERE id IN (${rows.map(({ id }) => `'${id}'`).join(', ')})
+    `);
+    const triggerId = await seedWrongTail('kc_a', 2);
+
+    const decision = await evaluate(triggerId);
+    expect(decision.fire).toBe(true);
+    if (!decision.fire) throw new Error('expected fire');
+    expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
+  });
+
+  it.each(['linked unsupported', 'corrected', 'appealed'] as const)(
+    'excludes a %s failure at the page boundary before applying the breaker',
+    async (kind) => {
+      const excludedId = `boundary_excluded_${kind.replace(' ', '_')}`;
+      await seedAttempt({
+        id: 'boundary_older_failure',
+        outcome: 'failure',
+        knowledgeIds: ['kc_a'],
+        at: new Date(NOW.getTime() - 300_000),
+      });
+      await seedAttempt({
+        id: excludedId,
+        outcome: 'failure',
+        knowledgeIds: ['kc_a'],
+        at: new Date(NOW.getTime() - 200_000),
+      });
+      if (kind === 'linked unsupported') {
+        await seedUnsupportedJudge(excludedId, new Date(NOW.getTime() - 199_999));
+      } else {
+        await seedContestedJudge(excludedId, kind, new Date(NOW.getTime() - 199_999));
+      }
+      await seedAttempts(
+        Array.from({ length: 99 }, (_, i) => ({
+          id: `boundary_filler_${kind}_${i.toString().padStart(3, '0')}`,
+          outcome: 'failure' as const,
+          knowledgeIds: ['kc_a'],
+          at: new Date(NOW.getTime() - 150_000 + i * 1_000),
+          unsupported: true,
+        })),
+      );
+      const triggerId = await seedWrongTail('kc_a', 2);
+
+      const decision = await evaluate(triggerId);
+      expect(decision.fire).toBe(true);
+      if (!decision.fire) throw new Error('expected fire');
+      expect(decision.event.payload.evidence).toMatchObject({ streak_n: 3 });
+    },
+  );
+
+  it.each(['success', 'partial'] as const)(
+    'stops at a %s breaker immediately behind page 100',
+    async (outcome) => {
+      await seedAttempt({
+        id: `boundary_breaker_${outcome}`,
+        outcome,
+        knowledgeIds: ['kc_a'],
+        at: new Date(NOW.getTime() - 200_000),
+      });
+      await seedAttempts(
+        Array.from({ length: 100 }, (_, i) => ({
+          id: `boundary_unsupported_${outcome}_${i.toString().padStart(3, '0')}`,
+          outcome: 'failure' as const,
+          knowledgeIds: ['kc_a'],
+          at: new Date(NOW.getTime() - 150_000 + i * 1_000),
+          unsupported: true,
+        })),
+      );
+      const triggerId = await seedWrongTail('kc_a', 2);
+
+      await expect(evaluate(triggerId)).resolves.toEqual({
+        fire: false,
+        reason: 'streak_below_threshold',
+      });
+    },
+  );
 
   it('finds eligible failures behind more than 100 excluded rows', async () => {
     await seedAttempt({
