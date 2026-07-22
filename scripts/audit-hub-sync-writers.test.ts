@@ -324,6 +324,113 @@ describe('auditHubSyncWriters', () => {
     expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
   });
 
+  it.each([
+    [
+      'assignment computed lhs',
+      "import { db } from '@/db/client'; target[db.insert(knowledge).values({})] = value;",
+    ],
+    [
+      'update computed argument',
+      "import { db } from '@/db/client'; target[db.insert(knowledge).values({})]++;",
+    ],
+    ['callee expression', "import { db } from '@/db/client'; (db.insert(knowledge).values({}))();"],
+    [
+      'computed callee key',
+      "import { db } from '@/db/client'; obj[db.insert(knowledge).values({})]();",
+    ],
+    [
+      'parameter initializer',
+      "import { db } from '@/db/client'; function f(x = db.insert(knowledge).values({})) {}",
+    ],
+    [
+      'computed object method key',
+      "import { db } from '@/db/client'; const x = { [db.insert(knowledge).values({})]() {} };",
+    ],
+    [
+      'computed class method key',
+      "import { db } from '@/db/client'; class X { [db.insert(knowledge).values({})]() {} }",
+    ],
+    [
+      'computed binding key',
+      "import { db } from '@/db/client'; const {[db.insert(knowledge).values({})]: x} = obj;",
+    ],
+    [
+      'catch default pattern',
+      "import { db } from '@/db/client'; try {} catch ({x = db.insert(knowledge).values({})}) {}",
+    ],
+    [
+      'static block cleanup',
+      "import { db } from '@/db/client'; class X { static { const db = cache; } write() { db.insert(knowledge).values({}); } }",
+    ],
+    [
+      'namespace cleanup',
+      "import { db } from '@/db/client'; namespace X { const db = cache; } db.insert(knowledge).values({});",
+    ],
+    [
+      'nested namespace cleanup',
+      "import { db } from '@/db/client'; namespace X { namespace Y { const db = cache; } } db.insert(knowledge).values({});",
+    ],
+    [
+      'switch cleanup',
+      "import { db } from '@/db/client'; switch(x) { case 1: const db = cache; break; } db.insert(knowledge).values({});",
+    ],
+    [
+      'generic trusted alias',
+      "import type { Tx } from '@/db/client'; type A<T> = T; function f(x: A<Tx>) { x.insert(knowledge).values({}); }",
+    ],
+    [
+      'branch trusted path',
+      "import { db } from '@/db/client'; let client = db; if (condition) client = cache; client.insert(knowledge).values({});",
+    ],
+    [
+      'inverse branch trusted path',
+      "import { db } from '@/db/client'; let client = cache; if (condition) client = db; client.insert(knowledge).values({});",
+    ],
+  ])('YUK-746 exhaustive traversal: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exhaustive-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'static block shadow',
+      "import { db } from '@/db/client'; class X { static { const db = cache; db.insert(knowledge).values({}); } }",
+    ],
+    [
+      'later switch case shadow',
+      "import { db } from '@/db/client'; switch(x) { case 1: db.insert(knowledge).values({}); break; case 2: const db = cache; }",
+    ],
+    [
+      'type parameter shadow',
+      "import type { Db } from '@/db/client'; function f<Db extends Writer>(x: Db) { x.insert(knowledge).values({}); }",
+    ],
+    [
+      'class type parameter shadow',
+      "import type { Db } from '@/db/client'; class X<Db> { f(x: Db) { x.insert(knowledge).values({}); } }",
+    ],
+    [
+      'namespace type parameter shadow',
+      "import type * as Repository from '@/db/client'; function f<Repository>(x: Repository.Tx) { x.insert(knowledge).values({}); }",
+    ],
+    [
+      'parameter property shadow',
+      "import { db } from '@/db/client'; class X { constructor(public db: Cache) { db.insert(knowledge).values({}); } }",
+    ],
+    [
+      'generic untrusted alias',
+      "import type { Db } from '@/db/client'; type A<Db> = Db; function f(x: A<Cache>) { x.insert(knowledge).values({}); }",
+    ],
+    [
+      'branch no trusted path',
+      "import { db } from '@/db/client'; let client = cache; if (condition) client = other; else client = cache; client.insert(knowledge).values({});",
+    ],
+  ])('YUK-746 exhaustive traversal: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exhaustive-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
   it('YUK-746 AST: fails closed on parse failure', async () => {
     const root = fixtureRepo({ 'src/invalid.ts': 'function {' });
     await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).rejects.toThrow(

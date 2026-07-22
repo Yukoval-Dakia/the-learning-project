@@ -254,8 +254,10 @@ type Scope = {
   parent?: Scope;
   bindings: Map<string, Binding>;
   types: Map<string, AstNode>;
+  typeParameters: Map<string, string[]>;
   trustedTypes: Set<string>;
   trustedTypeNamespaces: Set<string>;
+  shadowedTypes: Set<string>;
   functionScope: Scope;
 };
 
@@ -276,8 +278,18 @@ function childNodes(value: unknown): AstNode[] {
 
 function unwrapPattern(pattern: unknown): AstNode | undefined {
   let candidate = node(pattern);
-  while (candidate?.type === 'AssignmentPattern' || candidate?.type === 'RestElement') {
-    candidate = node(candidate.type === 'AssignmentPattern' ? candidate.left : candidate.argument);
+  while (
+    candidate?.type === 'AssignmentPattern' ||
+    candidate?.type === 'RestElement' ||
+    candidate?.type === 'TSParameterProperty'
+  ) {
+    candidate = node(
+      candidate.type === 'AssignmentPattern'
+        ? candidate.left
+        : candidate.type === 'TSParameterProperty'
+          ? candidate.parameter
+          : candidate.argument,
+    );
   }
   return candidate;
 }
@@ -304,11 +316,22 @@ function identifierName(value: unknown): string | undefined {
   return candidate?.type === 'Identifier' ? (candidate.name as string) : undefined;
 }
 
+function typeParameterName(value: unknown): string | undefined {
+  const candidate = node(value);
+  if (!candidate) return undefined;
+  if (typeof candidate.name === 'string') return candidate.name;
+  return identifierName(candidate.name ?? candidate);
+}
+
 function declarePattern(pattern: unknown, scope: Scope): void {
   const candidate = node(pattern);
   if (!candidate) return;
   if (candidate.type === 'Identifier') {
     scope.bindings.set(candidate.name as string, { trusted: false });
+    return;
+  }
+  if (candidate.type === 'TSParameterProperty') {
+    declarePattern(candidate.parameter, scope);
     return;
   }
   if (candidate.type === 'RestElement') {
@@ -375,7 +398,12 @@ function nullishTrustedType(candidate: AstNode): boolean {
   return candidate.type === 'TSLiteralType' && node(candidate.literal)?.type === 'NullLiteral';
 }
 
-function trustedType(typeNode: unknown, scope: Scope, seen = new Set<string>()): boolean {
+function trustedType(
+  typeNode: unknown,
+  scope: Scope,
+  seen = new Set<string>(),
+  substitutions = new Map<string, AstNode>(),
+): boolean {
   const candidate = node(typeNode);
   if (!candidate) return false;
   if (candidate.type === 'TSTypeAnnotation')
@@ -399,19 +427,30 @@ function trustedType(typeNode: unknown, scope: Scope, seen = new Set<string>()):
     const terminal = identifierName(qualified.right);
     if (!namespace || !terminal || !DB_TYPE_EXPORTS.has(terminal)) return false;
     for (let current: Scope | undefined = scope; current; current = current.parent) {
+      if (current.shadowedTypes.has(namespace)) return false;
       if (current.bindings.has(namespace)) return current.trustedTypeNamespaces.has(namespace);
     }
     return false;
   }
   const name = identifierName(qualified);
   if (!name || seen.has(name)) return false;
+  const substituted = substitutions.get(name);
+  if (substituted) return trustedType(substituted, scope, seen, substitutions);
   for (let current: Scope | undefined = scope; current; current = current.parent) {
+    if (current.shadowedTypes.has(name)) return false;
     if (current.trustedTypes.has(name)) return true;
     const alias = current.types.get(name);
     if (alias) {
       const nextSeen = new Set(seen);
       nextSeen.add(name);
-      return trustedType(alias, current, nextSeen);
+      const nextSubstitutions = new Map(substitutions);
+      const parameters = current.typeParameters.get(name) ?? [];
+      const arguments_ = childNodes(node(candidate.typeParameters)?.params);
+      for (const [index, parameter] of parameters.entries()) {
+        const argument = arguments_[index];
+        if (argument) nextSubstitutions.set(parameter, argument);
+      }
+      return trustedType(alias, current, nextSeen, nextSubstitutions);
     }
   }
   return false;
@@ -428,7 +467,15 @@ function predeclareImmediate(statements: unknown, scope: Scope): void {
     } else if (statement.type === 'TSTypeAliasDeclaration') {
       const name = identifierName(statement.id);
       const annotation = node(statement.typeAnnotation);
-      if (name && annotation) scope.types.set(name, annotation);
+      if (name && annotation) {
+        scope.types.set(name, annotation);
+        scope.typeParameters.set(
+          name,
+          childNodes(node(statement.typeParameters)?.params)
+            .map(typeParameterName)
+            .filter((parameter): parameter is string => parameter !== undefined),
+        );
+      }
     }
   }
 }
@@ -485,8 +532,10 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
   const root = {} as Scope;
   root.bindings = new Map();
   root.types = new Map();
+  root.typeParameters = new Map();
   root.trustedTypes = new Set();
   root.trustedTypeNamespaces = new Set();
+  root.shadowedTypes = new Set();
   root.functionScope = root;
 
   const makeScope = (parent: Scope, isFunction = false): Scope => {
@@ -494,12 +543,58 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
       parent,
       bindings: new Map<string, Binding>(),
       types: new Map<string, AstNode>(),
+      typeParameters: new Map<string, string[]>(),
       trustedTypes: new Set<string>(),
       trustedTypeNamespaces: new Set<string>(),
+      shadowedTypes: new Set<string>(),
       functionScope: parent.functionScope,
     };
     if (isFunction) scope.functionScope = scope;
     return scope;
+  };
+
+  const visitPatternExpressions = (pattern: unknown, scope: Scope): void => {
+    const candidate = node(pattern);
+    if (!candidate) return;
+    if (candidate.type === 'TSParameterProperty') {
+      visitPatternExpressions(candidate.parameter, scope);
+    } else if (candidate.type === 'AssignmentPattern') {
+      visitPatternExpressions(candidate.left, scope);
+      const right = node(candidate.right);
+      if (right) visit(right, scope);
+    } else if (candidate.type === 'RestElement') {
+      visitPatternExpressions(candidate.argument, scope);
+    } else if (candidate.type === 'ObjectPattern') {
+      for (const property of childNodes(candidate.properties)) {
+        if (property.computed) {
+          const key = node(property.key);
+          if (key) visit(key, scope);
+        }
+        visitPatternExpressions(
+          property.type === 'RestElement' ? property.argument : property.value,
+          scope,
+        );
+      }
+    } else if (candidate.type === 'ArrayPattern') {
+      for (const element of childNodes(candidate.elements)) visitPatternExpressions(element, scope);
+    }
+  };
+
+  const bindingState = (scope: Scope): Map<Binding, boolean> => {
+    const state = new Map<Binding, boolean>();
+    for (let current: Scope | undefined = scope; current; current = current.parent) {
+      for (const binding of current.bindings.values()) state.set(binding, binding.trusted);
+    }
+    return state;
+  };
+  const restoreState = (state: Map<Binding, boolean>): void => {
+    for (const [binding, trusted] of state) binding.trusted = trusted;
+  };
+  const mergeStates = (...states: Array<Map<Binding, boolean>>): void => {
+    const bindings = new Set(states.flatMap((state) => [...state.keys()]));
+    for (const binding of bindings) {
+      binding.trusted = states.some((state) => state.get(binding) === true);
+    }
   };
 
   const establishImport = (candidate: AstNode, scope: Scope): void => {
@@ -531,9 +626,18 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
 
   const visitFunction = (candidate: AstNode, parent: Scope, transactionCallback: boolean): void => {
     const scope = makeScope(parent, true);
+    for (const parameter of childNodes(node(candidate.typeParameters)?.params)) {
+      const name = typeParameterName(parameter);
+      if (name) scope.shadowedTypes.add(name);
+    }
     const ownName = identifierName(candidate.id);
     if (ownName) scope.bindings.set(ownName, { trusted: false });
     const parameters = childNodes(candidate.params);
+    for (const decorator of childNodes(candidate.decorators)) visit(decorator, parent);
+    if (candidate.computed) {
+      const key = node(candidate.key);
+      if (key) visit(key, parent);
+    }
     for (const parameter of parameters) declarePattern(parameter, scope);
     if (transactionCallback) {
       const first = unwrapPattern(parameters[0]);
@@ -547,6 +651,7 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
       const binding = name ? scope.bindings.get(name) : undefined;
       const typeAnnotation = normalized?.typeAnnotation ?? parameter.typeAnnotation;
       if (binding && trustedType(typeAnnotation, scope)) binding.trusted = true;
+      visitPatternExpressions(parameter, scope);
     }
     predeclareVars(candidate.body, scope);
     const body = node(candidate.body);
@@ -594,7 +699,15 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
         visit(argument, scope);
       }
     }
-    if (member) visit(member.object as AstNode, scope);
+    if (member) {
+      visit(member.object as AstNode, scope);
+      if (member.computed) {
+        const key = node(member.property);
+        if (key) visit(key, scope);
+      }
+    } else if (callee) {
+      visit(callee, scope);
+    }
   };
 
   const visit = (candidate: AstNode, scope: Scope): void => {
@@ -620,22 +733,41 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
       case 'ClassPrivateMethod':
         visitFunction(candidate, scope, false);
         return;
-      case 'ForStatement':
+      case 'ForStatement': {
+        const loopScope = makeScope(scope);
+        const init = node(candidate.init);
+        if (init?.type === 'VariableDeclaration' && init.kind !== 'var') {
+          for (const declaration of childNodes(init.declarations))
+            declarePattern(declaration.id, loopScope);
+        }
+        if (init) visit(init, loopScope);
+        const test = node(candidate.test);
+        if (test) visit(test, loopScope);
+        const body = node(candidate.body);
+        if (body) visit(body, loopScope);
+        const update = node(candidate.update);
+        if (update) visit(update, loopScope);
+        return;
+      }
       case 'ForInStatement':
       case 'ForOfStatement': {
         const loopScope = makeScope(scope);
-        const init = node(candidate.init ?? candidate.left);
-        if (init?.type === 'VariableDeclaration' && init.kind !== 'var') {
-          for (const declaration of childNodes(init.declarations)) {
+        const left = node(candidate.left);
+        if (left?.type === 'VariableDeclaration' && left.kind !== 'var') {
+          for (const declaration of childNodes(left.declarations))
             declarePattern(declaration.id, loopScope);
-          }
         }
-        visitGeneric(candidate, loopScope);
+        if (left) visit(left, loopScope);
+        const right = node(candidate.right);
+        if (right) visit(right, loopScope);
+        const body = node(candidate.body);
+        if (body) visit(body, loopScope);
         return;
       }
       case 'CatchClause': {
         const catchScope = makeScope(scope);
         declarePattern(candidate.param, catchScope);
+        visitPatternExpressions(candidate.param, catchScope);
         const body = node(candidate.body);
         if (body) visitBlock(body, catchScope);
         return;
@@ -651,6 +783,7 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
               trustedType(node(declaration.id)?.typeAnnotation, scope) ||
               trustedBinding(declaration.init, scope);
           }
+          visitPatternExpressions(declaration.id, scope);
           const init = node(declaration.init);
           if (init) visit(init, scope);
         }
@@ -665,24 +798,85 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
           }
         } else {
           setPatternTrust(candidate.left, scope, false);
+          visitPatternExpressions(candidate.left, scope);
+          const left = unwrapExpression(candidate.left);
+          if (left && !['ObjectPattern', 'ArrayPattern'].includes(left.type)) visit(left, scope);
         }
         const right = node(candidate.right);
         if (right) visit(right, scope);
         return;
       }
       case 'UpdateExpression': {
-        const name = identifierName(unwrapExpression(candidate.argument));
+        const argument = unwrapExpression(candidate.argument);
+        const name = identifierName(argument);
         const binding = name ? bindingFor(name, scope) : undefined;
         if (binding) binding.trusted = false;
+        else if (argument) visit(argument, scope);
         return;
       }
       case 'CallExpression':
       case 'OptionalCallExpression':
         visitCall(candidate, scope);
         return;
+      case 'IfStatement': {
+        const test = node(candidate.test);
+        if (test) visit(test, scope);
+        const before = bindingState(scope);
+        const consequent = node(candidate.consequent);
+        if (consequent) visit(consequent, scope);
+        const consequentState = bindingState(scope);
+        restoreState(before);
+        const alternate = node(candidate.alternate);
+        if (alternate) visit(alternate, scope);
+        const alternateState = bindingState(scope);
+        mergeStates(consequentState, alternateState);
+        return;
+      }
+      case 'ConditionalExpression': {
+        const test = node(candidate.test);
+        if (test) visit(test, scope);
+        const before = bindingState(scope);
+        const consequent = node(candidate.consequent);
+        if (consequent) visit(consequent, scope);
+        const consequentState = bindingState(scope);
+        restoreState(before);
+        const alternate = node(candidate.alternate);
+        if (alternate) visit(alternate, scope);
+        mergeStates(consequentState, bindingState(scope));
+        return;
+      }
+      case 'StaticBlock':
+      case 'TSModuleBlock':
+        visitBlock(candidate, scope);
+        return;
+      case 'TSModuleDeclaration': {
+        const moduleScope = makeScope(scope);
+        const body = node(candidate.body);
+        if (body) visit(body, moduleScope);
+        return;
+      }
+      case 'SwitchStatement': {
+        const discriminant = node(candidate.discriminant);
+        if (discriminant) visit(discriminant, scope);
+        const switchScope = makeScope(scope);
+        const consequents = childNodes(candidate.cases).flatMap((caseNode) =>
+          childNodes(caseNode.consequent),
+        );
+        predeclareImmediate(consequents, switchScope);
+        for (const caseNode of childNodes(candidate.cases)) {
+          const test = node(caseNode.test);
+          if (test) visit(test, switchScope);
+          for (const statement of childNodes(caseNode.consequent)) visit(statement, switchScope);
+        }
+        return;
+      }
       case 'ClassDeclaration':
       case 'ClassExpression': {
         const classScope = makeScope(scope);
+        for (const parameter of childNodes(node(candidate.typeParameters)?.params)) {
+          const name = typeParameterName(parameter);
+          if (name) classScope.shadowedTypes.add(name);
+        }
         const ownName = identifierName(candidate.id);
         if (ownName) classScope.bindings.set(ownName, { trusted: false });
         for (const decorator of childNodes(candidate.decorators)) visit(decorator, scope);
