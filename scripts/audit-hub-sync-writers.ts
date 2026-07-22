@@ -68,6 +68,9 @@ function codeText(source: string): string {
   const copy = (start: number, end: number) => {
     for (let index = start; index < end; index += 1) out[index] = source[index];
   };
+  const copyStructural = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) structural[index] = source[index];
+  };
   const previousWord = (index: number): string => {
     let cursor = index - 1;
     while (/\s/.test(structural[cursor] ?? '')) cursor -= 1;
@@ -90,6 +93,15 @@ function codeText(source: string): string {
     cursor = previousSignificantIndex(cursor + 1);
     if (structural[cursor] !== '.') return false;
     return previousWord(cursor) === 'sql';
+  };
+  const isActorRefValue = (index: number): boolean => {
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== ':') return false;
+    cursor = previousSignificantIndex(cursor);
+    if (structural[cursor] === '"' || structural[cursor] === "'") cursor -= 1;
+    const end = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    return structural.slice(cursor + 1, end).join('') === 'actorRef';
   };
   const followsControlCondition = (index: number): boolean => {
     let cursor = previousSignificantIndex(index);
@@ -177,27 +189,30 @@ function codeText(source: string): string {
           escaped = !escaped && current === '\\';
           cursor += 1;
         }
-        if (
-          /actorRef\s*:\s*$/.test(source.slice(0, literalStart)) ||
-          isSqlRawArgument(literalStart)
-        ) {
+        const actorRefValue = isActorRefValue(literalStart);
+        const literalText = source.slice(literalStart + 1, cursor - 1);
+        let afterLiteral = cursor;
+        while (/\s/.test(source[afterLiteral] ?? '')) afterLiteral += 1;
+        const actorRefKey = literalText === 'actorRef' && source[afterLiteral] === ':';
+        if (actorRefValue || isSqlRawArgument(literalStart) || actorRefKey) {
           copy(literalStart, cursor);
         }
+        if (actorRefValue || actorRefKey) copyStructural(literalStart, cursor);
         index = cursor;
         continue;
       }
       if (char === '`') {
-        const sqlTagged = previousWord(index) === 'sql';
+        const sqlTemplate = previousWord(index) === 'sql' || isSqlRawArgument(index);
         let cursor = index + 1;
-        if (sqlTagged) copy(index, index + 1);
+        if (sqlTemplate) copy(index, index + 1);
         while (cursor < source.length) {
           if (source[cursor] === '\\') {
-            if (sqlTagged) copy(cursor, Math.min(cursor + 2, source.length));
+            if (sqlTemplate) copy(cursor, Math.min(cursor + 2, source.length));
             cursor += 2;
             continue;
           }
           if (source[cursor] === '`') {
-            if (sqlTagged) copy(cursor, cursor + 1);
+            if (sqlTemplate) copy(cursor, cursor + 1);
             cursor += 1;
             break;
           }
@@ -207,7 +222,7 @@ function codeText(source: string): string {
             copy(cursor - 1, cursor);
             continue;
           }
-          if (sqlTagged) copy(cursor, cursor + 1);
+          if (sqlTemplate) copy(cursor, cursor + 1);
           cursor += 1;
         }
         index = cursor;
@@ -298,7 +313,9 @@ export async function auditHubSyncWriters(input: {
         addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index);
       }
     }
-    for (const match of code.matchAll(/actorRef\s*:\s*['"]hub_auto_sync['"]/g)) {
+    for (const match of code.matchAll(
+      /(?:actorRef|['"]actorRef['"])\s*:\s*['"]hub_auto_sync['"]/g,
+    )) {
       addFinding('DIRECT_HUB_ACTOR_APPLY', match.index);
     }
     for (const table of TOPOLOGY_TABLES) {

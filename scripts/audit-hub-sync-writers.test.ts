@@ -260,6 +260,57 @@ describe('auditHubSyncWriters', () => {
     );
   });
 
+  it.each([
+    ['static template', 'db.execute(sql.raw(`delete from knowledge`));'],
+    ['multiline template', 'db.execute(sql.raw(`insert into\nknowledge_edge (id) values (1)`));'],
+    ['escaped backtick', 'db.execute(sql.raw(`update knowledge set name = \\`x\\``));'],
+  ])('YUK-746 P2 follow-up: detects sql.raw %s writes', async (_name, source) => {
+    const root = fixtureRepo({ 'src/sql-raw-template-writer.ts': source });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it('YUK-746 P2 follow-up: detects internal marker in sql.raw template', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-template-marker.ts':
+        "db.execute(sql.raw(`set local app.hub_sync_internal_apply = '1'`));",
+    });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'INTERNAL_APPLY_MARKER_BYPASS' }),
+    );
+  });
+
+  it('YUK-746 P2 follow-up: scans executable sql.raw template interpolation', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-template-expression.ts':
+        'db.execute(sql.raw(`select ${db.insert(knowledge).values({})}`));',
+    });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    ['comment lookalike', "/* actorRef: */ const value = 'hub_auto_sync';"],
+    ['ordinary property lookalike', "const actorRefText = 'hub_auto_sync';"],
+  ])('YUK-746 P2 follow-up: ignores %s actor string', async (_name, source) => {
+    const root = fixtureRepo({ 'src/actor-string.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
+    ['identifier key', "const value = { actorRef: 'hub_auto_sync' };"],
+    ['quoted key', 'const value = { "actorRef": "hub_auto_sync" };'],
+  ])('YUK-746 P2 follow-up: detects real %s actor value', async (_name, source) => {
+    const root = fixtureRepo({ 'src/actor-value.ts': source });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(expect.objectContaining({ rule: 'DIRECT_HUB_ACTOR_APPLY' }));
+  });
+
   it('YUK-746 review: scans production audit-prefixed files', async () => {
     const root = fixtureRepo({ 'scripts/audit-production.ts': 'db.insert(knowledge).values({});' });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
