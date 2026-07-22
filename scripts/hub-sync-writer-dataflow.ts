@@ -252,8 +252,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const returnedFunctions = new WeakMap<AstNode, Set<AstNode>>();
   const staticStrings = new Map<Binding, string>();
   const staticSqlTexts = new Map<Binding, string>();
-  const staticStringWriteKeys = new Map<Binding, Set<string>>();
-  const staticStringMarkerIndexes = new Map<Binding, Set<number>>();
   const pendingFunctions: Array<{ candidate: AstNode; parent: Scope; state: State }> = [];
   const pendingFunctionNodes = new WeakSet<AstNode>();
   const deferFunction = (candidate: AstNode, parent: Scope, state: State): void => {
@@ -432,6 +430,14 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
 
   const predeclareImmediate = (statements: unknown, scope: Scope): void => {
     for (const statement of childNodes(statements)) {
+      if (
+        statement.type === 'ExportNamedDeclaration' ||
+        statement.type === 'ExportDefaultDeclaration'
+      ) {
+        const declaration = node(statement.declaration);
+        if (declaration) predeclareImmediate([declaration], scope);
+        continue;
+      }
       if (statement.type === 'VariableDeclaration' && statement.kind !== 'var') {
         for (const declaration of childNodes(statement.declarations))
           declarePattern(declaration.id, scope);
@@ -879,11 +885,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (!binding) return;
     staticStrings.delete(binding);
     staticSqlTexts.delete(binding);
-    for (const key of staticStringWriteKeys.get(binding) ?? []) writes.delete(key);
-    for (const index of staticStringMarkerIndexes.get(binding) ?? [])
-      internalApplyMarkers.delete(index);
-    staticStringWriteKeys.delete(binding);
-    staticStringMarkerIndexes.delete(binding);
   };
 
   const RAW_SQL_TABLE_PATTERNS = new Map(
@@ -893,18 +894,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     ]),
   );
 
-  const reportRawText = (candidate: AstNode, text: string, staticBinding?: Binding): void => {
+  const reportRawText = (candidate: AstNode, text: string): void => {
     if (candidate.start == null) return;
     if (text.includes('app.hub_sync_internal_apply')) {
       internalApplyMarkers.set(candidate.start, {
         index: candidate.start,
         end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
       });
-      if (staticBinding) {
-        const indexes = staticStringMarkerIndexes.get(staticBinding) ?? new Set<number>();
-        indexes.add(candidate.start);
-        staticStringMarkerIndexes.set(staticBinding, indexes);
-      }
     }
     for (const [table, pattern] of RAW_SQL_TABLE_PATTERNS) {
       if (!pattern.test(text)) continue;
@@ -914,11 +910,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
         table,
       });
-      if (staticBinding) {
-        const keys = staticStringWriteKeys.get(staticBinding) ?? new Set<string>();
-        keys.add(key);
-        staticStringWriteKeys.set(staticBinding, keys);
-      }
     }
   };
 
@@ -936,7 +927,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         : undefined;
     const storedSqlText = storedSqlBinding ? staticSqlTexts.get(storedSqlBinding) : undefined;
     if (storedSqlText) {
-      reportRawText(candidate, storedSqlText, storedSqlBinding);
+      reportRawText(candidate, storedSqlText);
       return;
     }
     if (executeArgument?.type === 'TaggedTemplateExpression') {
@@ -966,13 +957,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     )
       return;
     const rawArgument = unwrapExpression(childNodes(rawCall.arguments)[0]);
-    const staticBinding =
-      rawArgument?.type === 'Identifier'
-        ? resolveBinding(rawArgument.name as string, scope)
-        : undefined;
     const text = staticStringValue(rawArgument, scope);
     if (!text) return;
-    reportRawText(candidate, text, staticBinding);
+    reportRawText(candidate, text);
   };
 
   const evalList = (values: unknown, ctx: EvalCtx, state: State): EvalResult => {
@@ -1263,6 +1250,24 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           functionValue &&
           ['FunctionExpression', 'ArrowFunctionExpression'].includes(functionValue.type)
         ) {
+          functionParents.set(functionValue, ctx.scope);
+          deferFunction(functionValue, ctx.scope, reference.normal.state);
+        }
+      } else if (target.type === 'MemberExpression') {
+        const objectName = identifierName(target.object);
+        const propertyName = target.computed
+          ? staticComputedPropertyName(target.property)
+          : identifierName(target.property);
+        const binding = objectName ? resolveBinding(objectName, ctx.scope) : undefined;
+        if (
+          binding &&
+          propertyName &&
+          functionValue &&
+          ['FunctionExpression', 'ArrowFunctionExpression'].includes(functionValue.type)
+        ) {
+          const properties = objectFunctions.get(binding) ?? new Map<string, AstNode>();
+          properties.set(propertyName, functionValue);
+          objectFunctions.set(binding, properties);
           functionParents.set(functionValue, ctx.scope);
           deferFunction(functionValue, ctx.scope, reference.normal.state);
         }
@@ -2095,14 +2100,18 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             const propertyName = property.computed
               ? staticComputedPropertyName(property.key)
               : identifierName(property.key);
-            const propertyFunction = unwrapExpression(property.value);
+            const propertyFunction =
+              property.type === 'ObjectMethod' ? property : unwrapExpression(property.value);
             if (
               propertyName &&
               propertyFunction &&
-              ['FunctionExpression', 'ArrowFunctionExpression'].includes(propertyFunction.type)
+              ['ObjectMethod', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
+                propertyFunction.type,
+              )
             ) {
               properties.set(propertyName, propertyFunction);
               functionParents.set(propertyFunction, ctx.scope);
+              deferFunction(propertyFunction, ctx.scope, next);
             }
           }
           if (binding && properties.size > 0) objectFunctions.set(binding, properties);

@@ -516,6 +516,62 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    [
+      'exported interface parameter',
+      "import type { Db } from '@/db/client'; export interface Deps { db: Db } function write({ db }: Deps) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'exported type alias parameter',
+      "import type { Tx } from '@/db/client'; export type Deps = { db: Tx }; function write({ db }: Deps) { db.update(knowledge_edge).set({}); }",
+    ],
+    [
+      'assigned object property closure',
+      "import { db } from '@/db/client'; let client = cache; const handlers = {}; handlers.sync = () => client.delete(knowledge).where(ok); client = db; handlers.sync();",
+    ],
+    [
+      'assigned computed object property closure',
+      "import { db } from '@/db/client'; let client = cache; const handlers = {}; handlers['sync'] = () => client.insert(knowledge).values({}); client = db; handlers.sync();",
+    ],
+    [
+      'object method shorthand',
+      "import { db } from '@/db/client'; let client = cache; const handlers = { sync() { client.update(knowledge).set({}); } }; client = db; handlers.sync();",
+    ],
+    [
+      'computed object method shorthand',
+      "import { db } from '@/db/client'; let client = cache; const handlers = { ['sync']() { client.delete(knowledge_edge).where(ok); } }; client = db; handlers.sync();",
+    ],
+    [
+      'raw write survives later string reassignment',
+      "import { db } from '@/db/client'; const text = 'update knowledge set name = 1'; db.execute(sql.raw(text)); text = 'select 1';",
+    ],
+    [
+      'raw marker survives later string reassignment',
+      "import { db } from '@/db/client'; const text = \"set local app.hub_sync_internal_apply = '1'\"; db.execute(sql.raw(text)); text = 'select 1';",
+    ],
+  ])('YUK-746 exact-head remaining: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exact-head-remaining-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).not.toEqual([]);
+  });
+
+  it.each([
+    [
+      'foreign assigned object property closure',
+      'let client = cache; const handlers = {}; handlers.sync = () => client.insert(knowledge).values({}); client = other; handlers.sync();',
+    ],
+    [
+      'overwritten assigned property closure',
+      "import { db } from '@/db/client'; let client = cache; const handlers = {}; handlers.sync = () => client.insert(knowledge).values({}); handlers.sync = safe; client = db; handlers.sync();",
+    ],
+    [
+      'object method called before assignment',
+      "import { db } from '@/db/client'; let client = cache; const handlers = { sync() { client.update(knowledge).set({}); } }; handlers.sync(); client = db;",
+    ],
+  ])('YUK-746 exact-head remaining: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exact-head-remaining-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
     ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
     [
       'fake line comment import',
@@ -988,12 +1044,22 @@ describe('auditHubSyncWriters', () => {
         "const marker = 'select app.hub_sync_status'; db.execute(sql.raw(marker));",
       ),
     });
-    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([
-      expect.objectContaining({
-        file: 'src/sql-raw-marker-constant.ts',
-        rule: 'INTERNAL_APPLY_MARKER_BYPASS',
-      }),
-    ]);
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: 'src/sql-raw-marker-constant.ts',
+          rule: 'INTERNAL_APPLY_MARKER_BYPASS',
+        }),
+        expect.objectContaining({
+          file: 'src/sql-raw-marker-reassigned-after.ts',
+          rule: 'INTERNAL_APPLY_MARKER_BYPASS',
+        }),
+        expect.objectContaining({
+          file: 'src/sql-raw-marker-updated-after.ts',
+          rule: 'INTERNAL_APPLY_MARKER_BYPASS',
+        }),
+      ]),
+    );
   });
 
   it('YUK-746 P2: detects internal marker inside sql.raw', async () => {
