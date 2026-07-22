@@ -216,6 +216,30 @@ describe('auditHubSyncWriters', () => {
       "const [{ db }] = await Promise.all([import('@/db/client')]); db.delete(knowledge).where(ok);",
     ],
     [
+      'flattened array spread preserves trusted position',
+      "const [, { db }] = [...[foreignClient, await import('@/db/client')]]; db.insert(knowledge).values({});",
+    ],
+    [
+      'Promise.all evaluates later arguments',
+      "import { db } from '@/db/client'; Promise.all([], db.insert(knowledge).values({}));",
+    ],
+    [
+      'optional value namespace db member',
+      "import * as repoDb from '@/db/client'; repoDb?.db.update(knowledge).set({});",
+    ],
+    [
+      'computed Promise all',
+      "const [{ db }] = await Promise['all']([import('@/db/client')]); db.delete(knowledge).where(ok);",
+    ],
+    [
+      'optional Promise member',
+      "const [{ db }] = await Promise?.all([import('@/db/client')]); db.insert(knowledge_edge).values({});",
+    ],
+    [
+      'optional Promise call',
+      "const [{ db }] = await Promise.all?.([import('@/db/client')]); db.update(knowledge).set({});",
+    ],
+    [
       'direct function typed parameter',
       "((client: import('@/db/client').Db) => client.insert(knowledge).values({}))(cache);",
     ],
@@ -250,6 +274,18 @@ describe('auditHubSyncWriters', () => {
     [
       'foreign Promise.all tuple element',
       "const [{ db }] = await Promise.all([import('cache/db/client'), import('@/db/client')]); db.insert(knowledge).values({});",
+    ],
+    [
+      'unknown array spread invalidates positional provenance',
+      "const [{ db }] = [...unknownValues, await import('@/db/client')]; db.insert(knowledge).values({});",
+    ],
+    [
+      'known spread does not leak trust across positions',
+      "const [{ db }] = [...[await import('cache/db/client'), await import('@/db/client')]]; db.update(knowledge).set({});",
+    ],
+    [
+      'shadowed computed Promise all',
+      "function run(Promise) { const [{ db }] = Promise['all']([import('@/db/client')]); db.delete(knowledge).where(ok); }",
     ],
     [
       'tuple trust does not leak across elements',

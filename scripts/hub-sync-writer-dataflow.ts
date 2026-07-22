@@ -1140,7 +1140,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         return {
           normal: taken.normal && {
             state: joinState(state, taken.normal.state) as State,
-            value: U,
+            value: trustJoin(U, taken.normal.value),
           },
           throws: taken.throws,
         };
@@ -1149,21 +1149,39 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       case 'OptionalCallExpression': {
         const callee = unwrapExpression(candidate.callee);
         if (
-          callee?.type === 'MemberExpression' &&
-          !callee.computed &&
+          callee &&
+          ['MemberExpression', 'OptionalMemberExpression'].includes(callee.type) &&
           identifierName(callee.object) === 'Promise' &&
           !resolveBinding('Promise', ctx.scope) &&
-          identifierName(callee.property) === 'all'
+          (callee.computed
+            ? staticComputedPropertyName(callee.property) === 'all'
+            : identifierName(callee.property) === 'all')
         ) {
-          const argument = childNodes(candidate.arguments)[0];
-          if (argument?.type === 'ArrayExpression') {
-            const evaluated = evalExpr(argument, ctx, state);
-            if (!evaluated.normal) return evaluated;
-            return {
-              normal: evaluated.normal,
-              throws: joinState(evaluated.throws, evaluated.normal.state),
-            };
+          let evaluated: EvalResult = { normal: { state, value: U } };
+          let tupleElements: readonly Trust[] | undefined;
+          for (const [index, argument] of childNodes(candidate.arguments).entries()) {
+            evaluated = sequenceEval(evaluated, (next) => {
+              const argumentResult = evalExpr(argument, ctx, next);
+              if (index === 0) tupleElements = argumentResult.normal?.elements;
+              return argumentResult;
+            });
           }
+          if (!evaluated.normal) return evaluated;
+          const completed = {
+            state: evaluated.normal.state,
+            value: U as Trust,
+            elements: tupleElements,
+          };
+          return {
+            normal:
+              candidate.optional || callee.optional
+                ? {
+                    ...completed,
+                    state: joinState(state, completed.state) as State,
+                  }
+                : completed,
+            throws: joinState(evaluated.throws, evaluated.normal.state),
+          };
         }
         if (callee?.type === 'Import') {
           const source = childNodes(candidate.arguments)[0];
@@ -1278,16 +1296,20 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       case 'ArrayExpression': {
         let result: EvalResult = { normal: { state, value: U } };
-        const elements: Trust[] = [];
+        let elements: Trust[] | undefined = [];
         for (const rawElement of Array.isArray(candidate.elements) ? candidate.elements : []) {
           const element = node(rawElement);
           if (!element) {
-            elements.push(U);
+            elements?.push(U);
             continue;
           }
           result = sequenceEval(result, (next) => {
             const evaluated = evalExpr(element, ctx, next);
-            if (evaluated.normal) elements.push(evaluated.normal.value);
+            if (evaluated.normal && elements) {
+              if (element.type !== 'SpreadElement') elements.push(evaluated.normal.value);
+              else if (evaluated.normal.elements) elements.push(...evaluated.normal.elements);
+              else elements = undefined;
+            }
             return evaluated;
           });
         }
