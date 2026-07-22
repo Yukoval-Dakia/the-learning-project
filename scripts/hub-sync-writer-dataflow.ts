@@ -226,6 +226,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const analyzedFunctions = new WeakMap<AstNode, State>();
   const functionBindings = new Map<Binding, AstNode>();
   const staticStrings = new Map<Binding, string>();
+  const staticStringWriteKeys = new Map<Binding, Set<string>>();
+  const staticStringMarkerIndexes = new Map<Binding, Set<number>>();
   const pendingFunctions: Array<{ candidate: AstNode; parent: Scope; state: State }> = [];
   const pendingFunctionNodes = new WeakSet<AstNode>();
   const deferFunction = (candidate: AstNode, parent: Scope, state: State): void => {
@@ -373,7 +375,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     return initialized;
   };
 
-  type Substitutions = Map<string, AstNode | undefined>;
+  type Substitution = { type: AstNode | undefined; scope: Scope };
+  type Substitutions = Map<string, Substitution>;
   const trustedType = (
     typeValue: unknown,
     scope: Scope,
@@ -419,7 +422,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (!name) return false;
     if (substitutions.has(name)) {
       const replacement = substitutions.get(name);
-      return replacement ? trustedType(replacement, scope, substitutions, seen) : false;
+      return replacement?.type
+        ? trustedType(replacement.type, replacement.scope, substitutions, seen)
+        : false;
     }
     for (let current: Scope | undefined = scope; current; current = current.parent) {
       if (current.shadowedTypes.has(name)) return false;
@@ -432,7 +437,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       for (const [index, parameter] of alias.parameters.entries()) {
         const explicit = arguments_[index];
         const actual = explicit ?? parameter.defaultType;
-        local.set(parameter.name, actual);
+        local.set(parameter.name, { type: actual, scope });
         actualKey.push(actual ? `${actual.type}:${actual.start ?? ''}` : '?');
       }
       const key = `${alias.id}<${actualKey.join(',')}>`;
@@ -464,7 +469,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       return propertyTypeViews(candidate.typeAnnotation, propertyName, scope, substitutions, seen);
     if (candidate.type === 'TSParenthesizedType' || candidate.type === 'TSOptionalType')
       return propertyTypeViews(candidate.typeAnnotation, propertyName, scope, substitutions, seen);
-    if (candidate.type === 'TSUnionType' || candidate.type === 'TSIntersectionType') {
+    if (candidate.type === 'TSUnionType') {
       const parts = childNodes(candidate.types).filter(
         (part) => !['TSNullKeyword', 'TSUndefinedKeyword', 'TSNeverKeyword'].includes(part.type),
       );
@@ -472,6 +477,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         propertyTypeViews(part, propertyName, scope, substitutions, new Set(seen)),
       );
       return resolved.every((views) => views.length > 0) ? resolved.flat() : [];
+    }
+    if (candidate.type === 'TSIntersectionType') {
+      return childNodes(candidate.types).flatMap((part) =>
+        propertyTypeViews(part, propertyName, scope, substitutions, new Set(seen)),
+      );
     }
     if (candidate.type === 'TSTypeLiteral') {
       for (const member of childNodes(candidate.members)) {
@@ -490,8 +500,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (!name) return [];
     if (substitutions.has(name)) {
       const replacement = substitutions.get(name);
-      return replacement
-        ? propertyTypeViews(replacement, propertyName, scope, substitutions, seen)
+      return replacement?.type
+        ? propertyTypeViews(replacement.type, propertyName, replacement.scope, substitutions, seen)
         : [];
     }
     for (let current: Scope | undefined = scope; current; current = current.parent) {
@@ -503,7 +513,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const actualKey: string[] = [];
       for (const [index, parameter] of alias.parameters.entries()) {
         const actual = arguments_[index] ?? parameter.defaultType;
-        local.set(parameter.name, actual);
+        local.set(parameter.name, { type: actual, scope });
         actualKey.push(actual ? `${actual.type}:${actual.start ?? ''}` : '?');
       }
       const key = `${alias.id}<${actualKey.join(',')}>`;
@@ -628,6 +638,16 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     writes.set(`${candidate.start}:${tableName}`, { index: candidate.start, table: tableName });
   };
 
+  const invalidateStaticString = (binding: Binding | undefined): void => {
+    if (!binding) return;
+    staticStrings.delete(binding);
+    for (const key of staticStringWriteKeys.get(binding) ?? []) writes.delete(key);
+    for (const index of staticStringMarkerIndexes.get(binding) ?? [])
+      internalApplyMarkerIndexes.delete(index);
+    staticStringWriteKeys.delete(binding);
+    staticStringMarkerIndexes.delete(binding);
+  };
+
   const reportRawExecute = (
     candidate: AstNode,
     receiver: Trust,
@@ -646,17 +666,32 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     )
       return;
     const rawArgument = unwrapExpression(childNodes(rawCall.arguments)[0]);
+    const staticBinding =
+      rawArgument?.type === 'Identifier'
+        ? resolveBinding(rawArgument.name as string, scope)
+        : undefined;
     const text = staticStringValue(rawArgument, scope);
     if (!text) return;
-    if (rawArgument?.type === 'Identifier' && text.includes('app.hub_sync_internal_apply'))
+    if (staticBinding && text.includes('app.hub_sync_internal_apply')) {
       internalApplyMarkerIndexes.add(candidate.start);
+      const indexes = staticStringMarkerIndexes.get(staticBinding) ?? new Set<number>();
+      indexes.add(candidate.start);
+      staticStringMarkerIndexes.set(staticBinding, indexes);
+    }
     for (const table of ['hub_sync_reconciliation', 'knowledge', 'knowledge_edge']) {
       const pattern = new RegExp(
         `\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`,
         'i',
       );
-      if (pattern.test(text))
-        writes.set(`${candidate.start}:${table}`, { index: candidate.start, table });
+      if (pattern.test(text)) {
+        const key = `${candidate.start}:${table}`;
+        writes.set(key, { index: candidate.start, table });
+        if (staticBinding) {
+          const keys = staticStringWriteKeys.get(staticBinding) ?? new Set<string>();
+          keys.add(key);
+          staticStringWriteKeys.set(staticBinding, keys);
+        }
+      }
     }
   };
 
@@ -699,6 +734,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const binding = declarationScope
         ? ensureBinding(candidate.name as string, declarationScope, candidate)
         : resolveBinding(candidate.name as string, ctx.scope);
+      if (!declarationScope) invalidateStaticString(binding);
       const storedValue = trustedBindings?.has(candidate) ? T : value;
       return { normal: { state: store(binding, storedValue, state), value: storedValue } };
     }
@@ -872,9 +908,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const assign = (input: State, value: Trust): EvalResult => {
       const target = unwrapExpression(left) ?? left;
       if (target.type === 'Identifier') {
+        const binding = resolveBinding(target.name as string, ctx.scope);
+        invalidateStaticString(binding);
         return {
           normal: {
-            state: store(resolveBinding(target.name as string, ctx.scope), value, input),
+            state: store(binding, value, input),
             value,
           },
         };
@@ -998,7 +1036,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const target = unwrapExpression(argument) ?? argument;
         const next =
           target.type === 'Identifier'
-            ? store(resolveBinding(target.name as string, ctx.scope), U, reference.normal.state)
+            ? (() => {
+                const binding = resolveBinding(target.name as string, ctx.scope);
+                invalidateStaticString(binding);
+                return store(binding, U, reference.normal.state);
+              })()
             : reference.normal.state;
         return { normal: { state: next, value: U }, throws: reference.throws };
       }

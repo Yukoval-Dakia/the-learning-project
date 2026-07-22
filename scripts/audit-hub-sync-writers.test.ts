@@ -336,6 +336,14 @@ describe('auditHubSyncWriters', () => {
       "import type * as Repository from 'other/db/client'; function write(tx: Repository.Tx) { tx.insert(knowledge).values({}); }",
     ],
     [
+      'generic substitution respects use-site type parameter shadowing',
+      "import type { Db } from '@/db/client'; type D<T> = { db: T }; function f<Db>({ db }: D<Db>) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'conflicting property intersection',
+      "import type { Db } from '@/db/client'; function f({ db }: { db: Db } & { db: Cache }) { db.insert(knowledge).values({}); }",
+    ],
+    [
       'mixed untrusted union',
       "import type { Tx } from '@/db/client'; function write(tx: Tx | S3Client) { tx.insert(knowledge).values({}); }",
     ],
@@ -639,6 +647,18 @@ describe('auditHubSyncWriters', () => {
       'src/sql-raw-marker-reassigned.ts': withDb(
         "let marker = \"set local app.hub_sync_internal_apply = '1'\"; marker = 'select 1'; db.execute(sql.raw(marker));",
       ),
+      'src/sql-raw-marker-reassigned-before.ts': withDb(
+        "const marker = \"set local app.hub_sync_internal_apply = '1'\"; marker = 'select 1'; db.execute(sql.raw(marker));",
+      ),
+      'src/sql-raw-marker-reassigned-after.ts': withDb(
+        "const marker = \"set local app.hub_sync_internal_apply = '1'\"; db.execute(sql.raw(marker)); marker = 'select 1';",
+      ),
+      'src/sql-raw-marker-updated-before.ts': withDb(
+        'const marker = "set local app.hub_sync_internal_apply = \'1\'"; marker++; db.execute(sql.raw(marker));',
+      ),
+      'src/sql-raw-marker-updated-after.ts': withDb(
+        'const marker = "set local app.hub_sync_internal_apply = \'1\'"; db.execute(sql.raw(marker)); marker++;',
+      ),
       'src/sql-raw-ordinary-constant.ts': withDb(
         "const marker = 'select app.hub_sync_status'; db.execute(sql.raw(marker));",
       ),
@@ -925,6 +945,10 @@ describe('auditHubSyncWriters', () => {
       [
         'union nullish default',
         'type A<T = typeof db | undefined> = T; function f(client: A){ client?.insert(knowledge).values({}); }',
+      ],
+      [
+        'destructured trusted intersection property',
+        "import type { Db } from '@/db/client'; type Props = { db: Db } & { cache: Cache }; function f({ db }: Props) { db.insert(knowledge).values({}); }",
       ],
       ['computed string insert', "db['insert'](knowledge).values({});"],
       ['computed string update', "db['update'](knowledge_edge).set({});"],
