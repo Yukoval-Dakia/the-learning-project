@@ -597,7 +597,8 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 // every live hub that already existed BEFORE the migration ran. This describe
 // spins its own testcontainer and migrates ONLY through the frozen baseline
 // (0070) so it can seed a pre-0071 live hub, then applies the pending migration
-// (0071) and asserts the exact schema/triggers/indexes plus the live-hub backfill.
+// (0071) and the forward trigger-function fix (0072), then asserts the exact
+// schema/triggers/functions plus the live-hub backfill.
 describe('migration smoke — YUK-384 durable hub sync backfill', () => {
   // Frozen baseline: the last migration on main before 0071. `beforeAll` stops
   // here so the old-schema fixture is seeded before the durable-cursor DDL runs.
@@ -728,5 +729,23 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
       'hub_sync_knowledge_dirty',
       'hub_sync_knowledge_edge_dirty',
     ]);
+
+    const triggerFunctions = await oldSchemaSql<{ proname: string; definition: string }[]>`
+      select p.proname, pg_get_functiondef(p.oid) as definition
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname in ('fanout_hub_sync_dirty', 'mark_hub_sync_dirty')
+      order by p.proname
+    `;
+    expect(triggerFunctions.map((row) => row.proname)).toEqual([
+      'fanout_hub_sync_dirty',
+      'mark_hub_sync_dirty',
+    ]);
+    expect(triggerFunctions[0]?.definition).toContain('ORDER BY target_artifact_id');
+    expect(triggerFunctions[0]?.definition).toContain('id <> NEW.id');
+    expect(triggerFunctions[0]?.definition).not.toContain(
+      "ELSIF OLD.type = 'note_atomic' OR NEW.type = 'note_atomic'",
+    );
   });
 });

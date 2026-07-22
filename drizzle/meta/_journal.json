@@ -505,6 +505,13 @@
       "when": 1784613599273,
       "tag": "0071_yuk384_durable_hub_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1784710800000,
+      "tag": "0072_yuk746_hub_type_transitions",
+      "breakpoints": true
     }
   ]
 }
