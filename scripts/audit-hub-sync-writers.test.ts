@@ -873,6 +873,11 @@ describe('auditHubSyncWriters', () => {
         'dynamic repo db import typed binding',
         "async function f(){ const { db }: { db: import('@/db/client').Db } = await import('@/db/client'); db.update(knowledge_edge).set({}); } f();",
       ],
+      [
+        'dynamic import evaluates source expression',
+        'async function f(){ await import((db.insert(knowledge).values({}), path)); } f();',
+      ],
+      ['IIFE return resumes caller', '(function(){ return; })(), db.insert(knowledge).values({});'],
       ['TS export assignment expression', 'export = db.delete(knowledge).where(condition);'],
     ] as const;
 
@@ -996,6 +1001,11 @@ describe('auditHubSyncWriters', () => {
         '(function(){ cache.update(knowledge_edge).set({}); })();',
       ],
       ['inline abrupt before write', '(()=>{ throw error; db.insert(knowledge).values({}); })();'],
+      ['throwing IIFE stops caller', '(()=>{ throw error; })(), db.insert(knowledge).values({});'],
+      [
+        'dynamic import abrupt source stops caller',
+        'async function f(){ await import((()=>{ throw error; })()); db.insert(knowledge).values({}); } f();',
+      ],
       [
         'foreign dynamic db import',
         "async function f(){ const { db: client } = await import('@/cache/client'); client.insert(knowledge).values({}); } f();",

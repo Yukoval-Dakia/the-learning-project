@@ -625,6 +625,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         ? callee
         : undefined;
     let calleeResult: EvalResult;
+    let directFunction: AstNode | undefined;
     let receiver: Trust = U;
     let method: string | undefined;
     if (member) {
@@ -647,7 +648,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         ['ArrowFunctionExpression', 'FunctionExpression'].includes(callee.type) &&
         calleeResult.normal
       )
-        visitFunction(callee, ctx.scope, calleeResult.normal.state, false);
+        directFunction = callee;
       else if (functionNode && calleeResult.normal)
         visitFunction(
           functionNode,
@@ -681,6 +682,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     }
     if (!argumentsResult.normal) return argumentsResult;
     const after = argumentsResult.normal.state;
+    if (directFunction) {
+      const invoked = invokeDirectFunction(directFunction, ctx.scope, after);
+      return {
+        normal: invoked.normal && { state: invoked.normal.state, value: U },
+        throws: joinState(argumentsResult.throws, invoked.throws),
+      };
+    }
     return {
       normal: { state: after, value: U },
       throws: joinState(argumentsResult.throws, callFrontier, after),
@@ -791,12 +799,14 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         if (callee?.type === 'Import') {
           const source = childNodes(candidate.arguments)[0];
           const sourceValue = source?.type === 'StringLiteral' ? source.value : undefined;
+          const evaluated = source ? evalExpr(source, ctx, state) : { normal: { state, value: U } };
+          if (!evaluated.normal) return evaluated;
           return {
             normal: {
-              state,
+              state: evaluated.normal.state,
               value: typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file) ? N : U,
             },
-            throws: state,
+            throws: joinState(evaluated.throws, evaluated.normal.state),
           };
         }
         const taken = evalCall(candidate, ctx, state);
@@ -1269,6 +1279,39 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
   const functionParents = new WeakMap<AstNode, Scope>();
   const functionBindingsScope = (candidate: AstNode): Scope =>
     functionParents.get(candidate) ?? root;
+
+  function invokeDirectFunction(candidate: AstNode, parent: Scope, captured: State): EvalResult {
+    functionParents.set(candidate, parent);
+    const scope = makeScope(candidate, parent, true);
+    for (const parameter of childNodes(node(candidate.typeParameters)?.params)) {
+      const name = typeParameterName(parameter);
+      if (name) scope.shadowedTypes.add(name);
+    }
+    const ownName = identifierName(candidate.id);
+    if (ownName) ensureBinding(ownName, scope, candidate);
+    const parameters = childNodes(candidate.params);
+    for (const parameter of parameters) declarePattern(parameter, scope);
+    predeclareVars(candidate.body, scope);
+    let initialized: EvalResult = { normal: { state: captured, value: U } };
+    for (const parameter of parameters) {
+      initialized = sequenceEval(initialized, (next) =>
+        evalPattern(parameter, U, { scope }, next, scope),
+      );
+    }
+    if (!initialized.normal) return initialized;
+    const body = node(candidate.body);
+    if (!body) return initialized;
+    if (body.type !== 'BlockStatement') {
+      const evaluated = evalExpr(body, { scope }, initialized.normal.state);
+      return { normal: evaluated.normal, throws: joinState(initialized.throws, evaluated.throws) };
+    }
+    const flow = execBlock(body, scope, initialized.normal.state);
+    const normal = joinState(flow.normal, flow.returns);
+    return {
+      normal: normal && { state: normal, value: U },
+      throws: joinState(initialized.throws, flow.throws),
+    };
+  }
 
   const visitFunction = (
     candidate: AstNode,
