@@ -28,6 +28,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from '@babel/parser';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -242,113 +243,341 @@ function codeText(source: string): string {
   return out.join('');
 }
 
-function drizzleReceivers(
-  source: string,
-  code: string,
-): { receivers: Set<string>; shadowed: Map<string, Array<[number, number]>> } {
-  const receivers = new Set(['db', 'dbh', 'tx', 'trx']);
-  const dbTypes = new Set<string>();
-  const shadowed = new Map<string, Array<[number, number]>>();
+type AstNode = {
+  type: string;
+  start?: number | null;
+  [key: string]: unknown;
+};
 
-  for (const match of source.matchAll(
-    /\bimport\s+(?:type\s+)?{([^}]*)}\s*from\s*['"]([^'"]*db\/client)['"]/g,
-  )) {
-    for (const specifier of match[1].split(',')) {
-      const imported = /^\s*(?:type\s+)?(db|Db|Tx)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(
-        specifier,
-      );
-      if (!imported) continue;
-      const local = imported[2] ?? imported[1];
-      if (imported[1] === 'db') receivers.add(local);
-      else dbTypes.add(local);
-    }
-  }
+type Binding = { trusted: boolean };
+type Scope = {
+  parent?: Scope;
+  bindings: Map<string, Binding>;
+  types: Map<string, AstNode>;
+  trustedTypes: Set<string>;
+  functionScope: Scope;
+};
 
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const match of code.matchAll(/\btype\s+([A-Za-z_$][\w$]*)\s*=\s*([^;]+)/g)) {
-      if (
-        match[2].split('|').some((part) =>
-          dbTypes.has(
-            part
-              .trim()
-              .replace(/\s*&.*$/, '')
-              .trim(),
-          ),
-        ) &&
-        !dbTypes.has(match[1])
-      ) {
-        dbTypes.add(match[1]);
-        changed = true;
-      }
-    }
-    for (const match of code.matchAll(
-      /\b([A-Za-z_$][\w$]*)\s*\??\s*:\s*(?:typeof\s+([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)(?:\s*\|\s*([A-Za-z_$][\w$]*))?)/g,
-    )) {
-      const proven = match[2]
-        ? receivers.has(match[2])
-        : [match[3], match[4]].some((t) => dbTypes.has(t));
-      if (proven && !receivers.has(match[1])) {
-        receivers.add(match[1]);
-        changed = true;
-      }
-    }
-    for (const match of code.matchAll(
-      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\b/g,
-    )) {
-      if (receivers.has(match[2]) && !receivers.has(match[1])) {
-        receivers.add(match[1]);
-        changed = true;
-      }
-    }
-    for (const receiver of [...receivers]) {
-      const escaped = receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const callback = new RegExp(
-        `\\b${escaped}\\s*\\.\\s*transaction\\s*\\(\\s*(?:async\\s*)?\\(?\\s*([A-Za-z_$][\\w$]*)`,
-        'g',
-      );
-      for (const match of code.matchAll(callback)) {
-        if (!receivers.has(match[1])) {
-          receivers.add(match[1]);
-          changed = true;
-        }
-      }
-    }
-  }
+type DrizzleWrite = { index: number; table: string };
 
-  for (const receiver of receivers) {
-    const escaped = receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const binding = new RegExp(`\\b${escaped}\\s*:\\s*([A-Za-z_$][\\w$]*)`, 'g');
-    for (const match of code.matchAll(binding)) {
-      if (dbTypes.has(match[1])) continue;
-      const bodyStart = code.indexOf('{', match.index + match[0].length);
-      if (bodyStart < 0) continue;
-      let depth = 1;
-      let bodyEnd = bodyStart + 1;
-      while (bodyEnd < code.length && depth > 0) {
-        if (code[bodyEnd] === '{') depth += 1;
-        else if (code[bodyEnd] === '}') depth -= 1;
-        bodyEnd += 1;
-      }
-      const ranges = shadowed.get(receiver) ?? [];
-      ranges.push([bodyStart, bodyEnd]);
-      shadowed.set(receiver, ranges);
-    }
-  }
+const DB_MODULE_ALIAS = '@/db/client';
+const DB_TYPE_EXPORTS = new Set(['Db', 'Tx']);
 
-  return { receivers, shadowed };
+function node(value: unknown): AstNode | undefined {
+  return value && typeof value === 'object' && 'type' in value ? (value as AstNode) : undefined;
 }
 
-function drizzleWritePattern(table: string, receivers: Set<string>): RegExp {
-  const receiver = [...receivers]
-    .sort((a, b) => b.length - a.length)
-    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|');
-  return new RegExp(
-    `\\b(${receiver})\\s*(?:\\?\\.|\\.)\\s*(?:update|insert|delete)\\s*(?:\\?\\.)?\\s*(?:<[^;()]*>)?\\s*\\(\\s*\\(*\\s*${table}\\b`,
-    'g',
-  );
+function childNodes(value: unknown): AstNode[] {
+  if (Array.isArray(value)) return value.flatMap(childNodes);
+  const candidate = node(value);
+  return candidate ? [candidate] : [];
+}
+
+function identifierName(value: unknown): string | undefined {
+  const candidate = node(value);
+  return candidate?.type === 'Identifier' ? (candidate.name as string) : undefined;
+}
+
+function declarePattern(pattern: unknown, scope: Scope): void {
+  const candidate = node(pattern);
+  if (!candidate) return;
+  if (candidate.type === 'Identifier') {
+    scope.bindings.set(candidate.name as string, { trusted: false });
+    return;
+  }
+  if (candidate.type === 'RestElement') {
+    declarePattern(candidate.argument, scope);
+    return;
+  }
+  if (candidate.type === 'AssignmentPattern') {
+    declarePattern(candidate.left, scope);
+    return;
+  }
+  if (candidate.type === 'ObjectPattern') {
+    for (const property of childNodes(candidate.properties)) {
+      declarePattern(property.type === 'RestElement' ? property.argument : property.value, scope);
+    }
+    return;
+  }
+  if (candidate.type === 'ArrayPattern') {
+    for (const element of childNodes(candidate.elements)) declarePattern(element, scope);
+  }
+}
+
+function bindingFor(name: string, scope: Scope): Binding | undefined {
+  for (let current: Scope | undefined = scope; current; current = current.parent) {
+    const binding = current.bindings.get(name);
+    if (binding) return binding;
+  }
+  return undefined;
+}
+
+function trustedBinding(expression: unknown, scope: Scope): boolean {
+  let candidate = node(expression);
+  while (
+    candidate &&
+    [
+      'TSAsExpression',
+      'TSSatisfiesExpression',
+      'TSNonNullExpression',
+      'TypeCastExpression',
+    ].includes(candidate.type)
+  ) {
+    candidate = node(candidate.expression);
+  }
+  const name = identifierName(candidate);
+  return name ? bindingFor(name, scope)?.trusted === true : false;
+}
+
+function trustedType(typeNode: unknown, scope: Scope, seen = new Set<string>()): boolean {
+  const candidate = node(typeNode);
+  if (!candidate) return false;
+  if (candidate.type === 'TSTypeAnnotation')
+    return trustedType(candidate.typeAnnotation, scope, seen);
+  if (candidate.type === 'TSParenthesizedType' || candidate.type === 'TSOptionalType') {
+    return trustedType(candidate.typeAnnotation, scope, seen);
+  }
+  if (candidate.type === 'TSUnionType' || candidate.type === 'TSIntersectionType') {
+    return childNodes(candidate.types).some((part) => trustedType(part, scope, seen));
+  }
+  if (candidate.type === 'TSTypeQuery') return trustedBinding(candidate.exprName, scope);
+  if (candidate.type !== 'TSTypeReference') return false;
+  const name = identifierName(candidate.typeName);
+  if (!name || seen.has(name)) return false;
+  for (let current: Scope | undefined = scope; current; current = current.parent) {
+    if (current.trustedTypes.has(name)) return true;
+    const alias = current.types.get(name);
+    if (alias) {
+      seen.add(name);
+      return trustedType(alias, current, seen);
+    }
+  }
+  return false;
+}
+
+function predeclareImmediate(statements: unknown, scope: Scope): void {
+  for (const statement of childNodes(statements)) {
+    if (statement.type === 'VariableDeclaration' && statement.kind !== 'var') {
+      for (const declaration of childNodes(statement.declarations))
+        declarePattern(declaration.id, scope);
+    } else if (statement.type === 'FunctionDeclaration' || statement.type === 'ClassDeclaration') {
+      const name = identifierName(statement.id);
+      if (name) scope.bindings.set(name, { trusted: false });
+    } else if (statement.type === 'TSTypeAliasDeclaration') {
+      const name = identifierName(statement.id);
+      const annotation = node(statement.typeAnnotation);
+      if (name && annotation) scope.types.set(name, annotation);
+    }
+  }
+}
+
+function predeclareVars(value: unknown, functionScope: Scope): void {
+  for (const candidate of childNodes(value)) {
+    if (
+      candidate.type === 'FunctionDeclaration' ||
+      candidate.type === 'FunctionExpression' ||
+      candidate.type === 'ArrowFunctionExpression' ||
+      candidate.type === 'ClassDeclaration' ||
+      candidate.type === 'ClassExpression'
+    ) {
+      continue;
+    }
+    if (candidate.type === 'VariableDeclaration' && candidate.kind === 'var') {
+      for (const declaration of childNodes(candidate.declarations)) {
+        declarePattern(declaration.id, functionScope);
+      }
+    }
+    for (const [key, child] of Object.entries(candidate)) {
+      if (key === 'loc' || key === 'start' || key === 'end') continue;
+      predeclareVars(child, functionScope);
+    }
+  }
+}
+
+function isRepoDbModule(source: string, file: string): boolean {
+  if (source === DB_MODULE_ALIAS) return true;
+  if (!source.startsWith('.')) return false;
+  const resolved = normalizePath(resolve('/', dirname(file), source)).slice(1);
+  return resolved === 'src/db/client' || resolved === 'src/db/client.ts';
+}
+
+function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
+  let program: AstNode;
+  try {
+    program = parse(source, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      errorRecovery: false,
+      attachComment: false,
+    }).program as unknown as AstNode;
+  } catch (error) {
+    throw new Error(
+      `audit:hub-sync-writers: cannot parse ${file}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const writes: DrizzleWrite[] = [];
+  const root = {} as Scope;
+  root.bindings = new Map();
+  root.types = new Map();
+  root.trustedTypes = new Set();
+  root.functionScope = root;
+
+  const makeScope = (parent: Scope, isFunction = false): Scope => {
+    const scope = {
+      parent,
+      bindings: new Map<string, Binding>(),
+      types: new Map<string, AstNode>(),
+      trustedTypes: new Set<string>(),
+      functionScope: parent.functionScope,
+    };
+    if (isFunction) scope.functionScope = scope;
+    return scope;
+  };
+
+  const visitGeneric = (candidate: AstNode, scope: Scope): void => {
+    for (const [key, child] of Object.entries(candidate)) {
+      if (key === 'loc' || key === 'start' || key === 'end') continue;
+      for (const childNode of childNodes(child)) visit(childNode, scope);
+    }
+  };
+
+  const visitFunction = (candidate: AstNode, parent: Scope, transactionCallback: boolean): void => {
+    const scope = makeScope(parent, true);
+    const ownName = identifierName(candidate.id);
+    if (ownName) scope.bindings.set(ownName, { trusted: false });
+    const parameters = childNodes(candidate.params);
+    for (const parameter of parameters) declarePattern(parameter, scope);
+    if (transactionCallback) {
+      const firstName = identifierName(parameters[0]);
+      const binding = firstName ? scope.bindings.get(firstName) : undefined;
+      if (binding) binding.trusted = true;
+    }
+    for (const parameter of parameters) {
+      const name = identifierName(parameter);
+      const binding = name ? scope.bindings.get(name) : undefined;
+      if (binding && trustedType(parameter.typeAnnotation, scope)) binding.trusted = true;
+    }
+    predeclareVars(candidate.body, scope);
+    const body = node(candidate.body);
+    if (body?.type === 'BlockStatement') visitBlock(body, scope);
+    else if (body) visit(body, scope);
+  };
+
+  const visitBlock = (candidate: AstNode, parent: Scope): void => {
+    const scope = makeScope(parent);
+    predeclareImmediate(candidate.body, scope);
+    for (const statement of childNodes(candidate.body)) visit(statement, scope);
+  };
+
+  const visitCall = (candidate: AstNode, scope: Scope): void => {
+    const callee = node(candidate.callee);
+    const member =
+      callee && (callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression')
+        ? callee
+        : undefined;
+    const property = member
+      ? member.computed
+        ? undefined
+        : identifierName(member.property)
+      : undefined;
+    const trustedReceiver = member ? trustedBinding(member.object, scope) : false;
+    if (trustedReceiver && property && ['insert', 'update', 'delete'].includes(property)) {
+      let table = node(childNodes(candidate.arguments)[0]);
+      while (table?.type === 'TSAsExpression' || table?.type === 'TSNonNullExpression') {
+        table = node(table.expression);
+      }
+      const tableName = identifierName(table);
+      if (tableName && candidate.start != null)
+        writes.push({ index: candidate.start, table: tableName });
+    }
+    const transactionCallback = trustedReceiver && property === 'transaction';
+    for (const argument of childNodes(candidate.arguments)) {
+      if (
+        transactionCallback &&
+        (argument.type === 'ArrowFunctionExpression' || argument.type === 'FunctionExpression')
+      ) {
+        visitFunction(argument, scope, true);
+      } else {
+        visit(argument, scope);
+      }
+    }
+    if (member) visit(member.object as AstNode, scope);
+  };
+
+  const visit = (candidate: AstNode, scope: Scope): void => {
+    switch (candidate.type) {
+      case 'Program':
+        predeclareImmediate(candidate.body, scope);
+        predeclareVars(candidate.body, scope);
+        for (const statement of childNodes(candidate.body)) visit(statement, scope);
+        return;
+      case 'ImportDeclaration': {
+        const sourceValue = node(candidate.source)?.value;
+        const trustedModule = typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file);
+        for (const specifier of childNodes(candidate.specifiers)) {
+          const local = identifierName(specifier.local);
+          if (!local) continue;
+          scope.bindings.set(local, { trusted: false });
+          if (!trustedModule || specifier.type !== 'ImportSpecifier') continue;
+          const imported = identifierName(specifier.imported);
+          const binding = scope.bindings.get(local);
+          if (imported === 'db' && binding) binding.trusted = true;
+          else if (imported && DB_TYPE_EXPORTS.has(imported)) scope.trustedTypes.add(local);
+        }
+        return;
+      }
+      case 'BlockStatement':
+        visitBlock(candidate, scope);
+        return;
+      case 'FunctionDeclaration':
+      case 'FunctionExpression':
+      case 'ArrowFunctionExpression':
+        visitFunction(candidate, scope, false);
+        return;
+      case 'CatchClause': {
+        const catchScope = makeScope(scope);
+        declarePattern(candidate.param, catchScope);
+        const body = node(candidate.body);
+        if (body) visitBlock(body, catchScope);
+        return;
+      }
+      case 'VariableDeclaration':
+        for (const declaration of childNodes(candidate.declarations)) {
+          const targetScope = candidate.kind === 'var' ? scope.functionScope : scope;
+          declarePattern(declaration.id, targetScope);
+          const name = identifierName(declaration.id);
+          const binding = name ? targetScope.bindings.get(name) : undefined;
+          if (binding) {
+            binding.trusted =
+              trustedType(node(declaration.id)?.typeAnnotation, scope) ||
+              trustedBinding(declaration.init, scope);
+          }
+          const init = node(declaration.init);
+          if (init) visit(init, scope);
+        }
+        return;
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visitCall(candidate, scope);
+        return;
+      case 'ClassDeclaration':
+      case 'ClassExpression': {
+        const classScope = makeScope(scope);
+        const ownName = identifierName(candidate.id);
+        if (ownName) classScope.bindings.set(ownName, { trusted: false });
+        visitGeneric(candidate, classScope);
+        return;
+      }
+      case 'TSTypeAliasDeclaration':
+        return;
+      default:
+        visitGeneric(candidate, scope);
+    }
+  };
+
+  visit(program, root);
+  return writes;
 }
 
 function rawSqlWritePattern(table: string): RegExp {
@@ -397,27 +626,21 @@ export async function auditHubSyncWriters(input: {
     const isReconciler = rel === RECONCILER_PATH;
     const sourceText = readFileSync(abs, 'utf8');
     const code = codeText(sourceText);
-    const { receivers, shadowed } = drizzleReceivers(sourceText, code);
-    const isShadowed = (match: RegExpMatchArray): boolean =>
-      (shadowed.get(match[1]) ?? []).some(
-        ([start, end]) => match.index >= start && match.index < end,
-      );
+    const drizzleWrites = collectDrizzleWrites(sourceText, rel);
     const lines = sourceText.split('\n');
     const addFinding = (rule: HubSyncAuditRule, index: number) => {
       const line = code.slice(0, index).split('\n').length;
       findings.push({ rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
     };
 
-    const reconciliationPatterns = [
-      drizzleWritePattern('hub_sync_reconciliation', receivers),
-      rawSqlWritePattern('hub_sync_reconciliation'),
-    ];
     if (!isReconciler) {
-      for (const pattern of reconciliationPatterns) {
-        for (const match of code.matchAll(pattern)) {
-          if (pattern === reconciliationPatterns[0] && isShadowed(match)) continue;
-          addFinding('RECONCILIATION_OWNER_BYPASS', match.index);
+      for (const write of drizzleWrites) {
+        if (write.table === 'hub_sync_reconciliation') {
+          addFinding('RECONCILIATION_OWNER_BYPASS', write.index);
         }
+      }
+      for (const match of code.matchAll(rawSqlWritePattern('hub_sync_reconciliation'))) {
+        addFinding('RECONCILIATION_OWNER_BYPASS', match.index ?? 0);
       }
       for (const match of code.matchAll(/app\.hub_sync_internal_apply/g)) {
         addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index);
@@ -430,12 +653,11 @@ export async function auditHubSyncWriters(input: {
     }
     for (const table of TOPOLOGY_TABLES) {
       if (allowByPath.get(rel)?.has(table)) continue;
-      const drizzlePattern = drizzleWritePattern(table, receivers);
-      for (const pattern of [drizzlePattern, rawSqlWritePattern(table)]) {
-        for (const match of code.matchAll(pattern)) {
-          if (pattern === drizzlePattern && isShadowed(match)) continue;
-          addFinding('UNINVENTORIED_TOPOLOGY_WRITER', match.index);
-        }
+      for (const write of drizzleWrites) {
+        if (write.table === table) addFinding('UNINVENTORIED_TOPOLOGY_WRITER', write.index);
+      }
+      for (const match of code.matchAll(rawSqlWritePattern(table))) {
+        addFinding('UNINVENTORIED_TOPOLOGY_WRITER', match.index ?? 0);
       }
     }
   }

@@ -11,6 +11,10 @@ import { type AllowlistEntry, auditHubSyncWriters } from './audit-hub-sync-write
 
 const emptyAllowlist: AllowlistEntry[] = [];
 const fixtures: string[] = [];
+const withDb = (source: string) =>
+  /from\s*['"]@\/db\/client['"]/.test(source)
+    ? source
+    : `import { db } from '@/db/client';\n${source}`;
 
 function fixtureRepo(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'hub-sync-audit-'));
@@ -50,7 +54,7 @@ describe('auditHubSyncWriters', () => {
       'DIRECT_HUB_ACTOR_APPLY',
     ],
   ] as const)('YUK-384 RED 25: catches %s bypass', async (_name, source, rule) => {
-    const root = fixtureRepo({ 'src/bypass.ts': source });
+    const root = fixtureRepo({ 'src/bypass.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(expect.objectContaining({ rule, file: 'src/bypass.ts' }));
   });
@@ -69,7 +73,7 @@ describe('auditHubSyncWriters', () => {
     ['update', 'knowledge_edge', 'db\n  .update(\n    knowledge_edge,\n  )\n  .set({});'],
     ['delete', 'knowledge', 'db\n  .delete(\n    knowledge,\n  )\n  .where(eq(knowledge.id, id));'],
   ])('YUK-746 RED: catches multiline Drizzle %s calls', async (_operation, _table, source) => {
-    const root = fixtureRepo({ 'src/multiline.ts': source });
+    const root = fixtureRepo({ 'src/multiline.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({
@@ -101,10 +105,13 @@ describe('auditHubSyncWriters', () => {
     ['optional call', 'db.insert?.(knowledge).values({})'],
     ['type argument', 'db.insert<typeof knowledge>(knowledge).values({})'],
     ['parenthesized table', 'db.insert((knowledge)).values({})'],
-    ['transaction receiver', 'tx.update(knowledge).set({})'],
+    [
+      'transaction receiver',
+      "import type { Tx } from '@/db/client'; function write(tx: Tx) { tx.update(knowledge).set({}); }",
+    ],
     ['nested template expression', 'const value = `ignored ${`also ${db.delete(knowledge)}`}`'],
   ])('YUK-746 review: catches %s Drizzle syntax', async (_name, source) => {
-    const root = fixtureRepo({ 'src/writer.ts': source });
+    const root = fixtureRepo({ 'src/writer.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -142,6 +149,100 @@ describe('auditHubSyncWriters', () => {
       );
     },
   );
+
+  it.each([
+    [
+      'exact relative import alias',
+      "import { db as repositoryDb } from '../src/db/client'; repositoryDb.insert(knowledge).values({});",
+    ],
+    [
+      'typed union',
+      "import type { Db, Tx } from '@/db/client'; function write(client: Db | Tx | undefined) { client?.update(knowledge).set({}); }",
+    ],
+    [
+      'typeof trusted binding',
+      "import { db } from '@/db/client'; function write(client: typeof db) { client.delete(knowledge).where(ok); }",
+    ],
+    [
+      'chained type aliases',
+      "import { db } from '@/db/client'; type RepositoryDb = typeof db; type MaybeDb = RepositoryDb | undefined; function write(client: MaybeDb) { client?.insert(knowledge).values({}); }",
+    ],
+    [
+      'inline transaction callback',
+      "import { db } from '@/db/client'; db.transaction(async (tx) => tx.update(knowledge_edge).set({}));",
+    ],
+  ])('YUK-746 AST: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/ast-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
+    [
+      'fake line comment import',
+      "// import { db } from '@/db/client';\ndb.insert(knowledge).values({});",
+    ],
+    [
+      'fake block comment import',
+      "/* import { db } from '@/db/client'; */ db.insert(knowledge).values({});",
+    ],
+    [
+      'fake string import',
+      'const text = "import { db } from \'@/db/client\'"; db.insert(knowledge).values({});',
+    ],
+    [
+      'fake template import',
+      "const text = `import { db } from '@/db/client'`; db.insert(knowledge).values({});",
+    ],
+    [
+      'fake interpolation import',
+      'const text = `${"import { db } from \'@/db/client\'"}`; db.insert(knowledge).values({});',
+    ],
+    [
+      'suffix package path',
+      "import { db } from 'other/db/client'; db.insert(knowledge).values({});",
+    ],
+    [
+      'typed receiver does not leak functions',
+      "import type { Db } from '@/db/client'; function first(client: Db) {} function second(client) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'untyped inner parameter shadows',
+      "import { db } from '@/db/client'; function inner(db) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'untyped inner local shadows',
+      "import { db } from '@/db/client'; { const db = cache; db.insert(knowledge).values({}); }",
+    ],
+    [
+      'destructuring shadows',
+      "import { db } from '@/db/client'; function inner({ db }) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'catch binding shadows',
+      "import { db } from '@/db/client'; try {} catch (db) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'transaction callback does not leak',
+      "import { db } from '@/db/client'; db.transaction(async (tx) => {}); tx.insert(knowledge).values({});",
+    ],
+    [
+      'named transaction handler',
+      "import { db } from '@/db/client'; function handler(tx) { tx.insert(knowledge).values({}); } db.transaction(handler);",
+    ],
+  ])('YUK-746 AST: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/ast-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it('YUK-746 AST: fails closed on parse failure', async () => {
+    const root = fixtureRepo({ 'src/invalid.ts': 'function {' });
+    await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).rejects.toThrow(
+      'cannot parse src/invalid.ts',
+    );
+  });
 
   it('YUK-746 review follow-up: preserves UTF-16 line and excerpt alignment', async () => {
     const root = fixtureRepo({
@@ -193,7 +294,7 @@ describe('auditHubSyncWriters', () => {
     ['optional receiver update', 'db?.update(knowledge).set({})'],
     ['optional receiver delete', 'db?.delete(knowledge).where(condition)'],
   ])('YUK-746 round 2: catches %s', async (_name, source) => {
-    const root = fixtureRepo({ 'src/optional-writer.ts': source });
+    const root = fixtureRepo({ 'src/optional-writer.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -212,7 +313,7 @@ describe('auditHubSyncWriters', () => {
     ['after if condition', 'if (ok) db.insert(knowledge).values({});'],
     ['after while condition', 'while (next()) db.update(knowledge).set({});'],
   ])('YUK-746 round 2: still catches executable write %s', async (_name, source) => {
-    const root = fixtureRepo({ 'src/control-flow-write.ts': source });
+    const root = fixtureRepo({ 'src/control-flow-write.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -223,7 +324,6 @@ describe('auditHubSyncWriters', () => {
     ['if string condition', 'if (fn(")")) /db.insert(knowledge)/.test(x);'],
     ['if regex condition', 'if (/[(]/.test(x)) /db.insert(knowledge)/.test(x);'],
     ['for string condition', 'for (; fn(")");) /update knowledge/.test(x);'],
-    ['with regex condition', 'with (/[(]/.exec(x)) /db.insert(knowledge)/.test(x);'],
   ])('YUK-746 round 3: ignores regex after %s', async (_name, source) => {
     const root = fixtureRepo({ 'src/literal-condition-regex.ts': source });
     expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
@@ -233,9 +333,8 @@ describe('auditHubSyncWriters', () => {
     ['if string condition', 'if (fn(")")) db.insert(knowledge).values({});'],
     ['if regex condition', 'if (/[(]/.test(x)) db.update(knowledge).set({});'],
     ['for string condition', 'for (; fn(")");) db.delete(knowledge).where(condition);'],
-    ['with regex condition', 'with (/[(]/.exec(x)) db.insert(knowledge).values({});'],
   ])('YUK-746 round 3: catches real write after %s', async (_name, source) => {
-    const root = fixtureRepo({ 'src/literal-condition-write.ts': source });
+    const root = fixtureRepo({ 'src/literal-condition-write.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -262,7 +361,7 @@ describe('auditHubSyncWriters', () => {
     ],
     ['nested tagged SQL delimiter', 'if (sql`select ${sql`(`}`) db.delete(knowledge).where(ok);'],
   ])('YUK-746 final: catches real write after %s condition', async (_name, source) => {
-    const root = fixtureRepo({ 'src/sql-condition-write.ts': source });
+    const root = fixtureRepo({ 'src/sql-condition-write.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -313,7 +412,9 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 P2: catches real write after sql.raw delimiter condition', async () => {
     const root = fixtureRepo({
-      'src/sql-raw-control-write.ts': "if (sql.raw('select )')) db.insert(knowledge).values({});",
+      'src/sql-raw-control-write.ts': withDb(
+        "if (sql.raw('select )')) db.insert(knowledge).values({});",
+      ),
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
@@ -346,8 +447,9 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 P2 follow-up: scans executable sql.raw template interpolation', async () => {
     const root = fixtureRepo({
-      'src/sql-raw-template-expression.ts':
+      'src/sql-raw-template-expression.ts': withDb(
         'db.execute(sql.raw(`select ${db.insert(knowledge).values({})}`));',
+      ),
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
@@ -373,7 +475,9 @@ describe('auditHubSyncWriters', () => {
   });
 
   it('YUK-746 review: scans production audit-prefixed files', async () => {
-    const root = fixtureRepo({ 'scripts/audit-production.ts': 'db.insert(knowledge).values({});' });
+    const root = fixtureRepo({
+      'scripts/audit-production.ts': withDb('db.insert(knowledge).values({});'),
+    });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ file: 'scripts/audit-production.ts' }),
