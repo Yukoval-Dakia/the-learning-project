@@ -112,6 +112,33 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    ['dbOrTx', 'dbOrTx.insert(knowledge).values({})'],
+    ['repository alias', 'repositoryDb.update(knowledge_edge).set({})'],
+  ])(
+    'YUK-746 review follow-up: catches Drizzle calls through %s receiver',
+    async (_name, source) => {
+      const root = fixtureRepo({ 'src/aliased-writer.ts': source });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(findings).toContainEqual(
+        expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+      );
+    },
+  );
+
+  it('YUK-746 review follow-up: preserves UTF-16 line and excerpt alignment', async () => {
+    const root = fixtureRepo({
+      'src/unicode-writer.ts': '// non-BMP: 🧭\ndbOrTx.insert(knowledge).values({});',
+    });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual({
+      rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
+      file: 'src/unicode-writer.ts',
+      line: 2,
+      excerpt: 'dbOrTx.insert(knowledge).values({});',
+    });
+  });
+
+  it.each([
     ['ordinary template text', 'const text = `db.insert(knowledge) ${"still text"}`;'],
     ['string in interpolation', 'const text = `${"db.insert(knowledge)"}`;'],
     ['comment in interpolation', 'const text = `${/* db.insert(knowledge) */ value}`;'],

@@ -62,7 +62,9 @@ function normalizePath(p: string): string {
 }
 
 function codeText(source: string): string {
-  const out: string[] = [...source].map((char) => (char === '\n' ? '\n' : ' '));
+  const out: string[] = Array.from({ length: source.length }, (_, index) =>
+    source[index] === '\n' ? '\n' : ' ',
+  );
   const structural: string[] = [...out];
 
   const copy = (start: number, end: number) => {
@@ -241,8 +243,10 @@ function codeText(source: string): string {
 }
 
 function drizzleWritePattern(table: string): RegExp {
+  const call = String.raw`\s*(?:\?\.|\.)\s*(?:update|insert|delete)\s*(?:\?\.)?\s*(?:<[^;()]*>)?\s*\(\s*\(*\s*${table}\b`;
+  const drizzleChain = String.raw`[^;]*?\)\s*(?:\?\.|\.)\s*(?:values|set|where|returning|onConflictDoNothing|onConflictDoUpdate)\b`;
   return new RegExp(
-    `\\b(?:db|dbh|tx|trx)\\s*(?:\\?\\.|\\.)\\s*(?:update|insert|delete)\\s*(?:\\?\\.)?\\s*(?:<[^;()]*>)?\\s*\\(\\s*\\(*\\s*${table}\\b`,
+    String.raw`\b(?:(?:db|dbh|tx|trx)${call}|[A-Za-z_$][\w$]*${call}${drizzleChain})`,
     'g',
   );
 }
