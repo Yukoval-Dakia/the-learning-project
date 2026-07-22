@@ -459,6 +459,52 @@ describe('auditHubSyncWriters', () => {
 
   it.each([
     [
+      'dependency object shorthand property',
+      "import { db } from '@/db/client'; const deps = { db }; deps.db.insert(knowledge).values({});",
+    ],
+    [
+      'dependency object aliased property destructuring',
+      "import { db } from '@/db/client'; const deps = { client: db }; const { client } = deps; client.update(knowledge_edge).set({});",
+    ],
+    [
+      'dependency object alias',
+      "import { db } from '@/db/client'; const deps = { client: db }; const alias = deps; alias.client.delete(knowledge).where(ok);",
+    ],
+    [
+      'dependency property assigned before use',
+      "import { db } from '@/db/client'; const deps = { client: cache }; deps.client = db; deps.client.insert(knowledge).values({});",
+    ],
+    [
+      'CommonJS module exports property',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.insert(knowledge).values({}); client = db; module.exports.writer = writer;",
+    ],
+  ])('YUK-746 fresh Important blockers: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/fresh-important-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'foreign dependency object property',
+      'const deps = { db: cache }; deps.db.insert(knowledge).values({});',
+    ],
+    [
+      'CommonJS module exports property follows final safe state',
+      "import { db } from '@/db/client'; let client = db; const writer = () => client.insert(knowledge).values({}); module.exports.writer = writer; client = cache;",
+    ],
+    [
+      'foreign CommonJS-shaped property assignment',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.update(knowledge).set({}); client = db; loader.module.exports.writer = writer;",
+    ],
+  ])('YUK-746 fresh Important blockers: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/fresh-important-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
+    [
       'inline object callback registrar',
       "import { db } from '@/db/client'; let client = cache; register({ run: () => client.insert(knowledge).values({}) }); client = db;",
     ],

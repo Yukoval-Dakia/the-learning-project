@@ -47,6 +47,7 @@ type PositionalValue = {
   elements?: readonly Trust[];
   elementValues?: readonly PositionalValue[];
   elementsExact?: boolean;
+  properties?: ReadonlyMap<string, Binding>;
 };
 type EvalResult = {
   normal?: PositionalValue & { state: State };
@@ -248,6 +249,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const transactionAnalyzedFunctions = new WeakSet<AstNode>();
   const functionBindings = new Map<Binding, AstNode>();
   const objectFunctions = new Map<Binding, Map<string, AstNode>>();
+  const objectPropertyBindings = new Map<Binding, Map<string, Binding>>();
+  const objectPropertyCache = new WeakMap<AstNode, Map<string, Binding>>();
   const escapedFunctions = new Set<AstNode>();
   const returnedFunctions = new WeakMap<AstNode, Set<AstNode>>();
   const staticStrings = new Map<Binding, string>();
@@ -366,6 +369,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       if (binding) {
         functionBindings.delete(binding);
         objectFunctions.delete(binding);
+        objectPropertyBindings.delete(binding);
       }
       return;
     }
@@ -990,8 +994,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const propertyName = candidate.computed
       ? staticComputedPropertyName(candidate.property)
       : identifierName(candidate.property);
-    const value =
-      result.normal.value & N && propertyName === 'db'
+    const propertyBinding = propertyName ? result.normal.properties?.get(propertyName) : undefined;
+    const value = propertyBinding
+      ? load(propertyBinding, result.normal.state)
+      : result.normal.value & N && propertyName === 'db'
         ? T
         : result.normal.value & T && propertyName === 'with'
           ? T
@@ -1010,6 +1016,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     declarationScope?: Scope,
     trustedBindings?: Set<AstNode>,
     elements?: readonly Trust[],
+    properties?: ReadonlyMap<string, Binding>,
   ): EvalResult => {
     const candidate = node(pattern);
     if (!candidate) return { normal: { state, value } };
@@ -1063,10 +1070,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             ? staticComputedPropertyName(property.key)
             : identifierName(property.key);
           const propertyValue = value & N && propertyName === 'db' ? T : U;
+          const propertyBinding = propertyName ? properties?.get(propertyName) : undefined;
           return sequenceEval(keyed, (afterKey) =>
             evalPattern(
               property.type === 'RestElement' ? property.argument : property.value,
-              propertyValue,
+              propertyBinding ? load(propertyBinding, afterKey) : propertyValue,
               ctx,
               afterKey,
               declarationScope,
@@ -1224,19 +1232,50 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const reference = evalReference(left, ctx, state);
     if (!reference.normal) return reference;
     const operator = candidate.operator as string;
-    const assign = (input: State, value: Trust, elements?: readonly Trust[]): EvalResult => {
+    const assign = (
+      input: State,
+      value: Trust,
+      elements?: readonly Trust[],
+      properties?: ReadonlyMap<string, Binding>,
+    ): EvalResult => {
       const target = unwrapExpression(left) ?? left;
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
         invalidateCallable(target, ctx.scope);
+        if (binding && properties) objectPropertyBindings.set(binding, new Map(properties));
         return {
           normal: {
             state: store(binding, value, input),
             value,
+            properties,
           },
         };
       }
-      if (target.type === 'MemberExpression') invalidateCallable(target, ctx.scope);
+      if (target.type === 'MemberExpression') {
+        invalidateCallable(target, ctx.scope);
+        const objectName = identifierName(target.object);
+        const propertyName = target.computed
+          ? staticComputedPropertyName(target.property)
+          : identifierName(target.property);
+        const objectBinding = objectName ? resolveBinding(objectName, ctx.scope) : undefined;
+        let propertyBinding =
+          objectBinding && propertyName
+            ? objectPropertyBindings.get(objectBinding)?.get(propertyName)
+            : undefined;
+        if (objectBinding && propertyName && !propertyBinding && value & (T | N)) {
+          propertyBinding = {
+            id: nextBindingId++,
+            name: propertyName,
+            scope: ctx.scope,
+            decl: target,
+          };
+          const properties =
+            objectPropertyBindings.get(objectBinding) ?? new Map<string, Binding>();
+          properties.set(propertyName, propertyBinding);
+          objectPropertyBindings.set(objectBinding, properties);
+        }
+        return { normal: { state: store(propertyBinding, value, input), value } };
+      }
       if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
         invalidateCallable(target, ctx.scope);
         return evalPattern(target, value, ctx, input, undefined, undefined, elements);
@@ -1248,7 +1287,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const functionValue = unwrapExpression(right);
       const rhs = evalExpr(right, ctx, reference.normal.state);
       if (!rhs.normal) return { throws: joinState(reference.throws, rhs.throws) };
-      const stored = assign(rhs.normal.state, rhs.normal.value, rhs.normal.elements);
+      const stored = assign(
+        rhs.normal.state,
+        rhs.normal.value,
+        rhs.normal.elements,
+        rhs.normal.properties,
+      );
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
         const assignedFunction = resolveCallable(functionValue, ctx.scope);
@@ -1316,6 +1360,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           normal: {
             state,
             value: !binding && candidate.name === 'undefined' ? D : load(binding, state),
+            properties: binding ? objectPropertyBindings.get(binding) : undefined,
           },
         };
       }
@@ -1547,6 +1592,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       case 'ObjectExpression': {
         let result: EvalResult = { normal: { state, value: U } };
+        const properties = objectPropertyCache.get(candidate) ?? new Map<string, Binding>();
+        objectPropertyCache.set(candidate, properties);
         for (const property of childNodes(candidate.properties)) {
           result = sequenceEval(result, (next) => {
             let current: EvalResult = { normal: { state: next, value: U } };
@@ -1565,6 +1612,27 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
                 deferFunction(functionValue, ctx.scope, current.normal?.state ?? next);
               }
               current = sequenceEval(current, (afterKey) => evalExpr(value, ctx, afterKey));
+              const propertyName = property.computed
+                ? staticComputedPropertyName(property.key)
+                : identifierName(property.key);
+              if (propertyName && current.normal && current.normal.value & (T | N)) {
+                const binding =
+                  properties.get(propertyName) ??
+                  ({
+                    id: nextBindingId++,
+                    name: propertyName,
+                    scope: ctx.scope,
+                    decl: property,
+                  } as Binding);
+                current = {
+                  normal: {
+                    ...current.normal,
+                    state: store(binding, current.normal.value, current.normal.state),
+                  },
+                  throws: current.throws,
+                };
+                properties.set(propertyName, binding);
+              }
             }
             if (['ObjectMethod'].includes(property.type) && current.normal)
               visitFunction(property, ctx.scope, current.normal.state, false);
@@ -1572,7 +1640,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           });
         }
         return result.normal
-          ? { normal: { state: result.normal.state, value: U }, throws: result.throws }
+          ? {
+              normal: { state: result.normal.state, value: U, properties },
+              throws: result.throws,
+            }
           : result;
       }
       case 'TemplateLiteral':
@@ -2152,7 +2223,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           targetScope,
           trustedBindings,
           evaluated.normal.elements,
+          evaluated.normal.properties,
         );
+        if (simpleName) {
+          const binding = resolveBinding(simpleName, targetScope);
+          if (binding && evaluated.normal.properties)
+            objectPropertyBindings.set(binding, new Map(evaluated.normal.properties));
+        }
         return { normal: bound.normal, throws: joinState(evaluated.throws, bound.throws) };
       });
     }
@@ -2209,7 +2286,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             : undefined;
         if (
           assignment &&
-          ((objectName === 'module' && propertyName === 'exports') || objectName === 'exports')
+          ((objectName === 'module' && propertyName === 'exports') ||
+            objectName === 'exports' ||
+            (left?.type === 'MemberExpression' &&
+              identifierName(unwrapExpression(left.object)?.object) === 'module' &&
+              (unwrapExpression(left.object)?.computed
+                ? staticComputedPropertyName(unwrapExpression(left.object)?.property) === 'exports'
+                : identifierName(unwrapExpression(left.object)?.property) === 'exports')))
         )
           escapeValue(assignment.right, ctx.scope);
         const evaluated = expression
