@@ -78,6 +78,7 @@ function unwrapExpression(expression: unknown): AstNode | undefined {
     candidate &&
     [
       'TSAsExpression',
+      'TSTypeAssertion',
       'TSSatisfiesExpression',
       'TSNonNullExpression',
       'TypeCastExpression',
@@ -208,7 +209,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   try {
     program = parse(source, {
       sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
+      plugins: file.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
       errorRecovery: false,
       attachComment: false,
     }).program as unknown as AstNode;
@@ -325,9 +326,18 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       ) {
         const name = identifierName(statement.id);
         if (name) ensureBinding(name, scope, statement);
-      } else if (statement.type === 'TSTypeAliasDeclaration') {
+      } else if (
+        statement.type === 'TSTypeAliasDeclaration' ||
+        statement.type === 'TSInterfaceDeclaration'
+      ) {
         const name = identifierName(statement.id);
-        const body = node(statement.typeAnnotation);
+        const body =
+          statement.type === 'TSInterfaceDeclaration'
+            ? ({
+                type: 'TSTypeLiteral',
+                members: statement.body && node(statement.body)?.body,
+              } as AstNode)
+            : node(statement.typeAnnotation);
         if (!name || !body || scope.types.has(name)) continue;
         const parameters = childNodes(node(statement.typeParameters)?.params)
           .map((parameter) => {
@@ -858,13 +868,13 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     for (const [index, argument] of args.entries()) {
       argumentsResult = sequenceEval(argumentsResult, (next) => {
         const callback = unwrapExpression(argument);
-        if (
-          method === 'transaction' &&
-          receiver & T &&
-          callback &&
-          ['ArrowFunctionExpression', 'FunctionExpression'].includes(callback.type)
-        ) {
-          visitFunction(callback, ctx.scope, next, true);
+        if (callback && ['ArrowFunctionExpression', 'FunctionExpression'].includes(callback.type)) {
+          visitFunction(
+            callback,
+            ctx.scope,
+            next,
+            method === 'transaction' && Boolean(receiver & T),
+          );
           invocationArguments.push({ value: U, supplied: true, undefinedness: 'no' });
           return { normal: { state: next, value: U } };
         }
@@ -1686,6 +1696,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         }
         return execList(candidate.body, ctx, initialState);
       case 'ImportDeclaration':
+      case 'TSImportEqualsDeclaration':
       case 'TSTypeAliasDeclaration':
       case 'TSInterfaceDeclaration':
       case 'DeclareFunction':
@@ -1719,6 +1730,16 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       case 'ClassDeclaration': {
         const evaluated = evalClass(candidate, ctx, state);
+        const flow = emptyFlow(evaluated.normal?.state);
+        flow.throws = evaluated.throws;
+        return flow;
+      }
+      case 'TSEnumDeclaration': {
+        const evaluated = evalList(
+          childNodes(candidate.members).map((member) => member.initializer),
+          ctx,
+          state,
+        );
         const flow = emptyFlow(evaluated.normal?.state);
         flow.throws = evaluated.throws;
         return flow;

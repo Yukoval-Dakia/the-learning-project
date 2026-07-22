@@ -1164,6 +1164,67 @@ describe('auditHubSyncWriters', () => {
       expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
     });
 
+    it('scans inline callbacks passed to ordinary calls without trusting callback parameters', async () => {
+      const root = fixtureRepo({
+        'src/callbacks.ts': withDb(`
+          register(() => db.insert(knowledge).values({}));
+          register(function () { db.update(knowledge_edge).set({}); });
+          register((client) => client.delete(knowledge).where(condition));
+        `),
+      });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(findings).toHaveLength(2);
+    });
+
+    it('preserves property trust through generic interfaces and honors scoped shadowing', async () => {
+      const root = fixtureRepo({
+        'src/interfaces.ts': withDb(`
+          import type { Db } from '@/db/client';
+          interface Deps<T = Db> { db: T }
+          function write({ db: client }: Deps) { client.insert(knowledge).values({}); }
+          function skip<Deps>({ db: client }: Deps) { client.update(knowledge_edge).set({}); }
+        `),
+      });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(findings).toHaveLength(1);
+    });
+
+    it('unwraps angle-bracket TypeScript assertions', async () => {
+      const root = fixtureRepo({
+        'src/assertion.ts': withDb('(<typeof db>db).insert(knowledge).values({});'),
+      });
+      await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).resolves.toEqual([
+        expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+      ]);
+    });
+
+    it('deduplicates lexical and AST findings on the same rule, file, and line', async () => {
+      const root = fixtureRepo({
+        'src/duplicates.ts': withDb(
+          `db.execute(sql.raw("update knowledge set name = 'x'")); db.execute(sql.raw("set local app.hub_sync_internal_apply = '1'"));`,
+        ),
+      });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(
+        findings.filter((finding) => finding.rule === 'UNINVENTORIED_TOPOLOGY_WRITER'),
+      ).toHaveLength(1);
+      expect(
+        findings.filter((finding) => finding.rule === 'INTERNAL_APPLY_MARKER_BYPASS'),
+      ).toHaveLength(1);
+    });
+
+    it('evaluates enum initializers and safely accepts import-equals declarations', async () => {
+      const root = fixtureRepo({
+        'src/ts-declarations.ts': withDb(`
+          import fs = require('node:fs');
+          enum Writes { Value = db.insert(knowledge).values({}) as unknown as number }
+        `),
+      });
+      await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).resolves.toEqual([
+        expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+      ]);
+    });
+
     it('fails closed on an unsupported executable AST node', async () => {
       const root = fixtureRepo({
         'src/unsupported.ts': withDb('const value = module { export const x = 1 };'),

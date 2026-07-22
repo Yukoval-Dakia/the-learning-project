@@ -292,8 +292,12 @@ export async function auditHubSyncWriters(input: {
     const drizzleAudit = collectDrizzleWrites(sourceText, rel);
     const drizzleWrites = drizzleAudit.writes;
     const lines = sourceText.split('\n');
+    const findingKeys = new Set<string>();
     const addFinding = (rule: HubSyncAuditRule, index: number) => {
       const line = code.slice(0, index).split('\n').length;
+      const key = `${rule}:${rel}:${line}`;
+      if (findingKeys.has(key)) return;
+      findingKeys.add(key);
       findings.push({ rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
     };
 
