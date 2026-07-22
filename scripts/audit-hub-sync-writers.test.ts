@@ -581,6 +581,26 @@ describe('auditHubSyncWriters', () => {
     expect(findings).toHaveLength(1);
   });
 
+  it('YUK-746 P2: propagates immutable raw SQL constants', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-constant.ts': withDb(
+        "const q = 'delete from knowledge'; db.execute(sql.raw(q));",
+      ),
+      'src/sql-raw-constant-safe.ts': withDb(
+        'const q = `select * from knowledge`; db.execute(sql.raw(q));',
+      ),
+      'src/sql-raw-constant-foreign.ts': withDb(
+        "const q = 'delete from knowledge'; cache.execute(sql.raw(q));",
+      ),
+    });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([
+      expect.objectContaining({
+        file: 'src/sql-raw-constant.ts',
+        rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
+      }),
+    ]);
+  });
+
   it('YUK-746 P2: detects internal marker inside sql.raw', async () => {
     const root = fixtureRepo({
       'src/sql-raw-marker.ts':
@@ -839,6 +859,21 @@ describe('auditHubSyncWriters', () => {
       ['computed string insert', "db['insert'](knowledge).values({});"],
       ['computed string update', "db['update'](knowledge_edge).set({});"],
       ['computed string delete', "db['delete'](knowledge_edge).where(condition);"],
+      ['inline arrow invocation', '(()=>db.insert(knowledge).values({}))();'],
+      ['inline function invocation', '(function(){ db.update(knowledge_edge).set({}); })();'],
+      [
+        'inline default parameter',
+        '((client = db) => client.delete(knowledge).where(condition))();',
+      ],
+      [
+        'dynamic repo db import',
+        "async function f(){ const { db: client } = await import('@/db/client'); client.insert(knowledge).values({}); } f();",
+      ],
+      [
+        'dynamic repo db import typed binding',
+        "async function f(){ const { db }: { db: import('@/db/client').Db } = await import('@/db/client'); db.update(knowledge_edge).set({}); } f();",
+      ],
+      ['TS export assignment expression', 'export = db.delete(knowledge).where(condition);'],
     ] as const;
 
     it.each(positiveCases)('detects %s', async (_name, body) => {
@@ -955,6 +990,20 @@ describe('auditHubSyncWriters', () => {
       ['foreign computed string insert', "cache['insert'](knowledge).values({});"],
       ['foreign computed string update', "cache['update'](knowledge_edge).set({});"],
       ['foreign computed string delete', "cache['delete'](knowledge_edge).where(condition);"],
+      ['foreign inline arrow invocation', '(()=>cache.insert(knowledge).values({}))();'],
+      [
+        'foreign inline function invocation',
+        '(function(){ cache.update(knowledge_edge).set({}); })();',
+      ],
+      ['inline abrupt before write', '(()=>{ throw error; db.insert(knowledge).values({}); })();'],
+      [
+        'foreign dynamic db import',
+        "async function f(){ const { db: client } = await import('@/cache/client'); client.insert(knowledge).values({}); } f();",
+      ],
+      [
+        'dynamic repo import non-db property',
+        "async function f(){ const { cache } = await import('@/db/client'); cache.insert(knowledge).values({}); } f();",
+      ],
     ] as const;
 
     it.each(negativeCases)('ignores %s', async (_name, body) => {

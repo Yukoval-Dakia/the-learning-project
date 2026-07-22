@@ -6,9 +6,10 @@ type AstNode = {
   [key: string]: unknown;
 };
 
-type Trust = 1 | 2 | 3;
+type Trust = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 const U: Trust = 1;
 const T: Trust = 2;
+const N: Trust = 4;
 
 type Binding = { id: number; name: string; scope: Scope; decl: AstNode };
 type AliasParameter = { name: string; defaultType?: AstNode };
@@ -213,6 +214,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
   const scopeCache = new WeakMap<AstNode, Scope>();
   const analyzedFunctions = new WeakMap<AstNode, State>();
   const functionBindings = new Map<Binding, AstNode>();
+  const staticStrings = new Map<Binding, string>();
   const pendingFunctions: Array<{ candidate: AstNode; parent: Scope; state: State }> = [];
   const pendingFunctionNodes = new WeakSet<AstNode>();
   const deferFunction = (candidate: AstNode, parent: Scope, state: State): void => {
@@ -458,11 +460,59 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     return identifierName(candidate);
   };
 
+  const staticStringValue = (value: unknown, scope: Scope): string | undefined => {
+    const candidate = unwrapExpression(value);
+    if (!candidate) return undefined;
+    if (candidate.type === 'StringLiteral' && typeof candidate.value === 'string')
+      return candidate.value;
+    if (candidate.type === 'TemplateLiteral' && childNodes(candidate.expressions).length === 0) {
+      const quasi = childNodes(candidate.quasis)[0];
+      const value = quasi?.value;
+      const cooked =
+        value && typeof value === 'object' ? (value as { cooked?: unknown }).cooked : undefined;
+      return typeof cooked === 'string' ? cooked : undefined;
+    }
+    if (candidate.type === 'Identifier') {
+      const binding = resolveBinding(candidate.name as string, scope);
+      return binding ? staticStrings.get(binding) : undefined;
+    }
+    return undefined;
+  };
+
   const reportWrite = (candidate: AstNode, receiver: Trust, method: string | undefined): void => {
     if (!(receiver & T) || !method || !WRITE_METHODS.has(method) || candidate.start == null) return;
     const tableName = tableArgumentName(childNodes(candidate.arguments)[0]);
     if (!tableName) return;
     writes.set(`${candidate.start}:${tableName}`, { index: candidate.start, table: tableName });
+  };
+
+  const reportRawExecute = (
+    candidate: AstNode,
+    receiver: Trust,
+    method: string | undefined,
+    scope: Scope,
+  ): void => {
+    if (!(receiver & T) || method !== 'execute' || candidate.start == null) return;
+    const rawCall = unwrapExpression(childNodes(candidate.arguments)[0]);
+    const rawCallee = rawCall && unwrapExpression(rawCall.callee);
+    if (
+      rawCall?.type !== 'CallExpression' ||
+      rawCallee?.type !== 'MemberExpression' ||
+      rawCallee.computed ||
+      identifierName(rawCallee.object) !== 'sql' ||
+      identifierName(rawCallee.property) !== 'raw'
+    )
+      return;
+    const text = staticStringValue(childNodes(rawCall.arguments)[0], scope);
+    if (!text) return;
+    for (const table of ['hub_sync_reconciliation', 'knowledge', 'knowledge_edge']) {
+      const pattern = new RegExp(
+        `\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`,
+        'i',
+      );
+      if (pattern.test(text))
+        writes.set(`${candidate.start}:${table}`, { index: candidate.start, table });
+    }
   };
 
   const evalList = (values: unknown, ctx: EvalCtx, state: State): EvalResult => {
@@ -526,10 +576,14 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
             const key = node(property.key);
             if (key) keyed = evalExpr(key, ctx, next);
           }
+          const propertyName = property.computed
+            ? staticComputedPropertyName(property.key)
+            : identifierName(property.key);
+          const propertyValue = value & N && propertyName === 'db' ? T : U;
           return sequenceEval(keyed, (afterKey) =>
             evalPattern(
               property.type === 'RestElement' ? property.argument : property.value,
-              U,
+              propertyValue,
               ctx,
               afterKey,
               declarationScope,
@@ -586,10 +640,15 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     } else {
       calleeResult = callee ? evalExpr(callee, ctx, state) : { normal: { state, value: U } };
       const calleeName = identifierName(callee);
-      const functionNode = calleeName
-        ? functionBindings.get(resolveBinding(calleeName, ctx.scope) as Binding)
-        : undefined;
-      if (functionNode && calleeResult.normal)
+      const calleeBinding = calleeName ? resolveBinding(calleeName, ctx.scope) : undefined;
+      const functionNode = calleeBinding ? functionBindings.get(calleeBinding) : undefined;
+      if (
+        callee &&
+        ['ArrowFunctionExpression', 'FunctionExpression'].includes(callee.type) &&
+        calleeResult.normal
+      )
+        visitFunction(callee, ctx.scope, calleeResult.normal.state, false);
+      else if (functionNode && calleeResult.normal)
         visitFunction(
           functionNode,
           functionNode === callee ? ctx.scope : functionBindingsScope(functionNode),
@@ -599,6 +658,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     }
     if (!calleeResult.normal) return calleeResult;
     reportWrite(candidate, receiver, method);
+    reportRawExecute(candidate, receiver, method, ctx.scope);
     const callFrontier = calleeResult.normal.state;
     let argumentsResult: EvalResult = calleeResult;
     const args = childNodes(candidate.arguments);
@@ -727,6 +787,18 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       }
       case 'CallExpression':
       case 'OptionalCallExpression': {
+        const callee = unwrapExpression(candidate.callee);
+        if (callee?.type === 'Import') {
+          const source = childNodes(candidate.arguments)[0];
+          const sourceValue = source?.type === 'StringLiteral' ? source.value : undefined;
+          return {
+            normal: {
+              state,
+              value: typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file) ? N : U,
+            },
+            throws: state,
+          };
+        }
         const taken = evalCall(candidate, ctx, state);
         if (!candidate.optional) return taken;
         return {
@@ -765,8 +837,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         const argument = node(candidate.argument);
         return argument ? evalExpr(argument, ctx, state) : { normal: { state, value: U } };
       }
-      case 'UnaryExpression':
-      case 'TSExportAssignment': {
+      case 'UnaryExpression': {
         const argument = node(candidate.argument ?? candidate.expression);
         return argument
           ? sequenceEval(evalExpr(argument, ctx, state), (next) => ({
@@ -1256,6 +1327,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         const init = node(declaration.init);
         if (!init && candidate.kind === 'var') return { normal: { state: next, value: U } };
         const simpleName = identifierName(declaration.id);
+        if (candidate.kind === 'const' && simpleName) {
+          const binding = resolveBinding(simpleName, targetScope);
+          const text = staticStringValue(init, ctx.scope);
+          if (binding && text !== undefined) staticStrings.set(binding, text);
+        }
         const functionValue = unwrapExpression(init);
         if (
           simpleName &&
@@ -1315,7 +1391,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       case 'StaticBlock':
       case 'TSModuleBlock':
         return execBlock(candidate, ctx.scope, state);
-      case 'ExpressionStatement': {
+      case 'ExpressionStatement':
+      case 'TSExportAssignment': {
         const expression = node(candidate.expression);
         const evaluated = expression
           ? evalExpr(expression, ctx, state)
