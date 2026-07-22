@@ -191,6 +191,76 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    [
+      'value namespace db member',
+      "import * as repoDb from '@/db/client'; repoDb.db.insert(knowledge).values({});",
+    ],
+    [
+      'inline repo Db import type',
+      "function write(client: import('@/db/client').Db) { client.update(knowledge).set({}); }",
+    ],
+    [
+      'inline repo Tx import type',
+      "function write(client: import('../src/db/client').Tx) { client.delete(knowledge_edge).where(ok); }",
+    ],
+    [
+      'object property arrow capture',
+      "import { db } from '@/db/client'; const client = db; const writer = { run: () => client.insert(knowledge).values({}) };",
+    ],
+    [
+      'object property function capture',
+      "import { db } from '@/db/client'; const client = db; const writer = { run: function () { client.update(knowledge_edge).set({}); } };",
+    ],
+    [
+      'Promise.all tuple namespace destructuring',
+      "const [{ db }] = await Promise.all([import('@/db/client')]); db.delete(knowledge).where(ok);",
+    ],
+    [
+      'direct function typed parameter',
+      "((client: import('@/db/client').Db) => client.insert(knowledge).values({}))(cache);",
+    ],
+    [
+      'direct function typed destructured parameter',
+      "(({ db }: { db: import('@/db/client').Tx }) => db.update(knowledge).set({}))({ db: cache });",
+    ],
+    [
+      'direct function default typed destructured parameter',
+      "(({ db }: { db: import('@/db/client').Db } = fallback) => db.delete(knowledge_edge).where(ok))();",
+    ],
+  ])('YUK-746 exact-head blockers: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exact-head-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'arbitrary value namespace property',
+      "import * as repoDb from '@/db/client'; repoDb.cache.insert(knowledge).values({});",
+    ],
+    [
+      'foreign inline import type',
+      "function write(client: import('cache/db/client').Db) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'qualified inline repo import type',
+      "function write(client: import('@/db/client').nested.Db) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'foreign Promise.all tuple element',
+      "const [{ db }] = await Promise.all([import('cache/db/client'), import('@/db/client')]); db.insert(knowledge).values({});",
+    ],
+    [
+      'tuple trust does not leak across elements',
+      "const [cache, repo] = [foreignClient, await import('@/db/client')]; cache.db.update(knowledge).set({});",
+    ],
+  ])('YUK-746 exact-head blockers: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/exact-head-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
     ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
     [
       'fake line comment import',

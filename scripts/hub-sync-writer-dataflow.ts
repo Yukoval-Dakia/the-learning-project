@@ -40,9 +40,13 @@ type Flow = {
   breaks: CompletionMap;
   continues: CompletionMap;
 };
-type EvalResult = { normal?: { state: State; value: Trust }; throws?: State };
+type EvalResult = {
+  normal?: { state: State; value: Trust; elements?: readonly Trust[] };
+  throws?: State;
+};
 type InvocationArgument = {
   value: Trust;
+  elements?: readonly Trust[];
   supplied: boolean;
   undefinedness: 'definite' | 'maybe' | 'no';
 };
@@ -446,6 +450,18 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const name = identifierName(candidate.exprName);
       return name ? load(resolveBinding(name, scope), initialState) === T : false;
     }
+    if (candidate.type === 'TSImportType') {
+      const argument = node(candidate.argument);
+      const source =
+        argument?.type === 'StringLiteral' && typeof argument.value === 'string'
+          ? argument.value
+          : undefined;
+      const qualifier = node(candidate.qualifier);
+      const terminal = identifierName(qualifier);
+      return Boolean(
+        source && isRepoDbModule(source, file) && terminal && DB_TYPE_EXPORTS.has(terminal),
+      );
+    }
     if (candidate.type !== 'TSTypeReference') return false;
     const qualified = node(candidate.typeName);
     if (qualified?.type === 'TSQualifiedName') {
@@ -682,6 +698,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       if (!trustedModule) continue;
       if (specifier.type === 'ImportNamespaceSpecifier') {
         scope.trustedTypeNamespaces.add(local);
+        next = store(binding, N, next);
       } else if (specifier.type === 'ImportSpecifier') {
         const imported = identifierName(specifier.imported);
         if (imported === 'db') next = store(binding, T, next);
@@ -815,8 +832,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       if (property) result = sequenceEval(result, (next) => evalExpr(property, ctx, next));
     }
     if (!result.normal) return result;
+    const propertyName = candidate.computed
+      ? staticComputedPropertyName(candidate.property)
+      : identifierName(candidate.property);
+    const value = result.normal.value & N && propertyName === 'db' ? T : U;
     return {
-      normal: { state: result.normal.state, value: U },
+      normal: { state: result.normal.state, value },
       throws: joinState(result.throws, result.normal.state),
     };
   };
@@ -828,11 +849,20 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     state: State,
     declarationScope?: Scope,
     trustedBindings?: Set<AstNode>,
+    elements?: readonly Trust[],
   ): EvalResult => {
     const candidate = node(pattern);
     if (!candidate) return { normal: { state, value } };
     if (candidate.type === 'TSParameterProperty')
-      return evalPattern(candidate.parameter, value, ctx, state, declarationScope, trustedBindings);
+      return evalPattern(
+        candidate.parameter,
+        value,
+        ctx,
+        state,
+        declarationScope,
+        trustedBindings,
+        elements,
+      );
     if (candidate.type === 'Identifier') {
       const binding = declarationScope
         ? ensureBinding(candidate.name as string, declarationScope, candidate)
@@ -889,9 +919,21 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     }
     if (candidate.type === 'ArrayPattern') {
       let result: EvalResult = { normal: { state, value } };
-      for (const element of childNodes(candidate.elements)) {
+      for (const [index, rawElement] of (Array.isArray(candidate.elements)
+        ? candidate.elements
+        : []
+      ).entries()) {
+        const element = node(rawElement);
+        if (!element) continue;
         result = sequenceEval(result, (next) =>
-          evalPattern(element, U, ctx, next, declarationScope, trustedBindings),
+          evalPattern(
+            element,
+            elements?.[index] ?? U,
+            ctx,
+            next,
+            declarationScope,
+            trustedBindings,
+          ),
         );
       }
       return result;
@@ -977,6 +1019,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           const undefinedness = value === D ? 'definite' : value & D ? 'maybe' : 'no';
           invocationArguments.push({
             value: (value & ~D || U) as Trust,
+            elements: evaluated.normal.elements,
             supplied: true,
             undefinedness,
           });
@@ -984,7 +1027,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         return evaluated;
       });
       if (!argumentsResult.normal) break;
-      if (index === args.length - 1) break;
     }
     if (!argumentsResult.normal) return argumentsResult;
     const after = argumentsResult.normal.state;
@@ -1008,7 +1050,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const reference = evalReference(left, ctx, state);
     if (!reference.normal) return reference;
     const operator = candidate.operator as string;
-    const assign = (input: State, value: Trust): EvalResult => {
+    const assign = (input: State, value: Trust, elements?: readonly Trust[]): EvalResult => {
       const target = unwrapExpression(left) ?? left;
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
@@ -1021,7 +1063,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         };
       }
       if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern')
-        return evalPattern(target, value, ctx, input);
+        return evalPattern(target, value, ctx, input, undefined, undefined, elements);
       return { normal: { state: input, value } };
     };
     if (operator === '=') {
@@ -1039,7 +1081,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       const rhs = evalExpr(right, ctx, reference.normal.state);
       if (!rhs.normal) return { throws: joinState(reference.throws, rhs.throws) };
-      const stored = assign(rhs.normal.state, rhs.normal.value);
+      const stored = assign(rhs.normal.state, rhs.normal.value, rhs.normal.elements);
       return {
         normal: stored.normal,
         throws: joinState(reference.throws, rhs.throws, stored.throws),
@@ -1106,6 +1148,23 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       case 'CallExpression':
       case 'OptionalCallExpression': {
         const callee = unwrapExpression(candidate.callee);
+        if (
+          callee?.type === 'MemberExpression' &&
+          !callee.computed &&
+          identifierName(callee.object) === 'Promise' &&
+          !resolveBinding('Promise', ctx.scope) &&
+          identifierName(callee.property) === 'all'
+        ) {
+          const argument = childNodes(candidate.arguments)[0];
+          if (argument?.type === 'ArrayExpression') {
+            const evaluated = evalExpr(argument, ctx, state);
+            if (!evaluated.normal) return evaluated;
+            return {
+              normal: evaluated.normal,
+              throws: joinState(evaluated.throws, evaluated.normal.state),
+            };
+          }
+        }
         if (callee?.type === 'Import') {
           const source = childNodes(candidate.arguments)[0];
           const sourceValue = source?.type === 'StringLiteral' ? source.value : undefined;
@@ -1217,8 +1276,28 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           throws: joinState(tested.throws, yes.throws, no.throws),
         };
       }
-      case 'ArrayExpression':
-        return evalList(candidate.elements, ctx, state);
+      case 'ArrayExpression': {
+        let result: EvalResult = { normal: { state, value: U } };
+        const elements: Trust[] = [];
+        for (const rawElement of Array.isArray(candidate.elements) ? candidate.elements : []) {
+          const element = node(rawElement);
+          if (!element) {
+            elements.push(U);
+            continue;
+          }
+          result = sequenceEval(result, (next) => {
+            const evaluated = evalExpr(element, ctx, next);
+            if (evaluated.normal) elements.push(evaluated.normal.value);
+            return evaluated;
+          });
+        }
+        return result.normal
+          ? {
+              normal: { state: result.normal.state, value: U, elements },
+              throws: result.throws,
+            }
+          : result;
+      }
       case 'ObjectExpression': {
         let result: EvalResult = { normal: { state, value: U } };
         for (const property of childNodes(candidate.properties)) {
@@ -1229,8 +1308,17 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               if (key) current = evalExpr(key, ctx, next);
             }
             const value = node(property.value ?? property.argument);
-            if (value)
+            if (value) {
+              const functionValue = unwrapExpression(value);
+              if (
+                functionValue &&
+                ['ArrowFunctionExpression', 'FunctionExpression'].includes(functionValue.type)
+              ) {
+                functionParents.set(functionValue, ctx.scope);
+                deferFunction(functionValue, ctx.scope, current.normal?.state ?? next);
+              }
               current = sequenceEval(current, (afterKey) => evalExpr(value, ctx, afterKey));
+            }
             if (['ObjectMethod'].includes(property.type) && current.normal)
               visitFunction(property, ctx.scope, current.normal.state, false);
             return current;
@@ -1611,6 +1699,14 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (ownName) ensureBinding(ownName, scope, candidate);
     const parameters = childNodes(candidate.params);
     for (const parameter of parameters) declarePattern(parameter, scope);
+    const trustedParameters = parameters.map((parameter) => {
+      const normalized = unwrapPattern(parameter);
+      const annotation = normalized?.typeAnnotation ?? parameter.typeAnnotation;
+      return {
+        annotation,
+        bindings: trustedPatternBindings(parameter, annotation, scope),
+      };
+    });
     const hoisted = predeclareVars(candidate.body, scope, captured);
     let initialized: EvalResult = { normal: { state: hoisted, value: U } };
     for (const [index, parameter] of parameters.entries()) {
@@ -1620,10 +1716,21 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           supplied: false,
           undefinedness: 'definite' as const,
         };
+        const trusted = trustedParameters[index];
+        const argumentValue = trustedType(trusted?.annotation, scope) ? T : argument.value;
+        const trustedBindings = trusted?.bindings;
         if (parameter.type === 'AssignmentPattern') {
           const explicit =
             argument.supplied && argument.undefinedness !== 'definite'
-              ? evalPattern(parameter.left, argument.value, { scope }, next, scope)
+              ? evalPattern(
+                  parameter.left,
+                  argumentValue,
+                  { scope },
+                  next,
+                  scope,
+                  trustedBindings,
+                  argument.elements,
+                )
               : undefined;
           if (argument.undefinedness === 'no') return explicit as EvalResult;
           const fallback = node(parameter.right);
@@ -1637,6 +1744,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
               { scope },
               afterDefault,
               scope,
+              trustedBindings,
+              evaluated.normal?.elements,
             ),
           );
           if (!explicit) return defaulted;
@@ -1649,7 +1758,15 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             throws: joinState(explicit.throws, defaulted.throws),
           };
         }
-        return evalPattern(parameter, argument.value, { scope }, next, scope);
+        return evalPattern(
+          parameter,
+          argumentValue,
+          { scope },
+          next,
+          scope,
+          trustedBindings,
+          argument.elements,
+        );
       });
     }
     if (!initialized.normal) return initialized;
@@ -1757,6 +1874,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           evaluated.normal.state,
           targetScope,
           trustedBindings,
+          evaluated.normal.elements,
         );
         return { normal: bound.normal, throws: joinState(evaluated.throws, bound.throws) };
       });
