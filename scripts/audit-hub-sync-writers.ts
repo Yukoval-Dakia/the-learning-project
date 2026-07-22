@@ -289,7 +289,8 @@ export async function auditHubSyncWriters(input: {
     const isReconciler = rel === RECONCILER_PATH;
     const sourceText = readFileSync(abs, 'utf8');
     const code = codeText(sourceText);
-    const drizzleWrites = collectDrizzleWrites(sourceText, rel);
+    const drizzleAudit = collectDrizzleWrites(sourceText, rel);
+    const drizzleWrites = drizzleAudit.writes;
     const lines = sourceText.split('\n');
     const addFinding = (rule: HubSyncAuditRule, index: number) => {
       const line = code.slice(0, index).split('\n').length;
@@ -307,6 +308,9 @@ export async function auditHubSyncWriters(input: {
       }
       for (const match of code.matchAll(/app\.hub_sync_internal_apply/g)) {
         addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index);
+      }
+      for (const index of drizzleAudit.internalApplyMarkerIndexes) {
+        addFinding('INTERNAL_APPLY_MARKER_BYPASS', index);
       }
     }
     for (const match of code.matchAll(

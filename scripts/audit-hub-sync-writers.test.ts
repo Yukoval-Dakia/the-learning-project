@@ -120,6 +120,18 @@ describe('auditHubSyncWriters', () => {
 
   it.each([
     [
+      'inline typed destructured parameter',
+      "import type { Db } from '@/db/client'; function write({ db }: { db: Db }) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'aliased typed destructured parameter',
+      "import type { Db } from '@/db/client'; type Deps = { db: Db }; function write({ db: writerDb }: Deps) { writerDb.update(knowledge_edge).set({}); }",
+    ],
+    [
+      'nested renamed default typed destructured parameter',
+      "import type { Tx } from '@/db/client'; type Deps = { nested: { db: Tx } }; function write({ nested: { db: writerTx = fallback } }: Deps) { writerTx.delete(knowledge).where(ok); }",
+    ],
+    [
       'typed dbOrTx parameter',
       "import type { Tx } from '@/db/client';\nfunction write(dbOrTx: Tx) { return dbOrTx.insert(knowledge).values({}); }",
     ],
@@ -203,6 +215,18 @@ describe('auditHubSyncWriters', () => {
     [
       'suffix package path',
       "import { db } from 'other/db/client'; db.insert(knowledge).values({});",
+    ],
+    [
+      'foreign typed destructured property',
+      "import type { Db } from 'cache/db/client'; function write({ db }: { db: Db }) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'untrusted typed destructured property',
+      'type Deps = { db: Cache }; function write({ db }: Deps) { db.insert(knowledge).values({}); }',
+    ],
+    [
+      'typed destructured rest stays untrusted',
+      "import type { Db } from '@/db/client'; type Deps = { db: Db; cache: Cache }; function write({ ...rest }: Deps) { rest.insert(knowledge).values({}); }",
     ],
     [
       'typed receiver does not leak functions',
@@ -597,6 +621,32 @@ describe('auditHubSyncWriters', () => {
       expect.objectContaining({
         file: 'src/sql-raw-constant.ts',
         rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
+      }),
+    ]);
+  });
+
+  it('YUK-746 review: propagates immutable internal marker constants only through trusted execute', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-marker-constant.ts': withDb(
+        'const marker = "set local app.hub_sync_internal_apply = \'1\'"; db.execute(sql.raw(marker));',
+      ),
+      'src/sql-raw-marker-constant-foreign.ts': withDb(
+        'const marker = "set local app.hub_sync_internal_apply = \'1\'"; cache.execute(sql.raw(marker));',
+      ),
+      'src/sql-raw-marker-let.ts': withDb(
+        'let marker = "set local app.hub_sync_internal_apply = \'1\'"; db.execute(sql.raw(marker));',
+      ),
+      'src/sql-raw-marker-reassigned.ts': withDb(
+        "let marker = \"set local app.hub_sync_internal_apply = '1'\"; marker = 'select 1'; db.execute(sql.raw(marker));",
+      ),
+      'src/sql-raw-ordinary-constant.ts': withDb(
+        "const marker = 'select app.hub_sync_status'; db.execute(sql.raw(marker));",
+      ),
+    });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([
+      expect.objectContaining({
+        file: 'src/sql-raw-marker-constant.ts',
+        rule: 'INTERNAL_APPLY_MARKER_BYPASS',
       }),
     ]);
   });

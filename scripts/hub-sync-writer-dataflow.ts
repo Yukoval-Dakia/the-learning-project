@@ -41,6 +41,10 @@ type InvocationArgument = {
 };
 type EvalCtx = { scope: Scope };
 type DrizzleWrite = { index: number; table: string };
+export type DrizzleAuditResult = {
+  writes: DrizzleWrite[];
+  internalApplyMarkerIndexes: number[];
+};
 
 const DB_MODULE_ALIAS = '@/db/client';
 const DB_TYPE_EXPORTS = new Set(['Db', 'Tx']);
@@ -199,7 +203,7 @@ function isRepoDbModule(source: string, file: string): boolean {
   return resolved === 'src/db/client' || resolved === 'src/db/client.ts';
 }
 
-export function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
+export function collectDrizzleWrites(source: string, file: string): DrizzleAuditResult {
   let program: AstNode;
   try {
     program = parse(source, {
@@ -217,6 +221,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
   let nextBindingId = 1;
   let nextAliasId = 1;
   const writes = new Map<string, DrizzleWrite>();
+  const internalApplyMarkerIndexes = new Set<number>();
   const scopeCache = new WeakMap<AstNode, Scope>();
   const analyzedFunctions = new WeakMap<AstNode, State>();
   const functionBindings = new Map<Binding, AstNode>();
@@ -439,6 +444,130 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     return false;
   };
 
+  type TypeView = {
+    type: AstNode;
+    scope: Scope;
+    substitutions: Substitutions;
+    seen: Set<string>;
+  };
+
+  const propertyTypeViews = (
+    typeValue: unknown,
+    propertyName: string,
+    scope: Scope,
+    substitutions: Substitutions = new Map(),
+    seen = new Set<string>(),
+  ): TypeView[] => {
+    const candidate = node(typeValue);
+    if (!candidate) return [];
+    if (candidate.type === 'TSTypeAnnotation')
+      return propertyTypeViews(candidate.typeAnnotation, propertyName, scope, substitutions, seen);
+    if (candidate.type === 'TSParenthesizedType' || candidate.type === 'TSOptionalType')
+      return propertyTypeViews(candidate.typeAnnotation, propertyName, scope, substitutions, seen);
+    if (candidate.type === 'TSUnionType' || candidate.type === 'TSIntersectionType') {
+      const parts = childNodes(candidate.types).filter(
+        (part) => !['TSNullKeyword', 'TSUndefinedKeyword', 'TSNeverKeyword'].includes(part.type),
+      );
+      const resolved = parts.map((part) =>
+        propertyTypeViews(part, propertyName, scope, substitutions, new Set(seen)),
+      );
+      return resolved.every((views) => views.length > 0) ? resolved.flat() : [];
+    }
+    if (candidate.type === 'TSTypeLiteral') {
+      for (const member of childNodes(candidate.members)) {
+        if (member.type !== 'TSPropertySignature') continue;
+        const name = member.computed
+          ? staticComputedPropertyName(member.key)
+          : identifierName(member.key);
+        const annotation = node(member.typeAnnotation);
+        if (name === propertyName && annotation)
+          return [{ type: annotation, scope, substitutions, seen }];
+      }
+      return [];
+    }
+    if (candidate.type !== 'TSTypeReference') return [];
+    const name = identifierName(candidate.typeName);
+    if (!name) return [];
+    if (substitutions.has(name)) {
+      const replacement = substitutions.get(name);
+      return replacement
+        ? propertyTypeViews(replacement, propertyName, scope, substitutions, seen)
+        : [];
+    }
+    for (let current: Scope | undefined = scope; current; current = current.parent) {
+      if (current.shadowedTypes.has(name)) return [];
+      const alias = current.types.get(name);
+      if (!alias) continue;
+      const arguments_ = childNodes(node(candidate.typeParameters)?.params);
+      const local = new Map(substitutions);
+      const actualKey: string[] = [];
+      for (const [index, parameter] of alias.parameters.entries()) {
+        const actual = arguments_[index] ?? parameter.defaultType;
+        local.set(parameter.name, actual);
+        actualKey.push(actual ? `${actual.type}:${actual.start ?? ''}` : '?');
+      }
+      const key = `${alias.id}<${actualKey.join(',')}>`;
+      if (seen.has(key)) return [];
+      const nextSeen = new Set(seen);
+      nextSeen.add(key);
+      return propertyTypeViews(alias.body, propertyName, alias.scope, local, nextSeen);
+    }
+    return [];
+  };
+
+  const trustedPatternBindings = (
+    pattern: unknown,
+    typeValue: unknown,
+    scope: Scope,
+  ): Set<AstNode> => {
+    const trusted = new Set<AstNode>();
+    const visit = (value: unknown, views: TypeView[]): void => {
+      const candidate = node(value);
+      if (!candidate) return;
+      if (candidate.type === 'TSParameterProperty') {
+        visit(candidate.parameter, views);
+        return;
+      }
+      if (candidate.type === 'RestElement') return;
+      if (candidate.type === 'AssignmentPattern') {
+        visit(candidate.left, views);
+        return;
+      }
+      if (candidate.type === 'Identifier') {
+        if (
+          views.length > 0 &&
+          views.every((view) =>
+            trustedType(view.type, view.scope, view.substitutions, new Set(view.seen)),
+          )
+        )
+          trusted.add(candidate);
+        return;
+      }
+      if (candidate.type !== 'ObjectPattern') return;
+      for (const property of childNodes(candidate.properties)) {
+        if (property.type === 'RestElement') continue;
+        const propertyName = property.computed
+          ? staticComputedPropertyName(property.key)
+          : identifierName(property.key);
+        if (!propertyName) continue;
+        const propertyViews = views.flatMap((view) =>
+          propertyTypeViews(
+            view.type,
+            propertyName,
+            view.scope,
+            view.substitutions,
+            new Set(view.seen),
+          ),
+        );
+        if (propertyViews.length > 0) visit(property.value, propertyViews);
+      }
+    };
+    const annotation = node(typeValue);
+    if (annotation)
+      visit(pattern, [{ type: annotation, scope, substitutions: new Map(), seen: new Set() }]);
+    return trusted;
+  };
+
   const establishImport = (candidate: AstNode, scope: Scope, state: State): State => {
     const sourceValue = node(candidate.source)?.value;
     const trustedModule = typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file);
@@ -516,8 +645,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       identifierName(rawCallee.property) !== 'raw'
     )
       return;
-    const text = staticStringValue(childNodes(rawCall.arguments)[0], scope);
+    const rawArgument = unwrapExpression(childNodes(rawCall.arguments)[0]);
+    const text = staticStringValue(rawArgument, scope);
     if (!text) return;
+    if (rawArgument?.type === 'Identifier' && text.includes('app.hub_sync_internal_apply'))
+      internalApplyMarkerIndexes.add(candidate.start);
     for (const table of ['hub_sync_reconciliation', 'knowledge', 'knowledge_edge']) {
       const pattern = new RegExp(
         `\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`,
@@ -557,19 +689,21 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     ctx: EvalCtx,
     state: State,
     declarationScope?: Scope,
+    trustedBindings?: Set<AstNode>,
   ): EvalResult => {
     const candidate = node(pattern);
     if (!candidate) return { normal: { state, value } };
     if (candidate.type === 'TSParameterProperty')
-      return evalPattern(candidate.parameter, value, ctx, state, declarationScope);
+      return evalPattern(candidate.parameter, value, ctx, state, declarationScope, trustedBindings);
     if (candidate.type === 'Identifier') {
       const binding = declarationScope
         ? ensureBinding(candidate.name as string, declarationScope, candidate)
         : resolveBinding(candidate.name as string, ctx.scope);
-      return { normal: { state: store(binding, value, state), value } };
+      const storedValue = trustedBindings?.has(candidate) ? T : value;
+      return { normal: { state: store(binding, storedValue, state), value: storedValue } };
     }
     if (candidate.type === 'RestElement')
-      return evalPattern(candidate.argument, value, ctx, state, declarationScope);
+      return evalPattern(candidate.argument, value, ctx, state, declarationScope, trustedBindings);
     if (candidate.type === 'AssignmentPattern') {
       const fallback = node(candidate.right);
       const fallbackResult = fallback ? evalExpr(fallback, ctx, state) : undefined;
@@ -577,7 +711,14 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         ? trustJoin(value, fallbackResult.normal.value)
         : value;
       const mergedState = joinState(state, fallbackResult?.normal?.state) as State;
-      const stored = evalPattern(candidate.left, mergedValue, ctx, mergedState, declarationScope);
+      const stored = evalPattern(
+        candidate.left,
+        mergedValue,
+        ctx,
+        mergedState,
+        declarationScope,
+        trustedBindings,
+      );
       return { normal: stored.normal, throws: joinState(fallbackResult?.throws, stored.throws) };
     }
     if (candidate.type === 'ObjectPattern') {
@@ -600,6 +741,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
               ctx,
               afterKey,
               declarationScope,
+              trustedBindings,
             ),
           );
         });
@@ -610,7 +752,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       let result: EvalResult = { normal: { state, value } };
       for (const element of childNodes(candidate.elements)) {
         result = sequenceEval(result, (next) =>
-          evalPattern(element, U, ctx, next, declarationScope),
+          evalPattern(element, U, ctx, next, declarationScope, trustedBindings),
         );
       }
       return result;
@@ -1405,7 +1547,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       const normalized = unwrapPattern(parameter);
       const annotation = normalized?.typeAnnotation ?? parameter.typeAnnotation;
       const value = (transactionCallback && index === 0) || trustedType(annotation, scope) ? T : U;
-      const initialized = evalPattern(parameter, value, { scope }, state, scope);
+      const trustedBindings = trustedPatternBindings(parameter, annotation, scope);
+      const initialized = evalPattern(parameter, value, { scope }, state, scope, trustedBindings);
       if (!initialized.normal) return;
       state = initialized.normal.state;
     }
@@ -1457,7 +1600,19 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         const id = node(declaration.id);
         const annotated = trustedType(id?.typeAnnotation, ctx.scope);
         const value = annotated ? T : evaluated.normal.value;
-        const bound = evalPattern(declaration.id, value, ctx, evaluated.normal.state, targetScope);
+        const trustedBindings = trustedPatternBindings(
+          declaration.id,
+          id?.typeAnnotation,
+          ctx.scope,
+        );
+        const bound = evalPattern(
+          declaration.id,
+          value,
+          ctx,
+          evaluated.normal.state,
+          targetScope,
+          trustedBindings,
+        );
         return { normal: bound.normal, throws: joinState(evaluated.throws, bound.throws) };
       });
     }
@@ -1660,5 +1815,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     if (!pending || analyzedFunctions.has(pending.candidate)) continue;
     visitFunction(pending.candidate, pending.parent, pending.state, false);
   }
-  return [...writes.values()].sort((left, right) => left.index - right.index);
+  return {
+    writes: [...writes.values()].sort((left, right) => left.index - right.index),
+    internalApplyMarkerIndexes: [...internalApplyMarkerIndexes].sort((left, right) => left - right),
+  };
 }
