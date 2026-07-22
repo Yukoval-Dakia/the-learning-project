@@ -879,6 +879,14 @@ describe('auditHubSyncWriters', () => {
         '((client = db) => client.insert(knowledge).values({}))(condition ? cache : undefined);',
       ],
       [
+        'logical maybe undefined joins trusted default',
+        '((client = db) => client.insert(knowledge).values({}))(condition && undefined);',
+      ],
+      [
+        'unbound global undefined takes trusted default',
+        '((client = db) => client.insert(knowledge).values({}))(undefined);',
+      ],
+      [
         'inline argument side effect before invocation',
         'let client = cache; ((value)=>client.insert(knowledge).values({}))((client = db));',
       ],
@@ -1016,6 +1024,18 @@ describe('auditHubSyncWriters', () => {
       [
         'foreign argument suppresses trusted default',
         '((client=db)=>client.insert(knowledge).values({}))(cache);',
+      ],
+      [
+        'foreign conditional suppresses trusted default',
+        '((client=db)=>client.insert(knowledge).values({}))(condition ? cache : other);',
+      ],
+      [
+        'foreign logical result suppresses trusted default',
+        '((client=db)=>client.insert(knowledge).values({}))(cache || other);',
+      ],
+      [
+        'shadowed undefined carries foreign value',
+        'function outer(undefined){ ((client=db)=>client.insert(knowledge).values({}))(undefined); } outer(cache);',
       ],
       [
         'throwing argument stops IIFE body',

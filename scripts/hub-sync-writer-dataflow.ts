@@ -6,10 +6,11 @@ type AstNode = {
   [key: string]: unknown;
 };
 
-type Trust = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type Trust = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
 const U: Trust = 1;
 const T: Trust = 2;
 const N: Trust = 4;
+const D: Trust = 8;
 
 type Binding = { id: number; name: string; scope: Scope; decl: AstNode };
 type AliasParameter = { name: string; defaultType?: AstNode };
@@ -684,18 +685,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
         }
         const evaluated = evalExpr(argument, ctx, next);
         if (evaluated.normal) {
-          const expression = unwrapExpression(argument);
-          const undefinedness =
-            expression?.type === 'Identifier' && expression.name === 'undefined'
-              ? 'definite'
-              : expression?.type === 'UnaryExpression' && expression.operator === 'void'
-                ? 'definite'
-                : expression &&
-                    ['ConditionalExpression', 'LogicalExpression'].includes(expression.type)
-                  ? 'maybe'
-                  : 'no';
+          const value = evaluated.normal.value;
+          const undefinedness = value === D ? 'definite' : value & D ? 'maybe' : 'no';
           invocationArguments.push({
-            value: evaluated.normal.value,
+            value: (value & ~D || U) as Trust,
             supplied: true,
             undefinedness,
           });
@@ -787,13 +780,15 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
     const transparent = unwrapExpression(candidate);
     if (transparent && transparent !== candidate) return evalExpr(transparent, ctx, state);
     switch (candidate.type) {
-      case 'Identifier':
+      case 'Identifier': {
+        const binding = resolveBinding(candidate.name as string, ctx.scope);
         return {
           normal: {
             state,
-            value: load(resolveBinding(candidate.name as string, ctx.scope), state),
+            value: !binding && candidate.name === 'undefined' ? D : load(binding, state),
           },
         };
+      }
       case 'ThisExpression':
       case 'Super':
       case 'NullLiteral':
@@ -874,11 +869,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleWrite
       }
       case 'UnaryExpression': {
         const argument = node(candidate.argument ?? candidate.expression);
+        const value = candidate.operator === 'void' ? D : U;
         return argument
           ? sequenceEval(evalExpr(argument, ctx, state), (next) => ({
-              normal: { state: next, value: U },
+              normal: { state: next, value },
             }))
-          : { normal: { state, value: U } };
+          : { normal: { state, value } };
       }
       case 'BinaryExpression':
       case 'PipelineTopicExpression': {
