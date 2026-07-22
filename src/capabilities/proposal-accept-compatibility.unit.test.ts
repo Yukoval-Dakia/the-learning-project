@@ -16,8 +16,8 @@ describe('proposal accept compatibility fallback', () => {
     expect([...registry.keys()]).toEqual(['knowledge_node']);
     expect(load).not.toHaveBeenCalled();
 
-    await getProposalAcceptDecl(registry, 'knowledge_node')?.load();
-    expect(load).toHaveBeenCalledOnce();
+    expect(getProposalAcceptDecl(registry, 'knowledge_node')).toBe(declaration.accept);
+    expect(load).not.toHaveBeenCalled();
     load.mockRestore();
   });
 

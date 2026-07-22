@@ -35,6 +35,7 @@ async function handleLegacyDecision(
     }
     const { decision, new_relation_type, user_note } = parsed.data;
     if (decision === 'change_type') {
+      // superRefine enforces this at runtime but does not narrow the inferred field type.
       if (!new_relation_type) {
         throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
       }

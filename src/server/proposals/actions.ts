@@ -852,7 +852,7 @@ function isKnowledgeAcceptResult(result: unknown): result is KnowledgeAcceptResu
   if (typeof result !== 'object' || !('kind' in result) || typeof result.kind !== 'string') {
     return false;
   }
-  return result.kind in ACCEPT_RESULT_KINDS;
+  return Object.hasOwn(ACCEPT_RESULT_KINDS, result.kind);
 }
 
 async function dispatchAccept(
