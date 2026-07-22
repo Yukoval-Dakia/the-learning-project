@@ -255,6 +255,7 @@ type Scope = {
   bindings: Map<string, Binding>;
   types: Map<string, AstNode>;
   trustedTypes: Set<string>;
+  trustedTypeNamespaces: Set<string>;
   functionScope: Scope;
 };
 
@@ -271,6 +272,31 @@ function childNodes(value: unknown): AstNode[] {
   if (Array.isArray(value)) return value.flatMap(childNodes);
   const candidate = node(value);
   return candidate ? [candidate] : [];
+}
+
+function unwrapPattern(pattern: unknown): AstNode | undefined {
+  let candidate = node(pattern);
+  while (candidate?.type === 'AssignmentPattern' || candidate?.type === 'RestElement') {
+    candidate = node(candidate.type === 'AssignmentPattern' ? candidate.left : candidate.argument);
+  }
+  return candidate;
+}
+
+function unwrapExpression(expression: unknown): AstNode | undefined {
+  let candidate = node(expression);
+  while (
+    candidate &&
+    [
+      'TSAsExpression',
+      'TSSatisfiesExpression',
+      'TSNonNullExpression',
+      'TypeCastExpression',
+      'ParenthesizedExpression',
+    ].includes(candidate.type)
+  ) {
+    candidate = node(candidate.expression);
+  }
+  return candidate;
 }
 
 function identifierName(value: unknown): string | undefined {
@@ -304,6 +330,32 @@ function declarePattern(pattern: unknown, scope: Scope): void {
   }
 }
 
+function setPatternTrust(pattern: unknown, scope: Scope, trusted: boolean): void {
+  const candidate = node(pattern);
+  if (!candidate) return;
+  const name = identifierName(candidate);
+  if (name) {
+    const binding = bindingFor(name, scope);
+    if (binding) binding.trusted = trusted;
+    return;
+  }
+  if (candidate.type === 'AssignmentPattern') {
+    setPatternTrust(candidate.left, scope, trusted);
+  } else if (candidate.type === 'RestElement') {
+    setPatternTrust(candidate.argument, scope, trusted);
+  } else if (candidate.type === 'ObjectPattern') {
+    for (const property of childNodes(candidate.properties)) {
+      setPatternTrust(
+        property.type === 'RestElement' ? property.argument : property.value,
+        scope,
+        trusted,
+      );
+    }
+  } else if (candidate.type === 'ArrayPattern') {
+    for (const element of childNodes(candidate.elements)) setPatternTrust(element, scope, trusted);
+  }
+}
+
 function bindingFor(name: string, scope: Scope): Binding | undefined {
   for (let current: Scope | undefined = scope; current; current = current.parent) {
     const binding = current.bindings.get(name);
@@ -313,20 +365,14 @@ function bindingFor(name: string, scope: Scope): Binding | undefined {
 }
 
 function trustedBinding(expression: unknown, scope: Scope): boolean {
-  let candidate = node(expression);
-  while (
-    candidate &&
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TypeCastExpression',
-    ].includes(candidate.type)
-  ) {
-    candidate = node(candidate.expression);
-  }
-  const name = identifierName(candidate);
+  const name = identifierName(unwrapExpression(expression));
   return name ? bindingFor(name, scope)?.trusted === true : false;
+}
+
+function nullishTrustedType(candidate: AstNode): boolean {
+  if (['TSNullKeyword', 'TSUndefinedKeyword', 'TSNeverKeyword'].includes(candidate.type))
+    return true;
+  return candidate.type === 'TSLiteralType' && node(candidate.literal)?.type === 'NullLiteral';
 }
 
 function trustedType(typeNode: unknown, scope: Scope, seen = new Set<string>()): boolean {
@@ -337,19 +383,35 @@ function trustedType(typeNode: unknown, scope: Scope, seen = new Set<string>()):
   if (candidate.type === 'TSParenthesizedType' || candidate.type === 'TSOptionalType') {
     return trustedType(candidate.typeAnnotation, scope, seen);
   }
-  if (candidate.type === 'TSUnionType' || candidate.type === 'TSIntersectionType') {
-    return childNodes(candidate.types).some((part) => trustedType(part, scope, seen));
+  if (candidate.type === 'TSUnionType') {
+    return childNodes(candidate.types).every(
+      (part) => nullishTrustedType(part) || trustedType(part, scope, new Set(seen)),
+    );
+  }
+  if (candidate.type === 'TSIntersectionType') {
+    return childNodes(candidate.types).some((part) => trustedType(part, scope, new Set(seen)));
   }
   if (candidate.type === 'TSTypeQuery') return trustedBinding(candidate.exprName, scope);
   if (candidate.type !== 'TSTypeReference') return false;
-  const name = identifierName(candidate.typeName);
+  const qualified = node(candidate.typeName);
+  if (qualified?.type === 'TSQualifiedName') {
+    const namespace = identifierName(qualified.left);
+    const terminal = identifierName(qualified.right);
+    if (!namespace || !terminal || !DB_TYPE_EXPORTS.has(terminal)) return false;
+    for (let current: Scope | undefined = scope; current; current = current.parent) {
+      if (current.bindings.has(namespace)) return current.trustedTypeNamespaces.has(namespace);
+    }
+    return false;
+  }
+  const name = identifierName(qualified);
   if (!name || seen.has(name)) return false;
   for (let current: Scope | undefined = scope; current; current = current.parent) {
     if (current.trustedTypes.has(name)) return true;
     const alias = current.types.get(name);
     if (alias) {
-      seen.add(name);
-      return trustedType(alias, current, seen);
+      const nextSeen = new Set(seen);
+      nextSeen.add(name);
+      return trustedType(alias, current, nextSeen);
     }
   }
   return false;
@@ -377,6 +439,9 @@ function predeclareVars(value: unknown, functionScope: Scope): void {
       candidate.type === 'FunctionDeclaration' ||
       candidate.type === 'FunctionExpression' ||
       candidate.type === 'ArrowFunctionExpression' ||
+      candidate.type === 'ObjectMethod' ||
+      candidate.type === 'ClassMethod' ||
+      candidate.type === 'ClassPrivateMethod' ||
       candidate.type === 'ClassDeclaration' ||
       candidate.type === 'ClassExpression'
     ) {
@@ -421,6 +486,7 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
   root.bindings = new Map();
   root.types = new Map();
   root.trustedTypes = new Set();
+  root.trustedTypeNamespaces = new Set();
   root.functionScope = root;
 
   const makeScope = (parent: Scope, isFunction = false): Scope => {
@@ -429,10 +495,31 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
       bindings: new Map<string, Binding>(),
       types: new Map<string, AstNode>(),
       trustedTypes: new Set<string>(),
+      trustedTypeNamespaces: new Set<string>(),
       functionScope: parent.functionScope,
     };
     if (isFunction) scope.functionScope = scope;
     return scope;
+  };
+
+  const establishImport = (candidate: AstNode, scope: Scope): void => {
+    const sourceValue = node(candidate.source)?.value;
+    const trustedModule = typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file);
+    for (const specifier of childNodes(candidate.specifiers)) {
+      const local = identifierName(specifier.local);
+      if (!local) continue;
+      scope.bindings.set(local, { trusted: false });
+      if (!trustedModule) continue;
+      if (specifier.type === 'ImportNamespaceSpecifier') {
+        scope.trustedTypeNamespaces.add(local);
+        continue;
+      }
+      if (specifier.type !== 'ImportSpecifier') continue;
+      const imported = identifierName(specifier.imported);
+      const binding = scope.bindings.get(local);
+      if (imported === 'db' && binding) binding.trusted = true;
+      else if (imported && DB_TYPE_EXPORTS.has(imported)) scope.trustedTypes.add(local);
+    }
   };
 
   const visitGeneric = (candidate: AstNode, scope: Scope): void => {
@@ -449,14 +536,17 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
     const parameters = childNodes(candidate.params);
     for (const parameter of parameters) declarePattern(parameter, scope);
     if (transactionCallback) {
-      const firstName = identifierName(parameters[0]);
+      const first = unwrapPattern(parameters[0]);
+      const firstName = identifierName(first);
       const binding = firstName ? scope.bindings.get(firstName) : undefined;
       if (binding) binding.trusted = true;
     }
     for (const parameter of parameters) {
-      const name = identifierName(parameter);
+      const normalized = unwrapPattern(parameter);
+      const name = identifierName(normalized);
       const binding = name ? scope.bindings.get(name) : undefined;
-      if (binding && trustedType(parameter.typeAnnotation, scope)) binding.trusted = true;
+      const typeAnnotation = normalized?.typeAnnotation ?? parameter.typeAnnotation;
+      if (binding && trustedType(typeAnnotation, scope)) binding.trusted = true;
     }
     predeclareVars(candidate.body, scope);
     const body = node(candidate.body);
@@ -493,11 +583,13 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
     }
     const transactionCallback = trustedReceiver && property === 'transaction';
     for (const argument of childNodes(candidate.arguments)) {
+      const callback = unwrapExpression(argument);
       if (
         transactionCallback &&
-        (argument.type === 'ArrowFunctionExpression' || argument.type === 'FunctionExpression')
+        callback &&
+        (callback.type === 'ArrowFunctionExpression' || callback.type === 'FunctionExpression')
       ) {
-        visitFunction(argument, scope, true);
+        visitFunction(callback, scope, true);
       } else {
         visit(argument, scope);
       }
@@ -510,31 +602,37 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
       case 'Program':
         predeclareImmediate(candidate.body, scope);
         predeclareVars(candidate.body, scope);
+        for (const statement of childNodes(candidate.body)) {
+          if (statement.type === 'ImportDeclaration') establishImport(statement, scope);
+        }
         for (const statement of childNodes(candidate.body)) visit(statement, scope);
         return;
-      case 'ImportDeclaration': {
-        const sourceValue = node(candidate.source)?.value;
-        const trustedModule = typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file);
-        for (const specifier of childNodes(candidate.specifiers)) {
-          const local = identifierName(specifier.local);
-          if (!local) continue;
-          scope.bindings.set(local, { trusted: false });
-          if (!trustedModule || specifier.type !== 'ImportSpecifier') continue;
-          const imported = identifierName(specifier.imported);
-          const binding = scope.bindings.get(local);
-          if (imported === 'db' && binding) binding.trusted = true;
-          else if (imported && DB_TYPE_EXPORTS.has(imported)) scope.trustedTypes.add(local);
-        }
+      case 'ImportDeclaration':
         return;
-      }
       case 'BlockStatement':
         visitBlock(candidate, scope);
         return;
       case 'FunctionDeclaration':
       case 'FunctionExpression':
       case 'ArrowFunctionExpression':
+      case 'ObjectMethod':
+      case 'ClassMethod':
+      case 'ClassPrivateMethod':
         visitFunction(candidate, scope, false);
         return;
+      case 'ForStatement':
+      case 'ForInStatement':
+      case 'ForOfStatement': {
+        const loopScope = makeScope(scope);
+        const init = node(candidate.init ?? candidate.left);
+        if (init?.type === 'VariableDeclaration' && init.kind !== 'var') {
+          for (const declaration of childNodes(init.declarations)) {
+            declarePattern(declaration.id, loopScope);
+          }
+        }
+        visitGeneric(candidate, loopScope);
+        return;
+      }
       case 'CatchClause': {
         const catchScope = makeScope(scope);
         declarePattern(candidate.param, catchScope);
@@ -557,6 +655,27 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
           if (init) visit(init, scope);
         }
         return;
+      case 'AssignmentExpression': {
+        const left = unwrapExpression(candidate.left);
+        const name = identifierName(left);
+        if (name) {
+          const binding = bindingFor(name, scope);
+          if (binding) {
+            binding.trusted = candidate.operator === '=' && trustedBinding(candidate.right, scope);
+          }
+        } else {
+          setPatternTrust(candidate.left, scope, false);
+        }
+        const right = node(candidate.right);
+        if (right) visit(right, scope);
+        return;
+      }
+      case 'UpdateExpression': {
+        const name = identifierName(unwrapExpression(candidate.argument));
+        const binding = name ? bindingFor(name, scope) : undefined;
+        if (binding) binding.trusted = false;
+        return;
+      }
       case 'CallExpression':
       case 'OptionalCallExpression':
         visitCall(candidate, scope);
@@ -566,7 +685,11 @@ function collectDrizzleWrites(source: string, file: string): DrizzleWrite[] {
         const classScope = makeScope(scope);
         const ownName = identifierName(candidate.id);
         if (ownName) classScope.bindings.set(ownName, { trusted: false });
-        visitGeneric(candidate, classScope);
+        for (const decorator of childNodes(candidate.decorators)) visit(decorator, scope);
+        const superClass = node(candidate.superClass);
+        if (superClass) visit(superClass, scope);
+        const body = node(candidate.body);
+        if (body) visit(body, classScope);
         return;
       }
       case 'TSTypeAliasDeclaration':

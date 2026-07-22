@@ -237,6 +237,93 @@ describe('auditHubSyncWriters', () => {
     expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
   });
 
+  it.each([
+    [
+      'for-let scope cleanup',
+      "import { db } from '@/db/client'; for (let db = cache; ok; next()) {} db.insert(knowledge).values({});",
+    ],
+    [
+      'for-of const scope cleanup',
+      "import { db } from '@/db/client'; for (const db of caches) {} db.insert(knowledge).values({});",
+    ],
+    [
+      'trusted alias assignment',
+      "import { db } from '@/db/client'; let client; client = db; client.insert(knowledge).values({});",
+    ],
+    [
+      'typed default parameter',
+      "import type { Db } from '@/db/client'; function write(client: Db = fallback) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'typed rest parameter',
+      "import type { Db } from '@/db/client'; function write(...client: Db) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'wrapped transaction callback',
+      "import { db } from '@/db/client'; db.transaction(((tx) => tx.insert(knowledge).values({})) as Callback);",
+    ],
+    [
+      'namespace type parameter',
+      "import type * as Repository from '@/db/client'; function write(tx: Repository.Tx) { tx.insert(knowledge).values({}); }",
+    ],
+    ['hoisted import trust', "db.insert(knowledge).values({}); import { db } from '@/db/client';"],
+    [
+      'trusted intersection',
+      "import type { Tx } from '@/db/client'; function write(tx: Tx & Extra) { tx.insert(knowledge).values({}); }",
+    ],
+  ])('YUK-746 review fixes: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/review-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'object method parameter shadow',
+      "import { db } from '@/db/client'; const value = { write(db) { db.insert(knowledge).values({}); } };",
+    ],
+    [
+      'class method parameter shadow',
+      "import { db } from '@/db/client'; class Writer { write(db) { db.insert(knowledge).values({}); } }",
+    ],
+    [
+      'for-let body shadow',
+      "import { db } from '@/db/client'; for (let db = cache; ok; next()) { db.insert(knowledge).values({}); }",
+    ],
+    [
+      'for-var function shadow',
+      "import { db } from '@/db/client'; function write() { db.insert(knowledge).values({}); for (var db = cache; ok; next()) {} }",
+    ],
+    [
+      'reassignment away',
+      "import { db } from '@/db/client'; let client = db; client = cache; client.insert(knowledge).values({});",
+    ],
+    [
+      'compound assignment invalidates',
+      "import { db } from '@/db/client'; let client = db; client &&= cache; client.insert(knowledge).values({});",
+    ],
+    [
+      'update invalidates',
+      "import { db } from '@/db/client'; let client = db; client++; client.insert(knowledge).values({});",
+    ],
+    [
+      'destructuring assignment invalidates',
+      "import { db } from '@/db/client'; let client = db; ({ client } = cache); client.insert(knowledge).values({});",
+    ],
+    [
+      'foreign namespace type',
+      "import type * as Repository from 'other/db/client'; function write(tx: Repository.Tx) { tx.insert(knowledge).values({}); }",
+    ],
+    [
+      'mixed untrusted union',
+      "import type { Tx } from '@/db/client'; function write(tx: Tx | S3Client) { tx.insert(knowledge).values({}); }",
+    ],
+  ])('YUK-746 review fixes: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/review-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
   it('YUK-746 AST: fails closed on parse failure', async () => {
     const root = fixtureRepo({ 'src/invalid.ts': 'function {' });
     await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).rejects.toThrow(
