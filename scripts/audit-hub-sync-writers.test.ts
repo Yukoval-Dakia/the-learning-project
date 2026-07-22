@@ -1014,6 +1014,60 @@ describe('auditHubSyncWriters', () => {
     ]);
   });
 
+  it('YUK-746 blocker: propagates stored tagged SQL until reassignment', async () => {
+    const root = fixtureRepo({
+      'src/sql-tagged-stored.ts': withDb(
+        'const stmt = sql`delete from knowledge`; db.execute(stmt);',
+      ),
+      'src/sql-tagged-reassigned-before.ts': withDb(
+        'let stmt = sql`delete from knowledge`; stmt = safeQuery; db.execute(stmt);',
+      ),
+      'src/sql-tagged-reassigned-after.ts': withDb(
+        'let stmt = sql`delete from knowledge`; db.execute(stmt); stmt = safeQuery;',
+      ),
+      'src/sql-tagged-safe.ts': withDb(
+        'const stmt = sql`select * from knowledge`; db.execute(stmt);',
+      ),
+      'src/sql-tagged-foreign.ts': withDb(
+        'const stmt = sql`delete from knowledge`; cache.execute(stmt);',
+      ),
+    });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([
+      expect.objectContaining({
+        file: 'src/sql-tagged-reassigned-after.ts',
+        rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
+      }),
+      expect.objectContaining({
+        file: 'src/sql-tagged-stored.ts',
+        rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
+      }),
+    ]);
+  });
+
+  it('YUK-746 blocker: propagates stored tagged SQL internal markers until reassignment', async () => {
+    const root = fixtureRepo({
+      'src/sql-tagged-marker.ts': withDb(
+        "const stmt = sql`set local app.hub_sync_internal_apply = '1'`; db.execute(stmt);",
+      ),
+      'src/sql-tagged-marker-reassigned-before.ts': withDb(
+        "let stmt = sql`set local app.hub_sync_internal_apply = '1'`; stmt = safeQuery; db.execute(stmt);",
+      ),
+      'src/sql-tagged-marker-reassigned-after.ts': withDb(
+        "let stmt = sql`set local app.hub_sync_internal_apply = '1'`; db.execute(stmt); stmt = safeQuery;",
+      ),
+    });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([
+      expect.objectContaining({
+        file: 'src/sql-tagged-marker-reassigned-after.ts',
+        rule: 'INTERNAL_APPLY_MARKER_BYPASS',
+      }),
+      expect.objectContaining({
+        file: 'src/sql-tagged-marker.ts',
+        rule: 'INTERNAL_APPLY_MARKER_BYPASS',
+      }),
+    ]);
+  });
+
   it('YUK-746 review: propagates immutable internal marker constants only through trusted execute', async () => {
     const root = fixtureRepo({
       'src/sql-raw-marker-constant.ts': withDb(

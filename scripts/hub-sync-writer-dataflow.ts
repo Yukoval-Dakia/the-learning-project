@@ -851,6 +851,22 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     return undefined;
   };
 
+  const staticTaggedSqlTextValue = (value: unknown): string | undefined => {
+    const candidate = unwrapExpression(value);
+    if (candidate?.type !== 'TaggedTemplateExpression') return undefined;
+    const tag = unwrapExpression(candidate.tag);
+    if (identifierName(tag) !== 'sql') return undefined;
+    const quasi = node(candidate.quasi);
+    return childNodes(quasi?.quasis)
+      .map((part) => {
+        const templateValue = part.value;
+        return templateValue && typeof templateValue === 'object'
+          ? String((templateValue as { cooked?: unknown }).cooked ?? '')
+          : '';
+      })
+      .join(' ');
+  };
+
   const staticSqlTextValue = (value: unknown, scope: Scope): string | undefined => {
     const candidate = unwrapExpression(value);
     if (!candidate) return undefined;
@@ -858,6 +874,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       const binding = resolveBinding(candidate.name as string, scope);
       return binding ? staticSqlTexts.get(binding) : undefined;
     }
+    const taggedText = staticTaggedSqlTextValue(candidate);
+    if (taggedText !== undefined) return taggedText;
     if (candidate.type !== 'CallExpression') return undefined;
     const callee = unwrapExpression(candidate.callee);
     if (
@@ -931,18 +949,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       return;
     }
     if (executeArgument?.type === 'TaggedTemplateExpression') {
-      const tag = unwrapExpression(executeArgument.tag);
-      if (identifierName(tag) !== 'sql') return;
-      const quasi = node(executeArgument.quasi);
-      const quasis = childNodes(quasi?.quasis);
-      const text = quasis
-        .map((part) => {
-          const value = part.value;
-          return value && typeof value === 'object'
-            ? String((value as { cooked?: unknown }).cooked ?? '')
-            : '';
-        })
-        .join(' ');
+      const text = staticTaggedSqlTextValue(executeArgument);
+      if (text === undefined) return;
       reportRawText(candidate, text);
       return;
     }
