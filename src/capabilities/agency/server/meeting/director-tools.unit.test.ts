@@ -290,6 +290,63 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.proposals).toHaveLength(1);
   });
 
+  it('rolls back a thrown evidence validator reservation so the same key can retry', async () => {
+    const evidenceRefsExistFn = vi
+      .fn<NonNullable<BuildDirectorServerOpts['evidenceRefsExistFn']>>()
+      .mockRejectedValueOnce(new Error('validator unavailable'))
+      .mockResolvedValueOnce(true);
+    const h = build({ evidenceRefsExistFn });
+
+    const rejected = await callTool('propose_conjecture', validProposeArgs());
+    const retried = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(rejected).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('validator unavailable'),
+    });
+    expect(retried.ok).toBe(true);
+    expect(evidenceRefsExistFn).toHaveBeenCalledTimes(2);
+    expect(h.proposals).toHaveLength(1);
+    expect(h.caps.proposeCount).toBe(1);
+  });
+
+  it('retries after concurrent evidence validator throw and failure without stale reservations', async () => {
+    let rejectValidation: ((reason: Error) => void) | undefined;
+    const blockedValidation = new Promise<boolean>((_resolve, reject) => {
+      rejectValidation = reject;
+    });
+    const evidenceRefsExistFn = vi
+      .fn<NonNullable<BuildDirectorServerOpts['evidenceRefsExistFn']>>()
+      .mockReturnValueOnce(blockedValidation)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true);
+    const h = build({
+      meetingContext: meetingContext({
+        candidate_cells: [cell({ knowledge_id: 'k_throw' }), cell({ knowledge_id: 'k_failure' })],
+      }),
+      evidenceRefsExistFn,
+    });
+
+    const throwing = callTool('propose_conjecture', validProposeArgs({ knowledge_id: 'k_throw' }));
+    const failed = callTool('propose_conjecture', validProposeArgs({ knowledge_id: 'k_failure' }));
+    rejectValidation?.(new Error('validator unavailable'));
+
+    const [thrownResult, failedResult] = await Promise.all([throwing, failed]);
+    expect(thrownResult.ok).toBe(false);
+    expect(failedResult.ok).toBe(false);
+    expect(h.caps.proposeCount).toBe(0);
+
+    const [retriedThrow, retriedFailure] = await Promise.all([
+      callTool('propose_conjecture', validProposeArgs({ knowledge_id: 'k_throw' })),
+      callTool('propose_conjecture', validProposeArgs({ knowledge_id: 'k_failure' })),
+    ]);
+    expect(retriedThrow.ok).toBe(true);
+    expect(retriedFailure.ok).toBe(true);
+    expect(h.proposals).toHaveLength(2);
+    expect(h.caps.proposeCount).toBe(2);
+  });
+
   it('snapshots baseline_p to the cold-start neutral 0.5 for a KC absent from cells + mastery', async () => {
     const h = build({
       meetingContext: meetingContext({ candidate_cells: [] }),
