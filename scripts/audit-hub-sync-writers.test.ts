@@ -112,10 +112,28 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
-    ['dbOrTx', 'dbOrTx.insert(knowledge).values({})'],
-    ['repository alias', 'repositoryDb.update(knowledge_edge).set({})'],
+    [
+      'typed dbOrTx parameter',
+      "import type { Tx } from '@/db/client';\nfunction write(dbOrTx: Tx) { return dbOrTx.insert(knowledge).values({}); }",
+    ],
+    [
+      'typed repository union',
+      "import type { Db, Tx } from '@/db/client';\nfunction write(repositoryDb: Db | Tx) { return repositoryDb.update(knowledge_edge).set({}); }",
+    ],
+    [
+      'import alias',
+      "import { db as repositoryDb } from '@/db/client';\nrepositoryDb.delete(knowledge).where(ok);",
+    ],
+    [
+      'alias fixed point',
+      "import { db } from '@/db/client';\nconst repositoryDb = db; const writerDb = repositoryDb; writerDb.insert(knowledge).values({});",
+    ],
+    [
+      'transaction callback',
+      "import { db } from '@/db/client';\ndb.transaction(async (writerTx) => writerTx.update(knowledge).set({}));",
+    ],
   ])(
-    'YUK-746 review follow-up: catches Drizzle calls through %s receiver',
+    'YUK-746 review follow-up: catches Drizzle calls through %s provenance',
     async (_name, source) => {
       const root = fixtureRepo({ 'src/aliased-writer.ts': source });
       const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
@@ -127,14 +145,15 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 review follow-up: preserves UTF-16 line and excerpt alignment', async () => {
     const root = fixtureRepo({
-      'src/unicode-writer.ts': '// non-BMP: 🧭\ndbOrTx.insert(knowledge).values({});',
+      'src/unicode-writer.ts':
+        "// non-BMP: 🧭\nimport type { Tx } from '@/db/client';\nfunction write(dbOrTx: Tx) { dbOrTx.insert(knowledge).values({}); }",
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual({
       rule: 'UNINVENTORIED_TOPOLOGY_WRITER',
       file: 'src/unicode-writer.ts',
-      line: 2,
-      excerpt: 'dbOrTx.insert(knowledge).values({});',
+      line: 3,
+      excerpt: 'function write(dbOrTx: Tx) { dbOrTx.insert(knowledge).values({}); }',
     });
   });
 
@@ -147,6 +166,21 @@ describe('auditHubSyncWriters', () => {
       'const patterns = [/db.insert(knowledge)/, /update knowledge/, /[\\/]db\\.delete/];',
     ],
     ['unrelated receiver', 'formatter.insert(knowledge);'],
+    ['chained formatter API', 'formatter.insert(knowledge).values({});'],
+    ['chained cache API', 'cache.update(knowledge).set({});'],
+    ['chained collection API', 'collection.delete(knowledge).where(ok);'],
+    [
+      'untyped db-shaped alias',
+      'const repositoryDb = client; repositoryDb.insert(knowledge).values({});',
+    ],
+    [
+      'unrelated typed client',
+      "import type { S3Client } from '@aws-sdk/client-s3'; function write(client: S3Client) { client.insert(knowledge).values({}); }",
+    ],
+    [
+      'shadowed imported database',
+      "import { db as client } from '@/db/client'; import type { S3Client } from '@aws-sdk/client-s3'; function write(client: S3Client) { client.insert(knowledge).values({}); }",
+    ],
     ['unrecognized SQL tag', 'html`update knowledge set name = ${value}`;'],
   ])('YUK-746 review: ignores %s', async (_name, source) => {
     const root = fixtureRepo({ 'src/non-writer.ts': source });

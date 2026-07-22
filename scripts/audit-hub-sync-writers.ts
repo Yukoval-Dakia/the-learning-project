@@ -242,11 +242,111 @@ function codeText(source: string): string {
   return out.join('');
 }
 
-function drizzleWritePattern(table: string): RegExp {
-  const call = String.raw`\s*(?:\?\.|\.)\s*(?:update|insert|delete)\s*(?:\?\.)?\s*(?:<[^;()]*>)?\s*\(\s*\(*\s*${table}\b`;
-  const drizzleChain = String.raw`[^;]*?\)\s*(?:\?\.|\.)\s*(?:values|set|where|returning|onConflictDoNothing|onConflictDoUpdate)\b`;
+function drizzleReceivers(
+  source: string,
+  code: string,
+): { receivers: Set<string>; shadowed: Map<string, Array<[number, number]>> } {
+  const receivers = new Set(['db', 'dbh', 'tx', 'trx']);
+  const dbTypes = new Set<string>();
+  const shadowed = new Map<string, Array<[number, number]>>();
+
+  for (const match of source.matchAll(
+    /\bimport\s+(?:type\s+)?{([^}]*)}\s*from\s*['"]([^'"]*db\/client)['"]/g,
+  )) {
+    for (const specifier of match[1].split(',')) {
+      const imported = /^\s*(?:type\s+)?(db|Db|Tx)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(
+        specifier,
+      );
+      if (!imported) continue;
+      const local = imported[2] ?? imported[1];
+      if (imported[1] === 'db') receivers.add(local);
+      else dbTypes.add(local);
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const match of code.matchAll(/\btype\s+([A-Za-z_$][\w$]*)\s*=\s*([^;]+)/g)) {
+      if (
+        match[2].split('|').some((part) =>
+          dbTypes.has(
+            part
+              .trim()
+              .replace(/\s*&.*$/, '')
+              .trim(),
+          ),
+        ) &&
+        !dbTypes.has(match[1])
+      ) {
+        dbTypes.add(match[1]);
+        changed = true;
+      }
+    }
+    for (const match of code.matchAll(
+      /\b([A-Za-z_$][\w$]*)\s*\??\s*:\s*(?:typeof\s+([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)(?:\s*\|\s*([A-Za-z_$][\w$]*))?)/g,
+    )) {
+      const proven = match[2]
+        ? receivers.has(match[2])
+        : [match[3], match[4]].some((t) => dbTypes.has(t));
+      if (proven && !receivers.has(match[1])) {
+        receivers.add(match[1]);
+        changed = true;
+      }
+    }
+    for (const match of code.matchAll(
+      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\b/g,
+    )) {
+      if (receivers.has(match[2]) && !receivers.has(match[1])) {
+        receivers.add(match[1]);
+        changed = true;
+      }
+    }
+    for (const receiver of [...receivers]) {
+      const escaped = receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const callback = new RegExp(
+        `\\b${escaped}\\s*\\.\\s*transaction\\s*\\(\\s*(?:async\\s*)?\\(?\\s*([A-Za-z_$][\\w$]*)`,
+        'g',
+      );
+      for (const match of code.matchAll(callback)) {
+        if (!receivers.has(match[1])) {
+          receivers.add(match[1]);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  for (const receiver of receivers) {
+    const escaped = receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const binding = new RegExp(`\\b${escaped}\\s*:\\s*([A-Za-z_$][\\w$]*)`, 'g');
+    for (const match of code.matchAll(binding)) {
+      if (dbTypes.has(match[1])) continue;
+      const bodyStart = code.indexOf('{', match.index + match[0].length);
+      if (bodyStart < 0) continue;
+      let depth = 1;
+      let bodyEnd = bodyStart + 1;
+      while (bodyEnd < code.length && depth > 0) {
+        if (code[bodyEnd] === '{') depth += 1;
+        else if (code[bodyEnd] === '}') depth -= 1;
+        bodyEnd += 1;
+      }
+      const ranges = shadowed.get(receiver) ?? [];
+      ranges.push([bodyStart, bodyEnd]);
+      shadowed.set(receiver, ranges);
+    }
+  }
+
+  return { receivers, shadowed };
+}
+
+function drizzleWritePattern(table: string, receivers: Set<string>): RegExp {
+  const receiver = [...receivers]
+    .sort((a, b) => b.length - a.length)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
   return new RegExp(
-    String.raw`\b(?:(?:db|dbh|tx|trx)${call}|[A-Za-z_$][\w$]*${call}${drizzleChain})`,
+    `\\b(${receiver})\\s*(?:\\?\\.|\\.)\\s*(?:update|insert|delete)\\s*(?:\\?\\.)?\\s*(?:<[^;()]*>)?\\s*\\(\\s*\\(*\\s*${table}\\b`,
     'g',
   );
 }
@@ -297,6 +397,11 @@ export async function auditHubSyncWriters(input: {
     const isReconciler = rel === RECONCILER_PATH;
     const sourceText = readFileSync(abs, 'utf8');
     const code = codeText(sourceText);
+    const { receivers, shadowed } = drizzleReceivers(sourceText, code);
+    const isShadowed = (match: RegExpMatchArray): boolean =>
+      (shadowed.get(match[1]) ?? []).some(
+        ([start, end]) => match.index >= start && match.index < end,
+      );
     const lines = sourceText.split('\n');
     const addFinding = (rule: HubSyncAuditRule, index: number) => {
       const line = code.slice(0, index).split('\n').length;
@@ -304,12 +409,13 @@ export async function auditHubSyncWriters(input: {
     };
 
     const reconciliationPatterns = [
-      drizzleWritePattern('hub_sync_reconciliation'),
+      drizzleWritePattern('hub_sync_reconciliation', receivers),
       rawSqlWritePattern('hub_sync_reconciliation'),
     ];
     if (!isReconciler) {
       for (const pattern of reconciliationPatterns) {
         for (const match of code.matchAll(pattern)) {
+          if (pattern === reconciliationPatterns[0] && isShadowed(match)) continue;
           addFinding('RECONCILIATION_OWNER_BYPASS', match.index);
         }
       }
@@ -324,8 +430,10 @@ export async function auditHubSyncWriters(input: {
     }
     for (const table of TOPOLOGY_TABLES) {
       if (allowByPath.get(rel)?.has(table)) continue;
-      for (const pattern of [drizzleWritePattern(table), rawSqlWritePattern(table)]) {
+      const drizzlePattern = drizzleWritePattern(table, receivers);
+      for (const pattern of [drizzlePattern, rawSqlWritePattern(table)]) {
         for (const match of code.matchAll(pattern)) {
+          if (pattern === drizzlePattern && isShadowed(match)) continue;
           addFinding('UNINVENTORIED_TOPOLOGY_WRITER', match.index);
         }
       }
