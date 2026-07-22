@@ -184,8 +184,7 @@ export async function runBriefWriter(params: {
   };
 }
 
-// Prod factory: builds the GenerateBrief closure injected at handlers.ts:50.
-// Lazy-imports the real runTask (Pattern B) so tests never reach the SDK.
+// Production factory: binds the DB-backed runner once; injected test runners remain untouched.
 //
 // 3A note: GenerateBrief's signature (brief.ts:46-51) carries NO `now`, and
 // regenerateMemoryBrief computes its own `now` at brief.ts:252 but does not
@@ -206,6 +205,3 @@ export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn })
       now: new Date().toISOString(), // 3A — real-clock bucket anchor
     });
 }
-
-// Pattern B (mirror knowledge_propose_nightly.ts:104-112): lazy-import the real
-// runner so tests that inject a stub never pull the AI SDK / ANTHROPIC_API_KEY.

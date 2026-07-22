@@ -176,8 +176,11 @@ export class JudgeInvoker {
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
         runTaskFn: runTaskFn
-          ? (kind, taskInput) =>
-              runTaskFn(kind, taskInput, { subjectProfile: input.subjectProfile })
+          ? (kind, taskInput, callCtx) =>
+              runTaskFn(kind, taskInput, {
+                ...(callCtx && typeof callCtx === 'object' ? callCtx : {}),
+                subjectProfile: input.subjectProfile,
+              })
           : undefined,
         // YUK-573 (MF6) — additive threading; omitted → runner default.
         imageFetchFn: input.imageFetchFn,
@@ -192,8 +195,11 @@ export class JudgeInvoker {
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
         runTaskFn: runTaskFn
-          ? (kind, taskInput) =>
-              runTaskFn(kind, taskInput, { subjectProfile: input.subjectProfile })
+          ? (kind, taskInput, callCtx) =>
+              runTaskFn(kind, taskInput, {
+                ...(callCtx && typeof callCtx === 'object' ? callCtx : {}),
+                subjectProfile: input.subjectProfile,
+              })
           : undefined,
         // YUK-573 (MF6) — additive threading; omitted → runner default.
         imageFetchFn: input.imageFetchFn,

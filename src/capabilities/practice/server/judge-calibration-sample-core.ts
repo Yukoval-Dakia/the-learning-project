@@ -35,6 +35,7 @@ import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { judgeAnswer } from '@/server/ai/judges/question-contract';
+import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -371,9 +372,7 @@ export async function runJudgeCalibrationSample(
           // AFTER ...ctx on purpose (S5): the vision routes inject their own
           // override into ctx at the call site — the second lane must win.
           override: {
-            provider: cfg.rejudgeProvider as NonNullable<
-              import('@/server/ai/runner-fn').RunTaskCallCtx['override']
-            >['provider'],
+            provider: cfg.rejudgeProvider as ResolvedProvider['provider'],
             model: cfg.rejudgeModel,
           },
         });

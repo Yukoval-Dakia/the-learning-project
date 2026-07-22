@@ -727,8 +727,8 @@ export async function acceptImageCandidateProposal(
       imageBytes: bytes.buffer as ArrayBuffer,
       pageIndex: 0,
       runTaskFn: async (_kind, input, ctx) => {
-        // Merge the runner-supplied ctx (vision passes {}) with the real db ctx so the
-        // production runner can write its audit rows. A test seam ignores ctx entirely.
+        // Preserve the vision-supplied call context; the production runner already has db bound.
+        // Test seams may ignore the context entirely.
         const realCtx = ctx && typeof ctx === 'object' ? { ...ctx } : {};
         const out = await runTaskFn(IMAGE_EXTRACT_TASK_KIND, input, realCtx);
         // The production runTaskFn result carries task_run_id; the test seam returns just

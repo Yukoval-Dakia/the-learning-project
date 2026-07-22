@@ -139,6 +139,8 @@ export async function runBlockAssemblyTask(
       'runBlockAssemblyTask requires db when using the default runner',
     );
   }
+  // The session entry accepts Db | Tx for proposal writes. AI task audit writes require the
+  // root Db; production passes Db here, while transactional callers must inject runTaskFn.
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
   try {

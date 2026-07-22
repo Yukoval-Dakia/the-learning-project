@@ -256,6 +256,7 @@ describe('JudgeInvoker', () => {
   });
 
   it('dispatches steps route through the server runner', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'xiaomi');
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({
         extracted_steps: [{ idx: 0, content: 'x=1', verdict: 'correct', comment: 'ok' }],
@@ -296,9 +297,13 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'StepsJudgeTask',
       expect.objectContaining({ images: [] }),
-      expect.objectContaining({ subjectProfile: mathProfile }),
+      expect.objectContaining({
+        subjectProfile: mathProfile,
+        override: expect.any(Object),
+        enableTransientRetry: true,
+      }),
     );
-    expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
+    expect(runTaskFn.mock.calls[0]?.[2]).toHaveProperty('db', mockDb);
   });
 
   // YUK-573 (MF6) — imageFetchFn threading through the two vision dispatches.
@@ -456,6 +461,7 @@ describe('JudgeInvoker', () => {
   });
 
   it('dispatches multimodal_direct route through the server runner', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'xiaomi');
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({
         coarse_outcome: 'correct',
@@ -501,8 +507,12 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'MultimodalDirectJudgeTask',
       expect.objectContaining({ images: [] }),
-      expect.objectContaining({ subjectProfile: physicsProfile }),
+      expect.objectContaining({
+        subjectProfile: physicsProfile,
+        override: expect.any(Object),
+        enableTransientRetry: true,
+      }),
     );
-    expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
+    expect(runTaskFn.mock.calls[0]?.[2]).toHaveProperty('db', mockDb);
   });
 });

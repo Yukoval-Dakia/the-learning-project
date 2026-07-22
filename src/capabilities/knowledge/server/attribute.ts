@@ -86,7 +86,6 @@ export interface RunAttributionAndWriteJudgeEventParams {
   attemptEventId: string; // was mistakeId + expectedVersion
   input: AttributionInput;
   runTaskFn: TaskTextRunFn;
-  env?: unknown;
   subjectProfile?: SubjectProfile;
   /**
    * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate

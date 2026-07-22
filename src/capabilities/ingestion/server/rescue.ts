@@ -8,7 +8,7 @@ import { ApiError } from '@/server/http/errors';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 
-import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -23,7 +23,7 @@ export type RunRescueParams = {
   tier: RescueTier;
   strategy?: RescueStrategy;
   /** Inject runTask in tests. Defaults to production runner. */
-  runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+  runTaskFn?: (kind: string, input: unknown, ctx?: RunTaskCallCtx) => Promise<{ text: string }>;
 };
 
 /**
@@ -92,7 +92,7 @@ export async function runRescue(
     pageIndex: params.page,
     runTaskFn: async (kind, input, ctx) => {
       // route through the requested tier
-      const result = await runTaskFn(taskKind, input, ctx as never);
+      const result = await runTaskFn(taskKind, input, ctx as RunTaskCallCtx);
       void kind;
       return result;
     },

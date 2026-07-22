@@ -163,15 +163,11 @@ export interface MatcherDeps {
     questionId: string;
     runTaskFn: RunTaskFn;
   }) => Promise<MatcherVerifyResult>;
-  /** 透传给 verify → 被转调 run 函数的 task runner seam. 默认 lazy-import runTask (与
-   *  quiz_verify/source_verify 的 defaultRunTaskFn 同款). db 测试注 vi.fn() (不应被调，因 verify 也被 fake). */
+  /** 透传给 verify 的 task runner seam；默认绑定当前 db，测试可注入 vi.fn()。 */
   runTaskFn?: RunTaskFn;
   /** Observe-only event seam. It must not enqueue supply work or alter selection. */
   emitSelectionMiss?: (db: Db, miss: SelectionMissV1) => Promise<unknown>;
 }
-
-// 默认 runTaskFn — lazy-import runTask (mirror quiz_verify/source_verify defaultRunTaskFn).
-// 仅在 caller 不注入 runTaskFn 且走真实 verifyAndPromote 时执行；db 测试 fake 掉 verify 不触发.
 
 /**
  * Resolve the query vector for hybrid retrieval. queryEmbedding (路 A，caller 预算) 优先于
