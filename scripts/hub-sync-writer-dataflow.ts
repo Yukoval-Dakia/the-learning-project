@@ -6,6 +6,7 @@ type AstNode = {
   [key: string]: unknown;
 };
 
+// Trust is a bitset: U=unknown, T=trusted DB, N=trusted DB namespace, D=undefined.
 type Trust = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
 const U: Trust = 1;
 const T: Trust = 2;
@@ -243,8 +244,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const internalApplyMarkers = new Map<number, InternalApplyMarker>();
   const scopeCache = new WeakMap<AstNode, Scope>();
   const analyzedFunctions = new WeakMap<AstNode, State>();
+  const transactionAnalyzedFunctions = new WeakSet<AstNode>();
   const functionBindings = new Map<Binding, AstNode>();
+  const objectFunctions = new Map<Binding, Map<string, AstNode>>();
+  const escapedFunctions = new Set<AstNode>();
   const staticStrings = new Map<Binding, string>();
+  const staticSqlTexts = new Map<Binding, string>();
   const staticStringWriteKeys = new Map<Binding, Set<string>>();
   const staticStringMarkerIndexes = new Map<Binding, Set<number>>();
   const pendingFunctions: Array<{ candidate: AstNode; parent: Scope; state: State }> = [];
@@ -733,10 +738,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (candidate.type === 'StringLiteral' && typeof candidate.value === 'string')
       return candidate.value;
     if (candidate.type === 'TemplateLiteral' && childNodes(candidate.expressions).length === 0) {
-      const quasi = childNodes(candidate.quasis)[0];
-      const value = quasi?.value;
+      const templateElement = childNodes(candidate.quasis)[0];
+      const templateValue = templateElement?.value;
       const cooked =
-        value && typeof value === 'object' ? (value as { cooked?: unknown }).cooked : undefined;
+        templateValue && typeof templateValue === 'object'
+          ? (templateValue as { cooked?: unknown }).cooked
+          : undefined;
       return typeof cooked === 'string' ? cooked : undefined;
     }
     if (candidate.type === 'Identifier') {
@@ -744,6 +751,25 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       return binding ? staticStrings.get(binding) : undefined;
     }
     return undefined;
+  };
+
+  const staticSqlTextValue = (value: unknown, scope: Scope): string | undefined => {
+    const candidate = unwrapExpression(value);
+    if (!candidate) return undefined;
+    if (candidate.type === 'Identifier') {
+      const binding = resolveBinding(candidate.name as string, scope);
+      return binding ? staticSqlTexts.get(binding) : undefined;
+    }
+    if (candidate.type !== 'CallExpression') return undefined;
+    const callee = unwrapExpression(candidate.callee);
+    if (
+      callee?.type !== 'MemberExpression' ||
+      callee.computed ||
+      identifierName(callee.object) !== 'sql' ||
+      identifierName(callee.property) !== 'raw'
+    )
+      return undefined;
+    return staticStringValue(childNodes(candidate.arguments)[0], scope);
   };
 
   const reportWrite = (candidate: AstNode, receiver: Trust, method: string | undefined): void => {
@@ -760,11 +786,46 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   const invalidateStaticString = (binding: Binding | undefined): void => {
     if (!binding) return;
     staticStrings.delete(binding);
+    staticSqlTexts.delete(binding);
     for (const key of staticStringWriteKeys.get(binding) ?? []) writes.delete(key);
     for (const index of staticStringMarkerIndexes.get(binding) ?? [])
       internalApplyMarkers.delete(index);
     staticStringWriteKeys.delete(binding);
     staticStringMarkerIndexes.delete(binding);
+  };
+
+  const RAW_SQL_TABLE_PATTERNS = new Map(
+    ['hub_sync_reconciliation', 'knowledge', 'knowledge_edge'].map((table) => [
+      table,
+      new RegExp(`\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`, 'i'),
+    ]),
+  );
+
+  const reportRawText = (candidate: AstNode, text: string, staticBinding?: Binding): void => {
+    if (candidate.start == null) return;
+    if (staticBinding && text.includes('app.hub_sync_internal_apply')) {
+      internalApplyMarkers.set(candidate.start, {
+        index: candidate.start,
+        end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
+      });
+      const indexes = staticStringMarkerIndexes.get(staticBinding) ?? new Set<number>();
+      indexes.add(candidate.start);
+      staticStringMarkerIndexes.set(staticBinding, indexes);
+    }
+    for (const [table, pattern] of RAW_SQL_TABLE_PATTERNS) {
+      if (!pattern.test(text)) continue;
+      const key = `${candidate.start}:${table}`;
+      writes.set(key, {
+        index: candidate.start,
+        end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
+        table,
+      });
+      if (staticBinding) {
+        const keys = staticStringWriteKeys.get(staticBinding) ?? new Set<string>();
+        keys.add(key);
+        staticStringWriteKeys.set(staticBinding, keys);
+      }
+    }
   };
 
   const reportRawExecute = (
@@ -774,7 +835,17 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     scope: Scope,
   ): void => {
     if (!(receiver & T) || method !== 'execute' || candidate.start == null) return;
-    const rawCall = unwrapExpression(childNodes(candidate.arguments)[0]);
+    const executeArgument = unwrapExpression(childNodes(candidate.arguments)[0]);
+    const storedSqlBinding =
+      executeArgument?.type === 'Identifier'
+        ? resolveBinding(executeArgument.name as string, scope)
+        : undefined;
+    const storedSqlText = storedSqlBinding ? staticSqlTexts.get(storedSqlBinding) : undefined;
+    if (storedSqlText) {
+      reportRawText(candidate, storedSqlText, storedSqlBinding);
+      return;
+    }
+    const rawCall = executeArgument;
     const rawCallee = rawCall && unwrapExpression(rawCall.callee);
     if (
       rawCall?.type !== 'CallExpression' ||
@@ -791,34 +862,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         : undefined;
     const text = staticStringValue(rawArgument, scope);
     if (!text) return;
-    if (staticBinding && text.includes('app.hub_sync_internal_apply')) {
-      internalApplyMarkers.set(candidate.start, {
-        index: candidate.start,
-        end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
-      });
-      const indexes = staticStringMarkerIndexes.get(staticBinding) ?? new Set<number>();
-      indexes.add(candidate.start);
-      staticStringMarkerIndexes.set(staticBinding, indexes);
-    }
-    for (const table of ['hub_sync_reconciliation', 'knowledge', 'knowledge_edge']) {
-      const pattern = new RegExp(
-        `\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`,
-        'i',
-      );
-      if (pattern.test(text)) {
-        const key = `${candidate.start}:${table}`;
-        writes.set(key, {
-          index: candidate.start,
-          end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
-          table,
-        });
-        if (staticBinding) {
-          const keys = staticStringWriteKeys.get(staticBinding) ?? new Set<string>();
-          keys.add(key);
-          staticStringWriteKeys.set(staticBinding, keys);
-        }
-      }
-    }
+    reportRawText(candidate, text, staticBinding);
   };
 
   const evalList = (values: unknown, ctx: EvalCtx, state: State): EvalResult => {
@@ -841,7 +885,12 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const propertyName = candidate.computed
       ? staticComputedPropertyName(candidate.property)
       : identifierName(candidate.property);
-    const value = result.normal.value & N && propertyName === 'db' ? T : U;
+    const value =
+      result.normal.value & N && propertyName === 'db'
+        ? T
+        : result.normal.value & T && propertyName === 'with'
+          ? T
+          : U;
     return {
       normal: { state: result.normal.state, value },
       throws: joinState(result.throws, result.normal.state),
@@ -968,6 +1017,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         : undefined;
     let calleeResult: EvalResult;
     let directFunction: AstNode | undefined;
+    let memberFunction: AstNode | undefined;
     let receiver: Trust = U;
     let method: string | undefined;
     if (member) {
@@ -980,6 +1030,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         if (property)
           calleeResult = sequenceEval(calleeResult, (next) => evalExpr(property, ctx, next));
       } else method = identifierName(member.property);
+      const objectName = identifierName(member.object);
+      const objectBinding = objectName ? resolveBinding(objectName, ctx.scope) : undefined;
+      if (objectBinding && method) memberFunction = objectFunctions.get(objectBinding)?.get(method);
     } else {
       calleeResult = callee ? evalExpr(callee, ctx, state) : { normal: { state, value: U } };
       const calleeName = identifierName(callee);
@@ -1009,15 +1062,21 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     for (const [index, argument] of args.entries()) {
       argumentsResult = sequenceEval(argumentsResult, (next) => {
         const callback = unwrapExpression(argument);
+        const callbackName = identifierName(callback);
+        const callbackBinding = callbackName ? resolveBinding(callbackName, ctx.scope) : undefined;
+        const callbackFunction = callbackBinding
+          ? functionBindings.get(callbackBinding)
+          : undefined;
+        const transactionCallback = method === 'transaction' && Boolean(receiver & T);
         if (callback && ['ArrowFunctionExpression', 'FunctionExpression'].includes(callback.type)) {
-          visitFunction(
-            callback,
-            ctx.scope,
-            next,
-            method === 'transaction' && Boolean(receiver & T),
-          );
+          visitFunction(callback, ctx.scope, next, transactionCallback);
           invocationArguments.push({ value: U, supplied: true, undefinedness: 'no' });
           return { normal: { state: next, value: U } };
+        }
+        if (callbackFunction && transactionCallback) {
+          visitFunction(callbackFunction, functionBindingsScope(callbackFunction), next, true);
+        } else if (callbackFunction) {
+          escapedFunctions.add(callbackFunction);
         }
         const evaluated = evalExpr(argument, ctx, next);
         if (evaluated.normal) {
@@ -1036,6 +1095,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     }
     if (!argumentsResult.normal) return argumentsResult;
     const after = argumentsResult.normal.state;
+    if (memberFunction)
+      visitFunction(memberFunction, functionBindingsScope(memberFunction), after, false);
     if (directFunction) {
       const invoked = invokeDirectFunction(directFunction, ctx.scope, after, invocationArguments);
       return {
@@ -1044,7 +1105,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       };
     }
     return {
-      normal: { state: after, value: U },
+      normal: { state: after, value: receiver & T && method === 'with' ? T : U },
       throws: joinState(argumentsResult.throws, callFrontier, after),
     };
   };
@@ -1462,13 +1523,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     };
   };
 
-  const execWhile = (
-    candidate: AstNode,
-    ctx: EvalCtx,
-    entry: State,
-    labels: LoopLabels,
-    doFirst: boolean,
-  ): Flow => {
+  const execWhile = (candidate: AstNode, ctx: EvalCtx, entry: State, labels: LoopLabels): Flow => {
     const test = node(candidate.test);
     const body = node(candidate.body);
     let header: State = entry;
@@ -1851,8 +1906,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     functionParents.set(candidate, parent);
     const prior = analyzedFunctions.get(candidate);
     const widened = joinState(prior, captured) as State;
-    if (prior && equalState(prior, widened)) return;
+    const newTransactionAnalysis =
+      transactionCallback && !transactionAnalyzedFunctions.has(candidate);
+    if (prior && equalState(prior, widened) && !newTransactionAnalysis) return;
     analyzedFunctions.set(candidate, widened);
+    if (transactionCallback) transactionAnalyzedFunctions.add(candidate);
     const scope = makeScope(candidate, parent, true);
     for (const parameter of childNodes(node(candidate.typeParameters)?.params)) {
       const name = typeParameterName(parameter);
@@ -1899,12 +1957,41 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const init = node(declaration.init);
         if (!init && candidate.kind === 'var') return { normal: { state: next, value: U } };
         const simpleName = identifierName(declaration.id);
-        if (candidate.kind === 'const' && simpleName) {
+        if (simpleName) {
           const binding = resolveBinding(simpleName, targetScope);
-          const text = staticStringValue(init, ctx.scope);
-          if (binding && text !== undefined) staticStrings.set(binding, text);
+          const sqlText = staticSqlTextValue(init, ctx.scope);
+          if (binding && sqlText !== undefined) staticSqlTexts.set(binding, sqlText);
+          if (candidate.kind === 'const') {
+            const text = staticStringValue(init, ctx.scope);
+            if (binding && text !== undefined) staticStrings.set(binding, text);
+          }
         }
         const functionValue = unwrapExpression(init);
+        if (simpleName && functionValue?.type === 'Identifier') {
+          const binding = resolveBinding(simpleName, targetScope);
+          const sourceBinding = resolveBinding(functionValue.name as string, ctx.scope);
+          const aliasedFunction = sourceBinding ? functionBindings.get(sourceBinding) : undefined;
+          if (binding && aliasedFunction) functionBindings.set(binding, aliasedFunction);
+        }
+        if (simpleName && functionValue?.type === 'ObjectExpression') {
+          const binding = resolveBinding(simpleName, targetScope);
+          const properties = new Map<string, AstNode>();
+          for (const property of childNodes(functionValue.properties)) {
+            const propertyName = property.computed
+              ? staticComputedPropertyName(property.key)
+              : identifierName(property.key);
+            const propertyFunction = unwrapExpression(property.value);
+            if (
+              propertyName &&
+              propertyFunction &&
+              ['FunctionExpression', 'ArrowFunctionExpression'].includes(propertyFunction.type)
+            ) {
+              properties.set(propertyName, propertyFunction);
+              functionParents.set(propertyFunction, ctx.scope);
+            }
+          }
+          if (binding && properties.size > 0) objectFunctions.set(binding, properties);
+        }
         if (
           simpleName &&
           functionValue &&
@@ -2096,7 +2183,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         return flow;
       }
       case 'WhileStatement':
-        return execWhile(candidate, ctx, state, attachedLabels, false);
+        return execWhile(candidate, ctx, state, attachedLabels);
       case 'DoWhileStatement': {
         const body = node(candidate.body);
         if (!body) return emptyFlow(state);
@@ -2105,7 +2192,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const rest = consumed.rest;
         rest.normal = consumed.exit;
         if (consumed.backedge) {
-          const later = execWhile(candidate, ctx, consumed.backedge, attachedLabels, true);
+          const later = execWhile(candidate, ctx, consumed.backedge, attachedLabels);
           return joinFlow(rest, later);
         }
         return rest;
@@ -2133,6 +2220,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const declaration = node(candidate.declaration);
         if (!declaration) return emptyFlow(state);
         if (declaration.type === 'Identifier') {
+          const binding = resolveBinding(declaration.name as string, ctx.scope);
+          const exportedFunction = binding ? functionBindings.get(binding) : undefined;
+          if (exportedFunction) escapedFunctions.add(exportedFunction);
           const evaluated = evalExpr(declaration, ctx, state);
           return emptyFlow(evaluated.normal?.state);
         }
@@ -2157,7 +2247,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     );
   }
 
-  execStmt(program, { scope: root }, initialState);
+  const finalFlow = execStmt(program, { scope: root }, initialState);
+  const finalState = finalFlow.normal ?? initialState;
+  for (const escaped of escapedFunctions)
+    visitFunction(escaped, functionBindingsScope(escaped), finalState, false);
   for (let index = 0; index < pendingFunctions.length; index += 1) {
     const pending = pendingFunctions[index];
     if (!pending || analyzedFunctions.has(pending.candidate)) continue;

@@ -321,6 +321,85 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    [
+      'named transaction callback',
+      "import { db } from '@/db/client'; function write(tx) { tx.insert(knowledge).values({}); } db.transaction(write);",
+    ],
+    [
+      'aliased transaction callback',
+      "import { db } from '@/db/client'; const write = (tx) => tx.update(knowledge).set({}); const alias = write; db.transaction(alias);",
+    ],
+    [
+      'Drizzle with receiver',
+      "import { db } from '@/db/client'; db.with(cte).delete(knowledge_edge).where(ok);",
+    ],
+    [
+      'object property invoked after captured assignment',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; client = db; writer.run();",
+    ],
+    [
+      'stored literal sql.raw',
+      "import { db } from '@/db/client'; const query = sql.raw('update knowledge set name = 1'); db.execute(query);",
+    ],
+    [
+      'stored immutable string sql.raw',
+      "import { db } from '@/db/client'; const text = 'delete from knowledge_edge'; const query = sql.raw(text); db.execute(query);",
+    ],
+    [
+      'exported closure widened to final capture',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.update(knowledge).set({}); client = db; export default writer;",
+    ],
+    [
+      'registered closure widened to final capture',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.delete(knowledge_edge).where(ok); register(writer); client = db;",
+    ],
+  ])('YUK-746 OCR fail-safe: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/ocr-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'foreign transaction receiver does not trust callback',
+      'function write(tx) { tx.insert(knowledge).values({}); } cache.transaction(write);',
+    ],
+    ['foreign with receiver', 'cache.with(cte).update(knowledge).set({});'],
+    [
+      'object property call before assignment',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; writer.run(); client = db;",
+    ],
+    [
+      'object property never called',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; client = db;",
+    ],
+    [
+      'foreign object property',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; client = db; foreign.run();",
+    ],
+    [
+      'foreign execute stored raw',
+      "const text = 'u' + 'pdate knowledge set name = 1'; const query = sql.raw(text); cache.execute(query);",
+    ],
+    [
+      'unknown stored raw',
+      "import { db } from '@/db/client'; const query = sql.raw(dynamicText); db.execute(query);",
+    ],
+    [
+      'mutated stored raw',
+      "import { db } from '@/db/client'; const text = 'u' + 'pdate knowledge set name = 1'; let query = sql.raw(text); query = safeQuery; db.execute(query);",
+    ],
+    [
+      'nonescaped closure stays call-time precise',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.update(knowledge).set({}); writer(); client = db;",
+    ],
+  ])('YUK-746 OCR fail-safe: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/ocr-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it.each([
     ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
     [
       'fake line comment import',
@@ -384,7 +463,7 @@ describe('auditHubSyncWriters', () => {
     ],
     [
       'named transaction handler',
-      "import { db } from '@/db/client'; function handler(tx) { tx.insert(knowledge).values({}); } db.transaction(handler);",
+      "import { db } from '@/db/client'; function handler(tx) { tx.insert(knowledge).values({}); } cache.transaction(handler);",
     ],
   ])('YUK-746 AST: ignores %s', async (_name, source) => {
     const root = fixtureRepo({ 'src/ast-negative.ts': source });
