@@ -300,10 +300,6 @@ describe('auditHubSyncWriters', () => {
       "import { db } from '@/db/client'; let client = db; client = cache; client.insert(knowledge).values({});",
     ],
     [
-      'compound assignment invalidates',
-      "import { db } from '@/db/client'; let client = db; client &&= cache; client.insert(knowledge).values({});",
-    ],
-    [
       'update invalidates',
       "import { db } from '@/db/client'; let client = db; client++; client.insert(knowledge).values({});",
     ],
@@ -356,7 +352,7 @@ describe('auditHubSyncWriters', () => {
     ],
     [
       'catch default pattern',
-      "import { db } from '@/db/client'; try {} catch ({x = db.insert(knowledge).values({})}) {}",
+      "import { db } from '@/db/client'; try { throw value; } catch ({x = db.insert(knowledge).values({})}) {}",
     ],
     [
       'static block cleanup',
@@ -678,12 +674,306 @@ describe('auditHubSyncWriters', () => {
     );
   });
 
+  describe('YUK-746 bounded may-trust dataflow matrix', () => {
+    const positiveCases = [
+      [
+        'stable var hoist binding',
+        'function f(){ client = db; var client; client.insert(knowledge).values({}); }',
+      ],
+      [
+        'callee snapshot before argument reassignment',
+        'let client = db; client.insert((client = cache, knowledge)).values({});',
+      ],
+      [
+        'self assignment reports before clearing',
+        'let client = db; client = client.insert(knowledge).values({});',
+      ],
+      [
+        'computed lhs before rhs',
+        'let client = db; target[client.insert(knowledge).values({})] = (client = cache);',
+      ],
+      [
+        'declarator initializer before computed pattern key',
+        'let client = cache; const {[client.insert(knowledge).values({})]: x} = (client = db, obj);',
+      ],
+      [
+        'sequence and await ordering',
+        'let client = db; async function f(){ (await client.insert(knowledge).values({}), client = cache); }',
+      ],
+      [
+        'ternary trusted branch',
+        'let client = cache; condition ? client = db : client = cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'logical rhs creates trust',
+        'let client = cache; condition && (client = db); client.insert(knowledge).values({});',
+      ],
+      [
+        'logical assignment skip retains trust',
+        'let client = db; client &&= cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'optional argument side effect joins',
+        'let client = db; client?.transaction?.(client = cache); client.insert(knowledge).values({});',
+      ],
+      [
+        'while zero path retains trust',
+        'let client = db; while (condition) client = cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'while condition sets trust on zero path',
+        'let client = cache; while ((client = db, false)) {} client.insert(knowledge).values({});',
+      ],
+      [
+        'for zero path retains trust',
+        'let client = db; for (; condition; ) client = cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'do body executes once',
+        'let client = cache; do { client = db; } while (false); client.insert(knowledge).values({});',
+      ],
+      [
+        'arrow closure capture after assignment',
+        'let client = cache; const f = () => client.insert(knowledge).values({}); client = db; f();',
+      ],
+      [
+        'declaration closure capture after assignment',
+        'let client = cache; function f(){ client.insert(knowledge).values({}); } client = db; f();',
+      ],
+      [
+        'escaping declaration ignores unreachable syntactic call',
+        'function outer(){ function f(){ db.insert(knowledge).values({}); } return f; f(); } outer();',
+      ],
+      [
+        'declaration fallback ignores post-throw syntactic call',
+        'function outer(){ function f(){ db.insert(knowledge).values({}); } throw boom; f(); } outer();',
+      ],
+      [
+        'call throw frontier before argument mutation',
+        'let client = db; try { client.method(client = cache); } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'computed call throw frontier before argument mutation',
+        'let client = db; try { client[key](client = cache); } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'chained label continue reaches update',
+        'let client = cache; outer: inner: for (; condition; client = db) { continue outer; } client.insert(knowledge).values({});',
+      ],
+      [
+        'for-of zero path retains trust',
+        'let client = db; for (const x of values) client = cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'loop backedge gains trust',
+        'let client = cache; while (condition) { client = db; continue; } client.insert(knowledge).values({});',
+      ],
+      [
+        'continue reaches for update',
+        'let client = cache; for (; condition; client = db) { continue; } client.insert(knowledge).values({});',
+      ],
+      [
+        'break exit carries trust',
+        'let client = cache; while (condition) { client = db; break; } client.insert(knowledge).values({});',
+      ],
+      [
+        'labeled outer continue',
+        'let client = cache; outer: for (; condition; client = db) { for (;;) continue outer; } client.insert(knowledge).values({});',
+      ],
+      [
+        'switch independent trusted direct case',
+        'let client = cache; switch(x){ case (client = db, 1): break; case 2: client.insert(knowledge).values({}); }',
+      ],
+      [
+        'switch fallthrough',
+        'let client = cache; switch(x){ case 1: client = db; case 2: client.insert(knowledge).values({}); }',
+      ],
+      [
+        'switch default middle',
+        'let client = cache; switch(x){ default: client = db; case 2: client.insert(knowledge).values({}); }',
+      ],
+      [
+        'post switch merge',
+        'let client = cache; switch(x){ case 1: client = db; break; default: client = cache; } client.insert(knowledge).values({});',
+      ],
+      [
+        'explicit throw catch path',
+        'let client = cache; try { client = db; throw boom; } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'potential throw catch path',
+        'let client = db; try { client.prop; client = cache; } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'catch default effects',
+        'try { throw value; } catch ({x = db.insert(knowledge).values({})}) {}',
+      ],
+      [
+        'finally transforms return path',
+        'function f(){ let client = cache; try { client = db; return; } finally { client.insert(knowledge).values({}); } }',
+      ],
+      [
+        'finally transforms throw path',
+        'let client = cache; try { client = db; throw boom; } finally { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'nested try provenance',
+        'let client = cache; try { try { client = db; throw boom; } finally {} } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'unreachable after finally override ignored but final write found',
+        'function f(){ try { return; } finally { db.insert(knowledge).values({}); throw boom; } db.update(knowledge_edge).set({}); }',
+      ],
+      [
+        'generic default typeof db',
+        'type A<T = typeof db> = T; function f(client: A){ client.insert(knowledge).values({}); }',
+      ],
+      [
+        'chained generic defaults',
+        'type A<T = typeof db, U = T> = U; function f(client: A){ client.insert(knowledge).values({}); }',
+      ],
+      [
+        'union nullish default',
+        'type A<T = typeof db | undefined> = T; function f(client: A){ client?.insert(knowledge).values({}); }',
+      ],
+    ] as const;
+
+    it.each(positiveCases)('detects %s', async (_name, body) => {
+      const root = fixtureRepo({ 'src/dataflow-positive.ts': withDb(body) });
+      expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+        expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+      );
+    });
+
+    const negativeCases = [
+      [
+        'nested shadow',
+        'let client = db; { let client = cache; client.insert(knowledge).values({}); }',
+      ],
+      [
+        'reassignment clears trust',
+        'let client = db; client = cache; client.insert(knowledge).values({});',
+      ],
+      [
+        'callee argument cannot invent receiver trust',
+        'let client = cache; client.insert((client = db, knowledge)).values({});',
+      ],
+      [
+        'computed lhs clears before rhs',
+        'let client = db; target[(client = cache)] = client.insert(knowledge).values({});',
+      ],
+      [
+        'logical rhs all untrusted',
+        'let client = cache; condition && (client = other); client.insert(knowledge).values({});',
+      ],
+      [
+        'while body remains foreign',
+        'let client = cache; while (condition) client = other; client.insert(knowledge).values({});',
+      ],
+      [
+        'while condition clears trust before zero exit',
+        'let client = db; while ((client = cache, false)) {} client.insert(knowledge).values({});',
+      ],
+      [
+        'for body remains foreign',
+        'let client = cache; for (; condition; ) client = other; client.insert(knowledge).values({});',
+      ],
+      [
+        'do clears before post flow',
+        'let client = db; do { client = cache; } while (false); client.insert(knowledge).values({});',
+      ],
+      [
+        'arrow closure cleared before invocation',
+        'let client = db; const f = () => client.insert(knowledge).values({}); client = cache; f();',
+      ],
+      [
+        'declaration closure cleared before invocation',
+        'let client = db; function f(){ client.insert(knowledge).values({}); } client = cache; f();',
+      ],
+      [
+        'foreign escaping declaration ignores unreachable call',
+        'function outer(){ function f(){ cache.insert(knowledge).values({}); } return f; f(); } outer();',
+      ],
+      [
+        'foreign declaration fallback ignores post-throw call',
+        'function outer(){ function f(){ cache.insert(knowledge).values({}); } throw boom; f(); } outer();',
+      ],
+      [
+        'foreign call throw frontier remains clean',
+        'let client = cache; try { client.method(client = other); } catch { client.insert(knowledge).values({}); }',
+      ],
+      [
+        'chained label foreign update remains clean',
+        'let client = cache; outer: inner: for (; condition; client = other) { continue outer; } client.insert(knowledge).values({});',
+      ],
+      [
+        'for-of remains foreign',
+        'let client = cache; for (const x of values) client = other; client.insert(knowledge).values({});',
+      ],
+      ['unreachable after return', 'function f(){ return; db.insert(knowledge).values({}); }'],
+      ['unreachable after throw', 'function f(){ throw boom; db.insert(knowledge).values({}); }'],
+      ['unreachable after break', 'while (condition){ break; db.insert(knowledge).values({}); }'],
+      [
+        'unreachable after continue',
+        'while (condition){ continue; db.insert(knowledge).values({}); }',
+      ],
+      [
+        'switch broken case does not poison direct case',
+        'let client = cache; switch(x){ case 1: client = db; break; case 2: client.insert(knowledge).values({}); }',
+      ],
+      [
+        'switch foreign fallthrough',
+        'let client = cache; switch(x){ case 1: client = other; case 2: client.insert(knowledge).values({}); }',
+      ],
+      [
+        'try and catch both foreign',
+        'let client = cache; try { client.prop; } catch { client = other; } client.insert(knowledge).values({});',
+      ],
+      [
+        'finally abrupt makes later code unreachable',
+        'function f(){ try { return; } finally { throw boom; } db.insert(knowledge).values({}); }',
+      ],
+      [
+        'explicit cache generic override',
+        'type A<T = typeof db> = T; function f(client: A<Cache>){ client.insert(knowledge).values({}); }',
+      ],
+      [
+        'omitted required generic',
+        'type A<T> = T; function f(client: A){ client.insert(knowledge).values({}); }',
+      ],
+      [
+        'recursive alias',
+        'type A<T = Cache> = A<T>; function f(client: A){ client.insert(knowledge).values({}); }',
+      ],
+      [
+        'namespace shadow',
+        "import type * as Repository from '@/db/client'; function f<Repository>(client: Repository.Tx){ client.insert(knowledge).values({}); }",
+      ],
+    ] as const;
+
+    it.each(negativeCases)('ignores %s', async (_name, body) => {
+      const root = fixtureRepo({ 'src/dataflow-negative.ts': withDb(body) });
+      expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+    });
+
+    it('fails closed on an unsupported executable AST node', async () => {
+      const root = fixtureRepo({
+        'src/unsupported.ts': withDb('const value = module { export const x = 1 };'),
+      });
+      await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).rejects.toThrow(
+        /unsupported executable|cannot parse/,
+      );
+    });
+  });
+
   it('YUK-746 RED: runs as a CLI from a URL-significant path', () => {
     const specialRoot = mkdtempSync(join(resolve(__dirname, '..'), '.hub sync %'));
     fixtures.push(specialRoot);
     mkdirSync(join(specialRoot, 'scripts'), { recursive: true });
     const source = readFileSync(resolve(__dirname, 'audit-hub-sync-writers.ts'), 'utf8');
+    const dataflow = readFileSync(resolve(__dirname, 'hub-sync-writer-dataflow.ts'), 'utf8');
     writeFileSync(join(specialRoot, 'scripts/audit-hub-sync-writers.ts'), source);
+    writeFileSync(join(specialRoot, 'scripts/hub-sync-writer-dataflow.ts'), dataflow);
     writeFileSync(
       join(specialRoot, 'scripts/audit-hub-sync-writers-allowlist.json'),
       '{"writers":[]}',
