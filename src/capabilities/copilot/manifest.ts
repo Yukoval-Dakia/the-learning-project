@@ -143,6 +143,10 @@ export const copilotCapability = defineCapability({
   copilotTools: {
     tools: [
       {
+        name: 'run_task',
+        load: () => import('@/server/ai/tools/run-task').then((m) => m.runTaskTool),
+      },
+      {
         name: 'query_events',
         load: () => import('@/server/ai/tools/query-events').then((m) => m.queryEventsTool),
       },

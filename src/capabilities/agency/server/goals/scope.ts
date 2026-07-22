@@ -17,9 +17,11 @@ import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/a
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
+import type { GoalScopeIntent } from '@/kernel/task-intents';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import type { ToolContext } from '@/server/ai/tools/types';
 import { writeAiProposal } from '@/server/proposals/writer';
-import type { SubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 
 const GoalScopeOutputSchema = z.object({
   scope_knowledge_ids: z.array(z.string().min(1)).default([]),
@@ -52,35 +54,54 @@ const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
   scope_count: 0,
 };
 
+async function buildGoalScopePreparation(db: Db, intent: GoalScopeIntent) {
+  const tree = await loadTreeSnapshot(db);
+  if (tree.length === 0) return null;
+  const edges = await db
+    .select({
+      from_knowledge_id: knowledge_edge.from_knowledge_id,
+      to_knowledge_id: knowledge_edge.to_knowledge_id,
+      relation_type: knowledge_edge.relation_type,
+    })
+    .from(knowledge_edge);
+  return {
+    input: {
+      goal_title: intent.goal_title,
+      subject_id: intent.subject_id ?? null,
+      grid: {
+        nodes: tree.map((node) => ({
+          id: node.id,
+          name: node.name,
+          effective_domain: node.effective_domain,
+          mastery: node.mastery,
+          evidence_count: node.evidence_count,
+        })),
+        edges,
+      },
+    },
+    tree,
+  };
+}
+
+export async function prepareGoalScopeTask(ctx: ToolContext, intent: GoalScopeIntent) {
+  const prepared = await buildGoalScopePreparation(ctx.db, intent);
+  if (!prepared) throw new Error('GoalScopeTask knowledge grid is empty');
+  return {
+    input: prepared.input,
+    ctx: { subjectProfile: resolveSubjectProfile(intent.subject_id ?? null) },
+  };
+}
+
 export async function runGoalScopeAndWrite(
   params: RunGoalScopeAndWriteParams,
 ): Promise<RunGoalScopeAndWriteResult> {
   try {
-    const tree = await loadTreeSnapshot(params.db);
-    if (tree.length === 0) return { ...EMPTY_RESULT };
-
-    const edges = await params.db
-      .select({
-        from_knowledge_id: knowledge_edge.from_knowledge_id,
-        to_knowledge_id: knowledge_edge.to_knowledge_id,
-        relation_type: knowledge_edge.relation_type,
-      })
-      .from(knowledge_edge);
-
-    const input = {
+    const prepared = await buildGoalScopePreparation(params.db, {
       goal_title: params.goalTitle,
-      subject_id: params.subjectId ?? null,
-      grid: {
-        nodes: tree.map((n) => ({
-          id: n.id,
-          name: n.name,
-          effective_domain: n.effective_domain,
-          mastery: n.mastery,
-          evidence_count: n.evidence_count,
-        })),
-        edges,
-      },
-    };
+      subject_id: params.subjectId,
+    });
+    if (!prepared) return { ...EMPTY_RESULT };
+    const { input, tree } = prepared;
 
     const result = await params.runTaskFn('GoalScopeTask', input, {
       subjectProfile: params.subjectProfile,

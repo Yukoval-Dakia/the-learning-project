@@ -5,7 +5,11 @@ import {
   MetacogFlag,
   getDefaultMetaCause,
 } from '@/core/schema/business';
+import { GoalScopeIntentSchema } from '@/kernel/task-intents';
+import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
+import type { ToolContext } from '@/server/ai/tools/types';
 import type { SubjectProfile } from '@/subjects/profile';
+import { QuestionAuthorIntentSchema } from './task-intents';
 
 // AI Task 注册表（Phase 1 骨架）。
 //
@@ -66,6 +70,9 @@ export type TaskPrompt =
   | { kind: 'inline'; text: string }
   | { kind: 'profile'; build: (profile: SubjectProfile) => string };
 
+export type TaskPrepareResult = { input: unknown; ctx?: RunTaskCallCtx };
+export type TaskPrepare = (ctx: ToolContext, intent: unknown) => Promise<TaskPrepareResult>;
+
 export interface TaskDef {
   kind: string;
   description: string;
@@ -81,6 +88,12 @@ export interface TaskDef {
    * 修订）。'auto' = 后端可自由调用；'manual_rescue_only' = 仅用户手动触发。
    */
   invocation?: 'auto' | 'manual_rescue_only';
+  /** Copilot dispatch is deny-by-default; only literal true is reachable. */
+  copilot?: {
+    intentSchema: import('zod').ZodType<unknown>;
+    prepare: () => Promise<TaskPrepare>;
+    invocable: boolean;
+  };
 }
 
 function noteWriterRole(profile: SubjectProfile): string {
@@ -1525,6 +1538,14 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    copilot: {
+      intentSchema: GoalScopeIntentSchema,
+      prepare: () =>
+        import('@/capabilities/agency/server/goals/scope').then(
+          (m) => m.prepareGoalScopeTask as TaskPrepare,
+        ),
+      invocable: true,
+    },
     prompt: { kind: 'profile', build: buildGoalScopePrompt },
   },
   // YUK-406 (Phase 0 关系脑) / YUK-440 (A13) — the conjecture induction step of the
@@ -1783,6 +1804,14 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    copilot: {
+      intentSchema: QuestionAuthorIntentSchema,
+      prepare: () =>
+        import('@/server/ai/question-author').then(
+          (m) => m.prepareQuestionAuthorTask as TaskPrepare,
+        ),
+      invocable: true,
+    },
     prompt: { kind: 'profile', build: buildQuestionAuthorPrompt },
   },
   // B1-W1 (ADR-0035 慢热阶段①) — 题目冷启先验难度估计器。

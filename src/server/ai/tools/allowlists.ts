@@ -35,6 +35,8 @@ export const READ_TOOLS = [
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
   // filters it back out (same containment as query_questions).
   'get_question_block_structure',
+  // YUK-756 — generation-only dispatcher for explicitly invocable registry tasks.
+  'run_task',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -115,6 +117,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
   'query_memory_brief',
+  'run_task',
   'get_subject_graph_overview',
   'query_knowledge',
   'query_events',
@@ -245,11 +248,12 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name,
   ): name is Exclude<
     ReadDomainToolName,
-    'search_memory_facts' | 'query_questions' | 'get_question_block_structure'
+    'search_memory_facts' | 'query_questions' | 'get_question_block_structure' | 'run_task'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
-    name !== 'get_question_block_structure',
+    name !== 'get_question_block_structure' &&
+    name !== 'run_task',
 );
 
 const MAINTENANCE_TOOLS = [

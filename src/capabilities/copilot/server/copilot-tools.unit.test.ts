@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { tasks } from '@/ai/registry';
 import { capabilities } from '@/capabilities';
 import { COPILOT_TOOLS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/server/ai/tools/allowlists';
 
@@ -11,6 +12,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
+    expect(fullInventory).toHaveLength(38);
   });
 
   it('浏览器共享的 Copilot 字面 allowlist 是 manifest 完整 inventory 的精确子集', () => {
@@ -19,5 +21,18 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     );
     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
+    expect(COPILOT_TOOLS).toHaveLength(27);
+    expect(COPILOT_TOOLS).toContain('author_question');
+    expect(COPILOT_TOOLS).toContain('run_task');
+
+    const invocable = Object.values(tasks).filter(
+      (task) => 'copilot' in task && task.copilot?.invocable === true,
+    );
+    expect(invocable).toHaveLength(2);
+    expect(
+      capabilities
+        .flatMap((capability) => capability.copilotTools?.tools ?? [])
+        .filter((tool) => tool.name === 'run_task'),
+    ).toHaveLength(1);
   });
 });
