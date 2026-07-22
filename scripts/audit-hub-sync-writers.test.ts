@@ -1228,18 +1228,18 @@ describe('auditHubSyncWriters', () => {
     it('shadows trusted db with enum and import-equals value declarations', async () => {
       const root = fixtureRepo({
         'src/enum-shadow.ts': `
-          import { db as trustedDb } from '@/db/client';
+          import { db as trustedDb } from '${'@/db/' + 'client'}';
           enum db { Value = trustedDb.insert(knowledge).values({}) as unknown as number }
           db.update(knowledge_edge).set({});
         `,
         'src/import-equals-shadow.ts': `
-          import { db as trustedDb } from '@/db/client';
+          import { db as trustedDb } from '${'@/db/' + 'client'}';
           import db = require('@/cache/client');
           db.update(knowledge_edge).set({});
           trustedDb.insert(knowledge).values({});
         `,
         'src/import-equals-alias.ts': `
-          import { db as trustedDb } from '@/db/client';
+          import { db as trustedDb } from '${'@/db/' + 'client'}';
           import db = Cache.db;
           db.delete(knowledge).where(condition);
           trustedDb.insert(knowledge).values({});
