@@ -14,7 +14,14 @@ const D: Trust = 8;
 
 type Binding = { id: number; name: string; scope: Scope; decl: AstNode };
 type AliasParameter = { name: string; defaultType?: AstNode };
-type TypeAlias = { id: number; body: AstNode; parameters: AliasParameter[]; scope: Scope };
+type TypeAlias = {
+  id: number;
+  bodies: AstNode[];
+  extendsTypes: AstNode[];
+  parameters: AliasParameter[];
+  scope: Scope;
+  interface: boolean;
+};
 type Scope = {
   parent?: Scope;
   bindings: Map<string, Binding>;
@@ -40,10 +47,11 @@ type InvocationArgument = {
   undefinedness: 'definite' | 'maybe' | 'no';
 };
 type EvalCtx = { scope: Scope };
-type DrizzleWrite = { index: number; table: string };
+type DrizzleWrite = { index: number; end: number; table: string };
+type InternalApplyMarker = { index: number; end: number };
 export type DrizzleAuditResult = {
   writes: DrizzleWrite[];
-  internalApplyMarkerIndexes: number[];
+  internalApplyMarkers: InternalApplyMarker[];
 };
 
 const DB_MODULE_ALIAS = '@/db/client';
@@ -222,7 +230,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   let nextBindingId = 1;
   let nextAliasId = 1;
   const writes = new Map<string, DrizzleWrite>();
-  const internalApplyMarkerIndexes = new Set<number>();
+  const internalApplyMarkers = new Map<number, InternalApplyMarker>();
   const scopeCache = new WeakMap<AstNode, Scope>();
   const analyzedFunctions = new WeakMap<AstNode, State>();
   const functionBindings = new Map<Binding, AstNode>();
@@ -322,7 +330,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           declarePattern(declaration.id, scope);
       } else if (
         statement.type === 'FunctionDeclaration' ||
-        statement.type === 'ClassDeclaration'
+        statement.type === 'ClassDeclaration' ||
+        statement.type === 'TSEnumDeclaration' ||
+        statement.type === 'TSImportEqualsDeclaration'
       ) {
         const name = identifierName(statement.id);
         if (name) ensureBinding(name, scope, statement);
@@ -338,7 +348,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
                 members: statement.body && node(statement.body)?.body,
               } as AstNode)
             : node(statement.typeAnnotation);
-        if (!name || !body || scope.types.has(name)) continue;
+        if (!name || !body) continue;
         const parameters = childNodes(node(statement.typeParameters)?.params)
           .map((parameter) => {
             const parameterName = typeParameterName(parameter);
@@ -347,7 +357,27 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             return defaultType ? { name: parameterName, defaultType } : { name: parameterName };
           })
           .filter((parameter): parameter is AliasParameter => parameter !== undefined);
-        scope.types.set(name, { id: nextAliasId++, body, parameters, scope });
+        const existing = scope.types.get(name);
+        if (existing) {
+          if (
+            existing.interface &&
+            statement.type === 'TSInterfaceDeclaration' &&
+            existing.parameters.map((parameter) => parameter.name).join() ===
+              parameters.map((parameter) => parameter.name).join()
+          ) {
+            existing.bodies.push(body);
+            existing.extendsTypes.push(...childNodes(statement.extends));
+          }
+          continue;
+        }
+        scope.types.set(name, {
+          id: nextAliasId++,
+          bodies: [body],
+          extendsTypes: childNodes(statement.extends),
+          parameters,
+          scope,
+          interface: statement.type === 'TSInterfaceDeclaration',
+        });
       }
     }
   };
@@ -447,14 +477,18 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       for (const [index, parameter] of alias.parameters.entries()) {
         const explicit = arguments_[index];
         const actual = explicit ?? parameter.defaultType;
-        local.set(parameter.name, { type: actual, scope });
+        const replacementName = identifierName(node(actual)?.typeName);
+        local.set(
+          parameter.name,
+          (replacementName && substitutions.get(replacementName)) || { type: actual, scope },
+        );
         actualKey.push(actual ? `${actual.type}:${actual.start ?? ''}` : '?');
       }
       const key = `${alias.id}<${actualKey.join(',')}>`;
       if (seen.has(key)) return false;
       const nextSeen = new Set(seen);
       nextSeen.add(key);
-      return trustedType(alias.body, alias.scope, local, nextSeen);
+      return alias.bodies.every((body) => trustedType(body, alias.scope, local, nextSeen));
     }
     return false;
   };
@@ -464,6 +498,27 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     scope: Scope;
     substitutions: Substitutions;
     seen: Set<string>;
+  };
+
+  const interfaceInheritanceCycle = (alias: TypeAlias, path = new Set<number>()): boolean => {
+    if (path.has(alias.id)) return true;
+    const nextPath = new Set(path);
+    nextPath.add(alias.id);
+    return alias.extendsTypes.some((base) => {
+      const candidate = node(base);
+      const name = identifierName(
+        candidate?.type === 'TSExpressionWithTypeArguments'
+          ? candidate.expression
+          : node(candidate?.typeName),
+      );
+      if (!name) return false;
+      for (let current: Scope | undefined = alias.scope; current; current = current.parent) {
+        if (current.shadowedTypes.has(name)) return false;
+        const inherited = current.types.get(name);
+        if (inherited) return interfaceInheritanceCycle(inherited, nextPath);
+      }
+      return false;
+    });
   };
 
   const propertyTypeViews = (
@@ -505,6 +560,22 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       return [];
     }
+    if (candidate.type === 'TSExpressionWithTypeArguments') {
+      const expression = node(candidate.expression);
+      return expression
+        ? propertyTypeViews(
+            {
+              type: 'TSTypeReference',
+              typeName: expression,
+              typeParameters: candidate.typeParameters,
+            },
+            propertyName,
+            scope,
+            substitutions,
+            seen,
+          )
+        : [];
+    }
     if (candidate.type !== 'TSTypeReference') return [];
     const name = identifierName(candidate.typeName);
     if (!name) return [];
@@ -518,19 +589,30 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       if (current.shadowedTypes.has(name)) return [];
       const alias = current.types.get(name);
       if (!alias) continue;
+      if (interfaceInheritanceCycle(alias)) return [];
       const arguments_ = childNodes(node(candidate.typeParameters)?.params);
       const local = new Map(substitutions);
       const actualKey: string[] = [];
       for (const [index, parameter] of alias.parameters.entries()) {
         const actual = arguments_[index] ?? parameter.defaultType;
-        local.set(parameter.name, { type: actual, scope });
+        const replacementName = identifierName(node(actual)?.typeName);
+        local.set(
+          parameter.name,
+          (replacementName && substitutions.get(replacementName)) || { type: actual, scope },
+        );
         actualKey.push(actual ? `${actual.type}:${actual.start ?? ''}` : '?');
       }
       const key = `${alias.id}<${actualKey.join(',')}>`;
       if (seen.has(key)) return [];
       const nextSeen = new Set(seen);
       nextSeen.add(key);
-      return propertyTypeViews(alias.body, propertyName, alias.scope, local, nextSeen);
+      const ownViews = alias.bodies.flatMap((body) =>
+        propertyTypeViews(body, propertyName, alias.scope, local, new Set(nextSeen)),
+      );
+      const inheritedViews = alias.extendsTypes.flatMap((base) =>
+        propertyTypeViews(base, propertyName, alias.scope, local, new Set(nextSeen)),
+      );
+      return [...ownViews, ...inheritedViews];
     }
     return [];
   };
@@ -645,7 +727,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (!(receiver & T) || !method || !WRITE_METHODS.has(method) || candidate.start == null) return;
     const tableName = tableArgumentName(childNodes(candidate.arguments)[0]);
     if (!tableName) return;
-    writes.set(`${candidate.start}:${tableName}`, { index: candidate.start, table: tableName });
+    writes.set(`${candidate.start}:${tableName}`, {
+      index: candidate.start,
+      end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
+      table: tableName,
+    });
   };
 
   const invalidateStaticString = (binding: Binding | undefined): void => {
@@ -653,7 +739,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     staticStrings.delete(binding);
     for (const key of staticStringWriteKeys.get(binding) ?? []) writes.delete(key);
     for (const index of staticStringMarkerIndexes.get(binding) ?? [])
-      internalApplyMarkerIndexes.delete(index);
+      internalApplyMarkers.delete(index);
     staticStringWriteKeys.delete(binding);
     staticStringMarkerIndexes.delete(binding);
   };
@@ -683,7 +769,10 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     const text = staticStringValue(rawArgument, scope);
     if (!text) return;
     if (staticBinding && text.includes('app.hub_sync_internal_apply')) {
-      internalApplyMarkerIndexes.add(candidate.start);
+      internalApplyMarkers.set(candidate.start, {
+        index: candidate.start,
+        end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
+      });
       const indexes = staticStringMarkerIndexes.get(staticBinding) ?? new Set<number>();
       indexes.add(candidate.start);
       staticStringMarkerIndexes.set(staticBinding, indexes);
@@ -695,7 +784,11 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       );
       if (pattern.test(text)) {
         const key = `${candidate.start}:${table}`;
-        writes.set(key, { index: candidate.start, table });
+        writes.set(key, {
+          index: candidate.start,
+          end: typeof candidate.end === 'number' ? candidate.end : candidate.start,
+          table,
+        });
         if (staticBinding) {
           const keys = staticStringWriteKeys.get(staticBinding) ?? new Set<string>();
           keys.add(key);
@@ -1696,7 +1789,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         }
         return execList(candidate.body, ctx, initialState);
       case 'ImportDeclaration':
-      case 'TSImportEqualsDeclaration':
       case 'TSTypeAliasDeclaration':
       case 'TSInterfaceDeclaration':
       case 'DeclareFunction':
@@ -1734,11 +1826,28 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         flow.throws = evaluated.throws;
         return flow;
       }
+      case 'TSImportEqualsDeclaration': {
+        const binding = resolveBinding(identifierName(candidate.id) ?? '', ctx.scope);
+        const next = store(binding, U, state);
+        const reference = node(candidate.moduleReference);
+        if (reference?.type === 'TSExternalModuleReference') {
+          const expression = node(reference.expression);
+          const evaluated = expression
+            ? evalExpr(expression, ctx, next)
+            : { normal: { state: next, value: U } };
+          const flow = emptyFlow(evaluated.normal?.state);
+          flow.throws = evaluated.throws;
+          return flow;
+        }
+        return emptyFlow(next);
+      }
       case 'TSEnumDeclaration': {
+        const binding = resolveBinding(identifierName(candidate.id) ?? '', ctx.scope);
+        const initialized = store(binding, U, state);
         const evaluated = evalList(
           childNodes(candidate.members).map((member) => member.initializer),
           ctx,
-          state,
+          initialized,
         );
         const flow = emptyFlow(evaluated.normal?.state);
         flow.throws = evaluated.throws;
@@ -1880,6 +1989,8 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
   }
   return {
     writes: [...writes.values()].sort((left, right) => left.index - right.index),
-    internalApplyMarkerIndexes: [...internalApplyMarkerIndexes].sort((left, right) => left - right),
+    internalApplyMarkers: [...internalApplyMarkers.values()].sort(
+      (left, right) => left.index - right.index,
+    ),
   };
 }

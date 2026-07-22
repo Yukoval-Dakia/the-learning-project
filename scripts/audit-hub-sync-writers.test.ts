@@ -1198,16 +1198,16 @@ describe('auditHubSyncWriters', () => {
       ]);
     });
 
-    it('deduplicates lexical and AST findings on the same rule, file, and line', async () => {
+    it('deduplicates only AST and lexical overlap while preserving distinct same-line writes', async () => {
       const root = fixtureRepo({
         'src/duplicates.ts': withDb(
-          `db.execute(sql.raw("update knowledge set name = 'x'")); db.execute(sql.raw("set local app.hub_sync_internal_apply = '1'"));`,
+          `db.execute(sql.raw("update knowledge set name = 'x'")); db.execute(sql.raw("delete from knowledge")); db.execute(sql.raw("set local app.hub_sync_internal_apply = '1'"));`,
         ),
       });
       const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
       expect(
         findings.filter((finding) => finding.rule === 'UNINVENTORIED_TOPOLOGY_WRITER'),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       expect(
         findings.filter((finding) => finding.rule === 'INTERNAL_APPLY_MARKER_BYPASS'),
       ).toHaveLength(1);
@@ -1223,6 +1223,64 @@ describe('auditHubSyncWriters', () => {
       await expect(auditHubSyncWriters({ root, allowlist: emptyAllowlist })).resolves.toEqual([
         expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
       ]);
+    });
+
+    it('shadows trusted db with enum and import-equals value declarations', async () => {
+      const root = fixtureRepo({
+        'src/enum-shadow.ts': `
+          import { db as trustedDb } from '@/db/client';
+          enum db { Value = trustedDb.insert(knowledge).values({}) as unknown as number }
+          db.update(knowledge_edge).set({});
+        `,
+        'src/import-equals-shadow.ts': `
+          import { db as trustedDb } from '@/db/client';
+          import db = require('@/cache/client');
+          db.update(knowledge_edge).set({});
+          trustedDb.insert(knowledge).values({});
+        `,
+        'src/import-equals-alias.ts': `
+          import { db as trustedDb } from '@/db/client';
+          import db = Cache.db;
+          db.delete(knowledge).where(condition);
+          trustedDb.insert(knowledge).values({});
+        `,
+      });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(findings).toHaveLength(3);
+      expect(findings.every((finding) => finding.excerpt.includes('trustedDb.'))).toBe(true);
+    });
+
+    it('preserves interface inheritance, generics, declaration merging, and scoped shadowing', async () => {
+      const root = fixtureRepo({
+        'src/interface-inheritance.ts': withDb(`
+          import type { Db } from '@/db/client';
+          interface Base<T> { db: T }
+          interface Mid<T> extends Base<T> {}
+          interface Deps extends Mid<Db> {}
+          interface Merged {}
+          interface Merged { db: Db }
+          function inherited({ db: client }: Deps) { client.insert(knowledge).values({}); }
+          function merged({ db: client }: Merged) { client.update(knowledge_edge).set({}); }
+          function shadow<Deps>({ db: client }: Deps) { client.delete(knowledge).where(condition); }
+        `),
+      });
+      const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+      expect(findings).toHaveLength(2);
+    });
+
+    it('fails safe for conflicting merged interface properties and inheritance cycles', async () => {
+      const root = fixtureRepo({
+        'src/interface-conflicts.ts': withDb(`
+          import type { Db } from '@/db/client';
+          interface Conflict { db: Db }
+          interface Conflict { db: Cache }
+          interface CycleA extends CycleB { db: Db }
+          interface CycleB extends CycleA {}
+          function conflict({ db: client }: Conflict) { client.insert(knowledge).values({}); }
+          function cycle({ db: client }: CycleB) { client.update(knowledge_edge).set({}); }
+        `),
+      });
+      expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
     });
 
     it('fails closed on an unsupported executable AST node', async () => {

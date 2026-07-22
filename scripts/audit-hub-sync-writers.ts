@@ -293,9 +293,22 @@ export async function auditHubSyncWriters(input: {
     const drizzleWrites = drizzleAudit.writes;
     const lines = sourceText.split('\n');
     const findingKeys = new Set<string>();
-    const addFinding = (rule: HubSyncAuditRule, index: number) => {
+    const occurrenceForWrite = (index: number, table: string): string => {
+      const write = drizzleWrites.find(
+        (candidate) =>
+          candidate.table === table && candidate.index <= index && index < candidate.end,
+      );
+      return write ? `${write.index}:${write.end}:${write.table}` : `${index}:${table}`;
+    };
+    const occurrenceForMarker = (index: number): string => {
+      const marker = drizzleAudit.internalApplyMarkers.find(
+        (candidate) => candidate.index <= index && index < candidate.end,
+      );
+      return marker ? `${marker.index}:${marker.end}:internal-marker` : `${index}:internal-marker`;
+    };
+    const addFinding = (rule: HubSyncAuditRule, index: number, occurrence = String(index)) => {
       const line = code.slice(0, index).split('\n').length;
-      const key = `${rule}:${rel}:${line}`;
+      const key = `${rule}:${rel}:${occurrence}`;
       if (findingKeys.has(key)) return;
       findingKeys.add(key);
       findings.push({ rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
@@ -304,17 +317,29 @@ export async function auditHubSyncWriters(input: {
     if (!isReconciler) {
       for (const write of drizzleWrites) {
         if (write.table === 'hub_sync_reconciliation') {
-          addFinding('RECONCILIATION_OWNER_BYPASS', write.index);
+          addFinding(
+            'RECONCILIATION_OWNER_BYPASS',
+            write.index,
+            `${write.index}:${write.end}:${write.table}`,
+          );
         }
       }
       for (const match of code.matchAll(rawSqlWritePattern('hub_sync_reconciliation'))) {
-        addFinding('RECONCILIATION_OWNER_BYPASS', match.index ?? 0);
+        addFinding(
+          'RECONCILIATION_OWNER_BYPASS',
+          match.index ?? 0,
+          occurrenceForWrite(match.index ?? 0, 'hub_sync_reconciliation'),
+        );
       }
       for (const match of code.matchAll(/app\.hub_sync_internal_apply/g)) {
-        addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index);
+        addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index, occurrenceForMarker(match.index));
       }
-      for (const index of drizzleAudit.internalApplyMarkerIndexes) {
-        addFinding('INTERNAL_APPLY_MARKER_BYPASS', index);
+      for (const marker of drizzleAudit.internalApplyMarkers) {
+        addFinding(
+          'INTERNAL_APPLY_MARKER_BYPASS',
+          marker.index,
+          `${marker.index}:${marker.end}:internal-marker`,
+        );
       }
     }
     for (const match of code.matchAll(
@@ -325,10 +350,19 @@ export async function auditHubSyncWriters(input: {
     for (const table of TOPOLOGY_TABLES) {
       if (allowByPath.get(rel)?.has(table)) continue;
       for (const write of drizzleWrites) {
-        if (write.table === table) addFinding('UNINVENTORIED_TOPOLOGY_WRITER', write.index);
+        if (write.table === table)
+          addFinding(
+            'UNINVENTORIED_TOPOLOGY_WRITER',
+            write.index,
+            `${write.index}:${write.end}:${write.table}`,
+          );
       }
       for (const match of code.matchAll(rawSqlWritePattern(table))) {
-        addFinding('UNINVENTORIED_TOPOLOGY_WRITER', match.index ?? 0);
+        addFinding(
+          'UNINVENTORIED_TOPOLOGY_WRITER',
+          match.index ?? 0,
+          occurrenceForWrite(match.index ?? 0, table),
+        );
       }
     }
   }
