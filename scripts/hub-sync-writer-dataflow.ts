@@ -309,6 +309,20 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     return undefined;
   };
 
+  const resolvePropertyBinding = (value: unknown, scope: Scope): Binding | undefined => {
+    const candidate = unwrapExpression(value);
+    if (!candidate) return undefined;
+    if (candidate.type === 'Identifier') return resolveBinding(candidate.name as string, scope);
+    if (candidate.type !== 'MemberExpression') return undefined;
+    const propertyName = candidate.computed
+      ? staticComputedPropertyName(candidate.property)
+      : identifierName(candidate.property);
+    const objectBinding = resolvePropertyBinding(candidate.object, scope);
+    return objectBinding && propertyName
+      ? objectPropertyBindings.get(objectBinding)?.get(propertyName)
+      : undefined;
+  };
+
   const resolveCallable = (value: unknown, scope: Scope): AstNode | undefined => {
     const candidate = unwrapExpression(value);
     if (!candidate) return undefined;
@@ -1248,17 +1262,20 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       value: Trust,
       elements?: readonly Trust[],
       properties?: ReadonlyMap<string, Binding>,
+      functions?: readonly AstNode[],
     ): EvalResult => {
       const target = unwrapExpression(left) ?? left;
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
         invalidateCallable(target, ctx.scope);
         if (binding && properties) objectPropertyBindings.set(binding, new Map(properties));
+        if (binding && functions) arrayFunctions.set(binding, functions);
         return {
           normal: {
             state: store(binding, value, input),
             value,
             properties,
+            functions,
           },
         };
       }
@@ -1268,7 +1285,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         const propertyName = target.computed
           ? staticComputedPropertyName(target.property)
           : identifierName(target.property);
-        const objectBinding = objectName ? resolveBinding(objectName, ctx.scope) : undefined;
+        const objectBinding = resolvePropertyBinding(target.object, ctx.scope);
         let propertyBinding =
           objectBinding && propertyName
             ? objectPropertyBindings.get(objectBinding)?.get(propertyName)
@@ -1308,6 +1325,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         rhs.normal.value,
         rhs.normal.elements,
         rhs.normal.properties,
+        rhs.normal.functions,
       );
       if (target.type === 'Identifier') {
         const binding = resolveBinding(target.name as string, ctx.scope);
@@ -1378,6 +1396,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             state,
             value: !binding && candidate.name === 'undefined' ? D : load(binding, state),
             properties: binding ? objectPropertyBindings.get(binding) : undefined,
+            functions: binding ? arrayFunctions.get(binding) : undefined,
           },
         };
       }
@@ -2010,8 +2029,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
         if (value)
           current = sequenceEval(current, (after) => evalExpr(value, { scope: classScope }, after));
         const fieldFunction = value ? resolveCallable(value, classScope) : undefined;
-        if (fieldFunction && current.normal)
-          visitFunction(fieldFunction, classScope, current.normal.state, false);
+        if (fieldFunction && current.normal) escapedFunctions.add(fieldFunction);
         if (['ClassMethod', 'ClassPrivateMethod'].includes(element.type) && current.normal)
           visitFunction(element, classScope, current.normal.state, false);
         if (element.type === 'StaticBlock' && current.normal)

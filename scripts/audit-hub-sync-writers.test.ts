@@ -459,6 +459,18 @@ describe('auditHubSyncWriters', () => {
 
   it.each([
     [
+      'class field closure widened to final trusted capture',
+      "import { db } from '@/db/client'; let client = cache; export class Writer { run = () => client.insert(knowledge).values({}); } client = db;",
+    ],
+    [
+      'exported callback array alias',
+      "import { db } from '@/db/client'; const jobs = [() => db.update(knowledge_edge).set({})]; const alias = jobs; export { alias };",
+    ],
+    [
+      'registered callback array assignment alias',
+      "import { db } from '@/db/client'; const jobs = [() => db.delete(knowledge).where(ok)]; let alias; alias = jobs; register(alias);",
+    ],
+    [
       'function-valued class field',
       "import { db } from '@/db/client'; export class Writer { run = () => db.insert(knowledge).values({}); }",
     ],
@@ -521,6 +533,18 @@ describe('auditHubSyncWriters', () => {
     [
       'foreign dependency object property',
       'const deps = { db: cache }; deps.db.insert(knowledge).values({});',
+    ],
+    [
+      'class field closure follows final safe capture',
+      "import { db } from '@/db/client'; let client = db; export class Writer { run = () => client.insert(knowledge).values({}); } client = cache;",
+    ],
+    [
+      'callback array alias overwritten before export',
+      "import { db } from '@/db/client'; const jobs = [() => db.update(knowledge).set({})]; let alias = jobs; alias = safe; export { alias };",
+    ],
+    [
+      'nested dependency direct overwrite before use',
+      "import { db } from '@/db/client'; const ctx = { deps: { db } }; ctx.deps.db = cache; ctx.deps.db.delete(knowledge).where(ok);",
     ],
     [
       'nonfunction class field',
