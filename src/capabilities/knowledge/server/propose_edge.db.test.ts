@@ -1,6 +1,6 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
-import { tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import {
   cost_ledger,
@@ -22,7 +22,7 @@ import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
 
 describe('KnowledgeEdgeProposeTask system prompt', () => {
   it('talks edge vocabulary', () => {
-    const p = tasks.KnowledgeEdgeProposeTask.systemPrompt;
+    const p = getTaskSystemPrompt('KnowledgeEdgeProposeTask');
     expect(p).toContain('knowledge_edge');
     expect(p).toContain('relation_type');
     expect(p).toContain('prerequisite');

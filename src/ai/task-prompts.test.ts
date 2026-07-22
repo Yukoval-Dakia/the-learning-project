@@ -477,7 +477,7 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
       const w = getTaskSystemPrompt(kind, yuwenProfile);
       const m = getTaskSystemPrompt(kind, mathProfile);
       expect(w, `${kind} profile-coupling regression`).toBe(m);
-      expect(w).toBe(tasks[kind].systemPrompt);
+      expect(w).toBe(tasks[kind].prompt.kind === 'inline' ? tasks[kind].prompt.text : undefined);
     }
   });
 
