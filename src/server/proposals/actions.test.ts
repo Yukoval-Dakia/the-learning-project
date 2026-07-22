@@ -1224,6 +1224,45 @@ describe('proposal lifecycle owner service', () => {
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
     expect(rateRows).toHaveLength(1);
     expect(rateRows[0].payload).toMatchObject({ rating: 'accept' });
+
+    const replay = await acceptAiProposal(db, proposalId);
+    expect(replay).toEqual({ kind: 'knowledge_mutation', result: null, idempotent: true });
+    expect(
+      (await db.select().from(knowledge).where(eq(knowledge.id, 'k_child')).limit(1))[0],
+    ).toMatchObject({ parent_id: 'k_new_parent', version: 1 });
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId))),
+    ).toHaveLength(1);
+    expect(await db.select().from(proposal_signals)).toMatchObject([
+      { kind: 'knowledge_mutation', accept_count: 1, dismiss_count: 0 },
+    ]);
+  });
+
+  it('rejects a non-accept knowledge_mutation decision before mutation', async () => {
+    const db = testDb();
+    await seedKnowledge(['k_parent', 'k_child', 'k_new_parent']);
+    const proposalId = await writeKnowledgeProposeEvent(db, {
+      payload: {
+        mutation: 'reparent',
+        node_id: 'k_child',
+        new_parent_id: 'k_new_parent',
+        expected_version: 0,
+      },
+      reasoning: 'Move under the more precise parent.',
+    });
+
+    await expect(
+      acceptAiProposal(db, proposalId, {
+        decision: 'change_type',
+        new_relation_type: 'related_to',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 400 });
+    expect(
+      (await db.select().from(knowledge).where(eq(knowledge.id, 'k_child')).limit(1))[0],
+    ).toMatchObject({ parent_id: null, version: 0 });
   });
 
   it('acceptAiProposal completes a LearningItem proposal with ai_propose evidence', async () => {

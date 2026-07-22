@@ -61,7 +61,7 @@ import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import {
   ACCEPT_RESULT_KINDS,
   type AcceptResult as KnowledgeAcceptResult,
-  acceptProposal,
+  type acceptProposal,
   applyArchive,
   dismissProposal,
 } from '@/capabilities/knowledge/server/proposals';
@@ -888,12 +888,13 @@ async function dispatchAccept(
       });
     }
     if (
-      proposal.payload.kind === 'knowledge_node' &&
-      result.kind === 'knowledge_node' &&
+      (proposal.payload.kind === 'knowledge_node' ||
+        proposal.payload.kind === 'knowledge_mutation') &&
+      result.kind === proposal.payload.kind &&
       isKnowledgeAcceptResult(result.result)
     ) {
       return {
-        kind: 'knowledge_node',
+        kind: proposal.payload.kind,
         result: result.result,
         idempotent: result.idempotent,
       };
@@ -906,24 +907,6 @@ async function dispatchAccept(
   }
 
   switch (proposal.payload.kind) {
-    case 'knowledge_mutation': {
-      if (proposal.status !== 'pending') {
-        // Idempotent re-accept — see knowledge_node above. A second acceptProposal would
-        // re-run the mutation (worst case: re-apply a merge over 9 attribution surfaces),
-        // so return without re-applying. YUK-681 P2.
-        return { kind: 'knowledge_mutation', result: null, idempotent: true };
-      }
-      if (opts.decision && opts.decision !== 'accept') {
-        throw new ApiError(
-          'validation_error',
-          `knowledge_mutation proposal only supports accept, got ${opts.decision}`,
-          400,
-        );
-      }
-      const result = await acceptProposal(db, proposalId);
-      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-      return { kind: 'knowledge_mutation', result };
-    }
     case 'knowledge_edge':
       return await decideKnowledgeEdgeProposal(db, proposalId, {
         decision: opts.decision ?? 'accept',
