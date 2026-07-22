@@ -1277,6 +1277,21 @@ export async function streamTaskCollecting(
             cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
           };
           cost_usd = msg.total_cost_usd;
+          if (isApiErrorSuccessResult(msg)) {
+            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
+            throw new AgentRunError({
+              kind,
+              taskRunId,
+              subtype: 'api_error_result',
+              apiErrorStatus: msg.api_error_status ?? null,
+              errors: msg.result ? [msg.result] : [],
+            });
+          }
           stopReason = msg.stop_reason ?? 'stop';
           sawTerminalResult = true;
         } else {
