@@ -12,13 +12,13 @@ import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
 import {
   type GenerateReferenceSolutionResult,
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
-import { writeEvent } from '@/server/events/queries';
 import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';

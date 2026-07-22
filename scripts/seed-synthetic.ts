@@ -52,8 +52,8 @@ import {
   proposal_signals,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { writeEvent } from '@/server/events/queries';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';

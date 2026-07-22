@@ -53,7 +53,7 @@ import {
 } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, desc, eq, sql } from 'drizzle-orm';

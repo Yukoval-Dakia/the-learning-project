@@ -37,7 +37,7 @@ import {
 } from '@/capabilities/agency/server/misconception-promote';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import {
   asPlainRecord,

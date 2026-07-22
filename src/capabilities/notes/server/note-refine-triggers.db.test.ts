@@ -16,7 +16,7 @@ import {
 } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueNoteRefineTrigger } from '@/capabilities/notes/server/note-refine-triggers';
 import { event, job_events, mastery_state } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 

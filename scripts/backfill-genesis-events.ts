@@ -70,7 +70,7 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // The SCOPED backfill skips already-event-sourced NODES — reuse the SAME genesis-anchor check the
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so

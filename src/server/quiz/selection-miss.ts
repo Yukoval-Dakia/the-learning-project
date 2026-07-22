@@ -1,6 +1,6 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
 export const SELECTION_MISS_VERSION = 1 as const;

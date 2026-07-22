@@ -47,11 +47,11 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import { writeEvent } from '@/server/events/queries';
 import { SupplyTraceV1, type SupplyTraceV1T } from '@/server/question-supply/evidence-demand';
 import {
   type JyeooFailureClass,

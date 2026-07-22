@@ -32,7 +32,7 @@
 import { createId } from '@paralleldrive/cuid2';
 
 import type { Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { createLearningRecord } from '@/server/records/queries';
 
 /** The capture outcome signal. `unanswered` = item/material (no attempt). */

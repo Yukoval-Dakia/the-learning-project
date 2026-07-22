@@ -21,10 +21,10 @@ import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { runQuizVerify } from '@/server/boss/handlers/quiz_verify';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { runSourceVerify } from '@/server/boss/handlers/source_verify';
-import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 

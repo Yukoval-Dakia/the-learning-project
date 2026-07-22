@@ -52,9 +52,9 @@ import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {

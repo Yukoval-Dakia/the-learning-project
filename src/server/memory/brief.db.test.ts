@@ -10,8 +10,8 @@
 // which is the data-flow path unit tests can't cover. DB-touching → db partition.
 
 import { event, memory_brief_note } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { LONG_TERM_FRESHNESS_BUDGET } from '@/server/ai/tools/budgets';
-import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

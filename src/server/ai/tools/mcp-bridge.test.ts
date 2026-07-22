@@ -45,7 +45,7 @@ vi.mock('@/server/ai/log', () => ({
 
 // Mock writeEvent — Lane D's mirror writer. Unit test asserts the input
 // shape; full Zod validation is exercised by the db-level integration test.
-vi.mock('@/server/events/queries', () => ({
+vi.mock('@/kernel/events', () => ({
   writeEvent: vi.fn(async (_db: unknown, input: unknown) => {
     captured.events.push(input);
     return (input as { id: string }).id;

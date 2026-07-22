@@ -22,12 +22,12 @@ import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
-import { writeEvent } from '@/server/events/queries';
 // YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
 // event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
 // the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')

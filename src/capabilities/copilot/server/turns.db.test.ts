@@ -12,7 +12,7 @@ import { runCopilotChat } from '@/capabilities/copilot/server/chat';
 import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { Conversation } from '@/server/session';
 
 const writtenEventIds: string[] = [];

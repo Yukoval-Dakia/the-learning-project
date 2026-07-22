@@ -10,7 +10,7 @@
 // DB-config test: imports runVariantGen / writeAiProposal / acceptAiProposal /
 // @/db, seeds a real Postgres testcontainer.
 import { knowledge, learning_record, mistake_variant, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

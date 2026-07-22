@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
 import { event, kc_typed_state, knowledge, material_fsrs_state } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './conjecture-scores';
 

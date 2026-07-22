@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
 import { artifact, event, goal, learning_item, mistake_variant, question_block } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
 import { runB3Gate } from '../../../scripts/b3-gate';
 import {

@@ -29,11 +29,11 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
-import { writeEvent } from '@/server/events/queries';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';

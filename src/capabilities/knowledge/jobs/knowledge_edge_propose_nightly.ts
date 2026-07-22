@@ -14,6 +14,7 @@
 // ops cost (unregister/re-register queue+schedule); kept as-is until a separate
 // reason to move it.
 
+import { writeEvent } from '@/kernel/events';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -25,7 +26,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {

@@ -37,7 +37,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 

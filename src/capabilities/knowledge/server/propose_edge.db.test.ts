@@ -10,9 +10,10 @@ import {
   knowledge_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus } from '@/kernel/events';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
-import { getCorrectionStatus } from '@/server/events/corrections';
-import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

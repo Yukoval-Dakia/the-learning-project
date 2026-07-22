@@ -29,14 +29,15 @@
 // RESERVED_EXPERIMENTAL_ACTIONS → it validates via the loose generic ExperimentalEvent
 // with zero schema-file change. Do NOT reserve it.
 
+import { writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { getEventById } from '@/kernel/events';
+import type { WriteEventInput } from '@/kernel/events';
 import { scorePrediction } from '@/server/conjectures/scoring';
 import { type UpsertKcTypedStateInput, upsertKcTypedState } from '@/server/conjectures/typed-state';
-import { getEventById, writeEvent } from '@/server/events/queries';
-import type { WriteEventInput } from '@/server/events/queries';
 import { and, eq, sql } from 'drizzle-orm';
 
 /** Canonical LOG-only score event — loose escape hatch, NEVER reserved. */

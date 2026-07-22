@@ -39,9 +39,9 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { embedText } from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
-import { writeEvent } from '@/server/events/queries';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';

@@ -22,7 +22,7 @@ import type {
   NoteVerificationResultT,
 } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 // AgentRef value shape (artifact.generated_by / verified_by). Loosely typed at this seam — the
 // parseEvent barrier validates it against the canonical AgentRef schema.

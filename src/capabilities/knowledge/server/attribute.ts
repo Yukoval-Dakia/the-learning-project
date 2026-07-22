@@ -19,8 +19,9 @@ import {
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
+import { getJudgeForAttempt } from '@/server/events/queries';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';

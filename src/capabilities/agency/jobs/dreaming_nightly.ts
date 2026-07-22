@@ -1,3 +1,4 @@
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
@@ -12,6 +13,7 @@ import {
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import type { Db } from '@/db/client';
+import type { WriteEventInput } from '@/kernel/events';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -26,7 +28,6 @@ import {
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,

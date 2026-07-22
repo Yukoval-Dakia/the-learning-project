@@ -25,8 +25,8 @@ import {
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
-import { getCorrectionStatus } from '@/server/events/corrections';
-import { writeEvent } from '@/server/events/queries';
+import { getCorrectionStatus } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
