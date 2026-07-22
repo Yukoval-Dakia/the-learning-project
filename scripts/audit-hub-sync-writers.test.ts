@@ -400,6 +400,64 @@ describe('auditHubSyncWriters', () => {
   });
 
   it.each([
+    [
+      'export variable declaration closure',
+      "import { db } from '@/db/client'; let client = cache; export const writer = () => client.insert(knowledge).values({}); client = db;",
+    ],
+    [
+      'export aliased specifier closure',
+      "import { db } from '@/db/client'; let client = cache; const writer = () => client.update(knowledge).set({}); client = db; export { writer as run };",
+    ],
+    [
+      'exported object closure',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.delete(knowledge_edge).where(ok) }; client = db; export { writer };",
+    ],
+    [
+      'registered object property closure',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; register(writer.run); client = db;",
+    ],
+  ])('YUK-746 exact-head escape discovery: catches %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/escape-positive.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
+    [
+      'overwritten named callback',
+      "import { db } from '@/db/client'; function writer(tx) { tx.insert(knowledge).values({}); } writer = safe; db.transaction(writer);",
+    ],
+    [
+      'overwritten callback alias',
+      "import { db } from '@/db/client'; const writer = (tx) => tx.update(knowledge).set({}); let alias = writer; alias = safe; db.transaction(alias);",
+    ],
+    [
+      'overwritten whole object',
+      "import { db } from '@/db/client'; let client = cache; let writer = { run: () => client.insert(knowledge).values({}) }; writer = safeObject; client = db; writer.run();",
+    ],
+    [
+      'overwritten object property',
+      "import { db } from '@/db/client'; let client = cache; const writer = { run: () => client.insert(knowledge).values({}) }; writer.run = safe; client = db; writer.run();",
+    ],
+    ['raw construction alone', "sql.raw('update knowledge set name = 1');"],
+    ['foreign raw execution', "cache.execute(sql.raw('delete from knowledge'));"],
+    ['foreign tagged execution', 'cache.execute(sql`insert into knowledge_edge (id) values (1)`);'],
+  ])('YUK-746 exact-head invalidation and SQL gating: ignores %s', async (_name, source) => {
+    const root = fixtureRepo({ 'src/invalidation-negative.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it('YUK-746 exact-head SQL gating retains trusted tagged execution', async () => {
+    const root = fixtureRepo({
+      'src/tagged-positive.ts': withDb('db.execute(sql`update knowledge set name = ${value}`);'),
+    });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
+  it.each([
     ['untyped client', 'function write(client) { client.insert(knowledge).values({}); }'],
     [
       'fake line comment import',
@@ -801,7 +859,7 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 review: detects raw SQL only in recognized SQL tags', async () => {
     const root = fixtureRepo({
-      'src/raw.ts': 'db.execute(sql`update knowledge set name = ${value}`);',
+      'src/raw.ts': withDb('db.execute(sql`update knowledge set name = ${value}`);'),
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
@@ -814,7 +872,7 @@ describe('auditHubSyncWriters', () => {
     ['insert', "db.execute(sql.raw('insert into knowledge_edge (id) values (1)'));"],
     ['update', "db.execute(sql.raw('update knowledge set name = x'));"],
   ])('YUK-746 P2: detects sql.raw %s writes', async (_name, source) => {
-    const root = fixtureRepo({ 'src/sql-raw-writer.ts': source });
+    const root = fixtureRepo({ 'src/sql-raw-writer.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -882,8 +940,9 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 P2: detects internal marker inside sql.raw', async () => {
     const root = fixtureRepo({
-      'src/sql-raw-marker.ts':
+      'src/sql-raw-marker.ts': withDb(
         'db.execute(sql.raw("set local app.hub_sync_internal_apply = \'1\'"));',
+      ),
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
@@ -916,7 +975,7 @@ describe('auditHubSyncWriters', () => {
     ['multiline template', 'db.execute(sql.raw(`insert into\nknowledge_edge (id) values (1)`));'],
     ['escaped backtick', 'db.execute(sql.raw(`update knowledge set name = \\`x\\``));'],
   ])('YUK-746 P2 follow-up: detects sql.raw %s writes', async (_name, source) => {
-    const root = fixtureRepo({ 'src/sql-raw-template-writer.ts': source });
+    const root = fixtureRepo({ 'src/sql-raw-template-writer.ts': withDb(source) });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(
       expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
@@ -925,8 +984,9 @@ describe('auditHubSyncWriters', () => {
 
   it('YUK-746 P2 follow-up: detects internal marker in sql.raw template', async () => {
     const root = fixtureRepo({
-      'src/sql-raw-template-marker.ts':
+      'src/sql-raw-template-marker.ts': withDb(
         "db.execute(sql.raw(`set local app.hub_sync_internal_apply = '1'`));",
+      ),
     });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
     expect(findings).toContainEqual(

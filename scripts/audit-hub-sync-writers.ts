@@ -243,10 +243,6 @@ function codeText(source: string): string {
   return out.join('');
 }
 
-function rawSqlWritePattern(table: string): RegExp {
-  return new RegExp(`\\b(?:update|insert\\s+into|delete\\s+from)\\s+"?${table}\\b`, 'gi');
-}
-
 function listSourceFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -300,12 +296,6 @@ export async function auditHubSyncWriters(input: {
       );
       return write ? `${write.index}:${write.end}:${write.table}` : `${index}:${table}`;
     };
-    const occurrenceForMarker = (index: number): string => {
-      const marker = drizzleAudit.internalApplyMarkers.find(
-        (candidate) => candidate.index <= index && index < candidate.end,
-      );
-      return marker ? `${marker.index}:${marker.end}:internal-marker` : `${index}:internal-marker`;
-    };
     const addFinding = (rule: HubSyncAuditRule, index: number, occurrence = String(index)) => {
       const line = code.slice(0, index).split('\n').length;
       const key = `${rule}:${rel}:${occurrence}`;
@@ -323,16 +313,6 @@ export async function auditHubSyncWriters(input: {
             `${write.index}:${write.end}:${write.table}`,
           );
         }
-      }
-      for (const match of code.matchAll(rawSqlWritePattern('hub_sync_reconciliation'))) {
-        addFinding(
-          'RECONCILIATION_OWNER_BYPASS',
-          match.index ?? 0,
-          occurrenceForWrite(match.index ?? 0, 'hub_sync_reconciliation'),
-        );
-      }
-      for (const match of code.matchAll(/app\.hub_sync_internal_apply/g)) {
-        addFinding('INTERNAL_APPLY_MARKER_BYPASS', match.index, occurrenceForMarker(match.index));
       }
       for (const marker of drizzleAudit.internalApplyMarkers) {
         addFinding(
@@ -356,13 +336,6 @@ export async function auditHubSyncWriters(input: {
             write.index,
             `${write.index}:${write.end}:${write.table}`,
           );
-      }
-      for (const match of code.matchAll(rawSqlWritePattern(table))) {
-        addFinding(
-          'UNINVENTORIED_TOPOLOGY_WRITER',
-          match.index ?? 0,
-          occurrenceForWrite(match.index ?? 0, table),
-        );
       }
     }
   }
