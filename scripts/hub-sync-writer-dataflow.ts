@@ -40,8 +40,14 @@ type Flow = {
   breaks: CompletionMap;
   continues: CompletionMap;
 };
+type PositionalValue = {
+  value: Trust;
+  elements?: readonly Trust[];
+  elementValues?: readonly PositionalValue[];
+  elementsExact?: boolean;
+};
 type EvalResult = {
-  normal?: { state: State; value: Trust; elements?: readonly Trust[] };
+  normal?: PositionalValue & { state: State };
   throws?: State;
 };
 type InvocationArgument = {
@@ -1158,15 +1164,28 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
             : identifierName(callee.property) === 'all')
         ) {
           let evaluated: EvalResult = { normal: { state, value: U } };
-          let tupleElements: readonly Trust[] | undefined;
-          for (const [index, argument] of childNodes(candidate.arguments).entries()) {
+          const argumentValues: PositionalValue[] = [];
+          let argumentsExact = true;
+          for (const argument of childNodes(candidate.arguments)) {
             evaluated = sequenceEval(evaluated, (next) => {
               const argumentResult = evalExpr(argument, ctx, next);
-              if (index === 0) tupleElements = argumentResult.normal?.elements;
+              if (argumentResult.normal && argumentsExact) {
+                if (argument.type !== 'SpreadElement') {
+                  argumentValues.push(argumentResult.normal);
+                } else if (
+                  argumentResult.normal.elementsExact &&
+                  argumentResult.normal.elementValues
+                ) {
+                  argumentValues.push(...argumentResult.normal.elementValues);
+                } else {
+                  argumentsExact = false;
+                }
+              }
               return argumentResult;
             });
           }
           if (!evaluated.normal) return evaluated;
+          const tupleElements = argumentsExact ? argumentValues[0]?.elements : undefined;
           const completed = {
             state: evaluated.normal.state,
             value: U as Trust,
@@ -1296,26 +1315,43 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       case 'ArrayExpression': {
         let result: EvalResult = { normal: { state, value: U } };
-        let elements: Trust[] | undefined = [];
+        const elements: Trust[] = [];
+        const elementValues: PositionalValue[] = [];
+        let elementsExact = true;
         for (const rawElement of Array.isArray(candidate.elements) ? candidate.elements : []) {
           const element = node(rawElement);
           if (!element) {
-            elements?.push(U);
+            if (elementsExact) {
+              elements.push(U);
+              elementValues.push({ value: U });
+            }
             continue;
           }
           result = sequenceEval(result, (next) => {
             const evaluated = evalExpr(element, ctx, next);
-            if (evaluated.normal && elements) {
-              if (element.type !== 'SpreadElement') elements.push(evaluated.normal.value);
-              else if (evaluated.normal.elements) elements.push(...evaluated.normal.elements);
-              else elements = undefined;
+            if (evaluated.normal && elementsExact) {
+              if (element.type !== 'SpreadElement') {
+                elements.push(evaluated.normal.value);
+                elementValues.push(evaluated.normal);
+              } else if (evaluated.normal.elementsExact && evaluated.normal.elementValues) {
+                elements.push(...(evaluated.normal.elements ?? []));
+                elementValues.push(...evaluated.normal.elementValues);
+              } else {
+                elementsExact = false;
+              }
             }
             return evaluated;
           });
         }
         return result.normal
           ? {
-              normal: { state: result.normal.state, value: U, elements },
+              normal: {
+                state: result.normal.state,
+                value: U,
+                elements,
+                elementValues,
+                elementsExact,
+              },
               throws: result.throws,
             }
           : result;

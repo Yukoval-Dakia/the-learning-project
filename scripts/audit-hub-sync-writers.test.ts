@@ -240,6 +240,22 @@ describe('auditHubSyncWriters', () => {
       "const [{ db }] = await Promise.all?.([import('@/db/client')]); db.update(knowledge).set({});",
     ],
     [
+      'unknown trailing spread preserves trusted prefix',
+      "const [{ db }] = [await import('@/db/client'), ...unknownValues]; db.update(knowledge).set({});",
+    ],
+    [
+      'Promise.all unknown trailing spread preserves trusted prefix',
+      "const [{ db }] = await Promise.all([import('@/db/client'), ...unknownValues]); db.delete(knowledge).where(ok);",
+    ],
+    [
+      'known Promise.all call-argument spread preserves nested tuple',
+      "const [, { db }] = await Promise.all(...[[foreign, import('@/db/client')]]); db.insert(knowledge_edge).values({});",
+    ],
+    [
+      'unknown Promise.all call-argument spread still scans side effects',
+      "import { db } from '@/db/client'; Promise.all(...unknownArgs, db.update(knowledge).set({}));",
+    ],
+    [
       'direct function typed parameter',
       "((client: import('@/db/client').Db) => client.insert(knowledge).values({}))(cache);",
     ],
@@ -286,6 +302,14 @@ describe('auditHubSyncWriters', () => {
     [
       'shadowed computed Promise all',
       "function run(Promise) { const [{ db }] = Promise['all']([import('@/db/client')]); db.delete(knowledge).where(ok); }",
+    ],
+    [
+      'known Promise.all call spread does not leak trust across elements',
+      "const [{ db }] = await Promise.all(...[[import('cache/db/client'), import('@/db/client')]]); db.insert(knowledge).values({});",
+    ],
+    [
+      'unknown Promise.all call spread does not guess tuple provenance',
+      "const [{ db }] = await Promise.all(...unknownArgs, [import('@/db/client')]); db.update(knowledge).set({});",
     ],
     [
       'tuple trust does not leak across elements',
