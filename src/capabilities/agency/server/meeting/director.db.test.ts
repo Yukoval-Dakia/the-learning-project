@@ -225,6 +225,32 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(0);
   });
 
+  it('admits the same key after a real evidence validation failure rolls back its reservation', async () => {
+    let rejected: Record<string, unknown> | undefined;
+    let retried: Record<string, unknown> | undefined;
+    const runAgentTaskFn = vi.fn(async () => {
+      rejected = await callTool('propose_conjecture', {
+        ...validProposeArgs,
+        evidence_refs: ['att_1', 'missing_event'],
+      });
+      retried = await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_run_evidence_retry',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(rejected?.ok).toBe(false);
+    expect(retried?.ok).toBe(true);
+    expect(result.proposals_created).toBe(1);
+    expect(await conjectureProposalRows(RESEARCH_MEETING_AGENT_ACTOR)).toHaveLength(1);
+  });
+
   it('accepts a review event as primary evidence', async () => {
     await testDb()
       .insert(event)
