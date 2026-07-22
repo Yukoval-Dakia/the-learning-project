@@ -16,7 +16,7 @@
 import { createId } from '@paralleldrive/cuid2';
 
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 export type WriteSessionEventInput = {
   /** Required: chains the event to a learning_session row via event.session_id. */

@@ -1,8 +1,8 @@
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getCorrectionStatus, getCorrectionStatuses } from './corrections';
-import { writeEvent } from './queries';
 
 const BASE_TIME = new Date('2026-05-19T00:00:00Z');
 

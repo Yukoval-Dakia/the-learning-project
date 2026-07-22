@@ -38,6 +38,7 @@ import {
 } from '@/core/schema/sourcing';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -56,7 +57,6 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import { writeEvent } from '@/server/events/queries';
 // YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
 // ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
 // listProposalInboxRows (FIX-6) gives the live-pending dedup the same way variant_gen

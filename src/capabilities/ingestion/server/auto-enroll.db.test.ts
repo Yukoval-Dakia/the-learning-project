@@ -23,7 +23,7 @@ import {
   question,
   question_block,
 } from '@/db/schema';
-import type { WriteEventInput } from '@/server/events/queries';
+import type { WriteEventInput } from '@/kernel/events';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -1196,7 +1196,7 @@ describe('runAutoEnrollForSession', () => {
     let realWritten = 0;
     const writeEventFn = async (innerDb: Db, input: WriteEventInput): Promise<string> => {
       if (input.subject_id === block1) throw new Error('audit write failed');
-      const { writeEvent } = await import('@/server/events/queries');
+      const { writeEvent } = await import('@/kernel/events');
       realWritten += 1;
       return writeEvent(innerDb, input);
     };

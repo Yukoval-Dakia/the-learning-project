@@ -28,11 +28,11 @@ import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { writeToolCallLog } from '@/server/ai/log';
 import { streamTask } from '@/server/ai/runner';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getCorrectionStatuses } from '@/server/events/corrections';
 import { getFailureAttempts } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded

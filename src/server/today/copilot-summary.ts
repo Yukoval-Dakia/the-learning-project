@@ -25,9 +25,9 @@
 // TodayPlanPlaceholder in coach schema).
 
 import type { Db, Tx } from '@/db/client';
+import { getEvents } from '@/kernel/events';
 import { executeGetReviewDue, executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import type { ToolContext } from '@/server/ai/tools/types';
-import { getEvents } from '@/server/events/queries';
 import {
   PENDING_PROPOSAL_COUNT_BATCH_SIZE,
   PENDING_PROPOSAL_COUNT_MAX_BATCHES,

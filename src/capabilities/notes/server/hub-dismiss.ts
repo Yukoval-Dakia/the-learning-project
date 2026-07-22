@@ -13,8 +13,8 @@ import { SuppressArtifactLink } from '@/core/schema/event';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 
 const HUB_TYPE = 'note_hub';

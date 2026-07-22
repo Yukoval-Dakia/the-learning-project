@@ -31,7 +31,7 @@ import {
 import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 
 export interface HubSyncClaim {
   artifactId: string;

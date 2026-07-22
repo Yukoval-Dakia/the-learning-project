@@ -13,7 +13,7 @@ import {
   question,
   tool_call_log,
 } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

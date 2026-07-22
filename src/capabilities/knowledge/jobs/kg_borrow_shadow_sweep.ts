@@ -60,7 +60,7 @@ import {
 import { quantile } from '@/core/theta';
 import type { Db } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 // C9 single source — the borrow epsilon, admitted relation-type set, and edge split are the
 // live soft layer's (state.ts) exports so the shadow can never drift from the live path.
 import {

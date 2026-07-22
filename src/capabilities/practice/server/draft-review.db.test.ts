@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
 import { event, knowledge, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getDraftReviewDetail, listDraftReview } from './draft-review';
 

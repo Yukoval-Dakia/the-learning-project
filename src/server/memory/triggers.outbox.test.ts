@@ -9,11 +9,11 @@
 
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { _resetBossForTests, createBoss } from '../boss/client';
-import { writeEvent } from '../events/queries';
 import {
   MEMORY_EVENT_INGEST_QUEUE,
   buildMemoryIngestOutboxPollHandler,

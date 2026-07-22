@@ -11,7 +11,7 @@ import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/prop
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
-import { getCorrectionStatuses } from '@/server/events/corrections';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/server/proposals/inbox';
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 

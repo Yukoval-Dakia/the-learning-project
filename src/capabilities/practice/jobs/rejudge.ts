@@ -24,8 +24,8 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/s
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
-import { writeEvent } from '@/server/events/queries';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 

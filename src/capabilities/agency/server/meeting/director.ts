@@ -30,6 +30,7 @@
 import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
@@ -37,12 +38,7 @@ import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-a
 import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
-import {
-  type FailureAttempt,
-  type WriteEventInput,
-  getFailureAttempts,
-  writeEvent,
-} from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';

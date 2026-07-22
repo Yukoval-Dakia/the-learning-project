@@ -9,9 +9,9 @@ import {
 } from '@/capabilities/knowledge/server/subject-profile';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';

@@ -9,7 +9,7 @@
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import { loadNudgeConfig } from '../server/nudge-config';

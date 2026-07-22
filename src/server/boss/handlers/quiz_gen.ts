@@ -39,6 +39,7 @@ import {
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, question, source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
@@ -62,7 +63,6 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import { writeEvent } from '@/server/events/queries';
 import {
   SupplyTraceV1,
   type SupplyTraceV1T,

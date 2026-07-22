@@ -25,8 +25,8 @@
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { newId } from '@/core/ids';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { writeEvent } from '@/server/events/queries';
 import { decideKnowledgeEdgeProposal } from '@/server/proposals/actions';
 import { eq, inArray, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

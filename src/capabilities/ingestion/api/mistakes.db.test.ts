@@ -1,7 +1,7 @@
 // POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
 import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';

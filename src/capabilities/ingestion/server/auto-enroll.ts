@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
  *
@@ -28,7 +29,7 @@
  * The DEFERRED "AI auto-enrolled N items" review surface (slice 3b) reads the
  * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
  */
-import { createHash } from 'node:crypto';
+import { writeEvent } from '@/kernel/events';
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -72,13 +73,13 @@ import {
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
+import type { WriteEventInput } from '@/kernel/events';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   runMultimodalDirectJudge,
 } from '@/server/ai/judges/multimodal-direct-judge';
 import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
-import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import {
   isObjectiveJudgeRoute,
   recordFamilyObservationForAttempt,

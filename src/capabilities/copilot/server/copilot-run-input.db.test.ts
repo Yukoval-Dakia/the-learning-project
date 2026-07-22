@@ -17,7 +17,7 @@ import { assembleCopilotRunInput } from '@/capabilities/copilot/server/copilot-r
 import type { LearnerStateHeader } from '@/capabilities/copilot/server/learner-state';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { Conversation } from '@/server/session';
 
 const writtenEventIds: string[] = [];

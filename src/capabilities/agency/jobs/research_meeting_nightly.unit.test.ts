@@ -2,12 +2,13 @@
 // Fully injected deps (no DB / AI). The REAL gatherConjectureEvidence runs over the
 // injected failures, so this also locks the 取证 → top-K → propose integration.
 
+import type { WriteEventInput } from '@/kernel/events';
 import type {
   InduceConjectureInput,
   InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { conjectureKey } from '@/server/conjectures/evidence';
-import type { FailureAttempt, WriteEventInput } from '@/server/events/queries';
+import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { describe, expect, it, vi } from 'vitest';

@@ -2,7 +2,7 @@
 
 import { event, knowledge, question } from '@/db/schema';
 import { cost_ledger } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';

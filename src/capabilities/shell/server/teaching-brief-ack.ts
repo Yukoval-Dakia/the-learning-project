@@ -36,7 +36,7 @@ import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/server/http/errors';
 import { and, eq, sql } from 'drizzle-orm';
 

@@ -17,7 +17,7 @@
 | 契约 | 状态 | 位置 |
 |---|---|---|
 | manifest/组合 | ✅ P1 | src/kernel/manifest.ts + src/capabilities/index.ts |
-| 事件存储 | ✅ P1 薄 facade（包装 writeEvent） | src/kernel/events.ts |
+| 事件存储 | ✅ P1 本体（envelope 读写、修正投影、scope tagging） | src/kernel/events/ |
 | 投影引擎 | ⏳ P2（practice 首用时立） | — |
 | 提议生命周期 | ⏳ P2（首批 applier 迁入时立） | — |
 | 能动性策略层 | ⏳ P2+ | — |

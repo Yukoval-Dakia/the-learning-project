@@ -8,8 +8,8 @@
 //     never throws the whole nightly run.
 
 import type { Db } from '@/db/client';
+import type { WriteEventInput } from '@/kernel/events';
 import type { UpsertKcTypedStateInput } from '@/server/conjectures/typed-state';
-import type { WriteEventInput } from '@/server/events/queries';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

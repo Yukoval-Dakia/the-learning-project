@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ArtifactBacklinksResponseSchema } from '@/capabilities/notes/api/contracts';
 import { newId } from '@/core/ids';
 import { artifact, artifact_block_ref, learning_item } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './backlinks';
 

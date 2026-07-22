@@ -104,8 +104,8 @@ function isAllowed(relPath: string, prefixes: ReadonlyArray<string>): boolean {
 describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   it('db.insert(event) appears only inside documented writer modules', async () => {
     const ALLOWED_EVENT_WRITERS = [
-      // Single-owner INSERT path (ADR-0005)
-      'src/server/events/queries.ts',
+      // Single-owner INSERT path (ADR-0005 / YUK-747)
+      'src/kernel/events/events.ts',
       // session → event mapper (delegates to writeEvent)
       'src/server/session/events.ts',
       // knowledge tree mutation propose events

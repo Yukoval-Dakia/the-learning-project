@@ -21,7 +21,7 @@
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/kernel/events';
 import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
 
 // Injectable writeEvent seam (defaults to the real writeEvent). Lets callers/tests
