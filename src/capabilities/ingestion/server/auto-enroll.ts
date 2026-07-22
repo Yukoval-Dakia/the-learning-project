@@ -605,7 +605,8 @@ export async function runAutoEnrollForSession(
           studentAnswerMd: block.wrong_answer_md ?? null,
           knowledgeIds: verdict.prefilled.knowledge_ids,
           profile,
-          ctx: { db: params.db, subjectProfile: profile },
+          db: params.db,
+          ctx: { subjectProfile: profile },
         });
       } catch (err) {
         if (!(err instanceof MistakeEnrollTaskError)) throw err;

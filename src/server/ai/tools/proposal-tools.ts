@@ -48,6 +48,7 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 // ADR-0031 / YUK-304 (lane B) — the knowledge|material seed core (draft question
 // + question_draft proposal in one tx).
 import { runQuestionAuthor } from '@/server/ai/question-author';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
@@ -1046,7 +1047,7 @@ async function proposeVariantExecute(
     const result = await runVariantGen({
       db: ctx.db,
       attemptEventId: input.attempt_event_id,
-      runTaskFn: defaultRunTaskFn,
+      runTaskFn: makeRunTaskFn(ctx.db),
     });
     if (result.status !== 'proposed') {
       return {
@@ -1683,6 +1684,7 @@ export async function authorQuestion(
   seed: AuthorQuestionSeed,
   deps: AuthorQuestionDeps,
 ): Promise<AuthorQuestionOutput> {
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(deps.db);
   switch (seed.seed_mode) {
     case 'variant': {
       // DELEGATE to runVariantGen UNCHANGED — all variant guards live there.
@@ -1693,7 +1695,7 @@ export async function authorQuestion(
       const result = await runVariantGen({
         db: deps.db,
         attemptEventId: seed.attempt_event_id,
-        runTaskFn: deps.runTaskFn ?? defaultRunTaskFn,
+        runTaskFn,
       });
       if (result.status !== 'proposed') {
         return {
@@ -1794,7 +1796,7 @@ export async function authorQuestion(
           actorRef: deps.actorRef,
           taskRunId: deps.taskRunId,
           ...(deps.causedByEventId ? { causedByEventId: deps.causedByEventId } : {}),
-          runTaskFn: deps.runTaskFn ?? defaultRunTaskFn,
+          runTaskFn,
         },
       );
       if (result.status !== 'proposed') {
@@ -1833,6 +1835,7 @@ async function authorQuestionExecute(
       actorRef: ctx.callerActor.ref,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId,
+      runTaskFn: makeRunTaskFn(ctx.db),
     });
   } catch (err) {
     return {

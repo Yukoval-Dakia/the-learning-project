@@ -21,6 +21,7 @@
  * consumed by `assignFiguresFromVlm` in figure_attach.ts. The old Tencent-bbox
  * `assignFigures` heuristic is kept as a fallback (see figure_attach.ts).
  */
+import type { Db } from '@/db/client';
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
@@ -284,9 +285,11 @@ export type RunStructureTaskParams = {
    * Absent = no figures to assign.
    */
   preFigures?: Array<{ index: number; page_index: number; position: string }>;
+  /** Database bound by the production runner; tests may inject runTaskFn instead. */
+  db?: Db;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: StructureRunTaskFn;
-  /** Forwarded to runTask ctx (db / subjectProfile / r2). */
+  /** Forwarded to runTask ctx (subjectProfile / r2 only). */
   ctx?: unknown;
 };
 
@@ -310,9 +313,10 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
 
-  const runTaskFn =
-    params.runTaskFn ??
-    makeRunTaskTextFn((params.ctx as { db: Parameters<typeof makeRunTaskTextFn>[0] }).db);
+  if (params.runTaskFn === undefined && params.db === undefined) {
+    throw new StructureTaskError('runStructureTask requires db when using the default runner');
+  }
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
   try {
     const result = await runTaskFn(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { physicsProfile } from '@/subjects/physics/profile';
 import { runLlmFallback } from './llm-fallback';
 
 describe('unit_dimension LLM fallback', () => {
@@ -20,7 +21,7 @@ describe('unit_dimension LLM fallback', () => {
       student_answer: '三十米每秒',
       reference: { value: 30, unit: 'm/s' },
       runTaskFn: mockTask,
-      runTaskCtx: { subjectProfile: { id: 'physics' } },
+      runTaskCtx: { subjectProfile: physicsProfile },
     });
     expect(captured).toHaveLength(1);
     expect(captured[0].kind).toBe('UnitDimensionFallback');

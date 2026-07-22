@@ -105,9 +105,11 @@ export interface BlockAssemblyInput {
 
 export interface RunBlockAssemblyTaskParams {
   input: BlockAssemblyInput;
+  /** Database bound by the production runner; tests may inject runTaskFn instead. */
+  db?: Db | Tx;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: BlockAssemblyRunTaskFn;
-  /** Forwarded to runTask ctx (db / subjectProfile). */
+  /** Forwarded to runTask ctx (subjectProfile only). */
   ctx?: unknown;
 }
 
@@ -132,7 +134,12 @@ function extractJsonObject(text: string): unknown {
 export async function runBlockAssemblyTask(
   params: RunBlockAssemblyTaskParams,
 ): Promise<BlockAssemblyOutputT> {
-  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn((params.ctx as { db: Db }).db);
+  if (params.runTaskFn === undefined && params.db === undefined) {
+    throw new BlockAssemblyTaskError(
+      'runBlockAssemblyTask requires db when using the default runner',
+    );
+  }
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
   try {
     const result = await runTaskFn('BlockAssemblyTask', params.input, params.ctx ?? {});
@@ -317,6 +324,7 @@ export async function runBlockAssemblyForSession(
 
   const output = await runBlockAssemblyTask({
     input,
+    db,
     runTaskFn: params.runTaskFn,
     ctx: params.ctx,
   });

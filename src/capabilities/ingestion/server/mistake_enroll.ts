@@ -26,6 +26,7 @@ import {
   MistakeEnrollOutput,
   type MistakeEnrollOutputT,
 } from '@/core/schema/mistake_enroll';
+import type { Db } from '@/db/client';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 /**
@@ -58,9 +59,11 @@ export interface RunMistakeEnrollTaskParams {
   knowledgeIds?: string[];
   /** Subject taxonomy — supplies allowed cause ids (input) + the server clamp. */
   profile: CauseProfileLike;
+  /** Database bound by the production runner; tests may inject runTaskFn instead. */
+  db?: Db;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: MistakeEnrollRunTaskFn;
-  /** Forwarded to runTask ctx (db / subjectProfile). */
+  /** Forwarded to runTask ctx (subjectProfile only). */
   ctx?: unknown;
 }
 
@@ -112,19 +115,13 @@ export async function runMistakeEnrollTask(
     throw new MistakeEnrollTaskError('MistakeEnrollTask input was invalid', { cause: err });
   }
 
-  // The default (production) runner needs ctx.db (ai_task_run logging) +
-  // ctx.subjectProfile (prompt). Fail LOUD here if a caller forgets it, rather
-  // than letting it surface as an opaque 'LLM call failed' that upstream treats
-  // as a provider outage. Tests inject runTaskFn and don't need a real ctx.
-  if (params.runTaskFn === undefined && !hasDb(params.ctx)) {
+  if (params.runTaskFn === undefined && params.db === undefined) {
     throw new MistakeEnrollTaskError(
-      'runMistakeEnrollTask requires ctx with { db } when using the default runner (inject runTaskFn in tests)',
+      'runMistakeEnrollTask requires db when using the default runner (inject runTaskFn in tests)',
     );
   }
 
-  const runTaskFn =
-    params.runTaskFn ??
-    makeRunTaskTextFn((params.ctx as { db: Parameters<typeof makeRunTaskTextFn>[0] }).db);
+  const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
   let llmText: string;
   try {
     const result = await runTaskFn('MistakeEnrollTask', input, params.ctx ?? {});
