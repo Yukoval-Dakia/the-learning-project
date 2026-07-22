@@ -14,6 +14,7 @@ overrides:
   'uuid@<11.1.1': '>=11.1.1 <12'
   'hono@<4.12.21': '>=4.12.21 <5'
   'esbuild@<0.28.1': '>=0.28.1 <0.29'
+  'fast-uri@<3.1.4': '>=3.1.4 <4'
 
 # pnpm 11 fails closed on dependency lifecycle scripts. Keep the executable/native
 # packages explicit, and record the reviewed no-op/optional scripts as denied so CI
