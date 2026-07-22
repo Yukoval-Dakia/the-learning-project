@@ -69,30 +69,58 @@ function codeText(source: string): string {
     for (let index = start; index < end; index += 1) out[index] = source[index];
   };
   const previousWord = (index: number): string => {
-    const match = source.slice(0, index).match(/([\w$]+)\s*$/);
-    return match?.[1] ?? '';
+    let cursor = index - 1;
+    while (/\s/.test(structural[cursor] ?? '')) cursor -= 1;
+    const end = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    return structural.slice(cursor + 1, end).join('');
+  };
+  const previousSignificantIndex = (index: number): number => {
+    let cursor = index - 1;
+    while (/\s/.test(structural[cursor] ?? '')) cursor -= 1;
+    return cursor;
+  };
+  const isSqlRawArgument = (index: number): boolean => {
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== '(') return false;
+    cursor = previousSignificantIndex(cursor);
+    const rawEnd = cursor + 1;
+    while (/[\w$]/.test(structural[cursor] ?? '')) cursor -= 1;
+    if (structural.slice(cursor + 1, rawEnd).join('') !== 'raw') return false;
+    cursor = previousSignificantIndex(cursor + 1);
+    if (structural[cursor] !== '.') return false;
+    return previousWord(cursor) === 'sql';
   };
   const followsControlCondition = (index: number): boolean => {
-    const significant = structural.slice(0, index).join('');
-    let cursor = significant.length - 1;
-    while (/\s/.test(significant[cursor] ?? '')) cursor -= 1;
-    if (significant[cursor] !== ')') return false;
+    let cursor = previousSignificantIndex(index);
+    if (structural[cursor] !== ')') return false;
 
     let depth = 1;
     cursor -= 1;
     while (cursor >= 0 && depth > 0) {
-      if (significant[cursor] === ')') depth += 1;
-      else if (significant[cursor] === '(') depth -= 1;
+      if (structural[cursor] === ')') depth += 1;
+      else if (structural[cursor] === '(') depth -= 1;
       cursor -= 1;
     }
-    if (depth !== 0) return false;
-    return /\b(?:if|while|for|with)\s*$/.test(significant.slice(0, cursor + 1));
+    return depth === 0 && ['if', 'while', 'for', 'with'].includes(previousWord(cursor + 1));
   };
   const startsRegex = (index: number): boolean => {
-    const before = source.slice(0, index).trimEnd();
-    if (before === '' || followsControlCondition(index)) return true;
-    if (/[([{=,:;!&|?+*%^~<>-]$/.test(before)) return true;
-    return /\b(?:return|throw|case|delete|void|typeof|instanceof|in|of|yield|await)$/.test(before);
+    const cursor = previousSignificantIndex(index);
+    if (cursor < 0 || followsControlCondition(index)) return true;
+    if (/[([{=,:;!&|?+*%^~<>-]/.test(structural[cursor])) return true;
+    return [
+      'return',
+      'throw',
+      'case',
+      'delete',
+      'void',
+      'typeof',
+      'instanceof',
+      'in',
+      'of',
+      'yield',
+      'await',
+    ].includes(previousWord(index));
   };
 
   const scanCode = (start: number, stopAtBrace: boolean): number => {
@@ -130,7 +158,6 @@ function codeText(source: string): string {
             break;
           }
           escaped = !escaped && current === '\\';
-          if (current !== '\\') escaped = false;
           cursor += 1;
         }
         index = cursor;
@@ -148,10 +175,14 @@ function codeText(source: string): string {
             break;
           }
           escaped = !escaped && current === '\\';
-          if (current !== '\\') escaped = false;
           cursor += 1;
         }
-        if (/actorRef\s*:\s*$/.test(source.slice(0, literalStart))) copy(literalStart, cursor);
+        if (
+          /actorRef\s*:\s*$/.test(source.slice(0, literalStart)) ||
+          isSqlRawArgument(literalStart)
+        ) {
+          copy(literalStart, cursor);
+        }
         index = cursor;
         continue;
       }

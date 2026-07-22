@@ -218,6 +218,48 @@ describe('auditHubSyncWriters', () => {
     );
   });
 
+  it.each([
+    ['delete', "db.execute(sql.raw('delete from knowledge where id = 1'));"],
+    ['insert', "db.execute(sql.raw('insert into knowledge_edge (id) values (1)'));"],
+    ['update', "db.execute(sql.raw('update knowledge set name = x'));"],
+  ])('YUK-746 P2: detects sql.raw %s writes', async (_name, source) => {
+    const root = fixtureRepo({ 'src/sql-raw-writer.ts': source });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+    expect(findings).toHaveLength(1);
+  });
+
+  it('YUK-746 P2: detects internal marker inside sql.raw', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-marker.ts':
+        'db.execute(sql.raw("set local app.hub_sync_internal_apply = \'1\'"));',
+    });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'INTERNAL_APPLY_MARKER_BYPASS' }),
+    );
+  });
+
+  it.each([
+    ['ordinary string', "const value = 'delete from knowledge';"],
+    ['control delimiter', "if (sql.raw('select )')) /db.insert(knowledge)/.test(x);"],
+  ])('YUK-746 P2: keeps %s masked', async (_name, source) => {
+    const root = fixtureRepo({ 'src/sql-raw-non-writer.ts': source });
+    expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toEqual([]);
+  });
+
+  it('YUK-746 P2: catches real write after sql.raw delimiter condition', async () => {
+    const root = fixtureRepo({
+      'src/sql-raw-control-write.ts': "if (sql.raw('select )')) db.insert(knowledge).values({});",
+    });
+    const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
+    expect(findings).toContainEqual(
+      expect.objectContaining({ rule: 'UNINVENTORIED_TOPOLOGY_WRITER' }),
+    );
+  });
+
   it('YUK-746 review: scans production audit-prefixed files', async () => {
     const root = fixtureRepo({ 'scripts/audit-production.ts': 'db.insert(knowledge).values({});' });
     const findings = await auditHubSyncWriters({ root, allowlist: emptyAllowlist });
