@@ -29,6 +29,77 @@ function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
 }
 
+const PAPER_TIMING_STORAGE_VERSION = 1;
+const PAPER_TIMING_STORAGE_PREFIX = 'pf-paper-timing:v1';
+
+type PaperTimingState = {
+  version: 1;
+  session_id: string;
+  paper_id: string;
+  slots: Record<string, number>;
+};
+
+function safeTimingMs(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function timingStorageKey(sessionId: string, paperId: string): string {
+  return `${PAPER_TIMING_STORAGE_PREFIX}:${sessionId}:${paperId}`;
+}
+
+function readPaperTiming(sessionId: string, paperId: string): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(timingStorageKey(sessionId, paperId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<PaperTimingState>;
+    if (
+      parsed.version !== PAPER_TIMING_STORAGE_VERSION ||
+      parsed.session_id !== sessionId ||
+      parsed.paper_id !== paperId ||
+      !parsed.slots ||
+      typeof parsed.slots !== 'object'
+    )
+      return {};
+    return Object.fromEntries(
+      Object.entries(parsed.slots).flatMap(([key, value]) => {
+        const ms = safeTimingMs(value);
+        return ms === null ? [] : [[key, ms]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writePaperTiming(sessionId: string, paperId: string, slots: Record<string, number>): void {
+  try {
+    const persisted = readPaperTiming(sessionId, paperId);
+    const reconciled = { ...slots };
+    for (const [key, value] of Object.entries(persisted)) {
+      reconciled[key] = Math.max(reconciled[key] ?? 0, value);
+    }
+    window.localStorage.setItem(
+      timingStorageKey(sessionId, paperId),
+      JSON.stringify({
+        version: PAPER_TIMING_STORAGE_VERSION,
+        session_id: sessionId,
+        paper_id: paperId,
+        slots: reconciled,
+      }),
+    );
+  } catch {
+    // Timing capture is best-effort and must never block answering or submission.
+  }
+}
+
+function clearPaperTiming(sessionId: string, paperId: string): void {
+  try {
+    window.localStorage.removeItem(timingStorageKey(sessionId, paperId));
+  } catch {
+    // A completed paper stays completed even when browser storage is unavailable.
+  }
+}
+
 // Bounded wait for an in-flight draft to settle on exit before reporting: past this we treat
 // the save as unsaved rather than hang the exit indefinitely. A late success only over-warns
 // (a conservative, honesty-preserving direction), never a false 「进度保留」.
@@ -75,6 +146,7 @@ export function PfPaper({
   // dispatch must still match at settle, so a save outlives its paper as a no-op.
   const saveGen = useRef(0);
   const sessionRef = useRef<string | null>(null);
+  const [sessionReadyVersion, setSessionReadyVersion] = useState(0);
   const sessionOpenRef = useRef(false);
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
   // pending save, silently dropping A's last keystrokes while the UI still claims saved.
@@ -96,6 +168,32 @@ export function PfPaper({
   // Mutual exclusion with exitPaper: a submit and an exit must not both fire a terminal
   // transition (double onSubmitted/onExit). Synchronous, like exitingRef.
   const submittingRef = useRef(false);
+  const timingMsRef = useRef<Record<string, number>>({});
+  const timingSegmentRef = useRef<{ key: string; startedAt: number } | null>(null);
+  const submittedDuringAttemptsRef = useRef<Set<string>>(new Set());
+  const componentActiveRef = useRef(false);
+
+  const persistTiming = useCallback(() => {
+    const sid = sessionRef.current;
+    if (sid) writePaperTiming(sid, artifactId, timingMsRef.current);
+  }, [artifactId]);
+
+  const stopTimingSegment = useCallback(() => {
+    const segment = timingSegmentRef.current;
+    if (!segment) return;
+    timingSegmentRef.current = null;
+    const elapsed = Math.max(0, Math.trunc(performance.now() - segment.startedAt));
+    timingMsRef.current[segment.key] = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      (timingMsRef.current[segment.key] ?? 0) + elapsed,
+    );
+    persistTiming();
+  }, [persistTiming]);
+
+  const startTimingSegment = useCallback((key: string, submitted: boolean) => {
+    if (submitted || document.visibilityState === 'hidden') return;
+    timingSegmentRef.current = { key, startedAt: performance.now() };
+  }, []);
 
   // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
   // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
@@ -125,15 +223,21 @@ export function PfPaper({
     // Drop the old paper's in-flight tracking so a new paper's exit can't await A's saves
     // (their late settle is already a no-op via the bumped saveGen).
     inFlightSaves.current.clear();
+    timingMsRef.current = {};
+    timingSegmentRef.current = null;
+    submittedDuringAttemptsRef.current.clear();
   }, [artifactId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
   useEffect(() => {
+    componentActiveRef.current = true;
     const timers = saveTimers.current;
     return () => {
+      componentActiveRef.current = false;
+      stopTimingSegment();
       for (const t of Object.values(timers)) clearTimeout(t);
     };
-  }, []);
+  }, [stopTimingSegment]);
 
   // 已有 session 复用；没有则开卷即建（answer/submit 都需要 session_id）。
   useEffect(() => {
@@ -141,6 +245,7 @@ export function PfPaper({
     if (detail.session) {
       sessionRef.current = detail.session.id;
       sessionOpenRef.current = ['started', 'paused'].includes(detail.session.status);
+      timingMsRef.current = readPaperTiming(detail.session.id, artifactId);
       return;
     }
     // Guard the async open against a paper switch: capture the generation at dispatch and
@@ -152,6 +257,8 @@ export function PfPaper({
         if (saveGen.current !== gen) return;
         sessionRef.current = r.session_id;
         sessionOpenRef.current = true;
+        timingMsRef.current = readPaperTiming(r.session_id, artifactId);
+        setSessionReadyVersion((version) => version + 1);
       })
       .catch((e) => {
         if (saveGen.current !== gen) return;
@@ -181,6 +288,34 @@ export function PfPaper({
       }
     }
   }, [slots]);
+
+  // sessionReadyVersion intentionally retriggers this effect when a fresh paper's async session
+  // creation succeeds; the ref assignment alone is not reactive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionReadyVersion is an explicit reactive signal for sessionRef.current.
+  useEffect(() => {
+    if (slots.length === 0 || !sessionRef.current) return;
+    const current = slots[Math.min(pos, slots.length - 1)];
+    for (const slot of slots) {
+      if (slot.slot_state.submission?.submitted) delete timingMsRef.current[slotKey(slot)];
+    }
+    persistTiming();
+    startTimingSegment(slotKey(current), Boolean(current.slot_state.submission?.submitted));
+    return stopTimingSegment;
+  }, [pos, slots, sessionReadyVersion, persistTiming, startTimingSegment, stopTimingSegment]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stopTimingSegment();
+        return;
+      }
+      const current = slots[Math.min(pos, slots.length - 1)];
+      if (current)
+        startTimingSegment(slotKey(current), Boolean(current.slot_state.submission?.submitted));
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [pos, slots, startTimingSegment, stopTimingSegment]);
 
   const pauseCurrentSession = useCallback((keepalive = false) => {
     const sid = sessionRef.current;
@@ -349,6 +484,7 @@ export function PfPaper({
   // still in flight (a normal POST the teardown may cancel). Idempotent — the draft PUT is
   // last-write-wins, so re-sending the newest text is safe. Then pause the session.
   usePagehideTransition(() => {
+    stopTimingSegment();
     // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
     // other backstop for a session left open on teardown.
     try {
@@ -368,6 +504,7 @@ export function PfPaper({
     if (exitingRef.current || submittingRef.current) return;
     exitingRef.current = true;
     setExiting(true);
+    stopTimingSegment();
     // Fire any not-yet-fired debounce, then wait for ALL in-flight saves — those just fired
     // AND any POST already open from a debounce that fired moments ago (its timer key is
     // gone, so only in-flight tracking catches it). The host's 「进度保留」story then reflects
@@ -498,22 +635,27 @@ export function PfPaper({
     if (!sid || submittingRef.current || exitingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
+    stopTimingSegment();
     // Claim the terminal transition before any network request so pagehide cannot
     // race a completion attempt with a competing pause PATCH.
     sessionOpenRef.current = false;
     let completionCommitted = false;
     try {
       for (const s of slots) {
-        if (submittedKeys.has(slotKey(s))) continue;
+        const key = slotKey(s);
+        if (submittedKeys.has(key) || submittedDuringAttemptsRef.current.has(key)) continue;
         await submitPaperSlot(artifactId, {
           session_id: sid,
           question_id: s.question_id,
           part_ref: s.part_ref,
-          answer_md: answers[slotKey(s)] ?? '',
+          answer_md: answers[key] ?? '',
+          latency_ms: timingMsRef.current[key] ?? 0,
         });
+        submittedDuringAttemptsRef.current.add(key);
       }
       await endPaperSession(sid);
       completionCommitted = true;
+      clearPaperTiming(sid, artifactId);
       // Every slot is now submitted — no draft can still be unsaved, so drop any lingering
       // failure flags (and pending debounces) rather than leave the retry chip stuck.
       setSaveFailed({});
@@ -525,7 +667,19 @@ export function PfPaper({
       onSubmitted();
     } catch (e) {
       // The page is still alive, so let a retry or explicit exit own the session.
-      if (!completionCommitted) sessionOpenRef.current = true;
+      if (!completionCommitted) {
+        sessionOpenRef.current = true;
+        const current = slots[Math.min(pos, slots.length - 1)];
+        if (
+          current &&
+          componentActiveRef.current &&
+          document.visibilityState !== 'hidden' &&
+          !submittedKeys.has(slotKey(current)) &&
+          !submittedDuringAttemptsRef.current.has(slotKey(current))
+        ) {
+          startTimingSegment(slotKey(current), false);
+        }
+      }
       addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       submittingRef.current = false;
