@@ -1,5 +1,5 @@
 {
-  "src/capabilities/notes/server/mastery-progress-signal.ts": {
+  "src/capabilities/practice/server/mastery-progress-signal.ts": {
     "reason": "YUK-559 S2 seed — reads projection .theta_hat/.mastery to emit a note mastery-progress signal, without gating on provenance/isObserved/evidence_count. Acceptable TODAY because both borrow flags (GRAPH_LAPLACIAN_ENABLED / PREREQ_THETA_PROPAGATION_ENABLED) are dark, so getMasteryProjection returns zero inferred entries — the consumer can only ever see observed rows. Before either flag flips, this site must gate on isObserved / evidence_count.",
     "resolves_when": {
       "kind": "manual",

@@ -61,7 +61,7 @@ const ALLOWLIST_PATH = join(__dirname, 'audit-mastery-provenance-allowlist.json'
 // 同 audit:relations CONSUMER_REGISTRY 的已知 shape 限制）。
 export const TRACKED_CONSUMERS: readonly string[] = [
   'src/capabilities/agency/jobs/research_meeting_nightly.ts',
-  'src/capabilities/notes/server/mastery-progress-signal.ts',
+  'src/capabilities/practice/server/mastery-progress-signal.ts',
   'src/capabilities/knowledge/server/node-page.ts',
   'src/capabilities/knowledge/server/frontier-read.ts',
   'src/capabilities/knowledge/server/tree.ts',
