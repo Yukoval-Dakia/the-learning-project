@@ -16,10 +16,12 @@ import {
   PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_RENEWAL_CEILING_MS,
   PLACEMENT_VERIFY_POLL_MS,
+  PlacementStarterBudgetExhaustedError,
   acquirePlacementAttempt,
   assertPlacementAuthority,
   countEligiblePlacementQuestions,
   finishPlacementAttempt,
+  placementAttemptVerificationSettled,
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
   reserveAuthorizedPaidCall,
@@ -204,6 +206,68 @@ describe('placement attempt authority', () => {
       .where(eq(placement_starter_claim.id, CLAIM_ID));
     expect(afterThird.status).toBe('exhausted');
     expect(afterThird.exhausted_at).not.toBeNull();
+  });
+
+  it('throws a typed BudgetExhaustedError when known_cost has reached the budget (YUK-452 round-3)', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    // A prior settlement pushed known_cost up to the budget limit.
+    await testDb()
+      .update(placement_starter_claim)
+      .set({ status: 'retry_scheduled', known_cost_micro_usd: 1_000_000 })
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    await expect(
+      acquirePlacementAttempt(testDb(), {
+        claimId: CLAIM_ID,
+        pgBossJobId: JOB_ID,
+        deliveryNo: 2,
+        startedOn: now,
+        now,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterBudgetExhaustedError);
+  });
+
+  it('counts an active-duplicate question as settled/eligible without a quiz_verify event (YUK-452 round-3)', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    // An ACTIVE question (verified via some other path / a prior attempt) attached to this attempt,
+    // but with NO experimental:quiz_verify event — the outbox terminal_skips re-verifying an
+    // already-active question. It must settle the delivery and count toward eligibility rather than
+    // stranding reconcile until the deadline.
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'active-dup',
+        kind: 'short_answer',
+        prompt_md: 'p',
+        reference_md: 'a',
+        knowledge_ids: ['k-test'],
+        difficulty: 1,
+        source: 'quiz_gen',
+        source_ref: 'k-test',
+        draft_status: 'active',
+        metadata: {},
+        created_at: now,
+        updated_at: now,
+      });
+    await testDb().insert(placement_starter_attempt_question).values({
+      attempt_id: attempt.attemptId,
+      claim_id: CLAIM_ID,
+      question_id: 'active-dup',
+      canonical_hash: 'hash-dup',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      verification_status: 'authorized',
+      created_at: now,
+    });
+    expect(await placementAttemptVerificationSettled(testDb(), attempt.attemptId)).toBe(true);
+    expect(await countEligiblePlacementQuestions(testDb(), CLAIM_ID, attempt.attemptId)).toBe(1);
   });
 
   it('atomically supersedes expired authority rows during takeover', async () => {

@@ -85,6 +85,7 @@ import {
   type PlacementAttemptAuthority,
   type PlacementAttemptHeartbeat,
   PlacementStarterAdmissionError,
+  PlacementStarterBudgetExhaustedError,
   PlacementStarterDeadlineError,
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnderfillError,
@@ -103,6 +104,7 @@ import {
   reservePlacementGenerationCall,
   startPlacementAttemptHeartbeat,
 } from '@/server/question-supply/placement-starter-attempts';
+import { markPlacementStarterClaimTerminal } from '@/server/question-supply/placement-starter-store';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
@@ -1394,6 +1396,35 @@ export function buildQuizGenHandler(
         }
         console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
       } catch (err) {
+        // Pre-attempt budget exhaustion (codex P2-A): acquirePlacementAttempt threw
+        // PlacementStarterBudgetExhaustedError BEFORE placementAttempt was assigned, so the
+        // finishPlacementAttempt path below cannot terminalize. A budget-exhausted claim can never
+        // make progress (known_cost only grows), so terminalize it as 'exhausted' and COMPLETE the
+        // job (no re-throw) — otherwise pg-boss redelivers straight into the same throw until DLQ
+        // while the claim sits non-terminal forever (placement soft-stuck, sourcingNeeded only).
+        if (
+          !placementAttempt &&
+          err instanceof PlacementStarterBudgetExhaustedError &&
+          data.placement_starter_claim_id
+        ) {
+          const claimId = data.placement_starter_claim_id;
+          try {
+            await db.transaction((tx) =>
+              markPlacementStarterClaimTerminal(tx, claimId, 'exhausted', new Date(), {
+                class: 'budget_exhausted',
+                code: 'budget_exhausted',
+                message: 'placement starter budget exhausted before a delivery could be acquired',
+              }),
+            );
+          } catch (terminalizeErr) {
+            console.error(
+              '[quiz_gen] placement budget-exhausted terminalize failed for',
+              claimId,
+              terminalizeErr,
+            );
+          }
+          continue;
+        }
         // Terminalize the attempt if generation/verify failed BEFORE reconcile finalized it
         // (parse/exact-count/persist failure, admission block, fence-still-ours abort). Without
         // this the attempt stays 'running' holding a 20-min lease that blocks every pg-boss retry

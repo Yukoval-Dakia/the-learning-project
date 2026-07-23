@@ -36,6 +36,11 @@ export interface PlacementVerificationAuthority {
 }
 
 export class PlacementStarterAdmissionError extends Error {}
+// Budget exhaustion is a TERMINAL admission failure: no redelivery can make progress (known_cost
+// never decreases), so the handler terminalizes the claim as 'exhausted' and completes the job
+// rather than retrying into the same throw (YUK-452 round-3, codex P2-A). Subclass so existing
+// `instanceof PlacementStarterAdmissionError` checks + `/budget/` message assertions still hold.
+export class PlacementStarterBudgetExhaustedError extends PlacementStarterAdmissionError {}
 export class PlacementStarterAttemptActiveError extends Error {}
 export class PlacementStarterStaleAuthorityError extends Error {}
 export class PlacementStarterUnderfillError extends Error {}
@@ -111,7 +116,7 @@ export async function acquirePlacementAttempt(
       throw new PlacementStarterAdmissionError('placement paid delivery exceeds claim policy');
     }
     if (claim.known_cost_micro_usd >= claim.budget_limit_micro_usd) {
-      throw new PlacementStarterAdmissionError('placement starter budget exhausted');
+      throw new PlacementStarterBudgetExhaustedError('placement starter budget exhausted');
     }
 
     const [existing] = await tx
@@ -734,6 +739,14 @@ export async function countEligiblePlacementQuestions(
   claimId: string,
   attemptId?: string,
 ): Promise<number> {
+  // Eligibility = the question is authorized for this claim, currently POOL-VISIBLE (active, via the
+  // shared notDraftPredicate), not archived, and probes the claim's KC. An 'active' draft_status is
+  // itself the verification proof — nothing reaches active without passing a verify gate (quiz_verify,
+  // source_verify, or an explicit accept). The prior inner join on a fresh experimental:quiz_verify
+  // success event WRONGLY excluded active DUPLICATES that were verified via a different path (or a
+  // prior attempt): quiz_gen attaches such a live question to the attempt but the outbox terminal_skips
+  // re-verifying an already-active question, so no quiz_verify event is ever written for it
+  // (YUK-452 round-3, codex P2-B).
   const verified = await db
     .select({ questionId: placement_starter_attempt_question.question_id })
     .from(placement_starter_attempt_question)
@@ -741,15 +754,6 @@ export async function countEligiblePlacementQuestions(
     .innerJoin(
       placement_starter_claim,
       eq(placement_starter_claim.id, placement_starter_attempt_question.claim_id),
-    )
-    .innerJoin(
-      event,
-      and(
-        eq(event.subject_kind, 'question'),
-        eq(event.subject_id, question.id),
-        eq(event.action, 'experimental:quiz_verify'),
-        eq(event.outcome, 'success'),
-      ),
     )
     .where(
       and(
@@ -768,18 +772,27 @@ export async function placementAttemptVerificationSettled(
   db: Db | Tx,
   attemptId: string,
 ): Promise<boolean> {
+  // A question's verification is SETTLED when it is already pool-visible (active — verified by
+  // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event,
+  // YUK-452 round-3, codex P2-B) OR it carries a terminal quiz_verify verdict (any non-error
+  // outcome — pass/needs_review/fail all settle a draft). Only a still-draft question with no
+  // terminal verdict keeps the delivery polling.
   const rows = await db
     .select({
       questionId: placement_starter_attempt_question.question_id,
-      terminal: sql<boolean>`EXISTS (
-        SELECT 1 FROM ${event}
-        WHERE ${event.subject_kind} = 'question'
-          AND ${event.subject_id} = ${placement_starter_attempt_question.question_id}
-          AND ${event.action} = 'experimental:quiz_verify'
-          AND ${event.outcome} IS DISTINCT FROM 'error'
+      terminal: sql<boolean>`(
+        ${notDraftPredicate(question.draft_status)}
+        OR EXISTS (
+          SELECT 1 FROM ${event}
+          WHERE ${event.subject_kind} = 'question'
+            AND ${event.subject_id} = ${placement_starter_attempt_question.question_id}
+            AND ${event.action} = 'experimental:quiz_verify'
+            AND ${event.outcome} IS DISTINCT FROM 'error'
+        )
       )`,
     })
     .from(placement_starter_attempt_question)
+    .innerJoin(question, eq(question.id, placement_starter_attempt_question.question_id))
     .where(eq(placement_starter_attempt_question.attempt_id, attemptId));
   return rows.length > 0 && rows.every((row) => row.terminal);
 }
