@@ -495,6 +495,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const refetchTurns = useCallback(async () => {
     const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
     const replayed = replayToMessages(res.turns ?? []);
+    // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
+    // while a NEW send is streaming; a full setMessages(replayed) here would drop the locally
+    // tracked streaming message (its aiId is not yet in the server replay), and send()'s later
+    // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
+    // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
+    // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
+    if (sendingRef.current) return;
     setMessages(replayed);
     // A revert may have removed the turn that owned the active teaching skill / focused
     // knowledge — reset both, then recompute from the refreshed list (the same scan the
@@ -516,9 +523,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             { method: 'POST' },
           );
         } catch (err) {
-          // The revert POST itself failed — nothing landed. Surface it as a revert failure;
-          // the per-message 撤回 button re-enables (pending cleared) so the user can retry it.
-          setError(err instanceof Error ? err.message : '撤回失败');
+          // The revert POST itself failed — nothing landed. A cascade REFUSAL body ({ ok:false,
+          // refusal, reason }) carries no top-level message, so ApiError.message is only the generic
+          // "409 Conflict"; the actionable explanation (irreversible / conflict / …) lives in
+          // details.reason. Prefer it so the user sees WHY and doesn't blindly retry an irreversible
+          // revert (YUK-497 wave-2, codex P2). The per-message 撤回 button re-enables (pending
+          // cleared) so a genuinely retriable failure can still be retried.
+          const refusalReason =
+            err instanceof ApiError && typeof err.details?.reason === 'string'
+              ? err.details.reason
+              : undefined;
+          setError(refusalReason ?? (err instanceof Error ? err.message : '撤回失败'));
           return;
         }
         // Revert LANDED. A refetch failure from here must NOT read as '撤回失败' — the change
@@ -565,6 +580,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     sendingRef.current = true;
     lastUserMessageRef.current = text;
     setError(null);
+    // Clear the "revert landed, refresh failed" banner when starting a new send: otherwise it stays
+    // set (only retryRefresh success / a new revert clears it) and its suppression of the generic
+    // error banner (`error && !refreshFailed`) would mask a failure from THIS send (YUK-497 wave-2).
+    setRefreshFailed(false);
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);

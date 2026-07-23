@@ -36,23 +36,23 @@ export const CopilotCheckpointRevertErrorSchema = z.union([
   CopilotCheckpointRevertRefusalSchema,
 ]);
 
-export const CopilotCheckpointRevertResponseSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(true),
-    status: z.enum(['reverted', 'already_reverted']),
-    checkpoint_event_id: z.string(),
-    compensation_event_ids: z.array(z.string()),
-    reverted: z
-      .object({
-        snapshots_restored: z.number().int().nonnegative(),
-        structural_rows_archived: z.number().int().nonnegative(),
-        event_layer_compensated: z.number().int().nonnegative(),
-        total_nodes: z.number().int().nonnegative(),
-      })
-      .optional(),
-  }),
-  CopilotCheckpointRevertRefusalSchema,
-]);
+// Success-only body for the 200 response. The handler NEVER returns an ok:false refusal at 200 —
+// refusals are 404 (no_checkpoint) or 409 (all others) via CopilotCheckpointRevertErrorSchema — so
+// the 200 schema must not advertise a refusal shape to OpenAPI consumers (YUK-497 wave-2).
+export const CopilotCheckpointRevertSuccessSchema = z.object({
+  ok: z.literal(true),
+  status: z.enum(['reverted', 'already_reverted']),
+  checkpoint_event_id: z.string(),
+  compensation_event_ids: z.array(z.string()),
+  reverted: z
+    .object({
+      snapshots_restored: z.number().int().nonnegative(),
+      structural_rows_archived: z.number().int().nonnegative(),
+      event_layer_compensated: z.number().int().nonnegative(),
+      total_nodes: z.number().int().nonnegative(),
+    })
+    .optional(),
+});
 
 export const CopilotChatStreamResponseSchema = z.string();
 

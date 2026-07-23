@@ -8,7 +8,7 @@ import {
   CopilotChatStreamResponseSchema,
   CopilotCheckpointParamsSchema,
   CopilotCheckpointRevertErrorSchema,
-  CopilotCheckpointRevertResponseSchema,
+  CopilotCheckpointRevertSuccessSchema,
   CopilotDurableRunResponseSchema,
   CopilotNudgeCompanionResponseSchema,
   CopilotNudgesResponseSchema,
@@ -65,7 +65,7 @@ export const copilotCapability = defineCapability({
         // return the cascade refusal envelope, NOT the bare {error,message} the spread implies;
         // override those two statuses with the union that also admits the route's ApiError bodies.
         responses: {
-          200: CopilotCheckpointRevertResponseSchema,
+          200: CopilotCheckpointRevertSuccessSchema,
           ...API_ERROR_RESPONSES,
           404: CopilotCheckpointRevertErrorSchema,
           409: CopilotCheckpointRevertErrorSchema,

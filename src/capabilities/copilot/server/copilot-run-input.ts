@@ -100,15 +100,19 @@ export function assembleConversationHistory(
   budget: CopilotHistoryBudget,
   pinnedHeaderMd?: string,
 ): CopilotHistoryTurn[] {
-  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice). Explicit ALLOWLIST
-  // of the two conversational roles (not a `!== 'tombstone'` denylist) so a future turn role
-  // can never slip through the `as 'user' | 'ai'` cast below into the run input.
+  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice). Explicit ALLOWLIST of the
+  // two conversational roles (not a `!== 'tombstone'` denylist) as a type-guard predicate, so the
+  // compiler narrows `role` here and enforces the invariant at the `role: t.role` assignment below —
+  // widening the filter to admit another role becomes a compile error, not a silent cast (YUK-497 wave-2).
   const recent = turns
-    .filter((turn) => turn.role === 'user' || turn.role === 'ai')
+    .filter(
+      (turn): turn is CopilotTurn & { role: 'user' | 'ai' } =>
+        turn.role === 'user' || turn.role === 'ai',
+    )
     .slice(-budget.maxTurns);
   // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
-    role: t.role as 'user' | 'ai',
+    role: t.role,
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
   }));
   const pinned: CopilotHistoryTurn | null =

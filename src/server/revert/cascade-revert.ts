@@ -279,6 +279,33 @@ function classifyRow(row: EventRow): RevertableEffect {
 }
 
 /**
+ * copilotAskOnly allowlist (YUK-497 wave-2): which event rows a per-utterance Copilot ask revert may
+ * compensate. It MUST stay a subset of classifyRow's reversible set for the actions a copilot ask
+ * turn produces, or a legitimately-reversible turn gets rewritten to irreversible and every revert
+ * of it 409s:
+ *   - the root copilot_user_ask anchor, copilot_reply, and the state_snapshot anchor;
+ *   - propose / rate — event-layer proposals/votes a copilot ask emits via the propose and rate tools
+ *     (a `correct` retract is the complete reversal — EVENT_LAYER_ACTIONS). Scoped to these two, NOT the
+ *     whole event-layer set (teach_message / chip_trigger / grading_checkpoint belong to other lanes);
+ *   - a non-archive generate(knowledge_edge): an ABSENT edge_op means create everywhere in the
+ *     codebase, so gate on `!== 'archive'` (mirrors classifyRow, also admits supersede) — a strict
+ *     `=== 'create'` wrongly refuses legacy/supersede generate events.
+ * Exported for unit coverage.
+ */
+export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean {
+  return (
+    (isRoot && row.action === COPILOT_USER_ASK_ACTION) ||
+    row.action === COPILOT_REPLY_ACTION ||
+    row.action === STATE_SNAPSHOT_ACTION ||
+    row.action === 'propose' ||
+    row.action === 'rate' ||
+    (row.action === 'generate' &&
+      row.subject_kind === 'knowledge_edge' &&
+      (row.payload as { edge_op?: string } | null)?.edge_op !== 'archive')
+  );
+}
+
+/**
  * Orchestrate a cascade revert from `checkpointEventId`.
  *
  * Collects the downstream closure, classifies every node + the root, refuses the
@@ -367,14 +394,7 @@ export async function orchestrateCascadeRevert(
   if (opts?.copilotAskOnly) {
     for (let index = 0; index < orderedRows.length; index += 1) {
       const row = orderedRows[index];
-      const allowed =
-        (row.id === checkpointEventId && row.action === COPILOT_USER_ASK_ACTION) ||
-        row.action === COPILOT_REPLY_ACTION ||
-        row.action === STATE_SNAPSHOT_ACTION ||
-        (row.action === 'generate' &&
-          row.subject_kind === 'knowledge_edge' &&
-          (row.payload as { edge_op?: string } | null)?.edge_op === 'create');
-      if (!allowed)
+      if (!copilotAskRevertAllows(row, row.id === checkpointEventId))
         effects[index] = { eventId: row.id, action: row.action, reversibility: 'irreversible' };
     }
   }
@@ -712,9 +732,11 @@ async function acquireSnapshotStateLocks(
   tx: Tx,
   payloads: Iterable<StateSnapshotExperimentalPayload>,
 ): Promise<void> {
-  // Per-KC / per-material ids under the shared `fsrs` namespace — the SAME key space the
-  // grading path (mastery/state.ts fsrs:knowledge) and the merge retire pair lock, so the
-  // conflict guard's FOR-UPDATE reads never race a concurrent state writer on the same row.
+  // Per-KC / per-material ids under the shared `fsrs` namespace — matching the key space the
+  // merge-attribution retire pair uses (fsrs:knowledge:<id>). The global learning-state write lock
+  // G (acquired above) is the primary guard against concurrent writers; the regular grading path
+  // (updateThetaForAttempt / upsertMasteryState) only holds G, not these per-KC locks. These
+  // per-row advisory locks are defense-in-depth for the conflict guard's FOR-UPDATE reads.
   const ids = new Set<string>();
   for (const payload of payloads) {
     for (const snap of payload.theta_snapshots) {

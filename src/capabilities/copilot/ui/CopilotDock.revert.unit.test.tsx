@@ -56,4 +56,33 @@ describe('CopilotDock checkpoint revert', () => {
     expect(source).toContain('const restoreSkillStateFromReplay');
     expect(source).toContain('restoreSkillStateFromReplay(replayed)');
   });
+
+  it('refetchTurns does not clobber a live streaming send (wave-2 F3)', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
+      'utf8',
+    );
+    // A full setMessages(replayed) during an active send would orphan the streaming aiId; guard on
+    // the synchronous single-flight ref so the in-flight reply survives the revert refetch.
+    const refetchBody = source.slice(
+      source.indexOf('const refetchTurns'),
+      source.indexOf('const revertCheckpoint'),
+    );
+    expect(refetchBody).toContain('if (sendingRef.current) return;');
+    // The guard must precede the clobbering replace statement (match the `;` to skip the comment).
+    expect(refetchBody.indexOf('if (sendingRef.current) return;')).toBeLessThan(
+      refetchBody.indexOf('setMessages(replayed);'),
+    );
+  });
+
+  it('surfaces the cascade refusal reason and clears refreshFailed on send (wave-2 F4)', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
+      'utf8',
+    );
+    // F4a — a 409 refusal body has no top-level message; prefer ApiError.details.reason.
+    expect(source).toContain("err instanceof ApiError && typeof err.details?.reason === 'string'");
+    // F4b — a new send clears the refresh-failed banner so it can't mask this send's error.
+    expect(source).toContain('setRefreshFailed(false)');
+  });
 });

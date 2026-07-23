@@ -854,7 +854,16 @@ async function runCopilotChatImpl(
       session_id: sessionId,
       reply_event_id: replyEventId,
       ...(userAskEventId
-        ? { user_ask_event_id: userAskEventId, checkpoint_event_id: userAskEventId }
+        ? {
+            user_ask_event_id: userAskEventId,
+            // Suppress the revert checkpoint anchor when this ask_check materialized a
+            // source='teaching_check' draft question row: cascade revert only compensates the
+            // ask/reply event chain, NOT that question row, so exposing the Dock revert button
+            // would leave an orphan draft in the pool/review after a "successful" revert. Keep
+            // user_ask_event_id for provenance (YUK-497 wave-2, codex P2 — smallest fix; cascade
+            // scope is deliberately NOT expanded to question rows).
+            ...(materializedQuestion ? {} : { checkpoint_event_id: userAskEventId }),
+          }
         : {}),
       skill_turn: skillTurn,
     };

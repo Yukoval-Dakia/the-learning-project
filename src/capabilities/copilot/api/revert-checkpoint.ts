@@ -123,7 +123,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         if (result.refusal === 'irreversible') {
           body.irreversible_event_ids = result.irreversibleEventIds;
         } else if (result.refusal === 'legacy_snapshot') {
-          body.ref = { kind: 'theta', kc_id: result.ref.kcId };
+          body.ref = { kind: result.ref.kind, kc_id: result.ref.kcId };
         } else if (result.refusal === 'conflict') {
           body.conflict_ref = {
             kind: result.conflictRef.kind,
