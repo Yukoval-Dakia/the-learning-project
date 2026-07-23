@@ -36,7 +36,10 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    expect(SCHEMA_VERSION).toBe('4.14');
+    // 4.14 → 4.15 (YUK-452 Phase B): placement_starter_claim/attempt/attempt_question/
+    // cost_component 四张冷启 admission/成本台账表入 FK_ORDER（丢了即 restore 后预算控制
+    // 失忆 + 付费审计断链）。NEW FK_ORDER tables 必 bump。
+    expect(SCHEMA_VERSION).toBe('4.15');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
@@ -84,9 +87,12 @@ describe('export constants', () => {
     // subject_trait → subject_trait_journal → subject_trait_binding →
     // subject_control_journal → subject_name_claim），placed last as the newest
     // additive cluster（loose text-ref 无 enforced FK，语义父子排序保持 restore 可读）。
-    expect(FK_ORDER.length).toBe(42);
+    // 42 → 46 (YUK-452 Phase B): added placement_starter_claim → placement_starter_attempt
+    // → placement_starter_attempt_question / placement_starter_cost_component（硬 FK 父先
+    // 子后），placed last as the newest additive cluster。
+    expect(FK_ORDER.length).toBe(46);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('subject_name_claim');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('placement_starter_cost_component');
   });
 
   it('FK_ORDER includes YUK-599 subject 控制面六表（authored 配置 + journal，承重非排除）', () => {

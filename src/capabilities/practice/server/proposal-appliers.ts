@@ -53,6 +53,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 import { initialFsrsState } from './fsrs';
@@ -239,7 +240,8 @@ export async function acceptVariantQuestionProposal(
   const flip = projectionIsWriter('mistake_variant');
 
   await db.transaction(async (tx) => {
-    // YUK-499 — lock the draft mistake_variant row FOR UPDATE as the FIRST statement, before the new
+    await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
+    // YUK-499 — lock the draft mistake_variant row FOR UPDATE before the new
     // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
     // has no version column), so the lock is the sole serializer: it stops a concurrent
     // dismiss/verify/retract of the same mv from interleaving between this accept's rate event and
@@ -420,6 +422,7 @@ export async function acceptQuestionDraftProposal(
     // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
     // material_fsrs_state / mastery_state writer and the cascade revert).
     await acquireLearningStateWriteLock(tx);
+    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
     await tx
       .update(question)
       .set({ draft_status: 'active', updated_at: now })

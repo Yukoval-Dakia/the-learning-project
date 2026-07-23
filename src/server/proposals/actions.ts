@@ -250,7 +250,7 @@ export type AcceptAiProposalOpts = {
   // claim (canonical field names). Presence routes the conjecture accept through
   // the corrected_by_owner branch (→ mem0 CORE write). The 备课台 route/UI wiring
   // that populates this is a neighboring task; this shell only consumes it.
-  corrected_payload?: { claim_md?: string; cause_category?: string; knowledge_id?: string };
+  corrected_payload?: { claim_md: string };
 } & (
   | { decision?: 'accept'; new_relation_type?: never }
   | { decision: 'reverse'; new_relation_type?: never }

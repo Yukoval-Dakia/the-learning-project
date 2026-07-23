@@ -42,6 +42,7 @@ import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
@@ -450,6 +451,14 @@ export async function runSourceVerify(
       // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
+      // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
+      // the question row lock, matching placement paid admission (advisory lock → plain SELECT) and
+      // proposal-appliers. The prior order (row lock first, supply lock only inside the promote
+      // branch) let a concurrent /placement/start observe this draft as still-cold while this tx
+      // waited on the advisory lock, then promote after paid work was enqueued — a double-supply
+      // race. Locking row.knowledge_ids (pre-tx snapshot) is safe: on attribution drift the version
+      // guard below throws and pg-boss reruns against the fresh scope.
+      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       // The checks above ran against `row.version`. Cross-KC reconciliation bumps that version
       // under the same row lock; a mismatch makes this verdict stale, so abort before writing a
       // terminal event/promotion. The catch records a retriable outcome='error' and pg-boss reruns
@@ -467,6 +476,7 @@ export async function runSourceVerify(
         );
       }
       if (promote) {
+        // Supply scope already locked at the top of this tx (G→row order above).
         await tx
           .update(question)
           .set({ draft_status: 'active', updated_at: now })

@@ -131,7 +131,7 @@ export type StartPlacementSessionParams = {
  *   events with session_id=<this id> through the shared submit path.
  */
 export async function startPlacementSession(
-  db: Db,
+  db: Db | Tx,
   params: StartPlacementSessionParams = {},
 ): Promise<{ sessionId: string }> {
   return db.transaction(async (tx) => {

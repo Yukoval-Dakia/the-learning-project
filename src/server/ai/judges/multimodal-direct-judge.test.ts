@@ -1,7 +1,7 @@
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runMultimodalDirectJudge } from './multimodal-direct-judge';
+import { parseMultimodalDirectResult, runMultimodalDirectJudge } from './multimodal-direct-judge';
 import type { JudgeQuestionRow } from './question-contract';
 
 // runMultimodalDirectJudge is pure-logic once runTaskFn + imageFetchFn are
@@ -373,5 +373,112 @@ describe('runMultimodalDirectJudge — unsupported / error paths', () => {
     });
     expect(result.coarse_outcome).toBe('unsupported');
     expect(result.feedback_md).toContain('LLM call failed');
+  });
+});
+
+// YUK-591 — SDK structured-output migration. The judge now threads an outputFormat
+// (built from the registry-declared MultimodalDirectLlmOutput) and does three-state
+// dispatch: structured_output present → Zod-parse it; absent → char-scan text path.
+describe('runMultimodalDirectJudge — structured output (YUK-591)', () => {
+  const validStructured = {
+    coarse_outcome: 'correct' as const,
+    score: 0.9,
+    feedback_md: 'structured feedback',
+    evidence: { observed_md: '结构化证据', matched_points: ['p1'], missing_points: [] },
+    confidence: 0.8,
+  };
+
+  it('threads a json_schema outputFormat into ctx', async () => {
+    let ctx: unknown;
+    await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmResponse('correct', 0.9);
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    const outputFormat = (ctx as { outputFormat?: { type?: string; schema?: unknown } })
+      .outputFormat;
+    expect(outputFormat?.type).toBe('json_schema');
+    expect(outputFormat?.schema).toBeDefined();
+  });
+
+  it('parses structured_output through the schema, ignoring raw text', async () => {
+    // structured_output disagrees with the text on purpose: the structured value
+    // must win (endpoint honoured outputFormat), proving the dispatch reads it.
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async () => ({
+        text: JSON.stringify({ coarse_outcome: 'incorrect', score: 0 }),
+        structured_output: validStructured,
+      }),
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score).toBe(0.9);
+    expect(result.feedback_md).toBe('structured feedback');
+    expect(result.evidence_json).toMatchObject({
+      observed_md: '结构化证据',
+      matched_points: ['p1'],
+    });
+  });
+
+  it('returns unsupported when structured_output fails schema validation', async () => {
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async () => ({
+        text: '',
+        structured_output: { coarse_outcome: 'bogus', score: 9, confidence: 5 },
+      }),
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('did not match MultimodalDirectLlmOutput schema');
+  });
+
+  it('falls back to the char-scan text parse when structured_output is null', async () => {
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      // null is the "absent" sentinel — an endpoint that ignored outputFormat.
+      runTaskFn: async () => ({ ...llmResponse('partial', 0.5), structured_output: null }),
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(result.coarse_outcome).toBe('partial');
+  });
+
+  describe('parseMultimodalDirectResult — three-state dispatch', () => {
+    it('prefers structured_output over text', () => {
+      const parsed = parseMultimodalDirectResult({
+        text: 'not json',
+        structured_output: validStructured,
+      });
+      expect(parsed.coarse_outcome).toBe('correct');
+    });
+
+    it('char-scans text when structured_output is undefined', () => {
+      const parsed = parseMultimodalDirectResult({
+        text: `noise ${JSON.stringify(validStructured)} trailer`,
+      });
+      expect(parsed.coarse_outcome).toBe('correct');
+    });
+
+    it('throws (→ caller unsupported) on a non-JSON text with no structured_output', () => {
+      expect(() => parseMultimodalDirectResult({ text: 'no json here' })).toThrow(
+        'did not contain a JSON object',
+      );
+    });
   });
 });

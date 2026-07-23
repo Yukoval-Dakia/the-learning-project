@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // Search-grounded QuizGen (T-SQ) — Q5 + Q6 handler.
 //
 // docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §3 / §5.
@@ -65,6 +66,16 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+  releaseAuthorizedPaidCall,
+  reserveAuthorizedPaidCall,
+  settleAuthorizedPaidCall,
+} from '@/server/question-supply/placement-starter-attempts';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
+import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
   checksForTier,
@@ -79,6 +90,7 @@ import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
 
 export interface QuizVerifyJobData {
   question_ids: string[];
+  placement_authorities?: PlacementVerificationAuthority[];
 }
 
 // Loose run seam (mirrors variant_verify): the handler only consumes
@@ -189,6 +201,7 @@ export interface RunQuizVerifyParams {
   db: Db;
   questionId: string;
   runTaskFn: RunTaskFn;
+  placementAuthority?: PlacementVerificationAuthority;
 }
 
 export interface RunQuizVerifyResult {
@@ -206,7 +219,10 @@ export interface RunQuizVerifyResult {
  * chained verify event guard. Promotes draft→active + FSRS-enrolls on pass.
  */
 export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQuizVerifyResult> {
-  const { db, questionId, runTaskFn } = params;
+  const { db, questionId, runTaskFn, placementAuthority } = params;
+  if (placementAuthority) {
+    await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+  }
 
   const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   const row = rows[0];
@@ -316,6 +332,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     source_refs: meta.source_refs,
     self_copy_safety: meta.copy_safety,
     generation_method: meta.generation_method,
+    ...(placementAuthority ? { placement_authority: placementAuthority } : {}),
     // tier 3 only — the real grounded material for the `material_grounding` check.
     ...(materialDoc
       ? { material: { title: materialDoc.title, body_md: materialDoc.body_md } }
@@ -333,12 +350,47 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
+  // Primary QuizVerifyTask reservation bookkeeping (YUK-452 review): release on a
+  // reserved-but-unsettled throw so the reservation does not leak into known_cost.
+  const primaryInvocationId = randomUUID();
+  const primaryReservationKey = `${placementAuthority?.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`;
+  let primaryPaidSettled = false;
   try {
+    if (placementAuthority) {
+      await db.transaction(async (tx) =>
+        reserveAuthorizedPaidCall(tx, {
+          authority: placementAuthority,
+          kind: 'quiz_verify',
+          reservationKey: primaryReservationKey,
+        }),
+      );
+    }
     const result = await runTaskFn('QuizVerifyTask', input, {
       subjectProfile,
       ...(verifySkills ? { skills: verifySkills } : {}),
     });
     taskResult = result;
+    if (placementAuthority) {
+      if (!result.task_run_id) {
+        throw new PlacementStarterAdmissionError(
+          'placement quiz_verify paid invocation missing task_run_id',
+        );
+      }
+      const settlement = await db.transaction(async (tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority: placementAuthority,
+          reservationKey: primaryReservationKey,
+          providerTaskRunId: result.task_run_id as string,
+          costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+        }),
+      );
+      primaryPaidSettled = true;
+      if (settlement.overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement quiz_verify paid invocation exceeded authorized reservation',
+        );
+      }
+    }
     const parsed = parseQuizVerifyOutput(result.text);
 
     // §4 / §5 — deterministic n-gram overlap over the self-reported snippets,
@@ -434,9 +486,17 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // (Promise.resolve(undefined)) exactly as the prior sequential `? await ... : undefined` did, so
     // solveResult/teachingResult and every downstream veto/promote predicate are unchanged. Both
     // check functions internally catch their own runTaskFn/parse errors and resolve to an
-    // 'unsupported' verdict rather than rejecting, so racing them is safe (neither can leave the
-    // other's Promise.all settle blocked or produce an unhandled rejection).
-    const [solveResult, teachingResult] = await Promise.all([
+    // 'unsupported' verdict for NON-placement failures. On the placement path they now REJECT with a
+    // PlacementStarter admission/stale error (budget/authority). YUK-452 review (codex P2): with
+    // Promise.all a reject from one leg would abandon the sibling promise, which keeps its paid call
+    // settling OUT OF BAND (and could surface as an unhandled rejection). Use allSettled so BOTH legs
+    // are fully awaited — each settles or releases its own reservation inside its own await — then
+    // deterministically re-throw a leg's blocking error (solver first). Concurrency (wall-clock = max,
+    // not sum) is preserved.
+    if (placementAuthority && freeChecksPass) {
+      await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+    }
+    const [solveSettled, teachingSettled] = await Promise.allSettled([
       freeChecksPass && tierChecks.includes('solve_check')
         ? runSolveCheck(
             {
@@ -450,7 +510,53 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               knowledge_ids: row.knowledge_ids,
               metadata: metadataRaw,
             } satisfies SolveCheckQuestion,
-            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile }, db },
+            {
+              runTaskFn,
+              profile: { id: subjectProfile.id, full: subjectProfile },
+              db,
+              placementAuthority,
+              ...(placementAuthority
+                ? {
+                    beforePaidCall: async (kind, invocationId) => {
+                      await db.transaction(async (tx) =>
+                        reserveAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          kind: 'solution_check',
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
+                        }),
+                      );
+                    },
+                    settlePaidCall: async (kind, invocationId, paidResult) => {
+                      if (!paidResult.task_run_id) {
+                        throw new PlacementStarterAdmissionError(
+                          `placement ${kind} paid invocation missing task_run_id`,
+                        );
+                      }
+                      const settlement = await db.transaction(async (tx) =>
+                        settleAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
+                          providerTaskRunId: paidResult.task_run_id as string,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                        }),
+                      );
+                      if (settlement.overCap) {
+                        throw new PlacementStarterAdmissionError(
+                          `placement ${kind} paid invocation exceeded authorized reservation`,
+                        );
+                      }
+                    },
+                    releasePaidCall: async (kind, invocationId) => {
+                      await db.transaction(async (tx) =>
+                        releaseAuthorizedPaidCall(tx, {
+                          claimId: placementAuthority.claim_id,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
+                        }),
+                      );
+                    },
+                  }
+                : {}),
+            },
           )
         : Promise.resolve(undefined),
       freeChecksPass && tierChecks.includes('teaching_quality')
@@ -464,10 +570,64 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               rubric_json: row.rubric_json,
             } satisfies TeachingQualityQuestion,
             // YUK-606 — db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
-            { runTaskFn, db, profile: { id: subjectProfile.id, full: subjectProfile } },
+            {
+              runTaskFn,
+              db,
+              profile: { id: subjectProfile.id, full: subjectProfile },
+              placementAuthority,
+              ...(placementAuthority
+                ? {
+                    beforePaidCall: async (invocationId) => {
+                      await db.transaction(async (tx) =>
+                        reserveAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          kind: 'teaching_quality',
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
+                        }),
+                      );
+                    },
+                    settlePaidCall: async (invocationId, paidResult) => {
+                      if (!paidResult.task_run_id) {
+                        throw new PlacementStarterAdmissionError(
+                          'placement teaching_quality paid invocation missing task_run_id',
+                        );
+                      }
+                      const settlement = await db.transaction(async (tx) =>
+                        settleAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
+                          providerTaskRunId: paidResult.task_run_id as string,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                        }),
+                      );
+                      if (settlement.overCap) {
+                        throw new PlacementStarterAdmissionError(
+                          'placement teaching_quality paid invocation exceeded authorized reservation',
+                        );
+                      }
+                    },
+                    releasePaidCall: async (invocationId) => {
+                      await db.transaction(async (tx) =>
+                        releaseAuthorizedPaidCall(tx, {
+                          claimId: placementAuthority.claim_id,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
+                        }),
+                      );
+                    },
+                  }
+                : {}),
+            },
           )
         : Promise.resolve(undefined),
     ]);
+    // Re-throw a placement blocking error from EITHER leg (solver first, deterministic). Both legs
+    // were fully awaited above, so neither is still spending; a non-placement failure never rejects
+    // (the legs internally decay it to 'unsupported'), so a rejection here is always a placement
+    // admission/stale error that must propagate to the failure-bottom / handler (YUK-452 review).
+    if (solveSettled.status === 'rejected') throw solveSettled.reason;
+    if (teachingSettled.status === 'rejected') throw teachingSettled.reason;
+    const solveResult = solveSettled.value;
+    const teachingResult = teachingSettled.value;
     // Layered veto (Q1): solveCheckBlocks reads compared_by to pick the semantic vs
     // normalize flag. undefined (short-circuited / no solve_check in set) → never blocks.
     // A semantic confident-fail vetoes; a normalize (exact) fail vetoes by default but
@@ -585,6 +745,17 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
+      // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
+      // the question row lock, matching placement paid admission (which takes this advisory lock
+      // then a plain SELECT) and proposal-appliers. The prior order (row lock, then supply lock only
+      // inside the promote branch) let a concurrent /placement/start read the draft as still-cold
+      // while this tx waited on the advisory lock, then promote after it enqueued paid work — a
+      // double-supply race. Locking row.knowledge_ids (pre-tx snapshot) is safe: if attribution
+      // drifted, the version guard below throws and pg-boss reruns against the fresh scope.
+      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      if (placementAuthority) {
+        await assertPlacementAuthority(tx, placementAuthority, now);
+      }
       // Serialize the terminal verdict against cross-KC duplicate reconciliation. The model and
       // deterministic checks above ran against `row.version`; if attribution changed meanwhile,
       // this verdict is stale. Throwing writes a retriable outcome='error' event in the catch and
@@ -603,6 +774,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         );
       }
       if (promote) {
+        // Supply scope already locked at the top of this tx (G→row order above).
         // Promote draft→active.
         await tx
           .update(question)
@@ -671,6 +843,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             updated_at: now,
           })
           .where(eq(question.id, questionId));
+      }
+
+      if (placementAuthority) {
+        await assertPlacementAuthority(tx, placementAuthority, now);
       }
 
       await writeEvent(tx, {
@@ -819,6 +995,33 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       copy_safety_verdict: copySafetyVerdict,
     };
   } catch (err) {
+    // Release the primary QuizVerifyTask reservation if it reserved but never settled (the provider
+    // call threw). Idempotent / RETENTION-safe once settled (YUK-452 review).
+    if (placementAuthority && !primaryPaidSettled) {
+      try {
+        await db.transaction(async (tx) =>
+          releaseAuthorizedPaidCall(tx, {
+            claimId: placementAuthority.claim_id,
+            reservationKey: primaryReservationKey,
+          }),
+        );
+      } catch (releaseErr) {
+        console.error(
+          '[quiz_verify] primary reservation release failed for',
+          questionId,
+          releaseErr,
+        );
+      }
+    }
+    // A placement stale-authority OR admission failure is about the CLAIM's fence/budget, not the
+    // question's quality — skip the failure-bottom (which would stamp a spurious verification.status
+    // ='failed' on a possibly-good draft) and re-throw so the placement handler terminalizes the
+    // attempt (YUK-452 review).
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     // failure-bottom: best-effort mark verification.status='failed' on the row +
     // write a failure event, then re-throw so pg-boss retries. The draft stays
     // draft_status='draft' (never promoted) — the catch path NEVER promotes.
@@ -894,8 +1097,19 @@ export function buildQuizVerifyHandler(
         console.warn('[quiz_verify] job missing question_ids', job.id);
         continue;
       }
+      const placementAuthorities = new Map(
+        (job.data.placement_authorities ?? []).map((authority) => [
+          authority.question_id,
+          authority,
+        ]),
+      );
       for (const questionId of questionIds) {
-        const result = await runQuizVerify({ db, questionId, runTaskFn });
+        const result = await runQuizVerify({
+          db,
+          questionId,
+          runTaskFn,
+          placementAuthority: placementAuthorities.get(questionId),
+        });
         console.log(`[quiz_verify] ${questionId} -> ${result.status}`);
       }
     }

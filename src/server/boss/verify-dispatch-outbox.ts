@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
@@ -24,6 +25,15 @@ const verifyDispatchIntentPayloadSchema = z.object({
   verifier_kind: verifyKindSchema,
   question_id: z.string().min(1),
   supply_trace: z.record(z.string(), z.unknown()).optional(),
+  placement_authority: z
+    .object({
+      claim_id: z.string().min(1),
+      attempt_id: z.string().min(1),
+      question_id: z.string().min(1),
+      verification_authority_epoch: z.string().uuid(),
+      fencing_token: z.string().uuid(),
+    })
+    .optional(),
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
@@ -32,6 +42,7 @@ export type EnqueueVerifyFn = (
   verifier: VerifyKind,
   questionIds: string[],
   options?: object,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ) => Promise<void>;
 
 export interface VerifyDispatchResult {
@@ -73,17 +84,56 @@ function isStructurallyDispatchableIntent(payload: AnyColumn) {
   );
 }
 
-function stableEventId(kind: 'intent' | 'complete', questionId: string, verifier: VerifyKind) {
-  const digest = createHash('sha256').update(`${verifier}\0${questionId}`).digest('hex');
+function placementAuthorityIdentity(authority?: PlacementVerificationAuthority): string {
+  return authority
+    ? `\0${authority.claim_id}\0${authority.attempt_id}\0${authority.verification_authority_epoch}`
+    : '';
+}
+
+// Field-wise equality (YUK-452 review): the persisted authority is compared after a JSONB
+// round-trip + zod parse, which does NOT preserve object key order, so a raw JSON.stringify of the
+// two objects could differ purely by key order and raise a false "conflict". Compare the known
+// fields explicitly instead. All fields are strings (no Date serialization concern).
+function placementAuthorityEquals(
+  a: PlacementVerificationAuthority | undefined,
+  b: PlacementVerificationAuthority | undefined,
+): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.claim_id === b.claim_id &&
+    a.attempt_id === b.attempt_id &&
+    a.question_id === b.question_id &&
+    a.verification_authority_epoch === b.verification_authority_epoch &&
+    a.fencing_token === b.fencing_token
+  );
+}
+
+function stableEventId(
+  kind: 'intent' | 'complete',
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  const digest = createHash('sha256')
+    .update(`${verifier}\0${questionId}${placementAuthorityIdentity(authority)}`)
+    .digest('hex');
   return `verify-dispatch-${kind}-v${VERIFY_DISPATCH_VERSION_TAG}-${digest}`;
 }
 
-function intentEventId(questionId: string, verifier: VerifyKind) {
-  return stableEventId('intent', questionId, verifier);
+function intentEventId(
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  return stableEventId('intent', questionId, verifier, authority);
 }
 
-function completeEventId(questionId: string, verifier: VerifyKind) {
-  return stableEventId('complete', questionId, verifier);
+function completeEventId(
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  return stableEventId('complete', questionId, verifier, authority);
 }
 
 function metadataIsArchived(metadata: unknown): boolean {
@@ -112,6 +162,7 @@ export async function writeVerifyDispatchIntent(
     questionId: string;
     verifier: VerifyKind;
     supplyTrace?: unknown;
+    placementAuthority?: PlacementVerificationAuthority;
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -120,9 +171,28 @@ export async function writeVerifyDispatchIntent(
     verifier_kind: input.verifier,
     question_id: input.questionId,
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
+    ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
   });
+  const id = intentEventId(input.questionId, input.verifier, input.placementAuthority);
+  if (input.placementAuthority) {
+    const [existing] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, id))
+      .limit(1);
+    if (existing) {
+      const parsed = verifyDispatchIntentPayloadSchema.safeParse(existing.payload);
+      if (
+        !parsed.success ||
+        !placementAuthorityEquals(parsed.data.placement_authority, input.placementAuthority)
+      ) {
+        throw new Error('verify dispatch intent placement authority conflict');
+      }
+      return id;
+    }
+  }
   return writeEvent(db, {
-    id: intentEventId(input.questionId, input.verifier),
+    id,
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_INTENT_ACTION,
@@ -140,7 +210,7 @@ function dispatchCompletionEvent(
   input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
 ): WriteEventInput {
   return {
-    id: completeEventId(intent.question_id, intent.verifier_kind),
+    id: completeEventId(intent.question_id, intent.verifier_kind, intent.placement_authority),
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_COMPLETE_ACTION,
@@ -155,6 +225,7 @@ function dispatchCompletionEvent(
       recovery: input.recovery,
       disposition: input.disposition,
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
+      ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
     },
     created_at: input.now,
     ingest_at: input.now,
@@ -238,6 +309,7 @@ export async function dispatchPendingVerifyIntents(
                 eq(completion.action, VERIFY_DISPATCH_COMPLETE_ACTION),
                 eq(completion.subject_id, event.subject_id),
                 sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
+                sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
               ),
             ),
         ),
@@ -316,11 +388,23 @@ export async function dispatchPendingVerifyIntents(
       for (const verifier of verifyKindSchema.options) {
         const group = eligible.filter((intent) => intent.verifier_kind === verifier);
         if (group.length === 0) continue;
-        await input.enqueue(
-          verifier,
-          group.map((intent) => intent.question_id),
-          { db: fromPgBossDrizzleTx(tx) },
+        const placementAuthorities = group.flatMap((intent) =>
+          intent.placement_authority ? [intent.placement_authority] : [],
         );
+        if (placementAuthorities.length > 0) {
+          await input.enqueue(
+            verifier,
+            group.map((intent) => intent.question_id),
+            { db: fromPgBossDrizzleTx(tx) },
+            placementAuthorities,
+          );
+        } else {
+          await input.enqueue(
+            verifier,
+            group.map((intent) => intent.question_id),
+            { db: fromPgBossDrizzleTx(tx) },
+          );
+        }
         for (const intent of group) {
           completionEvents.push(
             dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),

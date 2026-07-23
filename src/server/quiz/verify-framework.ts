@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -29,10 +30,16 @@
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+} from '@/server/question-supply/placement-starter-attempts';
 
 // ---------- check identifiers ----------
 //
@@ -170,6 +177,23 @@ export interface SolveCheckOptions {
   solverModelOverride?: string;
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
   imageFetchFn?: SolveCheckImageFetchFn;
+  placementAuthority?: PlacementVerificationAuthority;
+  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  beforePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
+  ) => Promise<void>;
+  settlePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
+    result: { task_run_id?: string; cost_usd?: number },
+  ) => Promise<void>;
+  // Called when a leg RESERVED (beforePaidCall) but the paid call never settled — the provider
+  // call threw. Must durably clear the reservation (RETENTION-safe: a no-op once settled).
+  releasePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
+  ) => Promise<void>;
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -444,12 +468,27 @@ export async function runSolveCheck(
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   });
 
+  const assertCurrentAuthority = async (): Promise<void> => {
+    if (!opts.placementAuthority || !opts.db) return;
+    await opts.db.transaction(async (tx: Tx) =>
+      (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+        tx,
+        opts.placementAuthority as PlacementVerificationAuthority,
+      ),
+    );
+  };
+
   // Solve the question independently. Input shape mirrors solution-generate.ts:103.
   let solverFinalAnswer: string;
   let solverEquivalents: string[];
+  // Reservation bookkeeping (YUK-452 review): if beforePaidCall reserves budget but the provider
+  // call throws before settlePaidCall, release the reservation so it does not leak into known_cost.
+  let solverPaidInvocationId: string | undefined;
+  let solverPaidSettled = false;
   try {
     const meta = (question.metadata ?? {}) as Record<string, unknown>;
     const input = {
+      ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
       prompt_md: question.prompt_md,
       kind: question.kind,
       subject_id: opts.profile.id,
@@ -508,8 +547,14 @@ export async function runSolveCheck(
       taskInput = { text: JSON.stringify(input), images };
     }
     const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
+    await assertCurrentAuthority();
+    solverPaidInvocationId = randomUUID();
+    await opts.beforePaidCall?.('solution_check', solverPaidInvocationId);
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
-    recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
+    recordRun(solverRun);
+    await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
+    solverPaidSettled = true;
+    // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
     // Label reproduces the pre-existing error string byte-identically (OCR PR #716).
@@ -523,6 +568,20 @@ export async function runSolveCheck(
       ? eq.filter((e): e is string => typeof e === 'string')
       : [];
   } catch (err) {
+    // Release the solver reservation if we reserved but never settled (provider call threw). Runs
+    // for placement errors too — idempotent / RETENTION-safe once settled (YUK-452 review).
+    if (solverPaidInvocationId && !solverPaidSettled) {
+      try {
+        await opts.releasePaidCall?.('solution_check', solverPaidInvocationId);
+      } catch (releaseErr) {
+        console.error('[solve-check] solver reservation release failed', releaseErr);
+      }
+    }
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     // No usable solver answer → no signal. Conservative: do not fail the question.
     return {
       verdict: 'unsupported',
@@ -584,10 +643,40 @@ export async function runSolveCheck(
   }
   // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
   // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
+  const semanticInvocationId = randomUUID();
+  // YUK-452 review F1 — runSemanticJudge's own catch-all converts ANY throw into an
+  // 'unsupported' judge result, which would let an admission/stale failure on this paid
+  // leg fall through to the conservative pass below (over-cap promoting through
+  // 'unsupported'). Capture the blocking error out-of-band and re-throw it AFTER
+  // runSemanticJudge returns, so this leg blocks exactly like the solver/teaching-quality
+  // legs. Cost/run provenance is unaffected: settleAuthorizedPaidCall commits the actual
+  // cost + run id in its own transaction BEFORE throwing. Holder object (not a bare let)
+  // because TS control-flow analysis does not see closure assignments.
+  const semanticBlocking: { err: Error | null } = { err: null };
+  let semanticPaidSettled = false;
   const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
-    const r = await opts.runTaskFn(kind, input, ctx);
-    recordRun(r);
-    return r;
+    try {
+      await assertCurrentAuthority();
+      const authorizedInput =
+        opts.placementAuthority && input !== null && typeof input === 'object'
+          ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
+          : input;
+      const r = await opts.runTaskFn(kind, authorizedInput, ctx);
+      recordRun(r);
+      if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
+        await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
+        semanticPaidSettled = true;
+      }
+      return r;
+    } catch (err) {
+      if (
+        err instanceof PlacementStarterStaleAuthorityError ||
+        err instanceof PlacementStarterAdmissionError
+      ) {
+        semanticBlocking.err = err;
+      }
+      throw err;
+    }
   };
   // Treat the question's reference answer as the rubric/reference and the solver's
   // independent answer as the "submission". If the semantic judge CONFIDENTLY says
@@ -614,7 +703,24 @@ export async function runSolveCheck(
     subjectProfile: opts.profile.full,
     runTaskFn: recordingRunTaskFn,
   };
+  await assertCurrentAuthority();
+  await opts.beforePaidCall?.('semantic_judge', semanticInvocationId);
   const judged = await runSemanticJudge(semParams);
+  // Release the semantic reservation if the judge's paid call never settled — runSemanticJudge's
+  // catch-all swallows a provider throw into an 'unsupported' result (no settle, no rethrow), which
+  // would otherwise leak the reservation into known_cost. Before the blocking rethrow so both the
+  // swallowed-error and placement-error paths clear it. RETENTION-safe no-op once settled (YUK-452 review).
+  if (opts.beforePaidCall && !semanticPaidSettled) {
+    try {
+      await opts.releasePaidCall?.('semantic_judge', semanticInvocationId);
+    } catch (releaseErr) {
+      console.error('[solve-check] semantic reservation release failed', releaseErr);
+    }
+  }
+  // YUK-452 review F1 — an admission/stale failure captured inside the recording
+  // runTaskFn was swallowed into `judged`'s 'unsupported' shape by runSemanticJudge's
+  // catch-all; re-throw it here so it blocks instead of decaying to conservative pass.
+  if (semanticBlocking.err) throw semanticBlocking.err;
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
   const confidentlyEquivalent =
@@ -706,6 +812,15 @@ export interface TeachingQualityOptions {
     // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
     full: any;
   };
+  placementAuthority?: PlacementVerificationAuthority;
+  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  beforePaidCall?: (invocationId: string) => Promise<void>;
+  settlePaidCall?: (
+    invocationId: string,
+    result: { task_run_id?: string; cost_usd?: number },
+  ) => Promise<void>;
+  // Release a reserved-but-unsettled paid call (provider call threw). RETENTION-safe no-op once settled.
+  releasePaidCall?: (invocationId: string) => Promise<void>;
 }
 
 // Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
@@ -819,8 +934,13 @@ export async function runTeachingQualityCheck(
   });
 
   let parsed: unknown;
+  // Reservation bookkeeping (YUK-452 review): release a reserved-but-unsettled paid call if the
+  // provider throws before settlePaidCall, so it does not leak into known_cost.
+  let teachingPaidInvocationId: string | undefined;
+  let teachingPaidSettled = false;
   try {
     const input = {
+      ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
       prompt_md: question.prompt_md,
       kind: question.kind,
       reference_md: question.reference_md,
@@ -835,10 +955,34 @@ export async function runTeachingQualityCheck(
     };
     // YUK-606 — db 进 ctx：与 solve_check 支路（:436）同款，runner 观测写依赖它。
     const ctx = { db: opts.db, subjectProfile: opts.profile.full };
+    if (opts.placementAuthority) {
+      await opts.db.transaction(async (tx: Tx) =>
+        (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+          tx,
+          opts.placementAuthority as PlacementVerificationAuthority,
+        ),
+      );
+    }
+    teachingPaidInvocationId = randomUUID();
+    await opts.beforePaidCall?.(teachingPaidInvocationId);
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
     recordRun(run);
+    await opts.settlePaidCall?.(teachingPaidInvocationId, run);
+    teachingPaidSettled = true;
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
+    if (teachingPaidInvocationId && !teachingPaidSettled) {
+      try {
+        await opts.releasePaidCall?.(teachingPaidInvocationId);
+      } catch (releaseErr) {
+        console.error('[teaching-quality] reservation release failed', releaseErr);
+      }
+    }
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     return skipped(
       'unsupported',
       `teaching-quality judge did not produce usable output: ${err instanceof Error ? err.message : String(err)}`,

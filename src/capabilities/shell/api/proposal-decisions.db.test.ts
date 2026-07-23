@@ -63,6 +63,31 @@ async function seedNodeProposal(id = 'node_p1'): Promise<void> {
   });
 }
 
+async function seedConjectureProposal(id = 'conjecture_p1'): Promise<void> {
+  await writeAiProposal(testDb(), {
+    id,
+    actor_ref: 'research_meeting',
+    payload: {
+      kind: 'conjecture',
+      target: { subject_kind: 'mind_model', subject_id: 'k1' },
+      reason_md: 'recurrent evidence',
+      evidence_refs: [],
+      proposed_change: {
+        claim_md: '原判断',
+        knowledge_id: 'k1',
+        cause_category: 'concept_misunderstanding',
+        confidence: 0.7,
+        recurrence_count: 2,
+        probe_md: '请解释这一步。',
+        probe_reference_md: '参考解释',
+        discriminating: true,
+        predicted_p: 0.3,
+        baseline_p_at_induction: 0.6,
+      },
+    },
+  });
+}
+
 function decide(id: string, body: unknown): Promise<Response> {
   return POST(
     new Request(`http://test/api/proposals/${id}/decisions`, {
@@ -88,6 +113,69 @@ type DecisionBody = {
 describe('POST /api/proposals/[id]/decisions', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('threads a strict corrected claim through the canonical accept route atomically', async () => {
+    await seedConjectureProposal();
+
+    const response = await decide('conjecture_p1', {
+      decision: 'accept',
+      corrected_payload: { claim_md: '  改写后的判断  ' },
+    });
+
+    expect(response.status).toBe(201);
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'conjecture_p1')));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payload).toMatchObject({
+      corrected_by_owner: true,
+      corrected_claim_md: '改写后的判断',
+    });
+    expect((await response.json()) as DecisionBody).toMatchObject({
+      proposal_status: 'accepted',
+      result: { corrected_by_owner: true, weakness_confirmed: false },
+    });
+  });
+
+  it('rejects corrected payload outside accept and unknown corrected keys', async () => {
+    await seedConjectureProposal();
+    for (const body of [
+      { decision: 'dismiss', corrected_payload: { claim_md: '改写' } },
+      { decision: 'accept', corrected_payload: { claim_md: '改写', knowledge_id: 'other' } },
+    ]) {
+      const response = await decide('conjecture_p1', body);
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it('rejects corrected_payload on a non-conjecture proposal (400, never a silent drop)', async () => {
+    // codex P2 (PR #1039): only the conjecture applier consumes corrected_payload; any
+    // other kind would terminalize the proposal and silently discard the rewrite behind
+    // a success response. The canonical route must reject up front instead.
+    await seedEdgeProposal();
+
+    const response = await decide('edge_p1', {
+      decision: 'accept',
+      corrected_payload: { claim_md: '改写' },
+    });
+    expect(response.status).toBe(400);
+
+    // No rate event was written — the proposal is still undecided. Correlate via the
+    // canonical accept contract (subject_kind='event' + subject_id=proposalId), not
+    // only the causal-chain field.
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          eq(event.subject_kind, 'event'),
+          eq(event.subject_id, 'edge_p1'),
+        ),
+      );
+    expect(rows).toHaveLength(0);
   });
 
   it('creates an immutable decision resource with a readable Location', async () => {

@@ -111,6 +111,8 @@ export interface QuestionSupplyTarget {
      * compositeParentOnly hard filter on the retrieval side). Absent → unconstrained.
      */
     compositeParentOnly?: boolean;
+    /** Placement starter attempts must return this exact batch length. */
+    exactCount?: number;
   };
   /**
    * Supply-v2 Phase A compatibility envelope. Optional on the interface so legacy/manual
@@ -118,6 +120,10 @@ export interface QuestionSupplyTarget {
    * target factory populates it.
    */
   context?: SupplyTargetContextV1T;
+  placementStarter?: {
+    claimId: string;
+    semanticGoalRevisionId: string;
+  };
 }
 
 export type SupplyGapKind =
@@ -125,6 +131,7 @@ export type SupplyGapKind =
   | 'source_quality'
   | 'diagnostic'
   | 'format_diversity'
+  | 'placement_starter'
   // YUK-533 — a confusable KC pair (A↔B, from the confusable_with misconception mesh)
   // lacks a contrast/discrimination item. Emitted by the parallel discovery source
   // confusable-contrast-discovery.ts (NOT scanCoverageGaps — it scans the misconception
@@ -266,6 +273,7 @@ export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
 // 是最硬的缺口（KC 根本无题，选题层无可挑），故权重最高。
 const GAP_BASE_PRIORITY: Record<SupplyGapKind, number> = {
   frontier_zero: 1.0,
+  placement_starter: 1.0,
   diagnostic: 0.7,
   // YUK-533 — confusable contrast sits between diagnostic and source_quality: a real
   // misconfusion signal worth a targeted item, but a content-quality enhancement rather

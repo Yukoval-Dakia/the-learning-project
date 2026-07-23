@@ -12,6 +12,7 @@ import {
 } from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
+import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
@@ -144,7 +145,11 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // rate-limit friendly.
   //
   await createJobQueue(boss, 'quiz_gen', EXPIRE_AGENT);
-  await boss.work('quiz_gen', { pollingIntervalSeconds: 2, batchSize: 1 }, buildQuizGenHandler(db));
+  await boss.work(
+    'quiz_gen',
+    { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
+    buildQuizGenHandler(db),
+  );
 
   // Q5 + Q6 (same wave §3 / §5): QuizVerifyTask — chained behind quiz_gen, which
   // sends `quiz_verify` { question_ids } after writing draft questions. The
@@ -208,8 +213,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     verifier: 'quiz_verify' | 'source_verify',
     questionIds: string[],
     options?: object,
+    placementAuthorities?: PlacementVerificationAuthority[],
   ) => {
-    await boss.send(verifier, { question_ids: questionIds }, options);
+    await boss.send(
+      verifier,
+      {
+        question_ids: questionIds,
+        ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+      },
+      options,
+    );
   };
   await createOrUpdateQueue(boss, VERIFY_DISPATCH_RECOVERY_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(

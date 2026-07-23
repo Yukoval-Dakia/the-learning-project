@@ -1,3 +1,5 @@
+import { MultimodalDirectLlmOutput } from '@/core/capability/judges/multimodal_direct';
+import { StepsLlmOutput } from '@/core/capability/judges/steps';
 import {
   BloomLevel,
   MetaCause,
@@ -9,6 +11,7 @@ import { GoalScopeIntentSchema } from '@/kernel/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { ToolContext } from '@/server/ai/tools/types';
 import type { SubjectProfile } from '@/subjects/profile';
+import type { ZodTypeAny } from 'zod';
 import { QuestionAuthorIntentSchema } from './task-intents';
 
 // AI Task 注册表（Phase 1 骨架）。
@@ -88,6 +91,17 @@ export interface TaskDef {
    * 修订）。'auto' = 后端可自由调用；'manual_rescue_only' = 仅用户手动触发。
    */
   invocation?: 'auto' | 'manual_rescue_only';
+  /**
+   * YUK-591 — the task's SDK structured-output contract. When set, the handler
+   * builds `outputFormat: zodToJsonSchemaOutputFormat(structuredOutputSchema)`
+   * (src/server/ai/output-format.ts) and threads it into runTask's YUK-299 seam,
+   * so a structured-output-capable endpoint constrains the model to this shape
+   * (with a Zod second-pass on the returned `structured_output`; endpoints that
+   * ignore it — mimo — fall back to the handler's char-scan text parse, so the
+   * declaration is a zero-loss opt-in). Judge tasks (`*JudgeTask`) MUST declare
+   * this or be allowlisted — enforced by scripts/audit-structured-judge.ts (§7).
+   */
+  structuredOutputSchema?: ZodTypeAny;
   /** Copilot dispatch is deny-by-default; only literal true is reachable. */
   copilot?: {
     intentSchema: import('zod').ZodType<unknown>;
@@ -1308,12 +1322,14 @@ export const tasks = {
   },
   StepsJudgeTask: {
     kind: 'StepsJudgeTask',
-    // NOTE (YUK-576): "structured output" here means the JSON *product*
-    // (StepsLlmOutput parsed from text) — the SDK-native outputFormat migration
-    // for this judge is a tracked follow-up, deliberately NOT bundled with the
-    // retry change (one behavior change per sensor path at a time).
+    // YUK-591 — migrated to the SDK-native outputFormat seam (YUK-299): the judge
+    // declares StepsLlmOutput here, builds outputFormat from it, and does the
+    // three-state dispatch (structured_output present → safeParse; endpoint
+    // ignores it → char-scan text parse). The prior YUK-576 note ("structured
+    // output = the JSON product, SDK-native migration deferred") is now resolved.
     description:
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
+    structuredOutputSchema: StepsLlmOutput,
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
     // YUK-576 — transientRetries: 1: one same-target in-process retry on a fast
@@ -1338,11 +1354,13 @@ export const tasks = {
   },
   MultimodalDirectJudgeTask: {
     kind: 'MultimodalDirectJudgeTask',
-    // NOTE (YUK-576): "structured output" here means the JSON *product* — the
-    // SDK-native outputFormat migration is a tracked follow-up (see
-    // StepsJudgeTask note above).
+    // YUK-591 — migrated to the SDK-native outputFormat seam (YUK-299), same shape
+    // as StepsJudgeTask above: declares MultimodalDirectLlmOutput, builds
+    // outputFormat from it, three-state dispatch on the result. Prior YUK-576
+    // "SDK-native migration deferred" note resolved.
     description:
       'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
+    structuredOutputSchema: MultimodalDirectLlmOutput,
     defaultProvider: 'xiaomi',
     // multimodal: mimo-v2.5 reads prompt figures + student answer photos, outputs
     // a holistic JudgeResultV2 fragment. Mirrors StepsJudgeTask (same vision model).

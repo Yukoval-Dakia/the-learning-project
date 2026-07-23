@@ -22,12 +22,13 @@
 // 不能自动派的路由 → 记 status='manual'（emit + log，不动作），等用户/UI 接手。
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { and, eq, gte, sql } from 'drizzle-orm';
-import { buildSupplyTrace } from './evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
@@ -128,6 +129,8 @@ export type EnqueueFn = (
   data: Record<string, unknown>,
 ) => Promise<string | null>;
 
+export type EnqueueQuizGenFn = (data: QuizGenJobData) => Promise<string | null>;
+
 async function defaultEnqueue(
   queue: DispatchQueue,
   data: Record<string, unknown>,
@@ -149,7 +152,7 @@ async function defaultEnqueue(
  * 真发后台 job，不该让一个未满足的缺口被永久锁死——只有真发过 job 才进入 cooldown 静默期。
  */
 async function recentDispatchExists(
-  db: Db,
+  db: Db | Tx,
   fingerprint: string,
   cooldownDays: number,
 ): Promise<boolean> {
@@ -191,6 +194,12 @@ export interface DispatchDeps {
    * 落回 sourcing_web。测试注入 true 验证 jyeoo-supported 目标派到 jyeoo_fetch 队列。
    */
   jyeooFetchAvailable?: () => boolean;
+  /** Typed quiz_gen seam for claim-owned transactional sends. */
+  enqueueQuizGen?: EnqueueQuizGenFn;
+  /** Test seam for validating the fully augmented trace immediately before parsing. */
+  transformSupplyTrace?: (trace: SupplyTraceV1T) => unknown;
+  /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
+  atomic?: boolean;
 }
 
 /**
@@ -256,7 +265,7 @@ function chooseAutoRoute(
  * 选定 route list、stop condition、satisfied/skipped/failed 状态）。
  */
 export async function dispatchSupplyTarget(
-  db: Db,
+  db: Db | Tx,
   target: QuestionSupplyTarget,
   deps: DispatchDeps = {},
 ): Promise<DispatchResult> {
@@ -283,6 +292,7 @@ export async function dispatchSupplyTarget(
       : null;
 
   let result: DispatchResult;
+  let persistedSupplyTrace: SupplyTraceV1T | null = null;
 
   if (!anchorKid) {
     // 防御：扫描器永远给至少一个 KC，但 dispatch 不该在无锚时盲发。
@@ -338,33 +348,60 @@ export async function dispatchSupplyTarget(
       // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
-      const data: Record<string, unknown> = {
-        trigger: 'knowledge',
+      const commonData = {
+        trigger: 'knowledge' as const,
         ref_id: anchorKid,
         count: target.desiredCount,
         knowledge_id: anchorKid,
-        // 题型 hint（'any' → 不 pin）；扫描器的 kind 字段（forwarded：sourcing→kinds, quiz_gen→kind）。
         ...(target.kind && target.kind !== 'any' ? { kind: target.kind } : {}),
         ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
         ...(target.constraints.kindRequired ? { kind_required: true } : {}),
-        ...(queue === 'quiz_gen' ? { generation_method: generationMethodFor(target) } : {}),
-        // YUK-697 — jyeoo_fetch handler maps the target's difficulty band → jyeoo --dg token
-        // (deterministic 难度补带, design §2.2). Only forwarded on the jyeoo_fetch queue.
-        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
-        // YUK-533 — confusable_contrast targets carry BOTH KCs (the A↔B pair). anchorKid
-        // (knowledgeIds[0]) is the primary attribution anchor as usual; forward the full
-        // pair so the quiz_gen handler can probe the A-vs-B boundary. Only confusable
-        // targets are multi-KC, so single-KC targets are byte-identical to before.
-        // phase-deferred: the quiz_gen handler's contrast-aware generation (reading
-        // knowledge_ids to write a discrimination item) is a flag-flip increment — until
-        // then this rides the EXISTING dispatch path (cooldown + per-run cap intact, no
-        // G-COST bypass) so the seam is data-complete. Context: QuizGenJobData.knowledge_ids
-        // in src/server/boss/handlers/quiz_gen.ts.
         ...(target.knowledgeIds.length > 1 ? { knowledge_ids: target.knowledgeIds } : {}),
+      };
+      const placementTrace =
+        dispatchTrace && target.placementStarter
+          ? SupplyTraceV1.parse(
+              (deps.transformSupplyTrace ?? ((trace) => trace))({
+                ...dispatchTrace,
+                claim_id: target.placementStarter.claimId,
+                semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
+              }),
+            )
+          : dispatchTrace;
+      persistedSupplyTrace = placementTrace;
+      const quizGenData: QuizGenJobData | null =
+        queue === 'quiz_gen'
+          ? {
+              ...commonData,
+              generation_method: generationMethodFor(target),
+              ...(target.constraints.exactCount !== undefined
+                ? { exact_count: target.constraints.exactCount }
+                : {}),
+              ...(target.placementStarter
+                ? {
+                    placement_starter_claim_id: target.placementStarter.claimId,
+                    semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
+                  }
+                : {}),
+              ...(placementTrace ? { supply_trace: placementTrace } : {}),
+            }
+          : null;
+      const nonQuizData = {
+        ...commonData,
+        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
         ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
       };
       try {
-        const jobId = await enqueue(queue, data);
+        let jobId: string | null;
+        if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
+          if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
+          jobId = await deps.enqueueQuizGen(quizGenData);
+        } else if (quizGenData) {
+          const { trigger, ref_id, ...rest } = quizGenData;
+          jobId = await enqueue(queue, { trigger, ref_id, ...rest });
+        } else {
+          jobId = await enqueue(queue, nonQuizData);
+        }
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,
@@ -376,6 +413,7 @@ export async function dispatchSupplyTarget(
           reason: target.reason,
         };
       } catch (err) {
+        if (deps.atomic) throw err;
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,
@@ -407,7 +445,7 @@ export async function dispatchSupplyTarget(
   // 派一次又写一次事件即恢复 cooldown），故保留此权衡；收紧需把 cooldown 凭证写进专用持久表
   // （架构 doc 规划的后续 phase）或对 dispatched 路径的 writeEvent 做有限重试。
   try {
-    const supplyTrace = traceFor(result.chosenRoute);
+    const supplyTrace = persistedSupplyTrace ?? traceFor(result.chosenRoute);
     await writeEvent(db, {
       id: newId(),
       actor_kind: 'agent',
@@ -444,6 +482,7 @@ export async function dispatchSupplyTarget(
       },
     });
   } catch (eventErr) {
+    if (deps.atomic) throw eventErr;
     // 留痕失败 non-fatal：job 状态已定（result），observability 缺一条不该让派发 reject。
     console.error(
       `[question-supply] observability writeEvent failed for target ${target.id} (status=${result.status}); dispatch result stands:`,
@@ -463,7 +502,7 @@ export async function dispatchSupplyTarget(
  * 让批量扫描的其余缺口照常推进，不被一个瞬时错全盘 abort。
  */
 export async function dispatchSupplyTargets(
-  db: Db,
+  db: Db | Tx,
   targets: QuestionSupplyTarget[],
   deps: DispatchDeps = {},
 ): Promise<DispatchResult[]> {
