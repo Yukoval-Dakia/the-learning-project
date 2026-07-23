@@ -6682,6 +6682,31 @@ button.chip:disabled:hover {
   color: var(--ink);
   min-width: 0;
 }
+.tb-claim-edit {
+  display: grid;
+  gap: var(--s-2);
+}
+.tb-claim-edit label {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.tb-claim-edit textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 5.5rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: var(--s-2);
+  color: var(--ink);
+  background: var(--paper);
+  font: inherit;
+  line-height: 1.5;
+}
+.tb-claim-edit textarea:focus {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 .tb-basis {
   margin: 0;
   line-height: 1.5;

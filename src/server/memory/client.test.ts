@@ -7,7 +7,7 @@ import { createMem0Config, createMemoryClient } from './client';
 // which mocks the OUTER project surface). Every method is a no-op default with a
 // spread override for whichever one a given test drives.
 function mem0LikeMock(
-  overrides: Partial<Record<'add' | 'search' | 'delete' | 'history' | 'get', Mock>> = {},
+  overrides: Partial<Record<'add' | 'search' | 'delete' | 'history' | 'get' | 'getAll', Mock>> = {},
 ) {
   return {
     add: vi.fn(async () => ({ results: [] })),
@@ -15,6 +15,7 @@ function mem0LikeMock(
     delete: vi.fn(async () => ({ message: 'ok' })),
     history: vi.fn(async () => []),
     get: vi.fn(async () => null),
+    getAll: vi.fn(async () => ({ results: [] })),
     ...overrides,
   };
 }
@@ -174,6 +175,38 @@ describe('createMemoryClient', () => {
     expect(seenConfig?.llm.config.apiKey).toBe('zhipu-key');
     expect(seenConfig?.embedder.config.apiKey).toBe('dashscope-key');
     expect(Object.hasOwn(process.env, 'ANTHROPIC_BASE_URL')).toBe(hadAnthropicBaseUrl);
+  });
+
+  it('replays a stable projection identity without adding a duplicate verbatim memory', async () => {
+    const stored = new Map<
+      string,
+      { id: string; memory: string; metadata: Record<string, unknown> }
+    >();
+    let next = 1;
+    const memory = mem0LikeMock({
+      getAll: vi.fn(async ({ filters }: { filters: Record<string, unknown> }) => ({
+        results: [...stored.values()].filter(
+          (item) => item.metadata.projection_key === filters.projection_key,
+        ),
+      })),
+      add: vi.fn(async (text: string, config: { metadata: Record<string, unknown> }) => {
+        const item = { id: `m${next++}`, memory: text, metadata: config.metadata };
+        stored.set(item.id, item);
+        return { results: [item] };
+      }),
+    });
+    const client = createMemoryClient({ env, memoryFactory: () => memory });
+    const metadata = { source: 'conjecture_edit', event_id: 'rate_1' };
+
+    const first = await client.addVerbatimOnce('改写后的判断', metadata, 'conjecture-edit:rate_1');
+    // Simulates pg-boss redelivery after the first add succeeded but the process died
+    // before job acknowledgement. The retry must discover and return the same row.
+    const replay = await client.addVerbatimOnce('改写后的判断', metadata, 'conjecture-edit:rate_1');
+
+    expect(first.results).toHaveLength(1);
+    expect(replay.results).toEqual(first.results);
+    expect(memory.add).toHaveBeenCalledTimes(1);
+    expect(stored).toHaveLength(1);
   });
 
   it('不暴露 mem0 公开 update()（红线：update 替换式清 payload + textLemmatized）', () => {

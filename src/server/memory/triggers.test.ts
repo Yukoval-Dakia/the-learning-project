@@ -142,6 +142,77 @@ describe('buildMemoryEventIngestHandler', () => {
     });
   });
 
+  it('stores an edited conjecture claim verbatim and suppresses generic inferred extraction', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [] }));
+    const addVerbatimOnce = vi.fn(async () => ({
+      results: [{ id: 'mem_core_1', memory: '应先验证虚词语境判断' }],
+    }));
+    const send = vi.fn(async () => 'job-1');
+    const db = {
+      transaction: vi.fn(async (fn: (tx: { execute: () => Promise<void> }) => Promise<unknown>) =>
+        fn({ execute: vi.fn(async () => {}) }),
+      ),
+    };
+    const handler = buildMemoryEventIngestHandler(
+      db as never,
+      { send },
+      {
+        loadEvent: async () => ({
+          id: 'rate_edited_1',
+          actor_kind: 'user',
+          action: 'rate',
+          subject_kind: 'event',
+          subject_id: 'conjecture_1',
+          payload: {
+            rating: 'accept',
+            conjecture_id: 'conjecture_1',
+            corrected_by_owner: true,
+            corrected_claim_md: '应先验证虚词语境判断',
+          },
+          affected_scopes: ['global', 'topic:k1'],
+          created_at: new Date('2026-07-23T00:00:00Z'),
+          kind: 'preference',
+        }),
+        memoryClient: memoryClientMock({ addEventMemory, addVerbatimOnce }),
+      },
+    );
+
+    await handler([{ data: { event_id: 'rate_edited_1' } } as Job<{ event_id: string }>]);
+
+    expect(addEventMemory).not.toHaveBeenCalled();
+    expect(addVerbatimOnce).toHaveBeenCalledWith(
+      '应先验证虚词语境判断',
+      {
+        source: 'conjecture_edit',
+        event_id: 'rate_edited_1',
+        conjecture_id: 'conjecture_1',
+        // codex P2 (PR #1039) — the event row's scopes must be threaded VERBATIM so
+        // scoped search (scope_key → affected_scopes contains) can retrieve the edit.
+        affected_scopes: ['global', 'topic:k1'],
+        corrected_by_owner: true,
+        created_at: '2026-07-23T00:00:00.000Z',
+        created_ms: new Date('2026-07-23T00:00:00Z').getTime(),
+        kind: 'weakness',
+      },
+      'conjecture-edit:rate_edited_1',
+    );
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_RECONCILE_QUEUE,
+      {
+        memories: [
+          {
+            id: 'mem_core_1',
+            text: '应先验证虚词语境判断',
+            created_ms: new Date('2026-07-23T00:00:00Z').getTime(),
+            kind: 'weakness',
+          },
+        ],
+        user_id: 'self',
+      },
+      expect.any(Object),
+    );
+  });
+
   it('does not enqueue reconcile when addEventMemory returns empty results (md5 dedup)', async () => {
     const addEventMemory = vi.fn(async () => ({ results: [] }));
     const boss = { send: vi.fn(async () => 'job-1') };

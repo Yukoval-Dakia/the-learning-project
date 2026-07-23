@@ -4,6 +4,7 @@ import {
   DECISION_MAX_PAGES,
   type ProposalInboxRow,
   type ProposalPageWire,
+  decideProposal,
   decisionPaginationDiagnostics,
   getNextDecisionPageParam,
   listDecisionProposalPage,
@@ -34,6 +35,26 @@ function proposal(id: string, kind = 'learning_item'): ProposalInboxRow {
 function page(ids: string[], next: string | null): ProposalPageWire {
   return { rows: ids.map((id) => proposal(id)), next_cursor: next };
 }
+
+describe('proposal decision caller', () => {
+  const apiJsonMock = vi.mocked(apiJson);
+
+  beforeEach(() => apiJsonMock.mockReset());
+
+  it('sends only the corrected claim payload for an edited accept', async () => {
+    apiJsonMock.mockResolvedValueOnce({ result: { ok: true } });
+
+    await decideProposal('proposal/1', 'accept', { correctedClaimMd: '改写后的判断' });
+
+    expect(apiJsonMock).toHaveBeenCalledWith('/api/proposals/proposal%2F1/decisions', {
+      method: 'POST',
+      body: JSON.stringify({
+        decision: 'accept',
+        corrected_payload: { claim_md: '改写后的判断' },
+      }),
+    });
+  });
+});
 
 describe('progressive proposal page callers', () => {
   const apiJsonMock = vi.mocked(apiJson);
