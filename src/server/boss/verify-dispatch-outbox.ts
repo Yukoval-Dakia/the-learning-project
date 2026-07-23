@@ -134,8 +134,26 @@ export async function writeVerifyDispatchIntent(
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
     ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
   });
+  const id = intentEventId(input.questionId, input.verifier);
+  if (input.placementAuthority) {
+    const [existing] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, id))
+      .limit(1);
+    if (existing) {
+      const parsed = verifyDispatchIntentPayloadSchema.safeParse(existing.payload);
+      if (
+        !parsed.success ||
+        JSON.stringify(parsed.data.placement_authority) !== JSON.stringify(input.placementAuthority)
+      ) {
+        throw new Error('verify dispatch intent placement authority conflict');
+      }
+      return id;
+    }
+  }
   return writeEvent(db, {
-    id: intentEventId(input.questionId, input.verifier),
+    id,
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_INTENT_ACTION,

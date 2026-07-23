@@ -64,9 +64,11 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
+  PlacementStarterStaleAuthorityError,
   type PlacementVerificationAuthority,
-  addAuthorizedCostComponent,
   assertPlacementAuthority,
+  reserveAuthorizedPaidCall,
+  settleAuthorizedPaidCall,
 } from '@/server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
@@ -345,6 +347,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
 
   let taskResult: TaskTextResult | null = null;
   try {
+    if (placementAuthority) {
+      await db.transaction(async (tx) =>
+        reserveAuthorizedPaidCall(tx, {
+          authority: placementAuthority,
+          kind: 'quiz_verify',
+          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify`,
+        }),
+      );
+    }
     const result = await runTaskFn('QuizVerifyTask', input, {
       subjectProfile,
       ...(verifySkills ? { skills: verifySkills } : {}),
@@ -469,6 +480,30 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               profile: { id: subjectProfile.id, full: subjectProfile },
               db,
               placementAuthority,
+              ...(placementAuthority
+                ? {
+                    beforePaidCall: async (kind) => {
+                      await db.transaction(async (tx) =>
+                        reserveAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          kind: 'solution_check',
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}`,
+                        }),
+                      );
+                    },
+                    settlePaidCall: async (kind, paidResult) => {
+                      if (!paidResult.task_run_id) return;
+                      await db.transaction(async (tx) =>
+                        settleAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}`,
+                          providerTaskRunId: paidResult.task_run_id as string,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                        }),
+                      );
+                    },
+                  }
+                : {}),
             },
           )
         : Promise.resolve(undefined),
@@ -488,6 +523,30 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               db,
               profile: { id: subjectProfile.id, full: subjectProfile },
               placementAuthority,
+              ...(placementAuthority
+                ? {
+                    beforePaidCall: async () => {
+                      await db.transaction(async (tx) =>
+                        reserveAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          kind: 'teaching_quality',
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality`,
+                        }),
+                      );
+                    },
+                    settlePaidCall: async (paidResult) => {
+                      if (!paidResult.task_run_id) return;
+                      await db.transaction(async (tx) =>
+                        settleAuthorizedPaidCall(tx, {
+                          authority: placementAuthority,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality`,
+                          providerTaskRunId: paidResult.task_run_id as string,
+                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
+                        }),
+                      );
+                    },
+                  }
+                : {}),
             },
           )
         : Promise.resolve(undefined),
@@ -699,37 +758,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       }
 
       if (placementAuthority && result.task_run_id) {
-        await addAuthorizedCostComponent(tx, {
-          authority: {
-            claimId: placementAuthority.claim_id,
-            attemptId: placementAuthority.attempt_id,
-            fencingToken: placementAuthority.fencing_token,
-          },
-          kind: 'quiz_verify',
-          taskRunId: result.task_run_id,
-          questionId,
+        await settleAuthorizedPaidCall(tx, {
+          authority: placementAuthority,
+          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify`,
+          providerTaskRunId: result.task_run_id,
           costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
           now,
         });
-        for (const [kind, taskRunIds, costUsd] of [
-          ['solution_check', solveResult?.task_run_ids, solveResult?.cost_usd],
-          ['teaching_quality', teachingResult?.task_run_ids, teachingResult?.cost_usd],
-        ] as const) {
-          for (const taskRunId of taskRunIds ?? []) {
-            await addAuthorizedCostComponent(tx, {
-              authority: {
-                claimId: placementAuthority.claim_id,
-                attemptId: placementAuthority.attempt_id,
-                fencingToken: placementAuthority.fencing_token,
-              },
-              kind,
-              taskRunId,
-              questionId,
-              costMicroUsd: Math.round(((costUsd ?? 0) * 1_000_000) / (taskRunIds?.length ?? 1)),
-              now,
-            });
-          }
-        }
       }
 
       await writeEvent(tx, {
@@ -878,6 +913,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       copy_safety_verdict: copySafetyVerdict,
     };
   } catch (err) {
+    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
     // failure-bottom: best-effort mark verification.status='failed' on the row +
     // write a failure event, then re-throw so pg-boss retries. The draft stays
     // draft_status='draft' (never promoted) — the catch path NEVER promotes.

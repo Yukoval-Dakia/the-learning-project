@@ -243,6 +243,29 @@ describe('verify dispatch outbox (YUK-700)', () => {
     expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-valid-later'], expect.any(Object));
   });
 
+  it('rejects deterministic intent reuse with incompatible placement authority', async () => {
+    await seedQuestion('q-authority', 'quiz_gen');
+    const first = {
+      claim_id: 'claim',
+      attempt_id: 'attempt-1',
+      question_id: 'q-authority',
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    await writeVerifyDispatchIntent(db, {
+      questionId: 'q-authority',
+      verifier: 'quiz_verify',
+      placementAuthority: first,
+    });
+    await expect(
+      writeVerifyDispatchIntent(db, {
+        questionId: 'q-authority',
+        verifier: 'quiz_verify',
+        placementAuthority: { ...first, attempt_id: 'attempt-2' },
+      }),
+    ).rejects.toThrow('placement authority conflict');
+  });
+
   it('rolls back the intent when candidate persistence does not commit', async () => {
     await expect(
       db.transaction(async (tx) => {

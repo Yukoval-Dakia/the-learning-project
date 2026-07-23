@@ -1,3 +1,4 @@
+import { PlacementStarterStaleAuthorityError } from '@/server/question-supply/placement-starter-attempts';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -659,7 +660,7 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
   // The injected runTaskFn handles BOTH the solver call and the SemanticJudge call;
   // dispatch on the task kind.
   function dispatch(solverAnswer: string, semantic: string) {
-    return vi.fn(async (kind: string) => {
+    return vi.fn(async (kind: string, _input?: unknown, _ctx?: unknown) => {
       if (kind === 'SolutionGenerateTask') return { text: solverOutput(solverAnswer) };
       if (kind === 'SemanticJudgeTask') return { text: semantic };
       throw new Error(`unexpected task ${kind}`);
@@ -721,6 +722,54 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it('rechecks authority before SemanticJudge and propagates the exact tuple', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: openQuestion.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const assertAuthority = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new PlacementStarterStaleAuthorityError('fence lost'));
+    const runTaskFn = dispatch('独立答案', semanticOutput('correct', 0.95));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: { transaction } as never,
+        placementAuthority: authority,
+        assertPlacementAuthorityFn: assertAuthority,
+      }),
+    ).rejects.toThrow('fence lost');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({ placement_authority: authority });
+  });
+
+  it('passes the exact placement tuple into SemanticJudge input', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: openQuestion.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = dispatch('独立答案', semanticOutput('correct', 0.95));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await runSolveCheck(openQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: { transaction } as never,
+      placementAuthority: authority,
+      assertPlacementAuthorityFn: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({ placement_authority: authority });
   });
 
   it('is conservative (unsupported) for an open question when no db handle is passed', async () => {
@@ -812,6 +861,56 @@ describe('teachingQualityBlocks (tier3/4 per-axis veto seam)', () => {
     const flags = { clarity: false, unique_answer: true, distractor_power: true };
     expect(teachingQualityBlocks(result({ clarity: 'fail' }), flags)).toBe(false);
     expect(teachingQualityBlocks(result({ unique: 'fail' }), flags)).toBe(true);
+  });
+});
+
+describe('runTeachingQualityCheck — placement authority', () => {
+  it('rechecks authority immediately before the paid call and propagates the tuple', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: choiceQuestionTQ.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput() }));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      db: { transaction } as never,
+      profile: fakeProfile,
+      placementAuthority: authority,
+      assertPlacementAuthorityFn: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'TeachingQualityTask',
+      expect.objectContaining({ placement_authority: authority }),
+      expect.anything(),
+    );
+  });
+
+  it('does not swallow stale authority as unsupported', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: choiceQuestionTQ.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput() }));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await expect(
+      runTeachingQualityCheck(choiceQuestionTQ, {
+        runTaskFn,
+        db: { transaction } as never,
+        profile: fakeProfile,
+        placementAuthority: authority,
+        assertPlacementAuthorityFn: vi
+          .fn()
+          .mockRejectedValue(new PlacementStarterStaleAuthorityError('fence lost')),
+      }),
+    ).rejects.toThrow('fence lost');
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 

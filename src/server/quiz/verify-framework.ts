@@ -29,11 +29,15 @@
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
+import {
+  PlacementStarterStaleAuthorityError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+} from '@/server/question-supply/placement-starter-attempts';
 
 // ---------- check identifiers ----------
 //
@@ -172,6 +176,12 @@ export interface SolveCheckOptions {
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
   imageFetchFn?: SolveCheckImageFetchFn;
   placementAuthority?: PlacementVerificationAuthority;
+  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  beforePaidCall?: (kind: 'solution_check' | 'semantic_judge') => Promise<void>;
+  settlePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    result: { task_run_id?: string; cost_usd?: number },
+  ) => Promise<void>;
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -446,6 +456,16 @@ export async function runSolveCheck(
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
   });
 
+  const assertCurrentAuthority = async (): Promise<void> => {
+    if (!opts.placementAuthority || !opts.db) return;
+    await opts.db.transaction(async (tx: Tx) =>
+      (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+        tx,
+        opts.placementAuthority as PlacementVerificationAuthority,
+      ),
+    );
+  };
+
   // Solve the question independently. Input shape mirrors solution-generate.ts:103.
   let solverFinalAnswer: string;
   let solverEquivalents: string[];
@@ -511,7 +531,10 @@ export async function runSolveCheck(
       taskInput = { text: JSON.stringify(input), images };
     }
     const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
+    await assertCurrentAuthority();
+    await opts.beforePaidCall?.('solution_check');
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
+    await opts.settlePaidCall?.('solution_check', solverRun);
     recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
@@ -526,6 +549,7 @@ export async function runSolveCheck(
       ? eq.filter((e): e is string => typeof e === 'string')
       : [];
   } catch (err) {
+    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
     // No usable solver answer → no signal. Conservative: do not fail the question.
     return {
       verdict: 'unsupported',
@@ -588,7 +612,13 @@ export async function runSolveCheck(
   // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
   // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
   const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
-    const r = await opts.runTaskFn(kind, input, ctx);
+    await assertCurrentAuthority();
+    const authorizedInput =
+      opts.placementAuthority && input !== null && typeof input === 'object'
+        ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
+        : input;
+    const r = await opts.runTaskFn(kind, authorizedInput, ctx);
+    if (kind === 'SemanticJudgeTask') await opts.settlePaidCall?.('semantic_judge', r);
     recordRun(r);
     return r;
   };
@@ -617,6 +647,8 @@ export async function runSolveCheck(
     subjectProfile: opts.profile.full,
     runTaskFn: recordingRunTaskFn,
   };
+  await assertCurrentAuthority();
+  await opts.beforePaidCall?.('semantic_judge');
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
@@ -710,6 +742,9 @@ export interface TeachingQualityOptions {
     full: any;
   };
   placementAuthority?: PlacementVerificationAuthority;
+  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  beforePaidCall?: () => Promise<void>;
+  settlePaidCall?: (result: { task_run_id?: string; cost_usd?: number }) => Promise<void>;
 }
 
 // Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
@@ -840,10 +875,21 @@ export async function runTeachingQualityCheck(
     };
     // YUK-606 — db 进 ctx：与 solve_check 支路（:436）同款，runner 观测写依赖它。
     const ctx = { db: opts.db, subjectProfile: opts.profile.full };
+    if (opts.placementAuthority) {
+      await opts.db.transaction(async (tx: Tx) =>
+        (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+          tx,
+          opts.placementAuthority as PlacementVerificationAuthority,
+        ),
+      );
+    }
+    await opts.beforePaidCall?.();
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
+    await opts.settlePaidCall?.(run);
     recordRun(run);
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
+    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
     return skipped(
       'unsupported',
       `teaching-quality judge did not produce usable output: ${err instanceof Error ? err.message : String(err)}`,

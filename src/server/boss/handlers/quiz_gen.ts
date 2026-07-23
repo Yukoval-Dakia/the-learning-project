@@ -82,17 +82,23 @@ import {
   PLACEMENT_STARTER_REQUIRED_COUNT,
   PLACEMENT_VERIFY_POLL_MS,
   type PlacementAttemptAuthority,
+  type PlacementAttemptHeartbeat,
   PlacementStarterDeadlineError,
+  PlacementStarterStaleAuthorityError,
   PlacementStarterUnderfillError,
   type PlacementVerificationAuthority,
   acquirePlacementAttempt,
+  assertPlacementAttemptFence,
   countEligiblePlacementQuestions,
   finishPlacementAttempt,
   markAttemptVerifying,
   placementAttemptVerificationSettled,
   placementDeliveryMetadata,
+  placementFulfillmentDisposition,
   recordPlacementAttemptOutput,
   renewPlacementAttempt,
+  reservePlacementGenerationCall,
+  startPlacementAttemptHeartbeat,
 } from '@/server/question-supply/placement-starter-attempts';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
@@ -220,6 +226,7 @@ interface DepsOverride {
   retrieveFewShotFn?: RetrieveFewShotFn;
   now?: () => Date;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  heartbeatSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 async function defaultRetrieveFewShot(params: {
@@ -376,6 +383,7 @@ export interface RunQuizGenParams {
   kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
+  placementHeartbeat?: PlacementAttemptHeartbeat;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -601,6 +609,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   let taskResult: TaskTextResult | null = null;
   let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
+    if (params.placementAttempt) {
+      await params.placementHeartbeat?.assertHealthy();
+      await reservePlacementGenerationCall(db, params.placementAttempt);
+    }
     const result = await run('QuizGenTask', input, {
       db,
       mcpServers,
@@ -609,6 +621,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
+    await params.placementHeartbeat?.assertHealthy();
+    if (params.placementAttempt) {
+      await assertPlacementAttemptFence(db, params.placementAttempt);
+    }
     const { parsed, parseRepaired } = parseOutput(result.text);
     if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
       throw new Error(
@@ -821,7 +837,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               verification_authority_epoch: randomUUID(),
               fencing_token: params.placementAttempt.fencingToken,
             };
-            await tx
+            const insertedAuthority = await tx
               .insert(placement_starter_attempt_question)
               .values({
                 attempt_id: placementAuthority.attempt_id,
@@ -832,12 +848,44 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
                 verification_status: 'authorized',
                 created_at: now,
               })
-              .onConflictDoNothing();
+              .onConflictDoNothing()
+              .returning({ attemptId: placement_starter_attempt_question.attempt_id });
+            const persistedAuthority =
+              insertedAuthority.length === 1
+                ? placementAuthority
+                : await tx
+                    .select({
+                      attemptId: placement_starter_attempt_question.attempt_id,
+                      epoch: placement_starter_attempt_question.verification_authority_epoch,
+                    })
+                    .from(placement_starter_attempt_question)
+                    .where(
+                      and(
+                        eq(
+                          placement_starter_attempt_question.attempt_id,
+                          placementAuthority.attempt_id,
+                        ),
+                        eq(
+                          placement_starter_attempt_question.question_id,
+                          placementAuthority.question_id,
+                        ),
+                      ),
+                    )
+                    .limit(1)
+                    .then(([row]) =>
+                      row
+                        ? {
+                            ...placementAuthority,
+                            verification_authority_epoch: row.epoch,
+                          }
+                        : undefined,
+                    );
+            if (!persistedAuthority) continue;
             await writeVerifyDispatchIntent(tx, {
               questionId: existingDuplicate.id,
               verifier: 'quiz_verify',
               supplyTrace: params.supplyTrace,
-              placementAuthority,
+              placementAuthority: persistedAuthority,
               createdAt: now,
             });
           }
@@ -966,15 +1014,23 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             verification_authority_epoch: randomUUID(),
             fencing_token: params.placementAttempt.fencingToken,
           };
-          await tx.insert(placement_starter_attempt_question).values({
-            attempt_id: placementAuthority.attempt_id,
-            claim_id: placementAuthority.claim_id,
-            question_id: id,
-            canonical_hash: canonicalContentHash,
-            verification_authority_epoch: placementAuthority.verification_authority_epoch,
-            verification_status: 'authorized',
-            created_at: now,
-          });
+          const insertedAuthority = await tx
+            .insert(placement_starter_attempt_question)
+            .values({
+              attempt_id: placementAuthority.attempt_id,
+              claim_id: placementAuthority.claim_id,
+              question_id: id,
+              canonical_hash: canonicalContentHash,
+              verification_authority_epoch: placementAuthority.verification_authority_epoch,
+              verification_status: 'authorized',
+              created_at: now,
+            })
+            .onConflictDoNothing()
+            .returning({
+              attemptId: placement_starter_attempt_question.attempt_id,
+              epoch: placement_starter_attempt_question.verification_authority_epoch,
+            });
+          if (insertedAuthority.length === 0) continue;
           await writeVerifyDispatchIntent(tx, {
             questionId: id,
             verifier: 'quiz_verify',
@@ -1130,6 +1186,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       tool_quiz_artifact_id: toolQuizArtifactId,
     };
   } catch (err) {
+    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
     try {
       await writeEvent(db, {
         id: createId(),
@@ -1184,7 +1241,6 @@ async function reconcilePlacementDelivery(
   const now = deps.now ?? (() => new Date());
   const sleep = deps.sleep ?? defaultPlacementSleep;
   const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
-  let nextHeartbeat = now().getTime() + PLACEMENT_ATTEMPT_HEARTBEAT_MS;
   while (true) {
     if (signal.aborted) {
       await finishPlacementAttempt(db, attempt, 'interrupted', now());
@@ -1195,20 +1251,18 @@ async function reconcilePlacementDelivery(
       await finishPlacementAttempt(db, attempt, 'timed_out', current);
       throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
     }
-    if (
-      (await countEligiblePlacementQuestions(db, attempt.claimId)) >=
-      PLACEMENT_STARTER_REQUIRED_COUNT
-    ) {
+    const eligibleCount = await countEligiblePlacementQuestions(
+      db,
+      attempt.claimId,
+      attempt.attemptId,
+    );
+    if (placementFulfillmentDisposition(eligibleCount) === 'satisfied') {
       await finishPlacementAttempt(db, attempt, 'succeeded', current);
       return;
     }
     if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
       await finishPlacementAttempt(db, attempt, 'underfilled', current);
       throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
-    }
-    if (current.getTime() >= nextHeartbeat) {
-      await renewPlacementAttempt(db, attempt, current);
-      nextHeartbeat = current.getTime() + PLACEMENT_ATTEMPT_HEARTBEAT_MS;
     }
     await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
   }
@@ -1240,46 +1294,58 @@ export function buildQuizGenHandler(
         }
       }
       let placementAttempt: PlacementAttemptAuthority | undefined;
-      if (data.placement_starter_claim_id) {
-        const { deliveryNo } = placementDeliveryMetadata({
-          retryCount: job.retryCount,
-          retryLimit: job.retryLimit,
-        });
-        if (job.expireInSeconds * 1_000 !== 120 * 60_000) {
-          throw new Error('placement quiz_gen queue expiry must be 120 minutes');
+      let placementHeartbeat: PlacementAttemptHeartbeat | undefined;
+      try {
+        if (data.placement_starter_claim_id) {
+          const { deliveryNo } = placementDeliveryMetadata({
+            retryCount: job.retryCount,
+            retryLimit: job.retryLimit,
+          });
+          if (job.expireInSeconds * 1_000 !== 120 * 60_000) {
+            throw new Error('placement quiz_gen queue expiry must be 120 minutes');
+          }
+          placementAttempt = await acquirePlacementAttempt(db, {
+            claimId: data.placement_starter_claim_id,
+            pgBossJobId: job.id,
+            deliveryNo,
+            startedOn: job.startedOn,
+          });
+          placementHeartbeat = startPlacementAttemptHeartbeat(db, placementAttempt, job.signal, {
+            now: deps.now,
+            sleep: deps.heartbeatSleep,
+          });
         }
-        placementAttempt = await acquirePlacementAttempt(db, {
-          claimId: data.placement_starter_claim_id,
-          pgBossJobId: job.id,
-          deliveryNo,
-          startedOn: job.startedOn,
+        const result = await runQuizGen({
+          db,
+          trigger: data.trigger,
+          refId: data.ref_id,
+          count: data.count,
+          exactCount: data.exact_count,
+          // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
+          ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
+          ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
+          ...(data.kind ? { kind: data.kind } : {}),
+          ...(data.objective_only ? { objectiveOnly: true } : {}),
+          ...(data.kind_required ? { kindRequired: true } : {}),
+          ...(supplyTrace ? { supplyTrace } : {}),
+          ...(placementAttempt ? { placementAttempt } : {}),
+          ...(placementHeartbeat ? { placementHeartbeat } : {}),
+          runAgentTaskFn: deps.runAgentTaskFn,
+          buildMcpServerFn: deps.buildMcpServerFn,
+          buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
+          enqueueQuizVerify: deps.enqueueQuizVerify,
+          retrieveFewShotFn: deps.retrieveFewShotFn,
         });
+        if (placementAttempt) {
+          await placementHeartbeat?.assertHealthy();
+          await assertPlacementAttemptFence(db, placementAttempt);
+          await markAttemptVerifying(db, placementAttempt);
+          await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
+        }
+        console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+      } finally {
+        await placementHeartbeat?.stop();
       }
-      const result = await runQuizGen({
-        db,
-        trigger: data.trigger,
-        refId: data.ref_id,
-        count: data.count,
-        exactCount: data.exact_count,
-        // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
-        ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
-        ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
-        ...(data.kind ? { kind: data.kind } : {}),
-        ...(data.objective_only ? { objectiveOnly: true } : {}),
-        ...(data.kind_required ? { kindRequired: true } : {}),
-        ...(supplyTrace ? { supplyTrace } : {}),
-        ...(placementAttempt ? { placementAttempt } : {}),
-        runAgentTaskFn: deps.runAgentTaskFn,
-        buildMcpServerFn: deps.buildMcpServerFn,
-        buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
-        enqueueQuizVerify: deps.enqueueQuizVerify,
-        retrieveFewShotFn: deps.retrieveFewShotFn,
-      });
-      if (placementAttempt) {
-        await markAttemptVerifying(db, placementAttempt);
-        await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
-      }
-      console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
     }
   };
 }
