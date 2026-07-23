@@ -120,6 +120,10 @@ export interface QuestionSupplyTarget {
    * target factory populates it.
    */
   context?: SupplyTargetContextV1T;
+  placementStarter?: {
+    claimId: string;
+    semanticGoalRevisionId: string;
+  };
 }
 
 export type SupplyGapKind =

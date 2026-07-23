@@ -105,7 +105,7 @@ export async function batchResolveEffectiveDomains(
  * labels no questions; the caller (list reader) turns that into an empty list,
  * not a 404.
  */
-export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promise<string[]> {
+export async function resolveSubjectKnowledgeIds(db: Db | Tx, subject: string): Promise<string[]> {
   // YUK-603 (v2 contract §5.4) — canonicalize the PARAM once up front. The per-row compare
   // below resolves each node's effective domain to its CANONICAL subject id, so comparing it
   // against the raw param made every alias arg ('wenyan') miss everything. YUK-628：如果请求
@@ -190,7 +190,7 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
  * view, never a per-subject parameter (subject 模型终版第 2 条: scope is a derived
  * axis, not a column).
  */
-export async function resolveAllActiveKnowledgeIds(db: Db): Promise<string[]> {
+export async function resolveAllActiveKnowledgeIds(db: Db | Tx): Promise<string[]> {
   const rows = await db
     .select({ id: knowledge.id })
     .from(knowledge)

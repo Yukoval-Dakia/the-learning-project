@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -1607,6 +1608,10 @@ export const placement_starter_claim = pgTable(
       .where(
         sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled')`,
       ),
+    check(
+      'placement_starter_claim_status_check',
+      sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled','satisfied','exhausted','cancelled')`,
+    ),
     check('placement_starter_claim_max_attempts_v1', sql`${t.max_paid_attempts} = 3`),
     check(
       'placement_starter_claim_nonnegative_cost',
@@ -1629,7 +1634,17 @@ export const placement_starter_attempt = pgTable(
     pg_boss_job_id: text('pg_boss_job_id').notNull(),
     delivery_no: integer('delivery_no').notNull(),
     fencing_token: uuid('fencing_token').notNull(),
-    status: text('status').notNull(),
+    status: text('status', {
+      enum: [
+        'running',
+        'verifying',
+        'succeeded',
+        'underfilled',
+        'timed_out',
+        'interrupted',
+        'invariant_failed',
+      ],
+    }).notNull(),
     lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
     provider_task_run_id: text('provider_task_run_id'),
     provider_output_hash: text('provider_output_hash'),
@@ -1643,6 +1658,7 @@ export const placement_starter_attempt = pgTable(
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
   (t) => [
+    uniqueIndex('placement_starter_attempt_id_claim_uq').on(t.id, t.claim_id),
     uniqueIndex('placement_starter_attempt_fence_uq').on(t.fencing_token),
     uniqueIndex('placement_starter_attempt_delivery_uq').on(
       t.claim_id,
@@ -1652,6 +1668,10 @@ export const placement_starter_attempt = pgTable(
     uniqueIndex('placement_starter_attempt_active_uq')
       .on(t.claim_id)
       .where(sql`${t.status} IN ('running','verifying')`),
+    check(
+      'placement_starter_attempt_status_check',
+      sql`${t.status} IN ('running','verifying','succeeded','underfilled','timed_out','interrupted','invariant_failed')`,
+    ),
     check('placement_starter_attempt_delivery_range', sql`${t.delivery_no} BETWEEN 1 AND 3`),
   ],
 );
@@ -1674,6 +1694,11 @@ export const placement_starter_attempt_question = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   },
   (t) => [
+    foreignKey({
+      columns: [t.attempt_id, t.claim_id],
+      foreignColumns: [placement_starter_attempt.id, placement_starter_attempt.claim_id],
+      name: 'placement_starter_attempt_question_attempt_claim_fk',
+    }),
     primaryKey({ columns: [t.attempt_id, t.question_id] }),
     uniqueIndex('placement_starter_attempt_question_claim_uq').on(t.claim_id, t.question_id),
     uniqueIndex('placement_starter_attempt_question_authority_uq').on(
@@ -1703,10 +1728,19 @@ export const placement_starter_cost_component = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   },
   (t) => [
+    foreignKey({
+      columns: [t.attempt_id, t.claim_id],
+      foreignColumns: [placement_starter_attempt.id, placement_starter_attempt.claim_id],
+      name: 'placement_starter_cost_component_attempt_claim_fk',
+    }),
     uniqueIndex('placement_starter_cost_component_idempotency_uq').on(
       t.provider_task_run_id,
       t.component_kind,
       sql`COALESCE(${t.question_id}, '')`,
+    ),
+    check(
+      'placement_starter_cost_component_kind_check',
+      sql`${t.component_kind} IN ('quiz_gen','quiz_verify','solution_check','teaching_quality')`,
     ),
     check('placement_starter_cost_component_nonnegative', sql`${t.cost_micro_usd} >= 0`),
   ],

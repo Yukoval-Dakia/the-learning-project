@@ -167,21 +167,18 @@ export async function updateGoalScope(
   now: Date = new Date(),
   actorRef = 'goal-scope-update',
 ): Promise<void> {
-  const existing = (
-    await db.select({ version: goal.version }).from(goal).where(eq(goal.id, goalId)).limit(1)
-  )[0];
-  if (!existing) return;
-  // HIGH-2 applicability gate — capture base presence BEFORE writing the action event (see
-  // updateGoalStatus).
-  const wasEventSourced = await hasGoalGenesisAnchor(db, goalId);
-  // A3 (OCR major) — wrap the event write + ROW write in ONE tx (atomic), mirroring
-  // updateGoalStatus. db.transaction() is a savepoint when `db` is already a Tx.
+  // Lock/read/version capture must happen in the same transaction as the event and row write.
+  // Reading `existing` before this boundary permits a concurrent owner update to be overwritten
+  // by a stale replacement patch after the row lock is eventually acquired.
   await db.transaction(async (tx) => {
-    // YUK-499 — lock the goal row FOR UPDATE before the action event + ROW write (same rationale as
-    // updateGoalStatus): the ON-path projectGoalGuarded has no version-CAS, so the lock serializes
-    // concurrent goal writers and keeps the read→fold→write-through atomic per goal id. No-op cost on
-    // the OFF path (already version-CAS guarded).
-    await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, goalId)).for('update');
+    const [existing] = await tx
+      .select({ version: goal.version })
+      .from(goal)
+      .where(eq(goal.id, goalId))
+      .for('update');
+    if (!existing) return;
+    // HIGH-2 applicability gate — resolve base presence while the canonical goal row is locked.
+    const wasEventSourced = await hasGoalGenesisAnchor(tx, goalId);
     // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
     // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
     // reducer applies the same patch + version+1 the imperative UPDATE does below.

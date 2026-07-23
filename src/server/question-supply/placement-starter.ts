@@ -1,13 +1,12 @@
 import type { Db, Tx } from '@/db/client';
 import { placement_starter_claim } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
 import { and, eq } from 'drizzle-orm';
-import {
-  EvidenceDemandV1,
-  buildSupplyTrace,
-  evidenceDemandToTargetContext,
-} from './evidence-demand';
+import type { SendOptions } from 'pg-boss';
+import { dispatchSupplyTarget } from './dispatcher';
+import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -59,17 +58,20 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
     reason: `placement starter for semantic goal revision ${claim.semantic_goal_revision_id}`,
     constraints: { exactCount: PLACEMENT_STARTER_COUNT },
     context: evidenceDemandToTargetContext(demand),
+    placementStarter: {
+      claimId: claim.id,
+      semanticGoalRevisionId: claim.semantic_goal_revision_id,
+    },
   };
 }
+
+type PlacementStarterAdmission = (tx: Tx, claim: ClaimRow) => Promise<boolean>;
 
 export async function dispatchPlacementStarterClaimTx(
   tx: Tx,
   claimId: string,
-  send: (
-    queue: string,
-    data: Record<string, unknown>,
-    options: Record<string, unknown>,
-  ) => Promise<string | null>,
+  send: (queue: 'quiz_gen', data: QuizGenJobData, options: SendOptions) => Promise<string | null>,
+  admit: PlacementStarterAdmission = async () => true,
 ): Promise<string | null> {
   const [claim] = await tx
     .select()
@@ -77,59 +79,25 @@ export async function dispatchPlacementStarterClaimTx(
     .where(eq(placement_starter_claim.id, claimId))
     .for('update');
   if (!claim || claim.status !== 'pending_dispatch') return claim?.pg_boss_job_id ?? null;
+  if (!(await admit(tx, claim))) return null;
 
   const target = buildPlacementStarterTarget(claim);
-  const supplyTrace = {
-    ...buildSupplyTrace(
-      {
-        targetId: target.id,
-        targetFingerprint: target.fingerprint,
-        context: evidenceDemandToTargetContext(buildPlacementStarterDemand(claim)),
-      },
-      'quiz_gen',
-    ),
-    claim_id: claim.id,
-    semantic_goal_revision_id: claim.semantic_goal_revision_id,
-  };
-  const jobId = await send(
-    'quiz_gen',
-    {
-      trigger: 'knowledge',
-      ref_id: claim.knowledge_id,
-      count: PLACEMENT_STARTER_COUNT,
-      exact_count: PLACEMENT_STARTER_COUNT,
-      knowledge_id: claim.knowledge_id,
-      generation_method: 'closed_book',
-      placement_starter_claim_id: claim.id,
-      semantic_goal_revision_id: claim.semantic_goal_revision_id,
-      supply_trace: supplyTrace,
-    },
-    { db: fromPgBossDrizzleTx(tx), retryLimit: 2, retryDelay: 30, retryBackoff: true },
-  );
+  const result = await dispatchSupplyTarget(tx, target, {
+    atomic: true,
+    cooldownDays: 0,
+    actorRef: 'placement_starter',
+    tavilyAvailable: () => true,
+    enqueueQuizGen: (data) =>
+      send('quiz_gen', data, {
+        db: fromPgBossDrizzleTx(tx),
+        retryLimit: JOB_RETRY_LIMIT,
+        retryDelay: JOB_RETRY_DELAY_SECONDS,
+        retryBackoff: true,
+      }),
+  });
+  const jobId = result.jobId;
   if (!jobId) throw new Error(`pg-boss returned no job id for placement starter claim ${claim.id}`);
 
-  await writeEvent(tx, {
-    id: `placement-starter-dispatch-v1-${claim.id}`,
-    actor_kind: 'system',
-    actor_ref: 'placement_starter',
-    action: 'experimental:question_supply',
-    subject_kind: 'query',
-    subject_id: target.id,
-    outcome: 'success',
-    payload: {
-      target_id: target.id,
-      fingerprint: target.fingerprint,
-      gap_kind: target.gapKind,
-      subject_id: target.subjectId,
-      knowledge_ids: target.knowledgeIds,
-      desired_count: target.desiredCount,
-      chosen_route: 'quiz_gen',
-      status: 'dispatched',
-      job_id: jobId,
-      constraints: target.constraints,
-      supply_trace: supplyTrace,
-    },
-  });
   await tx
     .update(placement_starter_claim)
     .set({
@@ -150,12 +118,16 @@ export async function dispatchPlacementStarterClaimTx(
 export async function dispatchPlacementStarterClaim(
   db: Db,
   claimId: string,
+  admit?: PlacementStarterAdmission,
 ): Promise<string | null> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
   return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(tx, claimId, (queue, data, options) =>
-      boss.send(queue, data, options),
+    dispatchPlacementStarterClaimTx(
+      tx,
+      claimId,
+      (queue, data, options) => boss.send(queue, data, options),
+      admit,
     ),
   );
 }

@@ -91,10 +91,13 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 export const QUIZ_GEN_TRIGGERS = ['knowledge', 'learning_item', 'manual'] as const;
 export type QuizGenTrigger = (typeof QUIZ_GEN_TRIGGERS)[number];
 
-export interface QuizGenJobData {
+export interface QuizGenJobData extends Record<string, unknown> {
   trigger: QuizGenTrigger;
   ref_id: string;
   count?: number;
+  exact_count?: number;
+  placement_starter_claim_id?: string;
+  semantic_goal_revision_id?: string;
   // YUK-226 S2-5b F1 — the §3.2 找题次序 pins which tier it asked for (step 3
   // material_grounded vs step 4 closed_book). Absent on a bare manual quiz_gen
   // trigger, in which case the agent free-chooses the method as before.

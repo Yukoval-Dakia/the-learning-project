@@ -22,10 +22,11 @@
 // 不能自动派的路由 → 记 status='manual'（emit + log，不动作），等用户/UI 接手。
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';
@@ -128,6 +129,8 @@ export type EnqueueFn = (
   data: Record<string, unknown>,
 ) => Promise<string | null>;
 
+export type EnqueueQuizGenFn = (data: QuizGenJobData) => Promise<string | null>;
+
 async function defaultEnqueue(
   queue: DispatchQueue,
   data: Record<string, unknown>,
@@ -149,7 +152,7 @@ async function defaultEnqueue(
  * 真发后台 job，不该让一个未满足的缺口被永久锁死——只有真发过 job 才进入 cooldown 静默期。
  */
 async function recentDispatchExists(
-  db: Db,
+  db: Db | Tx,
   fingerprint: string,
   cooldownDays: number,
 ): Promise<boolean> {
@@ -191,6 +194,10 @@ export interface DispatchDeps {
    * 落回 sourcing_web。测试注入 true 验证 jyeoo-supported 目标派到 jyeoo_fetch 队列。
    */
   jyeooFetchAvailable?: () => boolean;
+  /** Typed quiz_gen seam for claim-owned transactional sends. */
+  enqueueQuizGen?: EnqueueQuizGenFn;
+  /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
+  atomic?: boolean;
 }
 
 /**
@@ -256,7 +263,7 @@ function chooseAutoRoute(
  * 选定 route list、stop condition、satisfied/skipped/failed 状态）。
  */
 export async function dispatchSupplyTarget(
-  db: Db,
+  db: Db | Tx,
   target: QuestionSupplyTarget,
   deps: DispatchDeps = {},
 ): Promise<DispatchResult> {
@@ -364,10 +371,29 @@ export async function dispatchSupplyTarget(
         // G-COST bypass) so the seam is data-complete. Context: QuizGenJobData.knowledge_ids
         // in src/server/boss/handlers/quiz_gen.ts.
         ...(target.knowledgeIds.length > 1 ? { knowledge_ids: target.knowledgeIds } : {}),
-        ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
+        ...(target.placementStarter
+          ? {
+              placement_starter_claim_id: target.placementStarter.claimId,
+              semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
+            }
+          : {}),
+        ...(dispatchTrace
+          ? {
+              supply_trace: target.placementStarter
+                ? {
+                    ...dispatchTrace,
+                    claim_id: target.placementStarter.claimId,
+                    semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
+                  }
+                : dispatchTrace,
+            }
+          : {}),
       };
       try {
-        const jobId = await enqueue(queue, data);
+        const jobId =
+          queue === 'quiz_gen' && deps.enqueueQuizGen
+            ? await deps.enqueueQuizGen({ ...data, trigger: 'knowledge', ref_id: anchorKid })
+            : await enqueue(queue, data);
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,
@@ -379,6 +405,7 @@ export async function dispatchSupplyTarget(
           reason: target.reason,
         };
       } catch (err) {
+        if (deps.atomic) throw err;
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,
@@ -447,6 +474,7 @@ export async function dispatchSupplyTarget(
       },
     });
   } catch (eventErr) {
+    if (deps.atomic) throw eventErr;
     // 留痕失败 non-fatal：job 状态已定（result），observability 缺一条不该让派发 reject。
     console.error(
       `[question-supply] observability writeEvent failed for target ${target.id} (status=${result.status}); dispatch result stands:`,
@@ -466,7 +494,7 @@ export async function dispatchSupplyTarget(
  * 让批量扫描的其余缺口照常推进，不被一个瞬时错全盘 abort。
  */
 export async function dispatchSupplyTargets(
-  db: Db,
+  db: Db | Tx,
   targets: QuestionSupplyTarget[],
   deps: DispatchDeps = {},
 ): Promise<DispatchResult[]> {

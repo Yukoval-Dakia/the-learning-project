@@ -16,11 +16,7 @@ import { goal } from '@/db/schema';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { dispatchPlacementStarterClaim } from '@/server/question-supply/placement-starter';
-import {
-  addPlacementStarterKnowledgeToExplicitGoal,
-  ensurePlacementStarterKnowledgeAndClaim,
-  resolvePlacementStarterGoalAuthority,
-} from '@/server/question-supply/placement-starter-store';
+import { materializePlacementStartersForGoal } from '@/server/question-supply/placement-starter-store';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
@@ -52,7 +48,16 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     const { goalId, knowledgeIds: explicit, leanings, pace } = parsed.data;
 
     let knowledgeIds = explicit ?? [];
-    if (knowledgeIds.length === 0 && goalId) {
+    let requestedGoal:
+      | {
+          scope: string[] | null;
+          subjectId: string | null;
+          scopeMode: 'explicit' | 'subject_live';
+        }
+      | undefined;
+    // Validate a requested goal before permissive tier-3 resolution or warm selection. This is an
+    // existence check only: paid-subject authority is resolved later, only on the cold path.
+    if (goalId) {
       const [goalRow] = await db
         .select({
           scope: goal.scope_knowledge_ids,
@@ -62,11 +67,11 @@ export async function createPlacementSession(req: Request): Promise<Response> {
         .from(goal)
         .where(eq(goal.id, goalId))
         .limit(1);
-      knowledgeIds = await resolveGoalPlacementScope(db, {
-        scope: goalRow?.scope ?? null,
-        subjectId: goalRow?.subjectId ?? null,
-        scopeMode: goalRow?.scopeMode ?? 'explicit',
-      });
+      if (!goalRow) throw new ApiError('not_found', `goal not found: ${goalId}`, 404);
+      requestedGoal = goalRow;
+    }
+    if (knowledgeIds.length === 0 && requestedGoal) {
+      knowledgeIds = await resolveGoalPlacementScope(db, requestedGoal);
     }
     if (knowledgeIds.length === 0) {
       // Post-YUK-481 this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
@@ -91,56 +96,57 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     // ordering selection first means a selection failure leaves NO orphan 'started' row (nothing
     // is created yet). The only remaining orphan source — a probe started but never answered /
     // ended — is covered by the orphan-sweep follow-up (YUK-470).
-    const first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
+    let first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
     const claimIds: string[] = [];
+    let sessionId: string;
     if (first === null && goalId) {
-      const authority = await resolvePlacementStarterGoalAuthority(db, goalId);
-      await db.transaction(async (tx) => {
-        const generatedKnowledgeIds: string[] = [];
-        for (const subjectId of authority.subjectIds) {
-          const { identity } = await ensurePlacementStarterKnowledgeAndClaim(
-            tx,
-            authority,
-            subjectId,
-          );
-          generatedKnowledgeIds.push(identity.knowledgeId);
-          claimIds.push(identity.claimId);
-        }
-        await addPlacementStarterKnowledgeToExplicitGoal(tx, authority, generatedKnowledgeIds);
-      });
-      const [goalRow] = await db
-        .select({
-          scope: goal.scope_knowledge_ids,
-          subjectId: goal.subject_id,
-          scopeMode: goal.scope_mode,
-        })
-        .from(goal)
-        .where(eq(goal.id, goalId))
-        .limit(1);
-      knowledgeIds = await resolveGoalPlacementScope(db, {
-        scope: goalRow?.scope ?? null,
-        subjectId: goalRow?.subjectId ?? null,
-        scopeMode: goalRow?.scopeMode ?? 'explicit',
-      });
+      ({ sessionId, knowledgeIds } = await db.transaction(async (tx) => {
+        const { identities } = await materializePlacementStartersForGoal(tx, goalId);
+        claimIds.push(...identities.map((identity) => identity.claimId));
+        const [goalRow] = await tx
+          .select({
+            scope: goal.scope_knowledge_ids,
+            subjectId: goal.subject_id,
+            scopeMode: goal.scope_mode,
+          })
+          .from(goal)
+          .where(eq(goal.id, goalId));
+        const effectiveScope = await resolveGoalPlacementScope(tx, {
+          scope: goalRow?.scope ?? null,
+          subjectId: goalRow?.subjectId ?? null,
+          scopeMode: goalRow?.scopeMode ?? 'explicit',
+        });
+        const started = await Placement.startPlacementSession(tx, {
+          goalId,
+          knowledgeIds: effectiveScope,
+          leanings,
+          pace: pace ?? null,
+        });
+        return { sessionId: started.sessionId, knowledgeIds: effectiveScope };
+      }));
+      // Re-select after Transaction A and immediately before paid admission. A verifier promotion
+      // racing the first read must suppress dispatch rather than create unnecessary paid work.
+      first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
+    } else {
+      ({ sessionId } = await Placement.startPlacementSession(db, {
+        goalId: goalId ?? null,
+        knowledgeIds,
+        leanings,
+        pace: pace ?? null,
+      }));
     }
-    // Persist the resolved scope on the session (YUK-470): /next reads it server-side rather
-    // than trusting the client to re-send knowledgeIds every call. YUK-480 — persist the raw
-    // self-report (leanings + pace) too so /next applies the leaning ordering + pace-derived cap
-    // under the same row lock (raw, not the resolved KC set: re-resolving fresh on /next picks
-    // up newly-bridged KCs, same rationale as the empty-frozen-scope live re-resolve above).
-    const { sessionId } = await Placement.startPlacementSession(db, {
-      goalId: goalId ?? null,
-      knowledgeIds,
-      leanings,
-      pace: pace ?? null,
-    });
 
-    // Paid starter work is cold-only. Dispatch happens after session materialization and never while
-    // holding a placement-session transaction; the claim transaction atomically sends + records.
+    // Paid starter work is cold-only after the post-Transaction-A re-selection.
     if (first === null) {
       for (const claimId of claimIds) {
         try {
-          await dispatchPlacementStarterClaim(db, claimId);
+          await dispatchPlacementStarterClaim(db, claimId, async (tx) => {
+            const eligible = await selectNextPlacementItem(tx, {
+              knowledgeIds,
+              preferKnowledgeIds,
+            });
+            return eligible === null;
+          });
         } catch (err) {
           console.error(
             `[placement-starter] initial dispatch failed for ${claimId}; recovery owns retry`,

@@ -41,7 +41,14 @@ export async function resolvePlacementStarterGoalAuthority(
 ): Promise<PlacementStarterGoalAuthority> {
   const [row] = await db.select().from(goal).where(eq(goal.id, goalId)).limit(1);
   if (!row) throw new ApiError('not_found', 'placement goal not found', 404);
+  return resolvePlacementStarterGoalAuthorityFromRow(db, row);
+}
 
+async function resolvePlacementStarterGoalAuthorityFromRow(
+  db: Db | Tx,
+  row: typeof goal.$inferSelect,
+): Promise<PlacementStarterGoalAuthority> {
+  const goalId = row.id;
   const semanticEvents = await db
     .select({
       id: event.id,
@@ -58,14 +65,21 @@ export async function resolvePlacementStarterGoalAuthority(
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
-  const semantic = semanticEvents.find(
-    (candidate) =>
-      !(
-        candidate.action === 'experimental:goal_scope_update' &&
-        candidate.actorRef === 'placement_starter' &&
-        candidate.payload.placement_starter_augmentation === true
-      ),
-  );
+  const semantic = semanticEvents.find((candidate) => {
+    if (
+      candidate.action === 'experimental:goal_scope_update' &&
+      candidate.actorRef === 'placement_starter' &&
+      candidate.payload.placement_starter_augmentation === true
+    ) {
+      return false;
+    }
+    if (candidate.action === 'experimental:goal_scope_update') {
+      return (
+        candidate.payload.title !== undefined || candidate.payload.scope_knowledge_ids !== undefined
+      );
+    }
+    return true;
+  });
   const semanticGoalRevisionId =
     semantic?.id ??
     row.source_ref ??
@@ -126,6 +140,22 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
   subjectId: string,
   now = new Date(),
 ): Promise<{ identity: PlacementStarterIdentity; insertedKnowledge: boolean }> {
+  const rootId = `seed:${subjectId}:root`;
+  const [root] = await tx
+    .select({
+      domain: knowledge.domain,
+      parentId: knowledge.parent_id,
+      archivedAt: knowledge.archived_at,
+    })
+    .from(knowledge)
+    .where(eq(knowledge.id, rootId));
+  if (!root || root.archivedAt || root.domain !== subjectId || root.parentId !== null) {
+    throw new ApiError(
+      'invariant_conflict',
+      `placement starter subject root is missing or invalid: ${rootId}`,
+      409,
+    );
+  }
   const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
   const [inserted] = await tx
     .insert(knowledge)
@@ -163,10 +193,10 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
     });
   } else {
     const [existing] = await tx
-      .select({ domain: knowledge.domain, parentId: knowledge.parent_id })
+      .select()
       .from(knowledge)
       .where(eq(knowledge.id, identity.knowledgeId));
-    if (existing?.domain !== subjectId || existing.parentId !== `seed:${subjectId}:root`) {
+    if (!existing || existing.domain !== subjectId || existing.parent_id !== rootId) {
       throw new ApiError(
         'invariant_conflict',
         'placement starter knowledge identity collision',
@@ -174,13 +204,41 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
       );
     }
     const [anchor] = await tx
-      .select({ id: materialized_id_index.materialized_id })
+      .select({
+        anchorEventId: materialized_id_index.anchor_event_id,
+        subjectKind: materialized_id_index.subject_kind,
+      })
       .from(materialized_id_index)
       .where(eq(materialized_id_index.materialized_id, identity.knowledgeId));
-    if (!anchor) {
+    const [genesis] = await tx
+      .select({
+        action: event.action,
+        subjectKind: event.subject_kind,
+        subjectId: event.subject_id,
+        payload: event.payload,
+      })
+      .from(event)
+      .where(eq(event.id, identity.genesisEventId));
+    const genesisRow = genesis?.payload.row as Record<string, unknown> | undefined;
+    const expectedGenesisRow = knowledgeRowToSnapshot(existing);
+    if (
+      anchor?.anchorEventId !== identity.genesisEventId ||
+      anchor.subjectKind !== 'knowledge' ||
+      genesis?.action !== 'experimental:genesis' ||
+      genesis.subjectKind !== 'knowledge' ||
+      genesis.subjectId !== identity.knowledgeId ||
+      !genesisRow ||
+      Object.entries(expectedGenesisRow).some(([key, value]) => {
+        const actual = genesisRow[key];
+        if (value instanceof Date) {
+          return new Date(String(actual)).getTime() !== value.getTime();
+        }
+        return JSON.stringify(actual) !== JSON.stringify(value);
+      })
+    ) {
       throw new ApiError(
         'invariant_conflict',
-        'placement starter knowledge has no genesis anchor',
+        'placement starter knowledge has a mismatched genesis anchor',
         409,
       );
     }
@@ -208,6 +266,34 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
     })
     .onConflictDoNothing({ target: placement_starter_claim.id });
   return { identity, insertedKnowledge: Boolean(inserted) };
+}
+
+export async function materializePlacementStartersForGoal(
+  tx: Tx,
+  goalId: string,
+  now = new Date(),
+): Promise<{ authority: PlacementStarterGoalAuthority; identities: PlacementStarterIdentity[] }> {
+  const [lockedGoal] = await tx.select().from(goal).where(eq(goal.id, goalId)).for('update');
+  if (!lockedGoal) throw new ApiError('not_found', 'placement goal not found', 404);
+
+  const authority = await resolvePlacementStarterGoalAuthorityFromRow(tx, lockedGoal);
+  const identities: PlacementStarterIdentity[] = [];
+  for (const subjectId of authority.subjectIds) {
+    const { identity } = await ensurePlacementStarterKnowledgeAndClaim(
+      tx,
+      authority,
+      subjectId,
+      now,
+    );
+    identities.push(identity);
+  }
+  await addPlacementStarterKnowledgeToExplicitGoal(
+    tx,
+    authority.goalId,
+    identities.map((identity) => identity.knowledgeId),
+    now,
+  );
+  return { authority, identities };
 }
 
 export async function markPlacementStarterClaimTerminal(
@@ -310,16 +396,22 @@ export async function authorizePlacementStarterQuestion(
 
 export async function addPlacementStarterKnowledgeToExplicitGoal(
   tx: Tx,
-  authority: PlacementStarterGoalAuthority,
+  goalId: string,
   knowledgeIds: string[],
   now = new Date(),
 ): Promise<void> {
-  if (authority.scopeMode !== 'explicit') return;
-  const stableUnion = [...new Set([...authority.scopeKnowledgeIds, ...knowledgeIds])];
-  if (stableUnion.length === authority.scopeKnowledgeIds.length) return;
+  // Caller holds the canonical goal row lock. Re-read current scope rather than using the authority
+  // snapshot so concurrent owner changes are unioned, never replaced.
+  const [current] = await tx
+    .select({ scopeMode: goal.scope_mode, scopeKnowledgeIds: goal.scope_knowledge_ids })
+    .from(goal)
+    .where(eq(goal.id, goalId));
+  if (!current || current.scopeMode !== 'explicit') return;
+  const stableUnion = [...new Set([...current.scopeKnowledgeIds, ...knowledgeIds])];
+  if (stableUnion.length === current.scopeKnowledgeIds.length) return;
   await updateGoalScope(
     tx,
-    authority.goalId,
+    goalId,
     { scope_knowledge_ids: stableUnion, placement_starter_augmentation: true },
     now,
     'placement_starter',
