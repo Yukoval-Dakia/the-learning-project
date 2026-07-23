@@ -76,8 +76,21 @@ export interface EffectivenessTrendAggregate {
 }
 
 export interface EffectivenessTrendResponse {
+  /** Globally ranked notable rising/falling non-root KCs; never the full KC set. */
   series: EffectivenessTrendSeries[];
+  subject_roots: EffectivenessTrendSeries[];
   aggregate: EffectivenessTrendAggregate;
+  metadata: {
+    as_of: string;
+    window_start: string;
+    window_end: string;
+    timezone: 'Asia/Shanghai';
+    granularity: 'calendar_day';
+    notable_limit: 6;
+    eligible: number;
+    returned: number;
+    truncated: boolean;
+  };
 }
 
 export const getEffectivenessTrend = () =>

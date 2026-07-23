@@ -563,11 +563,11 @@
     "methods": [
       {
         "method": "GET",
-        "summary": "per-KC / per-subject 纵向成效趋势只读观测面（YUK-519 A7）",
+        "summary": "30 日窗口内的有限显著成效趋势只读观测面（YUK-524）",
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "聚合 experimental:mastery_progress 事件成纵向轨迹。返回 { series: per-KC[{knowledge_id,name,effective_domain,points:[{at,p_learned,theta_hat,theta_delta}],trend:{direction,confidence,span_evidence,has_mastery_signal},activity_count}], aggregate:{total_kcs_with_activity,total_events,by_subject:[{effective_domain,direction,confidence,kc_count,kc_with_mastery_signal,activity_count}]} }。direction=rising|holding|falling|insufficient（早窗 vs 近窗 θ̂ 均值比较，<4 事件=insufficient）。⑥硬约束：绝不裸 delta，只定性方向+置信档。has_mastery_signal=false → UI 走 activity_count 活动量代理。需 x-internal-token"
+        "notes": "Asia/Shanghai 近 30 个日历日窗口，每 KC/日只取 created_at DESC,id DESC 最新事件作为趋势点，activity_count 保留窗口内原始活动数。series 仅返回全局排序后最多 6 个非 root rising/falling 显著 KC；subject_roots 单列；aggregate 从全部 active KC 计算。metadata 明示 as_of/window_start/window_end/timezone/granularity/notable_limit=6/eligible/returned/truncated。绝不返回数值 magnitude；需 x-internal-token"
       }
     ]
   },

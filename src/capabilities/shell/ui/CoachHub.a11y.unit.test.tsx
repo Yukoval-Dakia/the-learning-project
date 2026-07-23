@@ -13,7 +13,19 @@ afterEach(cleanup);
 
 const emptyTrend: EffectivenessTrendResponse = {
   series: [],
+  subject_roots: [],
   aggregate: { total_kcs_with_activity: 0, total_events: 0, by_subject: [] },
+  metadata: {
+    as_of: '2026-07-23T00:00:00.000Z',
+    window_start: '2026-06-23T16:00:00.000Z',
+    window_end: '2026-07-23T16:00:00.000Z',
+    timezone: 'Asia/Shanghai',
+    granularity: 'calendar_day',
+    notable_limit: 6,
+    eligible: 0,
+    returned: 0,
+    truncated: false,
+  },
 };
 
 function queryClient(): QueryClient {

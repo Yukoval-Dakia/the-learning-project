@@ -48,10 +48,16 @@ describe('diagnostic observation route contracts', () => {
       pct_firm: 0,
       median_theta_se: null,
     });
-    expect(EffectivenessTrendResponseSchema.parse(await responses[4].json()).aggregate).toEqual({
+    const effectiveness = EffectivenessTrendResponseSchema.parse(await responses[4].json());
+    expect(effectiveness.aggregate).toEqual({
       total_kcs_with_activity: 0,
       total_events: 0,
       by_subject: [],
+    });
+    expect(effectiveness).toMatchObject({
+      series: [],
+      subject_roots: [],
+      metadata: { notable_limit: 6, eligible: 0, returned: 0, truncated: false },
     });
   });
 });

@@ -192,24 +192,25 @@ const TrendSummarySchema = z.object({
   has_mastery_signal: z.boolean(),
 });
 
-export const EffectivenessTrendResponseSchema = z.object({
-  series: z.array(
+const TrendSeriesSchema = z.object({
+  knowledge_id: z.string(),
+  name: z.string().nullable(),
+  effective_domain: z.string().nullable(),
+  points: z.array(
     z.object({
-      knowledge_id: z.string(),
-      name: z.string().nullable(),
-      effective_domain: z.string().nullable(),
-      points: z.array(
-        z.object({
-          at: z.string().datetime(),
-          p_learned: z.number().nullable(),
-          theta_hat: z.number().nullable(),
-          theta_delta: z.number().nullable(),
-        }),
-      ),
-      trend: TrendSummarySchema,
-      activity_count: z.number().int().nonnegative(),
+      at: z.string().datetime(),
+      p_learned: z.number().nullable(),
+      theta_hat: z.number().nullable(),
+      theta_delta: z.number().nullable(),
     }),
   ),
+  trend: TrendSummarySchema,
+  activity_count: z.number().int().nonnegative(),
+});
+
+export const EffectivenessTrendResponseSchema = z.object({
+  series: z.array(TrendSeriesSchema),
+  subject_roots: z.array(TrendSeriesSchema),
   aggregate: z.object({
     total_kcs_with_activity: z.number().int().nonnegative(),
     total_events: z.number().int().nonnegative(),
@@ -223,5 +224,16 @@ export const EffectivenessTrendResponseSchema = z.object({
         activity_count: z.number().int().nonnegative(),
       }),
     ),
+  }),
+  metadata: z.object({
+    as_of: z.string().datetime(),
+    window_start: z.string().datetime(),
+    window_end: z.string().datetime(),
+    timezone: z.literal('Asia/Shanghai'),
+    granularity: z.literal('calendar_day'),
+    notable_limit: z.literal(6),
+    eligible: z.number().int().nonnegative(),
+    returned: z.number().int().min(0).max(6),
+    truncated: z.boolean(),
   }),
 });
