@@ -11,6 +11,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -447,7 +448,7 @@ describe('placement starter store', () => {
     ).rejects.toThrow('send failed');
     expect((await db.select().from(placement_starter_claim))[0]?.status).toBe('pending_dispatch');
 
-    const sent: Record<string, unknown>[] = [];
+    const sent: QuizGenJobData[] = [];
     await db.transaction((tx) =>
       dispatchPlacementStarterClaimTx(tx, identity.claimId, async (_queue, data) => {
         sent.push(data);

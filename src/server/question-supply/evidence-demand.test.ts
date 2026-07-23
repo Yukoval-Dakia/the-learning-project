@@ -83,6 +83,7 @@ describe('EvidenceDemand v1', () => {
     );
     expect(parseSupplyTrace(trace)).toEqual(trace);
     expect(() => parseSupplyTrace({ ...trace, demand_version: 99 })).toThrow();
+    expect(() => parseSupplyTrace({ ...trace, target_fignerprint: 'typo' })).toThrow();
   });
 
   it('correlates multiple targets emitted from the same frontier demand', () => {

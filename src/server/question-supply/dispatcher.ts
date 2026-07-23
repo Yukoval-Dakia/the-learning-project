@@ -394,8 +394,11 @@ export async function dispatchSupplyTarget(
         if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
           if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
           jobId = await deps.enqueueQuizGen(quizGenData);
+        } else if (quizGenData) {
+          const { trigger, ref_id, ...rest } = quizGenData;
+          jobId = await enqueue(queue, { trigger, ref_id, ...rest });
         } else {
-          jobId = await enqueue(queue, quizGenData ?? nonQuizData);
+          jobId = await enqueue(queue, nonQuizData);
         }
         result = {
           targetId: target.id,

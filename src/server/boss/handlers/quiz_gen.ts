@@ -91,7 +91,7 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 export const QUIZ_GEN_TRIGGERS = ['knowledge', 'learning_item', 'manual'] as const;
 export type QuizGenTrigger = (typeof QUIZ_GEN_TRIGGERS)[number];
 
-export interface QuizGenJobData extends Record<string, unknown> {
+export interface QuizGenJobData {
   trigger: QuizGenTrigger;
   ref_id: string;
   count?: number;
