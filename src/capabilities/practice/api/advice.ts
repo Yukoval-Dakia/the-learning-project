@@ -85,6 +85,7 @@ export async function POST(req: Request): Promise<Response> {
         capability_ref: invoked.result.capability_ref,
         suggested_rating: suggestedRating,
         telemetry: invoked.telemetry,
+        ...(invoked.task_run_id ? { task_run_id: invoked.task_run_id } : {}),
       },
       advice,
     });

@@ -321,7 +321,14 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(newJudge.action).toBe('judge');
     expect(newJudge.subject_id).toBe(attemptEventId);
     expect(newJudge.caused_by_event_id).toBe(appealEventId);
-    expect((newJudge.payload as { coarse_outcome: string }).coarse_outcome).toBe('correct');
+    const newJudgePayload = newJudge.payload as {
+      coarse_outcome: string;
+      execution_provenance: { version: number; kind: string };
+    };
+    expect(newJudgePayload.coarse_outcome).toBe('correct');
+    expect(newJudgePayload.execution_provenance).toEqual(
+      expect.objectContaining({ version: 1, kind: 'historical_unknown' }),
+    );
 
     // D15 直接生效：原 judge event 被 supersede（无 proposal 介入）。
     const truth = await getEffectiveTruth(db, judgeEventId);

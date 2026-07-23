@@ -1,3 +1,4 @@
+import type { AiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { JudgeKind as JudgeKindSchema } from '@/core/schema/business';
@@ -21,6 +22,11 @@ import {
   unsupportedResult,
 } from '../ai/judges/question-contract';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
+import {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
+  judgePromptFingerprint,
+  taskInputHash,
+} from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import { resolveQuestionJudgeRoute } from './route-resolve';
 
@@ -78,6 +84,16 @@ export const JudgeInvokerOutputSchema = z.object({
   route: JudgeKindSchema,
   result: JudgeResultV2,
   telemetry: JudgeInvocationTelemetrySchema,
+  task_run_id: z.string().min(1).optional(),
+  execution: z
+    .object({
+      task_kind: z.string().min(1),
+      task_run_id: z.string().min(1).optional(),
+      input_hash: z.string().regex(/^[a-f0-9]{64}$/),
+      prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      prompt_template_revision: z.string().min(1),
+    })
+    .optional(),
 });
 
 export type JudgeInvokerInput = z.infer<typeof JudgeInvokerInputSchema>;
@@ -114,7 +130,35 @@ export class JudgeInvoker {
 
     const route = resolveQuestionJudgeRoute(narrowed.question, narrowed.subjectProfile);
     const startedAt = nowMs();
-    const dispatched = await this.dispatch(route, narrowed);
+    let taskRunId: string | undefined;
+    let execution: JudgeInvokerOutput['execution'];
+    const configuredRunTaskFn =
+      narrowed.runTaskFn ?? this.runTaskFn ?? defaultRunTaskFn(narrowed.db);
+    const observedRunTaskFn: NonNullable<JudgeAnswerParams['runTaskFn']> = async (
+      kind,
+      taskInput,
+      callCtx,
+    ) => {
+      const taskResult = await configuredRunTaskFn(kind, taskInput, callCtx);
+      taskRunId = taskResult.task_run_id;
+      execution = {
+        task_kind: kind,
+        ...(taskResult.task_run_id ? { task_run_id: taskResult.task_run_id } : {}),
+        input_hash: taskInputHash(taskInput),
+        prompt_fingerprint: judgePromptFingerprint({
+          taskKind: kind as AiTaskKind,
+          taskInput,
+          subjectProfile: narrowed.subjectProfile,
+          judgeRoute: route,
+        }),
+        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+      };
+      return taskResult;
+    };
+    const dispatched = await this.dispatch(route, {
+      ...narrowed,
+      runTaskFn: observedRunTaskFn,
+    });
 
     // D6 (U4 L-stamp, critic-R2 HIGH): pin capability_ref.version from the
     // active SubjectProfile.version, NOT the judge runners' module-level
@@ -144,7 +188,13 @@ export class JudgeInvoker {
     });
 
     await this.emitTelemetry(telemetry);
-    return JudgeInvokerOutputSchema.parse({ route, result, telemetry });
+    return JudgeInvokerOutputSchema.parse({
+      route,
+      result,
+      telemetry,
+      ...(taskRunId ? { task_run_id: taskRunId } : {}),
+      ...(execution ? { execution } : {}),
+    });
   }
 
   private async dispatch(route: JudgeKind, input: JudgeAnswerParams): Promise<JudgeResultV2T> {

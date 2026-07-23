@@ -23,13 +23,13 @@
 //     Memory module decorates input ahead of the model call and observes
 //     output after.
 
-import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { Db } from '@/db/client';
+import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
@@ -304,28 +304,8 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-function stableInputForHash(value: unknown): unknown {
-  if (value instanceof URL) return value.toString();
-  if (value instanceof Uint8Array) return { _type: 'bytes', byteLength: value.byteLength };
-  if (Array.isArray(value)) return value.map(stableInputForHash);
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = stableInputForHash((value as Record<string, unknown>)[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
 function inputHash(input: unknown): string {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(stableInputForHash(input)) ?? 'null';
-  } catch {
-    serialized = String(input);
-  }
-  return createHash('sha256').update(serialized).digest('hex');
+  return taskInputHash(input);
 }
 
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by

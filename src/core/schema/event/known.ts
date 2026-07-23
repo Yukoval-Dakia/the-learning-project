@@ -118,6 +118,23 @@ export type AttemptOnQuestionT = z.infer<typeof AttemptOnQuestion>;
 // 行为本身成功；判分结果在 payload.cause。referenced_knowledge_ids 指批改时引用的
 // knowledge。
 
+export const JudgeExecutionProvenance = z.object({
+  version: z.literal(1),
+  kind: z.enum([
+    'invoked',
+    'supplied_verified',
+    'supplied_unverified',
+    'deterministic',
+    'historical_unknown',
+  ]),
+  task_run_id: z.string().min(1).optional(),
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  prompt_template_revision: z.string().min(1),
+});
+export type JudgeExecutionProvenanceT = z.infer<typeof JudgeExecutionProvenance>;
+
 export const JudgeOnEvent = z.object({
   actor_kind: z.literal('agent'),
   actor_ref: z.string(),
@@ -141,6 +158,10 @@ export const JudgeOnEvent = z.object({
     profile_version: z.string().optional(),
     capability_ref: CapabilityRef.optional(),
     judge_route: JudgeKind.optional(),
+    // YUK-589 — execution identity for newly written judge events. Optional only
+    // for historical compatibility; writers must stamp versioned provenance.
+    // Provider/model are allowed only when copied from an authoritative task run.
+    execution_provenance: JudgeExecutionProvenance.optional(),
     // U5 (YUK-203, F1/Q1) — paper-path visibility gate. The independent paper
     // judge event sets `false` for judge-now/show-later slots (feedback buffered
     // until the paper completes); omitted/true → immediately visible. Optional so

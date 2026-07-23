@@ -364,6 +364,7 @@ export interface JudgePreview {
   evidence_json: Record<string, unknown>;
   capability_ref: { id: string; version: string };
   suggested_rating: 'again' | 'hard' | 'good';
+  task_run_id?: string;
 }
 
 export const getAdvice = (questionId: string, responseMd: string) =>
@@ -392,7 +393,10 @@ export const submitReview = (input: {
   rating: 'again' | 'hard' | 'good';
   response_md: string;
   referenced_knowledge_ids: string[];
-  judge_result_v2?: Omit<JudgePreview, 'route' | 'suggested_rating'> & { score_meaning?: string };
+  judge_result_v2?: Omit<JudgePreview, 'route' | 'suggested_rating' | 'task_run_id'> & {
+    score_meaning?: string;
+  };
+  judge_task_run_id?: string;
   // YUK-372 L2 — 被答 practice_stream_item.id（流作答传被答 slot id，π_i 直 join 判别子）。
   // 散题/非流作答省略 → server hook skip。
   stream_item_id?: string;

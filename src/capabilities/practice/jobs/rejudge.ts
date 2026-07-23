@@ -26,6 +26,10 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
+import {
+  historicalUnknownExecutionProvenance,
+  modelExecutionProvenance,
+} from '@/server/judge/execution-provenance-resolve';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
@@ -124,6 +128,9 @@ export async function handleRejudge(
   });
 
   const now = new Date();
+  const executionProvenance = invoked.execution
+    ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
+    : historicalUnknownExecutionProvenance(invoked.route);
   const newOutcome = invoked.result.coarse_outcome;
 
   // 复核结论与原判一致（或复核不可用）→ 维持原判留痕。
@@ -214,6 +221,7 @@ export async function handleRejudge(
         profile_version: invoked.result.capability_ref.version,
         capability_ref: invoked.result.capability_ref,
         judge_route: invoked.route,
+        execution_provenance: executionProvenance,
         coarse_outcome: newOutcome,
         ...(invoked.result.score != null ? { score: invoked.result.score } : {}),
         feedback_md: invoked.result.feedback_md,
@@ -221,6 +229,7 @@ export async function handleRejudge(
         attribution_pending: true,
       },
       caused_by_event_id: appeal.id,
+      task_run_id: executionProvenance?.task_run_id ?? null,
       created_at: now,
     });
 

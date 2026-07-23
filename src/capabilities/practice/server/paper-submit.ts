@@ -36,6 +36,10 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { checkRateLimit } from '@/server/http/rate-limit';
+import {
+  deterministicExecutionProvenance,
+  modelExecutionProvenance,
+} from '@/server/judge/execution-provenance-resolve';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
@@ -543,6 +547,11 @@ export async function submitPaperSlot(
           throw err;
         });
   const judgeResult = invoked?.result ?? null;
+  const executionProvenance = invoked
+    ? invoked.execution
+      ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
+      : deterministicExecutionProvenance(invoked.route)
+    : null;
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
   const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';
 
@@ -785,6 +794,8 @@ export async function submitPaperSlot(
           profile_version: subjectProfile.version,
           capability_ref: invoked.result.capability_ref,
           judge_route: invoked.route,
+          execution_provenance:
+            executionProvenance ?? deterministicExecutionProvenance(invoked.route),
           // visibility gate (F1/Q1). Omit when visible (default) to keep the
           // payload minimal + back-compat; set false to buffer feedback.
           ...(visibleToUser ? {} : { visible_to_user: false }),
@@ -810,6 +821,7 @@ export async function submitPaperSlot(
           ...(partRef ? { sub_ref: partRef } : {}),
         },
         caused_by_event_id: attemptEventId,
+        task_run_id: executionProvenance?.task_run_id ?? null,
         created_at: now,
       });
     }

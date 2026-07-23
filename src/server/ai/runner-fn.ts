@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import type { TaskTextResult } from '@/server/ai/provenance';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 
 export type RunTaskCallCtx = Omit<RunTaskCtx, 'db' | 'enableTransientRetry'>;
@@ -8,7 +9,7 @@ export type BoundRunTaskFn = {
 }['bivarianceHack'];
 
 export type BoundRunTaskTextFn = {
-  bivarianceHack(kind: string, input: unknown, ctx?: RunTaskCallCtx): Promise<{ text: string }>;
+  bivarianceHack(kind: string, input: unknown, ctx?: RunTaskCallCtx): Promise<TaskTextResult>;
 }['bivarianceHack'];
 
 export function makeRunTaskFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRunTaskFn {
@@ -24,6 +25,11 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
   const runTask = makeRunTaskFn(db, baseCtx);
   return async (kind, input, callCtx) => {
     const result = await runTask(kind, input, callCtx);
-    return { text: result.text };
+    return {
+      text: result.text,
+      task_run_id: result.task_run_id,
+      cost_usd: result.cost_usd,
+      structured_output: result.structured_output,
+    };
   };
 }

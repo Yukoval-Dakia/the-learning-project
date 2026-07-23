@@ -37,8 +37,9 @@ import { emitMasteryProgressSignal } from '@/capabilities/practice/server/master
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
+import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -49,9 +50,20 @@ import {
   errorResponse,
 } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { semanticInput } from '@/server/ai/judges/question-contract';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
+import {
+  deterministicExecutionProvenance,
+  modelExecutionProvenance,
+  suppliedUnverifiedExecutionProvenance,
+} from '@/server/judge/execution-provenance-resolve';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
+  judgePromptFingerprint,
+  taskInputHash,
+} from '@/server/judge/judge-execution-provenance';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
@@ -132,6 +144,7 @@ interface JudgedSubmit {
   judgeTelemetry:
     | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
     | null;
+  executionProvenance: JudgeExecutionProvenanceT | null;
   suggestedRating: Rating | null;
   finalRating: Rating;
   adviceCauseCategory: Awaited<ReturnType<typeof resolveAdviceCauseForQuestion>>;
@@ -202,6 +215,33 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeRoute = suppliedJudgeResult.capability_ref.id;
   }
   let judgeTelemetry: JudgedSubmit['judgeTelemetry'] = null;
+  let executionProvenance: JudgeExecutionProvenanceT | null = null;
+  if (suppliedJudgeResult !== null && subjectProfile !== null && judgeRoute === 'semantic') {
+    const taskInput = {
+      question: semanticInput(q, subjectProfile),
+      answer: { content: answerMd },
+    };
+    executionProvenance = await modelExecutionProvenance(
+      db,
+      {
+        task_kind: 'SemanticJudgeTask',
+        ...(body.judge_task_run_id ? { task_run_id: body.judge_task_run_id } : {}),
+        input_hash: taskInputHash(taskInput),
+        prompt_fingerprint: judgePromptFingerprint({
+          taskKind: 'SemanticJudgeTask',
+          taskInput,
+          subjectProfile,
+          judgeRoute,
+        }),
+        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+      },
+      body.judge_task_run_id ? 'supplied_verified' : 'supplied_unverified',
+    );
+  } else if (suppliedJudgeResult !== null && judgeRoute !== null) {
+    executionProvenance = ['semantic', 'steps', 'multimodal_direct'].includes(judgeRoute)
+      ? suppliedUnverifiedExecutionProvenance(judgeRoute)
+      : deterministicExecutionProvenance(judgeRoute);
+  }
   if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
     // YUK-694 — only explicit auto-rate requests may spend a server-side judge
     // call, and those calls share the process-wide paid-AI request budget.
@@ -223,6 +263,9 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
     judgeTelemetry = invoked.telemetry;
+    executionProvenance = invoked.execution
+      ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
+      : deterministicExecutionProvenance(invoked.route);
   }
 
   // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -273,6 +316,7 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeResult,
     judgeRoute,
     judgeTelemetry,
+    executionProvenance,
     suggestedRating,
     finalRating,
     adviceCauseCategory,
@@ -303,6 +347,7 @@ async function persistSubmit(
     judgeResult,
     judgeRoute,
     judgeTelemetry,
+    executionProvenance,
     suggestedRating,
     finalRating,
     adviceCauseCategory,
@@ -579,6 +624,7 @@ async function persistSubmit(
           profile_version: judgeResult.capability_ref.version,
           capability_ref: judgeResult.capability_ref,
           judge_route: judgeRoute,
+          execution_provenance: executionProvenance ?? deterministicExecutionProvenance(judgeRoute),
           coarse_outcome: judgeResult.coarse_outcome,
           ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
           feedback_md: judgeResult.feedback_md,
@@ -590,7 +636,7 @@ async function persistSubmit(
           ...(body.part_ref ? { sub_ref: body.part_ref } : {}),
         },
         caused_by_event_id: eventId,
-        task_run_id: null,
+        task_run_id: executionProvenance?.task_run_id ?? null,
         cost_micro_usd: null,
         created_at: now,
       });

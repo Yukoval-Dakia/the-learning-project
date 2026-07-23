@@ -92,6 +92,7 @@ describe('JudgeInvoker', () => {
 
   it('dispatches semantic route with the injected task runner', async () => {
     const runTaskFn = vi.fn().mockResolvedValue({
+      task_run_id: 'tr-semantic',
       text: JSON.stringify({
         score: 0.92,
         coarse_outcome: 'correct',
@@ -118,6 +119,14 @@ describe('JudgeInvoker', () => {
     });
 
     expect(result.route).toBe('semantic');
+    expect(result.task_run_id).toBe('tr-semantic');
+    expect(result.execution).toMatchObject({
+      task_kind: 'SemanticJudgeTask',
+      task_run_id: 'tr-semantic',
+      input_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      prompt_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      prompt_template_revision: 'judge-prompt-v1',
+    });
     expect(result.result.coarse_outcome).toBe('correct');
     expect(result.telemetry).toMatchObject({
       route: 'semantic',
