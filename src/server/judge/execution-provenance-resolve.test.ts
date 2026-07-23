@@ -23,6 +23,8 @@ describe('model execution provenance resolution', () => {
         input_hash: 'a'.repeat(64),
         provider: 'anthropic-sub',
         model: 'claude-opus-4-8',
+        status: 'success',
+        finished_at: new Date(),
       }),
     ).toMatchObject({
       kind: 'supplied_verified',
@@ -32,9 +34,9 @@ describe('model execution provenance resolution', () => {
     });
   });
 
-  it('retains invoked kind without inventing provider/model when the task row is unavailable', () => {
+  it('downgrades invoked provenance when authoritative completion evidence is unavailable', () => {
     const result = resolveModelExecutionProvenance(execution, 'invoked');
-    expect(result.kind).toBe('invoked');
+    expect(result.kind).toBe('historical_unknown');
     expect(result.provider).toBeUndefined();
     expect(result.model).toBeUndefined();
   });
@@ -63,6 +65,8 @@ describe('model execution provenance resolution', () => {
     ['task kind', { task_kind: 'StepsJudgeTask' }],
     ['input identity', { input_hash: 'c'.repeat(64) }],
     ['run identity', { id: 'tr-other' }],
+    ['running status', { status: 'running', finished_at: null }],
+    ['failed status', { status: 'failure' }],
   ])('marks a supplied run unverified on mismatched %s', (_label, mismatch) => {
     const result = resolveModelExecutionProvenance(execution, 'supplied_verified', {
       id: 'tr-1',
@@ -70,6 +74,8 @@ describe('model execution provenance resolution', () => {
       input_hash: 'a'.repeat(64),
       provider: 'anthropic-sub',
       model: 'claude-opus-4-8',
+      status: 'success',
+      finished_at: new Date(),
       ...mismatch,
     });
     expect(result.kind).toBe('supplied_unverified');

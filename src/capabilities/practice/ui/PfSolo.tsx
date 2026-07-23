@@ -209,6 +209,7 @@ export function PfSolo({
         // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
         latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
         judge_task_run_id: pv.task_run_id,
+        judge_provenance_token: pv.provenance_token,
         judge_result_v2: {
           score: pv.score,
           score_meaning: 'correctness',

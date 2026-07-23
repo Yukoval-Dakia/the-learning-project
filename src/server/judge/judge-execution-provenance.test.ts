@@ -13,6 +13,12 @@ describe('judge execution provenance identity', () => {
     );
   });
 
+  it('hashes actual byte content, not only byte length', () => {
+    expect(taskInputHash(new Uint8Array([1, 2, 3]))).not.toBe(
+      taskInputHash(new Uint8Array([1, 2, 4])),
+    );
+  });
+
   it('binds the prompt fingerprint to route, profile version, and rendered input', () => {
     const base = {
       taskKind: 'SemanticJudgeTask',

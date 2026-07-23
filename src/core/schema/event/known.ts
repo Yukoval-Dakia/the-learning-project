@@ -118,21 +118,30 @@ export type AttemptOnQuestionT = z.infer<typeof AttemptOnQuestion>;
 // 行为本身成功；判分结果在 payload.cause。referenced_knowledge_ids 指批改时引用的
 // knowledge。
 
-export const JudgeExecutionProvenance = z.object({
-  version: z.literal(1),
-  kind: z.enum([
-    'invoked',
-    'supplied_verified',
-    'supplied_unverified',
-    'deterministic',
-    'historical_unknown',
-  ]),
-  task_run_id: z.string().min(1).optional(),
-  provider: z.string().min(1).optional(),
-  model: z.string().min(1).optional(),
+const PromptIdentity = z.object({
   prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   prompt_template_revision: z.string().min(1),
 });
+const TrustedModelExecution = PromptIdentity.extend({
+  version: z.literal(1),
+  task_run_id: z.string().min(1),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+});
+const UntrustedExecution = PromptIdentity.extend({
+  version: z.literal(1),
+  task_run_id: z.never().optional(),
+  provider: z.never().optional(),
+  model: z.never().optional(),
+});
+
+export const JudgeExecutionProvenance = z.discriminatedUnion('kind', [
+  TrustedModelExecution.extend({ kind: z.literal('invoked') }),
+  TrustedModelExecution.extend({ kind: z.literal('supplied_verified') }),
+  UntrustedExecution.extend({ kind: z.literal('supplied_unverified') }),
+  UntrustedExecution.extend({ kind: z.literal('deterministic') }),
+  UntrustedExecution.extend({ kind: z.literal('historical_unknown') }),
+]);
 export type JudgeExecutionProvenanceT = z.infer<typeof JudgeExecutionProvenance>;
 
 export const JudgeOnEvent = z.object({

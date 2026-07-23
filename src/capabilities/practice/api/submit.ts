@@ -59,11 +59,8 @@ import {
   suppliedUnverifiedExecutionProvenance,
 } from '@/server/judge/execution-provenance-resolve';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  judgePromptFingerprint,
-  taskInputHash,
-} from '@/server/judge/judge-execution-provenance';
+import { sha256Canonical, taskInputHash } from '@/server/judge/judge-execution-provenance';
+import { verifyJudgePreviewProvenanceToken } from '@/server/judge/preview-provenance-token';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
@@ -217,26 +214,38 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
   let judgeTelemetry: JudgedSubmit['judgeTelemetry'] = null;
   let executionProvenance: JudgeExecutionProvenanceT | null = null;
   if (suppliedJudgeResult !== null && subjectProfile !== null && judgeRoute === 'semantic') {
-    const taskInput = {
+    const claims = body.judge_provenance_token
+      ? verifyJudgePreviewProvenanceToken(
+          body.judge_provenance_token,
+          process.env.INTERNAL_TOKEN ?? '',
+        )
+      : null;
+    const expectedTaskInput = {
       question: semanticInput(q, subjectProfile),
       answer: { content: answerMd },
     };
-    executionProvenance = await modelExecutionProvenance(
-      db,
-      {
-        task_kind: 'SemanticJudgeTask',
-        ...(body.judge_task_run_id ? { task_run_id: body.judge_task_run_id } : {}),
-        input_hash: taskInputHash(taskInput),
-        prompt_fingerprint: judgePromptFingerprint({
-          taskKind: 'SemanticJudgeTask',
-          taskInput,
-          subjectProfile,
-          judgeRoute,
-        }),
-        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
-      },
-      body.judge_task_run_id ? 'supplied_verified' : 'supplied_unverified',
-    );
+    const claimsMatch =
+      claims !== null &&
+      claims.task_run_id === body.judge_task_run_id &&
+      claims.task_kind === 'SemanticJudgeTask' &&
+      claims.input_hash === taskInputHash(expectedTaskInput) &&
+      claims.subject_profile_id === subjectProfile.id &&
+      claims.subject_profile_version === subjectProfile.version &&
+      claims.judge_route === judgeRoute &&
+      claims.result_digest === sha256Canonical(suppliedJudgeResult);
+    executionProvenance = claimsMatch
+      ? await modelExecutionProvenance(
+          db,
+          {
+            task_kind: claims.task_kind,
+            task_run_id: claims.task_run_id,
+            input_hash: claims.input_hash,
+            prompt_fingerprint: claims.prompt_fingerprint,
+            prompt_template_revision: claims.prompt_template_revision,
+          },
+          'supplied_verified',
+        )
+      : suppliedUnverifiedExecutionProvenance(judgeRoute);
   } else if (suppliedJudgeResult !== null && judgeRoute !== null) {
     executionProvenance = ['semantic', 'steps', 'multimodal_direct'].includes(judgeRoute)
       ? suppliedUnverifiedExecutionProvenance(judgeRoute)

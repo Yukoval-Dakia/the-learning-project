@@ -18,6 +18,8 @@ interface TaskRunIdentity {
   input_hash: string;
   provider: string;
   model: string;
+  status: string;
+  finished_at: Date | null;
 }
 
 export function resolveModelExecutionProvenance(
@@ -29,22 +31,26 @@ export function resolveModelExecutionProvenance(
     run !== undefined &&
     run.id === execution.task_run_id &&
     run.task_kind === execution.task_kind &&
-    run.input_hash === execution.input_hash;
-  return {
-    version: 1,
-    kind:
-      kind === 'invoked'
-        ? 'invoked'
-        : kind === 'supplied_unverified' || !matches
-          ? 'supplied_unverified'
-          : kind,
-    ...(matches
-      ? { task_run_id: run.id, provider: run.provider, model: run.model }
-      : execution.task_run_id
-        ? { task_run_id: execution.task_run_id }
-        : {}),
+    run.input_hash === execution.input_hash &&
+    run.status === 'success' &&
+    run.finished_at !== null;
+  const promptIdentity = {
+    version: 1 as const,
     prompt_fingerprint: execution.prompt_fingerprint,
     prompt_template_revision: execution.prompt_template_revision,
+  };
+  if (!matches) {
+    return {
+      ...promptIdentity,
+      kind: kind === 'invoked' ? 'historical_unknown' : 'supplied_unverified',
+    };
+  }
+  return {
+    ...promptIdentity,
+    kind: kind === 'invoked' ? 'invoked' : 'supplied_verified',
+    task_run_id: run.id,
+    provider: run.provider,
+    model: run.model,
   };
 }
 
@@ -61,6 +67,8 @@ export async function modelExecutionProvenance(
           input_hash: ai_task_runs.input_hash,
           provider: ai_task_runs.provider,
           model: ai_task_runs.model,
+          status: ai_task_runs.status,
+          finished_at: ai_task_runs.finished_at,
         })
         .from(ai_task_runs)
         .where(eq(ai_task_runs.id, execution.task_run_id))
@@ -70,16 +78,22 @@ export async function modelExecutionProvenance(
 }
 
 export function historicalUnknownExecutionProvenance(route: string): JudgeExecutionProvenanceT {
+  const deterministic = deterministicExecutionProvenance(route);
   return {
-    ...deterministicExecutionProvenance(route),
+    version: 1,
     kind: 'historical_unknown',
+    prompt_fingerprint: deterministic.prompt_fingerprint,
+    prompt_template_revision: deterministic.prompt_template_revision,
   };
 }
 
 export function suppliedUnverifiedExecutionProvenance(route: string): JudgeExecutionProvenanceT {
+  const deterministic = deterministicExecutionProvenance(route);
   return {
-    ...deterministicExecutionProvenance(route),
+    version: 1,
     kind: 'supplied_unverified',
+    prompt_fingerprint: deterministic.prompt_fingerprint,
+    prompt_template_revision: deterministic.prompt_template_revision,
   };
 }
 

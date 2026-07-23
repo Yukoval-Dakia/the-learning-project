@@ -8,7 +8,13 @@ export const JUDGE_PROMPT_TEMPLATE_REVISION = 'judge-prompt-v1' as const;
 
 export function stableCanonicalValue(value: unknown): unknown {
   if (value instanceof URL) return value.toString();
-  if (value instanceof Uint8Array) return { _type: 'bytes', byteLength: value.byteLength };
+  if (value instanceof Uint8Array) {
+    return {
+      _type: 'bytes',
+      byteLength: value.byteLength,
+      sha256: createHash('sha256').update(value).digest('hex'),
+    };
+  }
   if (Array.isArray(value)) return value.map(stableCanonicalValue);
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};

@@ -20,6 +20,8 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import { sha256Canonical } from '@/server/judge/judge-execution-provenance';
+import { issueJudgePreviewProvenanceToken } from '@/server/judge/preview-provenance-token';
 import { eq } from 'drizzle-orm';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 
@@ -71,6 +73,25 @@ export async function POST(req: Request): Promise<Response> {
     const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
     const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
 
+    const provenanceToken =
+      invoked.execution && invoked.task_run_id
+        ? issueJudgePreviewProvenanceToken(
+            {
+              version: 1,
+              task_run_id: invoked.task_run_id,
+              task_kind: invoked.execution.task_kind,
+              input_hash: invoked.execution.input_hash,
+              prompt_fingerprint: invoked.execution.prompt_fingerprint,
+              prompt_template_revision: invoked.execution.prompt_template_revision,
+              subject_profile_id: subjectProfile.id,
+              subject_profile_version: subjectProfile.version,
+              judge_route: invoked.route,
+              result_digest: sha256Canonical(invoked.result),
+            },
+            process.env.INTERNAL_TOKEN ?? '',
+          )
+        : undefined;
+
     return Response.json({
       activity_ref: identity.activity_ref,
       question_id: questionId,
@@ -86,6 +107,7 @@ export async function POST(req: Request): Promise<Response> {
         suggested_rating: suggestedRating,
         telemetry: invoked.telemetry,
         ...(invoked.task_run_id ? { task_run_id: invoked.task_run_id } : {}),
+        ...(provenanceToken ? { provenance_token: provenanceToken } : {}),
       },
       advice,
     });
