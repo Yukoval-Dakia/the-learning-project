@@ -28,7 +28,7 @@ import { writeEvent } from '@/kernel/events';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import type { QuizGenJobData } from '@/server/boss/handlers/quiz_gen';
 import { and, eq, gte, sql } from 'drizzle-orm';
-import { buildSupplyTrace } from './evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { jyeooFetchEnabled } from './jyeoo-supply-config';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
@@ -196,6 +196,8 @@ export interface DispatchDeps {
   jyeooFetchAvailable?: () => boolean;
   /** Typed quiz_gen seam for claim-owned transactional sends. */
   enqueueQuizGen?: EnqueueQuizGenFn;
+  /** Test seam for validating the fully augmented trace immediately before parsing. */
+  transformSupplyTrace?: (trace: SupplyTraceV1T) => unknown;
   /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
   atomic?: boolean;
 }
@@ -345,55 +347,56 @@ export async function dispatchSupplyTarget(
       // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
-      const data: Record<string, unknown> = {
-        trigger: 'knowledge',
+      const commonData = {
+        trigger: 'knowledge' as const,
         ref_id: anchorKid,
         count: target.desiredCount,
         knowledge_id: anchorKid,
-        // 题型 hint（'any' → 不 pin）；扫描器的 kind 字段（forwarded：sourcing→kinds, quiz_gen→kind）。
         ...(target.kind && target.kind !== 'any' ? { kind: target.kind } : {}),
         ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
         ...(target.constraints.kindRequired ? { kind_required: true } : {}),
-        ...(queue === 'quiz_gen' ? { generation_method: generationMethodFor(target) } : {}),
-        ...(queue === 'quiz_gen' && target.constraints.exactCount !== undefined
-          ? { exact_count: target.constraints.exactCount }
-          : {}),
-        // YUK-697 — jyeoo_fetch handler maps the target's difficulty band → jyeoo --dg token
-        // (deterministic 难度补带, design §2.2). Only forwarded on the jyeoo_fetch queue.
-        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
-        // YUK-533 — confusable_contrast targets carry BOTH KCs (the A↔B pair). anchorKid
-        // (knowledgeIds[0]) is the primary attribution anchor as usual; forward the full
-        // pair so the quiz_gen handler can probe the A-vs-B boundary. Only confusable
-        // targets are multi-KC, so single-KC targets are byte-identical to before.
-        // phase-deferred: the quiz_gen handler's contrast-aware generation (reading
-        // knowledge_ids to write a discrimination item) is a flag-flip increment — until
-        // then this rides the EXISTING dispatch path (cooldown + per-run cap intact, no
-        // G-COST bypass) so the seam is data-complete. Context: QuizGenJobData.knowledge_ids
-        // in src/server/boss/handlers/quiz_gen.ts.
         ...(target.knowledgeIds.length > 1 ? { knowledge_ids: target.knowledgeIds } : {}),
-        ...(target.placementStarter
+      };
+      const placementTrace =
+        dispatchTrace && target.placementStarter
+          ? SupplyTraceV1.parse(
+              (deps.transformSupplyTrace ?? ((trace) => trace))({
+                ...dispatchTrace,
+                claim_id: target.placementStarter.claimId,
+                semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
+              }),
+            )
+          : dispatchTrace;
+      const quizGenData: QuizGenJobData | null =
+        queue === 'quiz_gen'
           ? {
-              placement_starter_claim_id: target.placementStarter.claimId,
-              semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
-            }
-          : {}),
-        ...(dispatchTrace
-          ? {
-              supply_trace: target.placementStarter
+              ...commonData,
+              generation_method: generationMethodFor(target),
+              ...(target.constraints.exactCount !== undefined
+                ? { exact_count: target.constraints.exactCount }
+                : {}),
+              ...(target.placementStarter
                 ? {
-                    ...dispatchTrace,
-                    claim_id: target.placementStarter.claimId,
+                    placement_starter_claim_id: target.placementStarter.claimId,
                     semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
                   }
-                : dispatchTrace,
+                : {}),
+              ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
-          : {}),
+          : null;
+      const nonQuizData = {
+        ...commonData,
+        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
+        ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
       };
       try {
-        const jobId =
-          queue === 'quiz_gen' && deps.enqueueQuizGen
-            ? await deps.enqueueQuizGen({ ...data, trigger: 'knowledge', ref_id: anchorKid })
-            : await enqueue(queue, data);
+        let jobId: string | null;
+        if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
+          if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
+          jobId = await deps.enqueueQuizGen(quizGenData);
+        } else {
+          jobId = await enqueue(queue, quizGenData ?? nonQuizData);
+        }
         result = {
           targetId: target.id,
           fingerprint: target.fingerprint,

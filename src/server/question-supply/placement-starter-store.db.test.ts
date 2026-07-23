@@ -1,4 +1,5 @@
 import { insertGoal } from '@/capabilities/agency/server/goals/queries';
+import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import {
   event,
   goal,
@@ -13,12 +14,14 @@ import {
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { dispatchSupplyTarget } from './dispatcher';
 import { SupplyTraceV1 } from './evidence-demand';
-import { dispatchPlacementStarterClaimTx } from './placement-starter';
+import { buildPlacementStarterTarget, dispatchPlacementStarterClaimTx } from './placement-starter';
 import {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './placement-starter-store';
+import { lockPlacementSupplyScopes } from './placement-supply-lock';
 
 const db = testDb();
 
@@ -230,6 +233,11 @@ describe('placement starter store', () => {
       }),
     ).rejects.toThrow();
     await expect(
+      db.execute(sql`insert into placement_starter_attempt_question
+        (attempt_id, claim_id, question_id, canonical_hash, verification_authority_epoch, verification_status, created_at)
+        values ('attempt-1', ${claim.id}, 'question-1', 'hash-bad-status', gen_random_uuid(), 'bogus', ${now})`),
+    ).rejects.toThrow();
+    await expect(
       db.insert(placement_starter_cost_component).values({
         id: 'cost-cross',
         claim_id: 'claim-2',
@@ -328,6 +336,98 @@ describe('placement starter store', () => {
     expect(result).toBeNull();
     expect(sends).toBe(0);
     expect((await db.select().from(placement_starter_claim))[0]?.status).toBe('pending_dispatch');
+  });
+
+  it('serializes promotion against final admission so warm and paid cannot both win', async () => {
+    await seedGoal();
+    const { identities } = await db.transaction((tx) =>
+      materializePlacementStartersForGoal(tx, 'goal-1'),
+    );
+    const identity = identities[0];
+    if (!identity) throw new Error('missing placement identity');
+    const now = new Date();
+    await db.insert(question).values({
+      id: 'question-race',
+      kind: 'short_answer',
+      prompt_md: 'race',
+      knowledge_ids: [identity.knowledgeId],
+      difficulty: 3,
+      source: 'quiz_gen',
+      draft_status: 'draft',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    let releasePromotion!: () => void;
+    const promotionLocked = new Promise<void>((resolve) => {
+      releasePromotion = resolve;
+    });
+    const promotion = db.transaction(async (tx) => {
+      await lockPlacementSupplyScopes(tx, [identity.knowledgeId]);
+      releasePromotion();
+      await tx
+        .update(question)
+        .set({ draft_status: 'active', updated_at: new Date() })
+        .where(eq(question.id, 'question-race'));
+    });
+    await promotionLocked;
+
+    let sends = 0;
+    const admission = db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(
+        tx,
+        identity.claimId,
+        async () => {
+          sends += 1;
+          return 'paid-job';
+        },
+        async (lockedTx) => {
+          await lockPlacementSupplyScopes(lockedTx, [identity.knowledgeId]);
+          return (
+            (await selectNextPlacementItem(lockedTx, {
+              knowledgeIds: [identity.knowledgeId],
+              preferKnowledgeIds: [],
+            })) === null
+          );
+        },
+      ),
+    );
+    await Promise.all([promotion, admission]);
+    expect(sends).toBe(0);
+    expect(
+      await selectNextPlacementItem(db, {
+        knowledgeIds: [identity.knowledgeId],
+        preferKnowledgeIds: [],
+      }),
+    ).not.toBeNull();
+  });
+
+  it('rejects a malformed fully augmented placement supply trace before enqueue', async () => {
+    await seedGoal();
+    const { identities } = await db.transaction((tx) =>
+      materializePlacementStartersForGoal(tx, 'goal-1'),
+    );
+    const identity = identities[0];
+    if (!identity) throw new Error('missing placement identity');
+    const [claim] = await db.select().from(placement_starter_claim);
+    if (!claim) throw new Error('missing placement claim');
+    let sends = 0;
+    await expect(
+      db.transaction((tx) =>
+        dispatchSupplyTarget(tx, buildPlacementStarterTarget(claim), {
+          atomic: true,
+          cooldownDays: 0,
+          tavilyAvailable: () => true,
+          transformSupplyTrace: (trace) => ({ ...trace, claim_id: '' }),
+          enqueueQuizGen: async () => {
+            sends += 1;
+            return 'must-not-send';
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+    expect(sends).toBe(0);
   });
 
   it('atomically records one job and rolls back when send fails', async () => {

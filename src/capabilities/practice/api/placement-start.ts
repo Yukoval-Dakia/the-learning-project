@@ -17,6 +17,7 @@ import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/htt
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { dispatchPlacementStarterClaim } from '@/server/question-supply/placement-starter';
 import { materializePlacementStartersForGoal } from '@/server/question-supply/placement-starter-store';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
@@ -141,6 +142,7 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       for (const claimId of claimIds) {
         try {
           await dispatchPlacementStarterClaim(db, claimId, async (tx) => {
+            await lockPlacementSupplyScopes(tx, knowledgeIds);
             const eligible = await selectNextPlacementItem(tx, {
               knowledgeIds,
               preferKnowledgeIds,

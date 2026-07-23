@@ -63,6 +63,7 @@ import {
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
@@ -599,6 +600,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         );
       }
       if (promote) {
+        await lockPlacementSupplyScopes(tx, current.knowledgeIds ?? []);
         // Promote draft→active.
         await tx
           .update(question)

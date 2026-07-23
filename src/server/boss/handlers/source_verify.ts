@@ -41,6 +41,7 @@ import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
@@ -463,6 +464,7 @@ export async function runSourceVerify(
         );
       }
       if (promote) {
+        await lockPlacementSupplyScopes(tx, current.knowledgeIds ?? []);
         await tx
           .update(question)
           .set({ draft_status: 'active', updated_at: now })

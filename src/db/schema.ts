@@ -1699,6 +1699,10 @@ export const placement_starter_attempt_question = pgTable(
       foreignColumns: [placement_starter_attempt.id, placement_starter_attempt.claim_id],
       name: 'placement_starter_attempt_question_attempt_claim_fk',
     }),
+    check(
+      'placement_starter_attempt_question_verification_status_check',
+      sql`${t.verification_status} IN ('authorized','satisfied','failed','cancelled','exhausted','superseded')`,
+    ),
     primaryKey({ columns: [t.attempt_id, t.question_id] }),
     uniqueIndex('placement_starter_attempt_question_claim_uq').on(t.claim_id, t.question_id),
     uniqueIndex('placement_starter_attempt_question_authority_uq').on(

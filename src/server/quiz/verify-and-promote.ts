@@ -26,6 +26,7 @@ import { runQuizVerify } from '@/server/boss/handlers/quiz_verify';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { runSourceVerify } from '@/server/boss/handlers/source_verify';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 
 export interface VerifyAndPromoteParams {
@@ -179,6 +180,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     const verifyEventId = newId();
 
     await db.transaction(async (tx) => {
+      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       await tx
         .update(question)
         .set({ draft_status: 'active', updated_at: now })
