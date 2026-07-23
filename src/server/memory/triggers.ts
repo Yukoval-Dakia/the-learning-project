@@ -274,6 +274,23 @@ export async function enqueueMemoryReconcile(
   );
 }
 
+export async function addVerbatimProjectionOnce(
+  db: Db,
+  client: Pick<MemoryClient, 'addVerbatimOnce'>,
+  input: { text: string; metadata: Record<string, unknown>; projectionKey: string },
+) {
+  return db.transaction(async (tx) => {
+    // The Postgres claim spans lookup + external add. Concurrent workers for the
+    // same immutable projection key serialize here. If the process dies after mem0
+    // commits, the DB connection releases the lock; redelivery acquires it and
+    // addVerbatimOnce's metadata lookup discovers the existing external row.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory_projection:${input.projectionKey}`}, 0))`,
+    );
+    return client.addVerbatimOnce(input.text, input.metadata, input.projectionKey);
+  });
+}
+
 export function buildMemoryEventIngestHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
@@ -306,9 +323,9 @@ export function buildMemoryEventIngestHandler(
       const memResult = !admitToExtraction
         ? null
         : editedConjecture
-          ? await client.addVerbatimOnce(
-              editedConjecture.claim,
-              {
+          ? await addVerbatimProjectionOnce(db, client, {
+              text: editedConjecture.claim,
+              metadata: {
                 source: 'conjecture_edit',
                 event_id: row.id,
                 conjecture_id: editedConjecture.conjectureId,
@@ -317,8 +334,8 @@ export function buildMemoryEventIngestHandler(
                 created_ms: row.created_at.getTime(),
                 kind: 'weakness',
               },
-              `conjecture-edit:${row.id}`,
-            )
+              projectionKey: `conjecture-edit:${row.id}`,
+            })
           : await client.addEventMemory(row);
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:

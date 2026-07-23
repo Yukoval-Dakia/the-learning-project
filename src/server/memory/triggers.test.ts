@@ -148,8 +148,13 @@ describe('buildMemoryEventIngestHandler', () => {
       results: [{ id: 'mem_core_1', memory: '应先验证虚词语境判断' }],
     }));
     const send = vi.fn(async () => 'job-1');
+    const db = {
+      transaction: vi.fn(async (fn: (tx: { execute: () => Promise<void> }) => Promise<unknown>) =>
+        fn({ execute: vi.fn(async () => {}) }),
+      ),
+    };
     const handler = buildMemoryEventIngestHandler(
-      {} as never,
+      db as never,
       { send },
       {
         loadEvent: async () => ({
