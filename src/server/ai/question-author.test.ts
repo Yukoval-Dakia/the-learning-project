@@ -181,7 +181,7 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
         material_title: '论语·学而',
         material_answer_anchor: {
           canonical_answer: { kind: 'text', value: '通「悦」' },
-          locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+          locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
         },
       },
       deps(runTaskFn),
@@ -296,7 +296,7 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
         material_body_md: '学而时习之，不亦说乎。',
         material_answer_anchor: {
           canonical_answer: { kind: 'text', value: '通「悦」' },
-          locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+          locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
         },
       },
       deps(runTaskFn),
@@ -323,7 +323,7 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
           material_body_md: '学而时习之，不亦说乎。',
           material_answer_anchor: {
             canonical_answer: { kind: 'text', value: '通「悦」' },
-            locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+            locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
           },
         },
         deps(
@@ -355,7 +355,7 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
           material_body_md: '学而时习之，不亦说乎。',
           material_answer_anchor: {
             canonical_answer: { kind: 'text', value: '通「悦」' },
-            locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+            locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
           },
         },
         deps(mockRunTask(draftFixture({ kind: 'short_answer' }))),
@@ -366,6 +366,87 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
     expect(plan.status).toBe('failed');
     expect(await db.select().from(question)).toEqual([]);
     expect(await db.select().from(question_generation_binding)).toEqual([]);
+  });
+
+  it('normalizes an alias kind once: prompt, persisted plan, and verifier all see the canonical kind', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    const runTaskFn = mockRunTask(
+      draftFixture({
+        kind: 'reading',
+        structured: {
+          id: 'r',
+          role: 'stem',
+          prompt_text: '阅读下面的文段：学而时习之，不亦说乎。',
+          sub_questions: [
+            {
+              id: 's1',
+              role: 'sub',
+              question_no: '1',
+              prompt_text: '「说」何意？',
+              answers: ['通「悦」'],
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await runQuestionAuthor(
+      {
+        seed_mode: 'material',
+        knowledge_ids: ['k_zhi'],
+        // 'reading_comprehension' is a profile-vocabulary alias of canonical 'reading'.
+        requested_kind: 'reading_comprehension',
+        material_body_md: '学而时习之，不亦说乎。',
+        material_answer_anchor: {
+          canonical_answer: { kind: 'text', value: '通「悦」' },
+          locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
+        },
+      },
+      deps(runTaskFn),
+    );
+
+    // A faithful 'reading' draft is NOT falsely vetoed against the raw alias.
+    expect(result.status).toBe('proposed');
+    // The prompt was steered with the canonical kind, not the raw alias.
+    const [, input] = runTaskFn.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(input.requested_kind).toBe('reading');
+    // The persisted plan stores the same canonical kind the prompt/verifier used.
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan.requested_kind).toBe('reading');
+    expect(plan.status).toBe('generated');
+    const [binding] = await db.select().from(question_generation_binding);
+    expect(binding.validation_status).toBe('needs_review');
+  });
+
+  it('defaults an omitted material kind to one canonical value and constrains the prompt to it', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    // draftFixture default kind is 'short_answer'; the model honors the constraint.
+    const runTaskFn = mockRunTask(draftFixture());
+
+    const result = await runQuestionAuthor(
+      {
+        seed_mode: 'material',
+        knowledge_ids: ['k_zhi'],
+        // requested_kind omitted.
+        material_body_md: '学而时习之，不亦说乎。',
+        material_answer_anchor: {
+          canonical_answer: { kind: 'text', value: '通「悦」' },
+          locator: { kind: 'text_span', start: 0, end: 33, exact_text: '学而时习之，不亦说乎。' },
+        },
+      },
+      deps(runTaskFn),
+    );
+
+    expect(result.status).toBe('proposed');
+    // The defaulted kind is injected into the prompt (constrains generation)…
+    const [, input] = runTaskFn.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(input.requested_kind).toBe('short_answer');
+    // …and is the exact value persisted on the plan (no prompt/plan divergence).
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan.requested_kind).toBe('short_answer');
+    expect(plan.status).toBe('generated');
   });
 
   it('rejects out-of-range or mismatched exact text before persisting an anchor', async () => {

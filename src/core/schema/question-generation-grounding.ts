@@ -47,6 +47,59 @@ export const SourceSpanLocator = z.union([
     }),
   }),
 ]);
+export type SourceSpanLocatorT = z.infer<typeof SourceSpanLocator>;
+
+/** Fail-closed source-locator validation error (never a silent pass). */
+export class SourceLocatorValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceLocatorValidationError';
+  }
+}
+
+/**
+ * Source-aware locator validation, centralized in the grounding owner module so
+ * every generation path shares one authority.
+ *
+ * Offsets are HALF-OPEN `[start, end)` measured in UTF-8 BYTES — never UTF-16
+ * code units (a `.length`/`.slice` on a JS string mis-measures every multibyte
+ * character). Validation can only be performed against the authoritative source
+ * bytes; when those bytes are absent (e.g. a page locator whose page text was
+ * never captured) this FAILS CLOSED rather than silently accepting the span.
+ */
+export function validateSourceLocatorBytes(
+  locator: SourceSpanLocatorT,
+  authoritativeBytes: Uint8Array | null,
+): void {
+  if (!authoritativeBytes) {
+    throw new SourceLocatorValidationError(
+      `source locator '${locator.kind}' requires authoritative source bytes; failing closed`,
+    );
+  }
+  if (locator.kind === 'text_span' || locator.kind === 'page_text_span') {
+    // Half-open [start, end): end is exclusive, in UTF-8 bytes.
+    if (locator.end <= locator.start) {
+      throw new SourceLocatorValidationError('source locator end must be greater than start');
+    }
+    if (locator.end > authoritativeBytes.length) {
+      throw new SourceLocatorValidationError(
+        'source locator end exceeds authoritative source byte length',
+      );
+    }
+    // fatal:false so a boundary that splits a codepoint decodes to U+FFFD and
+    // therefore cannot equal the recorded exact_text — the mismatch is rejected.
+    const decoded = new TextDecoder('utf-8', { fatal: false }).decode(
+      authoritativeBytes.subarray(locator.start, locator.end),
+    );
+    if (decoded !== locator.exact_text) {
+      throw new SourceLocatorValidationError(
+        'source locator byte range does not decode to the recorded exact_text',
+      );
+    }
+  }
+  // page_region carries bbox coordinates, not text offsets; the authoritative-
+  // bytes presence check above is its only fail-closed gate.
+}
 
 export const QuestionAnswerAnchor = z.object({
   id: z.string().min(1),

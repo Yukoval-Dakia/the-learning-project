@@ -7,6 +7,7 @@ import {
   QuestionGenerationPlan,
   type QuestionGenerationPlanT,
   structurallyVerifyGeneratedQuestion,
+  validateSourceLocatorBytes,
 } from '@/core/schema/question-generation-grounding';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -32,6 +33,12 @@ function contentHash(value: unknown): string {
 
 export interface PrepareQuestionGenerationInput<T> {
   source: QuestionAnswerAnchorT['source'];
+  /**
+   * Authoritative source bytes the locator is validated against (UTF-8). Every
+   * caller must supply these; `null` fails closed for any text-bearing locator
+   * so the generic path cannot bypass locator validation.
+   */
+  authoritativeBytes: Uint8Array | null;
   canonicalAnswer: QuestionAnswerAnchorT['canonical_answer'];
   anchorProvenance: QuestionAnswerAnchorT['provenance'];
   demand: QuestionGenerationPlanT['demand'];
@@ -51,6 +58,9 @@ export async function prepareQuestionGeneration<T>(
   db: Db,
   input: PrepareQuestionGenerationInput<T>,
 ): Promise<{ anchor: QuestionAnswerAnchorT; plan: QuestionGenerationPlanT; generated: T }> {
+  // Fail closed on an unvalidatable locator BEFORE any anchor/plan write or
+  // generation call — the generic path cannot bypass source-locator validation.
+  validateSourceLocatorBytes(input.source.locator, input.authoritativeBytes);
   const now = new Date();
   const anchorCore = {
     id: createId(),
@@ -161,6 +171,10 @@ export async function bindGeneratedQuestion(
   ) {
     throw new Error('generation plan answer anchor does not match supplied anchor');
   }
+  // Lock the exact plan row FOR UPDATE at transition entry: a concurrent
+  // markQuestionGenerationFailed (pending_generation → failed) now blocks until
+  // this transaction commits or rolls back, so it can never interleave between
+  // the binding write and the pending_generation → generated transition below.
   const [persistedPlan] = await db
     .select({ id: question_generation_plan.id })
     .from(question_generation_plan)
@@ -175,7 +189,8 @@ export async function bindGeneratedQuestion(
         eq(question_generation_plan.status, 'pending_generation'),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .for('update');
   const [persistedAnchor] = await db
     .select({ id: question_answer_anchor.id })
     .from(question_answer_anchor)
@@ -235,7 +250,7 @@ export async function bindGeneratedQuestion(
     objective_correctness: binding.objective_correctness,
     created_at: new Date(),
   });
-  await db
+  const transitioned = await db
     .update(question_generation_plan)
     .set({ status: 'generated' })
     .where(
@@ -245,6 +260,16 @@ export async function bindGeneratedQuestion(
         eq(question_generation_plan.content_hash, input.plan.content_hash),
         eq(question_generation_plan.status, 'pending_generation'),
       ),
+    )
+    .returning({ id: question_generation_plan.id });
+  // Assert the transition won: exactly one still-pending row moved to generated.
+  // Zero rows means a concurrent failure marker raced this transition; throwing
+  // rolls back the binding (and the caller's question + proposal writes) so the
+  // loser can never commit partial artifacts against a failed plan.
+  if (transitioned.length !== 1) {
+    throw new Error(
+      'generation plan transition lost a race: no pending_generation row to mark generated',
     );
+  }
   return binding;
 }

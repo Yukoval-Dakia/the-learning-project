@@ -30,7 +30,10 @@ import type { ToolContext } from '@/server/ai/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import type { QuestionAnswerAnchorT } from '@/core/schema/question-generation-grounding';
+import {
+  type QuestionAnswerAnchorT,
+  validateSourceLocatorBytes,
+} from '@/core/schema/question-generation-grounding';
 import {
   QuestionAuthorDraft,
   type QuestionAuthorDraftT,
@@ -50,6 +53,11 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 const PROMPT_PREVIEW_CHARS = 120;
+
+// The single canonical kind a material plan defaults to when none is requested.
+// A persisted plan's kind must equal the prompt kind and the verifier's
+// comparison kind, so the default also constrains generation (see Finding 1).
+const DEFAULT_MATERIAL_QUESTION_KIND = 'short_answer';
 
 export interface QuestionAuthorSeed {
   seed_mode: 'knowledge' | 'material';
@@ -97,12 +105,9 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
         `question_author material locator '${locator.kind}' has no authoritative page content`,
       );
     }
-    if (
-      locator.end > seed.material_body_md.length ||
-      seed.material_body_md.slice(locator.start, locator.end) !== locator.exact_text
-    ) {
-      throw new Error('question_author material locator does not match material_body_md');
-    }
+    // Inline material is its own authoritative source; validate the locator's
+    // half-open UTF-8 byte range via the shared grounding authority (Finding 2).
+    validateSourceLocatorBytes(locator, new TextEncoder().encode(seed.material_body_md));
   }
 
   const wanted = [...new Set(seed.knowledge_ids)];
@@ -123,15 +128,25 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
   } catch {
     effectiveDomain = null;
   }
-  const requestedKind = seed.requested_kind
-    ? (normalizeToCanonicalKind(seed.requested_kind) ?? undefined)
-    : undefined;
+  // ONE canonical effective kind, computed at plan-creation time and threaded to
+  // BOTH the generation prompt and (on the material path) the persisted plan, so
+  // the verifier compares like-for-like (Finding 1). The material path persists
+  // a plan whose requested_kind is veto-compared, so an omitted/unrecognized kind
+  // defaults to a canonical value AND constrains the prompt to it. Knowledge
+  // seeds persist no plan, so an omitted kind stays an open prompt hint.
+  const normalizedRequestedKind = seed.requested_kind
+    ? normalizeToCanonicalKind(seed.requested_kind)
+    : null;
+  const effectiveKind =
+    seed.seed_mode === 'material'
+      ? (normalizedRequestedKind ?? DEFAULT_MATERIAL_QUESTION_KIND)
+      : normalizedRequestedKind;
 
   return {
     input: {
       seed_mode: seed.seed_mode,
       knowledge_context: nodes.map((node) => ({ id: node.id, name: node.name })),
-      ...(requestedKind ? { requested_kind: requestedKind } : {}),
+      ...(effectiveKind ? { requested_kind: effectiveKind } : {}),
       ...(seed.difficulty !== undefined ? { requested_difficulty: seed.difficulty } : {}),
       ...(seed.material_body_md
         ? {
@@ -145,6 +160,7 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
     ctx: { subjectProfile: resolveSubjectProfile(effectiveDomain) },
     validIds,
     validIdSet,
+    effectiveKind,
   };
 }
 
@@ -198,7 +214,7 @@ export async function runQuestionAuthor(
 
   const prepared = await buildQuestionAuthorPreparation(db, seed);
   if (!prepared) return { status: 'skipped:knowledge_not_found' };
-  const { input, ctx: runCtx, validIds, validIdSet } = prepared;
+  const { input, ctx: runCtx, validIds, validIdSet, effectiveKind } = prepared;
 
   let preparedGrounding:
     | Awaited<ReturnType<typeof prepareQuestionGeneration<QuestionAuthorDraftT>>>
@@ -216,11 +232,16 @@ export async function runQuestionAuthor(
         content_hash: sourceHash,
         locator: seed.material_answer_anchor.locator,
       },
+      // Inline material IS the authoritative source; its UTF-8 bytes validate
+      // the locator centrally (fail-closed, never bypassed) — Finding 2.
+      authoritativeBytes: new TextEncoder().encode(seed.material_body_md),
       canonicalAnswer: seed.material_answer_anchor.canonical_answer,
       anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
       demand: { kind: 'knowledge', ref_id: validIds[0] },
       knowledgeIds: validIds,
-      requestedKind: seed.requested_kind ?? 'short_answer',
+      // Same canonical kind used for the prompt (Finding 1): the verifier
+      // compares the generated kind against this persisted value.
+      requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
       requestedAnswerClass: 'exact',
       constraints: { seed_mode: 'material' },
       planProvenance: { kind: 'human_planned', task_run_id: deps.taskRunId },

@@ -4,7 +4,10 @@ import {
   QuestionAnswerAnchor,
   QuestionGenerationBinding,
   QuestionGenerationPlan,
+  SourceLocatorValidationError,
+  type SourceSpanLocatorT,
   structurallyVerifyGeneratedQuestion,
+  validateSourceLocatorBytes,
 } from './question-generation-grounding';
 
 const anchor = QuestionAnswerAnchor.parse({
@@ -149,5 +152,77 @@ describe('question generation grounding contracts (YUK-350)', () => {
     expect(result.disposition).toBe('reject');
     expect(result.objective_correctness).toBe('unverified');
     expect(result.vetoes).toContain('answer_anchor_missing');
+  });
+});
+
+describe('validateSourceLocatorBytes — half-open UTF-8 byte semantics (YUK-350)', () => {
+  // '学而时习之' — five CJK chars, 3 bytes each = 15 UTF-8 bytes.
+  const body = '学而时习之';
+  const bytes = new TextEncoder().encode(body);
+
+  const textSpan = (start: number, end: number, exact_text: string): SourceSpanLocatorT => ({
+    kind: 'text_span',
+    start,
+    end,
+    exact_text,
+  });
+
+  it('accepts a byte-exact multibyte (CJK) span', () => {
+    // '学而' occupies bytes [0, 6); '之' occupies [12, 15).
+    expect(() => validateSourceLocatorBytes(textSpan(0, 6, '学而'), bytes)).not.toThrow();
+    expect(() => validateSourceLocatorBytes(textSpan(12, 15, '之'), bytes)).not.toThrow();
+    // The full body is 15 bytes, not string .length (5) — proves byte, not UTF-16.
+    expect(bytes.length).toBe(15);
+    expect(() => validateSourceLocatorBytes(textSpan(0, 15, body), bytes)).not.toThrow();
+  });
+
+  it('rejects a boundary that splits a codepoint (byte offset lands mid-character)', () => {
+    // [0, 4) cuts '而' in half → decodes to U+FFFD, never equals '学而'.
+    expect(() => validateSourceLocatorBytes(textSpan(0, 4, '学而'), bytes)).toThrow(
+      SourceLocatorValidationError,
+    );
+    // A UTF-16-style offset (end=2 for the 2-char '学而') under-reads in bytes.
+    expect(() => validateSourceLocatorBytes(textSpan(0, 2, '学而'), bytes)).toThrow(/exact_text/);
+  });
+
+  it('treats [start, end) as half-open: end is exclusive and may equal the byte length', () => {
+    expect(() => validateSourceLocatorBytes(textSpan(0, 15, body), bytes)).not.toThrow();
+    // end beyond the byte length is out of range.
+    expect(() => validateSourceLocatorBytes(textSpan(0, 16, body), bytes)).toThrow(
+      /exceeds authoritative source byte length/,
+    );
+    // Empty / inverted ranges are rejected.
+    expect(() => validateSourceLocatorBytes(textSpan(6, 6, ''), bytes)).toThrow(
+      /greater than start/,
+    );
+  });
+
+  it('fails closed when authoritative bytes are missing (never a silent pass)', () => {
+    expect(() => validateSourceLocatorBytes(textSpan(0, 6, '学而'), null)).toThrow(
+      /authoritative source bytes/,
+    );
+    const pageSpan: SourceSpanLocatorT = {
+      kind: 'page_text_span',
+      page_id: 'page_1',
+      page_version: 1,
+      page_index: 0,
+      start: 0,
+      end: 6,
+      exact_text: '学而',
+    };
+    expect(() => validateSourceLocatorBytes(pageSpan, null)).toThrow(SourceLocatorValidationError);
+    expect(() => validateSourceLocatorBytes(pageSpan, bytes)).not.toThrow();
+  });
+
+  it('fails closed for a page_region locator with no authoritative bytes, passes with them', () => {
+    const region: SourceSpanLocatorT = {
+      kind: 'page_region',
+      page_id: 'page_1',
+      page_version: 1,
+      page_index: 0,
+      bbox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+    };
+    expect(() => validateSourceLocatorBytes(region, null)).toThrow(/authoritative source bytes/);
+    expect(() => validateSourceLocatorBytes(region, bytes)).not.toThrow();
   });
 });
