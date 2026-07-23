@@ -1,9 +1,11 @@
+import { tasks } from '@/ai/registry';
 import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
 } from '@/core/capability/judges/multimodal_direct';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -13,11 +15,19 @@ import { defaultImageFetch } from './steps-judge';
 
 const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 
+// YUK-591 — the SDK structured-output envelope, built ONCE from the registry's
+// declared schema so the registry declaration (audited by §7) is the single,
+// load-bearing source. The ternary keeps the un-declared case typed; in practice
+// MultimodalDirectJudgeTask always declares it (the audit enforces exactly that).
+const outputSchema = tasks.MultimodalDirectJudgeTask.structuredOutputSchema;
+const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
+
+/** Widened (YUK-591) to carry the SDK `structured_output` passthrough. */
 export type MultimodalDirectRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; structured_output?: unknown }>;
 
 export type MultimodalDirectImageFetchFn = (
   assetIds: string[],
@@ -51,10 +61,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: RunTaskCtx,
-): Promise<{ text: string }> {
+): Promise<{ text: string; structured_output?: unknown }> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx);
-  return { text: result.text };
+  return { text: result.text, structured_output: result.structured_output };
 }
 
 function extractJsonObject(text: string): unknown {
@@ -64,6 +74,32 @@ function extractJsonObject(text: string): unknown {
     throw new Error('multimodal_direct judge output did not contain a JSON object');
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * YUK-591 — three-state dispatch over the task result (mirrors variant_verify's
+ * parseVariantVerifyResult). Exported so the unit test can feed constructed
+ * results directly.
+ *   (A) structured_output present (endpoint honoured outputFormat) → parse it
+ *       through the SAME Zod schema. The Zod pass is NOT optional: outputFormat
+ *       only guarantees JSON shape, not the app-level enum/range constraints, so
+ *       a shape-valid-but-constraint-violating payload still throws (→ the
+ *       caller's `unsupported` fallback, byte-identical bucket to today).
+ *   (B) structured_output absent/null (mimo ignores outputFormat, or the model
+ *       fell back to text) → the existing char-scan extractJsonObject path, so
+ *       the default mimo lane is byte-identical to pre-migration.
+ * `.parse` (throwing) is kept over safeParse so the thrown message is identical
+ * to the pre-migration text path (`extractJsonObject` "did not contain a JSON
+ * object" / ZodError), preserving the caller's evidence_json.error contract.
+ */
+export function parseMultimodalDirectResult(result: {
+  text: string;
+  structured_output?: unknown;
+}): MultimodalDirectLlmOutputT {
+  if (result.structured_output !== undefined && result.structured_output !== null) {
+    return MultimodalDirectLlmOutput.parse(result.structured_output);
+  }
+  return MultimodalDirectLlmOutput.parse(extractJsonObject(result.text));
 }
 
 /**
@@ -170,7 +206,7 @@ export async function runMultimodalDirectJudge(
   });
 
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
-  let llmText: string;
+  let taskResult: { text: string; structured_output?: unknown };
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
@@ -181,6 +217,12 @@ export async function runMultimodalDirectJudge(
     // YUK-576 — enableTransientRetry: true, same rationale + boundaries as
     // steps-judge.ts (sync-route sensor, no durable backstop; single module-level
     // call site covers all callers; operator-pinned routing turns retry off).
+    //
+    // YUK-591 — outputFormat: the SDK structured-output envelope (built from the
+    // registry-declared MultimodalDirectLlmOutput). Threaded in ctx here so an
+    // injected test runTaskFn can assert on it. A structured-output-capable
+    // endpoint constrains + SDK-retries the model to the schema; mimo ignores it
+    // and the dispatch falls back to the char-scan text parse (zero-loss).
     const result = await runTaskFn(
       'MultimodalDirectJudgeTask',
       { text: llmTextPayload, images },
@@ -189,9 +231,10 @@ export async function runMultimodalDirectJudge(
         subjectProfile: params.subjectProfile,
         override: visionJudgeProviderOverride(),
         enableTransientRetry: true,
+        outputFormat: OUTPUT_FORMAT,
       },
     );
-    llmText = result.text;
+    taskResult = result;
   } catch (err) {
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
@@ -202,11 +245,11 @@ export async function runMultimodalDirectJudge(
 
   let parsed: MultimodalDirectLlmOutputT;
   try {
-    parsed = MultimodalDirectLlmOutput.parse(extractJsonObject(llmText));
+    parsed = parseMultimodalDirectResult(taskResult);
   } catch (err) {
     return unsupportedResult('LLM output did not match MultimodalDirectLlmOutput schema', {
       error: err instanceof Error ? err.message : String(err),
-      raw_text: llmText,
+      raw_text: taskResult.text,
     });
   }
 

@@ -1,8 +1,10 @@
+import { tasks } from '@/ai/registry';
 import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/steps';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -10,6 +12,12 @@ import { eq } from 'drizzle-orm';
 import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
+
+// YUK-591 — SDK structured-output envelope built ONCE from the registry-declared
+// schema (the §7-audited single source). See multimodal-direct-judge.ts for the
+// symmetric wiring + zero-loss-on-mimo rationale.
+const outputSchema = tasks.StepsJudgeTask.structuredOutputSchema;
+const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
 const STEP_WEIGHT_DEFAULT = 0.6;
 const VERDICT_WEIGHT: Record<StepsLlmOutputT['signal_verdicts'][number]['verdict'], number> = {
   correct: 1,
@@ -18,11 +26,12 @@ const VERDICT_WEIGHT: Record<StepsLlmOutputT['signal_verdicts'][number]['verdict
   skipped: 0,
 };
 
+/** Widened (YUK-591) to carry the SDK `structured_output` passthrough. */
 export type StepsRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; structured_output?: unknown }>;
 
 export type StepsImageFetchFn = (
   assetIds: string[],
@@ -90,10 +99,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: RunTaskCtx,
-): Promise<{ text: string }> {
+): Promise<{ text: string; structured_output?: unknown }> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx);
-  return { text: result.text };
+  return { text: result.text, structured_output: result.structured_output };
 }
 
 function extractJsonObject(text: string): unknown {
@@ -103,6 +112,24 @@ function extractJsonObject(text: string): unknown {
     throw new Error('steps judge output did not contain a JSON object');
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * YUK-591 — three-state dispatch over the task result (symmetric with
+ * multimodal-direct-judge.ts parseMultimodalDirectResult). Exported for the unit
+ * test. structured_output present → Zod-parse it (constraint enforcement kept,
+ * not just JSON shape); absent/null → the char-scan text path (byte-identical to
+ * pre-migration on the default mimo lane). `.parse` (throwing) preserves the
+ * pre-migration thrown-message contract the caller records into evidence_json.
+ */
+export function parseStepsResult(result: {
+  text: string;
+  structured_output?: unknown;
+}): StepsLlmOutputT {
+  if (result.structured_output !== undefined && result.structured_output !== null) {
+    return StepsLlmOutput.parse(result.structured_output);
+  }
+  return StepsLlmOutput.parse(extractJsonObject(result.text));
 }
 
 function composeJudgeResult(
@@ -241,7 +268,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   });
 
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
-  let llmText: string;
+  let taskResult: { text: string; structured_output?: unknown };
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
@@ -257,6 +284,9 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     // single runTaskFn call site, so ALL sync callers of runStepsJudge are
     // covered by one flag. When the operator pins routing (VISION_JUDGE_PROVIDER
     // → ctx.override set), the runner's override gate turns retry off.
+    // YUK-591 — outputFormat threaded here (built from the registry-declared
+    // StepsLlmOutput); symmetric with multimodal-direct-judge.ts. mimo ignores it
+    // → structured_output absent → char-scan fallback (zero-loss on the default lane).
     const result = await runTaskFn(
       'StepsJudgeTask',
       { text: llmTextPayload, images },
@@ -265,9 +295,10 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         subjectProfile: params.subjectProfile,
         override: visionJudgeProviderOverride(),
         enableTransientRetry: true,
+        outputFormat: OUTPUT_FORMAT,
       },
     );
-    llmText = result.text;
+    taskResult = result;
   } catch (err) {
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
@@ -279,11 +310,11 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
 
   let parsed: StepsLlmOutputT;
   try {
-    parsed = StepsLlmOutput.parse(extractJsonObject(llmText));
+    parsed = parseStepsResult(taskResult);
   } catch (err) {
     return unsupportedResult('LLM output did not match StepsLlmOutput schema', {
       error: err instanceof Error ? err.message : String(err),
-      raw_text: llmText,
+      raw_text: taskResult.text,
     });
   }
 
