@@ -21,10 +21,13 @@ type SubscriptionLease = {
 export type SubscriptionDeliveryClaim = {
   subscriberId: string;
   subscriberVersion: number;
+  declarationHash: string;
   sourceEventId: string;
   deliverySeq: bigint;
   claimOwner: string;
   claimToken: string;
+  checkpointClaimOwner: string;
+  checkpointClaimToken: string;
   leaseUntil: Date;
 };
 
@@ -204,6 +207,21 @@ export async function renewSubscriptionLease(db: Db, lease: SubscriptionLease): 
   return rows.length === 1;
 }
 
+async function releaseSubscriptionLease(db: Db, lease: SubscriptionLease): Promise<void> {
+  await db.execute(sql`
+    update event_subscription_checkpoint
+    set claim_owner = null,
+        claim_token = null,
+        claim_lease_until = null,
+        updated_at = clock_timestamp()
+    where subscriber_id = ${lease.subscriberId}
+      and subscriber_version = ${lease.subscriberVersion}
+      and declaration_hash = ${lease.declarationHash}
+      and claim_owner = ${lease.claimOwner}
+      and claim_token = ${lease.claimToken}::uuid
+  `);
+}
+
 /**
  * Discovers with an anti-join, never with a dispatch_seq watermark. The
  * checkpoint lock serializes delivery_seq allocation for this one subscriber.
@@ -268,12 +286,23 @@ export async function discoverSubscriptionDeliveries(
       }
     }
     if (inserted > 0) {
-      await tx.execute(sql`
+      const advanced = await tx.execute(sql`
         update event_subscription_checkpoint
         set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
+          and declaration_hash = ${registry.declarationHash}
+          and status = 'active'
+          and claim_owner = ${lease.claimOwner}
+          and claim_token = ${lease.claimToken}::uuid
+          and claim_lease_until >= clock_timestamp()
+        returning subscriber_id
       `);
+      if (advanced.length !== 1) {
+        throw new Error(
+          `event subscription '${subscription.id}@v${subscription.version}' lost checkpoint lease during discovery`,
+        );
+      }
     }
     return inserted;
   });
@@ -338,10 +367,13 @@ export async function claimNextSubscriptionDelivery(
     ? {
         subscriberId: subscription.id,
         subscriberVersion: subscription.version,
+        declarationHash: registry.declarationHash,
         sourceEventId: row.source_event_id,
         deliverySeq: asBigint(row.delivery_seq),
         claimOwner: lease.claimOwner,
         claimToken: token,
+        checkpointClaimOwner: lease.claimOwner,
+        checkpointClaimToken: lease.claimToken,
         leaseUntil: row.claim_lease_until,
       }
     : null;
@@ -362,6 +394,17 @@ export async function renewSubscriptionDeliveryLease(
       and claim_owner = ${claim.claimOwner}
       and claim_token = ${claim.claimToken}::uuid
       and claim_lease_until >= clock_timestamp()
+      and exists (
+        select 1
+        from event_subscription_checkpoint c
+        where c.subscriber_id = event_subscription_delivery.subscriber_id
+          and c.subscriber_version = event_subscription_delivery.subscriber_version
+          and c.declaration_hash = ${claim.declarationHash}
+          and c.status = 'active'
+          and c.claim_owner = ${claim.checkpointClaimOwner}
+          and c.claim_token = ${claim.checkpointClaimToken}::uuid
+          and c.claim_lease_until >= clock_timestamp()
+      )
     returning source_event_id
   `);
   return rows.length === 1;
@@ -391,6 +434,17 @@ export async function completeSubscriptionDelivery(
       and claim_owner = ${claim.claimOwner}
       and claim_token = ${claim.claimToken}::uuid
       and claim_lease_until >= clock_timestamp()
+      and exists (
+        select 1
+        from event_subscription_checkpoint c
+        where c.subscriber_id = event_subscription_delivery.subscriber_id
+          and c.subscriber_version = event_subscription_delivery.subscriber_version
+          and c.declaration_hash = ${claim.declarationHash}
+          and c.status = 'active'
+          and c.claim_owner = ${claim.checkpointClaimOwner}
+          and c.claim_token = ${claim.checkpointClaimToken}::uuid
+          and c.claim_lease_until >= clock_timestamp()
+      )
     returning source_event_id
   `);
   return rows.length === 1;
@@ -425,6 +479,17 @@ export async function failSubscriptionDelivery(
       and claim_owner = ${claim.claimOwner}
       and claim_token = ${claim.claimToken}::uuid
       and claim_lease_until >= clock_timestamp()
+      and exists (
+        select 1
+        from event_subscription_checkpoint c
+        where c.subscriber_id = event_subscription_delivery.subscriber_id
+          and c.subscriber_version = event_subscription_delivery.subscriber_version
+          and c.declaration_hash = ${claim.declarationHash}
+          and c.status = 'active'
+          and c.claim_owner = ${claim.checkpointClaimOwner}
+          and c.claim_token = ${claim.checkpointClaimToken}::uuid
+          and c.claim_lease_until >= clock_timestamp()
+      )
     returning attempt_count
   `);
   if (rows.length === 0) return 'lost_lease';
@@ -458,6 +523,17 @@ export async function redriveSubscriptionDelivery(
       and c.declaration_hash = ${registry.declarationHash}
       and c.status = 'active'
       and d.status = 'dead_letter'
+      and not exists (
+        select 1
+        from event_subscription_delivery later
+        where later.subscriber_id = d.subscriber_id
+          and later.subscriber_version = d.subscriber_version
+          and later.delivery_seq > d.delivery_seq
+          and (
+            later.claimed_at is not null
+            or later.status in ('bootstrap_skipped', 'succeeded', 'skipped', 'dead_letter')
+          )
+      )
     returning d.source_event_id
   `);
   return rows.length === 1;
@@ -489,26 +565,30 @@ export async function runSubscriptionDispatchCycle(
     await bootstrapSubscription(db, registry, subscription);
     const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
     if (!lease) continue;
-    await discoverSubscriptionDeliveries(db, registry, subscription, lease);
-    const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
-    if (!claim) continue;
-
-    result.dispatched += 1;
     try {
-      const outcome = await subscription.handler({
-        subscriberId: subscription.id,
-        subscriberVersion: subscription.version,
-        deliverySeq: claim.deliverySeq,
-        sourceEventId: claim.sourceEventId,
-      });
-      if (await completeSubscriptionDelivery(db, claim, outcome)) {
-        if (outcome.status === 'succeeded') result.succeeded += 1;
-        else result.skipped += 1;
+      await discoverSubscriptionDeliveries(db, registry, subscription, lease);
+      const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
+      if (!claim) continue;
+
+      result.dispatched += 1;
+      try {
+        const outcome = await subscription.handler({
+          subscriberId: subscription.id,
+          subscriberVersion: subscription.version,
+          deliverySeq: claim.deliverySeq,
+          sourceEventId: claim.sourceEventId,
+        });
+        if (await completeSubscriptionDelivery(db, claim, outcome)) {
+          if (outcome.status === 'succeeded') result.succeeded += 1;
+          else result.skipped += 1;
+        }
+      } catch (error) {
+        const transition = await failSubscriptionDelivery(db, claim, error, options);
+        if (transition === 'retry_wait') result.retryScheduled += 1;
+        if (transition === 'dead_letter') result.deadLettered += 1;
       }
-    } catch (error) {
-      const transition = await failSubscriptionDelivery(db, claim, error, options);
-      if (transition === 'retry_wait') result.retryScheduled += 1;
-      if (transition === 'dead_letter') result.deadLettered += 1;
+    } finally {
+      await releaseSubscriptionLease(db, lease);
     }
   }
   return result;

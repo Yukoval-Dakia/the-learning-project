@@ -6,6 +6,7 @@ import {
   bootstrapSubscription,
   claimNextSubscriptionDelivery,
   claimSubscriptionLease,
+  completeSubscriptionDelivery,
   discoverSubscriptionDeliveries,
   failSubscriptionDelivery,
   redriveSubscriptionDelivery,
@@ -161,6 +162,134 @@ describe('YUK-751 durable event subscription runtime', () => {
     await expect(
       claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker'),
     ).rejects.toThrow(/declaration hash mismatch/);
+  });
+
+  it('fences delivery renew, completion, and failure on the checkpoint lease that created the claim', async () => {
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+    await insertEvent('renew-source');
+    await insertEvent('complete-source');
+    await insertEvent('fail-source');
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker-a');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+
+    const renewClaim = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+    if (!renewClaim) throw new Error('expected renew claim');
+    await testDb().execute(sql`
+      update event_subscription_checkpoint
+      set claim_lease_until = clock_timestamp() - interval '1 second'
+      where subscriber_id = ${SUBSCRIBER.id} and subscriber_version = ${SUBSCRIBER.version}
+    `);
+    expect(await renewSubscriptionDeliveryLease(testDb(), renewClaim)).toBe(false);
+
+    const takeover = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker-b');
+    if (!takeover) throw new Error('expected takeover');
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set claim_lease_until = clock_timestamp() - interval '1 second'
+      where source_event_id = 'renew-source'
+    `);
+    const completeClaim = await claimNextSubscriptionDelivery(
+      testDb(),
+      registry(),
+      SUBSCRIBER,
+      takeover,
+    );
+    if (!completeClaim) throw new Error('expected completion claim');
+    await testDb().execute(sql`
+      update event_subscription_checkpoint
+      set claim_lease_until = clock_timestamp() - interval '1 second'
+      where subscriber_id = ${SUBSCRIBER.id} and subscriber_version = ${SUBSCRIBER.version}
+    `);
+    expect(
+      await completeSubscriptionDelivery(testDb(), completeClaim, { status: 'succeeded' }),
+    ).toBe(false);
+    expect(
+      await failSubscriptionDelivery(testDb(), completeClaim, new Error('stale'), {
+        maxAttempts: 1,
+      }),
+    ).toBe('lost_lease');
+  });
+
+  it('rolls back discovered deliveries when the checkpoint expires before final advancement', async () => {
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+    await insertEvent('discovery-expire');
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await testDb().execute(
+      sql.raw(`
+      create or replace function expire_subscription_checkpoint() returns trigger as $$
+      begin
+        update event_subscription_checkpoint
+        set claim_lease_until = clock_timestamp() - interval '1 second'
+        where subscriber_id = new.subscriber_id and subscriber_version = new.subscriber_version;
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger expire_subscription_checkpoint_after_delivery
+      after insert on event_subscription_delivery
+      for each row execute function expire_subscription_checkpoint();
+    `),
+    );
+
+    try {
+      await expect(
+        discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease),
+      ).rejects.toThrow(/lost checkpoint lease/);
+      expect(await deliveryRows()).toEqual([]);
+    } finally {
+      await testDb().execute(
+        sql.raw(`
+        drop trigger if exists expire_subscription_checkpoint_after_delivery
+          on event_subscription_delivery;
+        drop function if exists expire_subscription_checkpoint();
+      `),
+      );
+    }
+  });
+
+  it('releases the exact checkpoint lease after no-claim and handler-failure cycles', async () => {
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+    await runSubscriptionDispatchCycle(testDb(), registry(), { owner: 'worker', maxAttempts: 1 });
+    expect(await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker')).not.toBeNull();
+
+    await testDb().execute(sql`
+      update event_subscription_checkpoint
+      set claim_owner = null, claim_token = null, claim_lease_until = null
+      where subscriber_id = ${SUBSCRIBER.id} and subscriber_version = ${SUBSCRIBER.version}
+    `);
+    const failing = { ...SUBSCRIBER, handler: async () => Promise.reject(new Error('boom')) };
+    await insertEvent('failed-source');
+    await runSubscriptionDispatchCycle(testDb(), registry(failing), {
+      owner: 'worker',
+      maxAttempts: 1,
+    });
+    expect(
+      await claimSubscriptionLease(testDb(), registry(failing), failing, 'worker'),
+    ).not.toBeNull();
+  });
+
+  it('rejects redrive when a later delivery has reached a terminal state', async () => {
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+    await insertEvent('first');
+    await insertEvent('second');
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+    const first = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+    if (!first) throw new Error('expected first claim');
+    expect(
+      await failSubscriptionDelivery(testDb(), first, new Error('dead'), { maxAttempts: 1 }),
+    ).toBe('dead_letter');
+    const second = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+    if (!second) throw new Error('expected second claim');
+    expect(await completeSubscriptionDelivery(testDb(), second, { status: 'succeeded' })).toBe(
+      true,
+    );
+
+    expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'first')).toBe(
+      false,
+    );
   });
 
   it('dispatches a claimed delivery to succeeded and observes handler outcomes', async () => {
