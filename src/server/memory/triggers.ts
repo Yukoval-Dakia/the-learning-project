@@ -189,6 +189,25 @@ export function shouldExtractToMemory(event: Pick<MemoryEventInput, 'actor_kind'
   return event.actor_kind === 'user';
 }
 
+type EditedConjectureMemory = { claim: string; conjectureId: string };
+
+function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory | null {
+  if (event.action !== 'rate' || event.subject_kind !== 'event') return null;
+  if (typeof event.payload !== 'object' || event.payload === null) return null;
+  const payload = event.payload as Record<string, unknown>;
+  if (
+    payload.rating !== 'accept' ||
+    payload.corrected_by_owner !== true ||
+    typeof payload.corrected_claim_md !== 'string' ||
+    typeof payload.conjecture_id !== 'string'
+  ) {
+    return null;
+  }
+  const claim = payload.corrected_claim_md.trim();
+  const conjectureId = payload.conjecture_id.trim();
+  return claim && conjectureId ? { claim, conjectureId } : null;
+}
+
 // ADR-0021 — outbox poll handler is the sole producer. Dedup is enforced by
 // the `ingest_at IS NULL` partition (a row is enqueued exactly once and the
 // stamp commits in the same tx as the enqueue). singletonKey + the iter2
@@ -279,11 +298,24 @@ export function buildMemoryEventIngestHandler(
       // agent activity too — so the brief regen fan-out STILL runs for gated events;
       // only addEventMemory + reconcile are skipped.
       const admitToExtraction = shouldExtractToMemory(row);
+      const editedConjecture = editedConjectureMemory(row);
 
-      // P2 (YUK-342): capture add() return — results[].id + results[].memory are
-      // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
-      // enqueue reconcile for the new memory ids.
-      const memResult = admitToExtraction ? await client.addEventMemory(row) : null;
+      // Owner-edited conjectures are already canonical text. Persist the claim verbatim
+      // (infer:false) so this job makes exactly one deterministic add+embedding call and
+      // does not also ask the generic extraction LLM to infer a duplicate preference.
+      const memResult = !admitToExtraction
+        ? null
+        : editedConjecture
+          ? await client.restoreVerbatim(editedConjecture.claim, {
+              source: 'conjecture_edit',
+              event_id: row.id,
+              conjecture_id: editedConjecture.conjectureId,
+              corrected_by_owner: true,
+              created_at: row.created_at.toISOString(),
+              created_ms: row.created_at.getTime(),
+              kind: 'weakness',
+            })
+          : await client.addEventMemory(row);
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:
       //  (1) bounded fan-out — slice to MAX_BRIEF_REGEN_SCOPES so an unbounded
@@ -376,7 +408,7 @@ export function buildMemoryEventIngestHandler(
           id: m.id,
           text: typeof m.memory === 'string' ? m.memory : '',
           created_ms: createdMs,
-          kind: row.kind,
+          kind: editedConjecture ? 'weakness' : row.kind,
         }));
       if (newMemories.length > 0) {
         // YUK-729 — same rationale as the brief-regen swallow above: a transient

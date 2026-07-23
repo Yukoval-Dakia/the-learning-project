@@ -30,6 +30,27 @@ describe('ProposalDecisionInput', () => {
     expect(ProposalDecisionInput.safeParse({ decision: 'veto' }).success).toBe(false);
   });
 
+  it('accepts only a strict trimmed claim correction on accept', () => {
+    expect(
+      ProposalDecisionInput.parse({
+        decision: 'accept',
+        corrected_payload: { claim_md: '  需要重新验证的判断  ' },
+      }).corrected_payload,
+    ).toEqual({ claim_md: '需要重新验证的判断' });
+
+    for (const input of [
+      { decision: 'dismiss', corrected_payload: { claim_md: '判断' } },
+      { decision: 'accept', corrected_payload: { claim_md: '' } },
+      { decision: 'accept', corrected_payload: { claim_md: 'x'.repeat(281) } },
+      { decision: 'accept', corrected_payload: { claim_md: '判断', knowledge_id: 'k1' } },
+      { decision: 'accept', corrected_payload: { claim_md: '判断', cause_category: 'concept' } },
+      { decision: 'accept', corrected_payload: { claim_md: '判断', extra: true } },
+      { decision: 'accept', corrected_payload: { corrected_claim_md: 'wrong key' } },
+    ]) {
+      expect(ProposalDecisionInput.safeParse(input).success).toBe(false);
+    }
+  });
+
   it('keeps decision-specific options on their own lane', () => {
     expect(ProposalDecisionInput.safeParse({ decision: 'change_type' }).success).toBe(false);
     expect(

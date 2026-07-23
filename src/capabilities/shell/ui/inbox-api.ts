@@ -218,7 +218,7 @@ export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 export const decideProposal = (
   id: string,
   decision: ProposalDecision,
-  opts: { newRelationType?: string; userNote?: string } = {},
+  opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
 ) =>
   apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
     method: 'POST',
@@ -226,6 +226,7 @@ export const decideProposal = (
       decision,
       ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
       ...(opts.userNote ? { user_note: opts.userNote } : {}),
+      ...(opts.correctedClaimMd ? { corrected_payload: { claim_md: opts.correctedClaimMd } } : {}),
     }),
   }).then((resource) => resource.result);
 

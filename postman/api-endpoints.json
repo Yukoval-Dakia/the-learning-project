@@ -492,6 +492,24 @@
     ]
   },
   {
+    "path": "/api/proposals/:id/decisions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "decision": "accept",
+          "corrected_payload": {
+            "claim_md": "更准确的待验证判断"
+          }
+        },
+        "notes": "corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/prep-desk/brief",
     "methods": [
       {

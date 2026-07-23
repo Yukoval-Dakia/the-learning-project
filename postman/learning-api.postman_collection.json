@@ -1450,6 +1450,45 @@
       ]
     },
     {
+      "name": "proposals",
+      "item": [
+        {
+          "name": "POST /api/proposals/:id/decisions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/:id/decisions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proposals", ":id", "decisions"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"corrected_payload\": {\n    \"claim_md\": \"更准确的待验证判断\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "questions",
       "item": [
         {

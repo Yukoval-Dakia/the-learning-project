@@ -98,6 +98,10 @@ export const ProposalDecisionInput = z
     user_note: z.string().max(2000).optional(),
     reason_md: z.string().trim().min(1).max(2000).optional(),
     affected_refs: z.array(ActivityRef).min(1).optional(),
+    corrected_payload: z
+      .object({ claim_md: z.string().trim().min(1).max(280) })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -113,6 +117,13 @@ export const ProposalDecisionInput = z
         code: z.ZodIssueCode.custom,
         message: 'new_relation_type is only valid for change_type',
         path: ['new_relation_type'],
+      });
+    }
+    if (data.decision !== 'accept' && data.corrected_payload) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'corrected_payload is only valid for accept',
+        path: ['corrected_payload'],
       });
     }
     if (data.decision !== 'retract' && (data.reason_md || data.affected_refs)) {

@@ -96,6 +96,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   // finding accept/dismiss transient state; probe_ready reveal toggle; outcome ack.
   const [deciding, setDeciding] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [editingClaim, setEditingClaim] = useState(false);
+  const [claimDraft, setClaimDraft] = useState('');
+  const editClaimTriggerRef = useRef<HTMLButtonElement>(null);
   const [revealed, setRevealed] = useState(false);
   const [acking, setAcking] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
@@ -135,6 +138,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       // prior candidate's spinner / error never bleeds onto the next one.
       setRevealed(false);
       setFailed(false);
+      setEditingClaim(false);
+      setClaimDraft('');
       setAckFailed(false);
       setDeciding(false);
       setAcking(false);
@@ -170,7 +175,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [brief, fireSeenIfNew]);
 
-  async function decide(decision: 'accept' | 'dismiss') {
+  async function decide(decision: 'accept' | 'dismiss', correctedClaimMd?: string) {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
     const targetId = brief.brief_id;
     // YUK-710 — interacting with the brief PROVES it was opened today, so record the seen first.
@@ -192,7 +197,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     setDeciding(true);
     setFailed(false);
     try {
-      await decideProposal(brief.prepared_action.proposal_id, decision);
+      if (correctedClaimMd) {
+        await decideProposal(brief.prepared_action.proposal_id, decision, { correctedClaimMd });
+      } else {
+        await decideProposal(brief.prepared_action.proposal_id, decision);
+      }
       // accept → re-project to probe_ready; dismiss → next candidate or null.
       await invalidateBriefSurfaces(qc);
     } catch (error) {
@@ -283,6 +292,70 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 教研团在检验什么
               </h3>
               <p className="tb-claim serif">{brief.finding.claim_md}</p>
+              {brief.prepared_action.kind === 'review_finding' &&
+                (editingClaim ? (
+                  <div className="tb-claim-edit">
+                    <label htmlFor="tb-claim-edit">改写后的判断</label>
+                    <textarea
+                      id="tb-claim-edit"
+                      value={claimDraft}
+                      maxLength={280}
+                      disabled={deciding}
+                      onChange={(event) => setClaimDraft(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Escape' || deciding) return;
+                        setEditingClaim(false);
+                        setFailed(false);
+                        requestAnimationFrame(() => editClaimTriggerRef.current?.focus());
+                      }}
+                    />
+                    <div className="tb-actions">
+                      <Btn
+                        size="sm"
+                        variant="primary"
+                        disabled={
+                          deciding ||
+                          claimDraft.trim().length === 0 ||
+                          claimDraft.trim() === brief.finding.claim_md.trim()
+                        }
+                        onClick={() => void decide('accept', claimDraft.trim())}
+                      >
+                        保存并验证
+                      </Btn>
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        disabled={deciding}
+                        onClick={() => {
+                          setEditingClaim(false);
+                          setFailed(false);
+                          requestAnimationFrame(() => editClaimTriggerRef.current?.focus());
+                        }}
+                      >
+                        取消
+                      </Btn>
+                      {failed && (
+                        <span className="tb-error" role="alert">
+                          操作失败，请重试
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <Btn
+                    ref={editClaimTriggerRef}
+                    size="sm"
+                    variant="ghost"
+                    disabled={deciding}
+                    onClick={() => {
+                      setClaimDraft(brief.finding.claim_md);
+                      setFailed(false);
+                      setEditingClaim(true);
+                    }}
+                  >
+                    改写判断
+                  </Btn>
+                ))}
             </section>
 
             {/* 依据 — summary + prose-only provenance chips (one per ref, no ×N, no ids). */}
@@ -321,7 +394,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 navigate={navigate}
                 revealed={revealed}
                 deciding={deciding}
-                failed={failed}
+                failed={editingClaim ? false : failed}
                 acking={acking}
                 ackFailed={ackFailed}
                 onReveal={() => {

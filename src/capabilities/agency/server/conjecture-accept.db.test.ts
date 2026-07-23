@@ -4,11 +4,7 @@
 // semantics (accept = calibration anchor / edit → mem0 CORE / reject → digest),
 // idempotency, and the ND-5 red line: NO FSRS / review row is ever written.
 
-import {
-  type ConjectureCoreWriter,
-  PROBE_SLOTS_FULL_CODE,
-  setConjectureCoreWriter,
-} from '@/capabilities/agency/server/conjecture-accept';
+import { PROBE_SLOTS_FULL_CODE } from '@/capabilities/agency/server/conjecture-accept';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -118,15 +114,11 @@ async function fillProbeSlots(n: number): Promise<string[]> {
 }
 
 describe('acceptConjectureProposal lifecycle', () => {
-  let coreWriter: ReturnType<typeof vi.fn<ConjectureCoreWriter>>;
-
   beforeEach(async () => {
     await resetDb();
     // YUK-531 PR-3 — every test starts with the promotion flag OFF (dark default).
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
-    coreWriter = vi.fn<ConjectureCoreWriter>(async () => {});
-    setConjectureCoreWriter(coreWriter);
   });
 
   afterEach(() => {
@@ -159,13 +151,11 @@ describe('acceptConjectureProposal lifecycle', () => {
       calibration_anchor: 'accept',
     });
 
-    // accept = calibration anchor, NOT confirmed: no CORE write.
-    expect(coreWriter).not.toHaveBeenCalled();
-    // ND-5 red line — accept never enrolls / writes FSRS.
+    // Accept is durably projected from this rate event by the worker outbox.
     expect(await fsrsRowCount()).toBe(0);
   });
 
-  it('edit sets corrected_by_owner=true, writes the owner version to CORE, not confirmed, no FSRS', async () => {
+  it('edit persists the owner version on the durable rate event, not confirmed, no FSRS', async () => {
     const db = testDb();
     const proposalId = await writeAiProposal(db, {
       actor_ref: 'research_meeting',
@@ -180,13 +170,6 @@ describe('acceptConjectureProposal lifecycle', () => {
       kind: 'conjecture',
       corrected_by_owner: true,
       weakness_confirmed: false,
-    });
-
-    expect(coreWriter).toHaveBeenCalledTimes(1);
-    expect(coreWriter).toHaveBeenCalledWith({
-      conjecture_id: proposalId,
-      claim_md: 'you apply the chain rule but drop the inner factor',
-      corrected_by_owner: true,
     });
 
     const rates = await rateEvents(proposalId);
@@ -222,11 +205,10 @@ describe('acceptConjectureProposal lifecycle', () => {
       user_note: 'wrong, I never confuse those',
     });
 
-    expect(coreWriter).not.toHaveBeenCalled();
     expect(await fsrsRowCount()).toBe(0);
   });
 
-  it('re-accept is idempotent — single rate event, no second CORE write, no FSRS', async () => {
+  it('re-accept is idempotent — single durable rate event and no FSRS', async () => {
     const db = testDb();
     const proposalId = await writeAiProposal(db, {
       actor_ref: 'research_meeting',
@@ -236,15 +218,11 @@ describe('acceptConjectureProposal lifecycle', () => {
     await acceptAiProposal(db, proposalId, {
       corrected_payload: { claim_md: 'edited claim' },
     });
-    coreWriter.mockClear();
-
     const again = await acceptAiProposal(db, proposalId, {
       corrected_payload: { claim_md: 'edited claim' },
     });
 
     expect(again).toMatchObject({ idempotent: true, corrected_by_owner: true });
-    expect(coreWriter).not.toHaveBeenCalled();
-
     // Exactly one rate event survives — no double-anchor.
     const rates = await rateEvents(proposalId);
     expect(rates).toHaveLength(1);

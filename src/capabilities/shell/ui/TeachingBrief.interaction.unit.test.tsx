@@ -204,6 +204,67 @@ describe('TeachingBriefBand — loading / error (jsdom)', () => {
 });
 
 describe('TeachingBriefBand — finding CTAs (jsdom)', () => {
+  it('edits only the finding claim, supports Escape focus restore, and submits trimmed text', async () => {
+    decideProposalMock.mockResolvedValue({});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    const trigger = await screen.findByRole('button', { name: '改写判断' });
+    await user.click(trigger);
+    const textarea = screen.getByRole('textbox', { name: '改写后的判断' }) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(FINDING_CLAIM);
+    expect((screen.getByRole('button', { name: '保存并验证' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    await user.clear(textarea);
+    await user.type(textarea, '  更准确的判断  ');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox', { name: '改写后的判断' })).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: '改写判断' })),
+    );
+
+    await user.click(screen.getByRole('button', { name: '改写判断' }));
+    const retryTextarea = screen.getByRole('textbox', { name: '改写后的判断' });
+    await user.clear(retryTextarea);
+    await user.type(retryTextarea, '  更准确的判断  ');
+    await user.click(screen.getByRole('button', { name: '保存并验证' }));
+    expect(decideProposalMock).toHaveBeenCalledWith('evt_conj_01', 'accept', {
+      correctedClaimMd: '更准确的判断',
+    });
+  });
+
+  it('edited save failure retains text and finding for role=alert retry', async () => {
+    decideProposalMock.mockRejectedValue(new Error('mem0 unavailable'));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: findingBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    await user.click(await screen.findByRole('button', { name: '改写判断' }));
+    const textarea = screen.getByRole('textbox', { name: '改写后的判断' });
+    await user.clear(textarea);
+    await user.type(textarea, '保留这段改写');
+    await user.click(screen.getByRole('button', { name: '保存并验证' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('操作失败，请重试');
+    expect(
+      (screen.getByRole('textbox', { name: '改写后的判断' }) as HTMLTextAreaElement).value,
+    ).toBe('保留这段改写');
+    expect(screen.getByText(FINDING_CLAIM)).toBeTruthy();
+  });
+
   it('accept calls decideProposal(accept) and invalidates the wired keys', async () => {
     decideProposalMock.mockResolvedValue({});
     vi.stubGlobal(

@@ -6,10 +6,8 @@
 //            calibration ANCHOR, NOT a confirmed weakness. `weakness_confirmed`
 //            is ALWAYS false here — only the probe one-shot (a later task) mints
 //            a confirmed weakness via its own confirmation path.
-//   edit   — owner rewrote the claim (corrected_payload). corrected_by_owner=true
-//            and the owner's version is written to mem0 CORE via the INJECTABLE
-//            ConjectureCoreWriter seam (default no-op so tests / cold-start never
-//            hit live mem0). Still NOT auto-confirmed.
+//   edit   — owner rewrote the claim (corrected_payload). corrected_by_owner=true;
+//            the durable rate event outbox projects it to mem0 in the worker.
 //   reject — handled by dismissAiProposal's default branch (writeGenericRateEvent
 //            rating='dismiss' + recordProposalDecisionSignal → digest); not here.
 //
@@ -67,7 +65,7 @@ export interface ConjectureApplierOpts {
   user_note?: string;
   // EDIT path: the owner-rewritten conjecture payload (canonical field names,
   // MISMATCH #2). Presence ⇒ corrected_by_owner=true + a CORE write.
-  corrected_payload?: { claim_md?: string; cause_category?: string; knowledge_id?: string };
+  corrected_payload?: { claim_md: string };
 }
 
 export interface ConjectureAcceptResult {
@@ -80,27 +78,6 @@ export interface ConjectureAcceptResult {
   // ALWAYS false: accept/edit never confirm a weakness — the probe does (later task).
   weakness_confirmed: false;
   idempotent?: boolean;
-}
-
-// Single owner of mem0 CORE writes for conjectures. Injected (default no-op in
-// tests / cold-start; wired to the live mem0 CORE writer by the agency worker
-// composition root in a later task). The sleep job is the only proposer; CORE is
-// read-only to copilot (single-writer invariant) — this seam preserves that by
-// being the lone write path for owner-corrected conjecture claims.
-export type ConjectureCoreWriter = (input: {
-  conjecture_id: string;
-  claim_md: string;
-  corrected_by_owner: boolean;
-}) => Promise<void>;
-
-let coreWriter: ConjectureCoreWriter = async () => {
-  // Phase-deferred (feedback_phase_deferred_comments): default no-op. The live
-  // mem0 CORE writer is injected by the agency worker composition root once the
-  // mem0 wiring task lands; tests inject a spy via setConjectureCoreWriter.
-};
-
-export function setConjectureCoreWriter(writer: ConjectureCoreWriter): void {
-  coreWriter = writer;
 }
 
 export async function acceptConjectureProposal(
@@ -236,13 +213,6 @@ export async function acceptConjectureProposal(
       );
     }
   });
-
-  // EDIT only: the owner's rewritten claim goes to mem0 CORE (single-writer
-  // seam). Accept-not-confirmed: NO weakness minted, NO FSRS write (ND-5).
-  if (isEdit) {
-    const claim = correctedClaim ?? requiredString(change.claim_md, 'claim_md', proposalId);
-    await coreWriter({ conjecture_id: conjectureId, claim_md: claim, corrected_by_owner: true });
-  }
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
