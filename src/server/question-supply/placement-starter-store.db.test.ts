@@ -260,7 +260,7 @@ describe('placement starter store', () => {
     ).rejects.toThrow();
   });
 
-  it('enforces at most one non-terminal claim per (goal, subject) (YUK-452 review)', async () => {
+  it('enforces at most one IN-FLIGHT claim per (goal, subject), pending exempt (YUK-452 round-2)', async () => {
     const now = new Date('2026-07-23T00:00:00Z');
     const baseClaim = {
       goal_id: 'goal-x',
@@ -269,7 +269,7 @@ describe('placement starter store', () => {
       knowledge_id: 'kc-a',
       demand_id: 'demand-a',
       target_id: 'target-a',
-      status: 'pending_dispatch' as const,
+      status: 'queued' as const,
       max_paid_attempts: 3,
       budget_limit_micro_usd: 1_000_000,
       known_cost_micro_usd: 0,
@@ -278,13 +278,12 @@ describe('placement starter store', () => {
       updated_at: now,
       version: 0,
     };
-    // First non-terminal claim for (goal-x, yuwen).
+    // First IN-FLIGHT (queued) claim for (goal-x, yuwen).
     await db
       .insert(placement_starter_claim)
       .values({ ...baseClaim, id: 'claim-a', fingerprint: 'fp-a' });
-    // A SECOND non-terminal claim for the SAME (goal, subject) — a later revision, distinct id — is
-    // rejected by placement_starter_claim_nonterminal_uq (the cross-revision single-flight budget
-    // guard). Before the YUK-452 fix the index was keyed on (id), so this insert wrongly succeeded.
+    // A SECOND in-flight claim (queued) for the SAME (goal, subject) — later revision, distinct id —
+    // is rejected by placement_starter_claim_nonterminal_uq (paid single-flight guard).
     await expect(
       db.insert(placement_starter_claim).values({
         ...baseClaim,
@@ -295,6 +294,18 @@ describe('placement starter store', () => {
         target_id: 'target-b',
       }),
     ).rejects.toThrow();
+    // pending_dispatch is EXEMPT (round-2): a never-dispatched claim has spent nothing, so it may
+    // coexist with the in-flight claim — otherwise a stranded pending claim would permanently block
+    // every later revision for this goal+subject.
+    await db.insert(placement_starter_claim).values({
+      ...baseClaim,
+      id: 'claim-pending',
+      fingerprint: 'fp-pending',
+      status: 'pending_dispatch',
+      semantic_goal_revision_id: 'rev-p',
+      demand_id: 'demand-p',
+      target_id: 'target-p',
+    });
     // A DIFFERENT subject for the same goal is allowed — multi-subject goals dispatch one claim each.
     await db.insert(placement_starter_claim).values({
       ...baseClaim,
@@ -306,8 +317,8 @@ describe('placement starter store', () => {
       demand_id: 'demand-c',
       target_id: 'target-c',
     });
-    // Once the first claim is TERMINAL, a fresh non-terminal claim for the same (goal, subject) is
-    // allowed — the partial index only covers non-terminal rows.
+    // Once the in-flight claim is TERMINAL, a fresh in-flight claim for the same (goal, subject) is
+    // allowed — the partial index only covers in-flight rows.
     await db
       .update(placement_starter_claim)
       .set({ status: 'satisfied', satisfied_at: now })
@@ -321,7 +332,92 @@ describe('placement starter store', () => {
       target_id: 'target-d',
     });
     const rows = await db.select().from(placement_starter_claim);
-    expect(rows.map((r) => r.id).sort()).toEqual(['claim-a', 'claim-c', 'claim-d']);
+    expect(rows.map((r) => r.id).sort()).toEqual([
+      'claim-a',
+      'claim-c',
+      'claim-d',
+      'claim-pending',
+    ]);
+  });
+
+  it('dispatches a new-revision claim even while a stranded pending claim exists (YUK-452 round-2)', async () => {
+    await seedGoal();
+    const { identities } = await db.transaction((tx) =>
+      materializePlacementStartersForGoal(tx, 'goal-1'),
+    );
+    const identity = identities[0];
+    if (!identity) throw new Error('missing placement identity');
+    const [materialized] = await db
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, identity.claimId));
+    if (!materialized) throw new Error('missing materialized claim');
+    // A prior revision's claim stranded in pending_dispatch (its dispatch tx failed; no sweeper
+    // re-drives it) for the SAME goal+subject. Under the round-2 predicate it must NOT block this
+    // revision's dispatch.
+    await db.insert(placement_starter_claim).values({
+      ...materialized,
+      id: 'stranded-pending',
+      fingerprint: 'fp-stranded',
+      semantic_goal_revision_id: 'rev-stranded',
+      demand_id: 'demand-stranded',
+      target_id: 'target-stranded',
+      status: 'pending_dispatch',
+      pg_boss_job_id: null,
+    });
+    const sent: QuizGenJobData[] = [];
+    const jobId = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId, async (_queue, data) => {
+        sent.push(data);
+        return 'job-new';
+      }),
+    );
+    expect(jobId).toBe('job-new');
+    expect(sent).toHaveLength(1);
+    const byId = Object.fromEntries(
+      (await db.select().from(placement_starter_claim)).map((r) => [r.id, r.status]),
+    );
+    expect(byId[identity.claimId]).toBe('queued');
+    expect(byId['stranded-pending']).toBe('pending_dispatch');
+  });
+
+  it('cancels a claim whose dispatch loses the single-flight slot, no orphan job (YUK-452 round-2)', async () => {
+    await seedGoal();
+    const { identities } = await db.transaction((tx) =>
+      materializePlacementStartersForGoal(tx, 'goal-1'),
+    );
+    const identity = identities[0];
+    if (!identity) throw new Error('missing placement identity');
+    const [materialized] = await db
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, identity.claimId));
+    if (!materialized) throw new Error('missing materialized claim');
+    // Another revision's claim is already IN FLIGHT (queued) for the same goal+subject — it holds
+    // the single-flight slot.
+    await db.insert(placement_starter_claim).values({
+      ...materialized,
+      id: 'in-flight-winner',
+      fingerprint: 'fp-winner',
+      semantic_goal_revision_id: 'rev-winner',
+      demand_id: 'demand-winner',
+      target_id: 'target-winner',
+      status: 'queued',
+      pg_boss_job_id: 'job-winner',
+    });
+    const jobId = await db.transaction((tx) =>
+      dispatchPlacementStarterClaimTx(tx, identity.claimId, async () => 'job-loser'),
+    );
+    // The losing claim's pending→queued raised the single-flight 23505; it is terminalized as
+    // cancelled (no throw, no dispatch) and the savepoint rolled back its enqueue → pg_boss_job_id
+    // stays null (no orphan job). The winner is untouched.
+    expect(jobId).toBeNull();
+    const rows = await db.select().from(placement_starter_claim);
+    const loser = rows.find((r) => r.id === identity.claimId);
+    expect(loser?.status).toBe('cancelled');
+    expect(loser?.pg_boss_job_id).toBeNull();
+    expect(loser?.last_error_class).toBe('superseded');
+    expect(rows.find((r) => r.id === 'in-flight-winner')?.status).toBe('queued');
   });
 
   it('ignores sequence-only goal updates when deriving semantic identity', async () => {

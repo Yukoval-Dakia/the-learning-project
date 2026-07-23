@@ -4677,7 +4677,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"placement_starter_claim\".\"status\" IN ('pending_dispatch','queued','running','verifying','retry_scheduled')",
+          "where": "\"placement_starter_claim\".\"status\" IN ('queued','running','verifying','retry_scheduled')",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -7,4 +7,4 @@ ALTER TABLE "placement_starter_attempt_question" ADD CONSTRAINT "placement_start
 ALTER TABLE "placement_starter_cost_component" ADD CONSTRAINT "placement_starter_cost_component_kind_check" CHECK ("placement_starter_cost_component"."component_kind" IN ('quiz_gen','quiz_verify','solution_check','teaching_quality'));--> statement-breakpoint
 DROP INDEX "placement_starter_claim_nonterminal_uq";--> statement-breakpoint
 CREATE INDEX "placement_starter_cost_component_claim_idx" ON "placement_starter_cost_component" USING btree ("claim_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "placement_starter_claim_nonterminal_uq" ON "placement_starter_claim" USING btree ("goal_id","subject_id") WHERE "placement_starter_claim"."status" IN ('pending_dispatch','queued','running','verifying','retry_scheduled');
+CREATE UNIQUE INDEX "placement_starter_claim_nonterminal_uq" ON "placement_starter_claim" USING btree ("goal_id","subject_id") WHERE "placement_starter_claim"."status" IN ('queued','running','verifying','retry_scheduled');

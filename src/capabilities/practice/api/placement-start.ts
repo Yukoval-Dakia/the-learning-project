@@ -156,8 +156,11 @@ export async function createPlacementSession(req: Request): Promise<Response> {
           // claims (the placement_starter_claim_recovery_idx supports one but none is wired yet), so
           // recovery is a SUBSEQUENT /placement/start for the same goal — materialize is idempotent
           // on the deterministic claim id and dispatchPlacementStarterClaimTx re-dispatches a
-          // still-'pending_dispatch' claim. We surface sourcingNeeded to the client rather than
-          // failing the whole probe (YUK-452 review: message corrected to match reality).
+          // still-'pending_dispatch' claim. A stranded pending claim is HARMLESS: it is exempt from
+          // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), so it blocks no
+          // later revision; if it is ever re-dispatched while a newer revision is already in flight it
+          // is cleanly superseded (cancelled), never a 500. We surface sourcingNeeded to the client
+          // rather than failing the whole probe (YUK-452 review: message corrected to match reality).
           console.error(
             `[placement-starter] initial dispatch failed for ${claimId}; claim left pending_dispatch, a subsequent placement start re-dispatches it`,
             err,

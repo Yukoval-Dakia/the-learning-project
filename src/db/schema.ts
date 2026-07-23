@@ -1598,21 +1598,26 @@ export const placement_starter_claim = pgTable(
     uniqueIndex('placement_starter_claim_job_uq')
       .on(t.pg_boss_job_id)
       .where(sql`${t.pg_boss_job_id} IS NOT NULL`),
-    // At most one non-terminal claim per (goal, subject). The claim id / fingerprint /
-    // (revision, subject) uniqueness already pins one row per goal REVISION; this partial
-    // index is the cross-revision budget guard: once a goal is edited (new
-    // semantic_goal_revision_id → new claim id) while an earlier revision's claim is still
-    // in flight, both revisions would otherwise dispatch concurrent paid generation batches
-    // into the SAME goal pool (addPlacementStarterKnowledgeToExplicitGoal unions every
-    // revision's synthetic KC into the goal scope). Keying the partial unique on (id) — the
-    // PK — enforced nothing beyond the PK (YUK-452 review). ensurePlacementStarterKnowledgeAndClaim
-    // inserts with a target-less ON CONFLICT DO NOTHING so this guard degrades to "skip the
-    // second concurrent batch", never a hard insert failure.
+    // At most one IN-FLIGHT (paid) claim per (goal, subject). The claim id / fingerprint /
+    // (revision, subject) uniqueness already pins one row per goal REVISION; this partial index
+    // is the cross-revision budget guard: once a goal is edited (new semantic_goal_revision_id →
+    // new claim id) while an earlier revision's claim is still generating, both revisions would
+    // otherwise dispatch concurrent paid generation batches into the SAME goal pool
+    // (addPlacementStarterKnowledgeToExplicitGoal unions every revision's synthetic KC into the
+    // goal scope). Keying the partial unique on (id) — the PK — enforced nothing (YUK-452 review).
+    //
+    // 'pending_dispatch' is DELIBERATELY EXCLUDED from the predicate (YUK-452 round-2): a claim
+    // that never dispatched has spent NOTHING and must not block a new revision's claim. Otherwise
+    // a claim stranded 'pending_dispatch' by a failed dispatch tx (no sweeper re-drives it) would
+    // permanently block every later revision for that goal+subject — placement soft-stuck forever.
+    // The paid single-flight invariant is preserved: paid work only begins once a claim reaches
+    // 'queued' (acquirePlacementAttempt requires queued+), so gating on {queued, running, verifying,
+    // retry_scheduled} still admits exactly one paid flight. The pending→queued transition in
+    // dispatchPlacementStarterClaimTx catches the resulting 23505 and terminalizes the losing
+    // (stale) claim as 'cancelled' — never a retry loop or 500.
     uniqueIndex('placement_starter_claim_nonterminal_uq')
       .on(t.goal_id, t.subject_id)
-      .where(
-        sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled')`,
-      ),
+      .where(sql`${t.status} IN ('queued','running','verifying','retry_scheduled')`),
     index('placement_starter_claim_recovery_idx')
       .on(t.next_reconcile_at, t.created_at)
       .where(

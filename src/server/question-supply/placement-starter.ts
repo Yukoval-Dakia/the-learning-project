@@ -7,9 +7,34 @@ import { and, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { dispatchSupplyTarget } from './dispatcher';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
+import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
+
+// The status→queued transition can collide with placement_starter_claim_nonterminal_uq when another
+// claim for the same goal+subject is already in flight (YUK-452 round-2). postgres.js surfaces the
+// index name as constraint_name; pg-boss's internal `pg` driver uses `constraint`. drizzle wraps the
+// driver error in a DrizzleQueryError, so walk the `.cause` chain and check both field names.
+function isNonterminalSingleFlightViolation(err: unknown): boolean {
+  for (let cur: unknown = err, depth = 0; cur != null && depth < 5; depth++) {
+    const e = cur as {
+      code?: string;
+      constraint_name?: string;
+      constraint?: string;
+      cause?: unknown;
+    };
+    if (
+      e.code === '23505' &&
+      (e.constraint_name === 'placement_starter_claim_nonterminal_uq' ||
+        e.constraint === 'placement_starter_claim_nonterminal_uq')
+    ) {
+      return true;
+    }
+    cur = e.cause;
+  }
+  return false;
+}
 
 type ClaimRow = typeof placement_starter_claim.$inferSelect;
 
@@ -81,38 +106,62 @@ export async function dispatchPlacementStarterClaimTx(
   if (!claim || claim.status !== 'pending_dispatch') return claim?.pg_boss_job_id ?? null;
   if (!(await admit(tx, claim))) return null;
 
-  const target = buildPlacementStarterTarget(claim);
-  const result = await dispatchSupplyTarget(tx, target, {
-    atomic: true,
-    cooldownDays: 0,
-    actorRef: 'placement_starter',
-    tavilyAvailable: () => true,
-    enqueueQuizGen: (data) =>
-      send('quiz_gen', data, {
-        db: fromPgBossDrizzleTx(tx),
-        retryLimit: JOB_RETRY_LIMIT,
-        retryDelay: JOB_RETRY_DELAY_SECONDS,
-        retryBackoff: true,
-      }),
-  });
-  const jobId = result.jobId;
-  if (!jobId) throw new Error(`pg-boss returned no job id for placement starter claim ${claim.id}`);
+  const now = new Date();
+  // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
+  // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
+  // outer tx — then we terminalize this claim below. The outer FOR UPDATE lock on the claim persists
+  // across the savepoint (YUK-452 round-2).
+  try {
+    return await tx.transaction(async (sp) => {
+      const target = buildPlacementStarterTarget(claim);
+      const result = await dispatchSupplyTarget(sp, target, {
+        atomic: true,
+        cooldownDays: 0,
+        actorRef: 'placement_starter',
+        tavilyAvailable: () => true,
+        enqueueQuizGen: (data) =>
+          send('quiz_gen', data, {
+            db: fromPgBossDrizzleTx(sp),
+            retryLimit: JOB_RETRY_LIMIT,
+            retryDelay: JOB_RETRY_DELAY_SECONDS,
+            retryBackoff: true,
+          }),
+      });
+      const jobId = result.jobId;
+      if (!jobId)
+        throw new Error(`pg-boss returned no job id for placement starter claim ${claim.id}`);
 
-  await tx
-    .update(placement_starter_claim)
-    .set({
-      status: 'queued',
-      pg_boss_job_id: jobId,
-      updated_at: new Date(),
-      version: claim.version + 1,
-    })
-    .where(
-      and(
-        eq(placement_starter_claim.id, claim.id),
-        eq(placement_starter_claim.status, 'pending_dispatch'),
-      ),
-    );
-  return jobId;
+      await sp
+        .update(placement_starter_claim)
+        .set({
+          status: 'queued',
+          pg_boss_job_id: jobId,
+          updated_at: now,
+          version: claim.version + 1,
+        })
+        .where(
+          and(
+            eq(placement_starter_claim.id, claim.id),
+            eq(placement_starter_claim.status, 'pending_dispatch'),
+          ),
+        );
+      return jobId;
+    });
+  } catch (err) {
+    if (!isNonterminalSingleFlightViolation(err)) throw err;
+    // Another claim for this goal+subject is already in flight and won the single-flight slot. This
+    // (losing/stale) claim never dispatched, so it spent nothing — terminalize it as 'cancelled'
+    // (the closest existing terminal enum state; there is no 'superseded' in the status enum / check
+    // constraint, and we must not widen the enum). The savepoint rollback already undid the enqueue
+    // and dispatch observation writes, so no paid flight and no orphan job result. Returns null (no
+    // dispatch) rather than a retry loop or a 500.
+    await markPlacementStarterClaimTerminal(tx, claim.id, 'cancelled', now, {
+      class: 'superseded',
+      code: 'nonterminal_single_flight',
+      message: 'superseded by a concurrent in-flight placement claim for the same goal+subject',
+    });
+    return null;
+  }
 }
 
 export async function dispatchPlacementStarterClaim(
