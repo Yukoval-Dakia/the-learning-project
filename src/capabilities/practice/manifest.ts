@@ -109,6 +109,7 @@ export const practiceCapability = defineCapability({
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
+      'experimental:mastery_progress',
     ],
   },
   api: {

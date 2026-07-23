@@ -23,7 +23,7 @@
 // A7 owner 决策（开放题科目只显活动量代理）：IRT 三量退化 / 证据不足的 KC 不假装掌握度
 // 趋势——`has_mastery_signal=false` 时让 UI 改走活动量代理（`activity_count` 始终内联提供）。
 
-import { MASTERY_PROGRESS_ACTION } from '@/capabilities/notes/server/mastery-progress-signal';
+import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { and, asc, eq } from 'drizzle-orm';

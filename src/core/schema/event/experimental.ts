@@ -100,6 +100,32 @@ export const MemoryBriefRefreshExperimental = z.object({
 export type MemoryBriefRefreshExperimentalT = z.infer<typeof MemoryBriefRefreshExperimental>;
 
 // ====================================================================
+// MasteryProgressExperimental — ADR-0040 progress telemetry
+// ====================================================================
+
+export const MasteryProgressExperimental = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.literal('mastery_progress_signal'),
+  action: z.literal('experimental:mastery_progress'),
+  subject_kind: z.literal('knowledge'),
+  subject_id: z.string(),
+  outcome: z.null().optional(),
+  payload: z.object({
+    knowledge_id: z.string(),
+    theta_delta: z.number().nullable(),
+    p_learned: z.number().nullable(),
+    theta_hat: z.number().nullable(),
+    question_id: z.string().nullable(),
+    attempt_event_id: z.string().nullable(),
+    threshold_deferred: z.literal(true),
+  }),
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type MasteryProgressExperimentalT = z.infer<typeof MasteryProgressExperimental>;
+
+// ====================================================================
 // Reserved experimental actions
 // ====================================================================
 //
@@ -117,6 +143,7 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',
+  'experimental:mastery_progress',
   // ADR-0044 §3 (YUK-471 Wave 0) — A-class θ̂/FSRS snapshot has a dedicated
   // StateSnapshotExperimental schema (./state-snapshot.ts). Generic fallback
   // must reject it so malformed snapshot payloads can't lose schema validation.

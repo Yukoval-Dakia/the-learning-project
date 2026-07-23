@@ -7,6 +7,7 @@ import {
 } from './artifact-events';
 import {
   ExperimentalEvent,
+  MasteryProgressExperimental,
   MemoryBriefRefreshExperimental,
   RecordCaptureExperimental,
   UserCauseExperimental,
@@ -92,6 +93,7 @@ export const Event = z.union([
   UserCauseExperimental,
   RecordCaptureExperimental,
   MemoryBriefRefreshExperimental,
+  MasteryProgressExperimental,
   StateSnapshotExperimental,
   GradingCheckpointExperimental,
   ReprojectDeferredExperimental,
