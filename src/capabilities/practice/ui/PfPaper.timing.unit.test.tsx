@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PfPaper } from './PfPaper';
 
 const mocks = vi.hoisted(() => ({
+  allocateKeepaliveBudget: vi.fn((sizes: number[]) => sizes.map(() => true)),
+  paperAnswerDraftBodyBytes: vi.fn(() => 0),
   endPaperSession: vi.fn(),
   getPaperDetail: vi.fn(),
   pausePaperSession: vi.fn(),
@@ -98,6 +100,18 @@ afterEach(() => {
 });
 
 describe('PfPaper cumulative foreground-visible slot timing (YUK-448)', () => {
+  it('starts timing after a fresh paper session is created', async () => {
+    mocks.getPaperDetail.mockResolvedValue({ ...detail, session: null });
+    mocks.startPaperSession.mockResolvedValue({ session_id: 'review_1' });
+    renderPaper();
+    await screen.findByText('计时测试卷');
+    await waitFor(() => expect(mocks.startPaperSession).toHaveBeenCalledWith('paper_1'));
+    now = 125;
+    await userEvent.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalled());
+    expect(mocks.submitPaperSlot.mock.calls[0][1].latency_ms).toBe(125);
+  });
+
   it('isolates slots and accumulates revisits', async () => {
     renderPaper();
     await screen.findByText('计时测试卷');
@@ -199,6 +213,32 @@ describe('PfPaper cumulative foreground-visible slot timing (YUK-448)', () => {
     await userEvent.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
     await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalled());
     expect(mocks.submitPaperSlot.mock.calls[0][1].latency_ms).toBe(60);
+  });
+
+  it('resumes the active unsubmitted slot after a partial submit failure', async () => {
+    mocks.submitPaperSlot
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('fail'));
+    renderPaper();
+    await screen.findByText('计时测试卷');
+    now = 100;
+    await userEvent.click(screen.getByRole('tab', { name: '2' }));
+    now = 200;
+    await userEvent.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(2));
+
+    mocks.submitPaperSlot.mockResolvedValue({ ok: true });
+    now = 350;
+    await userEvent.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(3));
+    expect(mocks.submitPaperSlot.mock.calls[0][1]).toMatchObject({
+      question_id: 'question_1',
+      latency_ms: 100,
+    });
+    expect(mocks.submitPaperSlot.mock.calls[2][1]).toMatchObject({
+      question_id: 'question_2',
+      latency_ms: 250,
+    });
   });
 
   it('retains timing after partial submit failure and clears only after full completion', async () => {

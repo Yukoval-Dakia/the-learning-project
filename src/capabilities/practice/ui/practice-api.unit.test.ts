@@ -51,12 +51,12 @@ describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
     expect(computeLatencyMs(6_000, 1_000)).toBe(0);
   });
 
-  it('clamps beyond the safe-integer ceiling', () => {
-    expect(computeLatencyMs(0, Number.MAX_SAFE_INTEGER + 1_000)).toBe(Number.MAX_SAFE_INTEGER);
+  it('超过上界 → clamp 到 3,600,000（对齐 solo server zod .max）', () => {
+    expect(computeLatencyMs(0, 3_600_001)).toBe(3_600_000);
   });
 
-  it('preserves the safe-integer ceiling', () => {
-    expect(computeLatencyMs(0, Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+  it('恰好 3,600,000 上界 → 不被 clamp', () => {
+    expect(computeLatencyMs(0, 3_600_000)).toBe(3_600_000);
   });
 
   it('恰好 0 下界 → 不被 clamp（now === shownAt，瞬时提交）', () => {

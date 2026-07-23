@@ -146,6 +146,7 @@ export function PfPaper({
   // dispatch must still match at settle, so a save outlives its paper as a no-op.
   const saveGen = useRef(0);
   const sessionRef = useRef<string | null>(null);
+  const [sessionReadyVersion, setSessionReadyVersion] = useState(0);
   const sessionOpenRef = useRef(false);
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
   // pending save, silently dropping A's last keystrokes while the UI still claims saved.
@@ -169,6 +170,8 @@ export function PfPaper({
   const submittingRef = useRef(false);
   const timingMsRef = useRef<Record<string, number>>({});
   const timingSegmentRef = useRef<{ key: string; startedAt: number } | null>(null);
+  const submittedDuringAttemptsRef = useRef<Set<string>>(new Set());
+  const componentActiveRef = useRef(false);
 
   const persistTiming = useCallback(() => {
     const sid = sessionRef.current;
@@ -222,12 +225,15 @@ export function PfPaper({
     inFlightSaves.current.clear();
     timingMsRef.current = {};
     timingSegmentRef.current = null;
+    submittedDuringAttemptsRef.current.clear();
   }, [artifactId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
   useEffect(() => {
+    componentActiveRef.current = true;
     const timers = saveTimers.current;
     return () => {
+      componentActiveRef.current = false;
       stopTimingSegment();
       for (const t of Object.values(timers)) clearTimeout(t);
     };
@@ -252,6 +258,7 @@ export function PfPaper({
         sessionRef.current = r.session_id;
         sessionOpenRef.current = true;
         timingMsRef.current = readPaperTiming(r.session_id, artifactId);
+        setSessionReadyVersion((version) => version + 1);
       })
       .catch((e) => {
         if (saveGen.current !== gen) return;
@@ -282,6 +289,9 @@ export function PfPaper({
     }
   }, [slots]);
 
+  // sessionReadyVersion intentionally retriggers this effect when a fresh paper's async session
+  // creation succeeds; the ref assignment alone is not reactive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionReadyVersion is an explicit reactive signal for sessionRef.current.
   useEffect(() => {
     if (slots.length === 0 || !sessionRef.current) return;
     const current = slots[Math.min(pos, slots.length - 1)];
@@ -291,7 +301,7 @@ export function PfPaper({
     persistTiming();
     startTimingSegment(slotKey(current), Boolean(current.slot_state.submission?.submitted));
     return stopTimingSegment;
-  }, [pos, slots, persistTiming, startTimingSegment, stopTimingSegment]);
+  }, [pos, slots, sessionReadyVersion, persistTiming, startTimingSegment, stopTimingSegment]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -632,14 +642,16 @@ export function PfPaper({
     let completionCommitted = false;
     try {
       for (const s of slots) {
-        if (submittedKeys.has(slotKey(s))) continue;
+        const key = slotKey(s);
+        if (submittedKeys.has(key) || submittedDuringAttemptsRef.current.has(key)) continue;
         await submitPaperSlot(artifactId, {
           session_id: sid,
           question_id: s.question_id,
           part_ref: s.part_ref,
-          answer_md: answers[slotKey(s)] ?? '',
-          latency_ms: timingMsRef.current[slotKey(s)] ?? 0,
+          answer_md: answers[key] ?? '',
+          latency_ms: timingMsRef.current[key] ?? 0,
         });
+        submittedDuringAttemptsRef.current.add(key);
       }
       await endPaperSession(sid);
       completionCommitted = true;
@@ -655,7 +667,19 @@ export function PfPaper({
       onSubmitted();
     } catch (e) {
       // The page is still alive, so let a retry or explicit exit own the session.
-      if (!completionCommitted) sessionOpenRef.current = true;
+      if (!completionCommitted) {
+        sessionOpenRef.current = true;
+        const current = slots[Math.min(pos, slots.length - 1)];
+        if (
+          current &&
+          componentActiveRef.current &&
+          document.visibilityState !== 'hidden' &&
+          !submittedKeys.has(slotKey(current)) &&
+          !submittedDuringAttemptsRef.current.has(slotKey(current))
+        ) {
+          startTimingSegment(slotKey(current), false);
+        }
+      }
       addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       submittingRef.current = false;

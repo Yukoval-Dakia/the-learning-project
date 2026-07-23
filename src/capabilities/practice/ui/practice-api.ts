@@ -378,10 +378,11 @@ export interface SubmitResult {
 }
 
 // YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。
-// Clamp to the shared wire-contract range: nonnegative safe integers.
+// Clamp to the solo submit wire-contract range [0, 3_600_000]. Paper timing uses its
+// separate safe-integer contract and sends its cumulative value directly.
 export function computeLatencyMs(shownAtMs: number | null, nowMs: number): number | null {
   if (shownAtMs === null) return null;
-  return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(nowMs - shownAtMs)));
+  return Math.max(0, Math.min(3_600_000, Math.trunc(nowMs - shownAtMs)));
 }
 
 export const submitReview = (input: {
