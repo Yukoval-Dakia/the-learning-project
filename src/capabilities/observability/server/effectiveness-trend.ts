@@ -7,7 +7,7 @@
 // 数据来源：通用 `event` 表里的 `experimental:mastery_progress` 事件——每次作答成功
 // per-KC 一条，payload 携本次 attempt 的 `theta_delta`(Δθ̂)/`p_learned`(当前 p(L))/
 // `theta_hat`(当前 θ̂)，`subject_id`=KC id，`created_at`=纵向时间轴唯一锚。emit 站点见
-// notes/server/mastery-progress-signal.ts（solo submit.ts + paper paper-submit.ts）。
+// practice/server/mastery-progress-signal.ts（solo submit.ts + paper paper-submit.ts）。
 // 本读模型是这些零散埋点的**第一个纵向聚合消费者**（此前零纵向读路径）。
 //
 // 红线（ADR-0035 三轴正交，同 mastery-progress-signal.ts:18-20）：**纯读 + 聚合，零写
@@ -23,7 +23,7 @@
 // A7 owner 决策（开放题科目只显活动量代理）：IRT 三量退化 / 证据不足的 KC 不假装掌握度
 // 趋势——`has_mastery_signal=false` 时让 UI 改走活动量代理（`activity_count` 始终内联提供）。
 
-import { MASTERY_PROGRESS_ACTION } from '@/capabilities/notes/server/mastery-progress-signal';
+import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { and, asc, eq } from 'drizzle-orm';

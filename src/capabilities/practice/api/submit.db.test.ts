@@ -12,7 +12,7 @@
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 // ADR-0040 决定2 — assert the p(L) delta telemetry event is emitted on a graded success.
-import { MASTERY_PROGRESS_ACTION } from '@/capabilities/notes/server/mastery-progress-signal';
+import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
 // YUK-432 — softmax 选题观测 seeder（label hook 的 π_i 直 join 需要一条 softmax_mfi selected 观测 +
 // 一个真物化 slot 才产标签）。
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';

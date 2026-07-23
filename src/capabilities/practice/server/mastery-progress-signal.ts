@@ -20,6 +20,7 @@
 // 不经此路径回流。它是只读旁路埋点，不是反馈环。
 
 import { newId } from '@/core/ids';
+import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
@@ -30,7 +31,7 @@ import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
 // constraint trick. Matches writeEvent's signature exactly.
 type WriteEventFn = typeof writeEvent;
 
-export const MASTERY_PROGRESS_ACTION = 'experimental:mastery_progress';
+export { MASTERY_PROGRESS_ACTION };
 
 // 一个 KC 的 p(L) progress 读数。delta = 本次 attempt 的 Δθ̂（state.ts:657
 // `newTheta - s.theta`，落在 mastery_state.last_theta_delta）；p_learned = 当前

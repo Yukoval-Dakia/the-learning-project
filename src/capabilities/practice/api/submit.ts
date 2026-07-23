@@ -32,8 +32,8 @@
 //   trigger). POST composes the phases and shapes the wire response.
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';

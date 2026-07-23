@@ -20,10 +20,10 @@
 // validateCauseAgainstProfile; a later attribution agent supersedes it.
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
+import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the snapshot `before`.
