@@ -540,11 +540,21 @@ export async function releaseAuthorizedPaidCall(
     .select({
       cost: placement_starter_cost_component.cost_micro_usd,
       providerTaskRunId: placement_starter_cost_component.provider_task_run_id,
+      claimId: placement_starter_cost_component.claim_id,
     })
     .from(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, id))
     .for('update');
   if (!reservation || !reservation.providerTaskRunId.startsWith('reservation:')) return;
+  // Ledger cross-wiring guard (CodeRabbit, PR #1040): the refund below debits the CALLER's
+  // claimId, so a caller passing a claimId that doesn't own this reservation would silently
+  // shrink the wrong claim's known_cost. All current callers derive both from one authority,
+  // making this unreachable — hence a loud invariant, not a silent no-op.
+  if (reservation.claimId !== input.claimId) {
+    throw new Error(
+      `releaseAuthorizedPaidCall: reservation ${input.reservationKey} belongs to claim ${reservation.claimId}, not ${input.claimId}`,
+    );
+  }
   await tx
     .delete(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, id));
