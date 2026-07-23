@@ -64,16 +64,37 @@ async function deliveryRows() {
     .orderBy(event_subscription_delivery.delivery_seq);
 }
 
-async function withIndependentDb<T>(run: (db: Db) => Promise<T>): Promise<T> {
+async function withIndependentDb<T>(
+  run: (db: Db) => Promise<T>,
+  applicationName?: string,
+): Promise<T> {
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set');
-  const client = postgres(url, { max: 1 });
+  const client = postgres(url, {
+    max: 1,
+    connection: applicationName ? { application_name: applicationName } : undefined,
+  });
   const db = drizzle(client, { schema }) as unknown as Db;
   try {
     return await run(db);
   } finally {
     await client.end();
   }
+}
+
+async function waitForBackendLock(applicationName: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await testDb().execute<{ wait_event_type: string | null }>(sql`
+      select wait_event_type
+      from pg_stat_activity
+      where application_name = ${applicationName}
+        and wait_event_type = 'Lock'
+    `);
+    if (rows.length === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`backend '${applicationName}' did not enter a lock wait`);
 }
 
 beforeEach(() => resetDb());
@@ -262,23 +283,24 @@ describe('YUK-751 durable event subscription runtime', () => {
       );
       await checkpointLocked;
 
-      let settled = false;
-      const staleTransition = withIndependentDb(async (db) => {
-        const result =
+      const staleApplicationName = `yuk751_stale_${transition}`;
+      const staleTransition = withIndependentDb(
+        async (db) =>
           transition === 'renew'
-            ? await renewSubscriptionDeliveryLease(db, claim)
+            ? renewSubscriptionDeliveryLease(db, claim)
             : transition === 'complete'
-              ? await completeSubscriptionDelivery(db, claim, { status: 'succeeded' })
-              : await failSubscriptionDelivery(db, claim, new Error('stale'), {
+              ? completeSubscriptionDelivery(db, claim, { status: 'succeeded' })
+              : failSubscriptionDelivery(db, claim, new Error('stale'), {
                   maxAttempts: 1,
-                });
-        settled = true;
-        return result;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(settled).toBe(false);
-      release();
-      await takeover;
+                }),
+        staleApplicationName,
+      );
+      try {
+        await waitForBackendLock(staleApplicationName);
+      } finally {
+        release();
+        await takeover;
+      }
 
       await expect(staleTransition).resolves.toBe(transition === 'fail' ? 'lost_lease' : false);
       const [delivery] = await deliveryRows();
