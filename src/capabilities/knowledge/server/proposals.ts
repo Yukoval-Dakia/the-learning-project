@@ -38,6 +38,7 @@ import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
+import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import {
   assertLearningItemParity,
@@ -432,25 +433,53 @@ export async function applyReparent(
   }
 }
 
+async function archiveIncidentKnowledgeEdges(
+  tx: Tx,
+  nodeId: string,
+  now: Date,
+  reason: string,
+): Promise<void> {
+  // Endpoint knowledge row is already locked/updated by the caller. Preserve the global lock order
+  // shared with live edge writers: endpoint knowledge row(s) → knowledge_edge advisory lock.
+  await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [nodeId]);
+  const touching = await listLiveEdgesTouchingNode(tx, nodeId);
+  for (const edge of touching) {
+    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+    if (!archived.archived) continue;
+    await writeEdgeArchiveEvent(tx, edge, edge.id, now, reason);
+    if (projectionIsWriter()) {
+      await projectKnowledgeEdgeGuarded(tx, edge.id);
+    }
+  }
+}
+
 export async function applyArchive(
   db: DbLike,
   payload: ArchivePayload,
   now: Date = new Date(),
 ): Promise<void> {
-  const result = await db
-    .update(knowledge)
-    .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-    .where(
-      and(
-        eq(knowledge.id, payload.node_id),
-        eq(knowledge.version, payload.expected_version),
-        isNull(knowledge.archived_at),
-      ),
+  await (db as Db).transaction(async (tx) => {
+    const result = await tx
+      .update(knowledge)
+      .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
+      .where(
+        and(
+          eq(knowledge.id, payload.node_id),
+          eq(knowledge.version, payload.expected_version),
+          isNull(knowledge.archived_at),
+        ),
+      );
+    const changes = (result as { count?: number }).count ?? 0;
+    if (changes !== 1) {
+      throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
+    }
+    await archiveIncidentKnowledgeEdges(
+      tx,
+      payload.node_id,
+      now,
+      'archive: incident edge retired with knowledge node (YUK-546)',
     );
-  const changes = (result as { count?: number }).count ?? 0;
-  if (changes !== 1) {
-    throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
-  }
+  });
 }
 
 export async function applySplit(
@@ -485,6 +514,12 @@ export async function applySplit(
     if (archiveChanges !== 1) {
       throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
     }
+    await archiveIncidentKnowledgeEdges(
+      tx,
+      payload.from_id,
+      now,
+      'split: source incident edge retired without child rewire (YUK-546)',
+    );
     for (let i = 0; i < payload.into.length; i++) {
       const entry = payload.into[i];
       await tx.insert(knowledge).values({
@@ -652,7 +687,13 @@ async function rewireMisconceptionEdgeTargets(
 // every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on
 // rebuild). Actor user/self matches the merge accept.
 
-async function writeEdgeArchiveEvent(tx: Tx, edge: TopologyEdge, oldEdgeId: string, now: Date) {
+async function writeEdgeArchiveEvent(
+  tx: Tx,
+  edge: TopologyEdge,
+  oldEdgeId: string,
+  now: Date,
+  reasoning = 'merge: KC attribution rewrite (YUK-543)',
+) {
   await writeEvent(tx, {
     id: newId(),
     actor_kind: 'user',
@@ -667,7 +708,7 @@ async function writeEdgeArchiveEvent(tx: Tx, edge: TopologyEdge, oldEdgeId: stri
       from_knowledge_id: edge.from_knowledge_id,
       to_knowledge_id: edge.to_knowledge_id,
       relation_type: edge.relation_type,
-      reasoning: 'merge: KC attribution rewrite (YUK-543)',
+      reasoning,
     },
     created_at: now,
   });

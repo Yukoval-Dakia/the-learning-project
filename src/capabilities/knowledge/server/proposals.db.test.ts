@@ -16,8 +16,12 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
-import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import {
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdge,
+  gatherAndFoldKnowledgeNode,
+} from '@/server/projections/gather';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -67,6 +71,64 @@ async function insertKnowledge(opts: {
     updated_at: now,
     version: opts.version ?? 0,
   });
+}
+
+async function insertKnowledgeEdge(opts: {
+  id: string;
+  from: string;
+  to: string;
+  relation: string;
+  archivedAt?: Date | null;
+  anchored?: boolean;
+}) {
+  const createdAt = new Date('2026-07-01T00:00:00.000Z');
+  await testDb()
+    .insert(knowledge_edge)
+    .values({
+      id: opts.id,
+      from_knowledge_id: opts.from,
+      to_knowledge_id: opts.to,
+      relation_type: opts.relation,
+      created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
+      archived_at: opts.archivedAt ?? null,
+      created_at: createdAt,
+    });
+  if (opts.anchored) {
+    await testDb()
+      .insert(event)
+      .values({
+        id: `create_${opts.id}`,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'generate',
+        subject_kind: 'knowledge_edge',
+        subject_id: opts.id,
+        outcome: 'success',
+        payload: {
+          edge_op: 'create',
+          from_knowledge_id: opts.from,
+          to_knowledge_id: opts.to,
+          relation_type: opts.relation,
+          weight: 1,
+          reasoning: null,
+        },
+        created_at: createdAt,
+      });
+  }
+}
+
+async function edgeArchiveEvents(ids: string[]) {
+  const rows = await testDb()
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'generate'),
+        eq(event.subject_kind, 'knowledge_edge'),
+        inArray(event.subject_id, ids),
+      ),
+    );
+  return rows.filter((row) => (row.payload as { edge_op?: string }).edge_op === 'archive');
 }
 
 async function insertProposeEvent(opts: {
@@ -409,6 +471,132 @@ describe('applyArchive', () => {
     expect(rows[0]?.version).toBe(6);
   });
 
+  it('cascade-archives every live inbound and outbound edge without touching unrelated or archived edges', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-23T12:34:56.789Z');
+    const alreadyArchivedAt = new Date('2026-07-01T00:00:00.000Z');
+    await insertKnowledge({ id: 'k_node', version: 5 });
+    for (const id of ['k_a', 'k_b', 'k_c']) await insertKnowledge({ id });
+    await insertKnowledgeEdge({
+      id: 'e_in',
+      from: 'k_a',
+      to: 'k_node',
+      relation: 'prerequisite',
+    });
+    await insertKnowledgeEdge({
+      id: 'e_out',
+      from: 'k_node',
+      to: 'k_b',
+      relation: 'related_to',
+    });
+    await insertKnowledgeEdge({
+      id: 'e_unrelated',
+      from: 'k_a',
+      to: 'k_c',
+      relation: 'contrasts_with',
+    });
+    await insertKnowledgeEdge({
+      id: 'e_archived',
+      from: 'k_node',
+      to: 'k_c',
+      relation: 'applied_in',
+      archivedAt: alreadyArchivedAt,
+    });
+
+    await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 5 }, now);
+
+    const rows = await db.select().from(knowledge_edge);
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get('e_in')?.archived_at).toEqual(now);
+    expect(byId.get('e_out')?.archived_at).toEqual(now);
+    expect(byId.get('e_unrelated')?.archived_at).toBeNull();
+    expect(byId.get('e_archived')?.archived_at).toEqual(alreadyArchivedAt);
+
+    const archiveEvents = await edgeArchiveEvents(['e_in', 'e_out', 'e_archived']);
+    expect(archiveEvents).toHaveLength(2);
+    expect(archiveEvents.map((row) => row.subject_id).sort()).toEqual(['e_in', 'e_out']);
+    for (const archiveEvent of archiveEvents) {
+      expect(archiveEvent.created_at).toEqual(now);
+      expect((archiveEvent.payload as { archive_edge_id?: string }).archive_edge_id).toBe(
+        archiveEvent.subject_id,
+      );
+    }
+  });
+
+  it('does not truncate incident selection at the general edge list limit', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-23T12:40:00.000Z');
+    await insertKnowledge({ id: 'k_node', version: 1 });
+    const peers = Array.from({ length: 501 }, (_, index) => `k_peer_${index}`);
+    const createdAt = new Date('2026-07-01T00:00:00.000Z');
+    await db.insert(knowledge).values(
+      peers.map((id) => ({
+        id,
+        name: id,
+        domain: 'yuwen',
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved' as const,
+        created_at: createdAt,
+        updated_at: createdAt,
+        version: 0,
+      })),
+    );
+    await db.insert(knowledge_edge).values(
+      peers.map((peer, index) => ({
+        id: `e_many_${index}`,
+        from_knowledge_id: index % 2 === 0 ? 'k_node' : peer,
+        to_knowledge_id: index % 2 === 0 ? peer : 'k_node',
+        relation_type: index % 3 === 0 ? 'related_to' : 'contrasts_with',
+        created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
+        created_at: createdAt,
+      })),
+    );
+
+    await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 1 }, now);
+
+    const liveIncidents = await db
+      .select({ id: knowledge_edge.id })
+      .from(knowledge_edge)
+      .where(
+        and(
+          isNull(knowledge_edge.archived_at),
+          or(
+            eq(knowledge_edge.from_knowledge_id, 'k_node'),
+            eq(knowledge_edge.to_knowledge_id, 'k_node'),
+          ),
+        ),
+      );
+    expect(liveIncidents).toHaveLength(0);
+    expect(await edgeArchiveEvents(peers.map((_, index) => `e_many_${index}`))).toHaveLength(501);
+  });
+
+  it.each(['0', '1'])(
+    'keeps edge row and replay projection at parity when flip=%s',
+    async (flip) => {
+      const db = testDb();
+      vi.stubEnv('PROJECTION_IS_WRITER', flip);
+      const now = new Date('2026-07-23T12:45:00.456Z');
+      await insertKnowledge({ id: 'k_node', version: 2 });
+      await insertKnowledge({ id: 'k_other' });
+      await insertKnowledgeEdge({
+        id: 'e_anchored',
+        from: 'k_node',
+        to: 'k_other',
+        relation: 'related_to',
+        anchored: true,
+      });
+
+      await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now);
+
+      const row = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_anchored'));
+      expect(row[0].archived_at).toEqual(now);
+      expect(await edgeArchiveEvents(['e_anchored'])).toHaveLength(1);
+      expect(await gatherAndFoldKnowledgeEdge(db, 'e_anchored')).toEqual(edgeRowToSnapshot(row[0]));
+    },
+  );
+
   it('throws stale error when already archived (changes=0)', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_node', archived: true, version: 5 });
@@ -449,6 +637,94 @@ describe('applySplit', () => {
     expect(fromRows[0]?.archived_at).toBeTruthy();
     const newRows = await db.select().from(knowledge).where(eq(knowledge.id, newIds[0]));
     expect(newRows).toHaveLength(1);
+  });
+
+  it('archives source incidents without rewiring them to split children', async () => {
+    const db = testDb();
+    const now = new Date('2026-07-23T13:00:00.123Z');
+    await insertKnowledge({ id: 'k_parent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_parent', version: 7 });
+    await insertKnowledge({ id: 'k_in' });
+    await insertKnowledge({ id: 'k_out' });
+    await insertKnowledgeEdge({
+      id: 'e_split_in',
+      from: 'k_in',
+      to: 'k_from',
+      relation: 'prerequisite',
+    });
+    await insertKnowledgeEdge({
+      id: 'e_split_out',
+      from: 'k_from',
+      to: 'k_out',
+      relation: 'contrasts_with',
+    });
+
+    const newIds = await applySplit(
+      db,
+      {
+        mutation: 'split',
+        from_id: 'k_from',
+        into: [
+          { name: 'A', parent_id: 'k_parent' },
+          { name: 'B', parent_id: 'k_parent' },
+        ],
+        expected_version: 7,
+      },
+      now,
+    );
+
+    const incidents = await db
+      .select()
+      .from(knowledge_edge)
+      .where(
+        or(
+          inArray(knowledge_edge.from_knowledge_id, newIds),
+          inArray(knowledge_edge.to_knowledge_id, newIds),
+        ),
+      );
+    expect(incidents).toHaveLength(0);
+    const oldEdges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(inArray(knowledge_edge.id, ['e_split_in', 'e_split_out']));
+    expect(oldEdges.every((edge) => edge.archived_at?.getTime() === now.getTime())).toBe(true);
+    const archiveEvents = await edgeArchiveEvents(['e_split_in', 'e_split_out']);
+    expect(archiveEvents).toHaveLength(2);
+    expect(archiveEvents.every((row) => row.created_at.getTime() === now.getTime())).toBe(true);
+  });
+
+  it('rolls the source and incident archives back when child insertion fails', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'k_parent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_parent', version: 7 });
+    await insertKnowledge({ id: 'k_other' });
+    await insertKnowledgeEdge({
+      id: 'e_rollback',
+      from: 'k_from',
+      to: 'k_other',
+      relation: 'related_to',
+    });
+
+    await expect(
+      applySplit(db, {
+        mutation: 'split',
+        from_id: 'k_from',
+        into: [
+          { name: 'A', parent_id: 'k_parent' },
+          { name: null as never, parent_id: 'k_parent' },
+        ],
+        expected_version: 7,
+      }),
+    ).rejects.toThrow();
+
+    const source = await db.select().from(knowledge).where(eq(knowledge.id, 'k_from'));
+    const edgeRows = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_rollback'));
+    expect(source[0].archived_at).toBeNull();
+    expect(edgeRows[0].archived_at).toBeNull();
+    expect(await edgeArchiveEvents(['e_rollback'])).toHaveLength(0);
   });
 
   it('rejects split with into[].parent_id=null (root creation)', async () => {
