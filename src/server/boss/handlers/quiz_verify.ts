@@ -65,6 +65,7 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
 import {
+  PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
@@ -363,6 +364,26 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       ...(verifySkills ? { skills: verifySkills } : {}),
     });
     taskResult = result;
+    if (placementAuthority) {
+      if (!result.task_run_id) {
+        throw new PlacementStarterAdmissionError(
+          'placement quiz_verify paid invocation missing task_run_id',
+        );
+      }
+      const settlement = await db.transaction(async (tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority: placementAuthority,
+          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
+          providerTaskRunId: result.task_run_id as string,
+          costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+        }),
+      );
+      if (settlement.overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement quiz_verify paid invocation exceeded authorized reservation',
+        );
+      }
+    }
     const parsed = parseQuizVerifyOutput(result.text);
 
     // §4 / §5 — deterministic n-gram overlap over the self-reported snippets,
@@ -494,8 +515,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (kind, invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) return;
-                      await db.transaction(async (tx) =>
+                      if (!paidResult.task_run_id) {
+                        throw new PlacementStarterAdmissionError(
+                          `placement ${kind} paid invocation missing task_run_id`,
+                        );
+                      }
+                      const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
@@ -503,6 +528,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
                         }),
                       );
+                      if (settlement.overCap) {
+                        throw new PlacementStarterAdmissionError(
+                          `placement ${kind} paid invocation exceeded authorized reservation`,
+                        );
+                      }
                     },
                   }
                 : {}),
@@ -537,8 +567,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                       );
                     },
                     settlePaidCall: async (invocationId, paidResult) => {
-                      if (!paidResult.task_run_id) return;
-                      await db.transaction(async (tx) =>
+                      if (!paidResult.task_run_id) {
+                        throw new PlacementStarterAdmissionError(
+                          'placement teaching_quality paid invocation missing task_run_id',
+                        );
+                      }
+                      const settlement = await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
@@ -546,6 +580,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
                         }),
                       );
+                      if (settlement.overCap) {
+                        throw new PlacementStarterAdmissionError(
+                          'placement teaching_quality paid invocation exceeded authorized reservation',
+                        );
+                      }
                     },
                   }
                 : {}),
@@ -759,14 +798,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           .where(eq(question.id, questionId));
       }
 
-      if (placementAuthority && result.task_run_id) {
-        await settleAuthorizedPaidCall(tx, {
-          authority: placementAuthority,
-          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
-          providerTaskRunId: result.task_run_id,
-          costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
-          now,
-        });
+      if (placementAuthority) {
+        await assertPlacementAuthority(tx, placementAuthority, now);
       }
 
       await writeEvent(tx, {

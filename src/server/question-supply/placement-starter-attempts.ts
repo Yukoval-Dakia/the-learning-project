@@ -570,7 +570,7 @@ export async function settleAuthorizedPaidCall(
     costMicroUsd: number;
     now?: Date;
   },
-): Promise<void> {
+): Promise<{ overCap: boolean }> {
   const now = input.now ?? new Date();
   await assertPlacementAuthority(tx, input.authority, now);
   const id = createHash('sha256')
@@ -587,14 +587,14 @@ export async function settleAuthorizedPaidCall(
     .for('update');
   if (!reservation)
     throw new PlacementStarterAdmissionError('placement paid call reservation missing');
-  if (reservation.providerTaskRunId === input.providerTaskRunId) return;
+  if (reservation.providerTaskRunId === input.providerTaskRunId) {
+    return { overCap: input.costMicroUsd > reservation.cost };
+  }
   if (!reservation.providerTaskRunId.startsWith('reservation:')) {
     throw new PlacementStarterAdmissionError('placement paid call reservation already settled');
   }
   const settledCost = Math.max(0, input.costMicroUsd);
-  if (settledCost > reservation.cost) {
-    throw new PlacementStarterAdmissionError('placement paid call exceeded authorized reservation');
-  }
+  const overCap = settledCost > reservation.cost;
   const settledId = createHash('sha256')
     .update(`${input.providerTaskRunId}\0${input.authority.attempt_id}\0${input.reservationKey}`)
     .digest('hex');
@@ -618,6 +618,7 @@ export async function settleAuthorizedPaidCall(
       updated_at: now,
     })
     .where(eq(placement_starter_claim.id, input.authority.claim_id));
+  return { overCap };
 }
 
 export async function addAuthorizedCostComponent(

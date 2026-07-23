@@ -35,6 +35,7 @@ import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import {
+  PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
@@ -540,8 +541,9 @@ export async function runSolveCheck(
     const invocationId = randomUUID();
     await opts.beforePaidCall?.('solution_check', invocationId);
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
+    recordRun(solverRun);
     await opts.settlePaidCall?.('solution_check', invocationId, solverRun);
-    recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
+    // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
     // Label reproduces the pre-existing error string byte-identically (OCR PR #716).
@@ -555,7 +557,11 @@ export async function runSolveCheck(
       ? eq.filter((e): e is string => typeof e === 'string')
       : [];
   } catch (err) {
-    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     // No usable solver answer → no signal. Conservative: do not fail the question.
     return {
       verdict: 'unsupported',
@@ -625,10 +631,10 @@ export async function runSolveCheck(
         ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
         : input;
     const r = await opts.runTaskFn(kind, authorizedInput, ctx);
+    recordRun(r);
     if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
       await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
     }
-    recordRun(r);
     return r;
   };
   // Treat the question's reference answer as the rubric/reference and the solver's
@@ -898,11 +904,15 @@ export async function runTeachingQualityCheck(
     const invocationId = randomUUID();
     await opts.beforePaidCall?.(invocationId);
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
-    await opts.settlePaidCall?.(invocationId, run);
     recordRun(run);
+    await opts.settlePaidCall?.(invocationId, run);
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
-    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     return skipped(
       'unsupported',
       `teaching-quality judge did not produce usable output: ${err instanceof Error ? err.message : String(err)}`,

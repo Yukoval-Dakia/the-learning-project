@@ -424,6 +424,10 @@ describe('placement paid-call reservations', () => {
   it('settles actual cost without exceeding the reserved budget and is replay-safe', async () => {
     const now = new Date('2026-07-23T00:00:00.000Z');
     await seedClaim(now);
+    await testDb()
+      .update(placement_starter_claim)
+      .set({ budget_limit_micro_usd: 2_000_000 })
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
     const attempt = await acquirePlacementAttempt(testDb(), {
       claimId: CLAIM_ID,
       pgBossJobId: JOB_ID,
@@ -467,11 +471,25 @@ describe('placement paid-call reservations', () => {
           now,
         }),
       ),
-    ).rejects.toThrow(/exceeded authorized reservation/);
+    ).resolves.toEqual({ overCap: true });
+    const [overCapComponent] = await testDb().select().from(placement_starter_cost_component);
+    expect(overCapComponent).toMatchObject({
+      provider_task_run_id: 'run-over-cap',
+      cost_micro_usd: 700_000,
+    });
+    await testDb().transaction((tx) =>
+      reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'solution_check',
+        reservationKey: 'settle-normal',
+        maxCostMicroUsd: 500_000,
+        now,
+      }),
+    );
     await testDb().transaction((tx) =>
       settleAuthorizedPaidCall(tx, {
         authority,
-        reservationKey: 'settle',
+        reservationKey: 'settle-normal',
         providerTaskRunId: 'run-settle',
         costMicroUsd: 400_000,
         now,
@@ -497,15 +515,18 @@ describe('placement paid-call reservations', () => {
     );
     const components = await testDb().select().from(placement_starter_cost_component);
     expect(components.map((row) => row.provider_task_run_id).sort()).toEqual([
+      'run-over-cap',
       'run-retry',
       'run-settle',
     ]);
-    expect(components.map((row) => row.cost_micro_usd).sort()).toEqual([300_000, 400_000]);
+    expect(components.map((row) => row.cost_micro_usd).sort((a, b) => a - b)).toEqual([
+      300_000, 400_000, 700_000,
+    ]);
     const [claim] = await testDb()
       .select()
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, CLAIM_ID));
-    expect(claim.known_cost_micro_usd).toBe(700_000);
+    expect(claim.known_cost_micro_usd).toBe(1_400_000);
   });
 });
 
