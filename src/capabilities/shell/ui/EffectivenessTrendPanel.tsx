@@ -59,7 +59,7 @@ function subjectLabel(domain: string | null): string {
 function confTagText(cls: ConfidenceClass, span: number, mini: boolean): string {
   const lbl = confidenceLabel(cls);
   if (mini) return lbl.mini;
-  if (cls === 'is-firm') return `${lbl.full} · ${span} 次`;
+  if (cls === 'is-firm') return `${lbl.full} · ${span} 个活跃日`;
   return lbl.full;
 }
 
@@ -205,9 +205,9 @@ function EffOverview({ series }: { series: EffectivenessTrendSeries[] }) {
         ))}
       </div>
       <p className="eff-overview-note meta">
-        {o.total} 个有活动的知识点 · <b className="mono">{o.firm}</b> 条方向较可靠，
-        <b className="mono">{o.tender}</b> 条仍需更多记录。样本少时只看大致方向，
-        不把幅度当成精确进度。
+        本窗共 {o.total} 个入选的显著变化知识点 · <b className="mono">{o.firm}</b> 条方向较可靠，
+        <b className="mono">{o.tender}</b>{' '}
+        条仍需更多记录。这里只展示全局排序后的有限子集，不代表全部知识点。
       </p>
     </LoomCard>
   );
@@ -351,7 +351,7 @@ function EffSubjectRow({
             type="button"
             className="eff-subj-settled"
             onClick={() => onDrill(rollup.effective_domain)}
-            title="默认折叠，点开看全部"
+            title="默认折叠，点开看入选项"
           >
             +{settled.holding} 持平 · {settled.insufficient} 数据不足{' '}
             <span className="eff-subj-settled-x">默认折叠</span>
@@ -366,12 +366,12 @@ function EffSubjectRow({
 function rowNote(kc: EffectivenessTrendSeries): string {
   const n = kc.trend.span_evidence;
   if (kc.trend.direction === 'insufficient') {
-    return `证据太少（${n} 次作答），连方向都不该断言 —— 这是「数据不足」，不是涨也不是退。再练一两次就看得出走向。`;
+    return `证据太少（${n} 个活跃日），连方向都不该断言 —— 这是「数据不足」，不是涨也不是退。再积累一些活跃日就看得出走向。`;
   }
   if (kc.trend.confidence === 'low') {
-    return `目前只能看大致方向（${n} 次作答），记录较少可能掩盖真实变化。`;
+    return `目前只能看大致方向（${n} 个活跃日），记录较少可能掩盖真实变化。`;
   }
-  return `相对过去的你${directionMeta(kc.trend.direction).label}（${n} 次作答支撑）—— 信方向，幅度别当精确值。`;
+  return `${n} 个活跃日支撑：相对过去的你${directionMeta(kc.trend.direction).label} —— 信方向，幅度别当精确值。`;
 }
 
 function EffSparkRow({
@@ -439,7 +439,7 @@ function RollupScreen({
           <EffSubjectRow
             key={rollup.effective_domain ?? UNCAT_KEY}
             rollup={rollup}
-            rows={seriesForDomain(data.series, rollup.effective_domain)}
+            rows={seriesForDomain([...data.subject_roots, ...data.series], rollup.effective_domain)}
             onDrill={onDrill}
           />
         ))}
@@ -460,7 +460,7 @@ function DrilldownScreen({
   navigate: (to: string) => void;
   onBack: () => void;
 }) {
-  const rows = seriesForDomain(data.series, domain);
+  const rows = seriesForDomain([...data.subject_roots, ...data.series], domain);
   const { whole, kcs } = partitionSubjectSeries(rows);
   const label = subjectLabel(domain);
   return (
@@ -472,7 +472,8 @@ function DrilldownScreen({
             返回科目
           </button>
           <div className="card-title">
-            {label} · 知识点轨迹 <span className="eff-vizhead-sub meta">{kcs.length} 个知识点</span>
+            {label} · 显著变化知识点{' '}
+            <span className="eff-vizhead-sub meta">最多 {data.metadata.notable_limit} 个</span>
           </div>
         </div>
       </div>
@@ -594,7 +595,7 @@ export function EffectivenessTrendPanel({
     );
   }
   if (!q.data) return <PanelShell embedded={embedded}>{null}</PanelShell>;
-  if (q.data.series.length === 0) {
+  if (q.data.aggregate.total_events === 0) {
     return (
       <PanelShell embedded={embedded}>
         <EffEmpty navigate={navigate} />

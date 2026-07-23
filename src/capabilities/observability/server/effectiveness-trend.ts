@@ -26,7 +26,7 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt } from 'drizzle-orm';
 import {
   type EffectivenessTrendPoint,
   type EffectivenessTrendSummary,
@@ -94,11 +94,26 @@ export interface EffectivenessTrendAggregate {
 }
 
 export interface EffectivenessTrendResponse {
+  /** Globally bounded notable non-root KCs only. */
   series: EffectivenessTrendSeries[];
+  /** Active subject-root trajectories are kept separate from notable KCs. */
+  subject_roots: EffectivenessTrendSeries[];
   aggregate: EffectivenessTrendAggregate;
+  metadata: {
+    as_of: string;
+    window_start: string;
+    window_end: string;
+    timezone: 'Asia/Shanghai';
+    granularity: 'calendar_day';
+    notable_limit: 6;
+    eligible: number;
+    returned: number;
+    truncated: boolean;
+  };
 }
 
 interface MasteryProgressEventRow {
+  id: string;
   subject_id: string;
   created_at: Date;
   payload: Record<string, unknown>;
@@ -107,8 +122,7 @@ interface MasteryProgressEventRow {
 /**
  * 派生 effective_domain：沿 parent_id 链上溯到首个非空 domain（项目铁律「科目是派生视图，
  * 不在事件/KC 上存列」）。镜像 domain.ts:resolveSubjectKnowledgeIds / tree.ts 的内存 walk。
- * 此处用**全量** knowledge map（含已归档），保证有事件的 KC 名/域始终可解——观测面要展示历史
- * 轨迹，归档后仍要可见。带 seen 防环。
+ * 此处用全部 knowledge map 解析祖先（含 archived 中间节点），但 eligible 事件仍只覆盖 active KC；带 seen 防环。
  */
 function buildEffectiveDomainResolver(
   rows: Array<{ id: string; domain: string | null; parent_id: string | null }>,
@@ -126,6 +140,34 @@ function buildEffectiveDomainResolver(
   };
 }
 
+const NOTABLE_LIMIT = 6;
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isSubjectRoot = (id: string): boolean => /^seed:[^:]+:root$/.test(id);
+
+function compareBinary(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+function responseWindow(asOf: Date): { windowStart: Date; windowEnd: Date } {
+  const shifted = new Date(asOf.getTime() + SHANGHAI_OFFSET_MS);
+  const localMidnightUtc = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+  );
+  return {
+    windowStart: new Date(localMidnightUtc - SHANGHAI_OFFSET_MS - 29 * DAY_MS),
+    windowEnd: asOf,
+  };
+}
+
+function calendarDay(at: Date): string {
+  return new Date(at.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 /**
  * Per-KC 纵向成效趋势读模型 + 沿派生科目轴的整科卷起。
  *
@@ -133,18 +175,33 @@ function buildEffectiveDomainResolver(
  * 算方向 + 置信（summarizeTrend），再沿 effective_domain 卷起。只读 event + knowledge 现有列，
  * 零写路径（红线）。
  */
-export async function loadEffectivenessTrend(db: DbLike): Promise<EffectivenessTrendResponse> {
-  // 全量 mastery_progress 事件，按 KC + 时间升序。单用户工具，事件量有界（同 tree.ts 的
-  // load-all 姿态）——若日后增长需窗口化，是 follow-up。
+export async function loadEffectivenessTrend(
+  db: DbLike,
+  asOf = new Date(),
+): Promise<EffectivenessTrendResponse> {
+  const { windowStart, windowEnd } = responseWindow(asOf);
   const events = (await db
     .select({
+      id: event.id,
       subject_id: event.subject_id,
       created_at: event.created_at,
       payload: event.payload,
     })
     .from(event)
-    .where(and(eq(event.action, MASTERY_PROGRESS_ACTION), eq(event.subject_kind, 'knowledge')))
-    .orderBy(asc(event.subject_id), asc(event.created_at))) as MasteryProgressEventRow[];
+    .where(
+      and(
+        eq(event.action, MASTERY_PROGRESS_ACTION),
+        eq(event.subject_kind, 'knowledge'),
+        gte(event.created_at, windowStart),
+        lt(event.created_at, windowEnd),
+        lt(event.created_at, asOf),
+      ),
+    )
+    .orderBy(
+      asc(event.subject_id),
+      desc(event.created_at),
+      desc(event.id),
+    )) as MasteryProgressEventRow[];
 
   // KC 名 + effective_domain 派生底料：一次全量 knowledge 扫描（单用户，几百节点）。
   const knowledgeRows = await db
@@ -153,39 +210,53 @@ export async function loadEffectivenessTrend(db: DbLike): Promise<EffectivenessT
       name: knowledge.name,
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
     })
     .from(knowledge);
-  const nameById = new Map(knowledgeRows.map((r) => [r.id, r.name]));
+  const activeRows = knowledgeRows.filter((row) => row.archived_at === null);
+  const nameById = new Map(activeRows.map((r) => [r.id, r.name]));
   const resolveEffectiveDomain = buildEffectiveDomainResolver(knowledgeRows);
 
-  // 按 KC 分组（events 已按 subject_id 排序，但用 Map 不依赖该假设）。
-  const pointsByKc = new Map<string, EffectivenessTrendPoint[]>();
+  const activeIds = new Set(activeRows.map((row) => row.id));
+  const latestByKcDay = new Map<string, MasteryProgressEventRow>();
+  const activityByKc = new Map<string, number>();
   for (const ev of events) {
+    if (!activeIds.has(ev.subject_id)) continue;
+    activityByKc.set(ev.subject_id, (activityByKc.get(ev.subject_id) ?? 0) + 1);
+    const key = `${ev.subject_id}\0${calendarDay(ev.created_at)}`;
+    if (!latestByKcDay.has(key)) latestByKcDay.set(key, ev);
+  }
+
+  const pointsByKc = new Map<string, EffectivenessTrendPoint[]>();
+  const latestAtByKc = new Map<string, string>();
+  for (const ev of latestByKcDay.values()) {
     const points = pointsByKc.get(ev.subject_id) ?? [];
+    const at = ev.created_at.toISOString();
     points.push({
-      at: ev.created_at.toISOString(),
+      at,
       p_learned: numOrNull(ev.payload.p_learned),
       theta_hat: numOrNull(ev.payload.theta_hat),
       theta_delta: numOrNull(ev.payload.theta_delta),
     });
     pointsByKc.set(ev.subject_id, points);
+    if (at > (latestAtByKc.get(ev.subject_id) ?? '')) latestAtByKc.set(ev.subject_id, at);
   }
 
-  const series: EffectivenessTrendSeries[] = [];
+  const allSeries: EffectivenessTrendSeries[] = [];
   for (const [knowledgeId, points] of pointsByKc) {
     // created_at 升序已由 query ORDER BY 保证，但显式再排一遍防 Map 迭代/同毫秒乱序。
-    points.sort((a, b) => a.at.localeCompare(b.at));
-    series.push({
+    points.sort((a, b) => compareBinary(a.at, b.at));
+    allSeries.push({
       knowledge_id: knowledgeId,
       name: nameById.get(knowledgeId) ?? null,
       effective_domain: resolveEffectiveDomain(knowledgeId),
       points,
       trend: summarizeTrend(points),
-      activity_count: points.length,
+      activity_count: activityByKc.get(knowledgeId) ?? 0,
     });
   }
   // 确定性输出顺序（KC id 升序）。
-  series.sort((a, b) => a.knowledge_id.localeCompare(b.knowledge_id));
+  allSeries.sort((a, b) => compareBinary(a.knowledge_id, b.knowledge_id));
 
   // 沿 effective_domain 卷起。null domain 归一桶（key ' '，与任何真实 domain 不冲突）。
   const NULL_DOMAIN = ' ';
@@ -198,7 +269,7 @@ export async function loadEffectivenessTrend(db: DbLike): Promise<EffectivenessT
       kc: number;
     }
   >();
-  for (const s of series) {
+  for (const s of allSeries) {
     const key = s.effective_domain ?? NULL_DOMAIN;
     const bucket = bySubject.get(key) ?? {
       effective_domain: s.effective_domain,
@@ -228,15 +299,53 @@ export async function loadEffectivenessTrend(db: DbLike): Promise<EffectivenessT
     if (a.effective_domain === b.effective_domain) return 0;
     if (a.effective_domain === null) return 1;
     if (b.effective_domain === null) return -1;
-    return a.effective_domain.localeCompare(b.effective_domain);
+    return compareBinary(a.effective_domain, b.effective_domain);
   });
+
+  const subjectRoots = allSeries.filter((row) => isSubjectRoot(row.knowledge_id));
+  const eligibleSeries = allSeries.filter(
+    (row) =>
+      !isSubjectRoot(row.knowledge_id) &&
+      (row.trend.direction === 'rising' || row.trend.direction === 'falling'),
+  );
+  const trendMagnitude = (row: EffectivenessTrendSeries): number => {
+    const values = row.points
+      .map((point) => point.theta_hat)
+      .filter((value): value is number => value !== null);
+    const half = Math.floor(values.length / 2);
+    if (half === 0) return 0;
+    const mean = (xs: number[]) => xs.reduce((sum, value) => sum + value, 0) / xs.length;
+    return Math.abs(mean(values.slice(values.length - half)) - mean(values.slice(0, half)));
+  };
+  eligibleSeries.sort((a, b) => {
+    const magnitudeOrder = trendMagnitude(b) - trendMagnitude(a);
+    if (magnitudeOrder !== 0) return magnitudeOrder;
+    const aLatest = latestAtByKc.get(a.knowledge_id) ?? '';
+    const bLatest = latestAtByKc.get(b.knowledge_id) ?? '';
+    const recencyOrder = compareBinary(bLatest, aLatest);
+    if (recencyOrder !== 0) return recencyOrder;
+    return compareBinary(a.knowledge_id, b.knowledge_id);
+  });
+  const series = eligibleSeries.slice(0, NOTABLE_LIMIT);
 
   return {
     series,
+    subject_roots: subjectRoots,
     aggregate: {
-      total_kcs_with_activity: series.length,
-      total_events: events.length,
+      total_kcs_with_activity: allSeries.length,
+      total_events: Array.from(activityByKc.values()).reduce((sum, count) => sum + count, 0),
       by_subject: subjectRollups,
+    },
+    metadata: {
+      as_of: asOf.toISOString(),
+      window_start: windowStart.toISOString(),
+      window_end: windowEnd.toISOString(),
+      timezone: 'Asia/Shanghai',
+      granularity: 'calendar_day',
+      notable_limit: NOTABLE_LIMIT,
+      eligible: eligibleSeries.length,
+      returned: series.length,
+      truncated: eligibleSeries.length > series.length,
     },
   };
 }
