@@ -79,7 +79,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 |---|---|---|---|---|
 | A5 | **request-shaped，无结构上界**：GMRF 联合解耦合 requested-诱导 `related_to` 连通分量全域（单 KC 请求 ≈1 跳星图；全树请求 = 整个连通分量）。冷启衰减最慢（λ=0.5/κ=0.01 下未观测链单跳保留 ≈0.87，5 跳仍 ~50%）。 | 线性解天然抗环 | 借用条目 `inferred`；被平滑观测 KC 保留 `theta_hat_raw` | 读侧重算自衰减（真证据一到 likelihood 盖过借用）；无独立 time-decay |
 | A6 | 真 1 跳（单趟同时更新、读原始 θ̂、无传递再传播）| `max(0,·)` 互斥、拓扑无关终止 | 同上（θ̂ 均值移动，band 不动）| 同 A5（读侧重算）|
-| A13 | 闭包 depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[] | path guard + depth bound | `risk_delta` 标 inferred 信号（event 投影，将来消费须走 provenance 契约）| 消费侧读时衰减（绑消费解锁；本单元不消费）|
+| A13 | **当前 dark provisional**：闭包 depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[]；live radius/bounds 仍按 YUK-675 #4 deferred，须后续 owner disposition | path guard + depth bound | `risk_delta` 标 inferred 信号（event 投影，将来消费须走 provenance 契约）| 消费侧读时衰减（绑消费解锁；本单元不消费）|
 | Rust coldstart | 全 DAG 前向 | Kahn 检测 → `Err`（reject）| day-one 先验读，产 display-tier 标量，不进 `getMasteryProjection` | n=0 先验，真数据一到即被 likelihood 盖过 |
 
 **借用侧永不修图**：三处读边（`loadEdgesForProjection`/`loadPrereqClosure`/shadow sweep）全 SELECT 只读，遇环只读容忍或 fail-safe-to-noop，**绝不 raw-UPDATE fold-owned `knowledge_edge`**（写边唯一 throat = `edges.ts`）。自愈删边（环检测 → archive 最低 weight 边）归**图治理单元**（经事件层、mirror `merge_attribution_sweep` forensic 形态），不在本 ADR。
