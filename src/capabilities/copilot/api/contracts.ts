@@ -16,13 +16,14 @@ export const CopilotCheckpointRevertRefusalSchema = z.object({
   ok: z.literal(false),
   refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
   reason: z.string(),
-  irreversibleEventIds: z.array(z.string()).optional(),
-  ref: z.object({ kind: z.literal('theta'), kcId: z.string() }).optional(),
-  conflictRef: z
+  // snake_case wire fields (this envelope is new in YUK-497 — align to house style now).
+  irreversible_event_ids: z.array(z.string()).optional(),
+  ref: z.object({ kind: z.literal('theta'), kc_id: z.string() }).optional(),
+  conflict_ref: z
     .object({
       kind: z.enum(['theta', 'fsrs']),
-      subjectKind: z.string(),
-      subjectId: z.string(),
+      subject_kind: z.string(),
+      subject_id: z.string(),
     })
     .optional(),
 });

@@ -89,10 +89,11 @@ export interface CopilotTurn {
   primary_view?: CopilotPrimaryView;
 }
 
-const USER_ACTIONS = [
-  'experimental:copilot_user_ask',
-  'experimental:copilot_chip_trigger',
-] as const;
+// The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
+// user-role turn but is NOT a revert root, so a reply caused by one must not surface a
+// checkpoint_event_id (which would render a revert button that 404s).
+const USER_ASK_ACTION = 'experimental:copilot_user_ask';
+const USER_ACTIONS = [USER_ASK_ACTION, 'experimental:copilot_chip_trigger'] as const;
 const REPLY_ACTION = 'experimental:copilot_reply';
 
 const DEFAULT_TURN_LIMIT = 20;
@@ -258,20 +259,17 @@ export async function getRecentCopilotTurns(
     dbArg,
     rows.map((row) => row.id),
   );
+  // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's
+  // caused_by may be a user_ask OR a chip_trigger; only the former may surface a
+  // checkpoint_event_id (revert affordance). retractedAskIds ⊆ askIds.
+  const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
   const retractedAskIds = new Set(
-    rows
-      .filter(
-        (row) =>
-          row.action === 'experimental:copilot_user_ask' &&
-          statuses.get(row.id)?.state === 'retracted',
-      )
-      .map((row) => row.id),
+    [...askIds].filter((id) => statuses.get(id)?.state === 'retracted'),
   );
 
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
-    const checkpointEventId =
-      row.action === 'experimental:copilot_user_ask' ? row.id : row.caused_by_event_id;
+    const checkpointEventId = row.action === USER_ASK_ACTION ? row.id : row.caused_by_event_id;
     if (checkpointEventId && retractedAskIds.has(checkpointEventId)) {
       if (row.id === checkpointEventId) {
         turns.push({
@@ -301,7 +299,11 @@ export async function getRecentCopilotTurns(
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: session.id,
         reply_event_id: row.id,
-        ...(checkpointEventId ? { checkpoint_event_id: checkpointEventId } : {}),
+        // Only a reply rooted at a typed user_ask exposes a revert affordance; a
+        // chip-triggered reply's caused_by points at a chip_trigger (not a revert root).
+        ...(checkpointEventId && askIds.has(checkpointEventId)
+          ? { checkpoint_event_id: checkpointEventId }
+          : {}),
       };
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
@@ -315,7 +317,7 @@ export async function getRecentCopilotTurns(
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
-        ...(row.action === 'experimental:copilot_user_ask' ? { checkpoint_event_id: row.id } : {}),
+        ...(row.action === USER_ASK_ACTION ? { checkpoint_event_id: row.id } : {}),
       });
     }
   }

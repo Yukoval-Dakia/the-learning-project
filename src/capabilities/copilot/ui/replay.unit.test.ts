@@ -59,6 +59,27 @@ describe('replayToMessages', () => {
     expect(out).toEqual([{ id: 'reply_ok', role: 'ai', text: 'ok' }]);
   });
 
+  it('keeps a tombstone even with empty text (guard order — it synthesizes its own copy)', () => {
+    // Regression for the reordered guards: the empty-text drop must not run before the
+    // tombstone branch, or a tombstone carrying no meaningful text would vanish.
+    const out = replayToMessages([
+      turn({
+        role: 'tombstone',
+        text: '',
+        event_id: 'ask_reverted',
+        checkpoint_event_id: 'ask_reverted',
+      }),
+    ]);
+    expect(out).toEqual([
+      {
+        id: 'ask_reverted',
+        role: 'tombstone',
+        text: '本轮更改已撤回',
+        checkpoint_event_id: 'ask_reverted',
+      },
+    ]);
+  });
+
   it('drops turns with an unknown role', () => {
     const out = replayToMessages([
       // @ts-expect-error — exercising the runtime guard against malformed roles.

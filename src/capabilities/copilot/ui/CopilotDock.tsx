@@ -268,6 +268,7 @@ export const MessageRow = memo(function MessageRow({
           <button
             type="button"
             className="chip"
+            data-testid="copilot-revert-button"
             // Disabled while THIS row's revert POST is in flight — prevents a duplicate
             // revert (mirrors the corrective chip's disabled={chipPending || chipAcked}).
             disabled={revertPending}
@@ -427,6 +428,31 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // clobber the live in-memory list with a stale prefill.
   const replayedRef = useRef(false);
 
+  // AF S4 / YUK-203 U6 — restore skill state from a replayed message list: adopt the
+  // latest non-end AI skill_context as activeSkillRef, and surface the latest in-scope
+  // knowledge entity for the quiz chip. Newest-first scan (replayed is oldest→newest).
+  // Set-if-found (no reset) so the drawer-open prefill keeps its exact semantics; callers
+  // that must drop stale context (post-revert refetch) reset the refs before calling.
+  const restoreSkillStateFromReplay = useCallback(
+    (replayed: ReturnType<typeof replayToMessages>) => {
+      for (let i = replayed.length - 1; i >= 0; i--) {
+        const m = replayed[i];
+        if (m.role !== 'ai' || !m.skill_turn) continue;
+        if (m.skill_turn.kind === 'end') break; // ended session → leave ref null
+        if (m.skill_context) activeSkillRef.current = m.skill_context;
+        break; // found the latest skill turn — done either way
+      }
+      for (let i = replayed.length - 1; i >= 0; i--) {
+        const sc = replayed[i].skill_context;
+        if (sc?.ref.kind === 'knowledge') {
+          setFocusedKnowledgeId(sc.ref.id);
+          break;
+        }
+      }
+    },
+    [],
+  );
+
   // AF S3a — on open, prefill the message list from GET /api/copilot/turns
   // (replay-last-N). Best-effort: on failure we keep the current in-memory list
   // (graceful degradation to pre-S3a behaviour) and surface no error for the
@@ -454,29 +480,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // Only prefill if the user has not already started typing/sending in this
         // open (don't stomp a live exchange that raced the fetch).
         setMessages((prev) => (prev.length === 0 ? replayed : prev));
-        // Restore the active skill context from the last non-end skill turn so
-        // composer answers after a page refresh still route to the skill.
-        // Scan newest-first (replayed is oldest→newest, so reverse-iterate).
-        for (let i = replayed.length - 1; i >= 0; i--) {
-          const m = replayed[i];
-          if (m.role !== 'ai' || !m.skill_turn) continue;
-          if (m.skill_turn.kind === 'end') break; // ended session → stop, leave ref null
-          if (m.skill_context) {
-            activeSkillRef.current = m.skill_context;
-          }
-          break; // found the latest skill turn — done either way
-        }
-        // YUK-272 (C3) — independently surface the latest in-scope knowledge entity
-        // (from any replayed skill_context with a knowledge ref) so the quiz chip
-        // has a real knowledge id after a page refresh. Quiz turns carry no
-        // skill_turn, so the restore loop above skips them — this scan does not.
-        for (let i = replayed.length - 1; i >= 0; i--) {
-          const sc = replayed[i].skill_context;
-          if (sc?.ref.kind === 'knowledge') {
-            setFocusedKnowledgeId(sc.ref.id);
-            break;
-          }
-        }
+        // Restore activeSkillRef + the quiz chip's in-scope knowledge entity from the
+        // replayed turns so composer answers / the quiz chip survive a page refresh.
+        restoreSkillStateFromReplay(replayed);
       } catch {
         // Replay is best-effort — stay on the in-memory list.
       }
@@ -484,12 +490,19 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, restoreSkillStateFromReplay]);
 
   const refetchTurns = useCallback(async () => {
     const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
-    setMessages(replayToMessages(res.turns ?? []));
-  }, []);
+    const replayed = replayToMessages(res.turns ?? []);
+    setMessages(replayed);
+    // A revert may have removed the turn that owned the active teaching skill / focused
+    // knowledge — reset both, then recompute from the refreshed list (the same scan the
+    // drawer-open prefill runs) so stale skill context never survives a revert.
+    activeSkillRef.current = null;
+    setFocusedKnowledgeId(null);
+    restoreSkillStateFromReplay(replayed);
+  }, [restoreSkillStateFromReplay]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
@@ -517,7 +530,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           setRefreshFailed(true);
         }
       } finally {
-        setRevertPendingId(null);
+        // Guarded clear (mirrors chipPending): only clear if THIS checkpoint is still the
+        // pending one, so a newer revert of a different checkpoint isn't cleared by our finally.
+        setRevertPendingId((cur) => (cur === checkpointEventId ? null : cur));
       }
     },
     [refetchTurns],
@@ -1051,7 +1066,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 </div>
               </div>
             ) : null}
-            {error ? (
+            {error && !refreshFailed ? (
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>

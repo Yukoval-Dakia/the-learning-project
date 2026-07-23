@@ -106,8 +106,10 @@ export interface ReplayChatMessage {
 export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
   const out: ReplayChatMessage[] = [];
   for (const t of turns) {
-    if (typeof t.text !== 'string' || t.text.length === 0) continue;
     if (t.role !== 'user' && t.role !== 'ai' && t.role !== 'tombstone') continue;
+    // Classify tombstones BEFORE the text guard — a tombstone synthesizes its own copy
+    // ('本轮更改已撤回') and carries no meaningful t.text, so an empty-text tombstone must
+    // still render rather than being dropped by the user/ai text check below.
     if (t.role === 'tombstone') {
       out.push({
         id: t.event_id,
@@ -117,6 +119,8 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
       });
       continue;
     }
+    // user / ai turns must carry real text — drop empty/malformed (best-effort prefill).
+    if (typeof t.text !== 'string' || t.text.length === 0) continue;
     out.push({
       id: t.event_id,
       role: t.role,

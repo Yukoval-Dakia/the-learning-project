@@ -266,6 +266,41 @@ describe('getRecentCopilotTurns', () => {
     });
   });
 
+  it('does NOT surface a revert checkpoint on a chip-triggered reply (YUK-497 wave-2)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // A chip trigger is a user-role turn but is NOT a valid revert root (owner-locked to
+    // copilot_user_ask). A reply caused by it must therefore expose no checkpoint_event_id.
+    const chipId = `copilot_chip_trigger_${createId()}`;
+    writtenEventIds.push(chipId);
+    await writeEvent(db, {
+      id: chipId,
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:copilot_chip_trigger',
+      subject_kind: 'query',
+      subject_id: chipId,
+      outcome: null,
+      payload: { surface: 'copilot', user_message: '继续讲', session_id: sessionId },
+      created_at: new Date(now.getTime() - 3000),
+    });
+    const chipReplyId = await writeReply('好的', sessionId, chipId, new Date(now.getTime() - 2000));
+    // Contrast case in the same window: a real user_ask-rooted reply DOES get a checkpoint
+    // (guards the fix against over-suppressing legitimate revert affordances).
+    const askId = await writeAsk('真问题', sessionId, new Date(now.getTime() - 1000));
+    const askReplyId = await writeReply('答案', sessionId, askId, new Date(now.getTime() - 500));
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const chipReply = turns.find((t) => t.event_id === chipReplyId);
+    const chipTurn = turns.find((t) => t.event_id === chipId);
+    const askReply = turns.find((t) => t.event_id === askReplyId);
+    expect(chipReply?.role).toBe('ai');
+    expect(chipReply?.checkpoint_event_id).toBeUndefined();
+    expect(chipTurn?.checkpoint_event_id).toBeUndefined();
+    expect(askReply?.checkpoint_event_id).toBe(askId);
+  });
+
   it('caps to limit turns (newest kept), returned chronologically', async () => {
     const now = new Date();
     const sessionId = await createLiveCopilotSession(now);

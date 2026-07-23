@@ -12,7 +12,7 @@ import {
   findReusableCopilotConversation,
   lockCopilotSessionSelection,
 } from '@/server/session/conversation';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { CopilotCheckpointParamsSchema } from './contracts';
 
@@ -68,7 +68,10 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           ),
         )
         .limit(1);
-      const terminalJobEvents = await tx
+      // Durable run shadow probes. job_events is free-form and a STREAMING run emits many
+      // DELTA rows, so never fetch the whole event set just to derive two booleans — two
+      // bounded existence checks (does a shadow exist at all; has it reached DONE/FAILED).
+      const shadowRows = await tx
         .select({ event_type: job_events.event_type })
         .from(job_events)
         .where(
@@ -76,12 +79,21 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
             eq(job_events.business_table, COPILOT_RUN_TABLE),
             eq(job_events.business_id, checkpointEventId),
           ),
-        );
-      const durableTerminal = terminalJobEvents.some(
-        (row) =>
-          row.event_type === COPILOT_RUN_EVENTS.DONE ||
-          row.event_type === COPILOT_RUN_EVENTS.FAILED,
-      );
+        )
+        .limit(1);
+      const shadowExists = shadowRows.length > 0;
+      const terminalRows = await tx
+        .select({ event_type: job_events.event_type })
+        .from(job_events)
+        .where(
+          and(
+            eq(job_events.business_table, COPILOT_RUN_TABLE),
+            eq(job_events.business_id, checkpointEventId),
+            inArray(job_events.event_type, [COPILOT_RUN_EVENTS.DONE, COPILOT_RUN_EVENTS.FAILED]),
+          ),
+        )
+        .limit(1);
+      const durableTerminal = terminalRows.length > 0;
       // YUK-497 review F6 — two distinct not-terminal conditions, previously conflated under
       // one 409. Keep both 409 but name the cause so the client (and forensics) can tell them
       // apart: (a) no reply persisted yet = the turn is still in flight; (b) a durable run
@@ -89,7 +101,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
       if (replies.length === 0) {
         throw new ApiError('turn_not_terminal', 'turn not complete yet — no reply persisted', 409);
       }
-      if (terminalJobEvents.length > 0 && !durableTerminal) {
+      if (shadowExists && !durableTerminal) {
         throw new ApiError(
           'turn_shadow_not_terminal',
           'durable run shadow not terminal yet — cannot revert',
@@ -101,9 +113,27 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         copilotAskOnly: true,
       });
       if (!result.ok) {
+        // YUK-497 review F4 — map the orchestrator's internal camelCase refusal to the
+        // snake_case wire envelope (irreversible_event_ids / ref.kc_id / conflict_ref.*).
+        const body: Record<string, unknown> = {
+          ok: false,
+          refusal: result.refusal,
+          reason: result.reason,
+        };
+        if (result.refusal === 'irreversible') {
+          body.irreversible_event_ids = result.irreversibleEventIds;
+        } else if (result.refusal === 'legacy_snapshot') {
+          body.ref = { kind: 'theta', kc_id: result.ref.kcId };
+        } else if (result.refusal === 'conflict') {
+          body.conflict_ref = {
+            kind: result.conflictRef.kind,
+            subject_kind: result.conflictRef.subjectKind,
+            subject_id: result.conflictRef.subjectId,
+          };
+        }
         return {
           status: result.refusal === 'no_checkpoint' ? 404 : 409,
-          body: result,
+          body,
         } as const;
       }
       return {

@@ -32,9 +32,9 @@ describe('Copilot declared route response contracts', () => {
         ok: false,
         refusal: 'irreversible',
         reason: 'unsupported effect',
-        irreversibleEventIds: ['tool_1'],
+        irreversible_event_ids: ['tool_1'],
       }),
-    ).toMatchObject({ refusal: 'irreversible' });
+    ).toMatchObject({ refusal: 'irreversible', irreversible_event_ids: ['tool_1'] });
   });
 
   it('parses the snake_case reverted sub-object and the 404/409 error union (review F3/F7)', () => {
@@ -64,6 +64,15 @@ describe('Copilot declared route response contracts', () => {
         reason: 'nothing to revert',
       }),
     ).toMatchObject({ refusal: 'no_checkpoint' });
+    // F4 — the refusal envelope's optional sub-objects are snake_case (conflict_ref.*).
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({
+        ok: false,
+        refusal: 'conflict',
+        reason: 'state moved',
+        conflict_ref: { kind: 'theta', subject_kind: 'knowledge', subject_id: 'kc_1' },
+      }),
+    ).toMatchObject({ conflict_ref: { subject_id: 'kc_1' } });
   });
 
   it('parses the real turns and today-summary route envelopes', async () => {

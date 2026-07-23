@@ -25,7 +25,12 @@ describe('CopilotDock checkpoint revert', () => {
     // Per-row in-flight guard mirrors the corrective chip's disabled idiom.
     expect(source).toContain('disabled={revertPending}');
     expect(source).toContain('setRevertPendingId(checkpointEventId)');
-    expect(source).toContain('setRevertPendingId(null)');
+    // Guarded clear (mirrors chipPending) — only clears if still the pending checkpoint.
+    expect(source).toContain(
+      'setRevertPendingId((cur) => (cur === checkpointEventId ? null : cur))',
+    );
+    // The button carries a stable testid mirroring sibling chips.
+    expect(source).toContain('data-testid="copilot-revert-button"');
   });
 
   it('distinguishes a post-revert refresh failure from a revert failure (F5b)', async () => {
@@ -37,5 +42,18 @@ describe('CopilotDock checkpoint revert', () => {
     expect(source).toContain('setRefreshFailed(true)');
     expect(source).toContain('copilot-refresh-error');
     expect(source).toContain('const retryRefresh');
+    // The two banners are mutually exclusive — refreshFailed wins when both are set.
+    expect(source).toContain('error && !refreshFailed');
+  });
+
+  it('recomputes skill state on the post-revert refetch (wave-2 F2)', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
+      'utf8',
+    );
+    // refetchTurns resets skill state then reuses the drawer-open recompute so a revert that
+    // removed the owning turn cannot leave a stale teaching skill / focused knowledge context.
+    expect(source).toContain('const restoreSkillStateFromReplay');
+    expect(source).toContain('restoreSkillStateFromReplay(replayed)');
   });
 });
