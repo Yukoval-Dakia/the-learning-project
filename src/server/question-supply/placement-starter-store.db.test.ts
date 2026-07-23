@@ -470,6 +470,15 @@ describe('placement starter store', () => {
     const trace = SupplyTraceV1.parse(sent[0]?.supply_trace);
     expect(trace.claim_id).toBe(identity.claimId);
     expect(trace.allowed_uses).toEqual(['placement', 'diagnostic']);
+    const [dispatchEvent] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.subject_id, identity.targetId));
+    expect(dispatchEvent?.payload.supply_trace).toEqual(trace);
+    expect(dispatchEvent?.payload.supply_trace).toMatchObject({
+      claim_id: identity.claimId,
+      semantic_goal_revision_id: 'goal-genesis-1',
+    });
     expect((await db.select().from(placement_starter_claim))[0]).toMatchObject({
       status: 'queued',
       pg_boss_job_id: 'job-1',

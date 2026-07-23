@@ -292,6 +292,7 @@ export async function dispatchSupplyTarget(
       : null;
 
   let result: DispatchResult;
+  let persistedSupplyTrace: SupplyTraceV1T | null = null;
 
   if (!anchorKid) {
     // 防御：扫描器永远给至少一个 KC，但 dispatch 不该在无锚时盲发。
@@ -367,6 +368,7 @@ export async function dispatchSupplyTarget(
               }),
             )
           : dispatchTrace;
+      persistedSupplyTrace = placementTrace;
       const quizGenData: QuizGenJobData | null =
         queue === 'quiz_gen'
           ? {
@@ -443,7 +445,7 @@ export async function dispatchSupplyTarget(
   // 派一次又写一次事件即恢复 cooldown），故保留此权衡；收紧需把 cooldown 凭证写进专用持久表
   // （架构 doc 规划的后续 phase）或对 dispatched 路径的 writeEvent 做有限重试。
   try {
-    const supplyTrace = traceFor(result.chosenRoute);
+    const supplyTrace = persistedSupplyTrace ?? traceFor(result.chosenRoute);
     await writeEvent(db, {
       id: newId(),
       actor_kind: 'agent',
