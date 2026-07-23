@@ -1,7 +1,8 @@
 # ADR-0047 — KG 承重借用：relation_type→机制映射 + 诊断向后传播 + 借用 provenance 契约
 
-**Status**: Proposed（草案，待 owner ratify — 勿自行 ratify）
+**Status**: Accepted — governance/contract ratified; empirical decisions and runtime activation deferred (YUK-675, 2026-07-23). This acceptance does not authorize any flag flip.
 **Part of**: YUK-441（A5 图-Laplacian 平滑先验）+ YUK-442（A6 prereq 有向 θ̂ 传播）+ YUK-455（A13 prereq 诊断向后传播 producer）+ YUK-559（kg-borrowing 借用纪律加固：provenance 契约 / 分量守卫 / shadow 遥测）。P4「KG 承重」里程碑——让知识图谱的边数学承重于 per-KC mastery。
+**Partially supersedes:** [ADR-0036](0036-dual-layer-heterogeneous-knowledge-graph.md) Decision 4 (RT2) only. ADR-0036’s remaining decisions stay authoritative.
 **Decision source**: 数学 dossier `docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md` §1(a)/§2 A5 行 + YUK-441/442「数学 dossier 裁决」comment（2026-06-20）+「🛠 实施讨论 · grounded」comment（2026-06-27）+ YUK-452 §6 Q5（A13 owner 裁决）+ `docs/design/2026-07-04-kg-borrowing-spec.md`（reconcile 终稿：M1 撤回 / 半径纪律从 A13 移到 A5 / 遥测重做 shadow）。
 **Related**: ADR-0010（knowledge_edge typed mesh / relation_type 核心集合）· ADR-0021（event memory-ingestion outbox opt-out）· ADR-0034（结构一致性闸 + `archived_at` 软归档，取代 bi-temporal）· ADR-0035（三轴正交 + p(L) 诊断轴 + 不确定性必过校准闸 corollary）· ADR-0036（双层异构 KG）· ADR-0040（决定2「先埋点 N 周再定阈」）· YUK-357 `audit:relations`（KG 死边反向审计）· YUK-539（evidence-floor，已关 register P1 判据）· YUK-551（frontier-gate 借用侧 UI/tone）· YUK-559（本单元）。
 
@@ -23,7 +24,7 @@
 |---|---|---|---|---|
 | **A5** 图-Laplacian 平滑 | 对称（`related_to`） | proper GMRF 联合稠密解（`solveDense` O(n³)） | **request-shaped，无结构上界**（见决定 6/8） | `GRAPH_LAPLACIAN_ENABLED` |
 | **A6** prereq 有向 θ̂ 传播 | 有向（`prerequisite`/`derived_from`） | 单趟 O(E) 加性 Δθ | 真 1 跳 | `PREREQ_THETA_PROPAGATION_ENABLED` |
-| **A13** prereq 诊断向后 emit | 有向逆走（答错→上溯前置） | 闭包 + 几何衰减 0.5^(d−1)，MAX 聚合，emit 事件 | depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[] | `PREREQ_RISK_EMIT_ENABLED` |
+| **A13** prereq 诊断向后 emit | 有向逆走（答错→上溯前置） | 闭包 + 当前 dark provisional 几何衰减 0.5^(d−1)，MAX 聚合，emit 事件 | 当前 dark 行为 depth≤16 + node-cap 10k + path-guard，overflow fail-safe→[]；这些界值未获 live ratification | `PREREQ_RISK_EMIT_ENABLED` |
 | Rust coldstart | day-one(n=0) 向前 DAG 先验 | Kahn 拓扑前向，probabilistic-AND | 全 DAG，遇环 reject | `DAY_ONE_PRIOR_ENABLED` |
 
 不同 relation_type 的数学语义不同，混用会污染 firm-up：对称平滑假设同质，有向边假设序，对立边是反向信号。本 ADR 钉死映射 + 承重借用的 provenance / 半径 / 环 / 衰减契约。
@@ -40,7 +41,7 @@
 | `contrasts_with` | 对立 | **两者都不进** | ❌ | ❌ | **反向信号**：易混项混入平滑会把对立项当同类 → 污染 firm-up。 |
 | `applied_in` | 有向 | 暂不进（有意死边候选，YUK-357）| ❌ | ❌ | 无明确序/平滑语义。 |
 
-**钉死三句**：① `related_to` → A5（且仅 A5）；② `prerequisite`(+`derived_from`) → A6 读侧 + A13 诊断向后；③ `contrasts_with` A5/A6/A13 都不进。relation_type 不相交、不双计。
+**钉死三句**：① `related_to` → A5（且仅 A5）；② `prerequisite` → A6 读侧 + A13 诊断向后，`derived_from` 仅以反向 orientation（`to` 为 base）进 A6；③ `contrasts_with` A5/A6/A13 都不进。relation_type 不相交、不双计；`derived_from` 若要进入 A5/A13，须另立 ADR 并由 owner disposition。
 
 ### 2. A5 = proper GMRF，不是裸 improper prior
 
@@ -87,13 +88,13 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 
 ### 7. dark-ship + flag-off byte-identical
 
-各 flag 默认 false（module-level const，仿 `THETA_GRID_ENABLED`，无 config 表/env）。flag-off → `getMasteryProjection` 不拉边、不平滑、不加借条目 = byte-identical 今日（回归锚）。λ/κ/λ_down/λ_up 是 owner 供给的**保守固定先验**（n=1 admissible），PHASE-DEFERRED 待各自验证闸调。
+各 flag 默认 false（module-level const，仿 `THETA_GRID_ENABLED`，无 config 表/env）。flag-off → `getMasteryProjection` 不拉边、不平滑、不加借条目 = byte-identical 今日（回归锚）。λ/κ/λ_down/λ_up 是 owner 供给的固定 n=1 先验；现有 λ=0.5、κ=0.01、λ_down=0.3、λ_up=0.15 仅是 **dark provisional placeholders**，不是经验证或获准 live 的默认值，数值 ratification 仍 deferred。
 
 **S1 形状变更说明**：`MasteryProjection` 加 required `provenance` 字段是 flag 无关的**类型形状变更**——flag-off 回归锚更新为「新形状下，soft-layer 不变量 = 无借用条目、无 theta 移动、无 theta_hat_raw」（数值仍 byte-identical）。
 
 ### 8. act-flip 闸（defer-flip not defer-build）+ A5 翻 flag 硬前置包
 
-代码建 + 接线 + 电到 live 已完成；**只 defer 最终 flag 翻转**：
+代码建 + 接线 + 电到 live 已完成；**本次 ratification 不授权任何 activation**。所有 flag 保持当前状态，最终翻转仍 deferred：
 - **A5**：gated on **V-A5-LOKO**（leave-one-KC-out：MSE < λ=0 独立基线 ∧ 90% 覆盖 ∈ [85%,95%] ∧ λ 后验 > 0）。**外加 YUK-559 硬前置包**（顺序前置，翻 flag 前必全绿）：
   1. **A5 解规模界定**（RP8）——`solveDense` O(n³)/O(n²) 跑在整个 requested 集上，全树请求 n≈5000 ⇒ 每次树读 ~10¹¹ flops，是**可扩展性悬崖**。已落 **分量守卫**（`smoothThetaByComponent` 按 `related_to` 连通分量分块求解——GMRF precision 块对角 ⇒ 逐分量解与整解逐分量一致的纯重排；超界分量 `GRAPH_SMOOTH_COMPONENT_CAP`=256 fail-safe-to-no-smoothing + 单点 warn）。cap 值 / 将来稀疏 CG solver vs per-request 局部化的取舍 = owner 决策。
   2. **provenance audit 升 hard-gate**（`audit:mastery-provenance` 从 report-only → `--strict` CI gate），9 caller 全过审。
@@ -117,12 +118,32 @@ A5/A6/A13 都只吃：**单学习者自身 θ̂/outcome**（mastery_state）+ **
 
 owner 可选让 borrowed band point = σ(θ̃−β)——**诚实框架**：这是 1PL ICC（`theta.ts` 家族），因 counts=0 使 PFA 退化为 σ(−β) 而用**异族模型**承接；同一 `.mastery` 字段从此双模型（observed=PFA、borrowed=1PL），β↔b 需 linking（ADR-0035 决定#1）。**硬前置链（顺序不可换）**：(a) `audit:mastery-provenance` 升 hard-gate 且 9 caller 全过审（否则在护栏强制前抬高今日天然保守的 mastery 轴）；(b) shadow 数据 ≥N 周 owner 审过背离分布；(c) 本 ADR 显式记双模型 + linking caveat。**不采则双轴现状 + 成文即终态**。
 
+## YUK-675 split ratification（owner disposition，1–11 原号保留）
+
+本表是本文的 owner disposition 真相源。`Ratified now` 只批准治理/契约；`Deferred` 保留当前行为，达到 unlock evidence 后仍须 owner 再次显式 disposition，**不会自动翻 flag、改 runtime 或升级 gate**。
+
+| # | Ratified now | Deferred | Unlock evidence + later owner disposition | Runtime impact now |
+|---|---|---|---|---|
+| 1 | 无；F′ 整体 deferred。 | borrowed `.mastery` 是否改用 θ̃ 的 1PL ICC，以及 PFA/1PL 双模型。 | `audit:mastery-provenance --strict` + heuristic guarded verdicts 的人工语义复核完成；shadow 满 N 周且 owner 审过背离；owner 显式决定 β↔b linking 后再拍采/不采。 | 无；borrowed `.mastery` 继续 cold PFA σ(−β)，未重开前即终态。 |
+| 2 | A5 pre-flip 包的类别与顺序：bounded solve/fail-safe → strict provenance gate → shadow window → V-A5-LOKO GO。 | 最终 component cap、sparse CG vs request-localization、N，以及 CI/runtime 工作。`256` 仅当前 dark 保守 safety bound。 | 四类证据完成后，owner 分别 disposition cap、solver/localization、N 与 activation；不得把 `256` 当 validated/live default。 | 无；A5 不获 activation。 |
+| 3 | 第一只 A5/A6 borrow flag 前，必须通过 `audit:mastery-provenance --strict`，并人工复核 heuristic guarded verdicts。 | package/CI 接线与首次执行时点。 | strict 结果与人工复核记录齐备后，owner disposition 接线和 flag。 | 无；本次不改 audit/package/CI。 |
+| 4 | 现有 `ingest_at:now` memory opt-out；A13 保持 emit-only、无 live consumer。 | ≤2-hop alternative、A13 `edge.weight` modulation、flag 与下游消费。当前 depth≤16/node-cap 10k/base/decay 都只是 dark 行为/owner-fixed unratified priors。 | owner 审阅 emitted distributions 后，逐项 disposition 半径、modulation、参数、activation 与消费。 | 无；A13 不获 activation 或 consumer。 |
+| 5 | A6 与 B3 既有 0.7 frontier gate 不得静默双重压制同一 dependency signal；pre-flip 设计须选 authoritative stage 或提供经测试的 bounded composition。 | 具体公式、owner stage 与 harness。 | shadow/pre-flip review 产出双压制分析和测试证据后，owner disposition。 | 无；A6/B3 行为不变。 |
+| 6 | 图自愈归图治理；必须经 event-owned write path。借用读路径只读、fail-safe，永不 raw archive/update。 | self-heal job 本身。 | 图治理另案明确事件契约与 owner 批准后才可实施。 | 无；无 job、写路径或修图变化。 |
+| 7 | Rust port 仅在 A5 activation 后，且出现已证明的性能需求或 required cross-runtime consistency 时进入；四前置为 deployment-aware non-cwd loader/artifact packaging、YUK-501 CI parity、wasm32-wasip1-threads + napi surfaces、crate target declaration。 | port、量化 trigger threshold 与所有实现。 | activation + need evidence + 四前置全绿后，owner disposition 是否 port 及阈值。 | 无；零 Rust/loader/package/CI 改动。 |
+| 8 | `derived_from` 仅进 A6，orientation 反转（`to` 为 base）；不进 A5/A13，除非后续 ADR。常量必须保持 owner-fixed n=1 priors。 | λ/κ/λ_down/λ_up 数值 ratification/tuning；当前 0.5/0.01/0.3/0.15 仅 dark provisional placeholders。 | 各机制验证证据完成后，owner 逐值 disposition；任何从跨人数据学习参数的方案仍 inadmissible。 | 无；常量与 flags 均不改。 |
+| 9 | 无；M1-F 整体 deferred，mean-only 是当前契约。 | graph uncertainty 进入 `theta_se`/`theta_precision`/p(L) band。 | V-A5-LOKO GO + graph uncertainty calibration 后，owner 显式 disposition。 | 无；uncertainty 与 band 不变。 |
+| 10 | A5 V-A5-LOKO gate 钉死为：MSE < λ=0 baseline **且** 90% coverage ∈ [85%,95%] **且** λ posterior > 0；synthetic correctness 不足以解锁。A6/A13 各须 owner-data gate。 | A6/A13 gate 的定义/阈值，以及全部 harness 接线/执行。 | A5 三条件全过后 owner disposition A5；A6/A13 各自 owner-data evidence 完成后另行 disposition。 | 无；无 harness、gate 接线或 activation。 |
+| 11 | 无；保留 required provenance union field + `isObserved` helper 的当前契约。 | Q1′-F 判别联合升级与 9 caller 迁移。 | V-A5-LOKO GO 后，由 owner 显式 disposition 是否迁移；GO 本身不自动触发。 | 无；无 caller/type migration。 |
+
 ## 后果
 
-- **正向**：`related_to` 获得首个 specialized 诊断消费者；`prerequisite`/`derived_from` 获得诊断轴 specialized 消费者（A6 读侧 + A13 emit）。`audit:relations` CONSUMER_REGISTRY 已补相应 `state.ts` / `prereq-propagation.ts` marker 证据（本单元 registry 零改动——relation_type 过滤未触）。observed/inferred 结构分离 + `audit:mastery-provenance` 埋点。
+- **正向**：`related_to` 获得首个 specialized 诊断消费者；`prerequisite` 获得诊断轴 specialized 消费者（A6 读侧 + A13 emit），`derived_from` 仅获 A6 读侧消费者。`audit:relations` CONSUMER_REGISTRY 已补相应 `state.ts` / `prereq-propagation.ts` marker 证据（本单元 registry 零改动——relation_type 过滤未触）。observed/inferred 结构分离 + `audit:mastery-provenance` 埋点。
 - **风险/护栏**：① λ 过大抹平真 misconception（V-A5-LOKO 守）；② A5 解规模悬崖（分量守卫 + shadow 规模数据守）；③ A6 与 B3 frontier 既有下游压制可能双计（owner 决策点）；④ 借用条目「凭空多出投影条目」——已标 `inferred` + `low_confidence`，provenance audit 防静默误用；⑤ A13 翻 flag 后 brief-regen 扇出（`ingest_at:now` opt-out 守）。
 
-## 待 owner 决策（不在本 lane 拍；勿自行 ratify）
+## Owner disposition 索引（历史问题 → YUK-675 表格）
+
+以下原 1–11 议题已由上表逐号处置；其 Ratified/Deferred 边界、unlock evidence 与「仍须 later owner disposition」以该表为准，不再把它们统称为未拍开放问题：
 
 1. **F′（θ̃ 进借用 band，1PL ICC）采不采**：前置链 =（audit 升 hard-gate → shadow 数据 N 周 → ADR 双模型+linking 成文），顺序不可换。
 2. **A5 翻 flag 硬前置包 ratify**：分量守卫 cap 值（初值 256）/ 稀疏 solver vs per-request 局部化取舍 / audit 升 hard-gate / shadow 数据周数 N。
