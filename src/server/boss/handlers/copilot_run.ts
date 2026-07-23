@@ -239,7 +239,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'cancelled', cancelled_before_start: true },
+      payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
     });
     return { status: 'cancelled' };
   }
@@ -493,7 +493,7 @@ async function handleDurableFailure(
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'exhausted', error: message },
+      payload: { reason: 'exhausted', error: message, checkpoint_event_id: runId },
     });
   } catch (writeErr) {
     console.error('[copilot_run] terminal-failed write failed for', runId, writeErr);

@@ -499,7 +499,10 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    expect(failed?.payload).toMatchObject({
+      reason: 'exhausted',
+      checkpoint_event_id: 'run_fail',
+    });
     expect(deriveCopilotRunStatus(events)).toBe('failed');
     // phantom-prevention：写了 error copilot_reply（chained user_ask=run_id）。
     const replies = await copilotReplyEvents('sess_fail');
@@ -525,7 +528,10 @@ describe('runCopilotRun', () => {
     expect(result.status).toBe('failed');
     const events = await replay(runId);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    expect(failed?.payload).toMatchObject({
+      reason: 'exhausted',
+      checkpoint_event_id: runId,
+    });
     // 半程文本落进 phantom-preventing reply（不丢已说的话）。
     const replies = await copilotReplyEvents('sess_partial');
     expect(replies).toHaveLength(1);
@@ -558,7 +564,11 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'cancelled', cancelled_before_start: true });
+    expect(failed?.payload).toMatchObject({
+      reason: 'cancelled',
+      cancelled_before_start: true,
+      checkpoint_event_id: runId,
+    });
   });
 
   it('④ run handle = run_id = job_events.business_id（checkpoint_id 即 handle）', async () => {

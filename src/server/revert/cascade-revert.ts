@@ -87,7 +87,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { restoreStateSnapshot } from './restore-snapshot';
 
 type DbLike = Db | Tx;
@@ -410,6 +410,7 @@ export async function orchestrateCascadeRevert(
 
   try {
     await db.transaction(async (tx) => {
+      await acquireSnapshotStateLocks(tx, snapshotPayloads.values());
       for (const e of effects) {
         if (e.reversibility === 'state_snapshot') {
           const payload = snapshotPayloads.get(e.eventId);
@@ -421,7 +422,7 @@ export async function orchestrateCascadeRevert(
           // concurrent writer between pre-check and tx). A conflict here throws → the
           // catch below returns the typed refusal (the pre-check already returned it in
           // the common case).
-          const conflict = await assertSnapshotMatchesCurrent(tx, payload);
+          const conflict = await assertSnapshotMatchesCurrent(tx, payload, true);
           if (conflict) {
             throw new CascadeRevertConflictError(e.eventId, conflict);
           }
@@ -684,6 +685,27 @@ function parseSnapshotPayload(row: EventRow): StateSnapshotExperimentalPayload {
   return parsed.data.payload;
 }
 
+async function acquireSnapshotStateLocks(
+  tx: Tx,
+  payloads: Iterable<StateSnapshotExperimentalPayload>,
+): Promise<void> {
+  const lockRefs = new Set<string>();
+  for (const payload of payloads) {
+    for (const snap of payload.theta_snapshots) {
+      lockRefs.add(`fsrs:knowledge:${snap.kc_id}`);
+    }
+    for (const snap of payload.fsrs_snapshots) {
+      lockRefs.add(`fsrs:${snap.subject_kind}:${snap.subject_id}`);
+    }
+  }
+  for (const lockRef of [...lockRefs].sort()) {
+    const [namespace, subjectKind, ...subjectIdParts] = lockRef.split(':');
+    const subjectId = subjectIdParts.join(':');
+    const sharedKey = namespace === 'fsrs' ? `${namespace}:${subjectKind}:${subjectId}` : lockRef;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${sharedKey}))`);
+  }
+}
+
 /**
  * Conflict guard: for each snapshot segment, assert the CURRENT live row equals
  * the snapshot's `after`. Returns the first conflicting ref, or null if all match.
@@ -698,6 +720,7 @@ function parseSnapshotPayload(row: EventRow): StateSnapshotExperimentalPayload {
 async function assertSnapshotMatchesCurrent(
   db: DbLike,
   payload: StateSnapshotExperimentalPayload,
+  lockRows = false,
 ): Promise<{ kind: 'theta' | 'fsrs'; subjectKind: string; subjectId: string } | null> {
   for (const snap of payload.theta_snapshots) {
     const rows = await db
@@ -706,7 +729,8 @@ async function assertSnapshotMatchesCurrent(
       .where(
         and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, snap.kc_id)),
       )
-      .limit(1);
+      .limit(1)
+      .for(lockRows ? 'update' : 'no key update');
     const current = rows[0]?.theta_hat;
     // The current θ̂ must equal the snapshot's after. A missing row means the
     // after-state is gone → conflict.
@@ -725,7 +749,8 @@ async function assertSnapshotMatchesCurrent(
           eq(material_fsrs_state.subject_id, snap.subject_id),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for(lockRows ? 'update' : 'no key update');
     const current = rows[0]?.state;
     if (current === undefined || !fsrsCardEq(current, snap.after)) {
       return { kind: 'fsrs', subjectKind: snap.subject_kind, subjectId: snap.subject_id };

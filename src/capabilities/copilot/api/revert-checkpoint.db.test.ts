@@ -1,5 +1,6 @@
 import { event, learning_session } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './revert-checkpoint';
@@ -115,6 +116,39 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     const old = await seedTurn({ sessionId: 'copilot_old' });
     await seedTurn({ sessionId: 'copilot_current' });
     const response = await POST(request(old.checkpointId), { eventId: old.checkpointId });
+    expect(response.status).toBe(404);
+    expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
+  });
+
+  it('re-resolves ownership after a concurrent session rollover holds the shared selection lock', async () => {
+    const old = await seedTurn({ sessionId: 'copilot_old' });
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set');
+    const holder = postgres(url, { max: 1 });
+    let signalAcquired: (() => void) | undefined;
+    const acquired = new Promise<void>((resolve) => {
+      signalAcquired = resolve;
+    });
+    let releaseHolder: (() => void) | undefined;
+    const release = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    const rollover = holder.begin(async (sql) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'copilot:session-selection'}, 0))`;
+      await sql`UPDATE learning_session SET status = 'ended' WHERE id = ${old.sessionId}`;
+      const now = new Date();
+      await sql`INSERT INTO learning_session (id, type, status, entrypoint, source_asset_ids, warnings, created_at, updated_at, version) VALUES ('copilot_new', 'conversation', 'active', 'copilot', '[]'::jsonb, '[]'::jsonb, ${now}, ${now}, 0)`;
+      signalAcquired?.();
+      await release;
+    });
+    await acquired;
+
+    const responsePromise = POST(request(old.checkpointId), { eventId: old.checkpointId });
+    releaseHolder?.();
+    await rollover;
+    const response = await responsePromise;
+    await holder.end();
+
     expect(response.status).toBe(404);
     expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
   });

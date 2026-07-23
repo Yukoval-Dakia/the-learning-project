@@ -170,7 +170,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
             business_table: COPILOT_RUN_TABLE,
             business_id: runId,
             event_type: COPILOT_RUN_EVENTS.FAILED,
-            payload: { reason: 'enqueue_failed' },
+            payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
           });
           await writeCopilotReply(db, {
             sessionId,

@@ -3,17 +3,20 @@ import { event, job_events } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events/corrections';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
-import { findReusableCopilotConversation } from '@/server/session/conversation';
+import {
+  findReusableCopilotConversation,
+  lockCopilotSessionSelection,
+} from '@/server/session/conversation';
 import { and, eq, sql } from 'drizzle-orm';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const checkpointEventId = params.eventId;
-    const currentSession = await findReusableCopilotConversation(db);
-    if (!currentSession) throw new ApiError('not_found', 'checkpoint not found', 404);
-
     const outcome = await db.transaction(async (tx) => {
+      await lockCopilotSessionSelection(tx);
+      const currentSession = await findReusableCopilotConversation(tx);
+      if (!currentSession) throw new ApiError('not_found', 'checkpoint not found', 404);
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`copilot_revert:${checkpointEventId}`}, 0))`,
       );

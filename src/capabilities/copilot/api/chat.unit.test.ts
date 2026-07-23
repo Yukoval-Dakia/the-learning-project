@@ -202,7 +202,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         business_table: 'copilot_run',
         business_id: 'copilot_user_ask_F2',
         event_type: 'copilot_run.failed',
-        payload: expect.objectContaining({ reason: 'enqueue_failed' }),
+        payload: expect.objectContaining({
+          reason: 'enqueue_failed',
+          checkpoint_event_id: 'copilot_user_ask_F2',
+        }),
       }),
     );
     // 补偿：copilot_reply error domain event（chained user_ask）让该轮不是 phantom。
