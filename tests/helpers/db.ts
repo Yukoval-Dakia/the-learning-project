@@ -26,6 +26,10 @@ const ALL_TABLES = [
   'placement_starter_attempt_question',
   'placement_starter_attempt',
   'placement_starter_claim',
+  // YUK-751 — derived subscription recovery state; child tables precede checkpoint/event.
+  'event_subscription_effect',
+  'event_subscription_delivery',
+  'event_subscription_checkpoint',
   'event',
   'proposal_signals',
   'material_fsrs_state',

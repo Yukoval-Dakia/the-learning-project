@@ -273,6 +273,12 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // restore and the `on conflict do nothing` restore insert would drop the archived
   // rows anyway. (Excluded, not FK_ORDER → no SCHEMA_VERSION bump.)
   'hub_sync_reconciliation',
+  // YUK-751 durable subscription dispatcher recovery state. All three tables are
+  // reconstructed by manifest reconciliation + event-log discovery; restoring stale
+  // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
+  'event_subscription_checkpoint',
+  'event_subscription_delivery',
+  'event_subscription_effect',
 ]);
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────

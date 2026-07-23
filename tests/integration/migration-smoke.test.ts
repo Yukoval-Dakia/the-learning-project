@@ -780,3 +780,77 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
     ]);
   });
 });
+
+// YUK-751 — prove the locked 0076 upgrade path against an already-populated event log.
+describe('migration smoke — YUK-751 populated event backfill', () => {
+  const BASELINE_TAG = '0075_yuk452_placement_starter_integrity';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  function orderedMigrations(): { tag: string; sql: string }[] {
+    const journal = JSON.parse(
+      readFileSync(join(process.cwd(), 'drizzle/meta/_journal.json'), 'utf8'),
+    ) as { entries: { idx: number; tag: string }[] };
+    return [...journal.entries]
+      .sort((a, b) => a.idx - b.idx)
+      .map((entry) => ({
+        tag: entry.tag,
+        sql: readFileSync(join(process.cwd(), 'drizzle', `${entry.tag}.sql`), 'utf8'),
+      }));
+  }
+
+  async function applyMigrationFile(fileSql: string) {
+    for (const chunk of fileSql.split('--> statement-breakpoint')) {
+      const statement = chunk.trim();
+      if (statement.length > 0) await client.unsafe(statement);
+    }
+  }
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('deterministically backfills every event and advances new inserts above the max', async () => {
+    const insertEvent = async (id: string, createdAt: string) => {
+      await client`insert into event
+        (id, actor_kind, actor_ref, action, subject_kind, subject_id, payload, affected_scopes, created_at)
+        values (${id}, 'system', 'migration-test', 'experimental:test', 'event', ${id},
+          '{}'::jsonb, array[]::text[], ${createdAt}::timestamptz)`;
+    };
+    await insertEvent('event-z', '2020-01-01T00:00:00Z');
+    await insertEvent('event-a', '2020-01-01T00:00:00Z');
+    await insertEvent('event-later', '2021-01-01T00:00:00Z');
+
+    const migration = orderedMigrations().find(
+      (entry) => entry.tag === '0076_yuk751_event_subscriptions',
+    );
+    if (!migration) throw new Error('0076_yuk751_event_subscriptions missing from journal');
+    await applyMigrationFile(migration.sql);
+
+    const backfilled = await client<{ id: string; dispatch_seq: string }[]>`
+      select id, dispatch_seq::text from event order by dispatch_seq
+    `;
+    expect(backfilled).toEqual([
+      { id: 'event-a', dispatch_seq: '1' },
+      { id: 'event-z', dispatch_seq: '2' },
+      { id: 'event-later', dispatch_seq: '3' },
+    ]);
+
+    await insertEvent('event-new', '2019-01-01T00:00:00Z');
+    const inserted = await client<{ dispatch_seq: string }[]>`
+      select dispatch_seq::text from event where id = 'event-new'
+    `;
+    expect(inserted[0]?.dispatch_seq).toBe('4');
+  });
+});

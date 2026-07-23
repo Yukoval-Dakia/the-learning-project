@@ -246,6 +246,9 @@ describe('export constants', () => {
       'artifact_edit_session',
       'echo_jobs',
       'editing_presence',
+      'event_subscription_checkpoint',
+      'event_subscription_delivery',
+      'event_subscription_effect',
       'hub_sync_reconciliation',
       'job_events',
     ]);
