@@ -50,6 +50,7 @@ import {
 // is null → not a real mismatch; the backfill establishes those anchors later).
 import {
   assertKnowledgeNodeParity,
+  knowledgeEdgesWithGenesisAnchor,
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
 } from '@/server/projections/parity';
@@ -443,11 +444,46 @@ async function archiveIncidentKnowledgeEdges(
   // shared with live edge writers: endpoint knowledge row(s) → knowledge_edge advisory lock.
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [nodeId]);
   const touching = await listLiveEdgesTouchingNode(tx, nodeId);
+  const projectionWrites = projectionIsWriter();
+  const anchored = projectionWrites
+    ? await knowledgeEdgesWithGenesisAnchor(
+        tx,
+        touching.map((edge) => edge.id),
+      )
+    : new Set<string>();
   for (const edge of touching) {
     const archived = await archiveKnowledgeEdge(tx, edge.id, now);
     if (!archived.archived) continue;
+    if (projectionWrites && !anchored.has(edge.id)) {
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: 'system',
+        actor_ref: 'genesis-backfill',
+        action: 'experimental:genesis',
+        subject_kind: 'knowledge_edge',
+        subject_id: edge.id,
+        outcome: 'success',
+        payload: {
+          row: {
+            id: edge.id,
+            from_knowledge_id: edge.from_knowledge_id,
+            to_knowledge_id: edge.to_knowledge_id,
+            relation_type: edge.relation_type,
+            weight: edge.weight,
+            created_by: edge.created_by,
+            reasoning: edge.reasoning,
+            created_at: edge.created_at,
+            archived_at: null,
+          },
+        },
+        // Keep the seed strictly before the archive even for a malformed future-dated legacy row;
+        // the canonical created_at remains preserved inside payload.row.
+        created_at:
+          edge.created_at < now ? edge.created_at : new Date(Math.max(0, now.getTime() - 1)),
+      });
+    }
     await writeEdgeArchiveEvent(tx, edge, edge.id, now, reason);
-    if (projectionIsWriter()) {
+    if (projectionWrites) {
       await projectKnowledgeEdgeGuarded(tx, edge.id);
     }
   }

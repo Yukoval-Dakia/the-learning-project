@@ -78,10 +78,17 @@ async function insertKnowledgeEdge(opts: {
   from: string;
   to: string;
   relation: string;
+  weight?: number;
+  createdBy?: Record<string, unknown>;
+  reasoning?: string | null;
+  createdAt?: Date;
   archivedAt?: Date | null;
   anchored?: boolean;
 }) {
-  const createdAt = new Date('2026-07-01T00:00:00.000Z');
+  const createdAt = opts.createdAt ?? new Date('2026-07-01T00:00:00.000Z');
+  const createdBy = opts.createdBy ?? { actor_kind: 'user', actor_ref: 'self' };
+  const weight = opts.weight ?? 1;
+  const reasoning = opts.reasoning ?? null;
   await testDb()
     .insert(knowledge_edge)
     .values({
@@ -89,7 +96,9 @@ async function insertKnowledgeEdge(opts: {
       from_knowledge_id: opts.from,
       to_knowledge_id: opts.to,
       relation_type: opts.relation,
-      created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
+      weight,
+      created_by: createdBy as never,
+      reasoning,
       archived_at: opts.archivedAt ?? null,
       created_at: createdAt,
     });
@@ -109,8 +118,8 @@ async function insertKnowledgeEdge(opts: {
           from_knowledge_id: opts.from,
           to_knowledge_id: opts.to,
           relation_type: opts.relation,
-          weight: 1,
-          reasoning: null,
+          weight,
+          reasoning,
         },
         created_at: createdAt,
       });
@@ -596,6 +605,38 @@ describe('applyArchive', () => {
       expect(await gatherAndFoldKnowledgeEdge(db, 'e_anchored')).toEqual(edgeRowToSnapshot(row[0]));
     },
   );
+
+  it('preserves every non-archive field when flag-on cascade archives an event-less legacy edge', async () => {
+    const db = testDb();
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    const now = new Date('2026-07-23T12:46:00.456Z');
+    const createdAt = new Date('2024-02-03T04:05:06.789Z');
+    const createdBy = {
+      actor_kind: 'agent',
+      actor_ref: 'knowledge-curator',
+      propose_event_id: 'proposal-original',
+    };
+    await insertKnowledge({ id: 'k_node', version: 2 });
+    await insertKnowledge({ id: 'k_other' });
+    await insertKnowledgeEdge({
+      id: 'e_legacy',
+      from: 'k_node',
+      to: 'k_other',
+      relation: 'related_to',
+      weight: 0.37,
+      createdBy,
+      reasoning: 'original legacy reasoning',
+      createdAt,
+    });
+    const before = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
+
+    await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now);
+
+    const after = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
+    expect(after[0]).toEqual({ ...before[0], archived_at: now });
+    expect(await edgeArchiveEvents(['e_legacy'])).toHaveLength(1);
+    expect(await gatherAndFoldKnowledgeEdge(db, 'e_legacy')).toEqual(edgeRowToSnapshot(after[0]));
+  });
 
   it('throws stale error when already archived (changes=0)', async () => {
     const db = testDb();
