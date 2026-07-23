@@ -48,6 +48,10 @@ type Mem0Like = {
     query: string,
     config: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
+  getAll(config: {
+    topK?: number;
+    filters: Record<string, unknown>;
+  }): Promise<SearchResult>;
   // YUK-557 (Q2a): mem0 official delete() — real vector DELETE that first writes
   // payload.data into the SQLite memory_history tombstone (index.mjs:6980→7164).
   delete(memoryId: string): Promise<{ message: string }>;
@@ -92,6 +96,16 @@ export type MemoryClient = {
   search(
     query: string,
     opts?: { topK?: number; filters?: Record<string, unknown> },
+  ): Promise<SearchResult>;
+  /**
+   * Idempotent worker projection for canonical verbatim facts. The stable projection
+   * key is persisted in mem0 metadata and queried before add, so a pg-boss retry after
+   * add success/process death returns the existing row instead of embedding another.
+   */
+  addVerbatimOnce(
+    text: string,
+    metadata: Record<string, unknown>,
+    projectionKey: string,
   ): Promise<SearchResult>;
   // YUK-557 (Q2a): idempotent hard delete via mem0 official delete() — writes a
   // tombstone (previous_value + is_deleted=1) before the real vector DELETE.
@@ -241,6 +255,16 @@ export function createMemoryClient(
           kind: input.kind,
         },
         infer: true,
+      });
+    },
+    async addVerbatimOnce(text, metadata, projectionKey) {
+      const filters = { user_id: 'self', projection_key: projectionKey };
+      const existing = await memory.getAll({ topK: 2, filters });
+      if ((existing.results ?? []).length > 0) return existing;
+      return memory.add(text, {
+        userId: 'self',
+        metadata: { ...metadata, projection_key: projectionKey },
+        infer: false,
       });
     },
     async search(query, searchOpts = {}) {

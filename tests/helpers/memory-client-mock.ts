@@ -14,6 +14,7 @@ import { vi } from 'vitest';
 export function memoryClientMock(overrides: Partial<MemoryClient> = {}): MemoryClient {
   return {
     addEventMemory: vi.fn(async () => ({ results: [] })),
+    addVerbatimOnce: vi.fn(async () => ({ results: [] })),
     search: vi.fn(async () => ({ results: [] })),
     hardDelete: vi.fn(async () => {}),
     history: vi.fn(async () => []),

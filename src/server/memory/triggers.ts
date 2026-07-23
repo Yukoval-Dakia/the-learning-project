@@ -306,15 +306,19 @@ export function buildMemoryEventIngestHandler(
       const memResult = !admitToExtraction
         ? null
         : editedConjecture
-          ? await client.restoreVerbatim(editedConjecture.claim, {
-              source: 'conjecture_edit',
-              event_id: row.id,
-              conjecture_id: editedConjecture.conjectureId,
-              corrected_by_owner: true,
-              created_at: row.created_at.toISOString(),
-              created_ms: row.created_at.getTime(),
-              kind: 'weakness',
-            })
+          ? await client.addVerbatimOnce(
+              editedConjecture.claim,
+              {
+                source: 'conjecture_edit',
+                event_id: row.id,
+                conjecture_id: editedConjecture.conjectureId,
+                corrected_by_owner: true,
+                created_at: row.created_at.toISOString(),
+                created_ms: row.created_at.getTime(),
+                kind: 'weakness',
+              },
+              `conjecture-edit:${row.id}`,
+            )
           : await client.addEventMemory(row);
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:

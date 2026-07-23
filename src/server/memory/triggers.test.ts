@@ -144,7 +144,7 @@ describe('buildMemoryEventIngestHandler', () => {
 
   it('stores an edited conjecture claim verbatim and suppresses generic inferred extraction', async () => {
     const addEventMemory = vi.fn(async () => ({ results: [] }));
-    const restoreVerbatim = vi.fn(async () => ({
+    const addVerbatimOnce = vi.fn(async () => ({
       results: [{ id: 'mem_core_1', memory: '应先验证虚词语境判断' }],
     }));
     const send = vi.fn(async () => 'job-1');
@@ -168,22 +168,26 @@ describe('buildMemoryEventIngestHandler', () => {
           created_at: new Date('2026-07-23T00:00:00Z'),
           kind: 'preference',
         }),
-        memoryClient: memoryClientMock({ addEventMemory, restoreVerbatim }),
+        memoryClient: memoryClientMock({ addEventMemory, addVerbatimOnce }),
       },
     );
 
     await handler([{ data: { event_id: 'rate_edited_1' } } as Job<{ event_id: string }>]);
 
     expect(addEventMemory).not.toHaveBeenCalled();
-    expect(restoreVerbatim).toHaveBeenCalledWith('应先验证虚词语境判断', {
-      source: 'conjecture_edit',
-      event_id: 'rate_edited_1',
-      conjecture_id: 'conjecture_1',
-      corrected_by_owner: true,
-      created_at: '2026-07-23T00:00:00.000Z',
-      created_ms: new Date('2026-07-23T00:00:00Z').getTime(),
-      kind: 'weakness',
-    });
+    expect(addVerbatimOnce).toHaveBeenCalledWith(
+      '应先验证虚词语境判断',
+      {
+        source: 'conjecture_edit',
+        event_id: 'rate_edited_1',
+        conjecture_id: 'conjecture_1',
+        corrected_by_owner: true,
+        created_at: '2026-07-23T00:00:00.000Z',
+        created_ms: new Date('2026-07-23T00:00:00Z').getTime(),
+        kind: 'weakness',
+      },
+      'conjecture-edit:rate_edited_1',
+    );
     expect(send).toHaveBeenCalledWith(
       MEMORY_RECONCILE_QUEUE,
       {
