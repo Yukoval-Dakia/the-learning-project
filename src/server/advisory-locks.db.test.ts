@@ -130,10 +130,11 @@ async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise
 
 /**
  * Like {@link assertBlocksOnGlobalLock}, but ALSO proves lock ORDER: while the contended
- * tx waits on the global lock, its backend must hold ZERO granted advisory locks — i.e.
- * the global lock is the FIRST advisory lock the tx tries to take. Had the tx taken a
- * knowledge_edge / fsrs:* / question-row-adjacent advisory lock first (the YUK-497 review
- * F1/F2 inversion shapes), it would show >=1 granted advisory lock while waiting.
+ * tx waits on the global lock, its backend must hold ZERO granted advisory locks AND zero
+ * granted locks on the `question` relation — i.e. the global lock is the FIRST lock the tx
+ * tries to take. The two counts cover both round-1 inversion shapes: F1 held knowledge_edge
+ * ADVISORY locks before G; F2 held a question ROW lock (FOR UPDATE → RowShareLock on the
+ * relation, invisible to an advisory-only probe) before G.
  */
 async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
   contended: () => Promise<T>,
@@ -169,14 +170,24 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
     const rows = (await testDb().execute(sql`
       SELECT w.pid,
              (SELECT count(*)::int FROM pg_locks g
-                WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory
+                WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.relation = 'question'::regclass::oid) AS granted_question_rel
         FROM pg_locks w
        WHERE w.locktype = 'advisory' AND NOT w.granted
          AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-    `)) as unknown as Array<{ pid: number; granted_advisory: number }>;
+    `)) as unknown as Array<{
+      pid: number;
+      granted_advisory: number;
+      granted_question_rel: number;
+    }>;
     expect(rows.length).toBeGreaterThanOrEqual(1);
     for (const row of rows) {
       expect(row.granted_advisory).toBe(0);
+      // F2 shape: a pre-fix dedup tx blocks on G while holding the question FOR UPDATE
+      // relation lock — this count would be >=1 and fail the regression.
+      expect(row.granted_question_rel).toBe(0);
     }
 
     release();
