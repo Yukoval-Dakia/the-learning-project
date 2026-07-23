@@ -3,101 +3,72 @@
   "writers": [
     {
       "path": "scripts/dev/question-supply-spike.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Dev-only spike script (not runtime); trigger fan-out covers its seed inserts."
     },
     {
       "path": "scripts/normalize-edge-created-by.ts",
-      "tables": [
-        "knowledge_edge"
-      ],
+      "tables": ["knowledge_edge"],
       "reason": "One-off maintenance script normalizing knowledge_edge.created_by (non-topology column); inventoried for table-level completeness."
     },
     {
       "path": "scripts/seed-synthetic.ts",
-      "tables": [
-        "knowledge",
-        "knowledge_edge"
-      ],
+      "tables": ["knowledge", "knowledge_edge"],
       "reason": "Synthetic dataset seed tooling (not runtime); seed-time writes fire the trigger."
     },
     {
       "path": "src/capabilities/knowledge/server/edges.ts",
-      "tables": [
-        "knowledge_edge"
-      ],
+      "tables": ["knowledge_edge"],
       "reason": "Sole named-primitive owner of knowledge_edge lifecycle (create/update/archive); the topology trigger fans out to every live hub on each edge write."
     },
     {
       "path": "src/capabilities/knowledge/server/proposals.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "KC proposal appliers (create/merge/reparent) — knowledge topology mutations covered by the trigger fan-out."
     },
     {
       "path": "src/capabilities/knowledge/server/seed.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Subject knowledge-tree seed; seed-time inserts fire the trigger and dirty any existing hubs."
     },
     {
       "path": "src/capabilities/practice/jobs/embed_backfill.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Nightly embed backfill writes ONLY non-topology columns (embedding/embed_model/embed_version/embed_content_hash) which the trigger ignores; inventoried for table-level completeness (does not dirty hubs)."
     },
     {
       "path": "src/server/orchestrator/learning_intent.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Learning-intent KC materialization inserts knowledge; trigger fan-out covers it."
     },
     {
       "path": "src/server/projections/knowledge.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Event-fold projection applier for knowledge nodes (upsert/delete on replay); trigger fan-out covers each applied write."
     },
     {
       "path": "src/server/projections/knowledge_edge.ts",
-      "tables": [
-        "knowledge_edge"
-      ],
+      "tables": ["knowledge_edge"],
       "reason": "Event-fold projection applier for knowledge edges (upsert/delete on replay); trigger fan-out covers each applied write."
     },
     {
       "path": "src/server/proposals/actions.ts",
-      "tables": [
-        "knowledge_edge"
-      ],
+      "tables": ["knowledge_edge"],
       "reason": "Proposal-accept edge materialization; trigger fan-out covers the insert."
     },
     {
       "path": "src/server/question-supply/placement-starter-store.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "YUK-452 placement cold-starter admission: inserts the deterministic starter KC under the subject root (identity-keyed, onConflictDoNothing, admission-gated single writer). Topology trigger fan-out applies exactly as for the other inventoried knowledge writers."
     },
     {
       "path": "src/server/subjects/ensure-subject-root.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Bootstraps the per-subject root knowledge node; trigger fan-out covers the insert."
     },
     {
       "path": "src/server/subjects/subject-control-write.ts",
-      "tables": [
-        "knowledge"
-      ],
+      "tables": ["knowledge"],
       "reason": "Subject control-plane knowledge edits; trigger fan-out covers the update."
     }
   ]
