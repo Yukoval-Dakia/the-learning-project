@@ -158,8 +158,14 @@ export async function updateGoalStatus(
 export async function updateGoalScope(
   db: DbLike,
   goalId: string,
-  patch: { title?: string; scope_knowledge_ids?: string[]; sequence_hint?: number },
+  patch: {
+    title?: string;
+    scope_knowledge_ids?: string[];
+    sequence_hint?: number;
+    placement_starter_augmentation?: boolean;
+  },
   now: Date = new Date(),
+  actorRef = 'goal-scope-update',
 ): Promise<void> {
   const existing = (
     await db.select({ version: goal.version }).from(goal).where(eq(goal.id, goalId)).limit(1)
@@ -182,7 +188,7 @@ export async function updateGoalScope(
     await writeEvent(tx, {
       id: newId(),
       actor_kind: 'system',
-      actor_ref: 'goal-scope-update',
+      actor_ref: actorRef,
       action: 'experimental:goal_scope_update',
       subject_kind: 'goal',
       subject_id: goalId,
@@ -193,6 +199,9 @@ export async function updateGoalScope(
           ? { scope_knowledge_ids: patch.scope_knowledge_ids }
           : {}),
         ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+        ...(patch.placement_starter_augmentation
+          ? { placement_starter_augmentation: true as const }
+          : {}),
       },
       created_at: now,
     });

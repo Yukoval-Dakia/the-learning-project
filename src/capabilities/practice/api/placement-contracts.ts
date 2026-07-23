@@ -24,7 +24,7 @@ export const PlacementSessionCreatedSchema = z.object({
 
 export const CreatePlacementQuestionSelectionBodySchema = z.object({
   knowledgeIds: z.array(z.string().min(1)).min(1).optional(),
-  cap: z.number().int().min(1).max(50).optional(),
+  cap: z.number().int().min(1).max(8).optional(),
   seThreshold: z.number().positive().nullable().optional(),
 });
 

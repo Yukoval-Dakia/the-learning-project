@@ -15,6 +15,12 @@ import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { dispatchPlacementStarterClaim } from '@/server/question-supply/placement-starter';
+import {
+  addPlacementStarterKnowledgeToExplicitGoal,
+  ensurePlacementStarterKnowledgeAndClaim,
+  resolvePlacementStarterGoalAuthority,
+} from '@/server/question-supply/placement-starter-store';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
@@ -45,14 +51,9 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     }
     const { goalId, knowledgeIds: explicit, leanings, pace } = parsed.data;
 
-    // Resolve the probe's KC scope: explicit set wins; else the goal's scope through the SHARED
-    // three-tier resolver (tier-1 frozen non-empty → tier-2 subject live-resolve → tier-3 full
-    // active tree — see placement-scope.ts for the tier rationale). Shared with
-    // placement-profile (YUK-516) so probe scope and profile read can never drift again.
-    // subject=view: no subject root node is involved here.
     let knowledgeIds = explicit ?? [];
     if (knowledgeIds.length === 0 && goalId) {
-      const rows = await db
+      const [goalRow] = await db
         .select({
           scope: goal.scope_knowledge_ids,
           subjectId: goal.subject_id,
@@ -61,9 +62,6 @@ export async function createPlacementSession(req: Request): Promise<Response> {
         .from(goal)
         .where(eq(goal.id, goalId))
         .limit(1);
-      const goalRow = rows[0];
-      // An unknown goalId keeps the pre-YUK-516 behavior: empty frozen scope + no subject →
-      // tier-3 full-tree resolution (the 400 below only fires when the whole tree is empty).
       knowledgeIds = await resolveGoalPlacementScope(db, {
         scope: goalRow?.scope ?? null,
         subjectId: goalRow?.subjectId ?? null,
@@ -94,6 +92,37 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     // is created yet). The only remaining orphan source — a probe started but never answered /
     // ended — is covered by the orphan-sweep follow-up (YUK-470).
     const first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
+    const claimIds: string[] = [];
+    if (first === null && goalId) {
+      const authority = await resolvePlacementStarterGoalAuthority(db, goalId);
+      await db.transaction(async (tx) => {
+        const generatedKnowledgeIds: string[] = [];
+        for (const subjectId of authority.subjectIds) {
+          const { identity } = await ensurePlacementStarterKnowledgeAndClaim(
+            tx,
+            authority,
+            subjectId,
+          );
+          generatedKnowledgeIds.push(identity.knowledgeId);
+          claimIds.push(identity.claimId);
+        }
+        await addPlacementStarterKnowledgeToExplicitGoal(tx, authority, generatedKnowledgeIds);
+      });
+      const [goalRow] = await db
+        .select({
+          scope: goal.scope_knowledge_ids,
+          subjectId: goal.subject_id,
+          scopeMode: goal.scope_mode,
+        })
+        .from(goal)
+        .where(eq(goal.id, goalId))
+        .limit(1);
+      knowledgeIds = await resolveGoalPlacementScope(db, {
+        scope: goalRow?.scope ?? null,
+        subjectId: goalRow?.subjectId ?? null,
+        scopeMode: goalRow?.scopeMode ?? 'explicit',
+      });
+    }
     // Persist the resolved scope on the session (YUK-470): /next reads it server-side rather
     // than trusting the client to re-send knowledgeIds every call. YUK-480 — persist the raw
     // self-report (leanings + pace) too so /next applies the leaning ordering + pace-derived cap
@@ -105,6 +134,21 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       leanings,
       pace: pace ?? null,
     });
+
+    // Paid starter work is cold-only. Dispatch happens after session materialization and never while
+    // holding a placement-session transaction; the claim transaction atomically sends + records.
+    if (first === null) {
+      for (const claimId of claimIds) {
+        try {
+          await dispatchPlacementStarterClaim(db, claimId);
+        } catch (err) {
+          console.error(
+            `[placement-starter] initial dispatch failed for ${claimId}; recovery owns retry`,
+            err,
+          );
+        }
+      }
+    }
 
     // first === null → cold subgraph (no eligible question). The probe stays 'started'; the
     // client should source questions for the goal (§6 Q3 —按目标生成 placement 起始题, via

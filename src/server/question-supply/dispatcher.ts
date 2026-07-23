@@ -348,6 +348,9 @@ export async function dispatchSupplyTarget(
         ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
         ...(target.constraints.kindRequired ? { kind_required: true } : {}),
         ...(queue === 'quiz_gen' ? { generation_method: generationMethodFor(target) } : {}),
+        ...(queue === 'quiz_gen' && target.constraints.exactCount !== undefined
+          ? { exact_count: target.constraints.exactCount }
+          : {}),
         // YUK-697 — jyeoo_fetch handler maps the target's difficulty band → jyeoo --dg token
         // (deterministic 难度补带, design §2.2). Only forwarded on the jyeoo_fetch queue.
         ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),

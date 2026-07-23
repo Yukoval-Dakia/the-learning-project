@@ -64,6 +64,7 @@ export const GoalScopeUpdateExperimental = z.object({
       title: z.string().optional(),
       scope_knowledge_ids: z.array(z.string()).optional(),
       sequence_hint: z.number().int().optional(),
+      placement_starter_augmentation: z.literal(true).optional(),
     })
     .strict(),
   caused_by_event_id: z.string().optional(),

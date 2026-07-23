@@ -30,7 +30,11 @@ import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import { and, eq, inArray } from 'drizzle-orm';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
-import { capForPace, evaluatePlacementTermination } from '../server/placement-termination';
+import {
+  PLACEMENT_DEFAULT_CAP,
+  capForPace,
+  evaluatePlacementTermination,
+} from '../server/placement-termination';
 import { CreatePlacementQuestionSelectionBodySchema } from './placement-contracts';
 
 export async function createPlacementQuestionSelection(
@@ -124,7 +128,7 @@ export async function createPlacementQuestionSelection(
         // YUK-480 — an explicit client `cap` still wins (override), else the cap derives from the
         // self-reported pace persisted at /start (capForPace; NULL pace → PLACEMENT_DEFAULT_CAP,
         // byte-identical to the pre-YUK-480 default). Server-authoritative, mirroring scope.
-        cap: cap ?? capForPace(session.pace),
+        cap: Math.min(cap ?? capForPace(session.pace), PLACEMENT_DEFAULT_CAP),
         perKcPrecision,
         seThreshold: seThreshold ?? null,
       });

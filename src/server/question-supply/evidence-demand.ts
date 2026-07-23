@@ -113,6 +113,8 @@ export const SupplyTraceV1 = SupplyTargetContextV1.extend({
   target_id: z.string().min(1),
   target_fingerprint: z.string().min(1),
   producer_route: SupplyProducerRoute.nullable(),
+  claim_id: z.string().min(1).optional(),
+  semantic_goal_revision_id: z.string().min(1).optional(),
   difficulty_evidence: DifficultyEvidence.optional(),
 });
 export type SupplyTraceV1T = z.infer<typeof SupplyTraceV1>;

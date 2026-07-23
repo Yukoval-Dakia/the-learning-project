@@ -14,6 +14,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import type {
@@ -1543,6 +1544,171 @@ export const goal = pgTable(
       'gin',
       sql`${t.scope_knowledge_ids} jsonb_path_ops`,
     ),
+  ],
+);
+
+export const placement_starter_claim = pgTable(
+  'placement_starter_claim',
+  {
+    id: text('id').primaryKey(),
+    fingerprint: text('fingerprint').notNull(),
+    goal_id: text('goal_id').notNull(),
+    semantic_goal_revision_id: text('semantic_goal_revision_id').notNull(),
+    subject_id: text('subject_id').notNull(),
+    knowledge_id: text('knowledge_id').notNull(),
+    demand_id: text('demand_id').notNull(),
+    target_id: text('target_id').notNull(),
+    status: text('status', {
+      enum: [
+        'pending_dispatch',
+        'queued',
+        'running',
+        'verifying',
+        'retry_scheduled',
+        'satisfied',
+        'exhausted',
+        'cancelled',
+      ],
+    })
+      .notNull()
+      .default('pending_dispatch'),
+    pg_boss_job_id: text('pg_boss_job_id'),
+    max_paid_attempts: integer('max_paid_attempts').notNull().default(3),
+    budget_limit_micro_usd: integer('budget_limit_micro_usd').notNull().default(1_000_000),
+    known_cost_micro_usd: integer('known_cost_micro_usd').notNull().default(0),
+    next_reconcile_at: timestamp('next_reconcile_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    satisfied_at: timestamp('satisfied_at', { withTimezone: true }),
+    exhausted_at: timestamp('exhausted_at', { withTimezone: true }),
+    last_error_class: text('last_error_class'),
+    last_error_code: text('last_error_code'),
+    last_error: text('last_error'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('placement_starter_claim_fingerprint_uq').on(t.fingerprint),
+    uniqueIndex('placement_starter_claim_revision_subject_uq').on(
+      t.semantic_goal_revision_id,
+      t.subject_id,
+    ),
+    uniqueIndex('placement_starter_claim_job_uq')
+      .on(t.pg_boss_job_id)
+      .where(sql`${t.pg_boss_job_id} IS NOT NULL`),
+    uniqueIndex('placement_starter_claim_nonterminal_uq')
+      .on(t.id)
+      .where(
+        sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled')`,
+      ),
+    index('placement_starter_claim_recovery_idx')
+      .on(t.next_reconcile_at, t.created_at)
+      .where(
+        sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled')`,
+      ),
+    check('placement_starter_claim_max_attempts_v1', sql`${t.max_paid_attempts} = 3`),
+    check(
+      'placement_starter_claim_nonnegative_cost',
+      sql`${t.budget_limit_micro_usd} >= 0 AND ${t.known_cost_micro_usd} >= 0`,
+    ),
+    check(
+      'placement_starter_claim_terminal_timestamps',
+      sql`(${t.status} = 'satisfied') = (${t.satisfied_at} IS NOT NULL) AND (${t.status} = 'exhausted') = (${t.exhausted_at} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const placement_starter_attempt = pgTable(
+  'placement_starter_attempt',
+  {
+    id: text('id').primaryKey(),
+    claim_id: text('claim_id')
+      .notNull()
+      .references(() => placement_starter_claim.id),
+    pg_boss_job_id: text('pg_boss_job_id').notNull(),
+    delivery_no: integer('delivery_no').notNull(),
+    fencing_token: uuid('fencing_token').notNull(),
+    status: text('status').notNull(),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    provider_task_run_id: text('provider_task_run_id'),
+    provider_output_hash: text('provider_output_hash'),
+    provider_output_recorded_at: timestamp('provider_output_recorded_at', { withTimezone: true }),
+    error_class: text('error_class'),
+    error_code: text('error_code'),
+    error_message: text('error_message'),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('placement_starter_attempt_fence_uq').on(t.fencing_token),
+    uniqueIndex('placement_starter_attempt_delivery_uq').on(
+      t.claim_id,
+      t.pg_boss_job_id,
+      t.delivery_no,
+    ),
+    uniqueIndex('placement_starter_attempt_active_uq')
+      .on(t.claim_id)
+      .where(sql`${t.status} IN ('running','verifying')`),
+    check('placement_starter_attempt_delivery_range', sql`${t.delivery_no} BETWEEN 1 AND 3`),
+  ],
+);
+
+export const placement_starter_attempt_question = pgTable(
+  'placement_starter_attempt_question',
+  {
+    attempt_id: text('attempt_id')
+      .notNull()
+      .references(() => placement_starter_attempt.id),
+    claim_id: text('claim_id')
+      .notNull()
+      .references(() => placement_starter_claim.id),
+    question_id: text('question_id')
+      .notNull()
+      .references(() => question.id),
+    canonical_hash: text('canonical_hash').notNull(),
+    verification_authority_epoch: uuid('verification_authority_epoch').notNull(),
+    verification_status: text('verification_status').notNull().default('authorized'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.attempt_id, t.question_id] }),
+    uniqueIndex('placement_starter_attempt_question_claim_uq').on(t.claim_id, t.question_id),
+    uniqueIndex('placement_starter_attempt_question_authority_uq').on(
+      t.attempt_id,
+      t.question_id,
+      t.verification_authority_epoch,
+    ),
+  ],
+);
+
+export const placement_starter_cost_component = pgTable(
+  'placement_starter_cost_component',
+  {
+    id: text('id').primaryKey(),
+    claim_id: text('claim_id')
+      .notNull()
+      .references(() => placement_starter_claim.id),
+    attempt_id: text('attempt_id')
+      .notNull()
+      .references(() => placement_starter_attempt.id),
+    component_kind: text('component_kind', {
+      enum: ['quiz_gen', 'quiz_verify', 'solution_check', 'teaching_quality'],
+    }).notNull(),
+    question_id: text('question_id').references(() => question.id),
+    provider_task_run_id: text('provider_task_run_id').notNull(),
+    cost_micro_usd: integer('cost_micro_usd').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('placement_starter_cost_component_idempotency_uq').on(
+      t.provider_task_run_id,
+      t.component_kind,
+      sql`COALESCE(${t.question_id}, '')`,
+    ),
+    check('placement_starter_cost_component_nonnegative', sql`${t.cost_micro_usd} >= 0`),
   ],
 );
 
