@@ -15,19 +15,25 @@ function identityKey(id: string, version: number): string {
   return JSON.stringify([id, version]);
 }
 
-function compareDeclarations(a: EventSubscriptionDecl, b: EventSubscriptionDecl): number {
+interface SubscriptionDeclarationSnapshot {
+  readonly id: string;
+  readonly version: number;
+  readonly actions: readonly string[];
+  readonly load: EventSubscriptionDecl['load'];
+}
+
+function compareDeclarations(
+  a: SubscriptionDeclarationSnapshot,
+  b: SubscriptionDeclarationSnapshot,
+): number {
   if (a.id !== b.id) return a.id < b.id ? -1 : 1;
   return a.version - b.version;
 }
 
-function computeDeclarationHash(declarations: readonly EventSubscriptionDecl[]): string {
+function computeDeclarationHash(declarations: readonly SubscriptionDeclarationSnapshot[]): string {
   const canonical = {
     contractVersion: EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION,
-    subscriptions: declarations.map(({ id, version, actions }) => ({
-      id,
-      version,
-      actions: [...actions].sort(),
-    })),
+    subscriptions: declarations.map(({ id, version, actions }) => ({ id, version, actions })),
   };
 
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
@@ -45,7 +51,17 @@ export async function loadEventSubscriptionRegistry(
 
   const declarations = capabilities
     .flatMap((capability) => capability.subscriptions?.handlers ?? [])
+    .map(
+      ({ id, version, actions, load }): SubscriptionDeclarationSnapshot =>
+        Object.freeze({
+          id,
+          version,
+          actions: Object.freeze([...actions].sort()),
+          load,
+        }),
+    )
     .sort(compareDeclarations);
+  const declarationHash = computeDeclarationHash(declarations);
 
   const loaded: LoadedEventSubscription[] = [];
   for (const declaration of declarations) {
@@ -68,7 +84,7 @@ export async function loadEventSubscriptionRegistry(
       Object.freeze({
         id: declaration.id,
         version: declaration.version,
-        actions: Object.freeze([...declaration.actions].sort()),
+        actions: declaration.actions,
         handler,
       }),
     );
@@ -83,7 +99,7 @@ export async function loadEventSubscriptionRegistry(
 
   return Object.freeze({
     contractVersion: EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION,
-    declarationHash: computeDeclarationHash(declarations),
+    declarationHash,
     subscriptions: Object.freeze(loaded),
     get(id: string, version: number) {
       return byIdentity.get(identityKey(id, version));

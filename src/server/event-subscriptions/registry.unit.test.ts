@@ -137,6 +137,33 @@ describe('loadEventSubscriptionRegistry', () => {
     ).rejects.toThrow(/subscriber\.a@v1.*non-function handler/);
   });
 
+  it('retains the validated declaration snapshot when a loader mutates a later declaration', async () => {
+    const later = declaration('subscriber.b', 2, [actionB]);
+    const first = declaration('subscriber.a', 1, [actionA], async () => {
+      later.id = 'subscriber.a';
+      later.version = 0;
+      later.actions = ['', actionA];
+      return () => async () => ({ status: 'succeeded' });
+    });
+    const expectedHash = await hashFor([
+      declaration('subscriber.a', 1, [actionA]),
+      declaration('subscriber.b', 2, [actionB]),
+    ]);
+
+    const registry = await loadEventSubscriptionRegistry(capabilities([first, later]), {});
+
+    expect(registry.declarationHash).toBe(expectedHash);
+    expect(
+      registry.subscriptions.map(({ id, version, actions }) => ({ id, version, actions })),
+    ).toEqual([
+      { id: 'subscriber.a', version: 1, actions: [actionA] },
+      { id: 'subscriber.b', version: 2, actions: [actionB] },
+    ]);
+    expect(registry.get('subscriber.a', 1)).toBe(registry.subscriptions[0]);
+    expect(registry.get('subscriber.b', 2)).toBe(registry.subscriptions[1]);
+    expect(registry.get('subscriber.a', 0)).toBeUndefined();
+  });
+
   it('rejects invalid or duplicate manifests through the composition invariant before loading', async () => {
     const load = vi.fn(async () => () => async () => ({ status: 'succeeded' as const }));
     const duplicate = declaration('subscriber.same', 1, [actionA], load);
