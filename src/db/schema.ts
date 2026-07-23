@@ -28,6 +28,10 @@ import type {
   Rubric,
   ToolState,
 } from '../core/schema/business';
+import type {
+  QuestionAnswerAnchorT,
+  QuestionGenerationPlanT,
+} from '../core/schema/question-generation-grounding';
 import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
 // A1 (YUK-449) — persisted shape for mastery_state.rt_correct_ms (per-KC rolling correct-RT
 // ring buffer; the SRT quantile-d source). Type-only; the buffer math lives in src/core/theta.ts.
@@ -226,6 +230,86 @@ export const source_document = pgTable('source_document', {
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
+});
+
+// YUK-350 — immutable, independently persisted source-grounded answer contract.
+// Rows are append-only versioned facts: generated questions bind an exact (id,
+// version, content_hash), never a mutable "latest" anchor.
+export const question_answer_anchor = pgTable(
+  'question_answer_anchor',
+  {
+    id: text('id').notNull(),
+    version: integer('version').notNull(),
+    schema_version: integer('schema_version').notNull(),
+    source_artifact_kind: text('source_artifact_kind').notNull(),
+    source_artifact_id: text('source_artifact_id').notNull(),
+    source_version: integer('source_version').notNull(),
+    source_content_hash: text('source_content_hash').notNull(),
+    source_locator: jsonb('source_locator')
+      .$type<QuestionAnswerAnchorT['source']['locator']>()
+      .notNull(),
+    canonical_answer: jsonb('canonical_answer')
+      .$type<QuestionAnswerAnchorT['canonical_answer']>()
+      .notNull(),
+    provenance: jsonb('provenance').$type<QuestionAnswerAnchorT['provenance']>().notNull(),
+    content_hash: text('content_hash').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.version] }),
+    uniqueIndex('question_answer_anchor_content_hash_uq').on(t.content_hash),
+  ],
+);
+
+// YUK-350 — persisted plan created after its answer anchor and before generation.
+// Plan lifecycle is deliberately independent of question verification lifecycle.
+export const question_generation_plan = pgTable(
+  'question_generation_plan',
+  {
+    id: text('id').notNull(),
+    version: integer('version').notNull(),
+    schema_version: integer('schema_version').notNull(),
+    demand: jsonb('demand').$type<QuestionGenerationPlanT['demand']>().notNull(),
+    knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull(),
+    requested_kind: text('requested_kind').notNull(),
+    requested_answer_class: text('requested_answer_class').notNull(),
+    answer_anchor_id: text('answer_anchor_id').notNull(),
+    answer_anchor_version: integer('answer_anchor_version').notNull(),
+    answer_anchor_hash: text('answer_anchor_hash').notNull(),
+    constraints: jsonb('constraints').$type<QuestionGenerationPlanT['constraints']>().notNull(),
+    status: text('status', {
+      enum: ['pending_generation', 'generated', 'failed', 'superseded'],
+    }).notNull(),
+    provenance: jsonb('provenance').$type<QuestionGenerationPlanT['provenance']>().notNull(),
+    content_hash: text('content_hash').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.version] }),
+    uniqueIndex('question_generation_plan_content_hash_uq').on(t.content_hash),
+    index('question_generation_plan_anchor_idx').on(t.answer_anchor_id, t.answer_anchor_version),
+  ],
+);
+
+// Exact immutable provenance bound to the generated question. Comparator "none"
+// is an explicit default-deny policy: structural no-veto still requires review.
+export const question_generation_binding = pgTable('question_generation_binding', {
+  question_id: text('question_id').primaryKey(),
+  plan_id: text('plan_id').notNull(),
+  plan_version: integer('plan_version').notNull(),
+  plan_hash: text('plan_hash').notNull(),
+  answer_anchor_id: text('answer_anchor_id').notNull(),
+  answer_anchor_version: integer('answer_anchor_version').notNull(),
+  answer_anchor_hash: text('answer_anchor_hash').notNull(),
+  comparator_policy_id: text('comparator_policy_id').notNull(),
+  comparator_policy_version: integer('comparator_policy_version').notNull(),
+  comparator_policy_hash: text('comparator_policy_hash').notNull(),
+  validation_status: text('validation_status', {
+    enum: ['pending', 'needs_review', 'rejected', 'verified'],
+  }).notNull(),
+  structural_status: text('structural_status', { enum: ['no_veto', 'vetoed'] }).notNull(),
+  objective_correctness: text('objective_correctness', { enum: ['unverified'] }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
 // Phase 1c.1 Step 9.J — `ingestion_session` table DROPped. Sessions now live
