@@ -17,6 +17,7 @@
 // PrepDeskCard / ProbeAnswerCard.
 
 import { learnerLocalDay } from '@/core/learner-day';
+import { CONJECTURE_CLAIM_MAX_CHARS } from '@/core/schema/proposal';
 import { scopedPracticeHref } from '@/ui/lib/routes';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -299,7 +300,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                     <textarea
                       id="tb-claim-edit"
                       value={claimDraft}
-                      maxLength={280}
+                      maxLength={CONJECTURE_CLAIM_MAX_CHARS}
                       disabled={deciding}
                       onChange={(event) => setClaimDraft(event.currentTarget.value)}
                       onKeyDown={(event) => {

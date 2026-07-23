@@ -91,6 +91,10 @@ export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 export const ProposalDecision = z.enum(['accept', 'reverse', 'change_type', 'dismiss', 'retract']);
 export type ProposalDecisionT = z.infer<typeof ProposalDecision>;
 
+// Shared with the TeachingBrief inline-edit textarea's maxLength — one source of truth so
+// the client cap and this server contract cannot drift.
+export const CONJECTURE_CLAIM_MAX_CHARS = 280;
+
 export const ProposalDecisionInput = z
   .object({
     decision: ProposalDecision,
@@ -99,7 +103,7 @@ export const ProposalDecisionInput = z
     reason_md: z.string().trim().min(1).max(2000).optional(),
     affected_refs: z.array(ActivityRef).min(1).optional(),
     corrected_payload: z
-      .object({ claim_md: z.string().trim().min(1).max(280) })
+      .object({ claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS) })
       .strict()
       .optional(),
   })

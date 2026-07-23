@@ -66,6 +66,18 @@ export async function createProposalDecision(
     throw new ApiError('not_found', `proposal ${proposalId} not found`, 404);
   }
 
+  // codex P2 (PR #1039) — corrected_payload is only consumed by the conjecture accept
+  // applier; every other kind would accept the proposal and silently drop the rewrite
+  // behind a success response (the proposal then terminalizes, so the edit is lost).
+  // Reject up front so the client learns the field is unsupported for this kind.
+  if (input.corrected_payload !== undefined && proposal.kind !== 'conjecture') {
+    throw new ApiError(
+      'validation_error',
+      `corrected_payload is only supported for conjecture proposals (got kind ${proposal.kind})`,
+      400,
+    );
+  }
+
   const correction = await getCorrectionStatus(db, proposalId);
   if (correction.state === 'retracted') {
     if (input.decision !== 'retract') throw conflict(proposalId, 'retract');

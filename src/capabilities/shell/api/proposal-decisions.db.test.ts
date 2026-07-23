@@ -150,6 +150,26 @@ describe('POST /api/proposals/[id]/decisions', () => {
     }
   });
 
+  it('rejects corrected_payload on a non-conjecture proposal (400, never a silent drop)', async () => {
+    // codex P2 (PR #1039): only the conjecture applier consumes corrected_payload; any
+    // other kind would terminalize the proposal and silently discard the rewrite behind
+    // a success response. The canonical route must reject up front instead.
+    await seedEdgeProposal();
+
+    const response = await decide('edge_p1', {
+      decision: 'accept',
+      corrected_payload: { claim_md: '改写' },
+    });
+    expect(response.status).toBe(400);
+
+    // No rate event was written — the proposal is still undecided.
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_p1')));
+    expect(rows).toHaveLength(0);
+  });
+
   it('creates an immutable decision resource with a readable Location', async () => {
     await seedEdgeProposal();
 

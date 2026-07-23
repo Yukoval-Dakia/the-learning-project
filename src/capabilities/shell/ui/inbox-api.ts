@@ -226,7 +226,11 @@ export const decideProposal = (
       decision,
       ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
       ...(opts.userNote ? { user_note: opts.userNote } : {}),
-      ...(opts.correctedClaimMd ? { corrected_payload: { claim_md: opts.correctedClaimMd } } : {}),
+      // Only omit when absent: an empty-string edit must reach the server and 400 per the
+      // contract (a truthiness check would silently degrade it to a plain accept).
+      ...(opts.correctedClaimMd !== undefined
+        ? { corrected_payload: { claim_md: opts.correctedClaimMd } }
+        : {}),
     }),
   }).then((resource) => resource.result);
 

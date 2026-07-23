@@ -208,6 +208,11 @@ function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory
   return claim && conjectureId ? { claim, conjectureId } : null;
 }
 
+// Single source of truth for the memory `kind` projected from an owner-edited conjecture:
+// used both on the verbatim projection metadata and the reconcile mapping below — the two
+// sites must never drift.
+const CONJECTURE_EDIT_MEMORY_KIND = 'weakness';
+
 // ADR-0021 — outbox poll handler is the sole producer. Dedup is enforced by
 // the `ingest_at IS NULL` partition (a row is enqueued exactly once and the
 // stamp commits in the same tx as the enqueue). singletonKey + the iter2
@@ -320,23 +325,25 @@ export function buildMemoryEventIngestHandler(
       // Owner-edited conjectures are already canonical text. Persist the claim verbatim
       // (infer:false) so this job makes exactly one deterministic add+embedding call and
       // does not also ask the generic extraction LLM to infer a duplicate preference.
-      const memResult = !admitToExtraction
-        ? null
-        : editedConjecture
-          ? await addVerbatimProjectionOnce(db, client, {
-              text: editedConjecture.claim,
-              metadata: {
-                source: 'conjecture_edit',
-                event_id: row.id,
-                conjecture_id: editedConjecture.conjectureId,
-                corrected_by_owner: true,
-                created_at: row.created_at.toISOString(),
-                created_ms: row.created_at.getTime(),
-                kind: 'weakness',
-              },
-              projectionKey: `conjecture-edit:${row.id}`,
-            })
-          : await client.addEventMemory(row);
+      const memResult = await (async () => {
+        if (!admitToExtraction) return null;
+        if (editedConjecture) {
+          return addVerbatimProjectionOnce(db, client, {
+            text: editedConjecture.claim,
+            metadata: {
+              source: 'conjecture_edit',
+              event_id: row.id,
+              conjecture_id: editedConjecture.conjectureId,
+              corrected_by_owner: true,
+              created_at: row.created_at.toISOString(),
+              created_ms: row.created_at.getTime(),
+              kind: CONJECTURE_EDIT_MEMORY_KIND,
+            },
+            projectionKey: `conjecture-edit:${row.id}`,
+          });
+        }
+        return client.addEventMemory(row);
+      })();
       // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
       // loop. Three properties matter:
       //  (1) bounded fan-out — slice to MAX_BRIEF_REGEN_SCOPES so an unbounded
@@ -429,7 +436,7 @@ export function buildMemoryEventIngestHandler(
           id: m.id,
           text: typeof m.memory === 'string' ? m.memory : '',
           created_ms: createdMs,
-          kind: editedConjecture ? 'weakness' : row.kind,
+          kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
         }));
       if (newMemories.length > 0) {
         // YUK-729 — same rationale as the brief-regen swallow above: a transient
