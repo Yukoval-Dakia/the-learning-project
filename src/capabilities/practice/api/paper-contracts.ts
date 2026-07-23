@@ -86,7 +86,7 @@ const PaperSubmissionBodyFields = {
   part_ref: z.string().min(1).nullable().optional(),
   answer_md: z.string().max(MAX_PAPER_ANSWER_CHARS),
   image_refs: z.array(z.string()).default([]),
-  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
+  latency_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
 };
 
 export const LegacyPaperSubmissionBodySchema = z.object({

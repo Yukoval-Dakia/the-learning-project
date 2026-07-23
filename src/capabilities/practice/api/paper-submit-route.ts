@@ -60,8 +60,8 @@ export async function createPaperSubmission(
         primaryKnowledgeId: slot.primaryKnowledgeId,
         secondaryKnowledgeIds: slot.secondaryKnowledgeIds,
         feedbackPolicy: slot.feedbackPolicy,
-        // YUK-448 — thread RT into the attempt payload (capture only; NOT wired
-        // into θ̂/p(L) SRT credit — paper path does not pass responseTimeMs today).
+        // YUK-448 — cumulative foreground-visible slot time, capture-only. Thread it into
+        // attempt payload.duration_ms; do not wire it into theta/mastery/SRT credit.
         latencyMs: body.latency_ms ?? undefined,
       },
       db,

@@ -51,13 +51,12 @@ describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
     expect(computeLatencyMs(6_000, 1_000)).toBe(0);
   });
 
-  it('超过 1 小时 → clamp 到 3_600_000（上界对齐 server zod .max(3_600_000)）', () => {
-    // 标签页挂置一整天等极端墙钟差：clamp 到服务端上界，避免 422。
-    expect(computeLatencyMs(0, 10_000_000)).toBe(3_600_000);
+  it('clamps beyond the safe-integer ceiling', () => {
+    expect(computeLatencyMs(0, Number.MAX_SAFE_INTEGER + 1_000)).toBe(Number.MAX_SAFE_INTEGER);
   });
 
-  it('恰好 1 小时上界 → 不被 clamp（边界包含）', () => {
-    expect(computeLatencyMs(0, 3_600_000)).toBe(3_600_000);
+  it('preserves the safe-integer ceiling', () => {
+    expect(computeLatencyMs(0, Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it('恰好 0 下界 → 不被 clamp（now === shownAt，瞬时提交）', () => {
@@ -143,12 +142,13 @@ describe('paper write resource bodies (YUK-644)', () => {
     });
   });
 
-  it('keeps final submission text in answer_md', () => {
-    expect(buildPaperSubmissionBody('paper_1', input)).toEqual({
+  it('keeps final submission text and cumulative latency in the request body', () => {
+    expect(buildPaperSubmissionBody('paper_1', { ...input, latency_ms: 12_345 })).toEqual({
       paper_id: 'paper_1',
       question_id: 'q1',
       part_ref: null,
       answer_md: '我的答案',
+      latency_ms: 12_345,
     });
   });
 });

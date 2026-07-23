@@ -111,10 +111,9 @@ export interface PaperSubmitSlotInput {
    */
   feedbackPolicy?: string | null;
   /**
-   * YUK-448 — wall-clock RT (ms) from slot reveal to submit. Optional; absent =
-   * no RT data. Frozen into the attempt event payload as `duration_ms` (mirrors
-   * the solo /api/review/submit path, submit.ts:532). Capture only — NOT fed into
-   * θ̂/p(L)/FSRS (ADR-0035 red-line; paper path passes no responseTimeMs).
+   * YUK-448 — cumulative foreground-visible time (ms) for this canonical paper slot.
+   * Optional; absent means no timing capture. Frozen into attempt payload.duration_ms.
+   * Capture only: never consumed by theta, mastery, SRT credit, or FSRS.
    */
   latencyMs?: number | null;
 }
