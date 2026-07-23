@@ -48,6 +48,39 @@ function asBigint(value: string | number | bigint): bigint {
   return BigInt(value);
 }
 
+type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+type CheckpointFence = {
+  subscriberId: string;
+  subscriberVersion: number;
+  declarationHash: string;
+  claimOwner: string;
+  claimToken: string;
+};
+
+async function withLockedCheckpoint<T>(
+  db: Db,
+  fence: CheckpointFence,
+  transition: (tx: DbTransaction) => Promise<T>,
+): Promise<T | null> {
+  return db.transaction(async (tx) => {
+    const checkpoints = await tx.execute(sql`
+      select subscriber_id
+      from event_subscription_checkpoint
+      where subscriber_id = ${fence.subscriberId}
+        and subscriber_version = ${fence.subscriberVersion}
+        and declaration_hash = ${fence.declarationHash}
+        and status = 'active'
+        and claim_owner = ${fence.claimOwner}
+        and claim_token = ${fence.claimToken}::uuid
+        and claim_lease_until >= clock_timestamp()
+      for update
+    `);
+    if (checkpoints.length !== 1) return null;
+    return transition(tx);
+  });
+}
+
 /**
  * Creates and activates a checkpoint while holding its row lock. Every source
  * event visible during this transaction is durably marked bootstrap_skipped;
@@ -320,49 +353,43 @@ export async function claimNextSubscriptionDelivery(
 ): Promise<SubscriptionDeliveryClaim | null> {
   getDeclaredSubscription(registry, subscription);
   const token = randomUUID();
-  const rows = await db.execute<{
-    source_event_id: string;
-    delivery_seq: number;
-    claim_lease_until: Date;
-  }>(sql`
-    with candidate as (
-      select d.source_event_id
-      from event_subscription_delivery d
-      join event_subscription_checkpoint c
-        on c.subscriber_id = d.subscriber_id
-       and c.subscriber_version = d.subscriber_version
-      where d.subscriber_id = ${subscription.id}
-        and d.subscriber_version = ${subscription.version}
-        and c.declaration_hash = ${registry.declarationHash}
-        and c.status = 'active'
-        and c.claim_owner = ${lease.claimOwner}
-        and c.claim_token = ${lease.claimToken}::uuid
-        and c.claim_lease_until >= clock_timestamp()
-        and d.status not in ('bootstrap_skipped', 'succeeded', 'skipped', 'dead_letter')
-      order by d.delivery_seq
-      for update of d
-      limit 1
-    )
-    update event_subscription_delivery d
-    set status = 'claimed',
-        claim_owner = ${lease.claimOwner},
-        claim_token = ${token}::uuid,
-        claim_lease_until = clock_timestamp() + interval '2 minutes',
-        claimed_at = clock_timestamp(),
-        next_attempt_at = null,
-        updated_at = clock_timestamp()
-    from candidate
-    where d.source_event_id = candidate.source_event_id
-      and d.subscriber_id = ${subscription.id}
-      and d.subscriber_version = ${subscription.version}
-      and (
-        d.status = 'pending'
-        or (d.status = 'retry_wait' and d.next_attempt_at <= clock_timestamp())
-        or (d.status = 'claimed' and d.claim_lease_until < clock_timestamp())
+  const rows = await withLockedCheckpoint(db, lease, async (tx) =>
+    tx.execute<{
+      source_event_id: string;
+      delivery_seq: number;
+      claim_lease_until: Date;
+    }>(sql`
+      with candidate as (
+        select d.source_event_id
+        from event_subscription_delivery d
+        where d.subscriber_id = ${subscription.id}
+          and d.subscriber_version = ${subscription.version}
+          and d.status not in ('bootstrap_skipped', 'succeeded', 'skipped', 'dead_letter')
+        order by d.delivery_seq
+        for update of d
+        limit 1
       )
-    returning d.source_event_id, d.delivery_seq, d.claim_lease_until
-  `);
-  const row = rows[0];
+      update event_subscription_delivery d
+      set status = 'claimed',
+          claim_owner = ${lease.claimOwner},
+          claim_token = ${token}::uuid,
+          claim_lease_until = clock_timestamp() + interval '2 minutes',
+          claimed_at = clock_timestamp(),
+          next_attempt_at = null,
+          updated_at = clock_timestamp()
+      from candidate
+      where d.source_event_id = candidate.source_event_id
+        and d.subscriber_id = ${subscription.id}
+        and d.subscriber_version = ${subscription.version}
+        and (
+          d.status = 'pending'
+          or (d.status = 'retry_wait' and d.next_attempt_at <= clock_timestamp())
+          or (d.status = 'claimed' and d.claim_lease_until < clock_timestamp())
+        )
+      returning d.source_event_id, d.delivery_seq, d.claim_lease_until
+    `),
+  );
+  const row = rows?.[0];
   return row
     ? {
         subscriberId: subscription.id,
@@ -383,31 +410,31 @@ export async function renewSubscriptionDeliveryLease(
   db: Db,
   claim: SubscriptionDeliveryClaim,
 ): Promise<boolean> {
-  const rows = await db.execute(sql`
-    update event_subscription_delivery
-    set claim_lease_until = clock_timestamp() + interval '2 minutes',
-        updated_at = clock_timestamp()
-    where subscriber_id = ${claim.subscriberId}
-      and subscriber_version = ${claim.subscriberVersion}
-      and source_event_id = ${claim.sourceEventId}
-      and status = 'claimed'
-      and claim_owner = ${claim.claimOwner}
-      and claim_token = ${claim.claimToken}::uuid
-      and claim_lease_until >= clock_timestamp()
-      and exists (
-        select 1
-        from event_subscription_checkpoint c
-        where c.subscriber_id = event_subscription_delivery.subscriber_id
-          and c.subscriber_version = event_subscription_delivery.subscriber_version
-          and c.declaration_hash = ${claim.declarationHash}
-          and c.status = 'active'
-          and c.claim_owner = ${claim.checkpointClaimOwner}
-          and c.claim_token = ${claim.checkpointClaimToken}::uuid
-          and c.claim_lease_until >= clock_timestamp()
-      )
-    returning source_event_id
-  `);
-  return rows.length === 1;
+  const rows = await withLockedCheckpoint(
+    db,
+    {
+      subscriberId: claim.subscriberId,
+      subscriberVersion: claim.subscriberVersion,
+      declarationHash: claim.declarationHash,
+      claimOwner: claim.checkpointClaimOwner,
+      claimToken: claim.checkpointClaimToken,
+    },
+    async (tx) =>
+      tx.execute(sql`
+        update event_subscription_delivery
+        set claim_lease_until = clock_timestamp() + interval '2 minutes',
+            updated_at = clock_timestamp()
+        where subscriber_id = ${claim.subscriberId}
+          and subscriber_version = ${claim.subscriberVersion}
+          and source_event_id = ${claim.sourceEventId}
+          and status = 'claimed'
+          and claim_owner = ${claim.claimOwner}
+          and claim_token = ${claim.claimToken}::uuid
+          and claim_lease_until >= clock_timestamp()
+        returning source_event_id
+      `),
+  );
+  return rows?.length === 1;
 }
 
 export async function completeSubscriptionDelivery(
@@ -415,39 +442,39 @@ export async function completeSubscriptionDelivery(
   claim: SubscriptionDeliveryClaim,
   outcome: EventSubscriptionOutcome,
 ): Promise<boolean> {
-  const rows = await db.execute(sql`
-    update event_subscription_delivery
-    set status = ${outcome.status},
-        claim_owner = null,
-        claim_token = null,
-        claim_lease_until = null,
-        claimed_at = null,
-        next_attempt_at = null,
-        outcome = ${JSON.stringify(outcome.detail ?? {})}::jsonb,
-        last_error = ${outcome.status === 'skipped' ? outcome.reason : null},
-        completed_at = clock_timestamp(),
-        updated_at = clock_timestamp()
-    where subscriber_id = ${claim.subscriberId}
-      and subscriber_version = ${claim.subscriberVersion}
-      and source_event_id = ${claim.sourceEventId}
-      and status = 'claimed'
-      and claim_owner = ${claim.claimOwner}
-      and claim_token = ${claim.claimToken}::uuid
-      and claim_lease_until >= clock_timestamp()
-      and exists (
-        select 1
-        from event_subscription_checkpoint c
-        where c.subscriber_id = event_subscription_delivery.subscriber_id
-          and c.subscriber_version = event_subscription_delivery.subscriber_version
-          and c.declaration_hash = ${claim.declarationHash}
-          and c.status = 'active'
-          and c.claim_owner = ${claim.checkpointClaimOwner}
-          and c.claim_token = ${claim.checkpointClaimToken}::uuid
-          and c.claim_lease_until >= clock_timestamp()
-      )
-    returning source_event_id
-  `);
-  return rows.length === 1;
+  const rows = await withLockedCheckpoint(
+    db,
+    {
+      subscriberId: claim.subscriberId,
+      subscriberVersion: claim.subscriberVersion,
+      declarationHash: claim.declarationHash,
+      claimOwner: claim.checkpointClaimOwner,
+      claimToken: claim.checkpointClaimToken,
+    },
+    async (tx) =>
+      tx.execute(sql`
+        update event_subscription_delivery
+        set status = ${outcome.status},
+            claim_owner = null,
+            claim_token = null,
+            claim_lease_until = null,
+            claimed_at = null,
+            next_attempt_at = null,
+            outcome = ${JSON.stringify(outcome.detail ?? {})}::jsonb,
+            last_error = ${outcome.status === 'skipped' ? outcome.reason : null},
+            completed_at = clock_timestamp(),
+            updated_at = clock_timestamp()
+        where subscriber_id = ${claim.subscriberId}
+          and subscriber_version = ${claim.subscriberVersion}
+          and source_event_id = ${claim.sourceEventId}
+          and status = 'claimed'
+          and claim_owner = ${claim.claimOwner}
+          and claim_token = ${claim.claimToken}::uuid
+          and claim_lease_until >= clock_timestamp()
+        returning source_event_id
+      `),
+  );
+  return rows?.length === 1;
 }
 
 export async function failSubscriptionDelivery(
@@ -457,42 +484,42 @@ export async function failSubscriptionDelivery(
   options: { maxAttempts: number },
 ): Promise<'retry_wait' | 'dead_letter' | 'lost_lease'> {
   const message = error instanceof Error ? error.message : String(error);
-  const rows = await db.execute<{ attempt_count: number }>(sql`
-    update event_subscription_delivery
-    set status = case when attempt_count + 1 >= ${options.maxAttempts} then 'dead_letter' else 'retry_wait' end,
-        attempt_count = attempt_count + 1,
-        claim_owner = null,
-        claim_token = null,
-        claim_lease_until = null,
-        claimed_at = null,
-        next_attempt_at = case
-          when attempt_count + 1 >= ${options.maxAttempts} then null
-          else clock_timestamp() + interval '1 second'
-        end,
-        last_error = ${message},
-        completed_at = case when attempt_count + 1 >= ${options.maxAttempts} then clock_timestamp() else null end,
-        updated_at = clock_timestamp()
-    where subscriber_id = ${claim.subscriberId}
-      and subscriber_version = ${claim.subscriberVersion}
-      and source_event_id = ${claim.sourceEventId}
-      and status = 'claimed'
-      and claim_owner = ${claim.claimOwner}
-      and claim_token = ${claim.claimToken}::uuid
-      and claim_lease_until >= clock_timestamp()
-      and exists (
-        select 1
-        from event_subscription_checkpoint c
-        where c.subscriber_id = event_subscription_delivery.subscriber_id
-          and c.subscriber_version = event_subscription_delivery.subscriber_version
-          and c.declaration_hash = ${claim.declarationHash}
-          and c.status = 'active'
-          and c.claim_owner = ${claim.checkpointClaimOwner}
-          and c.claim_token = ${claim.checkpointClaimToken}::uuid
-          and c.claim_lease_until >= clock_timestamp()
-      )
-    returning attempt_count
-  `);
-  if (rows.length === 0) return 'lost_lease';
+  const rows = await withLockedCheckpoint(
+    db,
+    {
+      subscriberId: claim.subscriberId,
+      subscriberVersion: claim.subscriberVersion,
+      declarationHash: claim.declarationHash,
+      claimOwner: claim.checkpointClaimOwner,
+      claimToken: claim.checkpointClaimToken,
+    },
+    async (tx) =>
+      tx.execute<{ attempt_count: number }>(sql`
+        update event_subscription_delivery
+        set status = case when attempt_count + 1 >= ${options.maxAttempts} then 'dead_letter' else 'retry_wait' end,
+            attempt_count = attempt_count + 1,
+            claim_owner = null,
+            claim_token = null,
+            claim_lease_until = null,
+            claimed_at = null,
+            next_attempt_at = case
+              when attempt_count + 1 >= ${options.maxAttempts} then null
+              else clock_timestamp() + interval '1 second'
+            end,
+            last_error = ${message},
+            completed_at = case when attempt_count + 1 >= ${options.maxAttempts} then clock_timestamp() else null end,
+            updated_at = clock_timestamp()
+        where subscriber_id = ${claim.subscriberId}
+          and subscriber_version = ${claim.subscriberVersion}
+          and source_event_id = ${claim.sourceEventId}
+          and status = 'claimed'
+          and claim_owner = ${claim.claimOwner}
+          and claim_token = ${claim.claimToken}::uuid
+          and claim_lease_until >= clock_timestamp()
+        returning attempt_count
+      `),
+  );
+  if (!rows || rows.length === 0) return 'lost_lease';
   return rows[0].attempt_count >= options.maxAttempts ? 'dead_letter' : 'retry_wait';
 }
 
@@ -503,8 +530,19 @@ export async function redriveSubscriptionDelivery(
   sourceEventId: string,
 ): Promise<boolean> {
   getDeclaredSubscription(registry, subscription);
-  const rows = await db.execute(sql`
-    update event_subscription_delivery d
+  const rows = await db.transaction(async (tx) => {
+    const checkpoints = await tx.execute(sql`
+      select subscriber_id
+      from event_subscription_checkpoint
+      where subscriber_id = ${subscription.id}
+        and subscriber_version = ${subscription.version}
+        and declaration_hash = ${registry.declarationHash}
+        and status = 'active'
+      for update
+    `);
+    if (checkpoints.length !== 1) return [];
+    return tx.execute(sql`
+      update event_subscription_delivery d
     set status = 'retry_wait',
         redrive_count = d.redrive_count + 1,
         claim_owner = null,
@@ -530,12 +568,14 @@ export async function redriveSubscriptionDelivery(
           and later.subscriber_version = d.subscriber_version
           and later.delivery_seq > d.delivery_seq
           and (
-            later.claimed_at is not null
-            or later.status in ('bootstrap_skipped', 'succeeded', 'skipped', 'dead_letter')
+            later.status <> 'pending'
+            or later.attempt_count > 0
+            or later.redrive_count > 0
           )
       )
-    returning d.source_event_id
-  `);
+      returning d.source_event_id
+    `);
+  });
   return rows.length === 1;
 }
 

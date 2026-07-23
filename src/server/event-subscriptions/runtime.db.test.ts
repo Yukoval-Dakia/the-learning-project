@@ -292,6 +292,29 @@ describe('YUK-751 durable event subscription runtime', () => {
     );
   });
 
+  it('rejects redrive when a later delivery has failed into retry_wait', async () => {
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+    await insertEvent('first-dead');
+    await insertEvent('later-retry');
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+    const first = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+    if (!first) throw new Error('expected first claim');
+    expect(
+      await failSubscriptionDelivery(testDb(), first, new Error('dead'), { maxAttempts: 1 }),
+    ).toBe('dead_letter');
+    const later = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+    if (!later) throw new Error('expected later claim');
+    expect(
+      await failSubscriptionDelivery(testDb(), later, new Error('retry'), { maxAttempts: 2 }),
+    ).toBe('retry_wait');
+
+    expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'first-dead')).toBe(
+      false,
+    );
+  });
+
   it('dispatches a claimed delivery to succeeded and observes handler outcomes', async () => {
     const handler = vi.fn(async () => ({ status: 'skipped' as const, reason: 'not applicable' }));
     const subscription = { ...SUBSCRIBER, handler };
