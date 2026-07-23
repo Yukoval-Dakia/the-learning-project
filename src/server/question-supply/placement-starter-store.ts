@@ -264,7 +264,13 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
       updated_at: now,
       version: 0,
     })
-    .onConflictDoNothing({ target: placement_starter_claim.id });
+    // Target-less ON CONFLICT DO NOTHING so BOTH the PK (same revision re-run, idempotent) and
+    // the placement_starter_claim_nonterminal_uq partial unique on (goal_id, subject_id) — an
+    // earlier revision's claim still in flight for this goal+subject — degrade to a silent skip
+    // rather than aborting the materialize transaction. The cross-revision skip is the intended
+    // budget guard: the in-flight batch fills the pool; a later placement/start re-materializes
+    // once it terminalizes (YUK-452 review).
+    .onConflictDoNothing();
   return { identity, insertedKnowledge: Boolean(inserted) };
 }
 
@@ -322,6 +328,15 @@ export async function addPlacementStarterCostComponent(
   tx: Tx,
   input: typeof placement_starter_cost_component.$inferInsert,
 ): Promise<void> {
+  // Lock the claim row before the insert + known_cost recompute so concurrent cost writers
+  // serialize on it (parity with addAuthorizedCostComponent, which locks FOR UPDATE; YUK-452
+  // review). The correlated SUM is self-healing under READ COMMITTED, but the explicit lock
+  // removes any doubt and keeps the recompute deterministic.
+  await tx
+    .select({ id: placement_starter_claim.id })
+    .from(placement_starter_claim)
+    .where(eq(placement_starter_claim.id, input.claim_id))
+    .for('update');
   await tx
     .insert(placement_starter_cost_component)
     .values({

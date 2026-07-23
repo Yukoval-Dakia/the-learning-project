@@ -4664,7 +4664,13 @@
           "name": "placement_starter_claim_nonterminal_uq",
           "columns": [
             {
-              "expression": "id",
+              "expression": "goal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4800,6 +4806,21 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "placement_starter_cost_component_claim_idx": {
+          "name": "placement_starter_cost_component_claim_idx",
+          "columns": [
+            {
+              "expression": "claim_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}

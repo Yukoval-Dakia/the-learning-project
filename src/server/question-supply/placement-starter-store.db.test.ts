@@ -194,6 +194,10 @@ describe('placement starter store', () => {
     await db.insert(placement_starter_claim).values({
       ...claim,
       id: 'claim-2',
+      // Distinct goal so this second non-terminal claim does not collide with the base claim on
+      // placement_starter_claim_nonterminal_uq (goal_id, subject_id) — this test exercises the
+      // cross-claim attempt/cost FK tuple guards, not the per-goal single-flight guard (YUK-452).
+      goal_id: 'goal-2',
       fingerprint: 'fp-2',
       semantic_goal_revision_id: 'revision-2',
       demand_id: 'demand-2',
@@ -254,6 +258,70 @@ describe('placement starter store', () => {
         (id, claim_id, attempt_id, component_kind, provider_task_run_id, cost_micro_usd, created_at)
         values ('cost-bad', ${claim.id}, 'attempt-1', 'bogus', 'run-bad', 1, ${now})`),
     ).rejects.toThrow();
+  });
+
+  it('enforces at most one non-terminal claim per (goal, subject) (YUK-452 review)', async () => {
+    const now = new Date('2026-07-23T00:00:00Z');
+    const baseClaim = {
+      goal_id: 'goal-x',
+      semantic_goal_revision_id: 'rev-a',
+      subject_id: 'yuwen',
+      knowledge_id: 'kc-a',
+      demand_id: 'demand-a',
+      target_id: 'target-a',
+      status: 'pending_dispatch' as const,
+      max_paid_attempts: 3,
+      budget_limit_micro_usd: 1_000_000,
+      known_cost_micro_usd: 0,
+      next_reconcile_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    };
+    // First non-terminal claim for (goal-x, yuwen).
+    await db
+      .insert(placement_starter_claim)
+      .values({ ...baseClaim, id: 'claim-a', fingerprint: 'fp-a' });
+    // A SECOND non-terminal claim for the SAME (goal, subject) — a later revision, distinct id — is
+    // rejected by placement_starter_claim_nonterminal_uq (the cross-revision single-flight budget
+    // guard). Before the YUK-452 fix the index was keyed on (id), so this insert wrongly succeeded.
+    await expect(
+      db.insert(placement_starter_claim).values({
+        ...baseClaim,
+        id: 'claim-b',
+        fingerprint: 'fp-b',
+        semantic_goal_revision_id: 'rev-b',
+        demand_id: 'demand-b',
+        target_id: 'target-b',
+      }),
+    ).rejects.toThrow();
+    // A DIFFERENT subject for the same goal is allowed — multi-subject goals dispatch one claim each.
+    await db.insert(placement_starter_claim).values({
+      ...baseClaim,
+      id: 'claim-c',
+      fingerprint: 'fp-c',
+      subject_id: 'shuxue',
+      knowledge_id: 'kc-c',
+      semantic_goal_revision_id: 'rev-c',
+      demand_id: 'demand-c',
+      target_id: 'target-c',
+    });
+    // Once the first claim is TERMINAL, a fresh non-terminal claim for the same (goal, subject) is
+    // allowed — the partial index only covers non-terminal rows.
+    await db
+      .update(placement_starter_claim)
+      .set({ status: 'satisfied', satisfied_at: now })
+      .where(eq(placement_starter_claim.id, 'claim-a'));
+    await db.insert(placement_starter_claim).values({
+      ...baseClaim,
+      id: 'claim-d',
+      fingerprint: 'fp-d',
+      semantic_goal_revision_id: 'rev-d',
+      demand_id: 'demand-d',
+      target_id: 'target-d',
+    });
+    const rows = await db.select().from(placement_starter_claim);
+    expect(rows.map((r) => r.id).sort()).toEqual(['claim-a', 'claim-c', 'claim-d']);
   });
 
   it('ignores sequence-only goal updates when deriving semantic identity', async () => {

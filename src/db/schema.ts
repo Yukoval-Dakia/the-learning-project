@@ -1598,8 +1598,18 @@ export const placement_starter_claim = pgTable(
     uniqueIndex('placement_starter_claim_job_uq')
       .on(t.pg_boss_job_id)
       .where(sql`${t.pg_boss_job_id} IS NOT NULL`),
+    // At most one non-terminal claim per (goal, subject). The claim id / fingerprint /
+    // (revision, subject) uniqueness already pins one row per goal REVISION; this partial
+    // index is the cross-revision budget guard: once a goal is edited (new
+    // semantic_goal_revision_id → new claim id) while an earlier revision's claim is still
+    // in flight, both revisions would otherwise dispatch concurrent paid generation batches
+    // into the SAME goal pool (addPlacementStarterKnowledgeToExplicitGoal unions every
+    // revision's synthetic KC into the goal scope). Keying the partial unique on (id) — the
+    // PK — enforced nothing beyond the PK (YUK-452 review). ensurePlacementStarterKnowledgeAndClaim
+    // inserts with a target-less ON CONFLICT DO NOTHING so this guard degrades to "skip the
+    // second concurrent batch", never a hard insert failure.
     uniqueIndex('placement_starter_claim_nonterminal_uq')
-      .on(t.id)
+      .on(t.goal_id, t.subject_id)
       .where(
         sql`${t.status} IN ('pending_dispatch','queued','running','verifying','retry_scheduled')`,
       ),
@@ -1742,6 +1752,10 @@ export const placement_starter_cost_component = pgTable(
       t.component_kind,
       sql`COALESCE(${t.question_id}, '')`,
     ),
+    // known_cost recompute (addAuthorizedCostComponent / addPlacementStarterCostComponent) and
+    // budget settlement sum cost components by claim_id; the composite FK is (attempt_id, claim_id)
+    // so nothing led with claim_id before (YUK-452 review).
+    index('placement_starter_cost_component_claim_idx').on(t.claim_id),
     check(
       'placement_starter_cost_component_kind_check',
       sql`${t.component_kind} IN ('quiz_gen','quiz_verify','solution_check','teaching_quality')`,
