@@ -173,7 +173,12 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
                 WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory,
              (SELECT count(*)::int FROM pg_locks g
                 WHERE g.pid = w.pid AND g.granted
-                  AND g.relation = 'question'::regclass::oid) AS granted_question_rel
+                  AND g.relation = 'question'::regclass::oid
+                  -- AccessShareLock is the harmless read lock the dedup path's UNLOCKED
+                  -- peek legitimately holds; the F2 inversion shape is FOR UPDATE's
+                  -- RowShareLock (and stronger), which is what must be absent while
+                  -- waiting on the global lock.
+                  AND g.mode <> 'AccessShareLock') AS granted_question_rel
         FROM pg_locks w
        WHERE w.locktype = 'advisory' AND NOT w.granted
          AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())

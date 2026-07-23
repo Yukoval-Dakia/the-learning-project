@@ -155,10 +155,22 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     now: Date;
   },
 ): Promise<ExactQuestionDuplicateKnowledgeMerge | null> {
-  // YUK-497 review F2 — global learning-state write lock BEFORE the question row lock.
-  // This path reaches enrollFsrsStateIfAbsent (G) after the FOR UPDATE below; without
-  // G-first, the dedup producers order question-row→G while the live submit tx orders
-  // G→question-row — a cross-process deadlock aborting the user-facing submit.
+  // YUK-497 review F2 (revised after the barrier-test deadlock postmortem) — lock order
+  // must be G→question-row (matching the live submit tx), but taking G on the LOOKUP-MISS
+  // path serializes the producers' entire persist txs and deadlocks the designed
+  // canonical-hash race choreography (a tx holding G at the post-miss seam while its racing
+  // twin blocks on G). So: optimistic UNLOCKED peek first — a miss returns null having
+  // taken NO locks (the miss path is safe without them: the caller's INSERT is guarded by
+  // onConflictDoNothing on the canonical hash, and the conflict loser re-enters here and
+  // merges under the locks). Only a HIT acquires G and then re-reads FOR UPDATE, so every
+  // path that touches the row or reaches enrollFsrsStateIfAbsent holds G first.
+  const peek = await tx
+    .select({ id: question.id })
+    .from(question)
+    .where(eq(question.canonical_content_hash, params.canonicalContentHash))
+    .limit(1);
+  if (peek.length === 0) return null;
+
   await acquireLearningStateWriteLock(tx);
   const rows = await tx
     .select({
@@ -174,6 +186,9 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     .limit(1)
     .for('update');
   const row = rows[0];
+  // The peeked row can vanish between the unlocked peek and the locked re-read only via
+  // out-of-band deletion (question rows are never deleted by production flows); treat as
+  // a clean miss rather than inventing a row.
   if (!row) return null;
 
   const terminalVerifyAction =
