@@ -8,7 +8,13 @@
 // throws to status:'failed').
 import { describe, expect, it, vi } from 'vitest';
 
-import { knowledge, question } from '@/db/schema';
+import {
+  knowledge,
+  question,
+  question_answer_anchor,
+  question_generation_binding,
+  question_generation_plan,
+} from '@/db/schema';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { beforeEach } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -172,6 +178,10 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
         material_body_md: '学而时习之，不亦说乎。',
         material_url: 'https://example.edu/lunyu',
         material_title: '论语·学而',
+        material_answer_anchor: {
+          canonical_answer: { kind: 'text', value: '通「悦」' },
+          locator: { kind: 'text_span', start: 0, end: 9, exact_text: '学而时习之，不亦说乎。' },
+        },
       },
       deps(runTaskFn),
     );
@@ -265,6 +275,39 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
 
     expect(await db.select().from(question)).toHaveLength(0);
     expect(await listProposalInboxRows(db, { status: 'pending' })).toHaveLength(0);
+  });
+
+  it('material live writer persists anchor and plan before model generation, then exact binding', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    const runTaskFn = vi.fn(async () => {
+      expect(await db.select().from(question_answer_anchor)).toHaveLength(1);
+      expect(await db.select().from(question_generation_plan)).toHaveLength(1);
+      expect(await db.select().from(question)).toHaveLength(0);
+      return { text: draftFixture(), task_run_id: 'author_run', cost_usd: 0.01 };
+    });
+
+    const result = await runQuestionAuthor(
+      {
+        seed_mode: 'material',
+        knowledge_ids: ['k_zhi'],
+        requested_kind: 'short_answer',
+        material_body_md: '学而时习之，不亦说乎。',
+        material_answer_anchor: {
+          canonical_answer: { kind: 'text', value: '通「悦」' },
+          locator: { kind: 'text_span', start: 0, end: 9, exact_text: '学而时习之，不亦说乎。' },
+        },
+      },
+      deps(runTaskFn),
+    );
+
+    expect(result.status).toBe('proposed');
+    if (result.status !== 'proposed') throw new Error('unreachable');
+    const [binding] = await db.select().from(question_generation_binding);
+    expect(binding.question_id).toBe(result.questionId);
+    expect(binding.validation_status).toBe('needs_review');
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan.status).toBe('generated');
   });
 
   it("material seed without material_body_md throws (URL-only seeds can't ground a passage)", async () => {

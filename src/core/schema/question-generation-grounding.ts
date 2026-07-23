@@ -6,17 +6,47 @@ const VersionedHashRef = z.object({
   content_hash: z.string().min(1),
 });
 
-export const SourceSpanLocator = z
+const TextOffsets = {
+  start: z.number().int().nonnegative(),
+  end: z.number().int().positive(),
+  exact_text: z.string().min(1),
+};
+
+const TextSpanLocator = z
+  .object({ kind: z.literal('text_span'), ...TextOffsets })
+  .refine((locator) => locator.end > locator.start, {
+    message: 'text span end must be greater than start',
+    path: ['end'],
+  });
+const PageTextSpanLocator = z
   .object({
-    kind: z.literal('text_span'),
-    start: z.number().int().nonnegative(),
-    end: z.number().int().positive(),
-    exact_text: z.string().min(1),
+    kind: z.literal('page_text_span'),
+    ...TextOffsets,
+    page_id: z.string().min(1),
+    page_version: z.number().int().nonnegative(),
+    page_index: z.number().int().nonnegative(),
   })
   .refine((locator) => locator.end > locator.start, {
     message: 'text span end must be greater than start',
     path: ['end'],
   });
+
+export const SourceSpanLocator = z.union([
+  TextSpanLocator,
+  PageTextSpanLocator,
+  z.object({
+    kind: z.literal('page_region'),
+    page_id: z.string().min(1),
+    page_version: z.number().int().nonnegative(),
+    page_index: z.number().int().nonnegative(),
+    bbox: z.object({
+      x: z.number().min(0),
+      y: z.number().min(0),
+      width: z.number().positive(),
+      height: z.number().positive(),
+    }),
+  }),
+]);
 
 export const QuestionAnswerAnchor = z.object({
   id: z.string().min(1),

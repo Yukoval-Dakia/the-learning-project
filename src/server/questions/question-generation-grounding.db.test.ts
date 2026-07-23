@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
@@ -47,7 +48,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
     expect(plan?.answer_anchor_id).toBe(result.anchor.id);
     expect(plan?.answer_anchor_version).toBe(result.anchor.version);
     expect(plan?.answer_anchor_hash).toBe(result.anchor.content_hash);
-    expect(plan?.status).toBe('pending_generation');
+    expect(plan?.status).toBe('generated');
   });
 
   it('binds a generated question to exact plan, anchor, and comparator-policy versions', async () => {
@@ -85,6 +86,65 @@ describe('question generation grounding persistence (YUK-350)', () => {
       structural_status: 'no_veto',
     });
     expect(binding.objective_correctness).toBe('unverified');
+  });
+
+  it('rejects mismatched or nonexistent persisted tuples without writing a binding', async () => {
+    await resetDb();
+    const prepared = await prepareQuestionGeneration(db, {
+      source,
+      canonicalAnswer: { kind: 'text', value: '北京' },
+      anchorProvenance: { kind: 'ai_extracted', task_run_id: 'anchor_run' },
+      demand: { kind: 'knowledge', ref_id: 'k_1' },
+      knowledgeIds: ['k_1'],
+      requestedKind: 'fill_blank',
+      requestedAnswerClass: 'exact',
+      constraints: {},
+      planProvenance: { kind: 'ai_planned', task_run_id: 'plan_run' },
+      generate: async () => 'generated',
+    });
+
+    await expect(
+      bindGeneratedQuestion(db, {
+        questionId: 'q_bad',
+        plan: prepared.plan,
+        anchor: { ...prepared.anchor, id: 'fabricated' },
+      }),
+    ).rejects.toThrow(/anchor/);
+    await db
+      .delete(question_generation_plan)
+      .where(eq(question_generation_plan.id, prepared.plan.id));
+    await expect(
+      bindGeneratedQuestion(db, {
+        questionId: 'q_missing',
+        plan: prepared.plan,
+        anchor: prepared.anchor,
+      }),
+    ).rejects.toThrow(/persisted/);
+    expect(await db.select().from(question_generation_binding)).toEqual([]);
+  });
+
+  it('records failed generation durably and rethrows without a binding', async () => {
+    await resetDb();
+    await expect(
+      prepareQuestionGeneration(db, {
+        source,
+        canonicalAnswer: { kind: 'text', value: '北京' },
+        anchorProvenance: { kind: 'ai_extracted', task_run_id: 'anchor_run' },
+        demand: { kind: 'knowledge', ref_id: 'k_1' },
+        knowledgeIds: ['k_1'],
+        requestedKind: 'fill_blank',
+        requestedAnswerClass: 'exact',
+        constraints: {},
+        planProvenance: { kind: 'ai_planned', task_run_id: 'plan_run' },
+        generate: async () => {
+          throw new Error('model unavailable');
+        },
+      }),
+    ).rejects.toThrow('model unavailable');
+
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan?.status).toBe('failed');
+    expect(await db.select().from(question_generation_binding)).toEqual([]);
   });
 
   it('never invokes generation when anchor or plan persistence fails', async () => {

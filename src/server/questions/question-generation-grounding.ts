@@ -7,12 +7,13 @@ import {
   QuestionGenerationPlan,
   type QuestionGenerationPlanT,
 } from '@/core/schema/question-generation-grounding';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   question_answer_anchor,
   question_generation_binding,
   question_generation_plan,
 } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -110,7 +111,32 @@ export async function prepareQuestionGeneration<T>(
     });
   });
 
-  return { anchor, plan, generated: await input.generate({ anchor, plan }) };
+  try {
+    const generated = await input.generate({ anchor, plan });
+    await db
+      .update(question_generation_plan)
+      .set({ status: 'generated' })
+      .where(
+        and(
+          eq(question_generation_plan.id, plan.id),
+          eq(question_generation_plan.version, plan.version),
+          eq(question_generation_plan.content_hash, plan.content_hash),
+        ),
+      );
+    return { anchor, plan, generated };
+  } catch (error) {
+    await db
+      .update(question_generation_plan)
+      .set({ status: 'failed' })
+      .where(
+        and(
+          eq(question_generation_plan.id, plan.id),
+          eq(question_generation_plan.version, plan.version),
+          eq(question_generation_plan.content_hash, plan.content_hash),
+        ),
+      );
+    throw error;
+  }
 }
 
 const NO_COMPARATOR_POLICY = {
@@ -121,13 +147,50 @@ const NO_COMPARATOR_POLICY = {
 
 /** Persist the exact provenance tuple without claiming objective correctness. */
 export async function bindGeneratedQuestion(
-  db: Db,
+  db: Db | Tx,
   input: {
     questionId: string;
     plan: QuestionGenerationPlanT;
     anchor: QuestionAnswerAnchorT;
   },
 ) {
+  if (
+    input.plan.answer_anchor.id !== input.anchor.id ||
+    input.plan.answer_anchor.version !== input.anchor.version ||
+    input.plan.answer_anchor.content_hash !== input.anchor.content_hash
+  ) {
+    throw new Error('generation plan answer anchor does not match supplied anchor');
+  }
+  const [persistedPlan] = await db
+    .select({ id: question_generation_plan.id })
+    .from(question_generation_plan)
+    .where(
+      and(
+        eq(question_generation_plan.id, input.plan.id),
+        eq(question_generation_plan.version, input.plan.version),
+        eq(question_generation_plan.content_hash, input.plan.content_hash),
+        eq(question_generation_plan.answer_anchor_id, input.anchor.id),
+        eq(question_generation_plan.answer_anchor_version, input.anchor.version),
+        eq(question_generation_plan.answer_anchor_hash, input.anchor.content_hash),
+        eq(question_generation_plan.status, 'generated'),
+      ),
+    )
+    .limit(1);
+  const [persistedAnchor] = await db
+    .select({ id: question_answer_anchor.id })
+    .from(question_answer_anchor)
+    .where(
+      and(
+        eq(question_answer_anchor.id, input.anchor.id),
+        eq(question_answer_anchor.version, input.anchor.version),
+        eq(question_answer_anchor.content_hash, input.anchor.content_hash),
+      ),
+    )
+    .limit(1);
+  if (!persistedPlan || !persistedAnchor) {
+    throw new Error('exact persisted generation plan and answer anchor tuple not found');
+  }
+
   const binding = {
     plan: {
       id: input.plan.id,

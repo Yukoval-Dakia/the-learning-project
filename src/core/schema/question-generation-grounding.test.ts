@@ -57,6 +57,46 @@ describe('question generation grounding contracts (YUK-350)', () => {
     ).toBe(false);
   });
 
+  it('accepts exact page spans and page-region coordinates with page identity', () => {
+    const pageSpan = {
+      ...anchor,
+      source: {
+        ...anchor.source,
+        locator: {
+          kind: 'page_text_span',
+          page_id: 'page_7',
+          page_version: 2,
+          page_index: 6,
+          start: 12,
+          end: 18,
+          exact_text: '北京',
+        },
+      },
+    };
+    const region = {
+      ...anchor,
+      source: {
+        ...anchor.source,
+        locator: {
+          kind: 'page_region',
+          page_id: 'page_7',
+          page_version: 2,
+          page_index: 6,
+          bbox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+        },
+      },
+    };
+
+    expect(QuestionAnswerAnchor.safeParse(pageSpan).success).toBe(true);
+    expect(QuestionAnswerAnchor.safeParse(region).success).toBe(true);
+    expect(
+      QuestionAnswerAnchor.safeParse({
+        ...region,
+        source: { ...region.source, locator: { ...region.source.locator, page_id: '' } },
+      }).success,
+    ).toBe(false);
+  });
+
   it('binds a plan to exact anchor identity, version, and content hash', () => {
     expect(
       QuestionGenerationPlan.safeParse({

@@ -21,6 +21,7 @@
 // paper by calling this repeatedly), in deliberate contrast to
 // record_promotion's pendingProposalWithCooldown.
 
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { z } from 'zod';
 
@@ -29,6 +30,7 @@ import type { ToolContext } from '@/server/ai/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import type { QuestionAnswerAnchorT } from '@/core/schema/question-generation-grounding';
 import {
   QuestionAuthorDraft,
   type QuestionAuthorDraftT,
@@ -39,6 +41,10 @@ import { knowledge, question } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  bindGeneratedQuestion,
+  prepareQuestionGeneration,
+} from '@/server/questions/question-generation-grounding';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -51,6 +57,11 @@ export interface QuestionAuthorSeed {
   difficulty?: number;
   /** REQUIRED for seed_mode='material' (the task has no fetch tool — critic #5). */
   material_body_md?: string;
+  /** REQUIRED source-grounded answer evidence for the material production path. */
+  material_answer_anchor?: {
+    canonical_answer: QuestionAnswerAnchorT['canonical_answer'];
+    locator: QuestionAnswerAnchorT['source']['locator'];
+  };
   /** Provenance-only metadata; never fetched (single-shot task, no Tavily). */
   material_url?: string;
   material_title?: string;
@@ -72,6 +83,10 @@ export type RunQuestionAuthorResult =
 async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) {
   if (seed.seed_mode === 'material' && !seed.material_body_md?.trim()) {
     throw new Error("question_author seed_mode 'material' requires material_body_md");
+  }
+
+  if (seed.seed_mode === 'material' && !seed.material_answer_anchor) {
+    throw new Error("question_author seed_mode 'material' requires material_answer_anchor");
   }
 
   const wanted = [...new Set(seed.knowledge_ids)];
@@ -169,8 +184,42 @@ export async function runQuestionAuthor(
   if (!prepared) return { status: 'skipped:knowledge_not_found' };
   const { input, ctx: runCtx, validIds, validIdSet } = prepared;
 
-  const result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
-  const draft = parseQuestionAuthorOutput(result.text);
+  let preparedGrounding:
+    | Awaited<ReturnType<typeof prepareQuestionGeneration<QuestionAuthorDraftT>>>
+    | undefined;
+  let result: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>>;
+  let draft: QuestionAuthorDraftT;
+  if (seed.seed_mode === 'material' && seed.material_body_md && seed.material_answer_anchor) {
+    const sourceHash = `sha256:${createHash('sha256').update(seed.material_body_md).digest('hex')}`;
+    let generationResult: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>> | undefined;
+    preparedGrounding = await prepareQuestionGeneration(db, {
+      source: {
+        artifact_kind: 'inline_material',
+        artifact_id: sourceHash,
+        version: 1,
+        content_hash: sourceHash,
+        locator: seed.material_answer_anchor.locator,
+      },
+      canonicalAnswer: seed.material_answer_anchor.canonical_answer,
+      anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
+      demand: { kind: 'knowledge', ref_id: validIds[0] },
+      knowledgeIds: validIds,
+      requestedKind: seed.requested_kind ?? 'short_answer',
+      requestedAnswerClass: 'exact',
+      constraints: { seed_mode: 'material' },
+      planProvenance: { kind: 'human_planned', task_run_id: deps.taskRunId },
+      generate: async () => {
+        generationResult = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+        return parseQuestionAuthorOutput(generationResult.text);
+      },
+    });
+    if (!generationResult) throw new Error('QuestionAuthorTask completed without a task result');
+    draft = preparedGrounding.generated;
+    result = generationResult;
+  } else {
+    result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+    draft = parseQuestionAuthorOutput(result.text);
+  }
 
   // Hallucinated-id discipline: intersect the echoed knowledge_ids with the
   // validated seed set; an empty intersection falls back to the full validated
@@ -221,6 +270,13 @@ export async function runQuestionAuthor(
         updated_at: now,
       }),
     );
+    if (preparedGrounding) {
+      await bindGeneratedQuestion(tx, {
+        questionId,
+        plan: preparedGrounding.plan,
+        anchor: preparedGrounding.anchor,
+      });
+    }
 
     proposalId = await writeAiProposal(tx, {
       actor_ref: deps.actorRef,
