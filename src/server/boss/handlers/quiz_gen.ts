@@ -17,9 +17,10 @@
 // draft_status='draft' (NOT in the review pool, no FSRS yet). The chained
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
+import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import type { Job, SendOptions } from 'pg-boss';
+import type { JobWithMetadata, SendOptions } from 'pg-boss';
 
 import {
   DifficultyEvidence,
@@ -38,7 +39,14 @@ import {
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, learning_item, question, source_document } from '@/db/schema';
+import {
+  artifact,
+  knowledge,
+  learning_item,
+  placement_starter_attempt_question,
+  question,
+  source_document,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
@@ -68,6 +76,24 @@ import {
   type SupplyTraceV1T,
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
+import {
+  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
+  PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_STARTER_REQUIRED_COUNT,
+  PLACEMENT_VERIFY_POLL_MS,
+  type PlacementAttemptAuthority,
+  PlacementStarterDeadlineError,
+  PlacementStarterUnderfillError,
+  type PlacementVerificationAuthority,
+  acquirePlacementAttempt,
+  countEligiblePlacementQuestions,
+  finishPlacementAttempt,
+  markAttemptVerifying,
+  placementAttemptVerificationSettled,
+  placementDeliveryMetadata,
+  recordPlacementAttemptOutput,
+  renewPlacementAttempt,
+} from '@/server/question-supply/placement-starter-attempts';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
@@ -180,7 +206,11 @@ export type RetrieveFewShotFn = (params: {
 }) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
-export type EnqueueQuizVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
+export type EnqueueQuizVerifyFn = (
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+) => Promise<void>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -188,6 +218,8 @@ interface DepsOverride {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
+  now?: () => Date;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 async function defaultRetrieveFewShot(params: {
@@ -202,12 +234,20 @@ async function defaultRetrieveFewShot(params: {
 async function defaultEnqueueQuizVerify(
   questionIds: string[],
   options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors attribution_followup). Q5 creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('quiz_verify', { question_ids: questionIds }, options);
+  await boss.send(
+    'quiz_verify',
+    {
+      question_ids: questionIds,
+      ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+    },
+    options,
+  );
 }
 
 // §2 / §5 — output JSON parse + judge-contract assertion (shared with
@@ -323,6 +363,7 @@ export interface RunQuizGenParams {
   trigger: QuizGenTrigger;
   refId: string;
   count?: number;
+  exactCount?: number;
   // YUK-226 S2-5b F1 — when set, the 找题次序 pins the generation_method (the agent is
   // instructed to honour it). Absent → original free-choice behaviour preserved.
   generationMethod?: 'material_grounded' | 'closed_book';
@@ -334,6 +375,7 @@ export interface RunQuizGenParams {
   objectiveOnly?: boolean;
   kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
+  placementAttempt?: PlacementAttemptAuthority;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -568,6 +610,21 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     });
     taskResult = result;
     const { parsed, parseRepaired } = parseOutput(result.text);
+    if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
+      throw new Error(
+        `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
+      );
+    }
+    if (params.placementAttempt) {
+      if (!result.task_run_id) {
+        throw new Error('placement quiz_gen requires provider task_run_id');
+      }
+      await recordPlacementAttemptOutput(db, params.placementAttempt, {
+        taskRunId: result.task_run_id,
+        outputText: result.text,
+        costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+      });
+    }
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
     // material_grounded vs step 4 closed_book), the agent prompt instructs honouring it,
@@ -756,6 +813,34 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             resulting_knowledge_ids: existingDuplicate.knowledgeIds,
             preserved_draft_status: existingDuplicate.draftStatus,
           });
+          if (params.placementAttempt) {
+            const placementAuthority: PlacementVerificationAuthority = {
+              claim_id: params.placementAttempt.claimId,
+              attempt_id: params.placementAttempt.attemptId,
+              question_id: existingDuplicate.id,
+              verification_authority_epoch: randomUUID(),
+              fencing_token: params.placementAttempt.fencingToken,
+            };
+            await tx
+              .insert(placement_starter_attempt_question)
+              .values({
+                attempt_id: placementAuthority.attempt_id,
+                claim_id: placementAuthority.claim_id,
+                question_id: existingDuplicate.id,
+                canonical_hash: canonicalContentHash,
+                verification_authority_epoch: placementAuthority.verification_authority_epoch,
+                verification_status: 'authorized',
+                created_at: now,
+              })
+              .onConflictDoNothing();
+            await writeVerifyDispatchIntent(tx, {
+              questionId: existingDuplicate.id,
+              verifier: 'quiz_verify',
+              supplyTrace: params.supplyTrace,
+              placementAuthority,
+              createdAt: now,
+            });
+          }
           continue;
         }
         await params.afterExactDuplicateLookupMiss?.();
@@ -873,12 +958,38 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             continue;
           }
         }
-        await writeVerifyDispatchIntent(tx, {
-          questionId: id,
-          verifier: 'quiz_verify',
-          supplyTrace: questionSupplyTrace,
-          createdAt: now,
-        });
+        if (params.placementAttempt) {
+          const placementAuthority: PlacementVerificationAuthority = {
+            claim_id: params.placementAttempt.claimId,
+            attempt_id: params.placementAttempt.attemptId,
+            question_id: id,
+            verification_authority_epoch: randomUUID(),
+            fencing_token: params.placementAttempt.fencingToken,
+          };
+          await tx.insert(placement_starter_attempt_question).values({
+            attempt_id: placementAuthority.attempt_id,
+            claim_id: placementAuthority.claim_id,
+            question_id: id,
+            canonical_hash: canonicalContentHash,
+            verification_authority_epoch: placementAuthority.verification_authority_epoch,
+            verification_status: 'authorized',
+            created_at: now,
+          });
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'quiz_verify',
+            supplyTrace: questionSupplyTrace,
+            placementAuthority,
+            createdAt: now,
+          });
+        } else {
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'quiz_verify',
+            supplyTrace: questionSupplyTrace,
+            createdAt: now,
+          });
+        }
         // Aggregate exactly the persisted question attribution (model-valid ids + supply target),
         // not the narrower pre-union model ids. Add only after a fresh row actually landed so the
         // artifact's tags describe its own tool_state.question_ids, not skipped duplicates.
@@ -995,11 +1106,15 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     failureStage = 'dispatch';
     const dispatchResult = await dispatchPendingVerifyIntents(db, {
       questionIds,
-      enqueue: async (verifier, ids, options) => {
+      enqueue: async (verifier, ids, options, placementAuthorities) => {
         if (verifier !== 'quiz_verify') {
           throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
         }
-        await enqueueQuizVerify(ids, options);
+        if (placementAuthorities && placementAuthorities.length > 0) {
+          await enqueueQuizVerify(ids, options, placementAuthorities);
+        } else {
+          await enqueueQuizVerify(ids, options);
+        }
       },
     });
     if (dispatchResult.failed > 0) {
@@ -1045,10 +1160,64 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   }
 }
 
+function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason ?? new Error('quiz_gen aborted'));
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new Error('quiz_gen aborted'));
+      },
+      { once: true },
+    );
+  });
+}
+
+async function reconcilePlacementDelivery(
+  db: Db,
+  attempt: PlacementAttemptAuthority,
+  signal: AbortSignal,
+  deps: DepsOverride,
+): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? defaultPlacementSleep;
+  const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
+  let nextHeartbeat = now().getTime() + PLACEMENT_ATTEMPT_HEARTBEAT_MS;
+  while (true) {
+    if (signal.aborted) {
+      await finishPlacementAttempt(db, attempt, 'interrupted', now());
+      throw signal.reason ?? new Error('quiz_gen aborted');
+    }
+    const current = now();
+    if (current.getTime() >= deadline) {
+      await finishPlacementAttempt(db, attempt, 'timed_out', current);
+      throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
+    }
+    if (
+      (await countEligiblePlacementQuestions(db, attempt.claimId)) >=
+      PLACEMENT_STARTER_REQUIRED_COUNT
+    ) {
+      await finishPlacementAttempt(db, attempt, 'succeeded', current);
+      return;
+    }
+    if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
+      await finishPlacementAttempt(db, attempt, 'underfilled', current);
+      throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
+    }
+    if (current.getTime() >= nextHeartbeat) {
+      await renewPlacementAttempt(db, attempt, current);
+      nextHeartbeat = current.getTime() + PLACEMENT_ATTEMPT_HEARTBEAT_MS;
+    }
+    await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
+  }
+}
+
 export function buildQuizGenHandler(
   db: Db,
   deps: DepsOverride = {},
-): (jobs: Job<QuizGenJobData>[]) => Promise<void> {
+): (jobs: JobWithMetadata<QuizGenJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
@@ -1070,11 +1239,28 @@ export function buildQuizGenHandler(
           console.warn('[quiz_gen] ignoring malformed supply_trace in job data', job.id);
         }
       }
+      let placementAttempt: PlacementAttemptAuthority | undefined;
+      if (data.placement_starter_claim_id) {
+        const { deliveryNo } = placementDeliveryMetadata({
+          retryCount: job.retryCount,
+          retryLimit: job.retryLimit,
+        });
+        if (job.expireInSeconds * 1_000 !== 120 * 60_000) {
+          throw new Error('placement quiz_gen queue expiry must be 120 minutes');
+        }
+        placementAttempt = await acquirePlacementAttempt(db, {
+          claimId: data.placement_starter_claim_id,
+          pgBossJobId: job.id,
+          deliveryNo,
+          startedOn: job.startedOn,
+        });
+      }
       const result = await runQuizGen({
         db,
         trigger: data.trigger,
         refId: data.ref_id,
         count: data.count,
+        exactCount: data.exact_count,
         // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
@@ -1082,12 +1268,17 @@ export function buildQuizGenHandler(
         ...(data.objective_only ? { objectiveOnly: true } : {}),
         ...(data.kind_required ? { kindRequired: true } : {}),
         ...(supplyTrace ? { supplyTrace } : {}),
+        ...(placementAttempt ? { placementAttempt } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
         enqueueQuizVerify: deps.enqueueQuizVerify,
         retrieveFewShotFn: deps.retrieveFewShotFn,
       });
+      if (placementAttempt) {
+        await markAttemptVerifying(db, placementAttempt);
+        await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
+      }
       console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
     }
   };

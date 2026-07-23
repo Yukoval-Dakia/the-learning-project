@@ -33,6 +33,7 @@ import type { Db } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 
 // ---------- check identifiers ----------
 //
@@ -170,6 +171,7 @@ export interface SolveCheckOptions {
   solverModelOverride?: string;
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
   imageFetchFn?: SolveCheckImageFetchFn;
+  placementAuthority?: PlacementVerificationAuthority;
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -450,6 +452,7 @@ export async function runSolveCheck(
   try {
     const meta = (question.metadata ?? {}) as Record<string, unknown>;
     const input = {
+      ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
       prompt_md: question.prompt_md,
       kind: question.kind,
       subject_id: opts.profile.id,
@@ -706,6 +709,7 @@ export interface TeachingQualityOptions {
     // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
     full: any;
   };
+  placementAuthority?: PlacementVerificationAuthority;
 }
 
 // Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
@@ -821,6 +825,7 @@ export async function runTeachingQualityCheck(
   let parsed: unknown;
   try {
     const input = {
+      ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
       prompt_md: question.prompt_md,
       kind: question.kind,
       reference_md: question.reference_md,

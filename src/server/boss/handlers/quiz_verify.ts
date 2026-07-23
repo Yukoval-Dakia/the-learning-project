@@ -63,6 +63,11 @@ import {
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { SupplyTraceV1 } from '@/server/question-supply/evidence-demand';
+import {
+  type PlacementVerificationAuthority,
+  addAuthorizedCostComponent,
+  assertPlacementAuthority,
+} from '@/server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import {
   type SolveCheckQuestion,
@@ -79,6 +84,7 @@ import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
 
 export interface QuizVerifyJobData {
   question_ids: string[];
+  placement_authorities?: PlacementVerificationAuthority[];
 }
 
 // Loose run seam (mirrors variant_verify): the handler only consumes
@@ -189,6 +195,7 @@ export interface RunQuizVerifyParams {
   db: Db;
   questionId: string;
   runTaskFn: RunTaskFn;
+  placementAuthority?: PlacementVerificationAuthority;
 }
 
 export interface RunQuizVerifyResult {
@@ -206,7 +213,10 @@ export interface RunQuizVerifyResult {
  * chained verify event guard. Promotes draft→active + FSRS-enrolls on pass.
  */
 export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQuizVerifyResult> {
-  const { db, questionId, runTaskFn } = params;
+  const { db, questionId, runTaskFn, placementAuthority } = params;
+  if (placementAuthority) {
+    await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+  }
 
   const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   const row = rows[0];
@@ -316,6 +326,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     source_refs: meta.source_refs,
     self_copy_safety: meta.copy_safety,
     generation_method: meta.generation_method,
+    ...(placementAuthority ? { placement_authority: placementAuthority } : {}),
     // tier 3 only — the real grounded material for the `material_grounding` check.
     ...(materialDoc
       ? { material: { title: materialDoc.title, body_md: materialDoc.body_md } }
@@ -436,6 +447,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // check functions internally catch their own runTaskFn/parse errors and resolve to an
     // 'unsupported' verdict rather than rejecting, so racing them is safe (neither can leave the
     // other's Promise.all settle blocked or produce an unhandled rejection).
+    if (placementAuthority && freeChecksPass) {
+      await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+    }
     const [solveResult, teachingResult] = await Promise.all([
       freeChecksPass && tierChecks.includes('solve_check')
         ? runSolveCheck(
@@ -450,7 +464,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               knowledge_ids: row.knowledge_ids,
               metadata: metadataRaw,
             } satisfies SolveCheckQuestion,
-            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile }, db },
+            {
+              runTaskFn,
+              profile: { id: subjectProfile.id, full: subjectProfile },
+              db,
+              placementAuthority,
+            },
           )
         : Promise.resolve(undefined),
       freeChecksPass && tierChecks.includes('teaching_quality')
@@ -464,7 +483,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               rubric_json: row.rubric_json,
             } satisfies TeachingQualityQuestion,
             // YUK-606 — db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
-            { runTaskFn, db, profile: { id: subjectProfile.id, full: subjectProfile } },
+            {
+              runTaskFn,
+              db,
+              profile: { id: subjectProfile.id, full: subjectProfile },
+              placementAuthority,
+            },
           )
         : Promise.resolve(undefined),
     ]);
@@ -582,6 +606,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
 
     await db.transaction(async (tx) => {
+      if (placementAuthority) {
+        await assertPlacementAuthority(tx, placementAuthority, now);
+      }
       // Serialize the terminal verdict against cross-KC duplicate reconciliation. The model and
       // deterministic checks above ran against `row.version`; if attribution changed meanwhile,
       // this verdict is stale. Throwing writes a retriable outcome='error' event in the catch and
@@ -669,6 +696,40 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             updated_at: now,
           })
           .where(eq(question.id, questionId));
+      }
+
+      if (placementAuthority && result.task_run_id) {
+        await addAuthorizedCostComponent(tx, {
+          authority: {
+            claimId: placementAuthority.claim_id,
+            attemptId: placementAuthority.attempt_id,
+            fencingToken: placementAuthority.fencing_token,
+          },
+          kind: 'quiz_verify',
+          taskRunId: result.task_run_id,
+          questionId,
+          costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+          now,
+        });
+        for (const [kind, taskRunIds, costUsd] of [
+          ['solution_check', solveResult?.task_run_ids, solveResult?.cost_usd],
+          ['teaching_quality', teachingResult?.task_run_ids, teachingResult?.cost_usd],
+        ] as const) {
+          for (const taskRunId of taskRunIds ?? []) {
+            await addAuthorizedCostComponent(tx, {
+              authority: {
+                claimId: placementAuthority.claim_id,
+                attemptId: placementAuthority.attempt_id,
+                fencingToken: placementAuthority.fencing_token,
+              },
+              kind,
+              taskRunId,
+              questionId,
+              costMicroUsd: Math.round(((costUsd ?? 0) * 1_000_000) / (taskRunIds?.length ?? 1)),
+              now,
+            });
+          }
+        }
       }
 
       await writeEvent(tx, {
@@ -892,8 +953,19 @@ export function buildQuizVerifyHandler(
         console.warn('[quiz_verify] job missing question_ids', job.id);
         continue;
       }
+      const placementAuthorities = new Map(
+        (job.data.placement_authorities ?? []).map((authority) => [
+          authority.question_id,
+          authority,
+        ]),
+      );
       for (const questionId of questionIds) {
-        const result = await runQuizVerify({ db, questionId, runTaskFn });
+        const result = await runQuizVerify({
+          db,
+          questionId,
+          runTaskFn,
+          placementAuthority: placementAuthorities.get(questionId),
+        });
         console.log(`[quiz_verify] ${questionId} -> ${result.status}`);
       }
     }

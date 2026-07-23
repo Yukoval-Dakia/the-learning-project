@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import type { PlacementVerificationAuthority } from '@/server/question-supply/placement-starter-attempts';
 import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
@@ -24,6 +25,15 @@ const verifyDispatchIntentPayloadSchema = z.object({
   verifier_kind: verifyKindSchema,
   question_id: z.string().min(1),
   supply_trace: z.record(z.string(), z.unknown()).optional(),
+  placement_authority: z
+    .object({
+      claim_id: z.string().min(1),
+      attempt_id: z.string().min(1),
+      question_id: z.string().min(1),
+      verification_authority_epoch: z.string().uuid(),
+      fencing_token: z.string().uuid(),
+    })
+    .optional(),
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
@@ -32,6 +42,7 @@ export type EnqueueVerifyFn = (
   verifier: VerifyKind,
   questionIds: string[],
   options?: object,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ) => Promise<void>;
 
 export interface VerifyDispatchResult {
@@ -112,6 +123,7 @@ export async function writeVerifyDispatchIntent(
     questionId: string;
     verifier: VerifyKind;
     supplyTrace?: unknown;
+    placementAuthority?: PlacementVerificationAuthority;
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -120,6 +132,7 @@ export async function writeVerifyDispatchIntent(
     verifier_kind: input.verifier,
     question_id: input.questionId,
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
+    ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
   });
   return writeEvent(db, {
     id: intentEventId(input.questionId, input.verifier),
@@ -155,6 +168,7 @@ function dispatchCompletionEvent(
       recovery: input.recovery,
       disposition: input.disposition,
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
+      ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
     },
     created_at: input.now,
     ingest_at: input.now,
@@ -316,11 +330,23 @@ export async function dispatchPendingVerifyIntents(
       for (const verifier of verifyKindSchema.options) {
         const group = eligible.filter((intent) => intent.verifier_kind === verifier);
         if (group.length === 0) continue;
-        await input.enqueue(
-          verifier,
-          group.map((intent) => intent.question_id),
-          { db: fromPgBossDrizzleTx(tx) },
+        const placementAuthorities = group.flatMap((intent) =>
+          intent.placement_authority ? [intent.placement_authority] : [],
         );
+        if (placementAuthorities.length > 0) {
+          await input.enqueue(
+            verifier,
+            group.map((intent) => intent.question_id),
+            { db: fromPgBossDrizzleTx(tx) },
+            placementAuthorities,
+          );
+        } else {
+          await input.enqueue(
+            verifier,
+            group.map((intent) => intent.question_id),
+            { db: fromPgBossDrizzleTx(tx) },
+          );
+        }
         for (const intent of group) {
           completionEvents.push(
             dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
