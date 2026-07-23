@@ -169,7 +169,7 @@ describe('buildMemoryEventIngestHandler', () => {
             corrected_by_owner: true,
             corrected_claim_md: '应先验证虚词语境判断',
           },
-          affected_scopes: [],
+          affected_scopes: ['global', 'topic:k1'],
           created_at: new Date('2026-07-23T00:00:00Z'),
           kind: 'preference',
         }),
@@ -186,6 +186,9 @@ describe('buildMemoryEventIngestHandler', () => {
         source: 'conjecture_edit',
         event_id: 'rate_edited_1',
         conjecture_id: 'conjecture_1',
+        // codex P2 (PR #1039) — the event row's scopes must be threaded VERBATIM so
+        // scoped search (scope_key → affected_scopes contains) can retrieve the edit.
+        affected_scopes: ['global', 'topic:k1'],
         corrected_by_owner: true,
         created_at: '2026-07-23T00:00:00.000Z',
         created_ms: new Date('2026-07-23T00:00:00Z').getTime(),

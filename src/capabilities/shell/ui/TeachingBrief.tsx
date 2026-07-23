@@ -100,6 +100,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   const [editingClaim, setEditingClaim] = useState(false);
   const [claimDraft, setClaimDraft] = useState('');
   const editClaimTriggerRef = useRef<HTMLButtonElement>(null);
+  const claimEditFieldRef = useRef<HTMLTextAreaElement>(null);
   const [revealed, setRevealed] = useState(false);
   const [acking, setAcking] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
@@ -299,6 +300,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                     <label htmlFor="tb-claim-edit">改写后的判断</label>
                     <textarea
                       id="tb-claim-edit"
+                      ref={claimEditFieldRef}
                       value={claimDraft}
                       maxLength={CONJECTURE_CLAIM_MAX_CHARS}
                       disabled={deciding}
@@ -352,6 +354,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                       setClaimDraft(brief.finding.claim_md);
                       setFailed(false);
                       setEditingClaim(true);
+                      // OCR (PR #1039) — move focus into the textarea on entering edit
+                      // mode (mirrors the Escape-path focus restoration idiom below).
+                      requestAnimationFrame(() => claimEditFieldRef.current?.focus());
                     }}
                   >
                     改写判断

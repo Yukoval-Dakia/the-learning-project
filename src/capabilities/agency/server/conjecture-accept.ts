@@ -64,7 +64,8 @@ export interface ConjectureApplierOpts {
   decision?: string;
   user_note?: string;
   // EDIT path: the owner-rewritten conjecture payload (canonical field names,
-  // MISMATCH #2). Presence ⇒ corrected_by_owner=true + a CORE write.
+  // MISMATCH #2). Presence ⇒ corrected_by_owner=true; the durable rate-event outbox
+  // worker projects the rewrite to mem0 CORE asynchronously (no direct CORE write here).
   corrected_payload?: { claim_md: string };
 }
 
@@ -143,6 +144,11 @@ export async function acceptConjectureProposal(
       payload: {
         rating: 'accept',
         conjecture_id: conjectureId,
+        // codex P2 (PR #1039) — scope-tagger derives `topic:<kc>` from
+        // referenced_knowledge_ids, so this rate event's affected_scopes (and the
+        // verbatim mem0 projection that copies them) are retrievable under the
+        // conjecture's knowledge scope instead of only 'global'.
+        referenced_knowledge_ids: [requiredString(change.knowledge_id, 'knowledge_id', proposalId)],
         // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
         corrected_by_owner: isEdit,
         calibration_anchor: isEdit ? 'edit' : 'accept',

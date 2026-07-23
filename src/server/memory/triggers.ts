@@ -334,6 +334,10 @@ export function buildMemoryEventIngestHandler(
               source: 'conjecture_edit',
               event_id: row.id,
               conjecture_id: editedConjecture.conjectureId,
+              // codex P2 (PR #1039) — mirror addEventMemory's scope metadata: search()
+              // maps scope_key → `affected_scopes contains`, so without this the edited
+              // claim would be invisible to every scoped retrieval.
+              affected_scopes: row.affected_scopes,
               corrected_by_owner: true,
               created_at: row.created_at.toISOString(),
               created_ms: row.created_at.getTime(),

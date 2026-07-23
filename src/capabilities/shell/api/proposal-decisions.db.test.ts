@@ -162,11 +162,19 @@ describe('POST /api/proposals/[id]/decisions', () => {
     });
     expect(response.status).toBe(400);
 
-    // No rate event was written — the proposal is still undecided.
+    // No rate event was written — the proposal is still undecided. Correlate via the
+    // canonical accept contract (subject_kind='event' + subject_id=proposalId), not
+    // only the causal-chain field.
     const rows = await testDb()
       .select()
       .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_p1')));
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          eq(event.subject_kind, 'event'),
+          eq(event.subject_id, 'edge_p1'),
+        ),
+      );
     expect(rows).toHaveLength(0);
   });
 
