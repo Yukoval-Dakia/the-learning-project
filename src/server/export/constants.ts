@@ -78,7 +78,10 @@
 // **序列本身不随行备份**：restore 尾必须 setval('subject_change_seq', max+1)
 // （archive.ts restore tx 内），不补会撞已有 as-of 坐标。NEW FK_ORDER tables 必
 // bump：36 → 42 tables，4.13 → 4.14。
-export const SCHEMA_VERSION = '4.14';
+// YUK-452 Phase B: placement_starter_claim/attempt/attempt_question/cost_component
+// 四张 admission/成本台账表进 FK_ORDER（见数组尾注记）。NEW FK_ORDER tables 必 bump：
+// 42 → 46 tables，4.14 → 4.15。
+export const SCHEMA_VERSION = '4.15';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -223,6 +226,16 @@ export const FK_ORDER = [
   'subject_trait_binding',
   'subject_control_journal',
   'subject_name_claim',
+  // YUK-452 Phase B (0074/0075): placement cold-starter admission 四表 — 冷启 admission
+  // 与付费清算的持久台账（预算 claim / attempt / attempt↔question 链 / settled 成本组件，
+  // 含 task_run_id 与 actual cost provenance）。丢了即 restore 后预算控制失忆（可重复
+  // 超额 admission）+ 付费审计断链，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 硬 FK 父先子后：claim ← attempt ← (attempt_question, cost_component)。
+  // NEW FK_ORDER tables 必 bump：42 → 46 tables，4.14 → 4.15。
+  'placement_starter_claim',
+  'placement_starter_attempt',
+  'placement_starter_attempt_question',
+  'placement_starter_cost_component',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];
