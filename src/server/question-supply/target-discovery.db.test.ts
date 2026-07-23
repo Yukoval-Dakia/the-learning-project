@@ -415,6 +415,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
       target_id: frontierTarget.id,
       producer_route: 'sourcing_web',
     });
+    expect(payload.supply_trace).toEqual(enqueued[0].data.supply_trace);
     expect(typeof payload.stop_condition).toBe('string');
   });
 

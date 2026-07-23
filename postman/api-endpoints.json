@@ -1036,7 +1036,7 @@
           "cap": 8,
           "seThreshold": null
         },
-        "notes": "答题经 /api/review/submit（session_id=本 probe）后调。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
+        "notes": "答题经 /api/review/submit（session_id=本 probe）后调。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
       }
     ]
   },

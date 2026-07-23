@@ -22,6 +22,10 @@ export function testDb(): Db {
 // ingestion_session DROPped — removed from this list. Step 1.4: judgment +
 // user_appeal previously dropped per data-assumptions §O2.
 const ALL_TABLES = [
+  'placement_starter_cost_component',
+  'placement_starter_attempt_question',
+  'placement_starter_attempt',
+  'placement_starter_claim',
   'event',
   'proposal_signals',
   'material_fsrs_state',

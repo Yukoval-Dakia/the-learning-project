@@ -16,10 +16,10 @@ import {
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
 } from '@/capabilities/knowledge/server/domain';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 
 export async function resolveGoalPlacementScope(
-  db: Db,
+  db: Db | Tx,
   goalRow: {
     scope: string[] | null;
     subjectId: string | null;

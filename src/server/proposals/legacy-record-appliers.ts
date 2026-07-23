@@ -24,6 +24,7 @@ import {
   learningItemLiveRowToSnapshot,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
@@ -368,6 +369,7 @@ export async function acceptRecordPromotionProposal(
 
   await db.transaction(async (tx) => {
     if (target === 'question') {
+      await lockPlacementSupplyScopes(tx, knowledgeIds);
       await tx.insert(question).values(
         withAnswerClass({
           id: materializedId,

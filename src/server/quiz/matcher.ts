@@ -456,6 +456,7 @@ export async function demandToSupplyTarget(
 // matcher 残余 demand 未显式给 priority 时的兜底基准，与扫描器同尺度便于观测对齐)。
 const GAP_KIND_BASE_PRIORITY: Record<SupplyGapKind, number> = {
   frontier_zero: 1.0,
+  placement_starter: 1.0,
   diagnostic: 0.7,
   source_quality: 0.5,
   format_diversity: 0.4,

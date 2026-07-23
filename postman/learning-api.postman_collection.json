@@ -1340,7 +1340,7 @@
                 }
               ]
             },
-            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/review/submit（session_id=本 probe）后调。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
+            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/review/submit（session_id=本 probe）后调。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ],\n  \"cap\": 8,\n  \"seThreshold\": null\n}",

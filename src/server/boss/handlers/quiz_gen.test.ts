@@ -21,6 +21,7 @@ import {
   knowledge,
   learning_item,
   material_fsrs_state,
+  placement_starter_claim,
   question,
   source_document,
 } from '@/db/schema';
@@ -1703,6 +1704,63 @@ describe('buildQuizGenHandler', () => {
     // the first batch and skips the duplicate batch without another verify enqueue.
     expect(rows).toHaveLength(2);
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('terminalizes a budget-exhausted placement claim and completes the job without throwing (YUK-452 round-3)', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('runQuizGen must not be reached on a budget-exhausted claim');
+    });
+    // Claim whose earlier settlements pushed known_cost up to the budget limit.
+    await testDb().insert(placement_starter_claim).values({
+      id: 'claim-budget',
+      fingerprint: 'placement-starter|budget',
+      goal_id: 'goal-budget',
+      semantic_goal_revision_id: 'rev-budget',
+      subject_id: 'wenyan',
+      knowledge_id: 'k-budget',
+      demand_id: 'demand-budget',
+      target_id: 'target-budget',
+      status: 'retry_scheduled',
+      pg_boss_job_id: 'job-budget',
+      max_paid_attempts: 3,
+      budget_limit_micro_usd: 1_000_000,
+      known_cost_micro_usd: 1_000_000,
+      next_reconcile_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn: runAgentTaskFn as never,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const job = {
+      id: 'job-budget',
+      data: {
+        trigger: 'knowledge',
+        ref_id: 'k-budget',
+        placement_starter_claim_id: 'claim-budget',
+      },
+      retryCount: 1,
+      retryLimit: 2,
+      expireInSeconds: 7200,
+      startedOn: now,
+      signal: new AbortController().signal,
+    } as never;
+
+    // Must NOT throw — the handler completes the job (no pg-boss redelivery loop).
+    await expect(handler([job])).resolves.toBeUndefined();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    const [claim] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, 'claim-budget'));
+    expect(claim?.status).toBe('exhausted');
+    expect(claim?.exhausted_at).not.toBeNull();
   });
 });
 

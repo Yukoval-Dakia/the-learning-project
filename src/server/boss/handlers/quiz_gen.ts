@@ -17,9 +17,10 @@
 // draft_status='draft' (NOT in the review pool, no FSRS yet). The chained
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
+import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import type { Job, SendOptions } from 'pg-boss';
+import type { JobWithMetadata, SendOptions } from 'pg-boss';
 
 import {
   DifficultyEvidence,
@@ -38,7 +39,14 @@ import {
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, learning_item, question, source_document } from '@/db/schema';
+import {
+  artifact,
+  knowledge,
+  learning_item,
+  placement_starter_attempt_question,
+  question,
+  source_document,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
@@ -68,6 +76,35 @@ import {
   type SupplyTraceV1T,
   withSupplyTraceDifficultyEvidence,
 } from '@/server/question-supply/evidence-demand';
+import {
+  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
+  PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  PLACEMENT_STARTER_REQUIRED_COUNT,
+  PLACEMENT_VERIFY_POLL_MS,
+  type PlacementAttemptAuthority,
+  type PlacementAttemptHeartbeat,
+  PlacementStarterAdmissionError,
+  PlacementStarterBudgetExhaustedError,
+  PlacementStarterDeadlineError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnderfillError,
+  type PlacementVerificationAuthority,
+  acquirePlacementAttempt,
+  assertPlacementAttemptFence,
+  countEligiblePlacementQuestions,
+  finishPlacementAttempt,
+  markAttemptVerifying,
+  placementAttemptVerificationSettled,
+  placementDeliveryMetadata,
+  placementFulfillmentDisposition,
+  recordPlacementAttemptOutput,
+  releaseAuthorizedPaidCall,
+  renewPlacementAttempt,
+  reservePlacementGenerationCall,
+  startPlacementAttemptHeartbeat,
+} from '@/server/question-supply/placement-starter-attempts';
+import { markPlacementStarterClaimTerminal } from '@/server/question-supply/placement-starter-store';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
@@ -95,6 +132,9 @@ export interface QuizGenJobData {
   trigger: QuizGenTrigger;
   ref_id: string;
   count?: number;
+  exact_count?: number;
+  placement_starter_claim_id?: string;
+  semantic_goal_revision_id?: string;
   // YUK-226 S2-5b F1 — the §3.2 找题次序 pins which tier it asked for (step 3
   // material_grounded vs step 4 closed_book). Absent on a bare manual quiz_gen
   // trigger, in which case the agent free-chooses the method as before.
@@ -177,7 +217,11 @@ export type RetrieveFewShotFn = (params: {
 }) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
-export type EnqueueQuizVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
+export type EnqueueQuizVerifyFn = (
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+) => Promise<void>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -185,6 +229,9 @@ interface DepsOverride {
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
+  now?: () => Date;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  heartbeatSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 async function defaultRetrieveFewShot(params: {
@@ -199,12 +246,20 @@ async function defaultRetrieveFewShot(params: {
 async function defaultEnqueueQuizVerify(
   questionIds: string[],
   options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ): Promise<void> {
   // Worker process already has boss started; getStartedBoss() returns the same
   // instance (mirrors attribution_followup). Q5 creates + works the queue.
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('quiz_verify', { question_ids: questionIds }, options);
+  await boss.send(
+    'quiz_verify',
+    {
+      question_ids: questionIds,
+      ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+    },
+    options,
+  );
 }
 
 // §2 / §5 — output JSON parse + judge-contract assertion (shared with
@@ -320,6 +375,7 @@ export interface RunQuizGenParams {
   trigger: QuizGenTrigger;
   refId: string;
   count?: number;
+  exactCount?: number;
   // YUK-226 S2-5b F1 — when set, the 找题次序 pins the generation_method (the agent is
   // instructed to honour it). Absent → original free-choice behaviour preserved.
   generationMethod?: 'material_grounded' | 'closed_book';
@@ -331,6 +387,8 @@ export interface RunQuizGenParams {
   objectiveOnly?: boolean;
   kindRequired?: boolean;
   supplyTrace?: SupplyTraceV1T;
+  placementAttempt?: PlacementAttemptAuthority;
+  placementHeartbeat?: PlacementAttemptHeartbeat;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -556,6 +614,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   let taskResult: TaskTextResult | null = null;
   let failureStage: 'producer' | 'persist' | 'event' | 'dispatch' = 'producer';
   try {
+    if (params.placementAttempt) {
+      await params.placementHeartbeat?.assertHealthy();
+      await reservePlacementGenerationCall(db, params.placementAttempt);
+    }
     const result = await run('QuizGenTask', input, {
       db,
       mcpServers,
@@ -564,7 +626,33 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
+    await params.placementHeartbeat?.assertHealthy();
+    if (params.placementAttempt) {
+      await assertPlacementAttemptFence(db, params.placementAttempt);
+    }
     const { parsed, parseRepaired } = parseOutput(result.text);
+    if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
+      throw new Error(
+        `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
+      );
+    }
+    if (params.placementAttempt) {
+      if (!result.task_run_id) {
+        throw new Error('placement quiz_gen requires provider task_run_id');
+      }
+      // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
+      // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
+      const { overCap } = await recordPlacementAttemptOutput(db, params.placementAttempt, {
+        taskRunId: result.task_run_id,
+        outputText: result.text,
+        costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
+      });
+      if (overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement generation exceeded authorized reservation',
+        );
+      }
+    }
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
     // material_grounded vs step 4 closed_book), the agent prompt instructs honouring it,
@@ -638,6 +726,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    // Placement-authorized questions whose verify intent must be drained THIS attempt but which are
+    // NOT in questionIds — currently exact duplicates of an existing draft (they get an authority +
+    // verify intent but reuse the existing row, so they never enter questionIds). Without draining
+    // them here their intent waits for daily recovery while reconcilePlacementDelivery blocks to the
+    // deadline (codex P2, YUK-452 review).
+    const placementDrainOnlyIds: string[] = [];
     const difficultyEvidenceByQuestion: Array<{
       question_id: string;
       evidence: DifficultyEvidenceT;
@@ -672,7 +766,77 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // questions in the run (one passage → many questions probing it).
     let materialSourceDocumentId: string | null = null;
     failureStage = 'persist';
+    await params.placementHeartbeat?.assertHealthy();
     await db.transaction(async (tx) => {
+      if (params.placementAttempt) {
+        await assertPlacementAttemptFence(tx, params.placementAttempt);
+      }
+      const authorizeAndDispatchPlacementQuestion = async (
+        questionId: string,
+        canonicalHash: string,
+        supplyTrace: SupplyTraceV1T | undefined,
+        allowPersistedReplay: boolean,
+      ): Promise<boolean> => {
+        if (!params.placementAttempt) return false;
+        const inserted = await tx
+          .insert(placement_starter_attempt_question)
+          .values({
+            attempt_id: params.placementAttempt.attemptId,
+            claim_id: params.placementAttempt.claimId,
+            question_id: questionId,
+            canonical_hash: canonicalHash,
+            verification_authority_epoch: randomUUID(),
+            verification_status: 'authorized',
+            created_at: now,
+          })
+          .onConflictDoNothing()
+          .returning({
+            claimId: placement_starter_attempt_question.claim_id,
+            attemptId: placement_starter_attempt_question.attempt_id,
+            questionId: placement_starter_attempt_question.question_id,
+            epoch: placement_starter_attempt_question.verification_authority_epoch,
+          });
+        let persisted = inserted[0];
+        if (inserted.length > 1) {
+          throw new Error('placement authority insert returned multiple rows');
+        }
+        if (!persisted && allowPersistedReplay) {
+          [persisted] = await tx
+            .select({
+              claimId: placement_starter_attempt_question.claim_id,
+              attemptId: placement_starter_attempt_question.attempt_id,
+              questionId: placement_starter_attempt_question.question_id,
+              epoch: placement_starter_attempt_question.verification_authority_epoch,
+            })
+            .from(placement_starter_attempt_question)
+            .where(
+              and(
+                eq(
+                  placement_starter_attempt_question.attempt_id,
+                  params.placementAttempt.attemptId,
+                ),
+                eq(placement_starter_attempt_question.question_id, questionId),
+              ),
+            )
+            .limit(1);
+        }
+        if (!persisted) return false;
+        const authority: PlacementVerificationAuthority = {
+          claim_id: persisted.claimId,
+          attempt_id: persisted.attemptId,
+          question_id: persisted.questionId,
+          verification_authority_epoch: persisted.epoch,
+          fencing_token: params.placementAttempt.fencingToken,
+        };
+        await writeVerifyDispatchIntent(tx, {
+          questionId: persisted.questionId,
+          verifier: 'quiz_verify',
+          supplyTrace,
+          placementAuthority: authority,
+          createdAt: now,
+        });
+        return true;
+      };
       if (parsed.generation_method === 'material_grounded' && parsed.material) {
         materialSourceDocumentId = createId();
         await tx.insert(source_document).values({
@@ -753,6 +917,16 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             resulting_knowledge_ids: existingDuplicate.knowledgeIds,
             preserved_draft_status: existingDuplicate.draftStatus,
           });
+          if (params.placementAttempt) {
+            const dupAuthorized = await authorizeAndDispatchPlacementQuestion(
+              existingDuplicate.id,
+              canonicalContentHash,
+              params.supplyTrace,
+              true,
+            );
+            // Drain the duplicate's intent this attempt (it never enters questionIds).
+            if (dupAuthorized) placementDrainOnlyIds.push(existingDuplicate.id);
+          }
           continue;
         }
         await params.afterExactDuplicateLookupMiss?.();
@@ -867,15 +1041,33 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               resulting_knowledge_ids: racedDuplicate.knowledgeIds,
               preserved_draft_status: racedDuplicate.draftStatus,
             });
+            if (params.placementAttempt) {
+              await authorizeAndDispatchPlacementQuestion(
+                racedDuplicate.id,
+                canonicalContentHash,
+                questionSupplyTrace,
+                true,
+              );
+            }
             continue;
           }
         }
-        await writeVerifyDispatchIntent(tx, {
-          questionId: id,
-          verifier: 'quiz_verify',
-          supplyTrace: questionSupplyTrace,
-          createdAt: now,
-        });
+        if (params.placementAttempt) {
+          const authorized = await authorizeAndDispatchPlacementQuestion(
+            id,
+            canonicalContentHash,
+            questionSupplyTrace,
+            false,
+          );
+          if (!authorized) continue;
+        } else {
+          await writeVerifyDispatchIntent(tx, {
+            questionId: id,
+            verifier: 'quiz_verify',
+            supplyTrace: questionSupplyTrace,
+            createdAt: now,
+          });
+        }
         // Aggregate exactly the persisted question attribution (model-valid ids + supply target),
         // not the narrower pre-union model ids. Add only after a fresh row actually landed so the
         // artifact's tags describe its own tool_state.question_ids, not skipped duplicates.
@@ -991,12 +1183,17 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // which is itself idempotent per question.
     failureStage = 'dispatch';
     const dispatchResult = await dispatchPendingVerifyIntents(db, {
-      questionIds,
-      enqueue: async (verifier, ids, options) => {
+      questionIds:
+        placementDrainOnlyIds.length > 0 ? [...questionIds, ...placementDrainOnlyIds] : questionIds,
+      enqueue: async (verifier, ids, options, placementAuthorities) => {
         if (verifier !== 'quiz_verify') {
           throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
         }
-        await enqueueQuizVerify(ids, options);
+        if (placementAuthorities && placementAuthorities.length > 0) {
+          await enqueueQuizVerify(ids, options, placementAuthorities);
+        } else {
+          await enqueueQuizVerify(ids, options);
+        }
       },
     });
     if (dispatchResult.failed > 0) {
@@ -1012,6 +1209,36 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       tool_quiz_artifact_id: toolQuizArtifactId,
     };
   } catch (err) {
+    // Release the generation reservation if the paid QuizGenTask threw AFTER reserving 500k but
+    // BEFORE recordPlacementAttemptOutput settled it — otherwise the reservation placeholder leaks
+    // into the claim's known_cost and falsely exhausts the budget across redeliveries. Idempotent /
+    // RETENTION-safe: a no-op once the call settled an actual cost. Skip when the fence is already
+    // lost (StaleAuthority) — a superseding delivery owns that attempt's ledger (YUK-452 review).
+    if (params.placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+      try {
+        const attempt = params.placementAttempt;
+        await db.transaction(async (tx) =>
+          releaseAuthorizedPaidCall(tx, {
+            claimId: attempt.claimId,
+            reservationKey: `${attempt.attemptId}:quiz_gen`,
+          }),
+        );
+      } catch (releaseErr) {
+        console.error(
+          '[quiz_gen] placement generation reservation release failed for',
+          params.placementAttempt.attemptId,
+          releaseErr,
+        );
+      }
+    }
+    // A placement stale-authority / admission failure is about the CLAIM's fence/budget, not the
+    // question's quality — do not write a spurious quiz_gen failure event against the trigger; let
+    // the handler terminalize the attempt and re-throw.
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     try {
       await writeEvent(db, {
         id: createId(),
@@ -1042,10 +1269,61 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   }
 }
 
+function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason ?? new Error('quiz_gen aborted'));
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new Error('quiz_gen aborted'));
+      },
+      { once: true },
+    );
+  });
+}
+
+async function reconcilePlacementDelivery(
+  db: Db,
+  attempt: PlacementAttemptAuthority,
+  signal: AbortSignal,
+  deps: DepsOverride,
+): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? defaultPlacementSleep;
+  const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
+  while (true) {
+    if (signal.aborted) {
+      await finishPlacementAttempt(db, attempt, 'interrupted', now());
+      throw signal.reason ?? new Error('quiz_gen aborted');
+    }
+    const current = now();
+    if (current.getTime() >= deadline) {
+      await finishPlacementAttempt(db, attempt, 'timed_out', current);
+      throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
+    }
+    const eligibleCount = await countEligiblePlacementQuestions(
+      db,
+      attempt.claimId,
+      attempt.attemptId,
+    );
+    if (placementFulfillmentDisposition(eligibleCount) === 'satisfied') {
+      await finishPlacementAttempt(db, attempt, 'succeeded', current);
+      return;
+    }
+    if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
+      await finishPlacementAttempt(db, attempt, 'underfilled', current);
+      throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
+    }
+    await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
+  }
+}
+
 export function buildQuizGenHandler(
   db: Db,
   deps: DepsOverride = {},
-): (jobs: Job<QuizGenJobData>[]) => Promise<void> {
+): (jobs: JobWithMetadata<QuizGenJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
@@ -1067,25 +1345,113 @@ export function buildQuizGenHandler(
           console.warn('[quiz_gen] ignoring malformed supply_trace in job data', job.id);
         }
       }
-      const result = await runQuizGen({
-        db,
-        trigger: data.trigger,
-        refId: data.ref_id,
-        count: data.count,
-        // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
-        ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
-        ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
-        ...(data.kind ? { kind: data.kind } : {}),
-        ...(data.objective_only ? { objectiveOnly: true } : {}),
-        ...(data.kind_required ? { kindRequired: true } : {}),
-        ...(supplyTrace ? { supplyTrace } : {}),
-        runAgentTaskFn: deps.runAgentTaskFn,
-        buildMcpServerFn: deps.buildMcpServerFn,
-        buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
-        enqueueQuizVerify: deps.enqueueQuizVerify,
-        retrieveFewShotFn: deps.retrieveFewShotFn,
-      });
-      console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+      let placementAttempt: PlacementAttemptAuthority | undefined;
+      let placementHeartbeat: PlacementAttemptHeartbeat | undefined;
+      try {
+        if (data.placement_starter_claim_id) {
+          const { deliveryNo } = placementDeliveryMetadata({
+            retryCount: job.retryCount,
+            retryLimit: job.retryLimit,
+          });
+          if (job.expireInSeconds * 1_000 !== PLACEMENT_QUEUE_EXPIRY_MS) {
+            throw new Error('placement quiz_gen queue expiry must be 120 minutes');
+          }
+          placementAttempt = await acquirePlacementAttempt(db, {
+            claimId: data.placement_starter_claim_id,
+            pgBossJobId: job.id,
+            deliveryNo,
+            startedOn: job.startedOn,
+          });
+          placementHeartbeat = startPlacementAttemptHeartbeat(db, placementAttempt, job.signal, {
+            now: deps.now,
+            sleep: deps.heartbeatSleep,
+          });
+        }
+        const result = await runQuizGen({
+          db,
+          trigger: data.trigger,
+          refId: data.ref_id,
+          count: data.count,
+          exactCount: data.exact_count,
+          // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
+          ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
+          ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
+          ...(data.kind ? { kind: data.kind } : {}),
+          ...(data.objective_only ? { objectiveOnly: true } : {}),
+          ...(data.kind_required ? { kindRequired: true } : {}),
+          ...(supplyTrace ? { supplyTrace } : {}),
+          ...(placementAttempt ? { placementAttempt } : {}),
+          ...(placementHeartbeat ? { placementHeartbeat } : {}),
+          runAgentTaskFn: deps.runAgentTaskFn,
+          buildMcpServerFn: deps.buildMcpServerFn,
+          buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
+          enqueueQuizVerify: deps.enqueueQuizVerify,
+          retrieveFewShotFn: deps.retrieveFewShotFn,
+        });
+        if (placementAttempt) {
+          await placementHeartbeat?.assertHealthy();
+          await assertPlacementAttemptFence(db, placementAttempt);
+          await markAttemptVerifying(db, placementAttempt);
+          await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
+        }
+        console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+      } catch (err) {
+        // Pre-attempt budget exhaustion (codex P2-A): acquirePlacementAttempt threw
+        // PlacementStarterBudgetExhaustedError BEFORE placementAttempt was assigned, so the
+        // finishPlacementAttempt path below cannot terminalize. A budget-exhausted claim can never
+        // make progress (known_cost only grows), so terminalize it as 'exhausted' and COMPLETE the
+        // job (no re-throw) — otherwise pg-boss redelivers straight into the same throw until DLQ
+        // while the claim sits non-terminal forever (placement soft-stuck, sourcingNeeded only).
+        if (
+          !placementAttempt &&
+          err instanceof PlacementStarterBudgetExhaustedError &&
+          data.placement_starter_claim_id
+        ) {
+          const claimId = data.placement_starter_claim_id;
+          try {
+            await db.transaction((tx) =>
+              markPlacementStarterClaimTerminal(tx, claimId, 'exhausted', new Date(), {
+                class: 'budget_exhausted',
+                code: 'budget_exhausted',
+                message: 'placement starter budget exhausted before a delivery could be acquired',
+              }),
+            );
+          } catch (terminalizeErr) {
+            console.error(
+              '[quiz_gen] placement budget-exhausted terminalize failed for',
+              claimId,
+              terminalizeErr,
+            );
+          }
+          continue;
+        }
+        // Terminalize the attempt if generation/verify failed BEFORE reconcile finalized it
+        // (parse/exact-count/persist failure, admission block, fence-still-ours abort). Without
+        // this the attempt stays 'running' holding a 20-min lease that blocks every pg-boss retry
+        // (acquirePlacementAttempt rejects behind the live lease), and the claim stays pinned
+        // non-terminal with no recovery — the zombie the codex P1 flagged. 'interrupted' routes the
+        // claim to retry_scheduled (non-final) or exhausted (final delivery) via finishPlacementAttempt.
+        // Skip on StaleAuthority: the fence is already lost, so a superseding delivery owns
+        // termination. reconcile's own terminal paths already finalized the attempt; a redundant
+        // finalize there simply finds a terminal row and throws StaleAuthority, which we swallow so
+        // the ORIGINAL error still propagates (YUK-452 review).
+        if (placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+          try {
+            await finishPlacementAttempt(db, placementAttempt, 'interrupted');
+          } catch (finalizeErr) {
+            if (!(finalizeErr instanceof PlacementStarterStaleAuthorityError)) {
+              console.error(
+                '[quiz_gen] placement attempt finalize failed for',
+                placementAttempt.attemptId,
+                finalizeErr,
+              );
+            }
+          }
+        }
+        throw err;
+      } finally {
+        await placementHeartbeat?.stop();
+      }
     }
   };
 }

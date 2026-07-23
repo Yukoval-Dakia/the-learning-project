@@ -6,7 +6,7 @@
 // dark-ship start gate is exercised in both directions.
 
 import { newId } from '@/core/ids';
-import { event, goal, knowledge, question } from '@/db/schema';
+import { event, goal, knowledge, learning_session, question } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -215,6 +215,15 @@ describe('placement API flow', () => {
     // Frozen scope respected — NOT widened to the full subject set.
     expect(body.knowledgeIds).toEqual(['kc-a']);
     expect(body.question?.questionId).toBe('q-a');
+  });
+
+  it('start rejects an unknown goal before tier-3 can serve a warm global question', async () => {
+    await seedKnowledge('kc-global');
+    await seedQuestion('q-global', ['kc-global'], 3);
+
+    const res = await startPlacement(jsonReq({ goalId: 'missing-goal' }));
+    expect(res.status).toBe(404);
+    expect(await db.select().from(learning_session)).toHaveLength(0);
   });
 
   it('start TIER-3 falls back to the full active tree for a NULL-subject empty-scope goal (YUK-481)', async () => {

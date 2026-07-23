@@ -1,3 +1,7 @@
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+} from '@/server/question-supply/placement-starter-attempts';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -538,6 +542,68 @@ describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
   });
 });
 
+// ---------- YUK-452 review F1 — semantic-leg settle failures must BLOCK ----------
+
+describe('runSolveCheck — semantic-leg admission failures block (YUK-452 F1)', () => {
+  it('re-throws PlacementStarterAdmissionError from settlePaidCall instead of decaying to conservative pass', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案'), task_run_id: 'tr_solver', cost_usd: 0.01 };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge', cost_usd: 0.9 };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    // quiz_verify-shaped settle callback: the semantic leg is over-cap → admission error.
+    // Pre-fix, runSemanticJudge's catch-all swallowed this into an 'unsupported' judge
+    // result and the solve-check fell through to the conservative 'pass'.
+    const settlePaidCall = vi.fn(async (kind: string) => {
+      if (kind === 'semantic_judge') {
+        throw new PlacementStarterAdmissionError('actual cost exceeded the per-call cap');
+      }
+    });
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        settlePaidCall,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterAdmissionError);
+    expect(settlePaidCall).toHaveBeenCalledWith(
+      'semantic_judge',
+      expect.any(String),
+      expect.objectContaining({ task_run_id: 'tr_judge' }),
+    );
+  });
+
+  it('re-throws PlacementStarterStaleAuthorityError raised on the semantic leg', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案') };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge' };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const settlePaidCall = vi.fn(async (kind: string) => {
+      if (kind === 'semantic_judge') {
+        throw new PlacementStarterStaleAuthorityError('placement authority rotated');
+      }
+    });
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        settlePaidCall,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
+  });
+});
+
 describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
   it('returns unsupported (NOT fail) when the solver throws', async () => {
     const runTaskFn = vi.fn(async () => {
@@ -659,7 +725,7 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
   // The injected runTaskFn handles BOTH the solver call and the SemanticJudge call;
   // dispatch on the task kind.
   function dispatch(solverAnswer: string, semantic: string) {
-    return vi.fn(async (kind: string) => {
+    return vi.fn(async (kind: string, _input?: unknown, _ctx?: unknown) => {
       if (kind === 'SolutionGenerateTask') return { text: solverOutput(solverAnswer) };
       if (kind === 'SemanticJudgeTask') return { text: semantic };
       throw new Error(`unexpected task ${kind}`);
@@ -721,6 +787,54 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it('rechecks authority before SemanticJudge and propagates the exact tuple', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: openQuestion.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const assertAuthority = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new PlacementStarterStaleAuthorityError('fence lost'));
+    const runTaskFn = dispatch('独立答案', semanticOutput('correct', 0.95));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: { transaction } as never,
+        placementAuthority: authority,
+        assertPlacementAuthorityFn: assertAuthority,
+      }),
+    ).rejects.toThrow('fence lost');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({ placement_authority: authority });
+  });
+
+  it('passes the exact placement tuple into SemanticJudge input', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: openQuestion.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = dispatch('独立答案', semanticOutput('correct', 0.95));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await runSolveCheck(openQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: { transaction } as never,
+      placementAuthority: authority,
+      assertPlacementAuthorityFn: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({ placement_authority: authority });
   });
 
   it('is conservative (unsupported) for an open question when no db handle is passed', async () => {
@@ -812,6 +926,56 @@ describe('teachingQualityBlocks (tier3/4 per-axis veto seam)', () => {
     const flags = { clarity: false, unique_answer: true, distractor_power: true };
     expect(teachingQualityBlocks(result({ clarity: 'fail' }), flags)).toBe(false);
     expect(teachingQualityBlocks(result({ unique: 'fail' }), flags)).toBe(true);
+  });
+});
+
+describe('runTeachingQualityCheck — placement authority', () => {
+  it('rechecks authority immediately before the paid call and propagates the tuple', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: choiceQuestionTQ.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput() }));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      db: { transaction } as never,
+      profile: fakeProfile,
+      placementAuthority: authority,
+      assertPlacementAuthorityFn: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'TeachingQualityTask',
+      expect.objectContaining({ placement_authority: authority }),
+      expect.anything(),
+    );
+  });
+
+  it('does not swallow stale authority as unsupported', async () => {
+    const authority = {
+      claim_id: 'claim',
+      attempt_id: 'attempt',
+      question_id: choiceQuestionTQ.id,
+      verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
+      fencing_token: '22222222-2222-4222-8222-222222222222',
+    };
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput() }));
+    const transaction = vi.fn(async (fn: (tx: never) => Promise<void>) => fn({} as never));
+    await expect(
+      runTeachingQualityCheck(choiceQuestionTQ, {
+        runTaskFn,
+        db: { transaction } as never,
+        profile: fakeProfile,
+        placementAuthority: authority,
+        assertPlacementAuthorityFn: vi
+          .fn()
+          .mockRejectedValue(new PlacementStarterStaleAuthorityError('fence lost')),
+      }),
+    ).rejects.toThrow('fence lost');
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 
