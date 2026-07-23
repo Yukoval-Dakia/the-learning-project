@@ -225,18 +225,21 @@ export interface PlacementAttemptHeartbeat {
   stop(): Promise<void>;
 }
 
-function heartbeatSleep(ms: number, signal: AbortSignal): Promise<void> {
+export function heartbeatSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason ?? new Error('placement heartbeat stopped'));
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason ?? new Error('placement heartbeat stopped'));
-      },
-      { once: true },
-    );
+    // Remove the abort listener on the normal resolve path — `{ once: true }` only fires-then-removes
+    // on abort, so a normal timeout would leak a listener on the long-lived job.signal every cycle
+    // (YUK-452 followup, same shape as defaultPlacementSleep).
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error('placement heartbeat stopped'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -874,15 +877,17 @@ export async function finishPlacementAttempt(
       .for('update');
     if (!claimRow) throw new PlacementStarterStaleAuthorityError('placement claim missing');
     const exhausted = status !== 'succeeded' && attempt.deliveryNo >= claimRow.maxPaidAttempts;
+    let claimUpdate: Partial<typeof placement_starter_claim.$inferInsert>;
+    if (status === 'succeeded') {
+      claimUpdate = { status: 'satisfied', satisfied_at: now, updated_at: now };
+    } else if (exhausted) {
+      claimUpdate = { status: 'exhausted', exhausted_at: now, updated_at: now };
+    } else {
+      claimUpdate = { status: 'retry_scheduled', updated_at: now };
+    }
     await tx
       .update(placement_starter_claim)
-      .set(
-        status === 'succeeded'
-          ? { status: 'satisfied', satisfied_at: now, updated_at: now }
-          : exhausted
-            ? { status: 'exhausted', exhausted_at: now, updated_at: now }
-            : { status: 'retry_scheduled', updated_at: now },
-      )
+      .set(claimUpdate)
       .where(eq(placement_starter_claim.id, attempt.claimId));
   });
 }
