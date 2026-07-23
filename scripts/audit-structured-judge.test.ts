@@ -28,23 +28,47 @@ function reg(defs: Record<string, TaskDefLike>): Record<string, TaskDefLike> {
 }
 
 describe('collectJudgeTasks', () => {
-  it('selects only kinds ending in JudgeTask, sorted, with the schema flag', () => {
+  it('selects JudgeTask-suffixed kinds + EXTRA_JUDGE_KINDS, sorted, with the schema flag', () => {
+    const zodLike = { safeParse: () => ({ success: true }) };
     const result = collectJudgeTasks(
       reg({
-        FooJudgeTask: { structuredOutputSchema: {} },
+        FooJudgeTask: { structuredOutputSchema: zodLike },
         BarJudgeTask: {},
-        NotAJudge: { structuredOutputSchema: {} },
+        NotAJudge: { structuredOutputSchema: zodLike },
         VariantVerifyTask: {},
+        // Suffix-less judge kind picked up via EXTRA_JUDGE_KINDS (PR #1042 codex P2).
+        UnitDimensionFallback: {},
       }),
     );
     expect(result).toEqual([
       { kind: 'BarJudgeTask', hasStructuredOutput: false },
       { kind: 'FooJudgeTask', hasStructuredOutput: true },
+      { kind: 'UnitDimensionFallback', hasStructuredOutput: false },
     ]);
+  });
+
+  it('only a Zod-like schema (safeParse function) counts as declared — null/{}/truthy junk do not', () => {
+    const result = collectJudgeTasks(
+      reg({
+        AJudgeTask: { structuredOutputSchema: null },
+        BJudgeTask: { structuredOutputSchema: {} },
+        CJudgeTask: { structuredOutputSchema: 'zod, trust me' },
+      }),
+    );
+    expect(result.map((t) => t.hasStructuredOutput)).toEqual([false, false, false]);
   });
 });
 
 describe('validateAllowlistEntry', () => {
+  it('rejects an array resolves_when (typeof [] is object — PR #1042 OCR)', () => {
+    const problems = validateAllowlistEntry(
+      'X',
+      { reason: 'because', resolves_when: [1, 2, 3] as never },
+      '2026-07-23',
+    );
+    expect(problems.some((p) => p.detail.includes('resolves_when must be'))).toBe(true);
+  });
+
   it('accepts a well-formed entry', () => {
     const problems = validateAllowlistEntry(
       'X',
@@ -135,12 +159,13 @@ describe('real registry + shipped allowlist', () => {
     readFileSync(join(__dirname, 'audit-structured-judge-allowlist.json'), 'utf-8'),
   ) as Allowlist;
 
-  it('has exactly the three known judge tasks with the expected schema state', () => {
+  it('has exactly the four known judge tasks with the expected schema state', () => {
     const judgeTasks = collectJudgeTasks(tasks as Record<string, TaskDefLike>);
     expect(judgeTasks).toEqual([
       { kind: 'MultimodalDirectJudgeTask', hasStructuredOutput: true },
       { kind: 'SemanticJudgeTask', hasStructuredOutput: false },
       { kind: 'StepsJudgeTask', hasStructuredOutput: true },
+      { kind: 'UnitDimensionFallback', hasStructuredOutput: false },
     ]);
   });
 

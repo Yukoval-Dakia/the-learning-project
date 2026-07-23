@@ -249,7 +249,13 @@ export async function runMultimodalDirectJudge(
   } catch (err) {
     return unsupportedResult('LLM output did not match MultimodalDirectLlmOutput schema', {
       error: err instanceof Error ? err.message : String(err),
-      raw_text: taskResult.text,
+      // Structured-fail evidence: on a structured-output endpoint the offending payload
+      // lives in structured_output (text may be empty) — record it, truncated; fall back
+      // to the text path's raw output otherwise (PR #1042 OCR).
+      raw_text:
+        taskResult.structured_output != null
+          ? JSON.stringify(taskResult.structured_output).slice(0, 4000)
+          : taskResult.text,
     });
   }
 

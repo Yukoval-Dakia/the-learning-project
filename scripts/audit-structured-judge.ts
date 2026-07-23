@@ -49,6 +49,13 @@ export const JUDGE_TASK_SUFFIX = 'JudgeTask';
 /** Minimal registry shape this audit reads (decoupled from the full TaskDef). */
 export type TaskDefLike = { structuredOutputSchema?: unknown };
 
+// Judge-shaped tasks that do NOT carry the `JudgeTask` suffix. The suffix sweep alone
+// misses them (PR #1042 codex P2: UnitDimensionFallback is the Judge v2 physics fallback
+// parsing free-text model output into a verdict). Keep this list in lockstep with the
+// self-test's pinned kind set — a new judge-shaped kind belongs either on the suffix
+// convention or in here.
+export const EXTRA_JUDGE_KINDS: ReadonlySet<string> = new Set(['UnitDimensionFallback']);
+
 export type JudgeTaskDecl = {
   kind: string;
   /** true iff the registry entry declares a `structuredOutputSchema`. */
@@ -62,10 +69,14 @@ export type JudgeTaskDecl = {
  */
 export function collectJudgeTasks(taskDefs: Record<string, TaskDefLike>): JudgeTaskDecl[] {
   return Object.entries(taskDefs)
-    .filter(([kind]) => kind.endsWith(JUDGE_TASK_SUFFIX))
+    .filter(([kind]) => kind.endsWith(JUDGE_TASK_SUFFIX) || EXTRA_JUDGE_KINDS.has(kind))
     .map(([kind, def]) => ({
       kind,
-      hasStructuredOutput: def.structuredOutputSchema !== undefined,
+      // Only a real schema counts: a Zod-like object exposing safeParse. Guards against
+      // structuredOutputSchema: null/false/'' accidentally reading as compliant (PR #1042 OCR).
+      hasStructuredOutput:
+        typeof (def.structuredOutputSchema as { safeParse?: unknown } | undefined)?.safeParse ===
+        'function',
     }))
     .sort((a, b) => a.kind.localeCompare(b.kind));
 }
@@ -92,7 +103,7 @@ export function validateAllowlistEntry(
     problems.push({ key, detail: 'reason must be a non-empty string' });
   }
   const rw = entry.resolves_when;
-  if (rw === null || typeof rw !== 'object') {
+  if (rw === null || typeof rw !== 'object' || Array.isArray(rw)) {
     problems.push({ key, detail: 'resolves_when must be { kind, ref, expected_by }' });
     return problems;
   }
