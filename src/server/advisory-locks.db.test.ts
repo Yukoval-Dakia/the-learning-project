@@ -18,10 +18,11 @@
 // updateThetaForAttempt tx shape auto-enroll runs, the merge retire pair, and the
 // shared upsert primitives) — NOT a synthetic cooperative writer.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { repairMergeAttributionForFromId } from '@/capabilities/knowledge/server/proposals';
 import { POST as submitPOST } from '@/capabilities/practice/api/submit';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
@@ -33,6 +34,7 @@ import {
   updateThetaForAttempt,
   upsertMasteryState,
 } from '@/server/mastery/state';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../tests/helpers/db';
 
 // The contended production writer must stay blocked at least this long. Unobstructed,
@@ -117,6 +119,65 @@ async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise
     // (and re-throws when awaited at the end).
     await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
     expect(settled).toBe(false);
+
+    release();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    await holder.end({ timeout: 5 });
+  }
+}
+
+/**
+ * Like {@link assertBlocksOnGlobalLock}, but ALSO proves lock ORDER: while the contended
+ * tx waits on the global lock, its backend must hold ZERO granted advisory locks — i.e.
+ * the global lock is the FIRST advisory lock the tx tries to take. Had the tx taken a
+ * knowledge_edge / fsrs:* / question-row-adjacent advisory lock first (the YUK-497 review
+ * F1/F2 inversion shapes), it would show >=1 granted advisory lock while waiting.
+ */
+async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
+  contended: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (s) => {
+      await s.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    // Order proof: every backend waiting on an advisory lock in THIS database holds no
+    // granted advisory locks (scoped to current database — the fork DBs share a cluster).
+    const rows = (await testDb().execute(sql`
+      SELECT w.pid,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory
+        FROM pg_locks w
+       WHERE w.locktype = 'advisory' AND NOT w.granted
+         AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `)) as unknown as Array<{ pid: number; granted_advisory: number }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.granted_advisory).toBe(0);
+    }
 
     release();
     await holdTx;
@@ -307,5 +368,52 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
         }
       }
     }
+  });
+
+  it('merge-repair path (sweep/backfill tx shape) takes the global lock FIRST (review F1)', async () => {
+    const from = newId();
+    const into = newId();
+    await seedKnowledge(from);
+    await seedKnowledge(into);
+
+    // Direct repairMergeAttributionForFromId call in a bare tx = the background
+    // merge_attribution_sweep / merge-attribution-backfill shape (no applyMerge wrapper).
+    // Pre-fix this tx took knowledge_edge advisory locks inside rewireKnowledgeEdges
+    // BEFORE reaching the global lock in the retire pair.
+    const repair = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+      testDb().transaction((tx) =>
+        repairMergeAttributionForFromId(tx, from, into, new Date(), new Set([from])),
+      ),
+    );
+    expect(repair.from_id).toBe(from);
+  });
+
+  it('exact-duplicate dedup producer takes the global lock BEFORE the question row lock (review F2)', async () => {
+    const kcA = newId();
+    const kcB = newId();
+    const qId = newId();
+    await seedKnowledge(kcA);
+    await seedKnowledge(kcB);
+    await seedQuestion(qId, [kcA]);
+    const hash = `hash-${qId}`;
+    await testDb()
+      .update(question)
+      .set({ canonical_content_hash: hash, draft_status: 'active' })
+      .where(eq(question.id, qId));
+
+    // quiz_gen/sourcing/jyeoo producer shape: dedup merge as the tx's learning-state
+    // entry point. Pre-fix it row-locked the duplicate question (FOR UPDATE) before
+    // enrollFsrsStateIfAbsent reached the global lock — inverted vs the live submit tx.
+    const merged = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+      testDb().transaction((tx) =>
+        mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash: hash,
+          knowledgeIds: [kcA, kcB],
+          actorRef: 'quiz_gen',
+          now: new Date(),
+        }),
+      ),
+    );
+    expect(merged).not.toBeNull();
   });
 });

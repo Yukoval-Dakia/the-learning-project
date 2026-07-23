@@ -1019,6 +1019,12 @@ export async function repairMergeAttributionForFromId(
   now: Date,
   mergeFromIds: ReadonlySet<string>,
 ): Promise<MergeRepairEntryT> {
+  // YUK-497 review F1 — global learning-state write lock at ENTRY for every caller of the
+  // shared repair path. applyMerge already holds it (reentrant no-op); the background
+  // merge_attribution_sweep / merge-attribution-backfill txs previously reached it mid-tx
+  // AFTER rewireKnowledgeEdges' knowledge_edge locks → G↔knowledge_edge cycle against a
+  // live merge accept (PG 40P01 aborting the user-facing side).
+  await acquireLearningStateWriteLock(tx);
   return {
     from_id: fromId,
     question_ids_rewritten: await rewriteQuestionKnowledgeIds(tx, fromId, intoId),

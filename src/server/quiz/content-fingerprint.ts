@@ -6,6 +6,7 @@ import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { enrollFsrsStateIfAbsent } from '@/server/fsrs/state';
 
 // Bumping this version rewrites the canonical string, so every persisted
@@ -154,6 +155,11 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     now: Date;
   },
 ): Promise<ExactQuestionDuplicateKnowledgeMerge | null> {
+  // YUK-497 review F2 — global learning-state write lock BEFORE the question row lock.
+  // This path reaches enrollFsrsStateIfAbsent (G) after the FOR UPDATE below; without
+  // G-first, the dedup producers order question-row→G while the live submit tx orders
+  // G→question-row — a cross-process deadlock aborting the user-facing submit.
+  await acquireLearningStateWriteLock(tx);
   const rows = await tx
     .select({
       id: question.id,

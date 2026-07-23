@@ -800,6 +800,8 @@ async function runResetTx(dbh: DbLike): Promise<ResetCounts> {
   const ps = await dbh.execute(
     sql`DELETE FROM "proposal_signals" WHERE cooldown_key LIKE ${'knowledge_edge:synthetic:%'} RETURNING id`,
   );
+  // YUK-497 doctrine note: raw DELETE without the learning-state write lock is acceptable
+  // ONLY here — dev-only script, touches synthetic:q:% rows exclusively, never live traffic.
   const fs = await dbh.execute(
     sql`DELETE FROM "material_fsrs_state" WHERE subject_id LIKE ${'synthetic:q:%'} RETURNING id`,
   );
