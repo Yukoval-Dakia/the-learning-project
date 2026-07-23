@@ -724,6 +724,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    // Placement-authorized questions whose verify intent must be drained THIS attempt but which are
+    // NOT in questionIds — currently exact duplicates of an existing draft (they get an authority +
+    // verify intent but reuse the existing row, so they never enter questionIds). Without draining
+    // them here their intent waits for daily recovery while reconcilePlacementDelivery blocks to the
+    // deadline (codex P2, YUK-452 review).
+    const placementDrainOnlyIds: string[] = [];
     const difficultyEvidenceByQuestion: Array<{
       question_id: string;
       evidence: DifficultyEvidenceT;
@@ -910,12 +916,14 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             preserved_draft_status: existingDuplicate.draftStatus,
           });
           if (params.placementAttempt) {
-            await authorizeAndDispatchPlacementQuestion(
+            const dupAuthorized = await authorizeAndDispatchPlacementQuestion(
               existingDuplicate.id,
               canonicalContentHash,
               params.supplyTrace,
               true,
             );
+            // Drain the duplicate's intent this attempt (it never enters questionIds).
+            if (dupAuthorized) placementDrainOnlyIds.push(existingDuplicate.id);
           }
           continue;
         }
@@ -1173,7 +1181,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // which is itself idempotent per question.
     failureStage = 'dispatch';
     const dispatchResult = await dispatchPendingVerifyIntents(db, {
-      questionIds,
+      questionIds:
+        placementDrainOnlyIds.length > 0 ? [...questionIds, ...placementDrainOnlyIds] : questionIds,
       enqueue: async (verifier, ids, options, placementAuthorities) => {
         if (verifier !== 'quiz_verify') {
           throw new Error(`quiz_gen outbox received unexpected verifier '${verifier}'`);
