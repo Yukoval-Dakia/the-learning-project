@@ -395,6 +395,10 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
         seed_mode: 'material',
         knowledge_ids: ['k_zhi'],
         material_body_md: '学而时习之，不亦说乎。',
+        material_answer_anchor: {
+          canonical_answer: { kind: 'text', value: '通「悦」' },
+          locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+        },
         material_url: 'https://example.edu/lunyu',
       },
       deps(),

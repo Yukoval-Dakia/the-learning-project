@@ -48,7 +48,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
     expect(plan?.answer_anchor_id).toBe(result.anchor.id);
     expect(plan?.answer_anchor_version).toBe(result.anchor.version);
     expect(plan?.answer_anchor_hash).toBe(result.anchor.content_hash);
-    expect(plan?.status).toBe('generated');
+    expect(plan?.status).toBe('pending_generation');
   });
 
   it('binds a generated question to exact plan, anchor, and comparator-policy versions', async () => {
@@ -70,6 +70,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
       questionId: 'q_1',
       plan: prepared.plan,
       anchor: prepared.anchor,
+      generated: { kind: 'fill_blank', reference_md: '北京' },
     });
 
     const [row] = await db.select().from(question_generation_binding);
@@ -108,6 +109,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
         questionId: 'q_bad',
         plan: prepared.plan,
         anchor: { ...prepared.anchor, id: 'fabricated' },
+        generated: { kind: 'fill_blank', reference_md: '北京' },
       }),
     ).rejects.toThrow(/anchor/);
     await db
@@ -118,6 +120,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
         questionId: 'q_missing',
         plan: prepared.plan,
         anchor: prepared.anchor,
+        generated: { kind: 'fill_blank', reference_md: '北京' },
       }),
     ).rejects.toThrow(/persisted/);
     expect(await db.select().from(question_generation_binding)).toEqual([]);

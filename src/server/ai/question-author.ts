@@ -43,6 +43,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   bindGeneratedQuestion,
+  markQuestionGenerationFailed,
   prepareQuestionGeneration,
 } from '@/server/questions/question-generation-grounding';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -87,6 +88,21 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
 
   if (seed.seed_mode === 'material' && !seed.material_answer_anchor) {
     throw new Error("question_author seed_mode 'material' requires material_answer_anchor");
+  }
+
+  if (seed.seed_mode === 'material' && seed.material_answer_anchor && seed.material_body_md) {
+    const locator = seed.material_answer_anchor.locator;
+    if (locator.kind !== 'text_span') {
+      throw new Error(
+        `question_author material locator '${locator.kind}' has no authoritative page content`,
+      );
+    }
+    if (
+      locator.end > seed.material_body_md.length ||
+      seed.material_body_md.slice(locator.start, locator.end) !== locator.exact_text
+    ) {
+      throw new Error('question_author material locator does not match material_body_md');
+    }
   }
 
   const wanted = [...new Set(seed.knowledge_ids)];
@@ -221,88 +237,94 @@ export async function runQuestionAuthor(
     draft = parseQuestionAuthorOutput(result.text);
   }
 
-  // Hallucinated-id discipline: intersect the echoed knowledge_ids with the
-  // validated seed set; an empty intersection falls back to the full validated
-  // seed (the question was generated FOR those nodes — quiz_gen salvage policy).
-  const echoed = draft.knowledge_ids.filter((id) => validIdSet.has(id));
-  const questionKnowledgeIds = echoed.length > 0 ? echoed : validIds;
+  try {
+    // Hallucinated-id discipline: intersect the echoed knowledge_ids with the
+    // validated seed set; an empty intersection falls back to the full validated
+    // seed (the question was generated FOR those nodes — quiz_gen salvage policy).
+    const echoed = draft.knowledge_ids.filter((id) => validIdSet.has(id));
+    const questionKnowledgeIds = echoed.length > 0 ? echoed : validIds;
 
-  // Server-side tree hardening: regenerate node ids, reject malformed shapes,
-  // derive (and require non-empty) prompt_md / reference_md.
-  const normalized = normalizeAuthorStructured(draft.structured);
+    // Server-side tree hardening: regenerate node ids, reject malformed shapes,
+    // derive (and require non-empty) prompt_md / reference_md.
+    const normalized = normalizeAuthorStructured(draft.structured);
 
-  const now = new Date();
-  const questionId = createId();
-  const promptPreview =
-    normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
-      ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
-      : normalized.prompt_md;
+    const now = new Date();
+    const questionId = createId();
+    const promptPreview =
+      normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
+        ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
+        : normalized.prompt_md;
 
-  let proposalId = '';
-  await db.transaction(async (tx) => {
-    await tx.insert(question).values(
-      withAnswerClass({
-        id: questionId,
-        kind: draft.kind,
-        prompt_md: normalized.prompt_md,
-        reference_md: normalized.reference_md,
-        structured: normalized.structured,
-        choices_md: draft.choices_md ?? null,
-        rubric_json: draft.rubric_json ?? null,
-        judge_kind_override: draft.judge_kind_override ?? null,
-        knowledge_ids: questionKnowledgeIds,
-        difficulty: draft.difficulty,
-        // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
-        source: 'copilot_authored',
-        source_ref: null,
-        // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
-        // until the question_draft proposal is accepted.
-        draft_status: 'draft',
-        created_by: aiAgentRef('QuestionAuthorTask', result),
-        metadata: {
-          author_question: {
+    let proposalId = '';
+    await db.transaction(async (tx) => {
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: questionId,
+          kind: draft.kind,
+          prompt_md: normalized.prompt_md,
+          reference_md: normalized.reference_md,
+          structured: normalized.structured,
+          choices_md: draft.choices_md ?? null,
+          rubric_json: draft.rubric_json ?? null,
+          judge_kind_override: draft.judge_kind_override ?? null,
+          knowledge_ids: questionKnowledgeIds,
+          difficulty: draft.difficulty,
+          // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
+          source: 'copilot_authored',
+          source_ref: null,
+          // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
+          // until the question_draft proposal is accepted.
+          draft_status: 'draft',
+          created_by: aiAgentRef('QuestionAuthorTask', result),
+          metadata: {
+            author_question: {
+              seed_mode: seed.seed_mode,
+              ...(seed.material_url ? { material_url: seed.material_url } : {}),
+              ...(seed.material_title ? { material_title: seed.material_title } : {}),
+            },
+          },
+          created_at: now,
+          updated_at: now,
+        }),
+      );
+      if (preparedGrounding) {
+        await bindGeneratedQuestion(tx, {
+          questionId,
+          plan: preparedGrounding.plan,
+          anchor: preparedGrounding.anchor,
+          generated: { kind: draft.kind, reference_md: normalized.reference_md },
+        });
+      }
+
+      proposalId = await writeAiProposal(tx, {
+        actor_ref: deps.actorRef,
+        payload: {
+          kind: 'question_draft',
+          target: { subject_kind: 'question', subject_id: questionId },
+          reason_md: `copilot 拟题（seed=${seed.seed_mode}）：${promptPreview}`,
+          evidence_refs: questionKnowledgeIds.map((id) => ({ kind: 'knowledge' as const, id })),
+          proposed_change: {
+            question_id: questionId,
+            kind: draft.kind,
+            difficulty: draft.difficulty,
+            knowledge_ids: questionKnowledgeIds,
             seed_mode: seed.seed_mode,
+            prompt_preview: promptPreview,
             ...(seed.material_url ? { material_url: seed.material_url } : {}),
-            ...(seed.material_title ? { material_title: seed.material_title } : {}),
+          },
+          rollback_plan: {
+            action: 'dismiss proposal; the draft question stays inert (never pooled)',
           },
         },
-        created_at: now,
-        updated_at: now,
-      }),
-    );
-    if (preparedGrounding) {
-      await bindGeneratedQuestion(tx, {
-        questionId,
-        plan: preparedGrounding.plan,
-        anchor: preparedGrounding.anchor,
+        task_run_id: deps.taskRunId,
+        caused_by_event_id: deps.causedByEventId ?? null,
+        cost_usd: result.cost_usd,
       });
-    }
-
-    proposalId = await writeAiProposal(tx, {
-      actor_ref: deps.actorRef,
-      payload: {
-        kind: 'question_draft',
-        target: { subject_kind: 'question', subject_id: questionId },
-        reason_md: `copilot 拟题（seed=${seed.seed_mode}）：${promptPreview}`,
-        evidence_refs: questionKnowledgeIds.map((id) => ({ kind: 'knowledge' as const, id })),
-        proposed_change: {
-          question_id: questionId,
-          kind: draft.kind,
-          difficulty: draft.difficulty,
-          knowledge_ids: questionKnowledgeIds,
-          seed_mode: seed.seed_mode,
-          prompt_preview: promptPreview,
-          ...(seed.material_url ? { material_url: seed.material_url } : {}),
-        },
-        rollback_plan: {
-          action: 'dismiss proposal; the draft question stays inert (never pooled)',
-        },
-      },
-      task_run_id: deps.taskRunId,
-      caused_by_event_id: deps.causedByEventId ?? null,
-      cost_usd: result.cost_usd,
     });
-  });
 
-  return { status: 'proposed', proposalId, questionId };
+    return { status: 'proposed', proposalId, questionId };
+  } catch (error) {
+    if (preparedGrounding) await markQuestionGenerationFailed(db, preparedGrounding.plan);
+    throw error;
+  }
 }

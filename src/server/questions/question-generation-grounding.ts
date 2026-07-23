@@ -6,6 +6,7 @@ import {
   type QuestionAnswerAnchorT,
   QuestionGenerationPlan,
   type QuestionGenerationPlanT,
+  structurallyVerifyGeneratedQuestion,
 } from '@/core/schema/question-generation-grounding';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -113,30 +114,28 @@ export async function prepareQuestionGeneration<T>(
 
   try {
     const generated = await input.generate({ anchor, plan });
-    await db
-      .update(question_generation_plan)
-      .set({ status: 'generated' })
-      .where(
-        and(
-          eq(question_generation_plan.id, plan.id),
-          eq(question_generation_plan.version, plan.version),
-          eq(question_generation_plan.content_hash, plan.content_hash),
-        ),
-      );
     return { anchor, plan, generated };
   } catch (error) {
-    await db
-      .update(question_generation_plan)
-      .set({ status: 'failed' })
-      .where(
-        and(
-          eq(question_generation_plan.id, plan.id),
-          eq(question_generation_plan.version, plan.version),
-          eq(question_generation_plan.content_hash, plan.content_hash),
-        ),
-      );
+    await markQuestionGenerationFailed(db, plan);
     throw error;
   }
+}
+
+export async function markQuestionGenerationFailed(
+  db: Db,
+  plan: QuestionGenerationPlanT,
+): Promise<void> {
+  await db
+    .update(question_generation_plan)
+    .set({ status: 'failed' })
+    .where(
+      and(
+        eq(question_generation_plan.id, plan.id),
+        eq(question_generation_plan.version, plan.version),
+        eq(question_generation_plan.content_hash, plan.content_hash),
+        eq(question_generation_plan.status, 'pending_generation'),
+      ),
+    );
 }
 
 const NO_COMPARATOR_POLICY = {
@@ -152,6 +151,7 @@ export async function bindGeneratedQuestion(
     questionId: string;
     plan: QuestionGenerationPlanT;
     anchor: QuestionAnswerAnchorT;
+    generated: { kind: string; reference_md: string };
   },
 ) {
   if (
@@ -172,7 +172,7 @@ export async function bindGeneratedQuestion(
         eq(question_generation_plan.answer_anchor_id, input.anchor.id),
         eq(question_generation_plan.answer_anchor_version, input.anchor.version),
         eq(question_generation_plan.answer_anchor_hash, input.anchor.content_hash),
-        eq(question_generation_plan.status, 'generated'),
+        eq(question_generation_plan.status, 'pending_generation'),
       ),
     )
     .limit(1);
@@ -191,7 +191,7 @@ export async function bindGeneratedQuestion(
     throw new Error('exact persisted generation plan and answer anchor tuple not found');
   }
 
-  const binding = {
+  const bindingRefs = {
     plan: {
       id: input.plan.id,
       version: input.plan.version,
@@ -203,9 +203,21 @@ export async function bindGeneratedQuestion(
       content_hash: input.anchor.content_hash,
     },
     comparator_policy: NO_COMPARATOR_POLICY,
-    validation_status: 'needs_review' as const,
-    structural_status: 'no_veto' as const,
-    objective_correctness: 'unverified' as const,
+  };
+  const verification = structurallyVerifyGeneratedQuestion({
+    binding: bindingRefs,
+    plan: input.plan,
+    anchor: input.anchor,
+    generated: input.generated,
+  });
+  if (verification.disposition === 'reject') {
+    throw new Error(`generated question structurally rejected: ${verification.vetoes.join(', ')}`);
+  }
+  const binding = {
+    ...bindingRefs,
+    validation_status: verification.disposition,
+    structural_status: verification.structural_status,
+    objective_correctness: verification.objective_correctness,
   };
   await db.insert(question_generation_binding).values({
     question_id: input.questionId,
@@ -223,5 +235,16 @@ export async function bindGeneratedQuestion(
     objective_correctness: binding.objective_correctness,
     created_at: new Date(),
   });
+  await db
+    .update(question_generation_plan)
+    .set({ status: 'generated' })
+    .where(
+      and(
+        eq(question_generation_plan.id, input.plan.id),
+        eq(question_generation_plan.version, input.plan.version),
+        eq(question_generation_plan.content_hash, input.plan.content_hash),
+        eq(question_generation_plan.status, 'pending_generation'),
+      ),
+    );
   return binding;
 }

@@ -175,12 +175,13 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
       {
         seed_mode: 'material',
         knowledge_ids: ['k_zhi'],
+        requested_kind: 'reading',
         material_body_md: '学而时习之，不亦说乎。',
         material_url: 'https://example.edu/lunyu',
         material_title: '论语·学而',
         material_answer_anchor: {
           canonical_answer: { kind: 'text', value: '通「悦」' },
-          locator: { kind: 'text_span', start: 0, end: 9, exact_text: '学而时习之，不亦说乎。' },
+          locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
         },
       },
       deps(runTaskFn),
@@ -295,7 +296,7 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
         material_body_md: '学而时习之，不亦说乎。',
         material_answer_anchor: {
           canonical_answer: { kind: 'text', value: '通「悦」' },
-          locator: { kind: 'text_span', start: 0, end: 9, exact_text: '学而时习之，不亦说乎。' },
+          locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
         },
       },
       deps(runTaskFn),
@@ -308,6 +309,89 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
     expect(binding.validation_status).toBe('needs_review');
     const [plan] = await db.select().from(question_generation_plan);
     expect(plan.status).toBe('generated');
+  });
+
+  it('material normalization failure durably fails its still-pending plan', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await expect(
+      runQuestionAuthor(
+        {
+          seed_mode: 'material',
+          knowledge_ids: ['k_zhi'],
+          requested_kind: 'reading',
+          material_body_md: '学而时习之，不亦说乎。',
+          material_answer_anchor: {
+            canonical_answer: { kind: 'text', value: '通「悦」' },
+            locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+          },
+        },
+        deps(
+          mockRunTask(
+            draftFixture({
+              kind: 'reading',
+              structured: { id: 'r', role: 'stem', prompt_text: '材料', sub_questions: [] },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toThrow(/sub_question/);
+
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan.status).toBe('failed');
+    expect(await db.select().from(question)).toEqual([]);
+    expect(await db.select().from(question_generation_binding)).toEqual([]);
+  });
+
+  it('material kind mismatch vetoes atomically and marks the plan failed', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await expect(
+      runQuestionAuthor(
+        {
+          seed_mode: 'material',
+          knowledge_ids: ['k_zhi'],
+          requested_kind: 'choice',
+          material_body_md: '学而时习之，不亦说乎。',
+          material_answer_anchor: {
+            canonical_answer: { kind: 'text', value: '通「悦」' },
+            locator: { kind: 'text_span', start: 0, end: 11, exact_text: '学而时习之，不亦说乎。' },
+          },
+        },
+        deps(mockRunTask(draftFixture({ kind: 'short_answer' }))),
+      ),
+    ).rejects.toThrow(/requested_kind_mismatch/);
+
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan.status).toBe('failed');
+    expect(await db.select().from(question)).toEqual([]);
+    expect(await db.select().from(question_generation_binding)).toEqual([]);
+  });
+
+  it('rejects out-of-range or mismatched exact text before persisting an anchor', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    for (const locator of [
+      { kind: 'text_span' as const, start: 0, end: 99, exact_text: '学而时习之，不亦说乎。' },
+      { kind: 'text_span' as const, start: 0, end: 2, exact_text: '错误' },
+    ]) {
+      await expect(
+        runQuestionAuthor(
+          {
+            seed_mode: 'material',
+            knowledge_ids: ['k_zhi'],
+            material_body_md: '学而时习之，不亦说乎。',
+            material_answer_anchor: {
+              canonical_answer: { kind: 'text', value: '通「悦」' },
+              locator,
+            },
+          },
+          deps(mockRunTask(draftFixture())),
+        ),
+      ).rejects.toThrow(/locator/);
+    }
+    expect(await db.select().from(question_answer_anchor)).toEqual([]);
+    expect(await db.select().from(question_generation_plan)).toEqual([]);
   });
 
   it("material seed without material_body_md throws (URL-only seeds can't ground a passage)", async () => {
