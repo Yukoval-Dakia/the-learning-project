@@ -358,7 +358,9 @@ export async function addPlacementStarterCostComponent(
         FROM ${placement_starter_cost_component}
         WHERE ${placement_starter_cost_component.claim_id} = ${input.claim_id}
       )`,
-      updated_at: input.created_at,
+      // The claim's updated_at marks when the claim row changed, not when the cost component was
+      // created — use a fresh timestamp (parity with addAuthorizedCostComponent's `now`).
+      updated_at: new Date(),
     })
     .where(eq(placement_starter_claim.id, input.claim_id));
 }

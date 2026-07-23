@@ -21,6 +21,7 @@ import {
   knowledge,
   learning_item,
   material_fsrs_state,
+  placement_starter_attempt_question,
   placement_starter_claim,
   question,
   source_document,
@@ -32,11 +33,13 @@ import {
   buildSupplyTrace,
   evidenceDemandToTargetContext,
 } from '@/server/question-supply/evidence-demand';
+import { acquirePlacementAttempt } from '@/server/question-supply/placement-starter-attempts';
 import { canonicalQuestionContentHash } from '@/server/quiz/content-fingerprint';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   QUIZ_GEN_READ_TOOLS,
   buildQuizGenHandler,
+  defaultPlacementSleep,
   embedMaterialInPrompt,
   runQuizGen,
   synthesizeMaterialSourceRefs,
@@ -758,6 +761,97 @@ describe('runQuizGen', () => {
       ]),
     );
   });
+
+  it.each([
+    ['draft', true],
+    ['active', false],
+  ])(
+    'drains a raced-duplicate placement question this attempt (%s collider) (YUK-452 followup)',
+    async (colliderDraftStatus, expectEnqueued) => {
+      const now = new Date('2026-07-24T00:00:00.000Z');
+      await seedKnowledge({ id: 'k-test' });
+      await testDb().insert(placement_starter_claim).values({
+        id: 'claim-raced',
+        fingerprint: 'placement-starter|raced',
+        goal_id: 'goal-raced',
+        semantic_goal_revision_id: 'rev-raced',
+        subject_id: 'wenyan',
+        knowledge_id: 'k-test',
+        demand_id: 'demand-raced',
+        target_id: 'target-raced',
+        status: 'queued',
+        pg_boss_job_id: 'job-raced',
+        max_paid_attempts: 3,
+        budget_limit_micro_usd: 1_000_000,
+        known_cost_micro_usd: 0,
+        next_reconcile_at: now,
+        created_at: now,
+        updated_at: now,
+      });
+      const attempt = await acquirePlacementAttempt(testDb(), {
+        claimId: 'claim-raced',
+        pgBossJobId: 'job-raced',
+        deliveryNo: 1,
+        startedOn: now,
+        now,
+      });
+      // The content the placement run is about to generate — inject a colliding row at the
+      // insert-time race window (afterExactDuplicateLookupMiss) so runQuizGen's own insert loses the
+      // canonical-hash race and falls into the racedDuplicate branch.
+      const collider = JSON.parse(CLOSED_BOOK_OUTPUT).questions[0];
+      const hash = canonicalQuestionContentHash({
+        promptMd: collider.prompt_md,
+        referenceMd: collider.reference_md,
+        choicesMd: collider.choices_md,
+        rubricJson: collider.rubric_json,
+      });
+      const enqueueQuizVerify = vi.fn(
+        async (_ids: string[], _options?: unknown, _authorities?: unknown) => {},
+      );
+      const result = await runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k-test',
+        count: 1,
+        placementAttempt: attempt,
+        runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-raced'),
+        enqueueQuizVerify,
+        buildTavilyMcpServerFn: () => null,
+        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        afterExactDuplicateLookupMiss: async () => {
+          await testDb()
+            .insert(question)
+            .values({
+              id: 'raced-existing',
+              kind: 'short_answer',
+              prompt_md: collider.prompt_md,
+              reference_md: collider.reference_md,
+              knowledge_ids: ['k-test'],
+              difficulty: 3,
+              source: 'quiz_gen',
+              source_ref: 'k-test',
+              draft_status: colliderDraftStatus as 'draft' | 'active',
+              metadata: {},
+              canonical_content_hash: hash,
+              created_at: now,
+              updated_at: now,
+            });
+        },
+      });
+
+      // The run's own insert lost the race → it authorized the existing row, not a new one.
+      expect(result.question_ids).toHaveLength(0);
+      const [aq] = await testDb()
+        .select()
+        .from(placement_starter_attempt_question)
+        .where(eq(placement_starter_attempt_question.question_id, 'raced-existing'));
+      expect(aq?.attempt_id).toBe(attempt.attemptId);
+      // A DRAFT raced duplicate must be drained THIS attempt (quiz_verify enqueued). An ACTIVE one is
+      // terminal_skipped by the outbox (it settles via pool-visibility) so it is NOT enqueued.
+      const enqueuedIds = enqueueQuizVerify.mock.calls.flatMap((call) => call[0]);
+      expect(enqueuedIds.includes('raced-existing')).toBe(expectEnqueued);
+    },
+  );
 
   it('does not create a ready artifact when the whole batch is exact duplicates', async () => {
     await seedKnowledge({ id: 'k1' });
@@ -1797,5 +1891,17 @@ describe('synthesizeMaterialSourceRefs (F3)', () => {
       },
     ];
     expect(synthesizeMaterialSourceRefs(declared, material)).toBe(declared);
+  });
+});
+
+// YUK-452 followup (OCR major) — the abort listener must be removed on the normal resolve path.
+// `{ once: true }` only auto-removes after firing (on abort); reconcile polls this every 2s for up
+// to 105 min, so a normal-resolve leak accumulates thousands of dead listeners on one job.signal.
+describe('defaultPlacementSleep', () => {
+  it('removes its abort listener when the timeout resolves normally', async () => {
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+    await defaultPlacementSleep(1, controller.signal);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });
