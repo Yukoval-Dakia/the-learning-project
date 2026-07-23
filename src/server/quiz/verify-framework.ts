@@ -624,18 +624,37 @@ export async function runSolveCheck(
   // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
   // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
   const semanticInvocationId = randomUUID();
+  // YUK-452 review F1 — runSemanticJudge's own catch-all converts ANY throw into an
+  // 'unsupported' judge result, which would let an admission/stale failure on this paid
+  // leg fall through to the conservative pass below (over-cap promoting through
+  // 'unsupported'). Capture the blocking error out-of-band and re-throw it AFTER
+  // runSemanticJudge returns, so this leg blocks exactly like the solver/teaching-quality
+  // legs. Cost/run provenance is unaffected: settleAuthorizedPaidCall commits the actual
+  // cost + run id in its own transaction BEFORE throwing. Holder object (not a bare let)
+  // because TS control-flow analysis does not see closure assignments.
+  const semanticBlocking: { err: Error | null } = { err: null };
   const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
-    await assertCurrentAuthority();
-    const authorizedInput =
-      opts.placementAuthority && input !== null && typeof input === 'object'
-        ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
-        : input;
-    const r = await opts.runTaskFn(kind, authorizedInput, ctx);
-    recordRun(r);
-    if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
-      await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
+    try {
+      await assertCurrentAuthority();
+      const authorizedInput =
+        opts.placementAuthority && input !== null && typeof input === 'object'
+          ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
+          : input;
+      const r = await opts.runTaskFn(kind, authorizedInput, ctx);
+      recordRun(r);
+      if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
+        await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
+      }
+      return r;
+    } catch (err) {
+      if (
+        err instanceof PlacementStarterStaleAuthorityError ||
+        err instanceof PlacementStarterAdmissionError
+      ) {
+        semanticBlocking.err = err;
+      }
+      throw err;
     }
-    return r;
   };
   // Treat the question's reference answer as the rubric/reference and the solver's
   // independent answer as the "submission". If the semantic judge CONFIDENTLY says
@@ -665,6 +684,10 @@ export async function runSolveCheck(
   await assertCurrentAuthority();
   await opts.beforePaidCall?.('semantic_judge', semanticInvocationId);
   const judged = await runSemanticJudge(semParams);
+  // YUK-452 review F1 — an admission/stale failure captured inside the recording
+  // runTaskFn was swallowed into `judged`'s 'unsupported' shape by runSemanticJudge's
+  // catch-all; re-throw it here so it blocks instead of decaying to conservative pass.
+  if (semanticBlocking.err) throw semanticBlocking.err;
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
   const confidentlyEquivalent =

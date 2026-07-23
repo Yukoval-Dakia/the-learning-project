@@ -1,4 +1,7 @@
-import { PlacementStarterStaleAuthorityError } from '@/server/question-supply/placement-starter-attempts';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+} from '@/server/question-supply/placement-starter-attempts';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -536,6 +539,68 @@ describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
     const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
     expect(result.task_run_ids).toBeUndefined();
     expect(result.cost_usd).toBeUndefined();
+  });
+});
+
+// ---------- YUK-452 review F1 — semantic-leg settle failures must BLOCK ----------
+
+describe('runSolveCheck — semantic-leg admission failures block (YUK-452 F1)', () => {
+  it('re-throws PlacementStarterAdmissionError from settlePaidCall instead of decaying to conservative pass', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案'), task_run_id: 'tr_solver', cost_usd: 0.01 };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge', cost_usd: 0.9 };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    // quiz_verify-shaped settle callback: the semantic leg is over-cap → admission error.
+    // Pre-fix, runSemanticJudge's catch-all swallowed this into an 'unsupported' judge
+    // result and the solve-check fell through to the conservative 'pass'.
+    const settlePaidCall = vi.fn(async (kind: string) => {
+      if (kind === 'semantic_judge') {
+        throw new PlacementStarterAdmissionError('actual cost exceeded the per-call cap');
+      }
+    });
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        settlePaidCall,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterAdmissionError);
+    expect(settlePaidCall).toHaveBeenCalledWith(
+      'semantic_judge',
+      expect.any(String),
+      expect.objectContaining({ task_run_id: 'tr_judge' }),
+    );
+  });
+
+  it('re-throws PlacementStarterStaleAuthorityError raised on the semantic leg', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案') };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge' };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const settlePaidCall = vi.fn(async (kind: string) => {
+      if (kind === 'semantic_judge') {
+        throw new PlacementStarterStaleAuthorityError('placement authority rotated');
+      }
+    });
+    await expect(
+      runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        settlePaidCall,
+      }),
+    ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
   });
 });
 
