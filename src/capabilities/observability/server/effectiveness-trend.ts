@@ -26,7 +26,7 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
-import { and, asc, desc, eq, gte, isNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt } from 'drizzle-orm';
 import {
   type EffectivenessTrendPoint,
   type EffectivenessTrendSummary,
@@ -122,7 +122,7 @@ interface MasteryProgressEventRow {
 /**
  * 派生 effective_domain：沿 parent_id 链上溯到首个非空 domain（项目铁律「科目是派生视图，
  * 不在事件/KC 上存列」）。镜像 domain.ts:resolveSubjectKnowledgeIds / tree.ts 的内存 walk。
- * 此处用**全部 active** knowledge map，确保窗口内聚合与 eligible 统计只覆盖当前有效 KC；带 seen 防环。
+ * 此处用全部 knowledge map 解析祖先（含 archived 中间节点），但 eligible 事件仍只覆盖 active KC；带 seen 防环。
  */
 function buildEffectiveDomainResolver(
   rows: Array<{ id: string; domain: string | null; parent_id: string | null }>,
@@ -143,6 +143,13 @@ function buildEffectiveDomainResolver(
 const NOTABLE_LIMIT = 6;
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const isSubjectRoot = (id: string): boolean => /^seed:[^:]+:root$/.test(id);
+
+function compareBinary(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
 
 function responseWindow(asOf: Date): { windowStart: Date; windowEnd: Date } {
   const shifted = new Date(asOf.getTime() + SHANGHAI_OFFSET_MS);
@@ -153,7 +160,7 @@ function responseWindow(asOf: Date): { windowStart: Date; windowEnd: Date } {
   );
   return {
     windowStart: new Date(localMidnightUtc - SHANGHAI_OFFSET_MS - 29 * DAY_MS),
-    windowEnd: new Date(localMidnightUtc - SHANGHAI_OFFSET_MS + DAY_MS),
+    windowEnd: asOf,
   };
 }
 
@@ -203,13 +210,14 @@ export async function loadEffectivenessTrend(
       name: knowledge.name,
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
+      archived_at: knowledge.archived_at,
     })
-    .from(knowledge)
-    .where(isNull(knowledge.archived_at));
-  const nameById = new Map(knowledgeRows.map((r) => [r.id, r.name]));
+    .from(knowledge);
+  const activeRows = knowledgeRows.filter((row) => row.archived_at === null);
+  const nameById = new Map(activeRows.map((r) => [r.id, r.name]));
   const resolveEffectiveDomain = buildEffectiveDomainResolver(knowledgeRows);
 
-  const activeIds = new Set(knowledgeRows.map((row) => row.id));
+  const activeIds = new Set(activeRows.map((row) => row.id));
   const latestByKcDay = new Map<string, MasteryProgressEventRow>();
   const activityByKc = new Map<string, number>();
   for (const ev of events) {
@@ -237,7 +245,7 @@ export async function loadEffectivenessTrend(
   const allSeries: EffectivenessTrendSeries[] = [];
   for (const [knowledgeId, points] of pointsByKc) {
     // created_at 升序已由 query ORDER BY 保证，但显式再排一遍防 Map 迭代/同毫秒乱序。
-    points.sort((a, b) => a.at.localeCompare(b.at));
+    points.sort((a, b) => compareBinary(a.at, b.at));
     allSeries.push({
       knowledge_id: knowledgeId,
       name: nameById.get(knowledgeId) ?? null,
@@ -248,7 +256,7 @@ export async function loadEffectivenessTrend(
     });
   }
   // 确定性输出顺序（KC id 升序）。
-  allSeries.sort((a, b) => a.knowledge_id.localeCompare(b.knowledge_id));
+  allSeries.sort((a, b) => compareBinary(a.knowledge_id, b.knowledge_id));
 
   // 沿 effective_domain 卷起。null domain 归一桶（key ' '，与任何真实 domain 不冲突）。
   const NULL_DOMAIN = ' ';
@@ -291,13 +299,13 @@ export async function loadEffectivenessTrend(
     if (a.effective_domain === b.effective_domain) return 0;
     if (a.effective_domain === null) return 1;
     if (b.effective_domain === null) return -1;
-    return a.effective_domain.localeCompare(b.effective_domain);
+    return compareBinary(a.effective_domain, b.effective_domain);
   });
 
-  const subjectRoots = allSeries.filter((row) => /^seed:.+:root$/.test(row.knowledge_id));
+  const subjectRoots = allSeries.filter((row) => isSubjectRoot(row.knowledge_id));
   const eligibleSeries = allSeries.filter(
     (row) =>
-      !/^seed:.+:root$/.test(row.knowledge_id) &&
+      !isSubjectRoot(row.knowledge_id) &&
       (row.trend.direction === 'rising' || row.trend.direction === 'falling'),
   );
   const trendMagnitude = (row: EffectivenessTrendSeries): number => {
@@ -312,11 +320,11 @@ export async function loadEffectivenessTrend(
   eligibleSeries.sort((a, b) => {
     const magnitudeOrder = trendMagnitude(b) - trendMagnitude(a);
     if (magnitudeOrder !== 0) return magnitudeOrder;
-    const recencyOrder = (latestAtByKc.get(b.knowledge_id) ?? '').localeCompare(
-      latestAtByKc.get(a.knowledge_id) ?? '',
-    );
+    const aLatest = latestAtByKc.get(a.knowledge_id) ?? '';
+    const bLatest = latestAtByKc.get(b.knowledge_id) ?? '';
+    const recencyOrder = compareBinary(bLatest, aLatest);
     if (recencyOrder !== 0) return recencyOrder;
-    return a.knowledge_id.localeCompare(b.knowledge_id);
+    return compareBinary(a.knowledge_id, b.knowledge_id);
   });
   const series = eligibleSeries.slice(0, NOTABLE_LIMIT);
 

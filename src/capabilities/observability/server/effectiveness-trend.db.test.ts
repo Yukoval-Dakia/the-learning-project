@@ -15,7 +15,11 @@ const AS_OF = new Date('2026-06-29T08:00:00Z');
 async function seedKc(
   id: string,
   name: string,
-  opts: { domain?: string | null; parent_id?: string | null } = {},
+  opts: {
+    domain?: string | null;
+    parent_id?: string | null;
+    archived_at?: Date | null;
+  } = {},
 ) {
   await db.insert(knowledge).values({
     id,
@@ -23,7 +27,7 @@ async function seedKc(
     domain: opts.domain === undefined ? 'yuwen' : opts.domain,
     parent_id: opts.parent_id ?? null,
     merged_from: [],
-    archived_at: null,
+    archived_at: opts.archived_at ?? null,
     proposed_by_ai: false,
     approval_status: 'approved',
     created_at: NOW,
@@ -68,11 +72,11 @@ async function seedMasteryProgress(opts: {
 }
 
 // 在一个 KC 上播一串等间隔 θ̂ 轨迹（按给定 θ̂ 数组升序时间）。
-async function seedTrajectory(knowledgeId: string, thetas: number[]) {
+async function seedTrajectory(knowledgeId: string, thetas: number[], latestAt = NOW) {
   for (let i = 0; i < thetas.length; i++) {
     await seedMasteryProgress({
       knowledge_id: knowledgeId,
-      created_at: new Date(NOW.getTime() - (thetas.length - 1 - i) * 86_400_000),
+      created_at: new Date(latestAt.getTime() - (thetas.length - 1 - i) * 86_400_000),
       theta_hat: thetas[i],
       p_learned: 1 / (1 + Math.exp(-thetas[i])),
       theta_delta: i === 0 ? null : thetas[i] - thetas[i - 1],
@@ -200,6 +204,7 @@ describe('loadEffectivenessTrend read model', () => {
 
   it('bounds the response to 30 Shanghai calendar days, keeps one latest point per KC/day, and preserves raw activity', async () => {
     await seedKc('k_daily', '每日去重');
+    await seedTrajectory('k_daily', [-0.8, -0.6, -0.4], new Date('2026-06-27T02:00:00Z'));
     await seedMasteryProgress({
       id: 'ev_a',
       knowledge_id: 'k_daily',
@@ -227,17 +232,68 @@ describe('loadEffectivenessTrend read model', () => {
     expect(result.metadata).toEqual({
       as_of: AS_OF.toISOString(),
       window_start: '2026-05-30T16:00:00.000Z',
-      window_end: '2026-06-29T16:00:00.000Z',
+      window_end: AS_OF.toISOString(),
       timezone: 'Asia/Shanghai',
       granularity: 'calendar_day',
       notable_limit: 6,
-      eligible: 0,
-      returned: 0,
+      eligible: 1,
+      returned: 1,
       truncated: false,
     });
-    expect(result.series).toEqual([]);
+    expect(result.series).toHaveLength(1);
+    expect(result.series[0].points.at(-1)).toMatchObject({
+      at: '2026-06-28T02:00:00.000Z',
+      theta_hat: 0.4,
+    });
+    expect(result.series[0].trend.direction).toBe('rising');
     expect(result.aggregate.total_kcs_with_activity).toBe(1);
-    expect(result.aggregate.total_events).toBe(2);
+    expect(result.aggregate.total_events).toBe(5);
+  });
+
+  it('resolves an active KC domain through an archived intermediate ancestor', async () => {
+    await seedKc('k_root_arch', '根', { domain: 'yuwen' });
+    await seedKc('k_mid_arch', '归档中间节点', {
+      domain: null,
+      parent_id: 'k_root_arch',
+      archived_at: NOW,
+    });
+    await seedKc('k_leaf_active', '有效叶节点', {
+      domain: null,
+      parent_id: 'k_mid_arch',
+    });
+    await seedTrajectory('k_leaf_active', [-1, -0.8, -0.5, -0.2, 0.2, 0.6, 1, 1.4]);
+
+    const result = await loadEffectivenessTrend(db, AS_OF);
+    expect(result.series.map((row) => [row.knowledge_id, row.effective_domain])).toContainEqual([
+      'k_leaf_active',
+      'yuwen',
+    ]);
+    expect(result.aggregate.total_kcs_with_activity).toBe(1);
+  });
+
+  it('breaks equal private-magnitude ties by latest recency, then binary knowledge id', async () => {
+    const same = [-1, -0.8, -0.5, -0.2, 0.2, 0.6, 1, 1.4];
+    await seedKc('k_z_old', '旧');
+    await seedKc('k_b_new', '新 B');
+    await seedKc('k_A_new', '新 A');
+    await seedTrajectory('k_z_old', same, new Date(NOW.getTime() - 60_000));
+    await seedTrajectory('k_b_new', same, NOW);
+    await seedTrajectory('k_A_new', same, NOW);
+
+    const result = await loadEffectivenessTrend(db, AS_OF);
+    expect(result.series.map((row) => row.knowledge_id)).toEqual(['k_A_new', 'k_b_new', 'k_z_old']);
+  });
+
+  it('recognizes only canonical subject-root ids', async () => {
+    await seedKc('seed:yuwen:root', '规范根');
+    await seedKc('seed:a:b:root', '非规范多冒号 ID');
+    const rising = [-1, -0.8, -0.5, -0.2, 0.2, 0.6, 1, 1.4];
+    await seedTrajectory('seed:yuwen:root', rising);
+    await seedTrajectory('seed:a:b:root', rising);
+
+    const result = await loadEffectivenessTrend(db, AS_OF);
+    expect(result.subject_roots.map((row) => row.knowledge_id)).toEqual(['seed:yuwen:root']);
+    expect(result.series.map((row) => row.knowledge_id)).toContain('seed:a:b:root');
   });
 
   it('globally returns at most six non-root moved KCs while aggregates cover every active KC', async () => {

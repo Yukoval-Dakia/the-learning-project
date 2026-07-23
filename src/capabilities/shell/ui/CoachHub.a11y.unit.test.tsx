@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CoachCalibrationView } from './CoachCalibrationView';
 import CoachHub from './CoachHub';
+import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 
 afterEach(cleanup);
 
@@ -70,6 +71,88 @@ function maturity(blindCount = 8, diagnosedCount = 2): CalibrationMaturityRespon
     },
   };
 }
+
+function renderTrend(data: EffectivenessTrendResponse) {
+  const client = queryClient();
+  client.setQueryData(['effectiveness-trend'], data);
+  return render(
+    <QueryClientProvider client={client}>
+      <EffectivenessTrendPanel navigate={() => {}} embedded />
+    </QueryClientProvider>,
+  );
+}
+
+describe('Effectiveness trend honest fallback states', () => {
+  it('renders root-only activity instead of the global empty state', () => {
+    renderTrend({
+      ...emptyTrend,
+      subject_roots: [
+        {
+          knowledge_id: 'seed:yuwen:root',
+          name: '语文',
+          effective_domain: 'yuwen',
+          points: [
+            {
+              at: '2026-07-22T08:00:00.000Z',
+              p_learned: null,
+              theta_hat: null,
+              theta_delta: null,
+            },
+          ],
+          trend: {
+            direction: 'insufficient',
+            confidence: 'low',
+            span_evidence: 1,
+            has_mastery_signal: false,
+          },
+          activity_count: 1,
+        },
+      ],
+      aggregate: {
+        total_kcs_with_activity: 1,
+        total_events: 1,
+        by_subject: [
+          {
+            effective_domain: 'yuwen',
+            direction: 'insufficient',
+            confidence: 'low',
+            kc_count: 1,
+            kc_with_mastery_signal: 0,
+            activity_count: 1,
+          },
+        ],
+      },
+    });
+
+    expect(screen.queryByText('还没有成效数据')).toBeNull();
+    expect(screen.getByText('整科概览')).toBeTruthy();
+    expect(screen.getByText(/活动 1 次/)).toBeTruthy();
+  });
+
+  it('renders insufficient-only rollup activity instead of the global empty state', () => {
+    renderTrend({
+      ...emptyTrend,
+      aggregate: {
+        total_kcs_with_activity: 1,
+        total_events: 3,
+        by_subject: [
+          {
+            effective_domain: 'yuwen',
+            direction: 'insufficient',
+            confidence: 'low',
+            kc_count: 1,
+            kc_with_mastery_signal: 0,
+            activity_count: 3,
+          },
+        ],
+      },
+    });
+
+    expect(screen.queryByText('还没有成效数据')).toBeNull();
+    expect(screen.getByText('语文')).toBeTruthy();
+    expect(screen.getByText('数据不足')).toBeTruthy();
+  });
+});
 
 describe('CoachHub three-view tabs', () => {
   it('uses roving tabindex + tabpanel semantics and supports arrows/Home/End', async () => {

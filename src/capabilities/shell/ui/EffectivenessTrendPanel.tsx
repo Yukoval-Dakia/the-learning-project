@@ -595,7 +595,7 @@ export function EffectivenessTrendPanel({
     );
   }
   if (!q.data) return <PanelShell embedded={embedded}>{null}</PanelShell>;
-  if (q.data.series.length === 0) {
+  if (q.data.aggregate.total_events === 0) {
     return (
       <PanelShell embedded={embedded}>
         <EffEmpty navigate={navigate} />
