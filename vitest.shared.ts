@@ -262,6 +262,8 @@ export const fastTestInclude = [
   // swapped for InMemoryPresenceStore), so no live DB is touched — fast unit. (YUK-97 P7)
   'src/server/artifacts/editing-session.test.ts',
   'src/server/events/cause-policy.test.ts',
+  // YUK-751 — pure loaded-subscription registry contract; no DB imports.
+  'src/server/event-subscriptions/registry.unit.test.ts',
   // YUK-406 Phase 0 (关系脑 conjecture engine) — pure no-DB units. 取证
   // (gatherConjectureEvidence) is a pure aggregator over injected FailureAttempt[] +
   // a mastery-projection Map; induceConjecture is a pure Opus self-consistency
