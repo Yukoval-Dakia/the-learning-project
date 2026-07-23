@@ -5,6 +5,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as acceptChip } from './accept-chip';
 import {
   AcceptTeachingChipResponseSchema,
+  CopilotCheckpointRevertResponseSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsResponseSchema,
 } from './contracts';
@@ -14,6 +15,25 @@ import { GET as getCopilotTurns } from './turns';
 describe('Copilot declared route response contracts', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('parses reverted and already-reverted checkpoint envelopes', () => {
+    expect(
+      CopilotCheckpointRevertResponseSchema.parse({
+        ok: true,
+        status: 'already_reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: [],
+      }),
+    ).toMatchObject({ status: 'already_reverted' });
+    expect(
+      CopilotCheckpointRevertResponseSchema.parse({
+        ok: false,
+        refusal: 'irreversible',
+        reason: 'unsupported effect',
+        irreversibleEventIds: ['tool_1'],
+      }),
+    ).toMatchObject({ refusal: 'irreversible' });
   });
 
   it('parses the real turns and today-summary route envelopes', async () => {

@@ -101,10 +101,10 @@ export function assembleConversationHistory(
   pinnedHeaderMd?: string,
 ): CopilotHistoryTurn[] {
   // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice).
-  const recent = turns.slice(-budget.maxTurns);
+  const recent = turns.filter((turn) => turn.role !== 'tombstone').slice(-budget.maxTurns);
   // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
-    role: t.role,
+    role: t.role as 'user' | 'ai',
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
   }));
   const pinned: CopilotHistoryTurn | null =

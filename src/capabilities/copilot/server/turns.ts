@@ -20,10 +20,11 @@
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events/corrections';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
 import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
 
-export type CopilotTurnRole = 'user' | 'ai';
+export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
 // AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
 // the copilot_reply event payload so replay can surface the structured question
@@ -78,6 +79,8 @@ export interface CopilotTurn {
   // present only on AI turns (replay fills them from the event row).
   session_id?: string;
   reply_event_id?: string;
+  /** Typed user_ask root that owns this reversible turn. */
+  checkpoint_event_id?: string;
   /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
   skill_turn?: CopilotTurnSkillTurn;
   /** Present for AI turns produced by a skill (teaching / solve) — lets replay restore the skill card. */
@@ -235,6 +238,7 @@ export async function getRecentCopilotTurns(
       action: event.action,
       payload: event.payload,
       created_at: event.created_at,
+      caused_by_event_id: event.caused_by_event_id,
     })
     .from(event)
     .where(
@@ -250,8 +254,37 @@ export async function getRecentCopilotTurns(
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit * 2);
 
+  const statuses = await getCorrectionStatuses(
+    dbArg,
+    rows.map((row) => row.id),
+  );
+  const retractedAskIds = new Set(
+    rows
+      .filter(
+        (row) =>
+          row.action === 'experimental:copilot_user_ask' &&
+          statuses.get(row.id)?.state === 'retracted',
+      )
+      .map((row) => row.id),
+  );
+
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
+    const checkpointEventId =
+      row.action === 'experimental:copilot_user_ask' ? row.id : row.caused_by_event_id;
+    if (checkpointEventId && retractedAskIds.has(checkpointEventId)) {
+      if (row.id === checkpointEventId) {
+        turns.push({
+          role: 'tombstone',
+          text: '本轮更改已撤回',
+          at: row.created_at.toISOString(),
+          event_id: row.id,
+          checkpoint_event_id: row.id,
+        });
+      }
+      continue;
+    }
+    if (statuses.get(row.id)?.state === 'retracted') continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
     if (row.action === REPLY_ACTION) {
       const text = replyText(payload);
@@ -268,6 +301,7 @@ export async function getRecentCopilotTurns(
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: session.id,
         reply_event_id: row.id,
+        ...(checkpointEventId ? { checkpoint_event_id: checkpointEventId } : {}),
       };
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
@@ -276,7 +310,13 @@ export async function getRecentCopilotTurns(
     } else {
       const text = userText(payload);
       if (text === null) continue;
-      turns.push({ role: 'user', text, at: row.created_at.toISOString(), event_id: row.id });
+      turns.push({
+        role: 'user',
+        text,
+        at: row.created_at.toISOString(),
+        event_id: row.id,
+        ...(row.action === 'experimental:copilot_user_ask' ? { checkpoint_event_id: row.id } : {}),
+      });
     }
   }
 

@@ -419,13 +419,21 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.REPLY,
-      payload: { reply_md: cleanedReply, task_run_id: result.task_run_id },
+      payload: {
+        reply_md: cleanedReply,
+        task_run_id: result.task_run_id,
+        checkpoint_event_id: runId,
+      },
     });
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.DONE,
-      payload: { task_run_id: result.task_run_id, finish_reason: result.finishReason },
+      payload: {
+        task_run_id: result.task_run_id,
+        finish_reason: result.finishReason,
+        checkpoint_event_id: runId,
+      },
     });
     return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };
   } catch (err) {

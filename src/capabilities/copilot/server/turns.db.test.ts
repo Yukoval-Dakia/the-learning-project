@@ -187,6 +187,47 @@ async function writeReplyWithPrimaryView(
 }
 
 describe('getRecentCopilotTurns', () => {
+  it('replaces a fully retracted ask/reply pair with one tombstone', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const askId = await writeAsk('不要保留的问题', sessionId, new Date(now.getTime() - 2000));
+    const replyId = await writeReply(
+      '不要保留的回复',
+      sessionId,
+      askId,
+      new Date(now.getTime() - 1000),
+    );
+    for (const targetId of [askId, replyId]) {
+      await db.insert(event).values({
+        id: `correct_${targetId}`,
+        actor_kind: 'agent',
+        actor_ref: 'cascade_revert',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: targetId,
+        outcome: 'success',
+        payload: {
+          correction_kind: 'retract',
+          reason_md: 'test revert',
+          affected_refs: [{ kind: 'open_inquiry', id: targetId }],
+        },
+        caused_by_event_id: targetId,
+        ingest_at: now,
+        created_at: now,
+      });
+    }
+
+    expect(await getRecentCopilotTurns(db, { now })).toEqual([
+      {
+        role: 'tombstone',
+        text: '本轮更改已撤回',
+        at: new Date(now.getTime() - 2000).toISOString(),
+        event_id: askId,
+        checkpoint_event_id: askId,
+      },
+    ]);
+  });
+
   it('returns ask+reply pairs oldest→newest with role/text/at/event_id', async () => {
     // Seed a real live Copilot session so the reader can resolve it; events are
     // scoped to it via the session_id column.
@@ -211,6 +252,7 @@ describe('getRecentCopilotTurns', () => {
       text: '今天该复习哪些？',
       at: t0.toISOString(),
       event_id: askId,
+      checkpoint_event_id: askId,
     });
     // AI turns carry session_id + reply_event_id (PR round-2 CR 3360614432).
     expect(ours[1]).toEqual({
@@ -220,6 +262,7 @@ describe('getRecentCopilotTurns', () => {
       event_id: replyId,
       session_id: sessionId,
       reply_event_id: replyId,
+      checkpoint_event_id: askId,
     });
   });
 

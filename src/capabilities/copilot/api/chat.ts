@@ -148,7 +148,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
       // SSE 面是两条返回契约）。
       return Response.json(
-        { run_id: runId, session_id: sessionId },
+        { run_id: runId, session_id: sessionId, checkpoint_event_id: runId },
         {
           status: 202,
           headers: {

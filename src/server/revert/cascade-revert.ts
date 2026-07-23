@@ -215,6 +215,8 @@ export type CascadeRevertRefusal =
 export type OrchestrateCascadeRevertResult = CascadeRevertResult | CascadeRevertRefusal;
 
 export interface OrchestrateCascadeRevertOptions extends CollectCascadeOptions {
+  /** Restrict the closure to the YUK-497 Copilot ask revert contract. */
+  copilotAskOnly?: boolean;
   /**
    * YUK-561 S3 — provenance threaded onto the retract compensation events' reason_md
    * (e.g. the appeal that drove a judge-overturn revert + the prior→new outcome). O2:
@@ -340,6 +342,20 @@ export async function orchestrateCascadeRevert(
   // 4. PRE-CHECK reversibility (all-or-nothing). Any irreversible / unknown / no-
   //    clean-inverse node → refuse the whole revert naming what blocked it.
   const effects: RevertableEffect[] = orderedRows.map(classifyRow);
+  if (opts?.copilotAskOnly) {
+    for (let index = 0; index < orderedRows.length; index += 1) {
+      const row = orderedRows[index];
+      const allowed =
+        (row.id === checkpointEventId && row.action === 'experimental:copilot_user_ask') ||
+        row.action === 'experimental:copilot_reply' ||
+        row.action === STATE_SNAPSHOT_ACTION ||
+        (row.action === 'generate' &&
+          row.subject_kind === 'knowledge_edge' &&
+          (row.payload as { edge_op?: string } | null)?.edge_op === 'create');
+      if (!allowed)
+        effects[index] = { eventId: row.id, action: row.action, reversibility: 'irreversible' };
+    }
+  }
   const irreversible = effects.filter((e) => e.reversibility === 'irreversible');
   if (irreversible.length > 0) {
     const actionsList = irreversible.map((e) => `${e.action}(${e.eventId})`).join(', ');

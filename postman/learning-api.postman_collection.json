@@ -861,6 +861,26 @@
           "response": []
         },
         {
+          "name": "POST /api/copilot/checkpoints/:eventId/revert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/checkpoints/:eventId/revert",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "checkpoints", ":eventId", "revert"],
+              "variable": [
+                {
+                  "key": "eventId",
+                  "value": "REPLACE_eventId"
+                }
+              ]
+            },
+            "description": "撤回当前 Copilot 会话中已终止的 typed user-ask 轮次\n\n**Path vars:** `:eventId` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 仅 experimental:copilot_user_ask 根；成功 200 reverted，重复调用 200 already_reverted 且不新增补偿；不支持 effect 原子拒绝。"
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/copilot/nudges/:id/dismiss",
           "request": {
             "method": "POST",

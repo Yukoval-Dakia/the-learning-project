@@ -18,6 +18,26 @@ const turn = (over: Partial<ReplayTurn>): ReplayTurn => ({
 });
 
 describe('replayToMessages', () => {
+  it('maps a retracted turn tombstone without interactive carriers', () => {
+    const out = replayToMessages([
+      turn({
+        role: 'tombstone',
+        text: '本轮更改已撤回',
+        event_id: 'ask_reverted',
+        checkpoint_event_id: 'ask_reverted',
+      }),
+    ]);
+
+    expect(out).toEqual([
+      {
+        id: 'ask_reverted',
+        role: 'tombstone',
+        text: '本轮更改已撤回',
+        checkpoint_event_id: 'ask_reverted',
+      },
+    ]);
+  });
+
   it('maps user + ai turns to chat messages, preserving order and reusing event_id as the message id', () => {
     const out = replayToMessages([
       turn({ role: 'user', text: '今天该复习哪些？', event_id: 'ask_1' }),

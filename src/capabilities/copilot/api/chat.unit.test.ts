@@ -140,6 +140,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(CopilotDurableRunResponseSchema.parse(await res.json())).toEqual({
       run_id: 'copilot_user_ask_RID',
       session_id: 'sess_1',
+      checkpoint_event_id: 'copilot_user_ask_RID',
     });
     // user_ask 写入 = run handle。
     expect(writeUserAskMock).toHaveBeenCalledWith(

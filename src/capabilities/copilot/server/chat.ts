@@ -311,6 +311,8 @@ export interface CopilotChatResult {
   reply: string;
   surface: DomainToolSurface;
   triggered_by: CopilotChatTriggerKind;
+  /** Authoritative checkpoint id for reverting this completed turn. */
+  checkpoint_event_id?: string;
   /** When the chat path wrote a user_ask event, this carries the id. */
   user_ask_event_id?: string;
   // AF S3a / YUK-203 U3 — durable conversation envelope this turn belongs to,
@@ -851,7 +853,9 @@ async function runCopilotChatImpl(
       triggered_by: req.triggered_by,
       session_id: sessionId,
       reply_event_id: replyEventId,
-      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+      ...(userAskEventId
+        ? { user_ask_event_id: userAskEventId, checkpoint_event_id: userAskEventId }
+        : {}),
       skill_turn: skillTurn,
     };
   }
@@ -1055,7 +1059,9 @@ async function runCopilotChatImpl(
     triggered_by: req.triggered_by,
     session_id: sessionId,
     reply_event_id: replyEventId,
-    ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+    ...(userAskEventId
+      ? { user_ask_event_id: userAskEventId, checkpoint_event_id: userAskEventId }
+      : {}),
     // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
     // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
     ...(streamError ? { error: streamError } : {}),

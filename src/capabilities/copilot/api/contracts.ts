@@ -6,12 +6,45 @@ import { CopilotChatRequest } from '../server/chat-contracts';
 export { CopilotChatRequest };
 
 export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
+export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
+
+export const CopilotCheckpointRevertResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    status: z.enum(['reverted', 'already_reverted']),
+    checkpoint_event_id: z.string(),
+    compensation_event_ids: z.array(z.string()),
+    reverted: z
+      .object({
+        snapshotsRestored: z.number().int().nonnegative(),
+        structuralRowsArchived: z.number().int().nonnegative(),
+        eventLayerCompensated: z.number().int().nonnegative(),
+        totalNodes: z.number().int().nonnegative(),
+      })
+      .optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
+    reason: z.string(),
+    irreversibleEventIds: z.array(z.string()).optional(),
+    ref: z.object({ kind: z.literal('theta'), kcId: z.string() }).optional(),
+    conflictRef: z
+      .object({
+        kind: z.enum(['theta', 'fsrs']),
+        subjectKind: z.string(),
+        subjectId: z.string(),
+      })
+      .optional(),
+  }),
+]);
 
 export const CopilotChatStreamResponseSchema = z.string();
 
 export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
+  checkpoint_event_id: z.string(),
 });
 
 export const CopilotTurnsQuerySchema = z.object({
@@ -42,12 +75,13 @@ const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
 ]);
 
 export const CopilotTurnSchema = z.object({
-  role: z.enum(['user', 'ai']),
+  role: z.enum(['user', 'ai', 'tombstone']),
   text: z.string(),
   at: z.string().datetime(),
   event_id: z.string(),
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
+  checkpoint_event_id: z.string().optional(),
   skill_turn: CopilotTurnSkillSchema.optional(),
   skill_context: z
     .object({

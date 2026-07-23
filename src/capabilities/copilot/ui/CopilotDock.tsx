@@ -100,6 +100,7 @@ interface CopilotChatResponse {
   triggered_by: string;
   session_id: string;
   reply_event_id: string;
+  checkpoint_event_id?: string;
   user_ask_event_id?: string;
   // AF S4 / YUK-203 U6 — additive optional structured-turn carrier.
   skill_turn?: SkillTurn;
@@ -120,8 +121,9 @@ interface CopilotTurnsResponse {
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'ai';
+  role: 'user' | 'ai' | 'tombstone';
   text: string;
+  checkpoint_event_id?: string;
   // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
   // skill turn. `skill_turn` drives the structured-question card + chips;
   // `session_id` is the Copilot session id the corrective accept-chip posts to;
@@ -217,6 +219,7 @@ interface MessageRowProps {
   message: ChatMessage;
   navigate: (to: string) => void;
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
+  onRevert?: (checkpointEventId: string) => void;
   // Per-row (not global) chip flags so a corrective-chip click on ONE message
   // does not re-render every other row: only the matching row sees its flag flip.
   chipPending: boolean;
@@ -234,6 +237,7 @@ export const MessageRow = memo(function MessageRow({
   message: m,
   navigate,
   onAcceptCorrective,
+  onRevert,
   chipPending,
   chipAcked,
 }: MessageRowProps) {
@@ -242,16 +246,31 @@ export const MessageRow = memo(function MessageRow({
       className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
       data-testid={`copilot-msg-${m.role}`}
     >
-      <div className="msg-avatar">
-        {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
-      </div>
+      {m.role === 'tombstone' ? null : (
+        <div className="msg-avatar">
+          {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
+        </div>
+      )}
       <div className="msg-body">
-        <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+        {m.role === 'tombstone' ? null : (
+          <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+        )}
         {/* The Markdown parser is warmed only when the drawer opens. Until
             its chunk arrives, DeferredMarkdownRenderer keeps escaped plain
             text visible instead of blanking or crashing the conversation.
             Copilot has no subject profile, so dollar syntax stays plain. */}
         <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
+        {m.role === 'ai' && m.checkpoint_event_id && !m.streaming && onRevert ? (
+          <button
+            type="button"
+            className="chip"
+            onClick={() => {
+              if (m.checkpoint_event_id) onRevert(m.checkpoint_event_id);
+            }}
+          >
+            撤回本轮更改
+          </button>
+        ) : null}
         {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
             message. A NEW testid distinct from copilot-thinking (which
             only covers the pre-first-byte gap). Reuses the Dock chat
@@ -455,6 +474,25 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     };
   }, [open]);
 
+  const refetchTurns = useCallback(async () => {
+    const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
+    setMessages(replayToMessages(res.turns ?? []));
+  }, []);
+
+  const revertCheckpoint = useCallback(
+    async (checkpointEventId: string) => {
+      try {
+        await apiJson(`/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`, {
+          method: 'POST',
+        });
+        await refetchTurns();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '撤回失败');
+      }
+    },
+    [refetchTurns],
+  );
+
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
   // bubble mounts and we want to scroll to it, even though the effect body
@@ -582,6 +620,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         role: 'ai',
         // The terminal reply is authoritative (reconciles any delta drift).
         text: res2.reply,
+        checkpoint_event_id: res2.checkpoint_event_id,
         skill_turn: res2.skill_turn,
         session_id: res2.session_id,
         reply_event_id: res2.reply_event_id,
@@ -948,6 +987,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   message={m}
                   navigate={navigate}
                   onAcceptCorrective={acceptCorrectiveChip}
+                  onRevert={revertCheckpoint}
                   chipPending={qid != null && chipPending === qid}
                   chipAcked={qid != null && chipAcked === qid}
                 />
