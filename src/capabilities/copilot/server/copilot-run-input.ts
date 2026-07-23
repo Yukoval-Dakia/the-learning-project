@@ -100,8 +100,12 @@ export function assembleConversationHistory(
   budget: CopilotHistoryBudget,
   pinnedHeaderMd?: string,
 ): CopilotHistoryTurn[] {
-  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice).
-  const recent = turns.filter((turn) => turn.role !== 'tombstone').slice(-budget.maxTurns);
+  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice). Explicit ALLOWLIST
+  // of the two conversational roles (not a `!== 'tombstone'` denylist) so a future turn role
+  // can never slip through the `as 'user' | 'ai'` cast below into the run input.
+  const recent = turns
+    .filter((turn) => turn.role === 'user' || turn.role === 'ai')
+    .slice(-budget.maxTurns);
   // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
     role: t.role as 'user' | 'ai',

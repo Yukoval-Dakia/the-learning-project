@@ -784,33 +784,37 @@ describe('orchestrateCascadeRevert', () => {
     const url = process.env.TEST_DATABASE_URL;
     if (!url) throw new Error('TEST_DATABASE_URL not set');
     const writer = postgres(url, { max: 1 });
-    let signalAcquired: (() => void) | undefined;
-    const acquired = new Promise<void>((resolve) => {
-      signalAcquired = resolve;
-    });
-    let releaseWriter: (() => void) | undefined;
-    const release = new Promise<void>((resolve) => {
-      releaseWriter = resolve;
-    });
-    const writeNewEvidence = writer.begin(async (sql) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${kcId}`}))`;
-      await sql`UPDATE mastery_state SET theta_hat = 1.3, evidence_count = 3 WHERE subject_kind = 'knowledge' AND subject_id = ${kcId}`;
-      signalAcquired?.();
-      await release;
-    });
-    await acquired;
+    try {
+      let signalAcquired: (() => void) | undefined;
+      const acquired = new Promise<void>((resolve) => {
+        signalAcquired = resolve;
+      });
+      let releaseWriter: (() => void) | undefined;
+      const release = new Promise<void>((resolve) => {
+        releaseWriter = resolve;
+      });
+      const writeNewEvidence = writer.begin(async (sql) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${kcId}`}))`;
+        await sql`UPDATE mastery_state SET theta_hat = 1.3, evidence_count = 3 WHERE subject_kind = 'knowledge' AND subject_id = ${kcId}`;
+        signalAcquired?.();
+        await release;
+      });
+      await acquired;
 
-    const revertPromise = orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
-    releaseWriter?.();
-    await writeNewEvidence;
-    const result = await revertPromise;
-    await writer.end();
+      const revertPromise = orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
+      releaseWriter?.();
+      await writeNewEvidence;
+      const result = await revertPromise;
 
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected conflict');
-    expect(result.refusal).toBe('conflict');
-    expect(await readTheta(kcId)).toBe(1.3);
-    expect(await countCorrectionsFor(`${attemptId}:snapshot:theta`)).toBe(0);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected conflict');
+      expect(result.refusal).toBe('conflict');
+      expect(await readTheta(kcId)).toBe(1.3);
+      expect(await countCorrectionsFor(`${attemptId}:snapshot:theta`)).toBe(0);
+    } finally {
+      // Always release the dedicated writer connection, even if an assertion above throws.
+      await writer.end();
+    }
   });
 
   it('tx-aware: runs inside a caller tx + threads reasonContext into the retract reason_md', async () => {

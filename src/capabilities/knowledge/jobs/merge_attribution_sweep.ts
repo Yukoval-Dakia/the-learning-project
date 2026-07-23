@@ -31,6 +31,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
@@ -259,17 +260,21 @@ export async function runMergeAttributionSweep(
       }
       const mergeFromIds = new Set(allFromIds);
       outcome = await db.transaction(async (tx): Promise<WinnerTxOutcome> => {
+        // YUK-497 review F2 — global learning-state write lock G FIRST, before the winner-row
+        // FOR UPDATE below, so this sweep tx shares the accept path's G→rows order. Pre-fix the
+        // winner-row FOR UPDATE preceded G (reached only inside repairMergeAttributionForFromId),
+        // while applyMerge holds G then updates the same winner row — the accept-vs-sweep window
+        // that could deadlock (PG 40P01). repairMergeAttributionForFromId re-acquires G reentrantly.
+        await acquireLearningStateWriteLock(tx);
         // TOCTOU re-verify — the census resolved winnerId WITHOUT any lock; a concurrent
         // accept-merge can archive this winner (absorbing it into a further node) in the window.
         // Of the 9 surface writers only createKnowledgeEdge self-protects (not_found on archived
         // endpoints); the other 8 would silently re-key rows onto an archived node. A locking read
         // (FOR UPDATE) is chosen over an advisory lock because it is the mechanism that OBSERVES a
         // committed concurrent archive: it blocks on applyMerge's in-flight row UPDATE (the archive
-        // takes the row lock) and then re-reads the LATEST committed row version. Lock order matches
-        // the accept path in the common case (knowledge row locks BEFORE per-KC advisory locks);
-        // the narrow cross-order window (an accept holding advisory locks while appending
-        // merged_from on OUR winner row) can deadlock, which Postgres detects and aborts one side —
-        // the per-winner try/catch below degrades that to skip + next-run retry, never a stuck job.
+        // takes the row lock) and then re-reads the LATEST committed row version. With G held first,
+        // both sides now take G before any winner-row lock, so the cross-order deadlock window is
+        // closed; the per-winner try/catch below still degrades any residual abort to skip + retry.
         const winnerRow = await tx
           .select({ archived_at: knowledge.archived_at })
           .from(knowledge)

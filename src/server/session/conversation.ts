@@ -114,9 +114,11 @@ const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${COPILOT_SESSION_SELECTION_LOCK}, 0))`,
-  );
+  // YUK-497 review — single-arg `hashtext` to match this PR's advisory-lock convention
+  // (acquireLearningStateWriteLock / acquireSortedAdvisoryLocks / mastery fsrs:knowledge all
+  // use hashtext); the two functions produce different keys, so this is the lone owner of
+  // COPILOT_SESSION_SELECTION_LOCK and no other lock site depends on the prior hashtextextended.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${COPILOT_SESSION_SELECTION_LOCK}))`);
 }
 
 /**

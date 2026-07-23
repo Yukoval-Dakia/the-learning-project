@@ -86,15 +86,23 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { restoreStateSnapshot } from './restore-snapshot';
 
 type DbLike = Db | Tx;
 
 /** A-class: the only action whose revert is a state-snapshot restore. */
 const STATE_SNAPSHOT_ACTION = 'experimental:state_snapshot';
+
+/**
+ * Copilot per-utterance checkpoint anchor + reply actions. The revert subsystem is the
+ * canonical owner of these names for the revert side (revert-checkpoint.ts imports them
+ * from here) so the magic strings are not re-minted across the endpoint + orchestrator.
+ */
+export const COPILOT_USER_ASK_ACTION = 'experimental:copilot_user_ask';
+export const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
 
 /**
  * B-class EVENT-LAYER actions: a `correct`(retract) event is the COMPLETE reversal
@@ -110,9 +118,9 @@ const STATE_SNAPSHOT_ACTION = 'experimental:state_snapshot';
  *   - rate : a vote; the materialization is the chained generate.
  */
 const EVENT_LAYER_ACTIONS: ReadonlySet<string> = new Set([
-  'experimental:copilot_reply',
+  COPILOT_REPLY_ACTION,
   'experimental:teach_message',
-  'experimental:copilot_user_ask',
+  COPILOT_USER_ASK_ACTION,
   'experimental:copilot_chip_trigger',
   // YUK-561 S2 (revert-bracket §4.2) — the grading_checkpoint anchor a state_snapshot
   // hangs off. NO independent live SoT row (the A-class state is in the snapshot it
@@ -290,6 +298,19 @@ export async function orchestrateCascadeRevert(
   // savepoint and returns a typed refusal, leaving the caller's tx alive to write a
   // deferred marker + commit), a real tx when db is a top-level Db.
 
+  // YUK-497 review F1 — G-FIRST for the tx-passed branch. When the caller owns the tx
+  // (revert endpoint / atomic judge-overturn), the step-5 pre-check below takes FOR NO KEY
+  // UPDATE row locks on mastery_state / material_fsrs_state. Those row locks must NEVER
+  // precede the global learning-state write lock G, or this tx (rows→G) deadlocks against a
+  // concurrent learning-state writer (which takes G→rows). Acquire G HERE, before ANY row
+  // access, so the whole caller tx is G-first. Reentrant: step 6's tx re-acquires it (no-op)
+  // and a caller that already holds G (the revert endpoint) is unaffected. A top-level Db
+  // (self-opened path) skips this — its pre-check row locks run in per-statement implicit
+  // txs (never held across G) and step 6 opens the real tx that acquires G first.
+  if (!('$client' in db)) {
+    await acquireLearningStateWriteLock(db);
+  }
+
   // 1. Collect the cascade. Truncation → honest-reject (no half set).
   const cascade = await collectCascadeFromCheckpoint(db, checkpointEventId, opts);
   if (cascade.truncated) {
@@ -347,8 +368,8 @@ export async function orchestrateCascadeRevert(
     for (let index = 0; index < orderedRows.length; index += 1) {
       const row = orderedRows[index];
       const allowed =
-        (row.id === checkpointEventId && row.action === 'experimental:copilot_user_ask') ||
-        row.action === 'experimental:copilot_reply' ||
+        (row.id === checkpointEventId && row.action === COPILOT_USER_ASK_ACTION) ||
+        row.action === COPILOT_REPLY_ACTION ||
         row.action === STATE_SNAPSHOT_ACTION ||
         (row.action === 'generate' &&
           row.subject_kind === 'knowledge_edge' &&
@@ -691,21 +712,19 @@ async function acquireSnapshotStateLocks(
   tx: Tx,
   payloads: Iterable<StateSnapshotExperimentalPayload>,
 ): Promise<void> {
-  const lockRefs = new Set<string>();
+  // Per-KC / per-material ids under the shared `fsrs` namespace — the SAME key space the
+  // grading path (mastery/state.ts fsrs:knowledge) and the merge retire pair lock, so the
+  // conflict guard's FOR-UPDATE reads never race a concurrent state writer on the same row.
+  const ids = new Set<string>();
   for (const payload of payloads) {
     for (const snap of payload.theta_snapshots) {
-      lockRefs.add(`fsrs:knowledge:${snap.kc_id}`);
+      ids.add(`knowledge:${snap.kc_id}`);
     }
     for (const snap of payload.fsrs_snapshots) {
-      lockRefs.add(`fsrs:${snap.subject_kind}:${snap.subject_id}`);
+      ids.add(`${snap.subject_kind}:${snap.subject_id}`);
     }
   }
-  for (const lockRef of [...lockRefs].sort()) {
-    const [namespace, subjectKind, ...subjectIdParts] = lockRef.split(':');
-    const subjectId = subjectIdParts.join(':');
-    const sharedKey = namespace === 'fsrs' ? `${namespace}:${subjectKind}:${subjectId}` : lockRef;
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${sharedKey}))`);
-  }
+  await acquireSortedAdvisoryLocks(tx, 'fsrs', [...ids]);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
-import { ApiIdParamsSchema } from '@/kernel/http-contracts';
+import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { z } from 'zod';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
@@ -7,6 +7,33 @@ export { CopilotChatRequest };
 
 export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
+
+// YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
+// (no_checkpoint) / 409 (truncated / irreversible / legacy_snapshot / conflict). Declared as
+// its own schema so the manifest can map it onto those statuses instead of the bare
+// {error,message} the API_ERROR_RESPONSES spread implied for a body that is NOT an API error.
+export const CopilotCheckpointRevertRefusalSchema = z.object({
+  ok: z.literal(false),
+  refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
+  reason: z.string(),
+  irreversibleEventIds: z.array(z.string()).optional(),
+  ref: z.object({ kind: z.literal('theta'), kcId: z.string() }).optional(),
+  conflictRef: z
+    .object({
+      kind: z.enum(['theta', 'fsrs']),
+      subjectKind: z.string(),
+      subjectId: z.string(),
+    })
+    .optional(),
+});
+
+// 404 / 409 on the revert route carry EITHER the standard API error body (the route's own
+// not_found / turn_not_terminal / turn_shadow_not_terminal ApiError throws) OR the cascade
+// refusal envelope (orchestrator no_checkpoint → 404, other refusals → 409).
+export const CopilotCheckpointRevertErrorSchema = z.union([
+  ApiErrorResponseSchema,
+  CopilotCheckpointRevertRefusalSchema,
+]);
 
 export const CopilotCheckpointRevertResponseSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -16,27 +43,14 @@ export const CopilotCheckpointRevertResponseSchema = z.discriminatedUnion('ok', 
     compensation_event_ids: z.array(z.string()),
     reverted: z
       .object({
-        snapshotsRestored: z.number().int().nonnegative(),
-        structuralRowsArchived: z.number().int().nonnegative(),
-        eventLayerCompensated: z.number().int().nonnegative(),
-        totalNodes: z.number().int().nonnegative(),
+        snapshots_restored: z.number().int().nonnegative(),
+        structural_rows_archived: z.number().int().nonnegative(),
+        event_layer_compensated: z.number().int().nonnegative(),
+        total_nodes: z.number().int().nonnegative(),
       })
       .optional(),
   }),
-  z.object({
-    ok: z.literal(false),
-    refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
-    reason: z.string(),
-    irreversibleEventIds: z.array(z.string()).optional(),
-    ref: z.object({ kind: z.literal('theta'), kcId: z.string() }).optional(),
-    conflictRef: z
-      .object({
-        kind: z.enum(['theta', 'fsrs']),
-        subjectKind: z.string(),
-        subjectId: z.string(),
-      })
-      .optional(),
-  }),
+  CopilotCheckpointRevertRefusalSchema,
 ]);
 
 export const CopilotChatStreamResponseSchema = z.string();

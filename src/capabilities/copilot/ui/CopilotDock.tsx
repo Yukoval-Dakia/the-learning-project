@@ -224,6 +224,9 @@ interface MessageRowProps {
   // does not re-render every other row: only the matching row sees its flag flip.
   chipPending: boolean;
   chipAcked: boolean;
+  // Per-row in-flight flag for THIS message's revert POST (mirrors chipPending) so a
+  // second click cannot fire a duplicate revert while the first is still in flight.
+  revertPending: boolean;
 }
 
 // YUK-715 — one chat row, memoized so an SSE delta (which rebuilds only the
@@ -240,6 +243,7 @@ export const MessageRow = memo(function MessageRow({
   onRevert,
   chipPending,
   chipAcked,
+  revertPending,
 }: MessageRowProps) {
   return (
     <div
@@ -264,11 +268,14 @@ export const MessageRow = memo(function MessageRow({
           <button
             type="button"
             className="chip"
+            // Disabled while THIS row's revert POST is in flight — prevents a duplicate
+            // revert (mirrors the corrective chip's disabled={chipPending || chipAcked}).
+            disabled={revertPending}
             onClick={() => {
               if (m.checkpoint_event_id) onRevert(m.checkpoint_event_id);
             }}
           >
-            撤回本轮更改
+            {revertPending ? '撤回中…' : '撤回本轮更改'}
           </button>
         ) : null}
         {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
@@ -364,6 +371,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
+  // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
+  // never surfaced as a revert failure (F5).
+  const [revertPendingId, setRevertPendingId] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [input, setInput] = useState('');
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
@@ -481,17 +493,46 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
+      setRevertPendingId(checkpointEventId);
+      setError(null);
+      setRefreshFailed(false);
       try {
-        await apiJson(`/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`, {
-          method: 'POST',
-        });
-        await refetchTurns();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '撤回失败');
+        try {
+          await apiJson(
+            `/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`,
+            { method: 'POST' },
+          );
+        } catch (err) {
+          // The revert POST itself failed — nothing landed. Surface it as a revert failure;
+          // the per-message 撤回 button re-enables (pending cleared) so the user can retry it.
+          setError(err instanceof Error ? err.message : '撤回失败');
+          return;
+        }
+        // Revert LANDED. A refetch failure from here must NOT read as '撤回失败' — the change
+        // was reverted, only the on-screen refresh failed. Distinct state drives a refresh-only
+        // retry (retryRefresh below), never a second revert.
+        try {
+          await refetchTurns();
+        } catch {
+          setRefreshFailed(true);
+        }
+      } finally {
+        setRevertPendingId(null);
       }
     },
     [refetchTurns],
   );
+
+  // Retry affordance for the "revert landed, refresh failed" state — re-runs the turns
+  // refetch ONLY (the revert already committed server-side); clears the banner on success.
+  const retryRefresh = useCallback(async () => {
+    try {
+      await refetchTurns();
+      setRefreshFailed(false);
+    } catch {
+      // Keep the banner up; the revert is already durable, only the refresh is still failing.
+    }
+  }, [refetchTurns]);
 
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
@@ -990,6 +1031,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   onRevert={revertCheckpoint}
                   chipPending={qid != null && chipPending === qid}
                   chipAcked={qid != null && chipAcked === qid}
+                  revertPending={
+                    m.checkpoint_event_id != null && revertPendingId === m.checkpoint_event_id
+                  }
                 />
               );
             })}
@@ -1013,6 +1057,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 <span>{error}</span>
                 <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
                   重试
+                </Btn>
+              </div>
+            ) : null}
+            {refreshFailed ? (
+              <div className="chat-error" data-testid="copilot-refresh-error" role="alert">
+                <LoomIcon name="alert" size={14} />
+                <span>撤回已完成，但刷新对话失败。</span>
+                <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
+                  刷新
                 </Btn>
               </div>
             ) : null}

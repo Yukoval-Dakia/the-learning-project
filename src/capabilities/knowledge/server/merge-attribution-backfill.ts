@@ -35,6 +35,7 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { repairMergeAttributionForFromId } from './proposals';
 
@@ -363,6 +364,11 @@ export async function runMergeAttributionBackfill(
     // Write mode: repair the whole winner group in ONE tx (atomic per winner).
     const mergeFromIds = new Set(fromIds);
     await db.transaction(async (tx) => {
+      // YUK-497 review F2 — global learning-state write lock G FIRST at the tx entry, so every
+      // learning-state-touching tx (accept / sweep / this backfill) shares the same G→rows order.
+      // repairMergeAttributionForFromId re-acquires G reentrantly; acquiring it here makes G the
+      // tx's first lock, before any row access inside the repair.
+      await acquireLearningStateWriteLock(tx);
       for (const fromId of fromIds) {
         // OCR O2 — NO pre-repair census here: the repair's own MergeRepairEntry return carries the
         // exact per-surface counts from the SAME tx snapshot, so a countOrphanSurfaces call before

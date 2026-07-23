@@ -5,6 +5,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as acceptChip } from './accept-chip';
 import {
   AcceptTeachingChipResponseSchema,
+  CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertResponseSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsResponseSchema,
@@ -34,6 +35,35 @@ describe('Copilot declared route response contracts', () => {
         irreversibleEventIds: ['tool_1'],
       }),
     ).toMatchObject({ refusal: 'irreversible' });
+  });
+
+  it('parses the snake_case reverted sub-object and the 404/409 error union (review F3/F7)', () => {
+    // F7 — the success envelope's reverted counters are snake_case on the wire.
+    expect(
+      CopilotCheckpointRevertResponseSchema.parse({
+        ok: true,
+        status: 'reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: ['c1'],
+        reverted: {
+          snapshots_restored: 1,
+          structural_rows_archived: 0,
+          event_layer_compensated: 2,
+          total_nodes: 3,
+        },
+      }),
+    ).toMatchObject({ reverted: { total_nodes: 3 } });
+    // F3 — 404/409 admit BOTH the route's ApiError body and the cascade refusal envelope.
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({ error: 'turn_not_terminal', message: 'x' }),
+    ).toMatchObject({ error: 'turn_not_terminal' });
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({
+        ok: false,
+        refusal: 'no_checkpoint',
+        reason: 'nothing to revert',
+      }),
+    ).toMatchObject({ refusal: 'no_checkpoint' });
   });
 
   it('parses the real turns and today-summary route envelopes', async () => {

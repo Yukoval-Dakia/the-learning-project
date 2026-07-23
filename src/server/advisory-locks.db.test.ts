@@ -22,11 +22,19 @@ import { and, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { POST as revertCheckpointPOST } from '@/capabilities/copilot/api/revert-checkpoint';
 import { repairMergeAttributionForFromId } from '@/capabilities/knowledge/server/proposals';
 import { POST as submitPOST } from '@/capabilities/practice/api/submit';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
-import { knowledge, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_session,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import {
@@ -201,6 +209,111 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
   } finally {
     await holder.end({ timeout: 5 });
   }
+}
+
+/**
+ * Like {@link assertBlocksOnGlobalLock}, but proves the G-FIRST order for a caller that
+ * LEGITIMATELY holds per-entity idempotency ADVISORY locks before G (the revert endpoint holds
+ * copilot_revert + session-selection). So it does NOT require zero advisory locks; it requires
+ * zero granted ROW locks (RowShareLock+ — FOR UPDATE / FOR NO KEY UPDATE, i.e. any relation lock
+ * stronger than the harmless AccessShareLock a plain SELECT takes) while the tx waits on G. That
+ * is the F1 inversion shape: a state-row lock taken before the global lock.
+ */
+async function assertBlocksOnGlobalLockHoldingNoRowLock<T>(
+  contended: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (s) => {
+      await s.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    // Order proof: every backend waiting on an advisory lock in THIS database holds zero granted
+    // RELATION locks stronger than AccessShareLock — i.e. G is taken before any FOR UPDATE / FOR
+    // NO KEY UPDATE state-row lock. Advisory idempotency locks (copilot_revert, session-selection)
+    // are legitimately held before G and are NOT counted here.
+    const rows = (await testDb().execute(sql`
+      SELECT w.pid,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.locktype = 'relation'
+                  AND g.mode <> 'AccessShareLock') AS granted_row_locks
+        FROM pg_locks w
+       WHERE w.locktype = 'advisory' AND NOT w.granted
+         AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `)) as unknown as Array<{ pid: number; granted_row_locks: number }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.granted_row_locks).toBe(0);
+    }
+
+    release();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    await holder.end({ timeout: 5 });
+  }
+}
+
+async function seedTerminalCopilotTurn(): Promise<string> {
+  const now = new Date();
+  const sessionId = 'copilot_current';
+  await testDb().insert(learning_session).values({
+    id: sessionId,
+    type: 'conversation',
+    status: 'active',
+    entrypoint: 'copilot',
+    updated_at: now,
+  });
+  const checkpointId = `ask_${sessionId}`;
+  await testDb()
+    .insert(event)
+    .values({
+      id: checkpointId,
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:copilot_user_ask',
+      subject_kind: 'query',
+      subject_id: checkpointId,
+      payload: { user_message: '撤回这一轮', session_id: sessionId },
+      created_at: new Date(now.getTime() - 2),
+    });
+  await testDb()
+    .insert(event)
+    .values({
+      id: `reply_${sessionId}`,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'experimental:copilot_reply',
+      subject_kind: 'query',
+      subject_id: `reply_${sessionId}`,
+      payload: { reply_md: '已完成' },
+      caused_by_event_id: checkpointId,
+      created_at: new Date(now.getTime() - 1),
+    });
+  return checkpointId;
 }
 
 describe('YUK-497 — global learning-state write lock (two-connection regressions)', () => {
@@ -431,5 +544,24 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
       ),
     );
     expect(merged).not.toBeNull();
+  });
+
+  it('copilot checkpoint revert endpoint takes the global lock BEFORE any state-row lock (review F1)', async () => {
+    const checkpointId = await seedTerminalCopilotTurn();
+
+    // The revert endpoint tx holds only its per-checkpoint + session-selection ADVISORY locks
+    // before reaching G; pre-fix the cascade pre-check's FOR NO KEY UPDATE row locks preceded G
+    // (rows→G), inverting against a concurrent learning-state writer (G→rows). While blocked on
+    // the held G it must hold ZERO RowShare+ state-row locks.
+    const response = await assertBlocksOnGlobalLockHoldingNoRowLock(() =>
+      revertCheckpointPOST(
+        new Request(`http://test/api/copilot/checkpoints/${checkpointId}/revert`, {
+          method: 'POST',
+        }),
+        { eventId: checkpointId },
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, status: 'reverted' });
   });
 });

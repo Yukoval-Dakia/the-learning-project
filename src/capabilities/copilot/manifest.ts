@@ -7,6 +7,7 @@ import {
   CopilotChatRequest,
   CopilotChatStreamResponseSchema,
   CopilotCheckpointParamsSchema,
+  CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertResponseSchema,
   CopilotDurableRunResponseSchema,
   CopilotNudgeCompanionResponseSchema,
@@ -60,7 +61,15 @@ export const copilotCapability = defineCapability({
         path: '/api/copilot/checkpoints/[eventId]/revert',
         operationId: 'revertCopilotCheckpoint',
         request: { params: CopilotCheckpointParamsSchema },
-        responses: { 200: CopilotCheckpointRevertResponseSchema, ...API_ERROR_RESPONSES },
+        // YUK-497 review F3 — 404 (no_checkpoint) / 409 (truncated/irreversible/legacy/conflict)
+        // return the cascade refusal envelope, NOT the bare {error,message} the spread implies;
+        // override those two statuses with the union that also admits the route's ApiError bodies.
+        responses: {
+          200: CopilotCheckpointRevertResponseSchema,
+          ...API_ERROR_RESPONSES,
+          404: CopilotCheckpointRevertErrorSchema,
+          409: CopilotCheckpointRevertErrorSchema,
+        },
         successStatus: 200,
         load: () => import('./api/revert-checkpoint').then((m) => m.POST),
       },

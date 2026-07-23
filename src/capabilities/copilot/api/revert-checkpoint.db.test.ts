@@ -134,7 +134,7 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
       releaseHolder = resolve;
     });
     const rollover = holder.begin(async (sql) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'copilot:session-selection'}, 0))`;
+      await sql`SELECT pg_advisory_xact_lock(hashtext(${'copilot:session-selection'}))`;
       await sql`UPDATE learning_session SET status = 'ended' WHERE id = ${old.sessionId}`;
       const now = new Date();
       await sql`INSERT INTO learning_session (id, type, status, entrypoint, source_asset_ids, warnings, created_at, updated_at, version) VALUES ('copilot_new', 'conversation', 'active', 'copilot', '[]'::jsonb, '[]'::jsonb, ${now}, ${now}, 0)`;
