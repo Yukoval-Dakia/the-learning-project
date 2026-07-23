@@ -14,7 +14,7 @@ import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
@@ -40,27 +40,32 @@ export interface UpsertFsrsStateInput {
  * the same statement via ON CONFLICT.
  */
 export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): Promise<void> {
-  const now = new Date();
-  await db
-    .insert(material_fsrs_state)
-    .values({
-      id: newId(),
-      subject_kind: input.subject_kind,
-      subject_id: input.subject_id,
-      state: input.state,
-      due_at: input.due_at,
-      last_review_event_id: input.last_review_event_id,
-      updated_at: now,
-    })
-    .onConflictDoUpdate({
-      target: [material_fsrs_state.subject_kind, material_fsrs_state.subject_id],
-      set: {
+  const apply = async (tx: Tx) => {
+    await acquireLearningStateWriteLock(tx);
+    const now = new Date();
+    await tx
+      .insert(material_fsrs_state)
+      .values({
+        id: newId(),
+        subject_kind: input.subject_kind,
+        subject_id: input.subject_id,
         state: input.state,
         due_at: input.due_at,
         last_review_event_id: input.last_review_event_id,
         updated_at: now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: [material_fsrs_state.subject_kind, material_fsrs_state.subject_id],
+        set: {
+          state: input.state,
+          due_at: input.due_at,
+          last_review_event_id: input.last_review_event_id,
+          updated_at: now,
+        },
+      });
+  };
+  if ('rollback' in db) await apply(db);
+  else await db.transaction(apply);
 }
 
 /**
@@ -74,22 +79,27 @@ export async function enrollFsrsStateIfAbsent(
   db: DbLike,
   input: UpsertFsrsStateInput,
 ): Promise<boolean> {
-  const inserted = await db
-    .insert(material_fsrs_state)
-    .values({
-      id: newId(),
-      subject_kind: input.subject_kind,
-      subject_id: input.subject_id,
-      state: input.state,
-      due_at: input.due_at,
-      last_review_event_id: input.last_review_event_id,
-      updated_at: new Date(),
-    })
-    .onConflictDoNothing({
-      target: [material_fsrs_state.subject_kind, material_fsrs_state.subject_id],
-    })
-    .returning({ id: material_fsrs_state.id });
-  return inserted.length > 0;
+  const apply = async (tx: Tx): Promise<boolean> => {
+    await acquireLearningStateWriteLock(tx);
+    const inserted = await tx
+      .insert(material_fsrs_state)
+      .values({
+        id: newId(),
+        subject_kind: input.subject_kind,
+        subject_id: input.subject_id,
+        state: input.state,
+        due_at: input.due_at,
+        last_review_event_id: input.last_review_event_id,
+        updated_at: new Date(),
+      })
+      .onConflictDoNothing({
+        target: [material_fsrs_state.subject_kind, material_fsrs_state.subject_id],
+      })
+      .returning({ id: material_fsrs_state.id });
+    return inserted.length > 0;
+  };
+  if ('rollback' in db) return apply(db);
+  return db.transaction(apply);
 }
 
 /**
@@ -109,6 +119,8 @@ export async function retireFsrsStateOnMerge(
   fromId: string,
   intoId: string,
 ): Promise<'noop' | 'renamed' | 'frozen'> {
+  // YUK-497 — global learning-state write lock before the per-key locks (shared tx-entry order).
+  await acquireLearningStateWriteLock(tx);
   await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
     .select({ subject_id: material_fsrs_state.subject_id })

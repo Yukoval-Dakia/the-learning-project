@@ -13,6 +13,13 @@
 import type { Tx } from '@/db/client';
 import { sql } from 'drizzle-orm';
 
+export const LEARNING_STATE_WRITE_LOCK = 'learning-state:write';
+
+/** Serialize every material_fsrs_state / mastery_state mutation before any row access. */
+export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${LEARNING_STATE_WRITE_LOCK}))`);
+}
+
 /**
  * Acquire `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))` for every id, in sorted string
  * order. Namespaces in use: `fsrs:knowledge` (mastery+fsrs, shared with the grading path),

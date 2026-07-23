@@ -86,6 +86,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { restoreStateSnapshot } from './restore-snapshot';
@@ -410,6 +411,7 @@ export async function orchestrateCascadeRevert(
 
   try {
     await db.transaction(async (tx) => {
+      await acquireLearningStateWriteLock(tx);
       await acquireSnapshotStateLocks(tx, snapshotPayloads.values());
       for (const e of effects) {
         if (e.reversibility === 'state_snapshot') {

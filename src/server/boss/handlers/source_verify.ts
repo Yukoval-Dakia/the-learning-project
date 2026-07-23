@@ -37,6 +37,7 @@ import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -446,6 +447,9 @@ export async function runSourceVerify(
 
     let wasDemoted = false;
     await db.transaction(async (tx) => {
+      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert).
+      await acquireLearningStateWriteLock(tx);
       // The checks above ran against `row.version`. Cross-KC reconciliation bumps that version
       // under the same row lock; a mismatch makes this verdict stale, so abort before writing a
       // terminal event/promotion. The catch records a retriable outcome='error' and pg-boss reruns

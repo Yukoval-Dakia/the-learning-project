@@ -30,7 +30,7 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
@@ -1048,6 +1048,11 @@ export async function applyMerge(
   }
 
   return await (db as Db).transaction(async (tx) => {
+    // YUK-497 — global learning-state write lock FIRST (before the knowledge_edge advisory
+    // locks taken inside rewireKnowledgeEdges): the merge tx retires mastery/FSRS state via
+    // retire*OnMerge, so it must share the same tx-entry order as every learning-state writer
+    // and the cascade revert (which holds this lock before touching edge rows).
+    await acquireLearningStateWriteLock(tx);
     const intoRow = (
       await tx
         .select({ id: knowledge.id, merged_from: knowledge.merged_from })

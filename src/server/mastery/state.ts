@@ -61,7 +61,7 @@ import {
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { resolveFamilyKeyForQuestion } from './family-key';
 import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
@@ -130,57 +130,64 @@ export async function upsertMasteryState(
   db: DbLike,
   input: UpsertMasteryStateInput,
 ): Promise<void> {
-  const now = new Date();
-  const subjectKind = input.subject_kind ?? 'knowledge';
-  // YUK-361 Phase 2 — precision/delta 是可选维护：只有 caller 显式传值时才写。
-  //   INSERT 缺省走 DB default（theta_precision=1, last_theta_delta=NULL）。
-  //   UPDATE 缺省不动这两列（既有 upsert caller 如直接 seed 不该重置 precision）。
-  // biome-ignore lint/suspicious/noExplicitAny: drizzle set 列子集动态拼装，类型在分支内已保真。
-  const updateSet: Record<string, any> = {
-    theta_hat: input.theta_hat,
-    evidence_count: input.evidence_count,
-    success_count: input.success_count,
-    fail_count: input.fail_count,
-    last_outcome_at: input.last_outcome_at,
-    updated_at: now,
-  };
-  if (input.theta_precision !== undefined) {
-    updateSet.theta_precision = input.theta_precision;
-  }
-  if (input.last_theta_delta !== undefined) {
-    updateSet.last_theta_delta = input.last_theta_delta;
-  }
-  // A4 (YUK-436) — same optional-maintenance semantics: only write the shadow grid
-  // posterior when the caller explicitly passes it (THETA_GRID_ENABLED single-KC path).
-  if (input.theta_grid_json !== undefined) {
-    updateSet.theta_grid_json = input.theta_grid_json;
-  }
-  // A1 (YUK-449) — same optional-maintenance semantics for the per-KC correct-RT buffer:
-  // only written on an SRT-eligible correct attempt; INSERT/UPDATE skip the column otherwise.
-  if (input.rt_correct_ms !== undefined) {
-    updateSet.rt_correct_ms = input.rt_correct_ms;
-  }
-  await db
-    .insert(mastery_state)
-    .values({
-      id: newId(),
-      subject_kind: subjectKind,
-      subject_id: input.subject_id,
+  const apply = async (tx: Tx) => {
+    await acquireLearningStateWriteLock(tx);
+    const now = new Date();
+    const subjectKind = input.subject_kind ?? 'knowledge';
+    // YUK-361 Phase 2 — precision/delta 是可选维护：只有 caller 显式传值时才写。
+    //   INSERT 缺省走 DB default（theta_precision=1, last_theta_delta=NULL）。
+    //   UPDATE 缺省不动这两列（既有 upsert caller 如直接 seed 不该重置 precision）。
+    // biome-ignore lint/suspicious/noExplicitAny: drizzle set 列子集动态拼装，类型在分支内已保真。
+    const updateSet: Record<string, any> = {
       theta_hat: input.theta_hat,
       evidence_count: input.evidence_count,
       success_count: input.success_count,
       fail_count: input.fail_count,
       last_outcome_at: input.last_outcome_at,
-      ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
-      ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
-      ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
-      ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
       updated_at: now,
-    })
-    .onConflictDoUpdate({
-      target: [mastery_state.subject_kind, mastery_state.subject_id],
-      set: updateSet,
-    });
+    };
+    if (input.theta_precision !== undefined) {
+      updateSet.theta_precision = input.theta_precision;
+    }
+    if (input.last_theta_delta !== undefined) {
+      updateSet.last_theta_delta = input.last_theta_delta;
+    }
+    // A4 (YUK-436) — same optional-maintenance semantics: only write the shadow grid
+    // posterior when the caller explicitly passes it (THETA_GRID_ENABLED single-KC path).
+    if (input.theta_grid_json !== undefined) {
+      updateSet.theta_grid_json = input.theta_grid_json;
+    }
+    // A1 (YUK-449) — same optional-maintenance semantics for the per-KC correct-RT buffer:
+    // only written on an SRT-eligible correct attempt; INSERT/UPDATE skip the column otherwise.
+    if (input.rt_correct_ms !== undefined) {
+      updateSet.rt_correct_ms = input.rt_correct_ms;
+    }
+    await tx
+      .insert(mastery_state)
+      .values({
+        id: newId(),
+        subject_kind: subjectKind,
+        subject_id: input.subject_id,
+        theta_hat: input.theta_hat,
+        evidence_count: input.evidence_count,
+        success_count: input.success_count,
+        fail_count: input.fail_count,
+        last_outcome_at: input.last_outcome_at,
+        ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
+        ...(input.last_theta_delta !== undefined
+          ? { last_theta_delta: input.last_theta_delta }
+          : {}),
+        ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
+        ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [mastery_state.subject_kind, mastery_state.subject_id],
+        set: updateSet,
+      });
+  };
+  if ('rollback' in db) await apply(db);
+  else await db.transaction(apply);
 }
 
 /**
@@ -203,6 +210,8 @@ export async function retireMasteryStateOnMerge(
   fromId: string,
   intoId: string,
 ): Promise<'noop' | 'renamed' | 'frozen'> {
+  // YUK-497 — global learning-state write lock before the per-key locks (shared tx-entry order).
+  await acquireLearningStateWriteLock(tx);
   // Sorted acquire of BOTH ids' locks (SAME namespace as updateThetaForAttempt) → no deadlock.
   await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
@@ -981,6 +990,7 @@ export async function updateThetaForAttempt(
   tx: Tx,
   input: UpdateThetaForAttemptInput,
 ): Promise<UpdateThetaForAttemptResult> {
+  await acquireLearningStateWriteLock(tx);
   const knowledgeIds = Array.from(
     new Set(input.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
   );

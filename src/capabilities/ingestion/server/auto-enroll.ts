@@ -74,6 +74,7 @@ import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
@@ -735,6 +736,10 @@ export async function runAutoEnrollForSession(
       captureMode = 'text';
     }
     const result = await params.db.transaction(async (tx) => {
+      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert); this tx reaches
+      // updateThetaForAttempt / FSRS enroll below.
+      await acquireLearningStateWriteLock(tx);
       // ---- YUK-486 idempotency claim — guard concurrent double-consume. ----------------
       // Two pg-boss consumers (dev: rw:api's embedded RW_WORKER + standalone worker:dev; or a
       // prod retry re-delivered mid-flight) can both fetch an `auto_enroll` job for this session

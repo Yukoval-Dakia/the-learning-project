@@ -22,6 +22,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { runQuizVerify } from '@/server/boss/handlers/quiz_verify';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { runSourceVerify } from '@/server/boss/handlers/source_verify';
@@ -179,6 +180,9 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     const verifyEventId = newId();
 
     await db.transaction(async (tx) => {
+      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert).
+      await acquireLearningStateWriteLock(tx);
       await tx
         .update(question)
         .set({ draft_status: 'active', updated_at: now })

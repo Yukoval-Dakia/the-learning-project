@@ -32,6 +32,7 @@ import { and, eq } from 'drizzle-orm';
 import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
 import type { Tx } from '@/db/client';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';
 
@@ -68,6 +69,10 @@ export async function restoreStateSnapshot(
   tx: Tx,
   payload: StateSnapshotExperimentalT['payload'],
 ): Promise<RestoreSnapshotResult> {
+  // YUK-497 — same global learning-state write lock as every production writer. Reentrant (and
+  // effectively a no-op) under the revert orchestrator, which already holds it at tx entry;
+  // this guards direct callers of the primitive.
+  await acquireLearningStateWriteLock(tx);
   // YUK-561 S1 — SCAN-FIRST for a legacy bare-number θ̂ `before` (pre-S1 on-disk
   // snapshot). A bare number can't be verbatim-restored (counts/precision/rt/grid
   // absent), so refuse the WHOLE restore WITHOUT mutating any row — never a partial-
