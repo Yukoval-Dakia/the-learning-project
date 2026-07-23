@@ -748,7 +748,77 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // questions in the run (one passage → many questions probing it).
     let materialSourceDocumentId: string | null = null;
     failureStage = 'persist';
+    await params.placementHeartbeat?.assertHealthy();
     await db.transaction(async (tx) => {
+      if (params.placementAttempt) {
+        await assertPlacementAttemptFence(tx, params.placementAttempt);
+      }
+      const authorizeAndDispatchPlacementQuestion = async (
+        questionId: string,
+        canonicalHash: string,
+        supplyTrace: SupplyTraceV1T | undefined,
+        allowPersistedReplay: boolean,
+      ): Promise<boolean> => {
+        if (!params.placementAttempt) return false;
+        const inserted = await tx
+          .insert(placement_starter_attempt_question)
+          .values({
+            attempt_id: params.placementAttempt.attemptId,
+            claim_id: params.placementAttempt.claimId,
+            question_id: questionId,
+            canonical_hash: canonicalHash,
+            verification_authority_epoch: randomUUID(),
+            verification_status: 'authorized',
+            created_at: now,
+          })
+          .onConflictDoNothing()
+          .returning({
+            claimId: placement_starter_attempt_question.claim_id,
+            attemptId: placement_starter_attempt_question.attempt_id,
+            questionId: placement_starter_attempt_question.question_id,
+            epoch: placement_starter_attempt_question.verification_authority_epoch,
+          });
+        let persisted = inserted[0];
+        if (inserted.length > 1) {
+          throw new Error('placement authority insert returned multiple rows');
+        }
+        if (!persisted && allowPersistedReplay) {
+          [persisted] = await tx
+            .select({
+              claimId: placement_starter_attempt_question.claim_id,
+              attemptId: placement_starter_attempt_question.attempt_id,
+              questionId: placement_starter_attempt_question.question_id,
+              epoch: placement_starter_attempt_question.verification_authority_epoch,
+            })
+            .from(placement_starter_attempt_question)
+            .where(
+              and(
+                eq(
+                  placement_starter_attempt_question.attempt_id,
+                  params.placementAttempt.attemptId,
+                ),
+                eq(placement_starter_attempt_question.question_id, questionId),
+              ),
+            )
+            .limit(1);
+        }
+        if (!persisted) return false;
+        const authority: PlacementVerificationAuthority = {
+          claim_id: persisted.claimId,
+          attempt_id: persisted.attemptId,
+          question_id: persisted.questionId,
+          verification_authority_epoch: persisted.epoch,
+          fencing_token: params.placementAttempt.fencingToken,
+        };
+        await writeVerifyDispatchIntent(tx, {
+          questionId: persisted.questionId,
+          verifier: 'quiz_verify',
+          supplyTrace,
+          placementAuthority: authority,
+          createdAt: now,
+        });
+        return true;
+      };
       if (parsed.generation_method === 'material_grounded' && parsed.material) {
         materialSourceDocumentId = createId();
         await tx.insert(source_document).values({
@@ -830,64 +900,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             preserved_draft_status: existingDuplicate.draftStatus,
           });
           if (params.placementAttempt) {
-            const placementAuthority: PlacementVerificationAuthority = {
-              claim_id: params.placementAttempt.claimId,
-              attempt_id: params.placementAttempt.attemptId,
-              question_id: existingDuplicate.id,
-              verification_authority_epoch: randomUUID(),
-              fencing_token: params.placementAttempt.fencingToken,
-            };
-            const insertedAuthority = await tx
-              .insert(placement_starter_attempt_question)
-              .values({
-                attempt_id: placementAuthority.attempt_id,
-                claim_id: placementAuthority.claim_id,
-                question_id: existingDuplicate.id,
-                canonical_hash: canonicalContentHash,
-                verification_authority_epoch: placementAuthority.verification_authority_epoch,
-                verification_status: 'authorized',
-                created_at: now,
-              })
-              .onConflictDoNothing()
-              .returning({ attemptId: placement_starter_attempt_question.attempt_id });
-            const persistedAuthority =
-              insertedAuthority.length === 1
-                ? placementAuthority
-                : await tx
-                    .select({
-                      attemptId: placement_starter_attempt_question.attempt_id,
-                      epoch: placement_starter_attempt_question.verification_authority_epoch,
-                    })
-                    .from(placement_starter_attempt_question)
-                    .where(
-                      and(
-                        eq(
-                          placement_starter_attempt_question.attempt_id,
-                          placementAuthority.attempt_id,
-                        ),
-                        eq(
-                          placement_starter_attempt_question.question_id,
-                          placementAuthority.question_id,
-                        ),
-                      ),
-                    )
-                    .limit(1)
-                    .then(([row]) =>
-                      row
-                        ? {
-                            ...placementAuthority,
-                            verification_authority_epoch: row.epoch,
-                          }
-                        : undefined,
-                    );
-            if (!persistedAuthority) continue;
-            await writeVerifyDispatchIntent(tx, {
-              questionId: existingDuplicate.id,
-              verifier: 'quiz_verify',
-              supplyTrace: params.supplyTrace,
-              placementAuthority: persistedAuthority,
-              createdAt: now,
-            });
+            await authorizeAndDispatchPlacementQuestion(
+              existingDuplicate.id,
+              canonicalContentHash,
+              params.supplyTrace,
+              true,
+            );
           }
           continue;
         }
@@ -1003,41 +1021,25 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               resulting_knowledge_ids: racedDuplicate.knowledgeIds,
               preserved_draft_status: racedDuplicate.draftStatus,
             });
+            if (params.placementAttempt) {
+              await authorizeAndDispatchPlacementQuestion(
+                racedDuplicate.id,
+                canonicalContentHash,
+                questionSupplyTrace,
+                true,
+              );
+            }
             continue;
           }
         }
         if (params.placementAttempt) {
-          const placementAuthority: PlacementVerificationAuthority = {
-            claim_id: params.placementAttempt.claimId,
-            attempt_id: params.placementAttempt.attemptId,
-            question_id: id,
-            verification_authority_epoch: randomUUID(),
-            fencing_token: params.placementAttempt.fencingToken,
-          };
-          const insertedAuthority = await tx
-            .insert(placement_starter_attempt_question)
-            .values({
-              attempt_id: placementAuthority.attempt_id,
-              claim_id: placementAuthority.claim_id,
-              question_id: id,
-              canonical_hash: canonicalContentHash,
-              verification_authority_epoch: placementAuthority.verification_authority_epoch,
-              verification_status: 'authorized',
-              created_at: now,
-            })
-            .onConflictDoNothing()
-            .returning({
-              attemptId: placement_starter_attempt_question.attempt_id,
-              epoch: placement_starter_attempt_question.verification_authority_epoch,
-            });
-          if (insertedAuthority.length === 0) continue;
-          await writeVerifyDispatchIntent(tx, {
-            questionId: id,
-            verifier: 'quiz_verify',
-            supplyTrace: questionSupplyTrace,
-            placementAuthority,
-            createdAt: now,
-          });
+          const authorized = await authorizeAndDispatchPlacementQuestion(
+            id,
+            canonicalContentHash,
+            questionSupplyTrace,
+            false,
+          );
+          if (!authorized) continue;
         } else {
           await writeVerifyDispatchIntent(tx, {
             questionId: id,

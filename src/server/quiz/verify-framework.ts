@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -177,9 +178,13 @@ export interface SolveCheckOptions {
   imageFetchFn?: SolveCheckImageFetchFn;
   placementAuthority?: PlacementVerificationAuthority;
   assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
-  beforePaidCall?: (kind: 'solution_check' | 'semantic_judge') => Promise<void>;
+  beforePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
+  ) => Promise<void>;
   settlePaidCall?: (
     kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
     result: { task_run_id?: string; cost_usd?: number },
   ) => Promise<void>;
 }
@@ -532,9 +537,10 @@ export async function runSolveCheck(
     }
     const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
     await assertCurrentAuthority();
-    await opts.beforePaidCall?.('solution_check');
+    const invocationId = randomUUID();
+    await opts.beforePaidCall?.('solution_check', invocationId);
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
-    await opts.settlePaidCall?.('solution_check', solverRun);
+    await opts.settlePaidCall?.('solution_check', invocationId, solverRun);
     recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
@@ -611,6 +617,7 @@ export async function runSolveCheck(
   }
   // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
   // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
+  const semanticInvocationId = randomUUID();
   const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
     await assertCurrentAuthority();
     const authorizedInput =
@@ -618,7 +625,9 @@ export async function runSolveCheck(
         ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
         : input;
     const r = await opts.runTaskFn(kind, authorizedInput, ctx);
-    if (kind === 'SemanticJudgeTask') await opts.settlePaidCall?.('semantic_judge', r);
+    if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
+      await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
+    }
     recordRun(r);
     return r;
   };
@@ -648,7 +657,7 @@ export async function runSolveCheck(
     runTaskFn: recordingRunTaskFn,
   };
   await assertCurrentAuthority();
-  await opts.beforePaidCall?.('semantic_judge');
+  await opts.beforePaidCall?.('semantic_judge', semanticInvocationId);
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
@@ -743,8 +752,11 @@ export interface TeachingQualityOptions {
   };
   placementAuthority?: PlacementVerificationAuthority;
   assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
-  beforePaidCall?: () => Promise<void>;
-  settlePaidCall?: (result: { task_run_id?: string; cost_usd?: number }) => Promise<void>;
+  beforePaidCall?: (invocationId: string) => Promise<void>;
+  settlePaidCall?: (
+    invocationId: string,
+    result: { task_run_id?: string; cost_usd?: number },
+  ) => Promise<void>;
 }
 
 // Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
@@ -883,9 +895,10 @@ export async function runTeachingQualityCheck(
         ),
       );
     }
-    await opts.beforePaidCall?.();
+    const invocationId = randomUUID();
+    await opts.beforePaidCall?.(invocationId);
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
-    await opts.settlePaidCall?.(run);
+    await opts.settlePaidCall?.(invocationId, run);
     recordRun(run);
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {

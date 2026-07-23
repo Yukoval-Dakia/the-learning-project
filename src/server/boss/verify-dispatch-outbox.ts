@@ -84,17 +84,38 @@ function isStructurallyDispatchableIntent(payload: AnyColumn) {
   );
 }
 
-function stableEventId(kind: 'intent' | 'complete', questionId: string, verifier: VerifyKind) {
-  const digest = createHash('sha256').update(`${verifier}\0${questionId}`).digest('hex');
+function placementAuthorityIdentity(authority?: PlacementVerificationAuthority): string {
+  return authority
+    ? `\0${authority.claim_id}\0${authority.attempt_id}\0${authority.verification_authority_epoch}`
+    : '';
+}
+
+function stableEventId(
+  kind: 'intent' | 'complete',
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  const digest = createHash('sha256')
+    .update(`${verifier}\0${questionId}${placementAuthorityIdentity(authority)}`)
+    .digest('hex');
   return `verify-dispatch-${kind}-v${VERIFY_DISPATCH_VERSION_TAG}-${digest}`;
 }
 
-function intentEventId(questionId: string, verifier: VerifyKind) {
-  return stableEventId('intent', questionId, verifier);
+function intentEventId(
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  return stableEventId('intent', questionId, verifier, authority);
 }
 
-function completeEventId(questionId: string, verifier: VerifyKind) {
-  return stableEventId('complete', questionId, verifier);
+function completeEventId(
+  questionId: string,
+  verifier: VerifyKind,
+  authority?: PlacementVerificationAuthority,
+) {
+  return stableEventId('complete', questionId, verifier, authority);
 }
 
 function metadataIsArchived(metadata: unknown): boolean {
@@ -134,7 +155,7 @@ export async function writeVerifyDispatchIntent(
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
     ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
   });
-  const id = intentEventId(input.questionId, input.verifier);
+  const id = intentEventId(input.questionId, input.verifier, input.placementAuthority);
   if (input.placementAuthority) {
     const [existing] = await db
       .select({ payload: event.payload })
@@ -171,7 +192,7 @@ function dispatchCompletionEvent(
   input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
 ): WriteEventInput {
   return {
-    id: completeEventId(intent.question_id, intent.verifier_kind),
+    id: completeEventId(intent.question_id, intent.verifier_kind, intent.placement_authority),
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_COMPLETE_ACTION,
@@ -270,6 +291,7 @@ export async function dispatchPendingVerifyIntents(
                 eq(completion.action, VERIFY_DISPATCH_COMPLETE_ACTION),
                 eq(completion.subject_id, event.subject_id),
                 sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
+                sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
               ),
             ),
         ),

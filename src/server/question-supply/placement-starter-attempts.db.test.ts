@@ -457,22 +457,55 @@ describe('placement paid-call reservations', () => {
         now,
       }),
     );
+    await expect(
+      testDb().transaction((tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: 'settle',
+          providerTaskRunId: 'run-over-cap',
+          costMicroUsd: 700_000,
+          now,
+        }),
+      ),
+    ).rejects.toThrow(/exceeded authorized reservation/);
     await testDb().transaction((tx) =>
       settleAuthorizedPaidCall(tx, {
         authority,
         reservationKey: 'settle',
         providerTaskRunId: 'run-settle',
-        costMicroUsd: 700_000,
+        costMicroUsd: 400_000,
         now,
       }),
     );
-    const [component] = await testDb().select().from(placement_starter_cost_component);
-    expect(component.cost_micro_usd).toBe(500_000);
+    await testDb().transaction((tx) =>
+      reserveAuthorizedPaidCall(tx, {
+        authority,
+        kind: 'solution_check',
+        reservationKey: 'settle-retry',
+        maxCostMicroUsd: 500_000,
+        now,
+      }),
+    );
+    await testDb().transaction((tx) =>
+      settleAuthorizedPaidCall(tx, {
+        authority,
+        reservationKey: 'settle-retry',
+        providerTaskRunId: 'run-retry',
+        costMicroUsd: 300_000,
+        now,
+      }),
+    );
+    const components = await testDb().select().from(placement_starter_cost_component);
+    expect(components.map((row) => row.provider_task_run_id).sort()).toEqual([
+      'run-retry',
+      'run-settle',
+    ]);
+    expect(components.map((row) => row.cost_micro_usd).sort()).toEqual([300_000, 400_000]);
     const [claim] = await testDb()
       .select()
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, CLAIM_ID));
-    expect(claim.known_cost_micro_usd).toBe(500_000);
+    expect(claim.known_cost_micro_usd).toBe(700_000);
   });
 });
 

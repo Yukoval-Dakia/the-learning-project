@@ -243,27 +243,44 @@ describe('verify dispatch outbox (YUK-700)', () => {
     expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-valid-later'], expect.any(Object));
   });
 
-  it('rejects deterministic intent reuse with incompatible placement authority', async () => {
+  it('keeps placement intent identity scoped to authority while ordinary intents remain deterministic', async () => {
     await seedQuestion('q-authority', 'quiz_gen');
     const first = {
-      claim_id: 'claim',
+      claim_id: 'claim-1',
       attempt_id: 'attempt-1',
       question_id: 'q-authority',
       verification_authority_epoch: '11111111-1111-4111-8111-111111111111',
       fencing_token: '22222222-2222-4222-8222-222222222222',
     };
-    await writeVerifyDispatchIntent(db, {
+    const firstId = await writeVerifyDispatchIntent(db, {
       questionId: 'q-authority',
       verifier: 'quiz_verify',
       placementAuthority: first,
     });
-    await expect(
-      writeVerifyDispatchIntent(db, {
+    const secondId = await writeVerifyDispatchIntent(db, {
+      questionId: 'q-authority',
+      verifier: 'quiz_verify',
+      placementAuthority: {
+        ...first,
+        claim_id: 'claim-2',
+        attempt_id: 'attempt-2',
+        verification_authority_epoch: '33333333-3333-4333-8333-333333333333',
+      },
+    });
+    expect(secondId).not.toBe(firstId);
+    const ordinaryId = await writeVerifyDispatchIntent(db, {
+      questionId: 'q-authority',
+      verifier: 'quiz_verify',
+    });
+    expect(
+      await writeVerifyDispatchIntent(db, {
         questionId: 'q-authority',
         verifier: 'quiz_verify',
-        placementAuthority: { ...first, attempt_id: 'attempt-2' },
       }),
-    ).rejects.toThrow('placement authority conflict');
+    ).toBe(ordinaryId);
+    expect(await db.select().from(event).where(eq(event.subject_id, 'q-authority'))).toHaveLength(
+      3,
+    );
   });
 
   it('rolls back the intent when candidate persistence does not commit', async () => {

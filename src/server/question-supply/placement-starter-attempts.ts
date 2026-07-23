@@ -296,13 +296,14 @@ export function startPlacementAttemptHeartbeat(
 export async function assertPlacementAttemptFence(
   db: Db | Tx,
   attempt: PlacementAttemptAuthority,
-  now = new Date(),
+  now?: Date,
 ): Promise<void> {
   const [current] = await db
     .select({
       fence: placement_starter_attempt.fencing_token,
       status: placement_starter_attempt.status,
       lease: placement_starter_attempt.lease_expires_at,
+      databaseNow: sql<Date>`transaction_timestamp()`,
     })
     .from(placement_starter_attempt)
     .where(eq(placement_starter_attempt.id, attempt.attemptId));
@@ -311,7 +312,7 @@ export async function assertPlacementAttemptFence(
     current.fence !== attempt.fencingToken ||
     !['running', 'verifying'].includes(current.status) ||
     !current.lease ||
-    current.lease <= now
+    current.lease <= (now ?? current.databaseNow)
   ) {
     throw new PlacementStarterStaleAuthorityError('placement attempt fence lost');
   }
@@ -481,7 +482,12 @@ export async function recordPlacementAttemptOutput(
       .where(eq(placement_starter_cost_component.id, reservationId))
       .for('update');
     if (reservation) {
-      const settledCost = Math.min(reservation.cost, Math.max(0, input.costMicroUsd));
+      const settledCost = Math.max(0, input.costMicroUsd);
+      if (settledCost > reservation.cost) {
+        throw new PlacementStarterAdmissionError(
+          'placement generation exceeded authorized reservation',
+        );
+      }
       await tx
         .update(placement_starter_cost_component)
         .set({ provider_task_run_id: input.taskRunId, cost_micro_usd: settledCost })
@@ -571,16 +577,39 @@ export async function settleAuthorizedPaidCall(
     .update(`placement-paid-call-reservation\0${input.reservationKey}`)
     .digest('hex');
   const [reservation] = await tx
-    .select({ cost: placement_starter_cost_component.cost_micro_usd })
+    .select({
+      cost: placement_starter_cost_component.cost_micro_usd,
+      providerTaskRunId: placement_starter_cost_component.provider_task_run_id,
+      kind: placement_starter_cost_component.component_kind,
+    })
     .from(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, id))
     .for('update');
   if (!reservation)
     throw new PlacementStarterAdmissionError('placement paid call reservation missing');
-  const settledCost = Math.min(reservation.cost, Math.max(0, input.costMicroUsd));
+  if (reservation.providerTaskRunId === input.providerTaskRunId) return;
+  if (!reservation.providerTaskRunId.startsWith('reservation:')) {
+    throw new PlacementStarterAdmissionError('placement paid call reservation already settled');
+  }
+  const settledCost = Math.max(0, input.costMicroUsd);
+  if (settledCost > reservation.cost) {
+    throw new PlacementStarterAdmissionError('placement paid call exceeded authorized reservation');
+  }
+  const settledId = createHash('sha256')
+    .update(`${input.providerTaskRunId}\0${input.authority.attempt_id}\0${input.reservationKey}`)
+    .digest('hex');
+  await tx.insert(placement_starter_cost_component).values({
+    id: settledId,
+    claim_id: input.authority.claim_id,
+    attempt_id: input.authority.attempt_id,
+    component_kind: reservation.kind,
+    question_id: input.authority.question_id,
+    provider_task_run_id: input.providerTaskRunId,
+    cost_micro_usd: settledCost,
+    created_at: now,
+  });
   await tx
-    .update(placement_starter_cost_component)
-    .set({ provider_task_run_id: input.providerTaskRunId, cost_micro_usd: settledCost })
+    .delete(placement_starter_cost_component)
     .where(eq(placement_starter_cost_component.id, id));
   await tx
     .update(placement_starter_claim)

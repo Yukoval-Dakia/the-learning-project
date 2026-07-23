@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // Search-grounded QuizGen (T-SQ) — Q5 + Q6 handler.
 //
 // docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §3 / §5.
@@ -347,12 +348,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
 
   let taskResult: TaskTextResult | null = null;
   try {
+    const primaryInvocationId = randomUUID();
     if (placementAuthority) {
       await db.transaction(async (tx) =>
         reserveAuthorizedPaidCall(tx, {
           authority: placementAuthority,
           kind: 'quiz_verify',
-          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify`,
+          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
         }),
       );
     }
@@ -482,21 +484,21 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               placementAuthority,
               ...(placementAuthority
                 ? {
-                    beforePaidCall: async (kind) => {
+                    beforePaidCall: async (kind, invocationId) => {
                       await db.transaction(async (tx) =>
                         reserveAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           kind: 'solution_check',
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}`,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
                         }),
                       );
                     },
-                    settlePaidCall: async (kind, paidResult) => {
+                    settlePaidCall: async (kind, invocationId, paidResult) => {
                       if (!paidResult.task_run_id) return;
                       await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}`,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
                           providerTaskRunId: paidResult.task_run_id as string,
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
                         }),
@@ -525,21 +527,21 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               placementAuthority,
               ...(placementAuthority
                 ? {
-                    beforePaidCall: async () => {
+                    beforePaidCall: async (invocationId) => {
                       await db.transaction(async (tx) =>
                         reserveAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
                           kind: 'teaching_quality',
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality`,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
                         }),
                       );
                     },
-                    settlePaidCall: async (paidResult) => {
+                    settlePaidCall: async (invocationId, paidResult) => {
                       if (!paidResult.task_run_id) return;
                       await db.transaction(async (tx) =>
                         settleAuthorizedPaidCall(tx, {
                           authority: placementAuthority,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality`,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
                           providerTaskRunId: paidResult.task_run_id as string,
                           costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd) ?? 0,
                         }),
@@ -760,7 +762,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       if (placementAuthority && result.task_run_id) {
         await settleAuthorizedPaidCall(tx, {
           authority: placementAuthority,
-          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify`,
+          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
           providerTaskRunId: result.task_run_id,
           costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
           now,
