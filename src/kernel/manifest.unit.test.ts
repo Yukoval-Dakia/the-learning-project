@@ -56,6 +56,141 @@ describe('validateComposition', () => {
     ).toThrow(/declared by both 'a' and 'b'/);
   });
 
+  it('accepts a versioned subscription owned by a different capability than its event', () => {
+    let loaded = false;
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'subscriber',
+          subscriptions: {
+            handlers: [
+              {
+                id: 'subscriber.x',
+                version: 1,
+                actions: ['experimental:x'],
+                load: async () => {
+                  loaded = true;
+                  return () => async () => ({ status: 'succeeded' });
+                },
+              },
+            ],
+          },
+        }),
+        base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+      ]),
+    ).not.toThrow();
+    expect(loaded).toBe(false);
+  });
+
+  it('allows separate versions but rejects duplicate subscription id/version pairs', () => {
+    const load = async () => () => async () => ({ status: 'succeeded' as const });
+    expect(() =>
+      validateComposition([
+        base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+        base({
+          name: 'a',
+          subscriptions: {
+            handlers: [
+              { id: 'subscriber.x', version: 1, actions: ['experimental:x'], load },
+              { id: 'subscriber.x', version: 2, actions: ['experimental:x'], load },
+            ],
+          },
+        }),
+      ]),
+    ).not.toThrow();
+
+    expect(() =>
+      validateComposition([
+        base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+        base({
+          name: 'a',
+          subscriptions: {
+            handlers: [{ id: 'subscriber.x', version: 1, actions: ['experimental:x'], load }],
+          },
+        }),
+        base({
+          name: 'b',
+          subscriptions: {
+            handlers: [{ id: 'subscriber.x', version: 1, actions: ['experimental:x'], load }],
+          },
+        }),
+      ]),
+    ).toThrow(/duplicate event subscription 'subscriber\.x@v1'.*'a'.*'b'/);
+  });
+
+  it.each([
+    { id: '', version: 1, error: /invalid id/ },
+    { id: '   ', version: 1, error: /invalid id/ },
+    { id: 'subscriber.x', version: 0, error: /invalid version 0/ },
+    { id: 'subscriber.x', version: -1, error: /invalid version -1/ },
+    { id: 'subscriber.x', version: 1.5, error: /invalid version 1\.5/ },
+  ])('rejects invalid subscription identity $id@$version', ({ id, version, error }) => {
+    expect(() =>
+      validateComposition([
+        base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+        base({
+          name: 'subscriber',
+          subscriptions: {
+            handlers: [
+              {
+                id,
+                version,
+                actions: ['experimental:x'],
+                load: async () => () => async () => ({ status: 'succeeded' }),
+              },
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(error);
+  });
+
+  it('rejects empty, duplicate, and undeclared subscription actions', () => {
+    const subscription = {
+      id: 'subscriber.x',
+      version: 1,
+      load: async () => () => async () => ({ status: 'succeeded' as const }),
+    };
+    const manifest = (actions: string[]) => [
+      base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+      base({
+        name: 'subscriber',
+        subscriptions: { handlers: [{ ...subscription, actions }] },
+      }),
+    ];
+
+    expect(() => validateComposition(manifest([]))).toThrow(/must declare at least one action/);
+    expect(() => validateComposition(manifest(['']))).toThrow(/declares an empty action/);
+    expect(() => validateComposition(manifest(['   ']))).toThrow(/declares an empty action/);
+    expect(() => validateComposition(manifest(['experimental:x', 'experimental:x']))).toThrow(
+      /duplicate action 'experimental:x'/,
+    );
+    expect(() => validateComposition(manifest(['experimental:unknown']))).toThrow(
+      /undeclared event action 'experimental:unknown'/,
+    );
+  });
+
+  it('rejects a subscription without a callable loader at runtime', () => {
+    expect(() =>
+      validateComposition([
+        base({ name: 'owner', events: { actions: ['experimental:x'] } }),
+        base({
+          name: 'subscriber',
+          subscriptions: {
+            handlers: [
+              {
+                id: 'subscriber.x',
+                version: 1,
+                actions: ['experimental:x'],
+                load: undefined,
+              } as never,
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(/has no loader/);
+  });
+
   it('accepts a route declaration carrying a lazy handler ref', () => {
     expect(() =>
       validateComposition([
