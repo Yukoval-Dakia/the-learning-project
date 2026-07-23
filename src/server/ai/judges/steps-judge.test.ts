@@ -2,7 +2,7 @@ import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JudgeQuestionRow } from './question-contract';
-import { runStepsJudge } from './steps-judge';
+import { parseStepsResult, runStepsJudge } from './steps-judge';
 
 // runStepsJudge is pure-logic once runTaskFn + imageFetchFn are stubbed.
 // A throwaway cast suffices — the function only passes db through to the stubs.
@@ -376,5 +376,141 @@ describe('runStepsJudge — error paths', () => {
     expect(multimodal.images).toHaveLength(3);
     expect(multimodal.text).toContain('"prompt_image_refs":["prompt-figure-1"]');
     expect(multimodal.text).toContain('"student_image_refs":["student-photo-1","student-photo-2"]');
+  });
+});
+
+// YUK-591 — SDK structured-output migration. Symmetric with multimodal-direct-judge:
+// outputFormat threaded from the registry-declared StepsLlmOutput; three-state parse.
+describe('runStepsJudge — structured output (YUK-591)', () => {
+  const validStructured = {
+    extracted_steps: [],
+    extracted_final_answer: 'a + b',
+    signal_verdicts: [
+      { signal_idx: 0, verdict: 'correct' as const, comment: '' },
+      { signal_idx: 1, verdict: 'correct' as const, comment: '' },
+      { signal_idx: 2, verdict: 'correct' as const, comment: '' },
+    ],
+    final_answer_match: true,
+    final_answer_comment: '结构化通过',
+    confidence: 0.9,
+  };
+
+  it('threads a json_schema outputFormat into ctx', async () => {
+    let ctx: unknown;
+    await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'triggers LLM (not in equivalents)',
+      subjectProfile: mathProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return { text: JSON.stringify(validStructured) };
+      },
+      imageFetchFn: async () => [],
+    });
+    const outputFormat = (ctx as { outputFormat?: { type?: string; schema?: unknown } })
+      .outputFormat;
+    expect(outputFormat?.type).toBe('json_schema');
+    expect(outputFormat?.schema).toBeDefined();
+  });
+
+  it('parses structured_output through the schema, ignoring raw text', async () => {
+    // Text says all-wrong; structured says all-correct. Structured must win.
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'triggers LLM (not in equivalents)',
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({
+        text: JSON.stringify({
+          extracted_steps: [],
+          extracted_final_answer: 'wrong',
+          signal_verdicts: [
+            { signal_idx: 0, verdict: 'wrong', comment: '' },
+            { signal_idx: 1, verdict: 'wrong', comment: '' },
+            { signal_idx: 2, verdict: 'wrong', comment: '' },
+          ],
+          final_answer_match: false,
+          final_answer_comment: 'text path',
+          confidence: 0.1,
+        }),
+        structured_output: validStructured,
+      }),
+      imageFetchFn: async () => [],
+    });
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score).toBeCloseTo(1.0, 2);
+    expect(result.feedback_md).toBe('结构化通过');
+  });
+
+  it('returns unsupported when structured_output fails schema validation', async () => {
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'triggers LLM (not in equivalents)',
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({
+        text: '',
+        structured_output: { signal_verdicts: 'not-an-array', confidence: 5 },
+      }),
+      imageFetchFn: async () => [],
+    });
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('did not match StepsLlmOutput schema');
+  });
+
+  it('still enforces the signal_verdicts length invariant on the structured path', async () => {
+    // structured_output is schema-valid but has the wrong signal count vs the
+    // 3 expected_signals — the runtime invariant (post-parse) must still fire.
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({ expected_signals: ['s1', 's2', 's3'] }),
+      answer_md: 'triggers LLM (not in equivalents)',
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({
+        text: '',
+        structured_output: {
+          extracted_steps: [],
+          extracted_final_answer: '',
+          signal_verdicts: [{ signal_idx: 0, verdict: 'correct', comment: '' }],
+          final_answer_match: false,
+          final_answer_comment: '',
+          confidence: 0.5,
+        },
+      }),
+      imageFetchFn: async () => [],
+    });
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('signal_verdicts length mismatch');
+  });
+
+  it('falls back to the char-scan text parse when structured_output is null', async () => {
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'triggers LLM (not in equivalents)',
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({ text: JSON.stringify(validStructured), structured_output: null }),
+      imageFetchFn: async () => [],
+    });
+    expect(result.coarse_outcome).toBe('correct');
+  });
+
+  describe('parseStepsResult — three-state dispatch', () => {
+    it('prefers structured_output over text', () => {
+      const parsed = parseStepsResult({ text: 'not json', structured_output: validStructured });
+      expect(parsed.final_answer_match).toBe(true);
+    });
+
+    it('char-scans text when structured_output is undefined', () => {
+      const parsed = parseStepsResult({ text: `noise ${JSON.stringify(validStructured)} tail` });
+      expect(parsed.final_answer_match).toBe(true);
+    });
+
+    it('throws (→ caller unsupported) on non-JSON text with no structured_output', () => {
+      expect(() => parseStepsResult({ text: 'no json here' })).toThrow(
+        'did not contain a JSON object',
+      );
+    });
   });
 });

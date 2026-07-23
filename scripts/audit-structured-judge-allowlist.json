@@ -1,0 +1,18 @@
+{
+  "SemanticJudgeTask": {
+    "reason": "Text (non-vision) semantic judge; runSemantic in src/server/ai/judges/question-contract.ts still parses free-text model output (extractJsonObject -> SemanticJudgeOutput.safeParse). YUK-591 migrated only the two vision judges (Steps / MultimodalDirect); the SemanticJudgeOutput schema is currently inlined in question-contract.ts and must be lifted to a reusable export before it can be declared on the registry task, so the migration is tracked as its own follow-up.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-759",
+      "expected_by": "2026-10-31"
+    }
+  },
+  "UnitDimensionFallback": {
+    "reason": "Judge v2 physics fallback（无 JudgeTask 后缀，经 EXTRA_JUDGE_KINDS 纳入清点）：src/core/capability/judges/unit_dimension/llm-fallback.ts 仍解析自由文本模型输出。与 SemanticJudgeTask 同批：schema 需先提升为可复用导出才能声明到 registry task，迁移并入 YUK-759 follow-up。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-759",
+      "expected_by": "2026-10-31"
+    }
+  }
+}
