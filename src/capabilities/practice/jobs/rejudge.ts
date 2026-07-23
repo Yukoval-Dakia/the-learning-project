@@ -25,11 +25,8 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { historicalUnknownExecutionProvenance, modelExecutionProvenance } from '@/kernel/judge';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
-import {
-  historicalUnknownExecutionProvenance,
-  modelExecutionProvenance,
-} from '@/server/judge/execution-provenance-resolve';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 

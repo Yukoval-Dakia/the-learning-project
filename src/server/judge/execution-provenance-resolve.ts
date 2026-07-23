@@ -10,6 +10,11 @@ export interface JudgeExecutionIdentity {
   input_hash: string;
   prompt_fingerprint: string;
   prompt_template_revision: string;
+  // YUK-589 (High-sec) — the digest of the exact judge result the caller is
+  // asking us to trust. Only the supplied-verified path sets this; it is
+  // corroborated against the digest the run itself persisted so a caller can
+  // never bind a real run to a result the model did not produce.
+  result_digest?: string;
 }
 
 interface TaskRunIdentity {
@@ -20,6 +25,11 @@ interface TaskRunIdentity {
   model: string;
   status: string;
   finished_at: Date | null;
+  // YUK-589 — prompt/result identity the run persisted at execution time.
+  // Nullable for rows written before this column existed (legacy runs stay
+  // uncorroborated → supplied_unverified, never falsely trusted).
+  prompt_fingerprint: string | null;
+  result_digest: string | null;
 }
 
 export function resolveModelExecutionProvenance(
@@ -27,19 +37,39 @@ export function resolveModelExecutionProvenance(
   kind: 'invoked' | 'supplied_verified' | 'supplied_unverified',
   run?: TaskRunIdentity,
 ): JudgeExecutionProvenanceT {
-  const matches =
+  const promptIdentity = {
+    version: 1 as const,
+    prompt_fingerprint: execution.prompt_fingerprint,
+    prompt_template_revision: execution.prompt_template_revision,
+  };
+
+  // YUK-589 (Finding 4) — a caller that already knows the input is unverified
+  // must never be promoted. Preserve the discriminant regardless of any run
+  // match: an unverified input can never come out the other side as verified.
+  if (kind === 'supplied_unverified') {
+    return { ...promptIdentity, kind: 'supplied_unverified' };
+  }
+
+  const runMatches =
     run !== undefined &&
     run.id === execution.task_run_id &&
     run.task_kind === execution.task_kind &&
     run.input_hash === execution.input_hash &&
     run.status === 'success' &&
     run.finished_at !== null;
-  const promptIdentity = {
-    version: 1 as const,
-    prompt_fingerprint: execution.prompt_fingerprint,
-    prompt_template_revision: execution.prompt_template_revision,
-  };
-  if (!matches) {
+
+  // YUK-589 (Finding 1) — the supplied path must corroborate the exact prompt
+  // AND result identity the run persisted, not merely a successful id/kind/input
+  // lookup. `invoked` is the server's own just-run call and needs no such
+  // cross-check (and legacy pre-column runs would have null digests).
+  const identityMatches =
+    kind === 'invoked' ||
+    (run !== undefined &&
+      run.prompt_fingerprint === execution.prompt_fingerprint &&
+      execution.result_digest !== undefined &&
+      run.result_digest === execution.result_digest);
+
+  if (!runMatches || !identityMatches) {
     return {
       ...promptIdentity,
       kind: kind === 'invoked' ? 'historical_unknown' : 'supplied_unverified',
@@ -69,12 +99,35 @@ export async function modelExecutionProvenance(
           model: ai_task_runs.model,
           status: ai_task_runs.status,
           finished_at: ai_task_runs.finished_at,
+          prompt_fingerprint: ai_task_runs.prompt_fingerprint,
+          result_digest: ai_task_runs.result_digest,
         })
         .from(ai_task_runs)
         .where(eq(ai_task_runs.id, execution.task_run_id))
         .limit(1)
     : [];
   return resolveModelExecutionProvenance(execution, kind, run);
+}
+
+/**
+ * YUK-589 — persist the prompt/result digests a judge run produced onto its
+ * ai_task_runs row so the supplied-verified path can later corroborate a
+ * client-supplied result against what the model actually ran. Best-effort: a
+ * failed update leaves the digests null, which downgrades a later supplied claim
+ * to `supplied_unverified` (fail-closed) rather than trusting it.
+ */
+export async function persistJudgeRunDigests(
+  db: Db,
+  taskRunId: string,
+  digests: { prompt_fingerprint: string; result_digest: string },
+): Promise<void> {
+  await db
+    .update(ai_task_runs)
+    .set({
+      prompt_fingerprint: digests.prompt_fingerprint,
+      result_digest: digests.result_digest,
+    })
+    .where(eq(ai_task_runs.id, taskRunId));
 }
 
 export function historicalUnknownExecutionProvenance(route: string): JudgeExecutionProvenanceT {

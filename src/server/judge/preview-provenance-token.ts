@@ -15,6 +15,19 @@ export const JudgePreviewProvenanceClaims = z.object({
 });
 export type JudgePreviewProvenanceClaimsT = z.infer<typeof JudgePreviewProvenanceClaims>;
 
+/**
+ * YUK-589 (High-sec) — the judge preview provenance token MUST be signed with a
+ * server-only secret. INTERNAL_TOKEN is held by every browser/API caller, so
+ * signing with it let any client forge `supplied_verified` claims. This returns
+ * the dedicated `JUDGE_PROVENANCE_SECRET`, or null when it is unconfigured — in
+ * which case callers issue no token and verify none, so supplied results fail
+ * closed to `supplied_unverified` rather than being signed with a weak/known key.
+ */
+export function judgeProvenanceSigningSecret(): string | null {
+  const secret = process.env.JUDGE_PROVENANCE_SECRET;
+  return secret && secret.length > 0 ? secret : null;
+}
+
 function signature(payload: string, secret: string): Buffer {
   return createHmac('sha256', secret).update(payload).digest();
 }

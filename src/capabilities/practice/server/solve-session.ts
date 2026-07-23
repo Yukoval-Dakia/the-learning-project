@@ -13,6 +13,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/s
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/kernel/judge';
 import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
@@ -20,7 +21,6 @@ import {
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
-import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';

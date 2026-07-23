@@ -49,22 +49,22 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
+  deterministicExecutionProvenance,
+  judgeProvenanceSigningSecret,
+  modelExecutionProvenance,
+  resolveQuestionJudgeRoute,
+  sha256Canonical,
+  suppliedUnverifiedExecutionProvenance,
+  taskInputHash,
+  verifyJudgePreviewProvenanceToken,
+} from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { semanticInput } from '@/server/ai/judges/question-contract';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
-import {
-  deterministicExecutionProvenance,
-  modelExecutionProvenance,
-  suppliedUnverifiedExecutionProvenance,
-} from '@/server/judge/execution-provenance-resolve';
-import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import { sha256Canonical, taskInputHash } from '@/server/judge/judge-execution-provenance';
-import { verifyJudgePreviewProvenanceToken } from '@/server/judge/preview-provenance-token';
-import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  resolveQuestionJudgeRoute,
-} from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
   PREREQ_RISK_EMIT_ENABLED,
@@ -89,7 +89,7 @@ type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
 // F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
-// shared from `@/server/judge/route-resolve` (IMAGE_CONSUMING_JUDGE_ROUTES) so
+// shared via the `@/kernel/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
 // the photo-only gate cannot drift between this single-question flow and the
 // paper-submit flow (F1).
 
@@ -214,12 +214,11 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
   let judgeTelemetry: JudgedSubmit['judgeTelemetry'] = null;
   let executionProvenance: JudgeExecutionProvenanceT | null = null;
   if (suppliedJudgeResult !== null && subjectProfile !== null && judgeRoute === 'semantic') {
-    const claims = body.judge_provenance_token
-      ? verifyJudgePreviewProvenanceToken(
-          body.judge_provenance_token,
-          process.env.INTERNAL_TOKEN ?? '',
-        )
-      : null;
+    const signingSecret = judgeProvenanceSigningSecret();
+    const claims =
+      body.judge_provenance_token && signingSecret
+        ? verifyJudgePreviewProvenanceToken(body.judge_provenance_token, signingSecret)
+        : null;
     const expectedTaskInput = {
       question: semanticInput(q, subjectProfile),
       answer: { content: answerMd },
@@ -242,6 +241,10 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
             input_hash: claims.input_hash,
             prompt_fingerprint: claims.prompt_fingerprint,
             prompt_template_revision: claims.prompt_template_revision,
+            // YUK-589 — corroborate the exact result the run persisted, not just
+            // a matching id/kind/input. claimsMatch already proved this digest
+            // equals sha256Canonical(suppliedJudgeResult).
+            result_digest: claims.result_digest,
           },
           'supplied_verified',
         )

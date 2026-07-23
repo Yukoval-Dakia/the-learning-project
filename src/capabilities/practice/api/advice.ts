@@ -18,10 +18,13 @@ import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-ra
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import {
+  createDefaultJudgeInvoker,
+  issueJudgePreviewProvenanceToken,
+  judgeProvenanceSigningSecret,
+  sha256Canonical,
+} from '@/kernel/judge';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import { sha256Canonical } from '@/server/judge/judge-execution-provenance';
-import { issueJudgePreviewProvenanceToken } from '@/server/judge/preview-provenance-token';
 import { eq } from 'drizzle-orm';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 
@@ -73,8 +76,12 @@ export async function POST(req: Request): Promise<Response> {
     const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
     const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
 
+    // YUK-589 — sign with the dedicated server-only secret, never INTERNAL_TOKEN
+    // (which every client holds). When the secret is unconfigured we issue no
+    // token; the submit side then treats the supplied result as unverified.
+    const signingSecret = judgeProvenanceSigningSecret();
     const provenanceToken =
-      invoked.execution && invoked.task_run_id
+      signingSecret && invoked.execution && invoked.task_run_id
         ? issueJudgePreviewProvenanceToken(
             {
               version: 1,
@@ -88,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
               judge_route: invoked.route,
               result_digest: sha256Canonical(invoked.result),
             },
-            process.env.INTERNAL_TOKEN ?? '',
+            signingSecret,
           )
         : undefined;
 

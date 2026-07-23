@@ -22,9 +22,11 @@ import {
   unsupportedResult,
 } from '../ai/judges/question-contract';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
+import { persistJudgeRunDigests } from './execution-provenance-resolve';
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   judgePromptFingerprint,
+  sha256Canonical,
   taskInputHash,
 } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
@@ -172,6 +174,25 @@ export class JudgeInvoker {
       version: narrowed.subjectProfile.version,
     };
     const result = { ...dispatched, capability_ref: pinnedCapabilityRef };
+
+    // YUK-589 (High-sec) — bind the run to the prompt/result identity it actually
+    // produced, so a later supplied-verified claim can be corroborated against
+    // the persisted digests (not just an id/kind/input lookup). Best-effort:
+    // failure leaves the digests null → a later supplied claim fails closed to
+    // `supplied_unverified` rather than being falsely trusted.
+    if (taskRunId && execution) {
+      try {
+        await persistJudgeRunDigests(narrowed.db, taskRunId, {
+          prompt_fingerprint: execution.prompt_fingerprint,
+          result_digest: sha256Canonical(result),
+        });
+      } catch (err) {
+        console.warn(
+          `judge run-digest persistence failed for ${narrowed.question.id}/${route} (run ${taskRunId}):`,
+          err,
+        );
+      }
+    }
 
     const telemetry = JudgeInvocationTelemetrySchema.parse({
       route,
