@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseEvent } from './index';
+import { MASTERY_PROGRESS_ACTION, parseEvent } from './index';
 
 function masteryProgressEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     actor_kind: 'system',
     actor_ref: 'mastery_progress_signal',
-    action: 'experimental:mastery_progress',
+    action: MASTERY_PROGRESS_ACTION,
     subject_kind: 'knowledge',
     subject_id: 'knowledge_1',
     outcome: null,
@@ -38,6 +38,23 @@ describe('parseEvent — experimental:mastery_progress routing', () => {
       attempt_event_id: 'attempt_1',
       threshold_deferred: true,
     });
+  });
+
+  it.each([
+    ['string', 'attempt_1'],
+    ['null', null],
+    ['undefined', undefined],
+  ] as const)('parses a %s caused-by envelope', (_label, causedByEventId) => {
+    const envelope = masteryProgressEnvelope({ caused_by_event_id: causedByEventId });
+    const { caused_by_event_id: _omitted, ...withoutCausedBy } = envelope;
+    const input = causedByEventId === undefined ? withoutCausedBy : envelope;
+
+    const parsed = parseEvent(input);
+
+    expect(parsed.action).toBe(MASTERY_PROGRESS_ACTION);
+    expect((parsed as { caused_by_event_id?: string | null }).caused_by_event_id).toBe(
+      causedByEventId,
+    );
   });
 
   it('parses historical nullable readings', () => {
