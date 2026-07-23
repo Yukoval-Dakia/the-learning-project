@@ -352,13 +352,31 @@ export async function claimNextSubscriptionDelivery(
   lease: SubscriptionLease,
 ): Promise<SubscriptionDeliveryClaim | null> {
   getDeclaredSubscription(registry, subscription);
+  if (
+    lease.subscriberId !== subscription.id ||
+    lease.subscriberVersion !== subscription.version ||
+    lease.declarationHash !== registry.declarationHash
+  ) {
+    throw new Error(
+      `event subscription '${subscription.id}@v${subscription.version}' lease identity mismatch`,
+    );
+  }
   const token = randomUUID();
-  const rows = await withLockedCheckpoint(db, lease, async (tx) =>
-    tx.execute<{
-      source_event_id: string;
-      delivery_seq: number;
-      claim_lease_until: Date;
-    }>(sql`
+  const rows = await withLockedCheckpoint(
+    db,
+    {
+      subscriberId: subscription.id,
+      subscriberVersion: subscription.version,
+      declarationHash: registry.declarationHash,
+      claimOwner: lease.claimOwner,
+      claimToken: lease.claimToken,
+    },
+    async (tx) =>
+      tx.execute<{
+        source_event_id: string;
+        delivery_seq: number;
+        claim_lease_until: Date;
+      }>(sql`
       with candidate as (
         select d.source_event_id
         from event_subscription_delivery d

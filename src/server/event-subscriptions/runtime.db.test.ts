@@ -1,5 +1,9 @@
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
 import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
 import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -58,6 +62,18 @@ async function deliveryRows() {
     })
     .from(event_subscription_delivery)
     .orderBy(event_subscription_delivery.delivery_seq);
+}
+
+async function withIndependentDb<T>(run: (db: Db) => Promise<T>): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set');
+  const client = postgres(url, { max: 1 });
+  const db = drizzle(client, { schema }) as unknown as Db;
+  try {
+    return await run(db);
+  } finally {
+    await client.end();
+  }
 }
 
 beforeEach(() => resetDb());
@@ -211,6 +227,65 @@ describe('YUK-751 durable event subscription runtime', () => {
     ).toBe('lost_lease');
   });
 
+  it.each(['renew', 'complete', 'fail'] as const)(
+    'serializes stale %s behind checkpoint takeover and then rejects it',
+    async (transition) => {
+      await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+      await insertEvent(`interleaved-${transition}`);
+      const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker-a');
+      if (!lease) throw new Error('expected lease');
+      await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+      const claim = await claimNextSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, lease);
+      if (!claim) throw new Error('expected delivery claim');
+
+      let locked!: () => void;
+      const checkpointLocked = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      let release!: () => void;
+      const releaseTakeover = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const takeover = withIndependentDb((db) =>
+        db.transaction(async (tx) => {
+          await tx.execute(sql`
+            update event_subscription_checkpoint
+            set claim_owner = 'worker-b',
+                claim_token = '11111111-1111-4111-8111-111111111111'::uuid,
+                claim_lease_until = clock_timestamp() + interval '2 minutes'
+            where subscriber_id = ${SUBSCRIBER.id}
+              and subscriber_version = ${SUBSCRIBER.version}
+          `);
+          locked();
+          await releaseTakeover;
+        }),
+      );
+      await checkpointLocked;
+
+      let settled = false;
+      const staleTransition = withIndependentDb(async (db) => {
+        const result =
+          transition === 'renew'
+            ? await renewSubscriptionDeliveryLease(db, claim)
+            : transition === 'complete'
+              ? await completeSubscriptionDelivery(db, claim, { status: 'succeeded' })
+              : await failSubscriptionDelivery(db, claim, new Error('stale'), {
+                  maxAttempts: 1,
+                });
+        settled = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      release();
+      await takeover;
+
+      await expect(staleTransition).resolves.toBe(transition === 'fail' ? 'lost_lease' : false);
+      const [delivery] = await deliveryRows();
+      expect(delivery).toEqual(expect.objectContaining({ status: 'claimed', attemptCount: 0 }));
+    },
+  );
+
   it('rolls back discovered deliveries when the checkpoint expires before final advancement', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('discovery-expire');
@@ -290,6 +365,42 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'first')).toBe(
       false,
     );
+  });
+
+  it('rejects a checkpoint lease from another subscriber without mutating the target delivery', async () => {
+    const other = { ...SUBSCRIBER, id: 'test.other-subscriber' };
+    const subscriptions = [SUBSCRIBER, other];
+    const sharedRegistry: LoadedEventSubscriptionRegistry = {
+      contractVersion: 'event-subscription-registry/v1',
+      declarationHash: HASH,
+      subscriptions,
+      get(id, version) {
+        return subscriptions.find(
+          (subscription) => subscription.id === id && subscription.version === version,
+        );
+      },
+    };
+    await bootstrapSubscription(testDb(), sharedRegistry, SUBSCRIBER);
+    await bootstrapSubscription(testDb(), sharedRegistry, other);
+    await insertEvent('shared-source');
+    const firstLease = await claimSubscriptionLease(
+      testDb(),
+      sharedRegistry,
+      SUBSCRIBER,
+      'worker-a',
+    );
+    const otherLease = await claimSubscriptionLease(testDb(), sharedRegistry, other, 'worker-b');
+    if (!firstLease || !otherLease) throw new Error('expected both leases');
+    await discoverSubscriptionDeliveries(testDb(), sharedRegistry, other, otherLease);
+
+    await expect(
+      claimNextSubscriptionDelivery(testDb(), sharedRegistry, other, firstLease),
+    ).rejects.toThrow(/lease identity mismatch/);
+    const [otherDelivery] = await testDb()
+      .select({ status: event_subscription_delivery.status })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_id} = ${other.id}`);
+    expect(otherDelivery?.status).toBe('pending');
   });
 
   it('rejects redrive when a later delivery has failed into retry_wait', async () => {
