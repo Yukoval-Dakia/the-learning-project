@@ -19,6 +19,7 @@ import {
   acquirePlacementAttempt,
   assertPlacementAuthority,
   countEligiblePlacementQuestions,
+  finishPlacementAttempt,
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
   reserveAuthorizedPaidCall,
@@ -166,6 +167,43 @@ describe('placement attempt authority', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].delivery_no).toBe(1);
     expect(rows[0].lease_expires_at).toEqual(new Date(now.getTime() + 20 * 60_000));
+  });
+
+  it('exhausts the claim only when the FINAL paid delivery fails (YUK-452 review)', async () => {
+    const now = new Date('2026-07-23T00:00:00.000Z');
+    await seedClaim(now);
+    // A non-final delivery failing routes the claim to retry_scheduled — pg-boss redelivers and
+    // acquirePlacementAttempt accepts that status for the next delivery.
+    const first = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 1,
+      startedOn: now,
+      now,
+    });
+    await finishPlacementAttempt(testDb(), first, 'interrupted', now);
+    const [afterFirst] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(afterFirst.status).toBe('retry_scheduled');
+    expect(afterFirst.exhausted_at).toBeNull();
+    // The FINAL paid delivery (delivery_no === max_paid_attempts) failing has no further redelivery
+    // and no recovery sweeper, so it terminalizes as exhausted instead of zombie retry_scheduled.
+    const third = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 3,
+      startedOn: now,
+      now: new Date(now.getTime() + 1_000),
+    });
+    await finishPlacementAttempt(testDb(), third, 'underfilled', new Date(now.getTime() + 2_000));
+    const [afterThird] = await testDb()
+      .select()
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    expect(afterThird.status).toBe('exhausted');
+    expect(afterThird.exhausted_at).not.toBeNull();
   });
 
   it('atomically supersedes expired authority rows during takeover', async () => {

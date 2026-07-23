@@ -69,6 +69,7 @@ import {
   PlacementStarterStaleAuthorityError,
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
+  releaseAuthorizedPaidCall,
   reserveAuthorizedPaidCall,
   settleAuthorizedPaidCall,
 } from '@/server/question-supply/placement-starter-attempts';
@@ -348,14 +349,18 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
+  // Primary QuizVerifyTask reservation bookkeeping (YUK-452 review): release on a
+  // reserved-but-unsettled throw so the reservation does not leak into known_cost.
+  const primaryInvocationId = randomUUID();
+  const primaryReservationKey = `${placementAuthority?.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`;
+  let primaryPaidSettled = false;
   try {
-    const primaryInvocationId = randomUUID();
     if (placementAuthority) {
       await db.transaction(async (tx) =>
         reserveAuthorizedPaidCall(tx, {
           authority: placementAuthority,
           kind: 'quiz_verify',
-          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
+          reservationKey: primaryReservationKey,
         }),
       );
     }
@@ -373,11 +378,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       const settlement = await db.transaction(async (tx) =>
         settleAuthorizedPaidCall(tx, {
           authority: placementAuthority,
-          reservationKey: `${placementAuthority.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`,
+          reservationKey: primaryReservationKey,
           providerTaskRunId: result.task_run_id as string,
           costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
         }),
       );
+      primaryPaidSettled = true;
       if (settlement.overCap) {
         throw new PlacementStarterAdmissionError(
           'placement quiz_verify paid invocation exceeded authorized reservation',
@@ -479,12 +485,17 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // (Promise.resolve(undefined)) exactly as the prior sequential `? await ... : undefined` did, so
     // solveResult/teachingResult and every downstream veto/promote predicate are unchanged. Both
     // check functions internally catch their own runTaskFn/parse errors and resolve to an
-    // 'unsupported' verdict rather than rejecting, so racing them is safe (neither can leave the
-    // other's Promise.all settle blocked or produce an unhandled rejection).
+    // 'unsupported' verdict for NON-placement failures. On the placement path they now REJECT with a
+    // PlacementStarter admission/stale error (budget/authority). YUK-452 review (codex P2): with
+    // Promise.all a reject from one leg would abandon the sibling promise, which keeps its paid call
+    // settling OUT OF BAND (and could surface as an unhandled rejection). Use allSettled so BOTH legs
+    // are fully awaited — each settles or releases its own reservation inside its own await — then
+    // deterministically re-throw a leg's blocking error (solver first). Concurrency (wall-clock = max,
+    // not sum) is preserved.
     if (placementAuthority && freeChecksPass) {
       await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
     }
-    const [solveResult, teachingResult] = await Promise.all([
+    const [solveSettled, teachingSettled] = await Promise.allSettled([
       freeChecksPass && tierChecks.includes('solve_check')
         ? runSolveCheck(
             {
@@ -533,6 +544,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                           `placement ${kind} paid invocation exceeded authorized reservation`,
                         );
                       }
+                    },
+                    releasePaidCall: async (kind, invocationId) => {
+                      await db.transaction(async (tx) =>
+                        releaseAuthorizedPaidCall(tx, {
+                          claimId: placementAuthority.claim_id,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
+                        }),
+                      );
                     },
                   }
                 : {}),
@@ -586,12 +605,28 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                         );
                       }
                     },
+                    releasePaidCall: async (invocationId) => {
+                      await db.transaction(async (tx) =>
+                        releaseAuthorizedPaidCall(tx, {
+                          claimId: placementAuthority.claim_id,
+                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
+                        }),
+                      );
+                    },
                   }
                 : {}),
             },
           )
         : Promise.resolve(undefined),
     ]);
+    // Re-throw a placement blocking error from EITHER leg (solver first, deterministic). Both legs
+    // were fully awaited above, so neither is still spending; a non-placement failure never rejects
+    // (the legs internally decay it to 'unsupported'), so a rejection here is always a placement
+    // admission/stale error that must propagate to the failure-bottom / handler (YUK-452 review).
+    if (solveSettled.status === 'rejected') throw solveSettled.reason;
+    if (teachingSettled.status === 'rejected') throw teachingSettled.reason;
+    const solveResult = solveSettled.value;
+    const teachingResult = teachingSettled.value;
     // Layered veto (Q1): solveCheckBlocks reads compared_by to pick the semantic vs
     // normalize flag. undefined (short-circuited / no solve_check in set) → never blocks.
     // A semantic confident-fail vetoes; a normalize (exact) fail vetoes by default but
@@ -706,6 +741,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
 
     await db.transaction(async (tx) => {
+      // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
+      // the question row lock, matching placement paid admission (which takes this advisory lock
+      // then a plain SELECT) and proposal-appliers. The prior order (row lock, then supply lock only
+      // inside the promote branch) let a concurrent /placement/start read the draft as still-cold
+      // while this tx waited on the advisory lock, then promote after it enqueued paid work — a
+      // double-supply race. Locking row.knowledge_ids (pre-tx snapshot) is safe: if attribution
+      // drifted, the version guard below throws and pg-boss reruns against the fresh scope.
+      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       if (placementAuthority) {
         await assertPlacementAuthority(tx, placementAuthority, now);
       }
@@ -727,7 +770,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         );
       }
       if (promote) {
-        await lockPlacementSupplyScopes(tx, current.knowledgeIds ?? []);
+        // Supply scope already locked at the top of this tx (G→row order above).
         // Promote draft→active.
         await tx
           .update(question)
@@ -948,7 +991,33 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       copy_safety_verdict: copySafetyVerdict,
     };
   } catch (err) {
-    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
+    // Release the primary QuizVerifyTask reservation if it reserved but never settled (the provider
+    // call threw). Idempotent / RETENTION-safe once settled (YUK-452 review).
+    if (placementAuthority && !primaryPaidSettled) {
+      try {
+        await db.transaction(async (tx) =>
+          releaseAuthorizedPaidCall(tx, {
+            claimId: placementAuthority.claim_id,
+            reservationKey: primaryReservationKey,
+          }),
+        );
+      } catch (releaseErr) {
+        console.error(
+          '[quiz_verify] primary reservation release failed for',
+          questionId,
+          releaseErr,
+        );
+      }
+    }
+    // A placement stale-authority OR admission failure is about the CLAIM's fence/budget, not the
+    // question's quality — skip the failure-bottom (which would stamp a spurious verification.status
+    // ='failed' on a possibly-good draft) and re-throw so the placement handler terminalizes the
+    // attempt (YUK-452 review).
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     // failure-bottom: best-effort mark verification.status='failed' on the row +
     // write a failure event, then re-throw so pg-boss retries. The draft stays
     // draft_status='draft' (never promoted) — the catch path NEVER promotes.

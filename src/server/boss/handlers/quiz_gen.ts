@@ -79,10 +79,12 @@ import {
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_STARTER_REQUIRED_COUNT,
   PLACEMENT_VERIFY_POLL_MS,
   type PlacementAttemptAuthority,
   type PlacementAttemptHeartbeat,
+  PlacementStarterAdmissionError,
   PlacementStarterDeadlineError,
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnderfillError,
@@ -96,6 +98,7 @@ import {
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
   recordPlacementAttemptOutput,
+  releaseAuthorizedPaidCall,
   renewPlacementAttempt,
   reservePlacementGenerationCall,
   startPlacementAttemptHeartbeat,
@@ -635,11 +638,18 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       if (!result.task_run_id) {
         throw new Error('placement quiz_gen requires provider task_run_id');
       }
-      await recordPlacementAttemptOutput(db, params.placementAttempt, {
+      // recordPlacementAttemptOutput commits the actual provider run id + cost (retention) and
+      // reports over-cap; block the delivery here so the settlement is preserved (codex P2).
+      const { overCap } = await recordPlacementAttemptOutput(db, params.placementAttempt, {
         taskRunId: result.task_run_id,
         outputText: result.text,
         costMicroUsd: costUsdToMicroUsd(result.cost_usd) ?? 0,
       });
+      if (overCap) {
+        throw new PlacementStarterAdmissionError(
+          'placement generation exceeded authorized reservation',
+        );
+      }
     }
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
@@ -1188,7 +1198,36 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       tool_quiz_artifact_id: toolQuizArtifactId,
     };
   } catch (err) {
-    if (err instanceof PlacementStarterStaleAuthorityError) throw err;
+    // Release the generation reservation if the paid QuizGenTask threw AFTER reserving 500k but
+    // BEFORE recordPlacementAttemptOutput settled it — otherwise the reservation placeholder leaks
+    // into the claim's known_cost and falsely exhausts the budget across redeliveries. Idempotent /
+    // RETENTION-safe: a no-op once the call settled an actual cost. Skip when the fence is already
+    // lost (StaleAuthority) — a superseding delivery owns that attempt's ledger (YUK-452 review).
+    if (params.placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+      try {
+        const attempt = params.placementAttempt;
+        await db.transaction(async (tx) =>
+          releaseAuthorizedPaidCall(tx, {
+            claimId: attempt.claimId,
+            reservationKey: `${attempt.attemptId}:quiz_gen`,
+          }),
+        );
+      } catch (releaseErr) {
+        console.error(
+          '[quiz_gen] placement generation reservation release failed for',
+          params.placementAttempt.attemptId,
+          releaseErr,
+        );
+      }
+    }
+    // A placement stale-authority / admission failure is about the CLAIM's fence/budget, not the
+    // question's quality — do not write a spurious quiz_gen failure event against the trigger; let
+    // the handler terminalize the attempt and re-throw.
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     try {
       await writeEvent(db, {
         id: createId(),
@@ -1303,7 +1342,7 @@ export function buildQuizGenHandler(
             retryCount: job.retryCount,
             retryLimit: job.retryLimit,
           });
-          if (job.expireInSeconds * 1_000 !== 120 * 60_000) {
+          if (job.expireInSeconds * 1_000 !== PLACEMENT_QUEUE_EXPIRY_MS) {
             throw new Error('placement quiz_gen queue expiry must be 120 minutes');
           }
           placementAttempt = await acquirePlacementAttempt(db, {
@@ -1345,6 +1384,31 @@ export function buildQuizGenHandler(
           await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
         }
         console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+      } catch (err) {
+        // Terminalize the attempt if generation/verify failed BEFORE reconcile finalized it
+        // (parse/exact-count/persist failure, admission block, fence-still-ours abort). Without
+        // this the attempt stays 'running' holding a 20-min lease that blocks every pg-boss retry
+        // (acquirePlacementAttempt rejects behind the live lease), and the claim stays pinned
+        // non-terminal with no recovery — the zombie the codex P1 flagged. 'interrupted' routes the
+        // claim to retry_scheduled (non-final) or exhausted (final delivery) via finishPlacementAttempt.
+        // Skip on StaleAuthority: the fence is already lost, so a superseding delivery owns
+        // termination. reconcile's own terminal paths already finalized the attempt; a redundant
+        // finalize there simply finds a terminal row and throws StaleAuthority, which we swallow so
+        // the ORIGINAL error still propagates (YUK-452 review).
+        if (placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
+          try {
+            await finishPlacementAttempt(db, placementAttempt, 'interrupted');
+          } catch (finalizeErr) {
+            if (!(finalizeErr instanceof PlacementStarterStaleAuthorityError)) {
+              console.error(
+                '[quiz_gen] placement attempt finalize failed for',
+                placementAttempt.attemptId,
+                finalizeErr,
+              );
+            }
+          }
+        }
+        throw err;
       } finally {
         await placementHeartbeat?.stop();
       }

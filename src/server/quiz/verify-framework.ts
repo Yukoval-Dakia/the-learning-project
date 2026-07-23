@@ -188,6 +188,12 @@ export interface SolveCheckOptions {
     invocationId: string,
     result: { task_run_id?: string; cost_usd?: number },
   ) => Promise<void>;
+  // Called when a leg RESERVED (beforePaidCall) but the paid call never settled — the provider
+  // call threw. Must durably clear the reservation (RETENTION-safe: a no-op once settled).
+  releasePaidCall?: (
+    kind: 'solution_check' | 'semantic_judge',
+    invocationId: string,
+  ) => Promise<void>;
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -475,6 +481,10 @@ export async function runSolveCheck(
   // Solve the question independently. Input shape mirrors solution-generate.ts:103.
   let solverFinalAnswer: string;
   let solverEquivalents: string[];
+  // Reservation bookkeeping (YUK-452 review): if beforePaidCall reserves budget but the provider
+  // call throws before settlePaidCall, release the reservation so it does not leak into known_cost.
+  let solverPaidInvocationId: string | undefined;
+  let solverPaidSettled = false;
   try {
     const meta = (question.metadata ?? {}) as Record<string, unknown>;
     const input = {
@@ -538,11 +548,12 @@ export async function runSolveCheck(
     }
     const solverTaskKind = requiresVision ? 'SolutionGenerateVisionTask' : 'SolutionGenerateTask';
     await assertCurrentAuthority();
-    const invocationId = randomUUID();
-    await opts.beforePaidCall?.('solution_check', invocationId);
+    solverPaidInvocationId = randomUUID();
+    await opts.beforePaidCall?.('solution_check', solverPaidInvocationId);
     const solverRun = await opts.runTaskFn(solverTaskKind, taskInput, ctx);
     recordRun(solverRun);
-    await opts.settlePaidCall?.('solution_check', invocationId, solverRun);
+    await opts.settlePaidCall?.('solution_check', solverPaidInvocationId, solverRun);
+    solverPaidSettled = true;
     // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
@@ -557,6 +568,15 @@ export async function runSolveCheck(
       ? eq.filter((e): e is string => typeof e === 'string')
       : [];
   } catch (err) {
+    // Release the solver reservation if we reserved but never settled (provider call threw). Runs
+    // for placement errors too — idempotent / RETENTION-safe once settled (YUK-452 review).
+    if (solverPaidInvocationId && !solverPaidSettled) {
+      try {
+        await opts.releasePaidCall?.('solution_check', solverPaidInvocationId);
+      } catch (releaseErr) {
+        console.error('[solve-check] solver reservation release failed', releaseErr);
+      }
+    }
     if (
       err instanceof PlacementStarterStaleAuthorityError ||
       err instanceof PlacementStarterAdmissionError
@@ -633,6 +653,7 @@ export async function runSolveCheck(
   // cost + run id in its own transaction BEFORE throwing. Holder object (not a bare let)
   // because TS control-flow analysis does not see closure assignments.
   const semanticBlocking: { err: Error | null } = { err: null };
+  let semanticPaidSettled = false;
   const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
     try {
       await assertCurrentAuthority();
@@ -644,6 +665,7 @@ export async function runSolveCheck(
       recordRun(r);
       if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
         await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
+        semanticPaidSettled = true;
       }
       return r;
     } catch (err) {
@@ -684,6 +706,17 @@ export async function runSolveCheck(
   await assertCurrentAuthority();
   await opts.beforePaidCall?.('semantic_judge', semanticInvocationId);
   const judged = await runSemanticJudge(semParams);
+  // Release the semantic reservation if the judge's paid call never settled — runSemanticJudge's
+  // catch-all swallows a provider throw into an 'unsupported' result (no settle, no rethrow), which
+  // would otherwise leak the reservation into known_cost. Before the blocking rethrow so both the
+  // swallowed-error and placement-error paths clear it. RETENTION-safe no-op once settled (YUK-452 review).
+  if (opts.beforePaidCall && !semanticPaidSettled) {
+    try {
+      await opts.releasePaidCall?.('semantic_judge', semanticInvocationId);
+    } catch (releaseErr) {
+      console.error('[solve-check] semantic reservation release failed', releaseErr);
+    }
+  }
   // YUK-452 review F1 — an admission/stale failure captured inside the recording
   // runTaskFn was swallowed into `judged`'s 'unsupported' shape by runSemanticJudge's
   // catch-all; re-throw it here so it blocks instead of decaying to conservative pass.
@@ -786,6 +819,8 @@ export interface TeachingQualityOptions {
     invocationId: string,
     result: { task_run_id?: string; cost_usd?: number },
   ) => Promise<void>;
+  // Release a reserved-but-unsettled paid call (provider call threw). RETENTION-safe no-op once settled.
+  releasePaidCall?: (invocationId: string) => Promise<void>;
 }
 
 // Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
@@ -899,6 +934,10 @@ export async function runTeachingQualityCheck(
   });
 
   let parsed: unknown;
+  // Reservation bookkeeping (YUK-452 review): release a reserved-but-unsettled paid call if the
+  // provider throws before settlePaidCall, so it does not leak into known_cost.
+  let teachingPaidInvocationId: string | undefined;
+  let teachingPaidSettled = false;
   try {
     const input = {
       ...(opts.placementAuthority ? { placement_authority: opts.placementAuthority } : {}),
@@ -924,13 +963,21 @@ export async function runTeachingQualityCheck(
         ),
       );
     }
-    const invocationId = randomUUID();
-    await opts.beforePaidCall?.(invocationId);
+    teachingPaidInvocationId = randomUUID();
+    await opts.beforePaidCall?.(teachingPaidInvocationId);
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
     recordRun(run);
-    await opts.settlePaidCall?.(invocationId, run);
+    await opts.settlePaidCall?.(teachingPaidInvocationId, run);
+    teachingPaidSettled = true;
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
+    if (teachingPaidInvocationId && !teachingPaidSettled) {
+      try {
+        await opts.releasePaidCall?.(teachingPaidInvocationId);
+      } catch (releaseErr) {
+        console.error('[teaching-quality] reservation release failed', releaseErr);
+      }
+    }
     if (
       err instanceof PlacementStarterStaleAuthorityError ||
       err instanceof PlacementStarterAdmissionError

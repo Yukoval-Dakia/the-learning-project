@@ -19,6 +19,7 @@ export const PLACEMENT_DECISION_DEADLINE_MS = 105 * 60_000;
 export const PLACEMENT_RENEWAL_CEILING_MS = 110 * 60_000;
 export const PLACEMENT_QUEUE_EXPIRY_MS = 120 * 60_000;
 export const PLACEMENT_STARTER_REQUIRED_COUNT = 8;
+export const PLACEMENT_GENERATION_RESERVATION_MICRO_USD = 500_000;
 
 export type PlacementCostComponentKind =
   | 'quiz_gen'
@@ -416,7 +417,7 @@ export async function reservePlacementGenerationCall(
       .from(placement_starter_cost_component)
       .where(eq(placement_starter_cost_component.id, id));
     if (existing) return;
-    const reserved = 500_000;
+    const reserved = PLACEMENT_GENERATION_RESERVATION_MICRO_USD;
     if (!claim || claim.knownCost + reserved > claim.budgetLimit) {
       throw new PlacementStarterAdmissionError('placement generation exceeds claim budget');
     }
@@ -440,10 +441,10 @@ export async function recordPlacementAttemptOutput(
   db: Db,
   attempt: PlacementAttemptAuthority,
   input: { taskRunId: string; outputText: string; costMicroUsd: number; now?: Date },
-): Promise<void> {
+): Promise<{ overCap: boolean }> {
   const now = input.now ?? new Date();
   const outputHash = createHash('sha256').update(input.outputText).digest('hex');
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [current] = await tx
       .select()
       .from(placement_starter_attempt)
@@ -481,13 +482,14 @@ export async function recordPlacementAttemptOutput(
       .from(placement_starter_cost_component)
       .where(eq(placement_starter_cost_component.id, reservationId))
       .for('update');
+    // Settle-before-raise (YUK-452 review, codex P2): persist the ACTUAL provider run id + cost
+    // and correct known_cost FIRST, then surface over-cap to the caller as a return flag. The prior
+    // shape threw before the settle write, so an over-budget generation call lost its real
+    // provider_task_run_id + actual cost and left the claim pinned to the 500k reservation
+    // placeholder. This transaction commits the settlement; the caller decides whether over-cap
+    // blocks the delivery.
     if (reservation) {
       const settledCost = Math.max(0, input.costMicroUsd);
-      if (settledCost > reservation.cost) {
-        throw new PlacementStarterAdmissionError(
-          'placement generation exceeded authorized reservation',
-        );
-      }
       await tx
         .update(placement_starter_cost_component)
         .set({ provider_task_run_id: input.taskRunId, cost_micro_usd: settledCost })
@@ -499,16 +501,55 @@ export async function recordPlacementAttemptOutput(
           updated_at: now,
         })
         .where(eq(placement_starter_claim.id, attempt.claimId));
-    } else {
-      await addAuthorizedCostComponent(tx, {
-        authority: attempt,
-        kind: 'quiz_gen',
-        taskRunId: input.taskRunId,
-        costMicroUsd: input.costMicroUsd,
-        now,
-      });
+      return { overCap: settledCost > reservation.cost };
     }
+    await addAuthorizedCostComponent(tx, {
+      authority: attempt,
+      kind: 'quiz_gen',
+      taskRunId: input.taskRunId,
+      costMicroUsd: input.costMicroUsd,
+      now,
+    });
+    return { overCap: false };
   });
+}
+
+/**
+ * Release an unsettled paid-call reservation (YUK-452 review): delete the `reservation:*`
+ * placeholder cost component and refund its reserved amount from the claim's known_cost. Idempotent
+ * and RETENTION-safe — a no-op when the reservation is missing or has already been settled (its
+ * provider_task_run_id no longer starts with `reservation:`), so an already-committed actual cost is
+ * never clawed back. Callers invoke this when a paid call throws AFTER reserving but BEFORE settling
+ * (e.g. runTaskFn network/parse failure), which would otherwise leak the reservation into known_cost
+ * and falsely exhaust the claim budget.
+ */
+export async function releaseAuthorizedPaidCall(
+  tx: Tx,
+  input: { claimId: string; reservationKey: string; now?: Date },
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const id = createHash('sha256')
+    .update(`placement-paid-call-reservation\0${input.reservationKey}`)
+    .digest('hex');
+  const [reservation] = await tx
+    .select({
+      cost: placement_starter_cost_component.cost_micro_usd,
+      providerTaskRunId: placement_starter_cost_component.provider_task_run_id,
+    })
+    .from(placement_starter_cost_component)
+    .where(eq(placement_starter_cost_component.id, id))
+    .for('update');
+  if (!reservation || !reservation.providerTaskRunId.startsWith('reservation:')) return;
+  await tx
+    .delete(placement_starter_cost_component)
+    .where(eq(placement_starter_cost_component.id, id));
+  await tx
+    .update(placement_starter_claim)
+    .set({
+      known_cost_micro_usd: sql`GREATEST(0, ${placement_starter_claim.known_cost_micro_usd} - ${reservation.cost})`,
+      updated_at: now,
+    })
+    .where(eq(placement_starter_claim.id, input.claimId));
 }
 
 export const PLACEMENT_PAID_CALL_RESERVATION_MICRO_USD = 100_000;
@@ -748,23 +789,28 @@ export async function markAttemptVerifying(
   attempt: PlacementAttemptAuthority,
 ): Promise<void> {
   const now = new Date();
-  const rows = await db
-    .update(placement_starter_attempt)
-    .set({ status: 'verifying', updated_at: now })
-    .where(
-      and(
-        eq(placement_starter_attempt.id, attempt.attemptId),
-        eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
-        eq(placement_starter_attempt.status, 'running'),
-      ),
-    )
-    .returning({ id: placement_starter_attempt.id });
-  if (rows.length !== 1)
-    throw new PlacementStarterStaleAuthorityError('placement attempt fence lost');
-  await db
-    .update(placement_starter_claim)
-    .set({ status: 'verifying', updated_at: now })
-    .where(eq(placement_starter_claim.id, attempt.claimId));
+  // Attempt + claim status must flip together: a crash between the two UPDATEs would leave the
+  // attempt 'verifying' while the claim stays 'running' (or vice versa), a split state the fence /
+  // reconcile guards do not model. One transaction (YUK-452 review).
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(placement_starter_attempt)
+      .set({ status: 'verifying', updated_at: now })
+      .where(
+        and(
+          eq(placement_starter_attempt.id, attempt.attemptId),
+          eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
+          eq(placement_starter_attempt.status, 'running'),
+        ),
+      )
+      .returning({ id: placement_starter_attempt.id });
+    if (rows.length !== 1)
+      throw new PlacementStarterStaleAuthorityError('placement attempt fence lost');
+    await tx
+      .update(placement_starter_claim)
+      .set({ status: 'verifying', updated_at: now })
+      .where(eq(placement_starter_claim.id, attempt.claimId));
+  });
 }
 
 export async function finishPlacementAttempt(
@@ -791,12 +837,28 @@ export async function finishPlacementAttempt(
       .update(placement_starter_attempt_question)
       .set({ verification_status: status === 'succeeded' ? 'satisfied' : 'superseded' })
       .where(eq(placement_starter_attempt_question.attempt_id, attempt.attemptId));
+    // Exhaustion (YUK-452 review): the pg-boss quiz_gen job has retryLimit=2 → exactly 3
+    // deliveries. When the FINAL (max_paid_attempts-th) delivery fails to satisfy, there is no
+    // further redelivery and no recovery sweeper consumes retry_scheduled, so writing
+    // retry_scheduled here would zombie the claim non-terminal forever. Terminalize as
+    // 'exhausted' (owner-locked explicit terminal failure state) so placement stops waiting on a
+    // batch that will never arrive. Non-final failures stay retry_scheduled — acquirePlacementAttempt
+    // accepts that status and the pg-boss retry re-drives the next delivery.
+    const [claimRow] = await tx
+      .select({ maxPaidAttempts: placement_starter_claim.max_paid_attempts })
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, attempt.claimId))
+      .for('update');
+    if (!claimRow) throw new PlacementStarterStaleAuthorityError('placement claim missing');
+    const exhausted = status !== 'succeeded' && attempt.deliveryNo >= claimRow.maxPaidAttempts;
     await tx
       .update(placement_starter_claim)
       .set(
         status === 'succeeded'
           ? { status: 'satisfied', satisfied_at: now, updated_at: now }
-          : { status: 'retry_scheduled', updated_at: now },
+          : exhausted
+            ? { status: 'exhausted', exhausted_at: now, updated_at: now }
+            : { status: 'retry_scheduled', updated_at: now },
       )
       .where(eq(placement_starter_claim.id, attempt.claimId));
   });

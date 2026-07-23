@@ -22,7 +22,7 @@ export function buildPlacementStarterDemand(claim: ClaimRow) {
     claim: {
       kind: 'content_coverage',
       knowledge_ids: [claim.knowledge_id],
-      statement: `Eight verified active placement starters for semantic goal revision ${claim.semantic_goal_revision_id}`,
+      statement: `${PLACEMENT_STARTER_COUNT} verified active placement starters for semantic goal revision ${claim.semantic_goal_revision_id}`,
     },
     evidence: {
       observables: ['distinct verified active pool-visible question eligible for placement'],

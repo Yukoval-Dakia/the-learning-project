@@ -90,6 +90,24 @@ function placementAuthorityIdentity(authority?: PlacementVerificationAuthority):
     : '';
 }
 
+// Field-wise equality (YUK-452 review): the persisted authority is compared after a JSONB
+// round-trip + zod parse, which does NOT preserve object key order, so a raw JSON.stringify of the
+// two objects could differ purely by key order and raise a false "conflict". Compare the known
+// fields explicitly instead. All fields are strings (no Date serialization concern).
+function placementAuthorityEquals(
+  a: PlacementVerificationAuthority | undefined,
+  b: PlacementVerificationAuthority | undefined,
+): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.claim_id === b.claim_id &&
+    a.attempt_id === b.attempt_id &&
+    a.question_id === b.question_id &&
+    a.verification_authority_epoch === b.verification_authority_epoch &&
+    a.fencing_token === b.fencing_token
+  );
+}
+
 function stableEventId(
   kind: 'intent' | 'complete',
   questionId: string,
@@ -166,7 +184,7 @@ export async function writeVerifyDispatchIntent(
       const parsed = verifyDispatchIntentPayloadSchema.safeParse(existing.payload);
       if (
         !parsed.success ||
-        JSON.stringify(parsed.data.placement_authority) !== JSON.stringify(input.placementAuthority)
+        !placementAuthorityEquals(parsed.data.placement_authority, input.placementAuthority)
       ) {
         throw new Error('verify dispatch intent placement authority conflict');
       }

@@ -111,7 +111,8 @@ export async function createPlacementSession(req: Request): Promise<Response> {
             scopeMode: goal.scope_mode,
           })
           .from(goal)
-          .where(eq(goal.id, goalId));
+          .where(eq(goal.id, goalId))
+          .limit(1);
         const effectiveScope = await resolveGoalPlacementScope(tx, {
           scope: goalRow?.scope ?? null,
           subjectId: goalRow?.subjectId ?? null,
@@ -150,8 +151,15 @@ export async function createPlacementSession(req: Request): Promise<Response> {
             return eligible === null;
           });
         } catch (err) {
+          // The claim was materialized (committed) in Transaction A above but its quiz_gen dispatch
+          // failed. It stays 'pending_dispatch'; there is NO background sweeper for pending_dispatch
+          // claims (the placement_starter_claim_recovery_idx supports one but none is wired yet), so
+          // recovery is a SUBSEQUENT /placement/start for the same goal — materialize is idempotent
+          // on the deterministic claim id and dispatchPlacementStarterClaimTx re-dispatches a
+          // still-'pending_dispatch' claim. We surface sourcingNeeded to the client rather than
+          // failing the whole probe (YUK-452 review: message corrected to match reality).
           console.error(
-            `[placement-starter] initial dispatch failed for ${claimId}; recovery owns retry`,
+            `[placement-starter] initial dispatch failed for ${claimId}; claim left pending_dispatch, a subsequent placement start re-dispatches it`,
             err,
           );
         }
