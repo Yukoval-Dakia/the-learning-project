@@ -114,6 +114,12 @@ export function isBlockedIpAddress(address: string): boolean {
 
   const words = parseIpv6Words(normalized);
   if (!words) return true;
+  // Block the two special IPv6 singletons explicitly and up front (YUK-229 review): `::`
+  // (unspecified) and `::1` (loopback). Both would otherwise only be caught incidentally by the
+  // IPv4-compatible interpretation below (as 0.0.0.0 / 0.0.0.1 in 0.0.0.0/8) — an explicit guard
+  // states the intent and is robust to that branch changing.
+  if (words.every((word) => word === 0)) return true; // :: unspecified
+  if (words.slice(0, 7).every((word) => word === 0) && words[7] === 1) return true; // ::1 loopback
   const mappedIpv4 =
     words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff
       ? words[6] * 65_536 + words[7]
@@ -157,7 +163,10 @@ export function isBlockedIpAddress(address: string): boolean {
  * server's responsibility (DNS-answer + redirect re-validation).
  */
 export function isBlockedHostLiteral(hostname: string): boolean {
-  const bareHost = stripIpv6Brackets(hostname.toLowerCase());
+  // Normalize a fully-qualified trailing dot (and any pathological repeats) before matching:
+  // `localhost.` / `printer.local.` / `foo.localhost.` resolve to the same host as their
+  // dotless form, so they must not slip past the literal name / IP checks. (YUK-229 review.)
+  const bareHost = stripIpv6Brackets(hostname.toLowerCase()).replace(/\.+$/, '');
   const blockedName =
     bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
   const family = ipFamily(bareHost);

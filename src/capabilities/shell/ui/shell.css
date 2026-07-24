@@ -234,10 +234,26 @@
   border: 1px solid var(--coral-line);
   border-radius: var(--r-pill);
   cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn:hover {
+  border-color: var(--coral);
+  background: var(--coral-line);
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
 }
 .inbox-loom .proposal-image-candidate .ic-reveal-note {
   font-size: var(--fs-meta);
   color: var(--ink-5);
+}
+/* YUK-229 review — summary_md 里的 Markdown 图片被覆写成不加载的占位文本（防被动内网探测）。 */
+.inbox-loom .proposal-image-candidate .ic-md-img {
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+  overflow-wrap: anywhere;
 }
 .inbox-loom .proposal-image-candidate .ic-fallback-note {
   font-size: var(--fs-meta);

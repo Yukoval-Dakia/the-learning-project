@@ -46,6 +46,12 @@ describe('isBlockedIpAddress', () => {
     expect(isBlockedIpAddress('::ffff:7f00:1')).toBe(true); // mapped 127.0.0.1
     expect(isBlockedIpAddress('64:ff9b::a9fe:a9fe')).toBe(true); // NAT64 -> 169.254.169.254
   });
+  it('explicitly blocks the :: unspecified and ::1 loopback singletons', () => {
+    expect(isBlockedIpAddress('::')).toBe(true);
+    expect(isBlockedIpAddress('::1')).toBe(true);
+    expect(isBlockedIpAddress('0:0:0:0:0:0:0:1')).toBe(true); // fully-expanded ::1
+    expect(isBlockedIpAddress('0:0:0:0:0:0:0:0')).toBe(true); // fully-expanded ::
+  });
   it('allows a public IPv6', () => {
     expect(isBlockedIpAddress('2606:4700:4700::1111')).toBe(false);
   });
@@ -64,6 +70,15 @@ describe('isBlockedHostLiteral', () => {
     expect(isBlockedHostLiteral('fdic.gov')).toBe(false);
     expect(isBlockedHostLiteral('images.example.edu')).toBe(false);
     expect(isBlockedHostLiteral('8.8.8.8')).toBe(false);
+  });
+  it('normalizes a trailing FQDN dot so localhost. / *.local. / *.localhost. cannot bypass', () => {
+    expect(isBlockedHostLiteral('localhost.')).toBe(true);
+    expect(isBlockedHostLiteral('printer.local.')).toBe(true);
+    expect(isBlockedHostLiteral('foo.localhost.')).toBe(true);
+    expect(isBlockedHostLiteral('127.0.0.1.')).toBe(true);
+    expect(isBlockedHostLiteral('192.168.1.10.')).toBe(true);
+    // A public host with a trailing dot stays allowed.
+    expect(isBlockedHostLiteral('images.example.edu.')).toBe(false);
   });
 });
 
@@ -90,6 +105,8 @@ describe('isPublicHttpUrl', () => {
       'http://[fd00::1]/x.png',
       'http://[::ffff:7f00:1]/x.png',
       'http://[64:ff9b::a9fe:a9fe]/x.png',
+      'http://localhost./x.png', // trailing FQDN dot must not bypass
+      'http://printer.local./x.png',
     ]) {
       expect(isPublicHttpUrl(url)).toBe(false);
     }

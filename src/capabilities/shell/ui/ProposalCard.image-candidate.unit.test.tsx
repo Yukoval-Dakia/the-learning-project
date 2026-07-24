@@ -156,6 +156,19 @@ describe('ProposalCard image_candidate', () => {
     expect(decideProposalMock).toHaveBeenCalledWith('proposal_ic_1', 'accept', {});
   });
 
+  it('neutralizes Markdown image syntax in summary_md (no <img>, renders a placeholder)', async () => {
+    const { container } = renderCard(
+      imageCandidateProposal({
+        summaryMd: '题目：![内网探测](http://192.168.1.5/probe.png) 求阴影面积。',
+      }),
+    );
+    // 等 react-markdown chunk 异步加载 + 重渲（首帧是纯文本 fallback）。
+    const placeholder = await screen.findByTestId('ic-md-img-block');
+    expect(placeholder.textContent).toContain('内网探测');
+    // 关键：整张卡（未点预览）不产出任何真实 <img>——summary 里的 markdown 图片后门被堵。
+    expect(container.querySelector('img')).toBeNull();
+  });
+
   it('does not render the image-candidate block or cost note for other kinds', () => {
     const other: ProposalInboxRow = {
       ...imageCandidateProposal(),

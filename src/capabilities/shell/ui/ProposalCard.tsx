@@ -13,6 +13,9 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useState } from 'react';
+// Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
+// the deferred loader still owns the runtime import).
+import type { Components } from 'react-markdown';
 
 import {
   type ProposalDecision,
@@ -108,6 +111,18 @@ export function imageCandidateViewOf(change: unknown): ImageCandidateView | null
   };
 }
 
+// 安全（YUK-229 review codex #2）：summary_md 里的 Markdown 图片语法 ![](url) 默认会被
+// react-markdown 渲成真实 <img> → 又一条被动内网探测后门（同 source_url 直渲问题）。覆写
+// img 组件为不加载的占位文本（绝不产出任何 src / 发 GET），把被动探测从 markdown 后门也堵死。
+// 其余 markdown（含链接 <a>，不自动取回）沿用默认渲染。
+const IC_MARKDOWN_COMPONENTS: Components = {
+  img: ({ alt, src }) => (
+    <span className="ic-md-img" data-testid="ic-md-img-block">
+      [图片：{alt || (typeof src === 'string' ? src : '') || '未命名'}]
+    </span>
+  ),
+};
+
 // 专属卡：题文（summary_md 预览）与原图并排对照。
 // 安全（YUK-229 review）：外部 source_url 是 AI/外部来源写的，直渲 <img> 会在用户打开
 // inbox 时就发起被动 GET，可被用来从用户浏览器探测内网（DNS rebinding 浏览器端防不了）。
@@ -124,7 +139,7 @@ function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
       <div className="ic-col ic-col-summary">
         <span className="ic-col-label">题文摘要</span>
         {view.summaryMd ? (
-          <DeferredMarkdownRenderer className="ic-summary-md">
+          <DeferredMarkdownRenderer className="ic-summary-md" components={IC_MARKDOWN_COMPONENTS}>
             {view.summaryMd}
           </DeferredMarkdownRenderer>
         ) : (
