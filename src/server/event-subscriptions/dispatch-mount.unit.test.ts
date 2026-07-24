@@ -7,6 +7,10 @@ import type { CapabilityManifest } from '@/kernel/manifest';
 vi.mock('@/server/boss/queue-config', () => ({
   createOrUpdateQueue: vi.fn(async () => undefined),
   FAST_QUEUE_OPTS: {},
+  // dispatch-mount.ts builds DISPATCH_QUEUE_OPTS from these at module load (H2), so the mock must
+  // export them or vitest throws "No <name> export is defined on the mock".
+  JOB_RETRY_LIMIT: 2,
+  JOB_RETRY_DELAY_SECONDS: 30,
 }));
 
 import { createOrUpdateQueue } from '@/server/boss/queue-config';
