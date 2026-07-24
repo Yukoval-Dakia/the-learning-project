@@ -109,8 +109,10 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
     if (t.role !== 'user' && t.role !== 'ai' && t.role !== 'tombstone') continue;
     // Classify tombstones BEFORE the text guard — a tombstone must still render even with empty
     // text (the user/ai text check below would otherwise drop it). Prefer the server-provided
-    // t.text (turns.ts sets '本轮更改已撤回') and fall back to the same constant so the two copies
-    // cannot silently drift (YUK-497 wave-2).
+    // t.text (turns.ts is the source of truth) and fall back to a LOCAL COPY of the literal it
+    // emits. NOTE: this is a duplicated literal, not a shared constant — turns.ts is client/server
+    // split so it can't be imported here; if turns.ts changes the tombstone text, update both
+    // (YUK-497 wave-3).
     if (t.role === 'tombstone') {
       out.push({
         id: t.event_id,

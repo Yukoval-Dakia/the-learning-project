@@ -16,6 +16,12 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { CopilotCheckpointParamsSchema } from './contracts';
 
+// Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the refusal-body
+// switch makes this fail to compile (YUK-497 wave-3).
+function assertNever(x: never): never {
+  throw new Error(`unhandled cascade refusal variant: ${JSON.stringify(x)}`);
+}
+
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { eventId: checkpointEventId } = CopilotCheckpointParamsSchema.parse(params);
@@ -26,11 +32,6 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`copilot_revert:${checkpointEventId}`}, 0))`,
       );
-      // YUK-497 review F1 — global learning-state write lock G, acquired immediately after the
-      // per-checkpoint idempotency lock and BEFORE any state row access, so this tx is G-first
-      // (G → rows). Without it the cascade pre-check's FOR NO KEY UPDATE row locks would precede
-      // G and invert against a concurrent learning-state writer (which takes G → rows).
-      await acquireLearningStateWriteLock(tx);
       const roots = await tx
         .select({ id: event.id })
         .from(event)
@@ -109,27 +110,47 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         );
       }
 
+      // YUK-497 wave-3 (OCR) — G acquired HERE, just before the first learning-state row access
+      // (orchestrateCascadeRevert), not at handler entry: the five pre-checks above are all
+      // lock-free plain SELECTs (roots / getCorrectionStatus / replies / shadow / terminal — no
+      // FOR UPDATE), so holding the global G across them + the early-return paths only amplifies
+      // contention. The G→rows invariant still holds (orchestrate takes row locks only after this),
+      // and orchestrate re-acquires G reentrantly on the tx path.
+      await acquireLearningStateWriteLock(tx);
       const result = await orchestrateCascadeRevert(tx, checkpointEventId, {
         copilotAskOnly: true,
       });
       if (!result.ok) {
         // YUK-497 review F4 — map the orchestrator's internal camelCase refusal to the
         // snake_case wire envelope (irreversible_event_ids / ref.kc_id / conflict_ref.*).
+        // wave-3 (OCR) — switch on the discriminant with an exhaustive assertNever so a new
+        // refusal variant with required fields fails to compile instead of silently shipping an
+        // incomplete body. Wire shapes are unchanged (contracts.db pins them).
         const body: Record<string, unknown> = {
           ok: false,
           refusal: result.refusal,
           reason: result.reason,
         };
-        if (result.refusal === 'irreversible') {
-          body.irreversible_event_ids = result.irreversibleEventIds;
-        } else if (result.refusal === 'legacy_snapshot') {
-          body.ref = { kind: result.ref.kind, kc_id: result.ref.kcId };
-        } else if (result.refusal === 'conflict') {
-          body.conflict_ref = {
-            kind: result.conflictRef.kind,
-            subject_kind: result.conflictRef.subjectKind,
-            subject_id: result.conflictRef.subjectId,
-          };
+        switch (result.refusal) {
+          case 'irreversible':
+            body.irreversible_event_ids = result.irreversibleEventIds;
+            break;
+          case 'legacy_snapshot':
+            body.ref = { kind: result.ref.kind, kc_id: result.ref.kcId };
+            break;
+          case 'conflict':
+            body.conflict_ref = {
+              kind: result.conflictRef.kind,
+              subject_kind: result.conflictRef.subjectKind,
+              subject_id: result.conflictRef.subjectId,
+            };
+            break;
+          case 'truncated':
+          case 'no_checkpoint':
+            // base { ok, refusal, reason } only — no extra wire fields.
+            break;
+          default:
+            assertNever(result);
         }
         return {
           status: result.refusal === 'no_checkpoint' ? 404 : 409,

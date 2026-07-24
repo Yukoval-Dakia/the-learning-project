@@ -116,6 +116,14 @@ export const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
  *   - propose : a suggestion; its materialization is the chained generate (handled
  *     separately with imperative undo when present).
  *   - rate : a vote; the materialization is the chained generate.
+ *   - tool_use : an agent tool-call PROVENANCE mirror (mcp-bridge, subject_kind='query')
+ *     written under the same caused_by as the ask. Pure episodic provenance — zero live
+ *     SoT: scope-tagger only adds a routing tag, memory maps it to the episodic 'event'
+ *     kind (same as copilot_reply / generate / correct), and no projection folds it as
+ *     authoritative domain state. The tool's REAL effect (propose / generate / …) is a
+ *     separate chained event the cascade reverts independently. So a `correct` retract is
+ *     harmless — same class as copilot_reply. Admitting it stops a propose-only ask turn
+ *     that emitted a tool_use mirror from 409-ing (YUK-497 wave-3, codex P2).
  */
 const EVENT_LAYER_ACTIONS: ReadonlySet<string> = new Set([
   COPILOT_REPLY_ACTION,
@@ -129,6 +137,7 @@ const EVENT_LAYER_ACTIONS: ReadonlySet<string> = new Set([
   'experimental:grading_checkpoint',
   'propose',
   'rate',
+  'tool_use',
 ]);
 
 /** The compensation actor (agent lane; non-'self' per CorrectEvent attribution). */
@@ -299,6 +308,10 @@ export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean 
     row.action === STATE_SNAPSHOT_ACTION ||
     row.action === 'propose' ||
     row.action === 'rate' ||
+    // tool_use — the agent tool-call provenance mirror mcp-bridge writes under the ask (episodic,
+    // no live state; see EVENT_LAYER_ACTIONS). Without it a propose-only ask that emitted a mirror
+    // would 409 on the extra irreversible node (YUK-497 wave-3, codex P2).
+    row.action === 'tool_use' ||
     (row.action === 'generate' &&
       row.subject_kind === 'knowledge_edge' &&
       (row.payload as { edge_op?: string } | null)?.edge_op !== 'archive')

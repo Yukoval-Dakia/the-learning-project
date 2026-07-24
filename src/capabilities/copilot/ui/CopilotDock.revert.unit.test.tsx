@@ -68,11 +68,24 @@ describe('CopilotDock checkpoint revert', () => {
       source.indexOf('const refetchTurns'),
       source.indexOf('const revertCheckpoint'),
     );
-    expect(refetchBody).toContain('if (sendingRef.current) return;');
+    expect(refetchBody).toContain('if (sendingRef.current) return false;');
     // The guard must precede the clobbering replace statement (match the `;` to skip the comment).
-    expect(refetchBody.indexOf('if (sendingRef.current) return;')).toBeLessThan(
+    expect(refetchBody.indexOf('if (sendingRef.current) return false;')).toBeLessThan(
       refetchBody.indexOf('setMessages(replayed);'),
     );
+  });
+
+  it('refetchTurns returns a boolean callers act on (wave-3 G5)', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
+      'utf8',
+    );
+    // refetchTurns is now typed Promise<boolean> — false on the sendingRef skip, true after replace.
+    expect(source).toContain('const refetchTurns = useCallback(async (): Promise<boolean> =>');
+    // revertCheckpoint surfaces the refresh-pending banner when the refetch was SKIPPED (false).
+    expect(source).toContain('if (!refreshed) setRefreshFailed(true);');
+    // retryRefresh only clears the banner when the refetch actually ran (true).
+    expect(source).toContain('if (refreshed) setRefreshFailed(false);');
   });
 
   it('surfaces the cascade refusal reason and clears refreshFailed on send (wave-2 F4)', async () => {

@@ -492,7 +492,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     };
   }, [open, restoreSkillStateFromReplay]);
 
-  const refetchTurns = useCallback(async () => {
+  // Returns true when it actually replaced the message list, false when it SKIPPED (a send is in
+  // flight). Callers use the flag so they don't report a refresh as done when it was skipped
+  // (YUK-497 wave-3).
+  const refetchTurns = useCallback(async (): Promise<boolean> => {
     const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
     const replayed = replayToMessages(res.turns ?? []);
     // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
@@ -501,7 +504,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
     // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
     // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
-    if (sendingRef.current) return;
+    if (sendingRef.current) return false;
     setMessages(replayed);
     // A revert may have removed the turn that owned the active teaching skill / focused
     // knowledge — reset both, then recompute from the refreshed list (the same scan the
@@ -509,6 +512,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     activeSkillRef.current = null;
     setFocusedKnowledgeId(null);
     restoreSkillStateFromReplay(replayed);
+    return true;
   }, [restoreSkillStateFromReplay]);
 
   const revertCheckpoint = useCallback(
@@ -538,9 +542,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         }
         // Revert LANDED. A refetch failure from here must NOT read as '撤回失败' — the change
         // was reverted, only the on-screen refresh failed. Distinct state drives a refresh-only
-        // retry (retryRefresh below), never a second revert.
+        // retry (retryRefresh below), never a second revert. A SKIP (refetchTurns → false, a send
+        // is streaming) also surfaces the refresh-pending banner so the user has a cue to retry
+        // rather than thinking the revert did nothing (YUK-497 wave-3).
         try {
-          await refetchTurns();
+          const refreshed = await refetchTurns();
+          if (!refreshed) setRefreshFailed(true);
         } catch {
           setRefreshFailed(true);
         }
@@ -557,8 +564,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // refetch ONLY (the revert already committed server-side); clears the banner on success.
   const retryRefresh = useCallback(async () => {
     try {
-      await refetchTurns();
-      setRefreshFailed(false);
+      // Only clear the banner when the refresh actually ran — a skip (a send started during the
+      // retry) must keep it up rather than misleading the user that it refreshed (YUK-497 wave-3).
+      const refreshed = await refetchTurns();
+      if (refreshed) setRefreshFailed(false);
     } catch {
       // Keep the banner up; the revert is already durable, only the refresh is still failing.
     }

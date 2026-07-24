@@ -153,11 +153,25 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
   });
 
-  it('atomically refuses unsupported descendants', async () => {
-    const { checkpointId } = await seedTurn({ childAction: 'tool_use' });
+  it('atomically refuses unsupported (real learner fact) descendants', async () => {
+    // A real learner fact (attempt) under the turn has no clean cascade inverse → whole revert
+    // refuses, mutating nothing.
+    const { checkpointId } = await seedTurn({ childAction: 'attempt' });
     const response = await POST(request(checkpointId), { eventId: checkpointId });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ refusal: 'irreversible' });
     expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
+  });
+
+  it('reverts a turn whose only extra descendant is a tool_use provenance mirror (wave-3 G2)', async () => {
+    // A copilot turn that called tools mirrors them as tool_use events under the ask. These are pure
+    // episodic provenance (event-layer), so the turn is fully revertable — no false 409.
+    const { checkpointId } = await seedTurn({ childAction: 'tool_use' });
+    const response = await POST(request(checkpointId), { eventId: checkpointId });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, status: 'reverted' });
+    // The tool_use mirror gets a `correct`(retract) compensation like the ask/reply.
+    const corrects = await testDb().select().from(event).where(eq(event.action, 'correct'));
+    expect(corrects.some((c) => c.subject_id === 'unsupported_copilot_current')).toBe(true);
   });
 });

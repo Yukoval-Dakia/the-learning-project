@@ -301,6 +301,89 @@ describe('getRecentCopilotTurns', () => {
     expect(askReply?.checkpoint_event_id).toBe(askId);
   });
 
+  it('does NOT surface a revert checkpoint on a replayed teaching ask_check reply (wave-3 G1)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // A teaching ask_check reply that materialized a source='teaching_check' draft question carries
+    // skill_turn.structured_question. Mirroring chat.ts's live F1 suppression, the REPLAY path must
+    // also omit checkpoint_event_id — else the revert button re-appears after refresh and would
+    // orphan the draft. Contrast: a plain free-form reply in the same window keeps its checkpoint.
+    const askTeach = await writeAsk('讲讲这个', sessionId, new Date(now.getTime() - 4000));
+    const replyTeach = await writeReplyWithSkillTurn(
+      '这里的「之」是代词。请作答。',
+      sessionId,
+      askTeach,
+      new Date(now.getTime() - 3500),
+      {
+        kind: 'ask_check',
+        suggested_next: 'continue',
+        structured_question: {
+          id: 'q_g1',
+          kind: 'short_answer',
+          prompt_md: '解释「之」。',
+          choices_md: null,
+        },
+      },
+    );
+    const askFree = await writeAsk('随便问', sessionId, new Date(now.getTime() - 2000));
+    const replyFree = await writeReply(
+      '随便答',
+      sessionId,
+      askFree,
+      new Date(now.getTime() - 1500),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const teachReply = turns.find((t) => t.event_id === replyTeach);
+    const freeReply = turns.find((t) => t.event_id === replyFree);
+    expect(teachReply?.role).toBe('ai');
+    expect(teachReply?.checkpoint_event_id).toBeUndefined();
+    // The suppression is scoped: a plain reply still exposes its checkpoint anchor.
+    expect(freeReply?.checkpoint_event_id).toBe(askFree);
+  });
+
+  it('hides a reply whose parent ask was retracted OUTSIDE the window (wave-3 G7)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // limit=1 → the reader fetches the newest 2 rows. Seed askOld (oldest, 3rd-newest → OUTSIDE the
+    // fetch), a filler ask between, then replyOld (newest) chained to askOld. Retract askOld. The
+    // reply's parent status must still be probed even though askOld fell out of the window, so the
+    // reply is hidden rather than rendered stale.
+    const askOld = await writeAsk('过期被撤回的问题', sessionId, new Date(now.getTime() - 3000));
+    const fillerAsk = await writeAsk('填充问题', sessionId, new Date(now.getTime() - 2000));
+    const replyOld = await writeReply(
+      '过期回复',
+      sessionId,
+      askOld,
+      new Date(now.getTime() - 1000),
+    );
+    // Retract askOld (the parent) — a cascade_revert correct(retract) event on it.
+    await db.insert(event).values({
+      id: `correct_${askOld}`,
+      actor_kind: 'agent',
+      actor_ref: 'cascade_revert',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: askOld,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'out-of-window revert',
+        affected_refs: [{ kind: 'open_inquiry', id: askOld }],
+      },
+      caused_by_event_id: askOld,
+      ingest_at: now,
+      created_at: now,
+    });
+    writtenEventIds.push(`correct_${askOld}`);
+
+    const turns = await getRecentCopilotTurns(db, { limit: 1, now });
+    // The reply from the out-of-window retracted ask is hidden (not shown stale).
+    expect(turns.some((t) => t.event_id === replyOld)).toBe(false);
+    // Sanity: fillerAsk (its own ask, not retracted) still renders.
+    expect(turns.some((t) => t.event_id === fillerAsk)).toBe(true);
+  });
+
   it('caps to limit turns (newest kept), returned chronologically', async () => {
     const now = new Date();
     const sessionId = await createLiveCopilotSession(now);

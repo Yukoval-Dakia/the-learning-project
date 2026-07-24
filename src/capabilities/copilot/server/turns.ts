@@ -255,16 +255,22 @@ export async function getRecentCopilotTurns(
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit * 2);
 
-  const statuses = await getCorrectionStatuses(
-    dbArg,
-    rows.map((row) => row.id),
-  );
-  // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's
-  // caused_by may be a user_ask OR a chip_trigger; only the former may surface a
-  // checkpoint_event_id (revert affordance). retractedAskIds ⊆ askIds.
+  // YUK-497 wave-3 (OCR minor) — also probe the retraction status of each reply's parent ask, even
+  // when that ask fell OUTSIDE this limit*2 window. Otherwise a reply whose parent ask was retracted
+  // out-of-window renders normally after a refresh (stale content from a reverted turn).
+  const replyParentAskIds = rows
+    .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+    .map((row) => row.caused_by_event_id as string);
+  const statuses = await getCorrectionStatuses(dbArg, [
+    ...new Set([...rows.map((row) => row.id), ...replyParentAskIds]),
+  ]);
+  // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's caused_by may be a
+  // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
+  // Retracted roots include out-of-window parent asks: a reply under such an ask is skipped (its ask
+  // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
   const retractedAskIds = new Set(
-    [...askIds].filter((id) => statuses.get(id)?.state === 'retracted'),
+    [...askIds, ...replyParentAskIds].filter((id) => statuses.get(id)?.state === 'retracted'),
   );
 
   const turns: CopilotTurn[] = [];
@@ -301,7 +307,12 @@ export async function getRecentCopilotTurns(
         reply_event_id: row.id,
         // Only a reply rooted at a typed user_ask exposes a revert affordance; a
         // chip-triggered reply's caused_by points at a chip_trigger (not a revert root).
-        ...(checkpointEventId && askIds.has(checkpointEventId)
+        // YUK-497 wave-3 (OCR major) — mirror chat.ts's F1 live suppression on the REPLAY path:
+        // an ask_check reply that materialized a source='teaching_check' draft question
+        // (skill_turn.structured_question present) must NOT re-expose the revert anchor after a
+        // refresh — cascade revert can't compensate that question row, so the button would orphan
+        // the draft. The live response already omits checkpoint_event_id for this case.
+        ...(checkpointEventId && askIds.has(checkpointEventId) && !skillTurn?.structured_question
           ? { checkpoint_event_id: checkpointEventId }
           : {}),
       };

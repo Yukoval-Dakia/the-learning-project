@@ -15,6 +15,15 @@ describe('copilotAskRevertAllows', () => {
     expect(copilotAskRevertAllows(row({ action: 'rate' }), false)).toBe(true);
   });
 
+  it('allows the tool_use provenance mirror a copilot ask emits (wave-3 G2)', () => {
+    // mcp-bridge writes action='tool_use', subject_kind='query'. Pure episodic provenance, so it is
+    // both in EVENT_LAYER_ACTIONS (classifyRow → event_layer) and admitted here, letting a
+    // propose-only ask that emitted a mirror revert instead of 409-ing.
+    expect(copilotAskRevertAllows(row({ action: 'tool_use', subject_kind: 'query' }), false)).toBe(
+      true,
+    );
+  });
+
   it('allows a non-archive generate(knowledge_edge), incl. absent edge_op and supersede (F2b)', () => {
     const edge = (payload: unknown) =>
       row({ action: 'generate', subject_kind: 'knowledge_edge', payload });
