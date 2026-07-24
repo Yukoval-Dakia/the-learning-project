@@ -70,3 +70,10 @@
 （滚存自 PLAN.md 头部，2026-07-20 backlog 连清收口时归档，原文保真）
 
 > **【更新 2026-07-19 · 12 小时双线推进：P0F 教研简报闭环 1-5 + jyeoo 供给接入 + 优化七票，agent 17 PR 自主合并】** agent 主线 17 PR 合入（#907-912/915-920/922-923/934/939），owner 并行合入 ~12 个（#921/#929-931/#935-938/#940-947，含消化 agent 当日立的 YUK-720/723/725/726）。三大块：① **P0F 教研简报闭环 P0F/1-5 全落**——契约（YUK-705）→read model（706）→/today 简报 band（707，#918）→幂等 ack 写端（708，#934：9 轮 codex 逐层收紧至「writer 接受集 ≡ reader 交付集」+ 事务内权威判词 + 幂等前置；1 条全局 selection lock 诉求 owner-WONT_FIX 注释化）→confirmed→KC-scoped 练习 CTA（709，#946 已合）；② **jyeoo-rs 确定性供给链 dark-ship**（697，#939：NDJSON adapter + spawn 安全壳 + jyeoo_fetch 一等路由 + 图题/异 host 闸 + canary/kill switch；jyeoo-rs 非 git 只读，producer 加固以 patch 提案 doc 交 owner；与 owner 并行 #938 的 sourcing.ts 完成双边语义调和，jyeoo 顺势接入 cross-KC 合并）；③ **优化扫描七票全清**（YUK-713 诚实失败链 9 轮 + 714/715/716/717/718/719）+ YUK-221 paper ordinal。纪律面：全程分段 gate grep 真实 EXIT 行；Docker IO 退化时 S2 按目录四分片；flake YUK-724 第 3/4 次发生已记录并建议并发隔离。Linear 当日 Done：YUK-697/705-708/711/713-719/721/221；（YUK-709 亦于收尾时随 #946 合入转 Done）；新立 YUK-720/722-727。生产未动（无部署授权）。
+
+
+---
+
+## 滚存 2026-07-24（原 PLAN.md 头部【更新】）
+
+> **【更新 2026-07-22 · existing-Linear grounding 与四票实现波收口】** 刷新 claude-context 至 1,654 files / 29,494 chunks 后，ground 105 candidates / 76 unique existing Linear issues，建立 30-ticket 战略顺序与 READY-only leaf wave。该 wave 的 YUK-755/#1023、YUK-742/#1021、YUK-590/#1020、YUK-745/#1022 已依次 merge（`91dd6490`、`0d30fbcc`、`07c4a982`、`d5e43a08`）且 Linear 全部 Done；merge 时 exact-head CI 与 review threads 均 clean。YUK-745 最终 focused DB suite 34/34，typecheck、Biome、partition、LSP 与 diff checks 通过。该 wave 无剩余开放 PR；权威 `origin/main` 为 `d5e43a08`。主工作树 owner-dirty，未触碰。
