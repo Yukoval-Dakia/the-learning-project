@@ -1004,6 +1004,13 @@ export const event_subscription_checkpoint = pgTable(
     declaration_hash: text('declaration_hash').notNull(),
     status: text('status', { enum: ['bootstrapping', 'active', 'paused'] }).notNull(),
     next_delivery_seq: bigint('next_delivery_seq', { mode: 'number' }).notNull().default(1),
+    // Max event.dispatch_seq captured when the 'bootstrapping' checkpoint is created (YUK-751 review
+    // Tb7Ai). Every backfill batch is bounded by `dispatch_seq <= bootstrap_horizon_seq` so events
+    // that COMMIT while the multi-batch backfill runs (seq > horizon) are NOT swept into
+    // bootstrap_skipped — they stay for post-activation discovery. Nullable: a checkpoint that was
+    // already 'bootstrapping' before this column existed carries NULL until the backfill resumes and
+    // computes-once-and-persists it (never left unbounded).
+    bootstrap_horizon_seq: bigint('bootstrap_horizon_seq', { mode: 'number' }),
     claim_owner: text('claim_owner'),
     claim_token: uuid('claim_token'),
     claim_lease_until: timestamp('claim_lease_until', { withTimezone: true }),

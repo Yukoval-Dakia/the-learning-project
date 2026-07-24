@@ -117,6 +117,7 @@ export async function bootstrapSubscription(
   subscription: LoadedEventSubscription,
 ): Promise<void> {
   const declared = getDeclaredSubscription(registry, subscription);
+  const declarationHash = declared.declarationHash;
   const actionList = sql.join(
     declared.actions.map((action) => sql`${action}`),
     sql`, `,
@@ -127,8 +128,9 @@ export async function bootstrapSubscription(
   const needsBackfill = await db.transaction(async (tx) => {
     await tx.execute(sql`
       insert into event_subscription_checkpoint
-        (subscriber_id, subscriber_version, declaration_hash, status)
-      values (${subscription.id}, ${subscription.version}, ${registry.declarationHash}, 'bootstrapping')
+        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
+      values (${subscription.id}, ${subscription.version}, ${declarationHash}, 'bootstrapping',
+        (select coalesce(max(dispatch_seq), 0) from event))
       on conflict (subscriber_id, subscriber_version) do nothing
     `);
     const checkpoints = await tx.execute<{
@@ -143,7 +145,7 @@ export async function bootstrapSubscription(
     `);
     const checkpoint = checkpoints[0];
     if (!checkpoint) throw new Error('event subscription checkpoint was not created');
-    if (checkpoint.declaration_hash !== registry.declarationHash) {
+    if (checkpoint.declaration_hash !== declarationHash) {
       throw new Error(
         `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
       );
@@ -165,8 +167,9 @@ export async function bootstrapSubscription(
         declaration_hash: string;
         status: 'bootstrapping' | 'active' | 'paused';
         next_delivery_seq: string;
+        bootstrap_horizon_seq: string | null;
       }>(sql`
-        select declaration_hash, status, next_delivery_seq
+        select declaration_hash, status, next_delivery_seq, bootstrap_horizon_seq
         from event_subscription_checkpoint
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
@@ -175,16 +178,39 @@ export async function bootstrapSubscription(
       const checkpoint = checkpoints[0];
       if (
         !checkpoint ||
-        checkpoint.declaration_hash !== registry.declarationHash ||
+        checkpoint.declaration_hash !== declarationHash ||
         checkpoint.status !== 'bootstrapping'
       ) {
         return true; // vanished / hash-rotated / already finished by a peer
+      }
+
+      // Event horizon (YUK-751 review Tb7Ai). Bound every batch by dispatch_seq <= horizon so an
+      // event that COMMITS while this multi-batch backfill runs (necessarily seq > horizon, since the
+      // sequence is monotonic and horizon was the max at bootstrap start) is NOT swept into
+      // bootstrap_skipped by a later fresh-snapshot batch — it stays > horizon and post-activation
+      // discovery delivers it as pending. A legacy checkpoint already 'bootstrapping' before this
+      // column existed has NULL horizon: compute-once-and-persist it here (best-effort recovery — the
+      // invariant stays total, never unbounded).
+      let horizon: bigint;
+      if (checkpoint.bootstrap_horizon_seq === null) {
+        const horizonRows = await tx.execute<{ bootstrap_horizon_seq: string }>(sql`
+          update event_subscription_checkpoint
+          set bootstrap_horizon_seq = (select coalesce(max(dispatch_seq), 0) from event),
+              updated_at = clock_timestamp()
+          where subscriber_id = ${subscription.id}
+            and subscriber_version = ${subscription.version}
+          returning bootstrap_horizon_seq
+        `);
+        horizon = asBigint(horizonRows[0].bootstrap_horizon_seq);
+      } else {
+        horizon = asBigint(checkpoint.bootstrap_horizon_seq);
       }
 
       const events = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
         select e.id, e.dispatch_seq
         from event e
         where e.action in (${actionList})
+          and e.dispatch_seq <= ${horizon}
           and not exists (
             select 1
             from event_subscription_delivery d
@@ -245,7 +271,7 @@ export async function claimSubscriptionLease(
   subscription: SubscriptionIdentity,
   owner: string,
 ): Promise<SubscriptionLease | null> {
-  getDeclaredSubscription(registry, subscription);
+  const declarationHash = getDeclaredSubscription(registry, subscription).declarationHash;
   const token = randomUUID();
   const rows = await db.execute<{
     claim_lease_until: Date;
@@ -257,7 +283,7 @@ export async function claimSubscriptionLease(
         updated_at = clock_timestamp()
     where subscriber_id = ${subscription.id}
       and subscriber_version = ${subscription.version}
-      and declaration_hash = ${registry.declarationHash}
+      and declaration_hash = ${declarationHash}
       and status = 'active'
       and (claim_lease_until is null or claim_lease_until < clock_timestamp())
     returning claim_lease_until
@@ -267,7 +293,7 @@ export async function claimSubscriptionLease(
     return {
       subscriberId: subscription.id,
       subscriberVersion: subscription.version,
-      declarationHash: registry.declarationHash,
+      declarationHash,
       claimOwner: owner,
       claimToken: token,
       leaseUntil: row.claim_lease_until,
@@ -280,7 +306,7 @@ export async function claimSubscriptionLease(
     where subscriber_id = ${subscription.id} and subscriber_version = ${subscription.version}
   `);
   const checkpoint = checkpoints[0];
-  if (checkpoint && checkpoint.declaration_hash !== registry.declarationHash) {
+  if (checkpoint && checkpoint.declaration_hash !== declarationHash) {
     throw new Error(
       `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
     );
@@ -333,6 +359,7 @@ export async function discoverSubscriptionDeliveries(
   lease: SubscriptionLease,
 ): Promise<number> {
   const declared = getDeclaredSubscription(registry, subscription);
+  const declarationHash = declared.declarationHash;
   return db.transaction(async (tx) => {
     const checkpoints = await tx.execute<{
       next_delivery_seq: string;
@@ -341,7 +368,7 @@ export async function discoverSubscriptionDeliveries(
       from event_subscription_checkpoint
       where subscriber_id = ${subscription.id}
         and subscriber_version = ${subscription.version}
-        and declaration_hash = ${registry.declarationHash}
+        and declaration_hash = ${declarationHash}
         and status = 'active'
         and claim_owner = ${lease.claimOwner}
         and claim_token = ${lease.claimToken}::uuid
@@ -391,7 +418,7 @@ export async function discoverSubscriptionDeliveries(
         set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
-          and declaration_hash = ${registry.declarationHash}
+          and declaration_hash = ${declarationHash}
           and status = 'active'
           and claim_owner = ${lease.claimOwner}
           and claim_token = ${lease.claimToken}::uuid
@@ -418,11 +445,11 @@ export async function claimNextSubscriptionDelivery(
   subscription: LoadedEventSubscription,
   lease: SubscriptionLease,
 ): Promise<SubscriptionDeliveryClaim | null> {
-  getDeclaredSubscription(registry, subscription);
+  const declarationHash = getDeclaredSubscription(registry, subscription).declarationHash;
   if (
     lease.subscriberId !== subscription.id ||
     lease.subscriberVersion !== subscription.version ||
-    lease.declarationHash !== registry.declarationHash
+    lease.declarationHash !== declarationHash
   ) {
     throw new Error(
       `event subscription '${subscription.id}@v${subscription.version}' lease identity mismatch`,
@@ -434,7 +461,7 @@ export async function claimNextSubscriptionDelivery(
     {
       subscriberId: subscription.id,
       subscriberVersion: subscription.version,
-      declarationHash: registry.declarationHash,
+      declarationHash,
       claimOwner: lease.claimOwner,
       claimToken: lease.claimToken,
     },
@@ -479,7 +506,7 @@ export async function claimNextSubscriptionDelivery(
     ? {
         subscriberId: subscription.id,
         subscriberVersion: subscription.version,
-        declarationHash: registry.declarationHash,
+        declarationHash,
         sourceEventId: row.source_event_id,
         deliverySeq: asBigint(row.delivery_seq),
         claimOwner: lease.claimOwner,
@@ -616,14 +643,14 @@ export async function redriveSubscriptionDelivery(
   subscription: SubscriptionIdentity,
   sourceEventId: string,
 ): Promise<boolean> {
-  getDeclaredSubscription(registry, subscription);
+  const declarationHash = getDeclaredSubscription(registry, subscription).declarationHash;
   const rows = await db.transaction(async (tx) => {
     const checkpoints = await tx.execute(sql`
       select subscriber_id
       from event_subscription_checkpoint
       where subscriber_id = ${subscription.id}
         and subscriber_version = ${subscription.version}
-        and declaration_hash = ${registry.declarationHash}
+        and declaration_hash = ${declarationHash}
         and status = 'active'
       for update
     `);
@@ -645,7 +672,7 @@ export async function redriveSubscriptionDelivery(
       and d.source_event_id = ${sourceEventId}
       and c.subscriber_id = d.subscriber_id
       and c.subscriber_version = d.subscriber_version
-      and c.declaration_hash = ${registry.declarationHash}
+      and c.declaration_hash = ${declarationHash}
       and c.status = 'active'
       and d.status = 'dead_letter'
       and not exists (

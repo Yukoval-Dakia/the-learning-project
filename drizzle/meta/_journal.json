@@ -540,6 +540,13 @@
       "when": 1784786534807,
       "tag": "0076_yuk751_event_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1784864968361,
+      "tag": "0077_yuk751_bootstrap_horizon",
+      "breakpoints": true
     }
   ]
 }

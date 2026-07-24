@@ -30,10 +30,18 @@ function compareDeclarations(
   return a.version - b.version;
 }
 
-function computeDeclarationHash(declarations: readonly SubscriptionDeclarationSnapshot[]): string {
+// Hash ONLY the subscription's own declaration (YUK-751 review Tb7Aj). A global hash over all
+// declarations was fenced per (subscriber_id, subscriber_version), so adding/removing/editing ANY
+// subscription bricked every other subscriber's checkpoint claim on a hash mismatch. Scoping the
+// hash to the single declaration confines a change to the subscriber that actually changed.
+function computeDeclarationHash(declaration: SubscriptionDeclarationSnapshot): string {
   const canonical = {
     contractVersion: EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION,
-    subscriptions: declarations.map(({ id, version, actions }) => ({ id, version, actions })),
+    subscription: {
+      id: declaration.id,
+      version: declaration.version,
+      actions: declaration.actions,
+    },
   };
 
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
@@ -61,7 +69,6 @@ export async function loadEventSubscriptionRegistry(
         }),
     )
     .sort(compareDeclarations);
-  const declarationHash = computeDeclarationHash(declarations);
 
   const loaded: LoadedEventSubscription[] = [];
   // Load all factories in parallel — the loaders are independent (dynamic imports with no shared
@@ -104,6 +111,7 @@ export async function loadEventSubscriptionRegistry(
         id: declaration.id,
         version: declaration.version,
         actions: declaration.actions,
+        declarationHash: computeDeclarationHash(declaration),
         handler,
       }),
     );
@@ -118,7 +126,6 @@ export async function loadEventSubscriptionRegistry(
 
   return Object.freeze({
     contractVersion: EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION,
-    declarationHash,
     subscriptions: Object.freeze(loaded),
     get(id: string, version: number) {
       return byIdentity.get(identityKey(id, version));

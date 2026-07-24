@@ -12,12 +12,15 @@ export type LoadedEventSubscriptionIdentity = Readonly<
 
 export interface LoadedEventSubscription extends LoadedEventSubscriptionIdentity {
   readonly actions: readonly string[];
+  // Hash of THIS subscription's own declaration only (id, version, actions). The per-subscriber
+  // checkpoint is fenced on this value, so adding/removing/editing an UNRELATED subscription never
+  // invalidates another subscriber's checkpoint (YUK-751 review Tb7Aj).
+  readonly declarationHash: string;
   readonly handler: EventSubscriptionHandler;
 }
 
 export interface LoadedEventSubscriptionRegistry {
   readonly contractVersion: string;
-  readonly declarationHash: string;
   readonly subscriptions: readonly LoadedEventSubscription[];
   get(id: string, version: number): LoadedEventSubscription | undefined;
 }

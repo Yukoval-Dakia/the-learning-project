@@ -20,18 +20,18 @@ import {
 } from './runtime';
 import type { LoadedEventSubscription, LoadedEventSubscriptionRegistry } from './types';
 
-const HASH = 'registry-declaration-hash';
+const HASH = 'subscriber-declaration-hash';
 const SUBSCRIBER: LoadedEventSubscription = {
   id: 'test.subscriber',
   version: 1,
   actions: ['test:handled'],
+  declarationHash: HASH,
   handler: async () => ({ status: 'succeeded' }),
 };
 
 function registry(subscription = SUBSCRIBER): LoadedEventSubscriptionRegistry {
   return {
     contractVersion: 'event-subscription-registry/v1',
-    declarationHash: HASH,
     subscriptions: [subscription],
     get(id, version) {
       return id === subscription.id && version === subscription.version ? subscription : undefined;
@@ -131,6 +131,69 @@ describe('YUK-751 durable event subscription runtime', () => {
       .select({ nextDeliverySeq: event_subscription_checkpoint.next_delivery_seq })
       .from(event_subscription_checkpoint);
     expect(checkpoint?.nextDeliverySeq).toBe(4);
+  });
+
+  it('bounds the backfill by the bootstrap horizon — an event committed mid-bootstrap is delivered, not skipped (Tb7Ai)', async () => {
+    // pre-1/pre-2 exist when the bootstrap begins. Create the 'bootstrapping' checkpoint with the
+    // horizon captured at that instant — exactly what bootstrapSubscription's creation tx does.
+    await insertEvent('pre-1');
+    await insertEvent('pre-2');
+    await testDb().execute(sql`
+      insert into event_subscription_checkpoint
+        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
+      values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping',
+        (select max(dispatch_seq) from event))
+    `);
+    // An event arrives WHILE the checkpoint is still 'bootstrapping' (dispatch_seq > horizon). Without
+    // the horizon bound the resuming backfill's fresh-snapshot anti-join would sweep it into
+    // bootstrap_skipped and it would never be delivered.
+    await insertEvent('mid-flight');
+
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+
+    // Only the pre-horizon events are skipped; mid-flight is left untouched (no delivery row).
+    expect(await deliveryRows()).toEqual([
+      expect.objectContaining({ sourceEventId: 'pre-1', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'pre-2', status: 'bootstrap_skipped' }),
+    ]);
+
+    // Post-activation discovery delivers the mid-flight event as pending.
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+    expect(await deliveryRows()).toEqual([
+      expect.objectContaining({ sourceEventId: 'pre-1', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'pre-2', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'mid-flight', status: 'pending' }),
+    ]);
+  });
+
+  it('computes-once-and-persists the horizon when resuming a legacy bootstrapping checkpoint with a NULL horizon (Tb7Ai)', async () => {
+    await insertEvent('legacy-1');
+    await insertEvent('legacy-2');
+    // A checkpoint left 'bootstrapping' before the bootstrap_horizon_seq column existed → NULL horizon.
+    await testDb().execute(sql`
+      insert into event_subscription_checkpoint
+        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
+      values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping', null)
+    `);
+
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+
+    // The resume computed + persisted the horizon (never left NULL/unbounded), activated, and skipped
+    // the pre-existing events exactly once.
+    const [cp] = await testDb()
+      .select({
+        horizon: event_subscription_checkpoint.bootstrap_horizon_seq,
+        status: event_subscription_checkpoint.status,
+      })
+      .from(event_subscription_checkpoint);
+    expect(cp?.status).toBe('active');
+    expect(cp?.horizon).not.toBeNull();
+    expect(await deliveryRows()).toEqual([
+      expect.objectContaining({ sourceEventId: 'legacy-1', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'legacy-2', status: 'bootstrap_skipped' }),
+    ]);
   });
 
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {
@@ -390,11 +453,14 @@ describe('YUK-751 durable event subscription runtime', () => {
   });
 
   it('rejects a checkpoint lease from another subscriber without mutating the target delivery', async () => {
-    const other = { ...SUBSCRIBER, id: 'test.other-subscriber' };
+    const other = {
+      ...SUBSCRIBER,
+      id: 'test.other-subscriber',
+      declarationHash: 'other-subscriber-declaration-hash',
+    };
     const subscriptions = [SUBSCRIBER, other];
     const sharedRegistry: LoadedEventSubscriptionRegistry = {
       contractVersion: 'event-subscription-registry/v1',
-      declarationHash: HASH,
       subscriptions,
       get(id, version) {
         return subscriptions.find(

@@ -37,10 +37,19 @@ function capabilities(
   ];
 }
 
-async function hashFor(subscriptions: EventSubscriptionDecl[]): Promise<string> {
+async function hashOf(
+  subscriptions: EventSubscriptionDecl[],
+  id: string,
+  version: number,
+): Promise<string> {
   const eventActions = [...new Set(subscriptions.flatMap(({ actions }) => actions))];
-  return (await loadEventSubscriptionRegistry(capabilities(subscriptions, eventActions), {}))
-    .declarationHash;
+  const registry = await loadEventSubscriptionRegistry(
+    capabilities(subscriptions, eventActions),
+    {},
+  );
+  const subscription = registry.get(id, version);
+  if (!subscription) throw new Error(`subscription ${id}@v${version} not loaded`);
+  return subscription.declarationHash;
 }
 
 describe('loadEventSubscriptionRegistry', () => {
@@ -60,7 +69,7 @@ describe('loadEventSubscriptionRegistry', () => {
     expect(registry.contractVersion).toBe(EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION);
   });
 
-  it('produces the same hash and ordering across declaration and action ordering', async () => {
+  it('produces the same per-subscription hash and ordering across declaration and action ordering', async () => {
     const first = await loadEventSubscriptionRegistry(
       capabilities([
         declaration('subscriber.z', 2, [actionB, actionA]),
@@ -76,7 +85,12 @@ describe('loadEventSubscriptionRegistry', () => {
       {},
     );
 
-    expect(first.declarationHash).toBe(second.declarationHash);
+    expect(first.get('subscriber.a', 1)?.declarationHash).toBe(
+      second.get('subscriber.a', 1)?.declarationHash,
+    );
+    expect(first.get('subscriber.z', 2)?.declarationHash).toBe(
+      second.get('subscriber.z', 2)?.declarationHash,
+    );
     expect(first.subscriptions.map(({ id, version }) => [id, version])).toEqual([
       ['subscriber.a', 1],
       ['subscriber.z', 2],
@@ -87,14 +101,40 @@ describe('loadEventSubscriptionRegistry', () => {
   });
 
   it('changes the hash for subscriber identity, version, or an exact action change', async () => {
-    const original = await hashFor([declaration('subscriber.a', 1, [actionA])]);
+    const original = await hashOf([declaration('subscriber.a', 1, [actionA])], 'subscriber.a', 1);
 
-    expect(await hashFor([declaration('subscriber.b', 1, [actionA])])).not.toBe(original);
-    expect(await hashFor([declaration('subscriber.a', 2, [actionA])])).not.toBe(original);
-    expect(await hashFor([declaration('subscriber.a', 1, [actionA.toUpperCase()])])).not.toBe(
+    expect(await hashOf([declaration('subscriber.b', 1, [actionA])], 'subscriber.b', 1)).not.toBe(
       original,
     );
-    expect(await hashFor([declaration('subscriber.a', 1, [`${actionA} `])])).not.toBe(original);
+    expect(await hashOf([declaration('subscriber.a', 2, [actionA])], 'subscriber.a', 2)).not.toBe(
+      original,
+    );
+    expect(
+      await hashOf([declaration('subscriber.a', 1, [actionA.toUpperCase()])], 'subscriber.a', 1),
+    ).not.toBe(original);
+    expect(
+      await hashOf([declaration('subscriber.a', 1, [`${actionA} `])], 'subscriber.a', 1),
+    ).not.toBe(original);
+  });
+
+  it('scopes each subscription hash to its own declaration, independent of siblings (Tb7Aj)', async () => {
+    // The regression the per-subscription hash guarantees: adding/removing/editing an UNRELATED
+    // subscription must NOT change another subscriber's hash — otherwise every checkpoint claim
+    // would brick on a hash mismatch whenever any subscription in the manifest set changed.
+    const alone = await hashOf([declaration('subscriber.a', 1, [actionA])], 'subscriber.a', 1);
+    const withSibling = await hashOf(
+      [declaration('subscriber.a', 1, [actionA]), declaration('subscriber.b', 3, [actionB])],
+      'subscriber.a',
+      1,
+    );
+    const withDifferentSibling = await hashOf(
+      [declaration('subscriber.a', 1, [actionA]), declaration('subscriber.c', 9, [actionA])],
+      'subscriber.a',
+      1,
+    );
+
+    expect(withSibling).toBe(alone);
+    expect(withDifferentSibling).toBe(alone);
   });
 
   it('wraps a loader rejection with the subscription identity and does not invoke factories', async () => {
@@ -151,14 +191,21 @@ describe('loadEventSubscriptionRegistry', () => {
       later.actions = ['', actionA];
       return () => async () => ({ status: 'succeeded' });
     });
-    const expectedHash = await hashFor([
-      declaration('subscriber.a', 1, [actionA]),
-      declaration('subscriber.b', 2, [actionB]),
-    ]);
+    const expectedHashA = await hashOf(
+      [declaration('subscriber.a', 1, [actionA])],
+      'subscriber.a',
+      1,
+    );
+    const expectedHashB = await hashOf(
+      [declaration('subscriber.b', 2, [actionB])],
+      'subscriber.b',
+      2,
+    );
 
     const registry = await loadEventSubscriptionRegistry(capabilities([first, later]), {});
 
-    expect(registry.declarationHash).toBe(expectedHash);
+    expect(registry.get('subscriber.a', 1)?.declarationHash).toBe(expectedHashA);
+    expect(registry.get('subscriber.b', 2)?.declarationHash).toBe(expectedHashB);
     expect(
       registry.subscriptions.map(({ id, version, actions }) => ({ id, version, actions })),
     ).toEqual([
