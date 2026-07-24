@@ -129,6 +129,12 @@ export interface UpsertMasteryStateInput {
  * (subject_kind, subject_id) — concurrent attempts on the same KC race on the
  * `mastery_state_unique` index; the loser falls back to UPDATE in one statement.
  * Pure persistence — the θ̂ math lives in updateThetaForAttempt.
+ *
+ * LOCKING (F6/TdZQz): self-acquires the global learning-state write lock G via
+ * `withLearningStateLock` — it opens its own tx + `acquireLearningStateWriteLock` when passed a Db,
+ * or runs inside the caller's tx when passed a Tx. G is a `pg_advisory_xact_lock`, which is
+ * RE-ENTRANT within a transaction, so a caller that already holds G (e.g. the grading path, or
+ * cascade-revert) can call this safely — the re-acquire is a no-op, no deadlock.
  */
 export async function upsertMasteryState(
   db: DbLike,

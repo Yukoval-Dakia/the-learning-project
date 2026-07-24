@@ -1070,10 +1070,26 @@ async function runCopilotChatImpl(
   // the probe on db being queryable so they need no new stub — production and the DB tests always
   // carry a real client. An injected selectMaterializingAsksFn (a DB test) still runs since its db is
   // real (YUK-497 wave-4, mirrors the "stub tx has no .select" seam above).
-  const turnMaterialized =
-    userAskEventId !== undefined &&
-    typeof (db as { select?: unknown }).select === 'function' &&
-    (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(userAskEventId);
+  let turnMaterialized: boolean;
+  if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
+    // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
+    turnMaterialized = false;
+  } else {
+    try {
+      turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(
+        userAskEventId,
+      );
+    } catch (err) {
+      // F1 (TdYwg) — this probe runs AFTER the reply is persisted (additive read). If it throws,
+      // degrade gracefully: log + SUPPRESS the anchor (a missing revert button is safe; a lying one
+      // that 409s / orphans a row is not). Never crash the turn over a post-reply read.
+      console.error('[copilot] materializing-tool probe failed; suppressing revert anchor', {
+        userAskEventId,
+        error: err,
+      });
+      turnMaterialized = true;
+    }
+  }
 
   return {
     task_run_id: replyRunId,

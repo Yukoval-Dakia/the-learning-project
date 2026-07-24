@@ -30,7 +30,7 @@ export async function selectAsksWithMaterializingToolCall(
   db: Db | Tx,
   askEventIds: readonly string[],
 ): Promise<Set<string>> {
-  if (askEventIds.length === 0 || MATERIALIZING_TOOL_NAMES.size === 0) return new Set();
+  if (askEventIds.length === 0) return new Set();
   const toolNameList = sql.join(
     [...MATERIALIZING_TOOL_NAMES].map((name) => sql`${name}`),
     sql`, `,

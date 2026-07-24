@@ -604,6 +604,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // the generic error banner would mask a failure from THIS send (YUK-497 wave-2).
     setRefreshFailed(false);
     setRefreshSkipped(false);
+    // F2 (TdZCB) — a send failure is a fresh, actionable error. A revert that INTERLEAVED with this
+    // send (landing after it started, its refetch SKIPPED because the send is streaming) sets
+    // refreshSkipped, which the error-banner guard suppresses — masking this send's failure. So every
+    // send-failure path re-clears both refresh banners before surfacing the error.
+    const reportSendError = (msg: string) => {
+      setRefreshFailed(false);
+      setRefreshSkipped(false);
+      setError(msg);
+    };
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);
@@ -683,7 +692,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // No usable terminal payload — degrade to the error affordance. If a
         // partial bubble was created, drop it so we don't strand a half message.
         if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
-        setError(finalReply?.error ?? '请求失败');
+        reportSendError(finalReply?.error ?? '请求失败');
         return;
       }
 
@@ -733,7 +742,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       );
       // YUK-266 (C1) — a partial-degrade reply still rendered (text persisted);
       // surface the error affordance alongside it so the user knows it was cut.
-      if (res2.error) setError(res2.error);
+      if (res2.error) reportSendError(res2.error);
     } catch (err) {
       // Network / stream error mid-flight. Drop any partial bubble and show the
       // existing 重试 affordance — the turn was best-effort.
@@ -744,7 +753,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           : err instanceof Error
             ? err.message
             : '请求失败';
-      setError(message);
+      reportSendError(message);
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -1114,6 +1123,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 </Btn>
               </div>
             ) : null}
+            {/* F5 (TdY96) — independent conditionals, not a nested ternary. The two are mutually
+                exclusive: refreshFailed wins via the !refreshFailed guard on the skip banner. */}
             {refreshFailed ? (
               <div className="chat-error" data-testid="copilot-refresh-error" role="alert">
                 <LoomIcon name="alert" size={14} />
@@ -1122,7 +1133,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   刷新
                 </Btn>
               </div>
-            ) : refreshSkipped ? (
+            ) : null}
+            {!refreshFailed && refreshSkipped ? (
               // TchmY — a SKIP is not an error: the revert landed, the on-screen refresh was just
               // deferred because a reply is streaming. Calmer copy (no failure wording) + a polite
               // role="status" live region (vs the failure banner's role="alert"), same 刷新 retry. The

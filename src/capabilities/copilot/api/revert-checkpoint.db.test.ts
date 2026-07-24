@@ -104,6 +104,12 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     expect(afterRetry).toEqual(beforeRetry);
   });
 
+  it('rejects an invalid path param with 400 validation_error (F3 TdY3h)', async () => {
+    const response = await POST(request(''), { eventId: '' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'validation_error' });
+  });
+
   it('refuses a non-terminal turn without mutation', async () => {
     const { checkpointId } = await seedTurn({ withReply: false });
     const response = await POST(request(checkpointId), { eventId: checkpointId });

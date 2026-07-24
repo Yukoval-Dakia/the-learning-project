@@ -13,6 +13,7 @@ import {
   lockCopilotSessionSelection,
 } from '@/server/session/conversation';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { CopilotCheckpointParamsSchema, type CopilotCheckpointRevertRefusalT } from './contracts';
 
@@ -178,6 +179,13 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
 
     return Response.json(outcome.body, { status: outcome.status });
   } catch (err) {
+    // F3 (TdY3h) — a bad path param is a 400 validation_error, not a generic 500 (mirrors chat.ts /
+    // accept-chip: a bare errorResponse(ZodError) would fall through to 500).
+    if (err instanceof ZodError) {
+      return errorResponse(
+        new ApiError('validation_error', err.issues.map((i) => i.message).join('; '), 400),
+      );
+    }
     return errorResponse(err);
   }
 }
