@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-24　·　历史头部日志（2026-06-23 ~ 07-22）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md` 与 `.remember/today-*.md`。
 
-> **【更新 2026-07-24 · 迁移列车日：七 PR 合并、两 epic 收口、事件总线通电、架构定调】** 单日合并 #1040（YUK-452 Phase B）、#1042（YUK-591）、#1045（fix-forward）、#1046（YUK-762 flake+定时炸弹拆除）、#1044（YUK-751 durable 事件总线 PR2，dispatch-mount 通电 + 迁移 0074-0076）、#1041（YUK-497 级联撤回，99 threads 七波闭环）、#1043（ADR-0048）。YUK-497/546/567/591 Done。PR #1047（YUK-350，0077 grounding）在飞收敛中。**owner 三条新规则**：① monitor 静默≠死亡，长等待须心跳主动核对；② bot findings 不再 important 后修一轮即合、不等 OCR（review-loop-convergence）；③ **新开发硬性避免深度耦合**（守则随派单附带）。**架构定调**：模块化单体 + 事件总线，微服务否决；多用户「买缝不买重构」——审计报告 `docs/audit/2026-07-24-coupling-multiuser-readiness.md`（D1-D9 决策菜单待 owner ballot）。新立案 YUK-762~773。**日终补记**：#1049-#1054 + #1051 亦合并（累计 16 PR/日）；YUK-589 Done（0074-0078 迁移列车全落）；D1-D9 owner ballot 落账（多用户系 D1/D2/D6 缓，D3/D5/D7/D8 立 YUK-770-773）；owner WIP 分诊（两设计文档抢救 #1053、presence 修复 YUK-768）；三层共享模型草稿 #1054；重测 @f9af38e8 入库 #1050（registry.ts 翻倍 1914 行=新头号 god file、D8 tripwire 已触发）。
+> **【更新 2026-07-24 · 迁移列车日：七 PR 合并、两 epic 收口、事件总线通电、架构定调】** 单日合并 #1040（YUK-452 Phase B）、#1042（YUK-591）、#1045（fix-forward）、#1046（YUK-762 flake+定时炸弹拆除）、#1044（YUK-751 durable 事件总线 PR2，dispatch-mount 通电 + 迁移 0074-0076）、#1041（YUK-497 级联撤回，99 threads 七波闭环）、#1043（ADR-0048）。YUK-497/546/567/591 Done。PR #1047（YUK-350，0077 grounding）在飞收敛中。**owner 三条新规则**：① monitor 静默≠死亡，长等待须心跳主动核对；② bot findings 不再 important 后修一轮即合、不等 OCR（review-loop-convergence）；③ **新开发硬性避免深度耦合**（守则随派单附带）。**架构定调**：模块化单体 + 事件总线，微服务否决；多用户「买缝不买重构」——审计报告 `docs/audit/2026-07-24-coupling-multiuser-readiness.md`（D1-D9 已 ballot（多用户系缓行，执行项立 YUK-770-773））。新立案 YUK-762~773。**日终补记**：#1049-#1054 + #1051 亦合并（累计 16 PR/日）；YUK-589 Done（0074-0078 迁移列车全落）；D1-D9 owner ballot 落账（多用户系 D1/D2/D6 缓，D3/D5/D7/D8 立 YUK-770-773）；owner WIP 分诊（两设计文档抢救 #1053、presence 修复 YUK-768）；三层共享模型草稿 #1054；重测 @f9af38e8 入库 #1050（registry.ts 翻倍 1914 行=新头号 god file、D8 tripwire 已触发）。
 
 ## 🎯 主线方向（当前）
 
@@ -18,11 +18,9 @@
 
 ## NEXT（就绪，排队）
 
-- **YUK-589（judge provenance 二期）**：#1047 合并后 rebase worktree agent-a4b5491eaa05fff02，renumber 0074_yuk589→**0078**；PR body 必带 `JUDGE_PROVENANCE_SECRET` 部署注记（openssl rand -hex 32，distinct from INTERNAL_TOKEN）。
-- **YUK-751 effect-slice**（worktree agent-aa45ca5635aa08991，rebase-ready）：⚠️ 硬前置 = YUK-766 灾备语义 ballot（D4）。
+- **YUK-751 effect-slice**（worktree agent-aa45ca5635aa08991，rebase-ready）：⚠️ 硬前置 = YUK-766 三道门**实施**（D4 已 ballot 选 (a)：checkpoint/delivery 进备份 + principal 类型层 + 幂等契约成文）。
 - **YUK-763（High）placement 快照漂移**：污染全 lane db:generate；YUK-452 lane 出专门迁移。
 - **07-23 已拍板可执行队列**（30-ticket 序）：YUK-608/229/230/562/594/444/437/679/757/758。测试跟进：YUK-764/765。
-- **D1-D9 中零成本项**（owner ballot 后即刻生效）：D2 锁名约定、D6 备份泳道标注、D9 度量口径。
 
 ## PARKED（已捕获，不是现在）
 
@@ -33,7 +31,7 @@
 
 ## BLOCKED-ON（在等什么）
 
-- **D1-D9 架构手术菜单** ← owner 逐项 ballot（报告 docs/audit/2026-07-24-coupling-multiuser-readiness.md §4）。
+- **多用户系决策（D1/D2/D6）** ← owner 主动缓行中（07-24 ballot：其余 D3/D5/D7/D8 已立 YUK-770-773 可执行，D9 已执行）。
 - **YUK-766 灾备恢复语义** ← effect-slice 硬前置（=D4）。
 - **YUK-405 教研团两周窗** ← owner 本周上传内容。
 
