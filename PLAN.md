@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-24　·　历史头部日志（2026-06-23 ~ 07-22）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md` 与 `.remember/today-*.md`。
 
-> **【更新 2026-07-24 · 迁移列车日：七 PR 合并、两 epic 收口、事件总线通电、架构定调】** 单日合并 #1040（YUK-452 Phase B）、#1042（YUK-591）、#1045（fix-forward）、#1046（YUK-762 flake+定时炸弹拆除）、#1044（YUK-751 durable 事件总线 PR2，dispatch-mount 通电 + 迁移 0074-0076）、#1041（YUK-497 级联撤回，99 threads 七波闭环）、#1043（ADR-0048）。YUK-497/546/567/591 Done。PR #1047（YUK-350，0077 grounding）在飞收敛中。**owner 三条新规则**：① monitor 静默≠死亡，长等待须心跳主动核对；② bot findings 不再 important 后修一轮即合、不等 OCR（review-loop-convergence）；③ **新开发硬性避免深度耦合**（守则随派单附带）。**架构定调**：模块化单体 + 事件总线，微服务否决；多用户「买缝不买重构」——审计报告 `docs/audit/2026-07-24-coupling-multiuser-readiness.md`（D1-D9 决策菜单待 owner ballot）。新立案 YUK-762~767。
+> **【更新 2026-07-24 · 迁移列车日：七 PR 合并、两 epic 收口、事件总线通电、架构定调】** 单日合并 #1040（YUK-452 Phase B）、#1042（YUK-591）、#1045（fix-forward）、#1046（YUK-762 flake+定时炸弹拆除）、#1044（YUK-751 durable 事件总线 PR2，dispatch-mount 通电 + 迁移 0074-0076）、#1041（YUK-497 级联撤回，99 threads 七波闭环）、#1043（ADR-0048）。YUK-497/546/567/591 Done。PR #1047（YUK-350，0077 grounding）在飞收敛中。**owner 三条新规则**：① monitor 静默≠死亡，长等待须心跳主动核对；② bot findings 不再 important 后修一轮即合、不等 OCR（review-loop-convergence）；③ **新开发硬性避免深度耦合**（守则随派单附带）。**架构定调**：模块化单体 + 事件总线，微服务否决；多用户「买缝不买重构」——审计报告 `docs/audit/2026-07-24-coupling-multiuser-readiness.md`（D1-D9 已 ballot（多用户系缓行，执行项立 YUK-770-773））。新立案 YUK-762~773。**日终补记**：#1049-#1054 + #1051 亦合并（累计 16 PR/日）；YUK-589 Done（0074-0078 迁移列车全落）；D1-D9 owner ballot 落账（多用户系 D1/D2/D6 缓，D3/D5/D7/D8 立 YUK-770-773）；owner WIP 分诊（两设计文档抢救 #1053、presence 修复 YUK-768）；三层共享模型草稿 #1054；重测 @f9af38e8 入库 #1050（registry.ts 翻倍 1914 行=新头号 god file、D8 tripwire 已触发）。
 
 ## 🎯 主线方向（当前）
 
@@ -12,17 +12,15 @@
 
 ## NOW（当前 active 线）
 
-- **PR #1047（YUK-350 grounding，0077）在飞**：threads 16/16 清、两轮评审 APPROVE，gate 绿即按收敛规则合并（不等 OCR）。合并后 YUK-589 立即发车。
-- **架构双轴生效**：新开发禁深耦合（跨包深 import / god file 添肉 / 无租户维度锁名）；「单用户 by-design」处置一律记债入 YUK-767。D1-D9 手术菜单等 owner ballot。
-- **owner 工作树保护不变**：主工作树 owner-dirty；本 session 仅以隔离 worktree/分支操作。
+- **07-24 迁移列车日已全部收官**：16 PR 合并、5 票 Done（YUK-497/546/567/589/591）、开放 agent PR = 0。无代码 lane 在飞。
+- **下一 session 作战序（owner 拍板）**：主 lane = **D3/YUK-770**（kernel http facade 收尾 + Biome lint 闸）；并行快通道收小票 **YUK-763/765/768/769**（加紧收票节奏，见 memory ticket-closure-pace：READY 票 2-3 张并行、小票单轮评审 gate 绿即合、session 末报吞吐）。
+- **effect-slice 硬前置**：YUK-766 三道门（(a) checkpoint 进备份 + principal 类型层 + 幂等契约）齐前不进实现。
 
 ## NEXT（就绪，排队）
 
-- **YUK-589（judge provenance 二期）**：#1047 合并后 rebase worktree agent-a4b5491eaa05fff02，renumber 0074_yuk589→**0078**；PR body 必带 `JUDGE_PROVENANCE_SECRET` 部署注记（openssl rand -hex 32，distinct from INTERNAL_TOKEN）。
-- **YUK-751 effect-slice**（worktree agent-aa45ca5635aa08991，rebase-ready）：⚠️ 硬前置 = YUK-766 灾备语义 ballot（D4）。
+- **YUK-751 effect-slice**（worktree agent-aa45ca5635aa08991，rebase-ready）：⚠️ 硬前置 = YUK-766 三道门**实施**（D4 已 ballot 选 (a)：checkpoint/delivery 进备份 + principal 类型层 + 幂等契约成文）。
 - **YUK-763（High）placement 快照漂移**：污染全 lane db:generate；YUK-452 lane 出专门迁移。
 - **07-23 已拍板可执行队列**（30-ticket 序）：YUK-608/229/230/562/594/444/437/679/757/758。测试跟进：YUK-764/765。
-- **D1-D9 中零成本项**（owner ballot 后即刻生效）：D2 锁名约定、D6 备份泳道标注、D9 度量口径。
 
 ## PARKED（已捕获，不是现在）
 
@@ -33,7 +31,7 @@
 
 ## BLOCKED-ON（在等什么）
 
-- **D1-D9 架构手术菜单** ← owner 逐项 ballot（报告 docs/audit/2026-07-24-coupling-multiuser-readiness.md §4）。
+- **多用户系决策（D1/D2/D6）** ← owner 主动缓行中（07-24 ballot：其余 D3/D5/D7/D8 已立 YUK-770-773 可执行，D9 已执行）。
 - **YUK-766 灾备恢复语义** ← effect-slice 硬前置（=D4）。
 - **YUK-405 教研团两周窗** ← owner 本周上传内容。
 
@@ -44,10 +42,10 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **开放 PR**：#1047（YUK-350，gate 中）· #1048（旧看板 PR，**已作废待关**——基于滞后底板，由本次重做取代）· cockpit #1019 与 Dependabot #1012-1016（未核，沿 07-22 口径）。
-- **权威主线**：origin/main@f62a8466（#1043 merge）。
-- **worktrees**：agent-a86cca6be64ea5a48（YUK-350，#1047 在飞勿动）· agent-a4b5491eaa05fff02（YUK-589 待 rebase）· agent-aa45ca5635aa08991（effect-slice 待 YUK-766）· 可清：agent-ab7f62c4f8745ef19（YUK-497）/agent-ad81f208c3821a8e6（YUK-751 PR2）/agent-a65c5174267a76894（YUK-452）。
-- **主工作树**：owner-dirty，未 stage、未改写。
+- **开放 agent PR：0**（本 session 16 个全合并：#1040-1047、#1049-1054、#1041；#1048 作废重做为 #1049）。cockpit #1019 与 Dependabot #1012-1016 沿旧口径未核。
+- **权威主线**：origin/main@8135cfad（#1051 / YUK-589）。**部署注记**：生产 rollout 前需设 `JUDGE_PROVENANCE_SECRET`（openssl rand -hex 32，≠ INTERNAL_TOKEN；详见 YUK-589 收官评论）。
+- **worktrees**：仅剩 agent-aa45ca5635aa08991（effect-slice，等 YUK-766 三道门）。本地分支 wip/owner-0724（owner WIP 存档，内容已榨干——可随时 `git branch -D` 删）。
+- **主工作树**：owner 工具配置（.codex bridge/AGENTS.md/serena）已还原为 owner 版本，仍未提交（其本机 setup 的家）。main 本地分支已与 origin 拉平。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
