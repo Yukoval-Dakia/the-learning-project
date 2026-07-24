@@ -4,7 +4,7 @@
 
 import { db } from '@/db/client';
 import { collectionPayload } from '@/kernel/http';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { getTraitJournalPage } from '@/server/subjects/admin-read';
 import { z } from 'zod';
 

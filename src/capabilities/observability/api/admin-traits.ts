@@ -3,7 +3,7 @@
 // 必须是六 kind 之一（400）。业务在 src/server/subjects/admin-read.ts。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { listAdminTraits } from '@/server/subjects/admin-read';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
 

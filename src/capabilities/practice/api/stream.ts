@@ -4,7 +4,7 @@
 
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { checkRateLimit } from '@/server/http/rate-limit';
 
 // YUK-558 (spec Q6-A / M2)：prod sampler 种子化——选题决策可重构（同 seed + 同输入 ⇒ 同选集）。

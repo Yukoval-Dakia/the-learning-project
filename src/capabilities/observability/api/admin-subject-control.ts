@@ -8,7 +8,7 @@
 // （rename/reset 改 displayName/绑定拓扑，retire/restore 改三集合归属）。
 
 import { type Db, db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
   type ControlWriteResult,

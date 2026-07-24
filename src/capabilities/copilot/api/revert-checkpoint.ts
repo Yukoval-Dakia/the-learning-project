@@ -1,8 +1,8 @@
 import { db } from '@/db/client';
 import { event, job_events } from '@/db/schema';
-import { getCorrectionStatus } from '@/kernel/events/corrections';
+import { getCorrectionStatus } from '@/kernel/events';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import {
   COPILOT_REPLY_ACTION,
   COPILOT_USER_ASK_ACTION,

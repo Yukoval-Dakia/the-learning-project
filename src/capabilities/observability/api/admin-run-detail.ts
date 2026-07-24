@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 import { getAdminRunTimeline } from '../server/ai-observability';
 import { AdminRunParamsSchema } from './admin-observability-contracts';

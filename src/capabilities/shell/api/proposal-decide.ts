@@ -5,7 +5,7 @@
 
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { LegacyProposalDecisionBodySchema } from './contracts';
 

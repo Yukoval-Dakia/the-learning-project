@@ -1,7 +1,7 @@
 import type { ProposalDecisionInputT, ProposalDecisionResourceT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { getCorrectionStatus } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import { getProposalInboxRow } from '@/server/proposals/inbox';

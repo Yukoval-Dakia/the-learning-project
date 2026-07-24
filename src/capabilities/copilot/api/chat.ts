@@ -27,9 +27,9 @@ import {
 // consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/server/durable-pickup';
 import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Conversation } from '@/server/session';

@@ -18,7 +18,7 @@
 // Auth：/api/* internal-token 中间件由组合根（server/app.ts）统一施加，本 handler 无需再校验。
 
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { setFixedAnchors } from '@/server/mastery/fixed-anchor';
 import { FixedAnchorBodySchema } from './review-planning-contracts';
 

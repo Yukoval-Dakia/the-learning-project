@@ -13,7 +13,7 @@ import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { eq } from 'drizzle-orm';
 import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
 

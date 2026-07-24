@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { MAX_PDF_PAGES, renderPdfToPngPages } from './pdf-render';
 
 // Pure renderer unit test — imports only pdf-render.ts + sharp (no DB/R2/AI),

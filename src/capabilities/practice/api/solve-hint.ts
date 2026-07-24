@@ -8,7 +8,7 @@ import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { HintRequestBodySchema } from './question-solve-contracts';
 
 export async function createHintRequest(

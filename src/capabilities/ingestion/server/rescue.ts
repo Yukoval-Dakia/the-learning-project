@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { question_block, source_asset } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 

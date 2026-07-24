@@ -14,8 +14,8 @@ import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
-import { ApiError } from '@/server/http/errors';
 
 const HUB_TYPE = 'note_hub';
 const SUPPRESS_ACTOR_REF = 'hub_dismiss_link';

@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { source_asset } from '@/db/schema';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getR2 } from '@/server/r2';
 
 function matchesIfNoneMatch(header: string | null, etag: string): boolean {

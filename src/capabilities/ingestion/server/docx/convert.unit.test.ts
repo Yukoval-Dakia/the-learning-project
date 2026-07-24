@@ -82,7 +82,7 @@ describe('converter seam (mock injection)', () => {
   });
 
   it('a converter that throws ApiError(400) surfaces (timeout-equivalent path)', async () => {
-    const { ApiError } = await import('@/server/http/errors');
+    const { ApiError } = await import('@/kernel/http');
     setDocxConverterForTests({
       async docxToMarkdown() {
         throw new ApiError('validation_error', 'DOCX 转换超时（60s）', 400);

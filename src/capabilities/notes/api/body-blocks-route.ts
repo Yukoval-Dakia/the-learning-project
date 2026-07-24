@@ -1,7 +1,7 @@
 import { EditArtifactBodyBlocksBodySchema } from '@/capabilities/notes/api/contracts';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {

@@ -36,7 +36,7 @@ import {
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import {
   asPlainRecord,
   ensureAcceptOnly,

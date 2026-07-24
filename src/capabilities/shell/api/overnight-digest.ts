@@ -2,7 +2,7 @@
 // ../server/overnight-digest（昨夜窗 digest 只读读模型）。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { loadTodayOvernightDigest } from '@/server/today/overnight-digest';
 
 export async function GET(): Promise<Response> {

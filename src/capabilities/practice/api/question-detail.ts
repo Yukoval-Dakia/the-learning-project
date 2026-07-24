@@ -17,7 +17,7 @@
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
   BLOODLINE_FIELDS,
