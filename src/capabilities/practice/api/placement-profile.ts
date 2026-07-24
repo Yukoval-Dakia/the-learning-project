@@ -18,9 +18,9 @@
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
 import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from '../server/placement-scope';

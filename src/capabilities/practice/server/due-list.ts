@@ -45,9 +45,9 @@ import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
+import { errorResponse } from '@/kernel/http';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
-import { errorResponse } from '@/server/http/errors';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal

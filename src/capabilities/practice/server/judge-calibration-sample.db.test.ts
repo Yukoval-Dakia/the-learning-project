@@ -40,6 +40,16 @@ function semanticOutput(coarse: 'correct' | 'partial' | 'incorrect'): string {
   });
 }
 
+/** LlmFallbackOutput shape (@/core/capability/judges/unit_dimension/types) — equivalent match. */
+function unitDimensionFallbackOutput(): string {
+  return JSON.stringify({
+    student_value_si: 42,
+    student_unit_si: 'm',
+    equivalent_to_reference: true,
+    parser_confidence: 0.8,
+  });
+}
+
 function stepsOutput(): string {
   return JSON.stringify({
     extracted_steps: [{ idx: 0, content: '2x=84', verdict: 'correct', comment: 'ok' }],
@@ -52,7 +62,7 @@ function stepsOutput(): string {
 }
 
 interface SeedOpts {
-  route: 'semantic' | 'steps' | 'multimodal_direct' | 'exact';
+  route: 'semantic' | 'steps' | 'multimodal_direct' | 'exact' | 'unit_dimension';
   priorOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
   /** 'present' → answer_image_refs: [] ; 'absent' → key missing (pre-persistence row). */
   imageRefsKey?: 'present' | 'absent';
@@ -60,6 +70,8 @@ interface SeedOpts {
   textKey?: 'present' | 'absent';
   createdAt?: Date;
   answerMd?: string;
+  /** YUK-769 (i2) — unit_dimension needs reference_value/reference_unit metadata. */
+  metadata?: Record<string, unknown>;
 }
 
 async function seedJudgedAttempt(opts: SeedOpts): Promise<{
@@ -100,7 +112,7 @@ async function seedJudgedAttempt(opts: SeedOpts): Promise<{
     figures: [],
     image_refs: [],
     structured: null,
-    metadata: {},
+    metadata: opts.metadata ?? {},
     created_at: now,
     updated_at: now,
     version: 0,
@@ -520,6 +532,34 @@ describe('runJudgeCalibrationSample', () => {
 
     expect(result.sampled).toBe(0);
     expect(runTaskInner).not.toHaveBeenCalled();
+  });
+
+  it('(i2) unit_dimension IS whitelisted IN — its LLM fallback route is sampled (YUK-769)', async () => {
+    // Regression pin for YUK-769: the sampler used to own a local
+    // LLM_JUDGE_ROUTES const that omitted 'unit_dimension', silently
+    // excluding its LLM-fallback verdicts from calibration. It now consumes
+    // the canonical MODEL_BACKED_JUDGE_ROUTES (@/kernel/judge), which includes
+    // 'unit_dimension'. Student answer is mathjs-unparseable Chinese prose, so
+    // the accelerator reports 'unparseable' and the real judge pipeline falls
+    // through to the LLM fallback — proving the route reaches the LLM lane,
+    // not just the deterministic accelerator.
+    await seedJudgedAttempt({
+      route: 'unit_dimension',
+      priorOutcome: 'correct',
+      answerMd: '四十二米',
+      metadata: { reference_value: 42, reference_unit: 'm', reference_tolerance: 0.05 },
+    });
+    const runTaskInner = vi.fn(async () => ({
+      task_run_id: 'run-syn-i2',
+      text: unitDimensionFallbackOutput(),
+    }));
+
+    const result = await runJudgeCalibrationSample(testDb(), mkCfg(), { runTaskInner });
+
+    expect(runTaskInner).toHaveBeenCalledTimes(1);
+    expect(result.sampled).toBe(1);
+    expect(result.agreed).toBe(1);
+    expect(await sampleEvents()).toHaveLength(1);
   });
 
   it('(j) newest judge per answer wins — superseded original never double-sampled (MF4②)', async () => {

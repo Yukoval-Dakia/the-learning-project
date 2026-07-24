@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 // YUK-258 — DOCX converter seam. ALL external-process conversion is收口在此文件;
 // the rest of the docx pipeline is engine-agnostic. Three-state resolution:

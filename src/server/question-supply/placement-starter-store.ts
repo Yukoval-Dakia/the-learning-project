@@ -13,7 +13,7 @@ import {
   placement_starter_cost_component,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';

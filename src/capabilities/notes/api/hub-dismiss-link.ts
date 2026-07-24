@@ -22,7 +22,7 @@
 import { DismissHubLinkBodySchema, HubIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {

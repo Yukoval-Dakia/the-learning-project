@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { normalizeReviewSubmitActivityRef } from './activity-ref';
 
 describe('normalizeReviewSubmitActivityRef', () => {

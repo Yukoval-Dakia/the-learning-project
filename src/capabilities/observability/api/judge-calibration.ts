@@ -4,7 +4,7 @@
 // (mass-skip discriminator). /api/* token 校验由组合根中间件统一施加；沿
 // conjecture-scores.ts 读模型 → 薄路由形态。无前端 UI（owner design pre-flight）。
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { loadJudgeCalibrationStats } from '../server/judge-calibration';
 
 export async function GET(): Promise<Response> {

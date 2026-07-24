@@ -2,7 +2,7 @@
 // per-KC mastery-calibration firm-up 观测面，沿 admin-cost.ts 的读模型 → 路由形态
 // （db + errorResponse + Response.json）。/api/* token 校验由组合根中间件统一施加。
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 import { loadCalibrationMaturity } from '../server/calibration-maturity';
 

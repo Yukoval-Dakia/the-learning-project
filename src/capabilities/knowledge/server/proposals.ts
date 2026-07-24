@@ -30,12 +30,12 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
-import { ApiError } from '@/server/http/errors';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';

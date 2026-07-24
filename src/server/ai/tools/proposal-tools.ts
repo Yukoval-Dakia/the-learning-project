@@ -38,7 +38,6 @@ import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
 import type { Db } from '@/db/client';
 import {
   artifact,
-  event,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -52,7 +51,10 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
-import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
+import {
+  getFailureAttemptWithReasoningTraceById,
+  getJudgeForAttempt,
+} from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
@@ -905,10 +907,14 @@ async function attributeMistakeExecute(
   raw: AttributeMistakeInput,
 ): Promise<AttributeMistakeOutput> {
   const input = AttributeMistakeInputSchema.parse(raw);
-  const failure = await getFailureAttemptById(ctx.db, input.attempt_event_id);
-  if (!failure) {
+  // YUK-562 — this loader runs the SAME single query as getFailureAttemptById and
+  // also surfaces the attempt payload's reasoning_trace, so the process-data
+  // self-report reaches attribution without a second round-trip.
+  const loaded = await getFailureAttemptWithReasoningTraceById(ctx.db, input.attempt_event_id);
+  if (!loaded) {
     return { status: 'skipped:not_failure_attempt' };
   }
+  const { failure, reasoning_trace: rawReasoningTrace } = loaded;
 
   const existingJudge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
   if (existingJudge) {
@@ -951,22 +957,10 @@ async function attributeMistakeExecute(
     domainByKnowledgeId.get(knowledgeRows[0]?.id) ?? null,
   );
 
-  // YUK-562 (process-data 通电) — read the attempt payload's reasoning_trace so this
-  // copilot caller feeds the same "student self-report" section into attribution as
-  // the attribution_followup job. Behavior-compatible: present → threaded, absent /
-  // whitespace-only → key omitted (byte-identical attribution input). FailureAttempt
-  // does not expose the raw payload, so read it with a targeted select (copilot path
-  // is interactive/low-frequency; the extra round-trip is negligible).
-  const attemptPayloadRow = (
-    await ctx.db
-      .select({ payload: event.payload })
-      .from(event)
-      .where(eq(event.id, input.attempt_event_id))
-      .limit(1)
-  )[0];
-  const rawReasoningTrace = (
-    attemptPayloadRow?.payload as { reasoning_trace?: string | null } | null
-  )?.reasoning_trace;
+  // YUK-562 (process-data 通电) — feed the attempt's reasoning_trace (already loaded
+  // above, no extra query) into attribution as the "student self-report" section,
+  // mirroring the attribution_followup job. Present → threaded; absent /
+  // whitespace-only → key omitted (byte-identical attribution input).
   const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
 
   let attributionTaskRan = false;

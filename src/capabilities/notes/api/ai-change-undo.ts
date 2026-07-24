@@ -3,7 +3,7 @@ import {
   undoNoteRefineApplyEvent,
 } from '@/capabilities/notes/server/note-refine-apply';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

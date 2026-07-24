@@ -6,7 +6,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { ensureAcceptOnly, existingAcceptRate } from '@/server/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import {

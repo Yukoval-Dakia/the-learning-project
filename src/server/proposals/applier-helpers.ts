@@ -8,7 +8,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 type DbLike = Db | Tx;
 

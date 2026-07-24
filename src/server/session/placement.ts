@@ -4,8 +4,8 @@ import { eq, sql } from 'drizzle-orm';
 import { parseFlag } from '@/core/env-flags';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-import { ApiError } from '@/server/http/errors';
 
 import { assertFromState } from './guards';
 

@@ -5,7 +5,7 @@
 import { db } from '@/db/client';
 import { getEventChain } from '@/kernel/events';
 import { getEventById } from '@/kernel/events';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { EventParamsSchema } from './event-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {

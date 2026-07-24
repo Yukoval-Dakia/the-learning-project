@@ -3,7 +3,7 @@
 
 import { loadWorkbenchSummary } from '@/capabilities/shell/server/workbench-summary';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 export async function GET(): Promise<Response> {
   try {

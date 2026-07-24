@@ -33,8 +33,8 @@ import {
 import { extractCrossLinkSnippet } from '@/capabilities/notes/server/body-blocks';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
-import { ApiError, errorResponse } from '@/server/http/errors';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const SNIPPET_MAX_LENGTH = 120;

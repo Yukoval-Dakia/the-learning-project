@@ -14,9 +14,9 @@ import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { buildCalendarReportWindow, localDateKey, resolveReportTimeZone } from './weekly-window';
 
 const MAX_DAYS = 90;

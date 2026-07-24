@@ -2,7 +2,7 @@
 
 import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { CopilotTurnsQuerySchema } from './contracts';
 
 export async function GET(req: Request): Promise<Response> {

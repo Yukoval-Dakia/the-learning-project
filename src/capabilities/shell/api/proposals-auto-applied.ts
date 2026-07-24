@@ -2,7 +2,7 @@
 // @/server/proposals/auto-applied-read（A 档 auto-applied 卡 + 当前熔断快照）。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { getAutoAppliedDigest } from '@/server/proposals/auto-applied-read';
 
 export async function GET(): Promise<Response> {

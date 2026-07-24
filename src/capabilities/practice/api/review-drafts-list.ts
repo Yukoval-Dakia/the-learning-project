@@ -10,7 +10,7 @@
 import { listDraftReview } from '@/capabilities/practice/server/draft-review';
 import { db } from '@/db/client';
 import { collectionPayload } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { DraftReviewListQuerySchema } from './draft-moderation-contracts';
 
 const DEFAULT_LIMIT = 50;

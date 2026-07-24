@@ -6,8 +6,8 @@ import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
-import { ApiError } from '@/server/http/errors';
 // YUK-471 W3-C3 — the per-entity SoT-flip wiring. ON → the projection write-through is the row writer;
 // OFF (default) → the imperative UPDATE stays the SoT and the parity assert catches fold↔row drift
 // during the double-write phase. Gated on hasArtifactGenesisAnchor (a pre-W3 un-backfilled artifact

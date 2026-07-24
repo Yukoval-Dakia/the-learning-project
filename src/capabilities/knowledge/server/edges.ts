@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;

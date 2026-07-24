@@ -99,8 +99,8 @@ import {
   mistake_variant,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
-import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — goal retract write-through (guarded; projection writes the dormant goal when the
 // per-entity flag is ON).
 import { projectGoalGuarded } from '@/server/projections/goal';

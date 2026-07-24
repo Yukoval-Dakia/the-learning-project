@@ -1,10 +1,10 @@
 import type { Db } from '@/db/client';
+import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
 } from '@/kernel/proposals';
-import { ApiError } from '@/server/http/errors';
 import { recordProposalDecisionSignal } from '@/server/proposals/signals';
 import { acceptProposal } from './proposals';
 

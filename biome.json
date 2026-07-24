@@ -49,9 +49,33 @@
       },
       "suspicious": {
         "noExplicitAny": "warn"
+      },
+      "nursery": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@/server/http/errors": "ApiError/errorResponse 已迁入 kernel（YUK-770）——从 '@/kernel/http' 导入，勿直穿遗留过渡壳。",
+              "@/kernel/events/events": "事件底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+              "@/kernel/events/corrections": "corrections 底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。"
+            }
+          }
+        }
       }
     }
   },
+  "overrides": [
+    {
+      "include": ["src/kernel/**", "src/server/http/errors.ts"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "single",

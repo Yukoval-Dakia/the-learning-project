@@ -9,7 +9,7 @@ vi.mock('@/capabilities/ingestion/server/revert-auto-enroll', () => ({
   revertAutoEnrolledBlock: (...args: unknown[]) => revertAutoEnrolledBlock(...args),
 }));
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { POST } from './revert';
 
 const ctx = { id: 'sess_1' };

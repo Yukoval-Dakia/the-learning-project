@@ -4,7 +4,7 @@ import { type SQL, and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'driz
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_record } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import type {
   CreateLearningRecordInput,
   CreateLearningRecordResult,

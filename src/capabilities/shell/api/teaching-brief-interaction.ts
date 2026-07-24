@@ -13,7 +13,7 @@ import {
   recordPrimaryActionStarted,
 } from '@/capabilities/shell/server/teaching-brief-interactions';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { TeachingBriefInteractionBodySchema } from './contracts';
 
 export async function POST(req: Request): Promise<Response> {

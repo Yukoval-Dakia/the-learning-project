@@ -27,7 +27,7 @@ vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
 // pg.ts 必须在 mock 之后导入。
 import { artifact, editing_presence } from '@/db/schema';
 import { PgPresenceStore } from './pg';
-import { EDITING_HEARTBEAT_TIMEOUT_MS } from './types';
+import { EDITING_HEARTBEAT_TIMEOUT_MS, HUB_AUTO_SYNC_ACTOR_REF } from './types';
 
 function createDeferred() {
   let resolve!: () => void;
@@ -420,6 +420,51 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     expect(persistNoteRefineApply).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('dropped 2 stale pending patch(es)'),
+    );
+  });
+
+  it('YUK-768: keeps a stale hub_auto_sync deferred patch during flush while dropping a same-aged non-hub one', async () => {
+    await seedArtifact('art_hub');
+    const flushAt = at(11 * 60_000); // T0 + 11min — both entries below are >10min old
+    // Two same-aged (queuedAtMs = T0) stale entries: the mutation-triggered hub
+    // sync patch opts out of the force-apply ceiling and must survive pruning;
+    // the plain note-refine patch (no actorRef) is dropped at the TTL.
+    await testDb()
+      .insert(editing_presence)
+      .values({
+        artifact_id: 'art_hub',
+        status: 'editing',
+        last_heartbeat_at: at(10 * 60_000),
+        editing_started_at: null,
+        pending: [
+          {
+            patch,
+            triggerEventId: null,
+            queuedAtMs: T0.getTime(),
+            actorRef: HUB_AUTO_SYNC_ACTOR_REF,
+          },
+          { patch, triggerEventId: null, queuedAtMs: T0.getTime() },
+        ],
+      });
+
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    // No active session → blur flushes. The hub_auto_sync entry survives pruning
+    // and is applied; the non-hub entry is dropped (warned).
+    const flush = await store.markArtifactIdleAndFlush({
+      db: applyDb,
+      artifactId: 'art_hub',
+      sessionId: 'gone',
+      now: flushAt,
+    });
+    expect(flush.flushed).toBe(1);
+    expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('dropped 1 stale pending patch(es)'),
+    );
+    // The intentional TTL exemption emits a low-severity visibility breadcrumb.
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`retained 1 ${HUB_AUTO_SYNC_ACTOR_REF} pending patch(es)`),
     );
   });
 

@@ -31,7 +31,7 @@
 
 import { db } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { sql } from 'drizzle-orm';
 
 // Window for the "due soon" band: cards becoming due within the next day. Kept

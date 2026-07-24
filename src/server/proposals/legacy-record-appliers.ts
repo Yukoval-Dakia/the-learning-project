@@ -9,11 +9,11 @@ import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/busi
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
-import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
 // genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
 // ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF + parity assert).
