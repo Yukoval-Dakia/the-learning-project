@@ -14,8 +14,8 @@ const CreateAttemptBodyBaseSchema = z.object({
   response_md: z.string().max(MAX_REVIEW_RESPONSE_CHARS).nullable().optional(),
   // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，落到 review event
   // payload.reasoning_trace（区别于 response_md 的最终作答）。API 侧先行支持；UI 采集框
-  // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界共用
-  // known.ts 的 REASONING_TRACE_MAX_LEN（单一真相源）。
+  // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界与
+  // known.ts 的 reasoning_trace 共享 REASONING_TRACE_MAX_LEN，不会漂移。
   reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
   // YUK-444 (A10 答题置信度自评) — 学生对本次作答的主观把握（1-5 整数），落到 review
   // event payload.self_confidence。**observe-only**：server 只透传落库，绝不进 θ̂ / FSRS /

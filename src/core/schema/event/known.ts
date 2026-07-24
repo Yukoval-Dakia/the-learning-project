@@ -5,11 +5,6 @@ import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
-// YUK-562 — reasoning_trace（学生自述解题思路）的字符上界。单一真相源，供 attempt/review payload
-// 的 zod .max()、/api/attempts 契约（contracts.ts）、及 UI 采集框（PfSolo textarea maxLength +
-// 发送前防御性截断）共用，避免超界文本经 wire 撞 zod .max() 抛 400（PR #1065 thread 修复）。
-export const REASONING_TRACE_MAX_LEN = 4000;
-
 // ---------- 通用 envelope 字段 ----------
 //
 // 所有 event 行都有的字段（除 action / subject_kind / outcome / payload 由各分支 lock）。
@@ -29,6 +24,14 @@ const baseOptionalFields = {
  */
 export const MAX_HINT_INDEX = 20;
 export const MAX_HINT_COUNT = MAX_HINT_INDEX + 1;
+
+/**
+ * YUK-562 — upper bound (chars) for the process-data `reasoning_trace` field.
+ * Single source of truth: the two payload schemas below AND the /api/attempts
+ * request contract (practice/api/contracts.ts) + the solve-session write-side
+ * truncation reference it, so the bound can never drift across the write path.
+ */
+export const REASONING_TRACE_MAX_LEN = 4000;
 
 // YUK-407 (Phase 0 red line) — ReconstructionSignal: was this answer DERIVED from the
 // knowledge node's parent derivation path, or RETRIEVED from memory? Logged as an
