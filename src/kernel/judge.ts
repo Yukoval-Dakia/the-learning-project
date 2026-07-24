@@ -14,6 +14,7 @@ export {
   suppliedUnverifiedExecutionProvenance,
 } from '@/server/judge/execution-provenance-resolve';
 export {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
   sha256Canonical,
   taskInputHash,
 } from '@/server/judge/judge-execution-provenance';
@@ -24,7 +25,10 @@ export {
 } from '@/server/judge/preview-provenance-token';
 export {
   IMAGE_CONSUMING_JUDGE_ROUTES,
+  isModelBackedJudgeRoute,
   type JudgeRoute,
   type JudgeRouteQuestionRow,
+  MODEL_BACKED_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
+export { semanticInput } from '@/server/ai/judges/question-contract';

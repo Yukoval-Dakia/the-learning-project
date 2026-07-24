@@ -125,9 +125,6 @@ export async function handleRejudge(
   });
 
   const now = new Date();
-  const executionProvenance = invoked.execution
-    ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
-    : historicalUnknownExecutionProvenance(invoked.route);
   const newOutcome = invoked.result.coarse_outcome;
 
   // 复核结论与原判一致（或复核不可用）→ 维持原判留痕。
@@ -190,6 +187,14 @@ export async function handleRejudge(
   const thetaSkippedPrior = priorOutcome === 'unsupported' || priorOutcome === 'unknown';
   const shouldRevertTheta =
     judgeDriven && (thetaSkippedPrior || outcomeBit(priorOutcome) !== outcomeBit(newOutcome));
+
+  // YUK-589 (Thgwv) — resolve execution provenance ONLY on the overturn path. The
+  // upheld/unchanged branch above returned early and never consumes it, so computing
+  // it up front spent an ai_task_runs SELECT on every no-op rejudge. It is embedded in
+  // the new judge event's payload (below), so it is needed only here.
+  const executionProvenance = invoked.execution
+    ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
+    : historicalUnknownExecutionProvenance(invoked.route);
 
   let newJudgeId = '';
   let correctionId = '';

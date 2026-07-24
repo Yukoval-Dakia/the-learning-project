@@ -36,6 +36,8 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   createDefaultJudgeInvoker,
   deterministicExecutionProvenance,
+  historicalUnknownExecutionProvenance,
+  isModelBackedJudgeRoute,
   modelExecutionProvenance,
   resolveQuestionJudgeRoute,
 } from '@/kernel/judge';
@@ -545,11 +547,22 @@ export async function submitPaperSlot(
           throw err;
         });
   const judgeResult = invoked?.result ?? null;
-  const executionProvenance = invoked
-    ? invoked.execution
-      ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
-      : deterministicExecutionProvenance(invoked.route)
-    : null;
+  // YUK-589 (J1) — flatten + fix the provenance stamp. Absent `invoked.execution` on a
+  // MODEL-backed route means the LLM call FAILED (provider timeout → coarse_outcome=
+  // 'unsupported'); stamping `deterministic` would be a lie (a failed model run posing as
+  // a no-model deterministic verdict), so use `historical_unknown`. Only a genuinely
+  // deterministic route (exact/keyword) is stamped `deterministic`. No judge invoked
+  // (photo-only unsupported path) → null.
+  let executionProvenance: Awaited<ReturnType<typeof modelExecutionProvenance>> | null = null;
+  if (invoked) {
+    if (invoked.execution) {
+      executionProvenance = await modelExecutionProvenance(db, invoked.execution, 'invoked');
+    } else if (isModelBackedJudgeRoute(invoked.route)) {
+      executionProvenance = historicalUnknownExecutionProvenance(invoked.route);
+    } else {
+      executionProvenance = deterministicExecutionProvenance(invoked.route);
+    }
+  }
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
   const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';
 
@@ -792,8 +805,12 @@ export async function submitPaperSlot(
           profile_version: subjectProfile.version,
           capability_ref: invoked.result.capability_ref,
           judge_route: invoked.route,
-          execution_provenance:
-            executionProvenance ?? deterministicExecutionProvenance(invoked.route),
+          // YUK-589 (Thgw3) — executionProvenance is always set inside this
+          // `invoked !== null` branch (assigned in every arm of the `if (invoked)`
+          // block above), so the prior `?? deterministicExecutionProvenance(...)`
+          // fallback was unreachable dead code (and would have re-introduced the J1
+          // provenance lie). Stamp the resolved provenance directly.
+          execution_provenance: executionProvenance,
           // visibility gate (F1/Q1). Omit when visible (default) to keep the
           // payload minimal + back-compat; set false to buffer feedback.
           ...(visibleToUser ? {} : { visible_to_user: false }),

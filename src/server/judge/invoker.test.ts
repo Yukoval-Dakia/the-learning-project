@@ -243,6 +243,59 @@ describe('JudgeInvoker', () => {
     expect(passedSubIds).toContain('p2');
   });
 
+  // YUK-589 (J4a) — the advisory provenance metadata (taskInputHash /
+  // judgePromptFingerprint) must never crash the judge call. When the task input
+  // carries an un-canonicalizable value (here a Map smuggled through figures), the
+  // metadata computation throws; the invoker must still return the real verdict AND
+  // leave `execution` / `task_run_id` undefined so the persist guard is skipped
+  // (digests stay null → later supplied claims fail closed). A throwing db proves
+  // persistJudgeRunDigests is NOT reached.
+  it('survives a metadata throw: returns the verdict, leaves execution/digests unset', async () => {
+    const throwingDb = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (typeof prop !== 'string' || prop === 'then' || prop === 'constructor') {
+            return undefined;
+          }
+          throw new Error(`__DB_TOUCHED__:${prop}`);
+        },
+      },
+    ) as unknown as Db;
+    const runTaskFn = vi.fn().mockResolvedValue({
+      task_run_id: 'tr-should-not-persist',
+      text: JSON.stringify({
+        score: 0.9,
+        coarse_outcome: 'correct',
+        confidence: 0.8,
+        feedback_md: 'ok',
+        evidence_json: { matched_points: ['p1'], missing_points: [] },
+      }),
+    });
+
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: throwingDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-metadata-throw',
+        judge_kind_override: 'semantic',
+        // A Map inside figures is copied verbatim into the semantic task input
+        // (semanticInput → figures), so taskInputHash throws during metadata.
+        figures: [new Map([['bad', 1]])] as never,
+      },
+      answer_md: '答案',
+      subjectProfile: yuwenProfile,
+    });
+
+    // The verdict survives the metadata failure.
+    expect(result.route).toBe('semantic');
+    expect(result.result.coarse_outcome).toBe('correct');
+    // Fail-closed: no execution identity, no task_run_id → persist skipped.
+    expect(result.execution).toBeUndefined();
+    expect(result.task_run_id).toBeUndefined();
+    expect(JudgeInvokerOutputSchema.safeParse(result).success).toBe(true);
+  });
+
   it('reports semantic provider failures as unsupported telemetry', async () => {
     const result = await new JudgeInvoker({
       runTaskFn: vi.fn().mockRejectedValue(new Error('provider down')),

@@ -25,7 +25,21 @@ export type JudgePreviewProvenanceClaimsT = z.infer<typeof JudgePreviewProvenanc
  */
 export function judgeProvenanceSigningSecret(): string | null {
   const secret = process.env.JUDGE_PROVENANCE_SECRET;
-  return secret && secret.length > 0 ? secret : null;
+  if (!secret || secret.length === 0) return null;
+  // Fail closed if the provenance secret equals INTERNAL_TOKEN: every browser/API
+  // caller holds INTERNAL_TOKEN, so an equal value reopens exactly the forgery
+  // door this dedicated secret exists to close. Treat it as UNSET (no token
+  // issued or verified → supplied results stay supplied_unverified).
+  if (secret === process.env.INTERNAL_TOKEN) {
+    console.error(
+      '[judge-provenance] JUDGE_PROVENANCE_SECRET equals INTERNAL_TOKEN — refusing to use it. ' +
+        'Clients hold INTERNAL_TOKEN, so signing with it lets any caller forge supplied_verified ' +
+        'claims. Provenance signing is DISABLED until a distinct secret is set ' +
+        '(openssl rand -hex 32).',
+    );
+    return null;
+  }
+  return secret;
 }
 
 function signature(payload: string, secret: string): Buffer {
@@ -49,12 +63,12 @@ export function verifyJudgePreviewProvenanceToken(
   const [payload, encodedSignature, extra] = token.split('.');
   if (!payload || !encodedSignature || extra !== undefined) return null;
   const expected = signature(payload, secret);
-  let actual: Buffer;
-  try {
-    actual = Buffer.from(encodedSignature, 'base64url');
-  } catch {
-    return null;
-  }
+  // Buffer.from(_, 'base64url') never throws — it silently drops invalid
+  // characters — so a try/catch here is false confidence. Decode, then reject
+  // any signature that is not canonical base64url (round-trip mismatch) before
+  // the constant-time compare, so a garbled/forged encoding can never slip past.
+  const actual = Buffer.from(encodedSignature, 'base64url');
+  if (actual.toString('base64url') !== encodedSignature) return null;
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
   try {
     return JudgePreviewProvenanceClaims.parse(

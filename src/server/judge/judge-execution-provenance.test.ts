@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   judgePromptFingerprint,
+  sha256Canonical,
   taskInputHash,
 } from './judge-execution-provenance';
 
@@ -38,6 +39,37 @@ describe('judge execution provenance identity', () => {
       taskInputHash({ __ykv_canon__: { v: 1, t: 'bytes' } }),
     );
   });
+
+  // YUK-589 (J4c) — BigInt must produce a deterministic, non-colliding digest
+  // instead of aborting the whole hash (JSON.stringify throws on a raw BigInt).
+  it('canonicalizes BigInt into a deterministic, non-colliding digest without throwing', () => {
+    expect(() => taskInputHash({ n: 10n })).not.toThrow();
+    // Deterministic: the same BigInt hashes identically across calls.
+    expect(taskInputHash({ n: 10n })).toBe(taskInputHash({ n: 10n }));
+    // Distinct BigInts do not collide.
+    expect(taskInputHash({ n: 10n })).not.toBe(taskInputHash({ n: 11n }));
+    // A BigInt and the equal Number render to different envelopes → never alias.
+    expect(taskInputHash({ n: 10n })).not.toBe(taskInputHash({ n: 10 }));
+    // Nor does a BigInt alias the decimal string that spells it.
+    expect(taskInputHash({ n: 10n })).not.toBe(taskInputHash({ n: '10' }));
+  });
+
+  // YUK-589 (J4c) — exotic non-plain objects (Map/Set/RegExp) silently serialized
+  // as `{}` before, colliding every distinct instance. They must now throw so the
+  // caller's fail-closed guard skips the fingerprint instead of trusting a
+  // colliding hash.
+  it.each([
+    ['Map', new Map([['a', 1]])],
+    ['Set', new Set([1, 2, 3])],
+    ['RegExp', /abc/g],
+    ['ArrayBuffer', new ArrayBuffer(8)],
+  ])(
+    'refuses to canonicalize an exotic %s value (throws, never collides as {})',
+    (_label, value) => {
+      expect(() => taskInputHash({ exotic: value })).toThrow(/non-canonicalizable/);
+      expect(() => sha256Canonical(value)).toThrow(/non-canonicalizable/);
+    },
+  );
 
   it('binds the prompt fingerprint to route, profile version, and rendered input', () => {
     const base = {

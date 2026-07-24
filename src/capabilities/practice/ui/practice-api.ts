@@ -394,7 +394,14 @@ export const submitReview = (input: {
   rating: 'again' | 'hard' | 'good';
   response_md: string;
   referenced_knowledge_ids: string[];
-  judge_result_v2?: Omit<JudgePreview, 'route' | 'suggested_rating' | 'task_run_id'> & {
+  // YUK-589 — `task_run_id` and `provenance_token` are promoted to the sibling
+  // `judge_task_run_id` / `judge_provenance_token` fields below, so they are stripped
+  // from the embedded judge result (they are not part of the JudgeResultV2 shape the
+  // server re-parses).
+  judge_result_v2?: Omit<
+    JudgePreview,
+    'route' | 'suggested_rating' | 'task_run_id' | 'provenance_token'
+  > & {
     score_meaning?: string;
   };
   judge_provenance_token?: string;

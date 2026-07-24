@@ -27,8 +27,34 @@ function bytesEnvelope(value: Uint8Array): Record<string, unknown> {
 export function stableCanonicalValue(value: unknown): unknown {
   if (value instanceof URL) return value.toString();
   if (value instanceof Uint8Array) return bytesEnvelope(value);
+  // YUK-589 (J4) — canonicalization must be TOTAL and non-colliding, never
+  // throwing for advisory metadata while silently aliasing distinct inputs.
+  //  - BigInt: JSON.stringify throws on it, which would abort the whole hash.
+  //    Tag it in a versioned, non-confusable envelope so it produces a stable,
+  //    unique digest instead. (Number and BigInt render to different envelopes,
+  //    so `1` and `1n` never collide.)
+  //  - Map / Set / RegExp / other exotic non-plain objects: these fall into the
+  //    `typeof === 'object'` branch below and JSON.stringify them as `{}`,
+  //    silently colliding every distinct instance. Refuse them loudly so the
+  //    caller's fail-closed guard (invoker metadata try/catch) skips the
+  //    fingerprint rather than trusting a colliding hash.
+  if (typeof value === 'bigint') {
+    return { [CANON_MARKER]: { v: 1, t: 'bigint', value: value.toString() } };
+  }
   if (Array.isArray(value)) return value.map(stableCanonicalValue);
   if (value && typeof value === 'object') {
+    // Date is intentionally NOT rejected: it serializes losslessly via toJSON
+    // (ISO string), so it neither throws nor collides. These exotics DO collide
+    // (JSON.stringify renders them as `{}` or a lossy shape), so refuse them.
+    if (
+      value instanceof Map ||
+      value instanceof Set ||
+      value instanceof RegExp ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value)
+    ) {
+      throw new Error(`non-canonicalizable value: ${value.constructor?.name ?? typeof value}`);
+    }
     const source = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(source).sort()) {

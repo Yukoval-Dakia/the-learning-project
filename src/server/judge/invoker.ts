@@ -1,4 +1,4 @@
-import type { AiTaskKind } from '@/ai/task-prompts';
+import { isAiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { JudgeKind as JudgeKindSchema } from '@/core/schema/business';
@@ -141,20 +141,45 @@ export class JudgeInvoker {
       taskInput,
       callCtx,
     ) => {
+      // Compute the judge result FIRST — it must NEVER be lost to a failure in the
+      // advisory provenance metadata below.
       const taskResult = await configuredRunTaskFn(kind, taskInput, callCtx);
-      taskRunId = taskResult.task_run_id;
-      execution = {
-        task_kind: kind,
-        ...(taskResult.task_run_id ? { task_run_id: taskResult.task_run_id } : {}),
-        input_hash: taskInputHash(taskInput),
-        prompt_fingerprint: judgePromptFingerprint({
-          taskKind: kind as AiTaskKind,
-          taskInput,
-          subjectProfile: narrowed.subjectProfile,
-          judgeRoute: route,
-        }),
-        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
-      };
+      // YUK-589 (J4) — the metadata (taskInputHash / judgePromptFingerprint) is
+      // best-effort provenance ONLY. A throw here (a BigInt / exotic value inside
+      // taskInput, or an unknown task kind) must not crash the judge call. On any
+      // failure leave `execution` undefined AND clear `taskRunId` so the persist
+      // guard (`if (taskRunId && execution)`) is skipped → digests stay null → a
+      // later supplied claim fails closed to `supplied_unverified` (never falsely
+      // trusted) rather than corroborating against a bogus fingerprint.
+      try {
+        // Boundary-validate the untrusted kind string instead of an
+        // `as AiTaskKind` cast-and-hope: an unknown kind would fingerprint against
+        // a garbage system prompt (fail-open). isAiTaskKind narrows to AiTaskKind.
+        if (!isAiTaskKind(kind)) {
+          throw new Error(`unknown judge task kind '${kind}' — refusing to fingerprint`);
+        }
+        const provenance = {
+          task_kind: kind,
+          ...(taskResult.task_run_id ? { task_run_id: taskResult.task_run_id } : {}),
+          input_hash: taskInputHash(taskInput),
+          prompt_fingerprint: judgePromptFingerprint({
+            taskKind: kind,
+            taskInput,
+            subjectProfile: narrowed.subjectProfile,
+            judgeRoute: route,
+          }),
+          prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+        };
+        taskRunId = taskResult.task_run_id;
+        execution = provenance;
+      } catch (err) {
+        console.warn(
+          `judge provenance metadata failed for ${narrowed.question.id}/${route} (kind '${kind}') — persisting no digests (fail-closed):`,
+          err,
+        );
+        taskRunId = undefined;
+        execution = undefined;
+      }
       return taskResult;
     };
     const dispatched = await this.dispatch(route, {
