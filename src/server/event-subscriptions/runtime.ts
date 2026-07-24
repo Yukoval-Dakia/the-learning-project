@@ -9,25 +9,33 @@ import type { LoadedEventSubscription, LoadedEventSubscriptionRegistry } from '.
 
 type SubscriptionIdentity = Pick<LoadedEventSubscription, 'id' | 'version'>;
 
-// Max un-delivered events materialized + inserted per bootstrap backfill transaction (YUK-751 OCR
-// major): bounds memory and per-tx lock duration when a new subscriber bootstraps against a large
-// event history. Each batch commits independently; the backfill resumes across batches.
-const BOOTSTRAP_BACKFILL_BATCH_SIZE = 1_000;
-
 // Max pending deliveries materialized per discovery transaction (YUK-751 OCR major Tcd9r): the
 // anti-join over the immutable event log was unbounded, so a large backlog (e.g. first discovery for
 // a new action) loaded + inserted every row in one tx (memory + a long checkpoint-row lock).
 // Discovery now drains in bounded batches — one tx each, re-fencing the lease — exactly like bootstrap.
 const DISCOVERY_BATCH_SIZE = 1_000;
 
+// Checkpoint + delivery claim lease TTL, in seconds (YUK-751 OCR minor Tc4HQ). Single source for what
+// was `interval '2 minutes'` repeated across every claim/renew SQL site — interpolated as
+// `${LEASE_TTL_SECONDS} * interval '1 second'` so drift can't creep between sites.
+const LEASE_TTL_SECONDS = 120;
+
 // CONTRACT (YUK-751 OCR major): a handler must resolve well INSIDE the checkpoint/delivery claim
-// lease TTL (`interval '2 minutes'`). The lease is NOT renewed while the handler runs, so a handler
-// that outlives the lease lets a concurrent worker take over and double-process the same delivery.
-// Bounding the await below the TTL guarantees the delivery is resolved (retry_wait via
-// failSubscriptionDelivery) before the lease can expire. On timeout the handler promise is abandoned
-// (JS can't truly cancel it) — its side effects must be idempotent, which the delivery-key dedup
-// already assumes. Keep this value < the lease TTL if the lease duration ever changes.
+// lease TTL (LEASE_TTL_SECONDS). The lease is NOT renewed while the handler runs, so a handler that
+// outlives the lease lets a concurrent worker take over and double-process the same delivery. Bounding
+// the await below the TTL guarantees the delivery is resolved (retry_wait via failSubscriptionDelivery)
+// before the lease can expire. On timeout the handler promise is abandoned (JS can't truly cancel it)
+// — its side effects must be idempotent, which the delivery-key dedup already assumes.
 const DEFAULT_HANDLER_TIMEOUT_MS = 90_000;
+
+// Validate the contract at module load: the default handler timeout MUST stay below the lease TTL, or
+// a slow handler could outlive its lease and get double-processed (Tc4HQ — the single-constant version
+// of the "keep < lease TTL" note above).
+if (DEFAULT_HANDLER_TIMEOUT_MS >= LEASE_TTL_SECONDS * 1000) {
+  throw new Error(
+    `event subscription DEFAULT_HANDLER_TIMEOUT_MS (${DEFAULT_HANDLER_TIMEOUT_MS}ms) must be below the lease TTL (${LEASE_TTL_SECONDS}s)`,
+  );
+}
 
 // Options intake guards (YUK-751 OCR minor Tcd9v). A non-finite / non-positive timeout or retry delay
 // silently corrupts the lease-TTL bound and the backoff SQL (`* interval '1 second'`), so reject them
@@ -131,10 +139,16 @@ async function withLockedCheckpoint<T>(
 }
 
 /**
- * Creates and activates a checkpoint while holding its row lock. Every source
- * event visible during this transaction is durably marked bootstrap_skipped;
- * later racing commits remain absent from the anti-join and will be discovered
- * as pending once the checkpoint is active.
+ * Bootstrap a subscriber in ONE transaction (YUK-751 review Tcx98). The creation tx's OWN MVCC
+ * snapshot defines "history": a single set-based `INSERT ... SELECT` marks every event visible to that
+ * snapshot bootstrap_skipped, then the checkpoint is inserted 'active'. No seq / xmin / snapshot fence
+ * and no resumable 'bootstrapping' phase — snapshot visibility is the exactly-right, mutation-proof
+ * definition of history. (Event rows are NOT immutable: the memory outbox UPDATEs `ingest_at`, so any
+ * xmin-based fence mis-classified an outbox-touched historical event as in-flight → over-delivery.)
+ * An event that commits after — or is in-flight during — this tx is simply absent from the snapshot →
+ * not skipped → later delivered as pending by discovery (the safe direction). Atomicity makes it
+ * crash-safe with no partial state; the whole set streams inside PG (no app-side row loading — the
+ * MAJ-2 concern), and a single-user small event table makes the one-shot lock a non-issue.
  */
 export async function bootstrapSubscription(
   db: Db,
@@ -148,158 +162,66 @@ export async function bootstrapSubscription(
     sql`, `,
   );
 
-  // Ensure the checkpoint row exists + its declaration hash matches (small tx). Returns whether the
-  // historical backfill still needs to run ('bootstrapping'); 'active'/'paused' → nothing to do.
-  const needsBackfill = await db.transaction(async (tx) => {
-    await tx.execute(sql`
+  await db.transaction(async (tx) => {
+    // Insert the checkpoint directly 'active'. RETURNING distinguishes a FRESH bootstrap (we own the
+    // skip-marking) from an already-bootstrapped subscriber (nothing to do). A concurrent bootstrap of
+    // the same subscriber serializes on the ON CONFLICT row lock, so only one run marks history.
+    const inserted = await tx.execute(sql`
       insert into event_subscription_checkpoint
-        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq,
-         bootstrap_snapshot)
-      values (${subscription.id}, ${subscription.version}, ${declarationHash}, 'bootstrapping',
-        (select coalesce(max(dispatch_seq), 0) from event), pg_current_snapshot()::text)
+        (subscriber_id, subscriber_version, declaration_hash, status, bootstrapped_at, activated_at)
+      values (${subscription.id}, ${subscription.version}, ${declarationHash}, 'active',
+        clock_timestamp(), clock_timestamp())
       on conflict (subscriber_id, subscriber_version) do nothing
+      returning subscriber_id
     `);
-    const checkpoints = await tx.execute<{
-      declaration_hash: string;
-      status: 'bootstrapping' | 'active' | 'paused';
-    }>(sql`
-      select declaration_hash, status
-      from event_subscription_checkpoint
-      where subscriber_id = ${subscription.id}
-        and subscriber_version = ${subscription.version}
-      for update
-    `);
-    const checkpoint = checkpoints[0];
-    if (!checkpoint) throw new Error('event subscription checkpoint was not created');
-    if (checkpoint.declaration_hash !== declarationHash) {
-      throw new Error(
-        `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
-      );
-    }
-    return checkpoint.status === 'bootstrapping';
-  });
-  if (!needsBackfill) return;
-
-  // YUK-751 (OCR major): batch the historical backfill rather than loading the ENTIRE un-delivered
-  // event set into one long transaction (OOM + a long checkpoint-row lock on a large event history).
-  // Each batch commits in its OWN tx so progress survives a crash — the anti-join skips
-  // already-inserted deliveries and next_delivery_seq is persisted per batch, so a re-run RESUMES
-  // where it left off. The final empty batch flips the checkpoint to 'active'. The FOR UPDATE on the
-  // checkpoint serializes batches per subscriber, and the status re-check detects a peer that
-  // already finished.
-  while (true) {
-    const done = await db.transaction(async (tx) => {
-      const checkpoints = await tx.execute<{
-        declaration_hash: string;
-        status: 'bootstrapping' | 'active' | 'paused';
-        next_delivery_seq: string;
-        bootstrap_horizon_seq: string | null;
-        bootstrap_snapshot: string | null;
-      }>(sql`
-        select declaration_hash, status, next_delivery_seq, bootstrap_horizon_seq, bootstrap_snapshot
+    if (inserted.length === 0) {
+      // Already bootstrapped — fail closed on declaration drift, else nothing to do.
+      const rows = await tx.execute<{ declaration_hash: string }>(sql`
+        select declaration_hash
         from event_subscription_checkpoint
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
         for update
       `);
-      const checkpoint = checkpoints[0];
-      if (
-        !checkpoint ||
-        checkpoint.declaration_hash !== declarationHash ||
-        checkpoint.status !== 'bootstrapping'
-      ) {
-        return true; // vanished / hash-rotated / already finished by a peer
+      const existing = rows[0];
+      if (!existing) throw new Error('event subscription checkpoint vanished during bootstrap');
+      if (existing.declaration_hash !== declarationHash) {
+        throw new Error(
+          `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
+        );
       }
+      return;
+    }
 
-      // Bootstrap visibility fence (YUK-751 review TcWGH). A batch skips an event only when it is
-      // dispatch_seq <= horizon AND was VISIBLE (committed) to the creation snapshot. dispatch_seq is
-      // NOT a snapshot: seq is allocated at insert, but a low-seq tx can COMMIT after a higher-seq tx,
-      // so a genuinely-new event committing mid-bootstrap can sit <= horizon — pg_visible_in_snapshot
-      // against its xmin excludes it (it was in-flight at creation) so post-activation discovery
-      // delivers it. A legacy checkpoint from before these columns existed has a NULL horizon: compute-
-      // once-and-persist it here (best-effort). A NULL snapshot (same legacy path) falls back to
-      // horizon-only — a documented residual out-of-order skew for that legacy window only, never
-      // unbounded.
-      let horizon: bigint;
-      if (checkpoint.bootstrap_horizon_seq === null) {
-        const horizonRows = await tx.execute<{ bootstrap_horizon_seq: string }>(sql`
-          update event_subscription_checkpoint
-          set bootstrap_horizon_seq = (select coalesce(max(dispatch_seq), 0) from event),
-              updated_at = clock_timestamp()
-          where subscriber_id = ${subscription.id}
-            and subscriber_version = ${subscription.version}
-          returning bootstrap_horizon_seq
-        `);
-        horizon = asBigint(horizonRows[0].bootstrap_horizon_seq);
-      } else {
-        horizon = asBigint(checkpoint.bootstrap_horizon_seq);
-      }
+    // Mark ALL of this snapshot's history bootstrap_skipped, set-based. delivery_seq is allocated 1..N
+    // by dispatch order via row_number(); a fresh subscriber has no prior deliveries (the checkpoint FK
+    // gates them) and no discovery can run against a not-yet-committed checkpoint, so ON CONFLICT never
+    // fires here — it's belt-and-braces against a concurrent writer.
+    await tx.execute(sql`
+      insert into event_subscription_delivery
+        (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
+         status, completed_at)
+      select ${subscription.id}, ${subscription.version}, e.id, e.dispatch_seq,
+        row_number() over (order by e.dispatch_seq, e.id),
+        'bootstrap_skipped', clock_timestamp()
+      from event e
+      where e.action in (${actionList})
+      on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
+    `);
 
-      // xmin is the event's (immutable, append-only) inserting xid; ::text::xid8 lifts the 32-bit xid
-      // into the full-xid space the snapshot uses (correct within the current epoch — a bootstrap
-      // window can't span a 2^32 xid wrap). No snapshot (legacy) → horizon-only.
-      const visibilityClause =
-        checkpoint.bootstrap_snapshot === null
-          ? sql``
-          : sql`and pg_visible_in_snapshot(e.xmin::text::xid8, ${checkpoint.bootstrap_snapshot}::pg_snapshot)`;
-
-      const events = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
-        select e.id, e.dispatch_seq
-        from event e
-        where e.action in (${actionList})
-          and e.dispatch_seq <= ${horizon}
-          ${visibilityClause}
-          and not exists (
-            select 1
-            from event_subscription_delivery d
-            where d.subscriber_id = ${subscription.id}
-              and d.subscriber_version = ${subscription.version}
-              and d.source_event_id = e.id
-          )
-        order by e.dispatch_seq, e.id
-        limit ${BOOTSTRAP_BACKFILL_BATCH_SIZE}
-      `);
-
-      if (events.length === 0) {
-        await tx.execute(sql`
-          update event_subscription_checkpoint
-          set status = 'active',
-              bootstrapped_at = clock_timestamp(),
-              activated_at = clock_timestamp(),
-              updated_at = clock_timestamp()
-          where subscriber_id = ${subscription.id}
-            and subscriber_version = ${subscription.version}
-        `);
-        return true;
-      }
-
-      let nextDeliverySeq = asBigint(checkpoint.next_delivery_seq);
-      for (const source of events) {
-        // RETURNING + count guard: only advance the seq on an ACTUAL insert. ON CONFLICT DO NOTHING
-        // can skip a row a prior interrupted batch already inserted, and an unconditional increment
-        // would inflate next_delivery_seq and leave permanent gaps (OCR minor — mirrors
-        // discoverSubscriptionDeliveries).
-        const inserted = await tx.execute(sql`
-          insert into event_subscription_delivery
-            (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
-             status, completed_at)
-          values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
-            ${nextDeliverySeq}, 'bootstrap_skipped', clock_timestamp())
-          on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
-          returning source_event_id
-        `);
-        if (inserted.length === 1) nextDeliverySeq += 1n;
-      }
-      await tx.execute(sql`
-        update event_subscription_checkpoint
-        set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
-        where subscriber_id = ${subscription.id}
-          and subscriber_version = ${subscription.version}
-      `);
-      return false; // more batches remain
-    });
-    if (done) break;
-  }
+    // Advance next_delivery_seq past the skipped block (= count + 1) so discovery allocates after it.
+    await tx.execute(sql`
+      update event_subscription_checkpoint
+      set next_delivery_seq = 1 + (
+            select count(*) from event_subscription_delivery
+            where subscriber_id = ${subscription.id}
+              and subscriber_version = ${subscription.version}
+          ),
+          updated_at = clock_timestamp()
+      where subscriber_id = ${subscription.id}
+        and subscriber_version = ${subscription.version}
+    `);
+  });
 }
 
 /** Claims a checkpoint lease, including expired-lease takeover, with registry fencing. */
@@ -317,7 +239,7 @@ export async function claimSubscriptionLease(
     update event_subscription_checkpoint
     set claim_owner = ${owner},
         claim_token = ${token}::uuid,
-        claim_lease_until = clock_timestamp() + interval '2 minutes',
+        claim_lease_until = clock_timestamp() + ${LEASE_TTL_SECONDS} * interval '1 second',
         updated_at = clock_timestamp()
     where subscriber_id = ${subscription.id}
       and subscriber_version = ${subscription.version}
@@ -358,7 +280,7 @@ export async function claimSubscriptionLease(
 export async function renewSubscriptionLease(db: Db, lease: SubscriptionLease): Promise<boolean> {
   const rows = await db.execute(sql`
     update event_subscription_checkpoint
-    set claim_lease_until = clock_timestamp() + interval '2 minutes',
+    set claim_lease_until = clock_timestamp() + ${LEASE_TTL_SECONDS} * interval '1 second',
         updated_at = clock_timestamp()
     where subscriber_id = ${lease.subscriberId}
       and subscriber_version = ${lease.subscriberVersion}
@@ -535,7 +457,7 @@ export async function claimNextSubscriptionDelivery(
       set status = 'claimed',
           claim_owner = ${lease.claimOwner},
           claim_token = ${token}::uuid,
-          claim_lease_until = clock_timestamp() + interval '2 minutes',
+          claim_lease_until = clock_timestamp() + ${LEASE_TTL_SECONDS} * interval '1 second',
           claimed_at = clock_timestamp(),
           next_attempt_at = null,
           updated_at = clock_timestamp()
@@ -584,7 +506,7 @@ export async function renewSubscriptionDeliveryLease(
     async (tx) =>
       tx.execute(sql`
         update event_subscription_delivery
-        set claim_lease_until = clock_timestamp() + interval '2 minutes',
+        set claim_lease_until = clock_timestamp() + ${LEASE_TTL_SECONDS} * interval '1 second',
             updated_at = clock_timestamp()
         where subscriber_id = ${claim.subscriberId}
           and subscriber_version = ${claim.subscriberVersion}
@@ -647,6 +569,13 @@ export async function failSubscriptionDelivery(
   // backoff away from the aggressive 1s storm without editing SQL string literals (YUK-751 review).
   options: { maxAttempts: number; retryDelaySeconds?: number },
 ): Promise<'retry_wait' | 'dead_letter' | 'lost_lease'> {
+  // Tc4HN — this is an EXPORTED entry, callable directly (not only via runSubscriptionDispatchCycle),
+  // so it validates its own numeric options: a NaN/negative maxAttempts corrupts the dead-letter
+  // threshold and retryDelaySeconds feeds the backoff SQL (`* interval '1 second'`).
+  assertPositiveInteger(options.maxAttempts, 'maxAttempts');
+  if (options.retryDelaySeconds !== undefined) {
+    assertPositiveFinite(options.retryDelaySeconds, 'retryDelaySeconds');
+  }
   const message = error instanceof Error ? error.message : String(error);
   const rows = await withLockedCheckpoint(
     db,
@@ -744,11 +673,17 @@ export async function redriveSubscriptionDelivery(
 }
 
 export type SubscriptionDispatchCycleResult = {
+  /** Deliveries CLAIMED this cycle. Reconciles exactly: dispatched = succeeded + skipped +
+   *  retryScheduled + deadLettered + lostLease (Tc4HR). */
   dispatched: number;
   succeeded: number;
   skipped: number;
   retryScheduled: number;
   deadLettered: number;
+  /** Claims whose lease was lost before the terminal write landed (completeSubscriptionDelivery
+   *  returned false, or failSubscriptionDelivery reported 'lost_lease') — a concurrent worker took
+   *  over. Tracked so `dispatched` reconciles instead of silently exceeding the terminal counters. */
+  lostLease: number;
 };
 
 /** Performs at most one delivery per declared subscriber, with no worker wiring. */
@@ -776,6 +711,7 @@ export async function runSubscriptionDispatchCycle(
     skipped: 0,
     retryScheduled: 0,
     deadLettered: 0,
+    lostLease: 0,
   };
 
   for (const subscription of registry.subscriptions) {
@@ -810,11 +746,15 @@ export async function runSubscriptionDispatchCycle(
           if (await completeSubscriptionDelivery(db, claim, outcome)) {
             if (outcome.status === 'succeeded') result.succeeded += 1;
             else result.skipped += 1;
+          } else {
+            // Lease lost between claim and the terminal write — a peer took over (Tc4HR).
+            result.lostLease += 1;
           }
         } catch (error) {
           const transition = await failSubscriptionDelivery(db, claim, error, options);
           if (transition === 'retry_wait') result.retryScheduled += 1;
-          if (transition === 'dead_letter') result.deadLettered += 1;
+          else if (transition === 'dead_letter') result.deadLettered += 1;
+          else result.lostLease += 1; // 'lost_lease'
         }
       } finally {
         await releaseSubscriptionLease(db, lease);

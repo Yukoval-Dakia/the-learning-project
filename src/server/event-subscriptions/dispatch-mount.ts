@@ -51,9 +51,17 @@ export async function mountSubscriptionDispatch(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
     async () => {
-      await runSubscriptionDispatchCycle(db, registry, { owner, maxAttempts });
+      // Tc4HL — log the cycle result (counts + duration) so the dispatcher is observable; a
+      // dead-lettered delivery is a real handler failure that needs attention → warn.
+      const startedAt = Date.now();
+      const cycle = await runSubscriptionDispatchCycle(db, registry, { owner, maxAttempts });
+      const durationMs = Date.now() - startedAt;
+      const log = cycle.deadLettered > 0 ? console.warn : console.info;
+      log('[event-subscriptions] dispatch cycle', { ...cycle, durationMs });
     },
   );
-  await boss.schedule(EVENT_SUBSCRIPTION_DISPATCH_QUEUE, cron, {}, {});
+  // Tc4HM — align tz with the codebase's boss.schedule convention (Asia/Shanghai). Cadence is not
+  // load-bearing (leases serialize), but keep the schedule row's tz consistent with the rest.
+  await boss.schedule(EVENT_SUBSCRIPTION_DISPATCH_QUEUE, cron, {}, { tz: 'Asia/Shanghai' });
   return true;
 }

@@ -133,119 +133,62 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(checkpoint?.nextDeliverySeq).toBe(4);
   });
 
-  it('bounds the backfill by the bootstrap horizon — an event committed mid-bootstrap is delivered, not skipped (Tb7Ai)', async () => {
-    // pre-1/pre-2 exist when the bootstrap begins. Create the 'bootstrapping' checkpoint with the
-    // horizon captured at that instant — exactly what bootstrapSubscription's creation tx does.
-    await insertEvent('pre-1');
-    await insertEvent('pre-2');
-    await testDb().execute(sql`
-      insert into event_subscription_checkpoint
-        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
-      values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping',
-        (select max(dispatch_seq) from event))
-    `);
-    // An event arrives WHILE the checkpoint is still 'bootstrapping' (dispatch_seq > horizon). Without
-    // the horizon bound the resuming backfill's fresh-snapshot anti-join would sweep it into
-    // bootstrap_skipped and it would never be delivered.
-    await insertEvent('mid-flight');
-
-    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
-
-    // Only the pre-horizon events are skipped; mid-flight is left untouched (no delivery row).
-    expect(await deliveryRows()).toEqual([
-      expect.objectContaining({ sourceEventId: 'pre-1', status: 'bootstrap_skipped' }),
-      expect.objectContaining({ sourceEventId: 'pre-2', status: 'bootstrap_skipped' }),
-    ]);
-
-    // Post-activation discovery delivers the mid-flight event as pending.
-    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
-    if (!lease) throw new Error('expected lease');
-    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
-    expect(await deliveryRows()).toEqual([
-      expect.objectContaining({ sourceEventId: 'pre-1', status: 'bootstrap_skipped' }),
-      expect.objectContaining({ sourceEventId: 'pre-2', status: 'bootstrap_skipped' }),
-      expect.objectContaining({ sourceEventId: 'mid-flight', status: 'pending' }),
-    ]);
-  });
-
-  it('computes-once-and-persists the horizon when resuming a legacy bootstrapping checkpoint with a NULL horizon (Tb7Ai)', async () => {
-    await insertEvent('legacy-1');
-    await insertEvent('legacy-2');
-    // A checkpoint left 'bootstrapping' before the bootstrap_horizon_seq column existed → NULL horizon.
-    await testDb().execute(sql`
-      insert into event_subscription_checkpoint
-        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
-      values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping', null)
-    `);
-
-    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
-
-    // The resume computed + persisted the horizon (never left NULL/unbounded), activated, and skipped
-    // the pre-existing events exactly once.
-    const [cp] = await testDb()
-      .select({
-        horizon: event_subscription_checkpoint.bootstrap_horizon_seq,
-        status: event_subscription_checkpoint.status,
-      })
-      .from(event_subscription_checkpoint);
-    expect(cp?.status).toBe('active');
-    expect(cp?.horizon).not.toBeNull();
-    expect(await deliveryRows()).toEqual([
-      expect.objectContaining({ sourceEventId: 'legacy-1', status: 'bootstrap_skipped' }),
-      expect.objectContaining({ sourceEventId: 'legacy-2', status: 'bootstrap_skipped' }),
-    ]);
-  });
-
-  it('visibility fence: a low-seq event committed after the creation snapshot is delivered, not skipped (TcWGH)', async () => {
-    // The exact P1 race: dispatch_seq is allocated at insert but commit order can differ. A tx that
-    // allocated a LOW seq can commit AFTER a higher-seq tx and after the bootstrap snapshot — such an
-    // event sits <= horizon yet was NOT part of history, so the seq bound alone would wrongly skip it.
+  it('single-tx bootstrap: an event in-flight during bootstrap is NOT skipped, later delivered (Tcx98/TcWGH)', async () => {
+    // The creation tx's OWN snapshot defines history — no seq/xmin/snapshot fence. An event still
+    // in-flight (uncommitted) when bootstrap runs is absent from that snapshot, so it is not skipped;
+    // once it commits, discovery delivers it as pending (the safe direction, cleaner mechanism).
+    await insertEvent('history-committed'); // committed before bootstrap → history.
     const url = process.env.TEST_DATABASE_URL;
     if (!url) throw new Error('TEST_DATABASE_URL not set');
     const held = postgres(url, { max: 1 });
     try {
-      // held tx allocates the LOW dispatch_seq for 'held-lowseq' but stays open (uncommitted).
       await held`begin`;
       await held`
         insert into event (id, actor_kind, actor_ref, action, subject_kind, subject_id, payload)
-        values ('held-lowseq', 'system', 'test', 'test:handled', 'event', 'held-lowseq', '{}'::jsonb)
+        values ('in-flight', 'system', 'test', 'test:handled', 'event', 'in-flight', '{}'::jsonb)
       `;
-      // A higher-seq event commits on the main connection → the max VISIBLE dispatch_seq is ITS seq.
-      await insertEvent('committed-highseq');
-      // Create the 'bootstrapping' checkpoint capturing horizon + snapshot NOW, while held is in-flight:
-      // the snapshot excludes held's xid; horizon = committed-highseq's seq (held not visible).
-      await testDb().execute(sql`
-        insert into event_subscription_checkpoint
-          (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq,
-           bootstrap_snapshot)
-        values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping',
-          (select max(dispatch_seq) from event), pg_current_snapshot()::text)
-      `);
-      // held commits — held-lowseq is now visible with a dispatch_seq <= horizon.
+      // Bootstrap runs while 'in-flight' is uncommitted → not in the creation snapshot.
+      await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
       await held`commit`;
     } finally {
       await held.end();
     }
 
-    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
-
-    // committed-highseq was visible to the creation snapshot → bootstrap_skipped. held-lowseq was
-    // in-flight at that snapshot (seq <= horizon but pg_visible_in_snapshot = false) → NOT skipped.
+    // history-committed skipped; in-flight left untouched (absent from the creation snapshot).
     expect(await deliveryRows()).toEqual([
-      expect.objectContaining({ sourceEventId: 'committed-highseq', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'history-committed', status: 'bootstrap_skipped' }),
     ]);
 
-    // Discovery delivers held-lowseq as pending — the genuinely-new event is not lost.
     const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
     if (!lease) throw new Error('expected lease');
     await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
     const rows = await deliveryRows();
     expect(rows).toContainEqual(
-      expect.objectContaining({ sourceEventId: 'held-lowseq', status: 'pending' }),
+      expect.objectContaining({ sourceEventId: 'in-flight', status: 'pending' }),
     );
     expect(rows).toContainEqual(
-      expect.objectContaining({ sourceEventId: 'committed-highseq', status: 'bootstrap_skipped' }),
+      expect.objectContaining({ sourceEventId: 'history-committed', status: 'bootstrap_skipped' }),
     );
+  });
+
+  it('single-tx bootstrap: a historical event whose row was later UPDATED is still skipped, not over-delivered (Tcx98)', async () => {
+    // event rows are NOT immutable — the memory outbox UPDATEs ingest_at, moving xmin. That broke the
+    // xmin-based fence (an outbox-touched historical event read as in-flight → over-delivered). The
+    // snapshot-based bootstrap is mutation-proof: a committed row is history regardless of its xmin.
+    await insertEvent('outbox-touched');
+    await testDb().execute(
+      sql`update event set ingest_at = clock_timestamp() where id = 'outbox-touched'`,
+    );
+
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+
+    expect(await deliveryRows()).toEqual([
+      expect.objectContaining({ sourceEventId: 'outbox-touched', status: 'bootstrap_skipped' }),
+    ]);
+    // And discovery does not re-deliver it (no over-delivery of pre-subscription history).
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    expect(await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease)).toBe(0);
   });
 
   it('rejects non-positive / non-finite dispatch options at intake (Tcd9v)', async () => {
@@ -603,6 +546,7 @@ describe('YUK-751 durable event subscription runtime', () => {
       skipped: 1,
       retryScheduled: 0,
       deadLettered: 0,
+      lostLease: 0,
     });
     expect(handler).toHaveBeenCalledWith({
       subscriberId: SUBSCRIBER.id,
