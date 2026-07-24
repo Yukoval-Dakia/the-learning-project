@@ -89,6 +89,15 @@ export interface ProposalPayloadWire {
     to_knowledge_id?: string;
     relation_type?: string;
     weight?: number;
+    // YUK-229 — image_candidate 窄投影（ImageCandidateProposalChange，proposal.ts）。
+    // 服务端 /api/proposals 直发完整 payload（proposals-list.ts → Response.json 的
+    // AiProposalPayloadT），无字段裁剪，故此处仅补客户端类型声明（runtime 早经
+    // index signature 透传）。图字节永不上 wire：source_url 的原图只在 accept 时下载，
+    // accept 是唯一 VLM 抽图触发。subject_id 在 propose 时为 null（资产 accept 才铸）。
+    source_url?: string;
+    source_title?: string;
+    summary_md?: string;
+    knowledge_ids?: string[];
     [key: string]: unknown;
   };
   [key: string]: unknown;

@@ -6,6 +6,7 @@
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
+import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -73,6 +74,83 @@ export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPrev
     summary: typeof hub.summary_md === 'string' ? hub.summary_md : null,
     steps,
   };
+}
+
+// YUK-229 — image_candidate 专属卡的显示投影。source_url 是候选来源页/图片直链，
+// source_title 是来源标题，summary_md 是 AI 对该图题的摘要（题文预览）。图字节永不
+//在 payload；accept 才是唯一 VLM 抽图触发（proposal.ts §image_candidate）。
+export interface ImageCandidateView {
+  sourceUrl: string;
+  sourceTitle: string;
+  summaryMd: string;
+  /** 安全的 http(s) 图片 src，或 null（非 http(s) 协议一律走纯文本降级，绝不发不安全 <img>）。 */
+  imgSrc: string | null;
+}
+
+// 只允许 http(s)：拒 data:/javascript:/blob: 等，防外部 source_url 走危险协议。
+function httpImageSrc(url: string): string | null {
+  if (url.length === 0) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Display-only, defensive projection of the free-form image_candidate proposed_change. */
+export function imageCandidateViewOf(change: unknown): ImageCandidateView | null {
+  const row = recordOf(change);
+  if (!row) return null;
+  const sourceUrl = typeof row.source_url === 'string' ? row.source_url : '';
+  const sourceTitle = typeof row.source_title === 'string' ? row.source_title : '';
+  const summaryMd = typeof row.summary_md === 'string' ? row.summary_md : '';
+  if (sourceUrl === '' && sourceTitle === '' && summaryMd === '') return null;
+  return { sourceUrl, sourceTitle, summaryMd, imgSrc: httpImageSrc(sourceUrl) };
+}
+
+// 专属卡：题文（summary_md 预览）与原图并排对照。<img> 尝试渲染，onError 或非
+// http(s) 协议时降级为「URL + 标题 + summary」纯文本卡（source_url 不保证图片直链）。
+function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = view.imgSrc !== null && !imgFailed;
+
+  return (
+    <div className="proposal-image-candidate">
+      <div className="ic-col ic-col-summary">
+        <span className="ic-col-label">题文摘要</span>
+        {view.summaryMd ? (
+          <DeferredMarkdownRenderer className="ic-summary-md">
+            {view.summaryMd}
+          </DeferredMarkdownRenderer>
+        ) : (
+          <span className="ic-empty">（无题文摘要）</span>
+        )}
+      </div>
+      <div className="ic-col ic-col-figure">
+        <span className="ic-col-label">原图对照</span>
+        {showImage ? (
+          <figure className="ic-figure">
+            <img
+              className="ic-img"
+              src={view.imgSrc ?? undefined}
+              alt={view.sourceTitle || '候选来源原图'}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onError={() => setImgFailed(true)}
+            />
+            {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
+          </figure>
+        ) : (
+          <div className="ic-fallback">
+            <span className="ic-fallback-note">无法内联加载原图，仅显示来源信息：</span>
+            {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+            {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function EvidenceChip({
@@ -201,6 +279,8 @@ export function ProposalCard({
           : null;
   const learningPlan =
     p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
+  const imageCandidate =
+    p.kind === 'image_candidate' ? imageCandidateViewOf(p.payload.proposed_change) : null;
   const mergePreview = p.kind === 'block_merge' ? p.presentation?.block_merge : null;
   const mergeBlockLabelById = new Map(
     mergePreview
@@ -295,6 +375,8 @@ export function ProposalCard({
         </div>
       )}
 
+      {imageCandidate && <ImageCandidateCard view={imageCandidate} />}
+
       {mergePreview?.primary && mergePreview.merged.length > 0 && (
         <div className="merge-preview">
           <div className="merge-block">
@@ -352,6 +434,14 @@ export function ProposalCard({
             >
               {acceptButtonLabel}
             </Btn>
+          )}
+          {/* YUK-229 — accept 是唯一 VLM 抽图触发（proposal.ts §image_candidate）。定性
+              前置提示（不显预估金额），作为 accept 旁的明确 affordance，非点击后弹窗。 */}
+          {p.kind === 'image_candidate' && (
+            <span className="image-candidate-cost-note">
+              <LoomIcon name="sparkle" size={12} />
+              接受将执行一次付费 VLM 抽图
+            </span>
           )}
           {isEdge && !isArchiveEdge && (
             <>
