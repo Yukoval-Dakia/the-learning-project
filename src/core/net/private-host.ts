@@ -163,13 +163,23 @@ export function isBlockedIpAddress(address: string): boolean {
  * server's responsibility (DNS-answer + redirect re-validation).
  */
 export function isBlockedHostLiteral(hostname: string): boolean {
-  // Normalize a fully-qualified trailing dot (and any pathological repeats) before matching:
-  // `localhost.` / `printer.local.` / `foo.localhost.` resolve to the same host as their
-  // dotless form, so they must not slip past the literal name / IP checks. (YUK-229 review.)
-  const bareHost = stripIpv6Brackets(hostname.toLowerCase()).replace(/\.+$/, '');
+  const lower = hostname.toLowerCase();
+  const wasBracketed = lower.startsWith('[') && lower.endsWith(']');
+  // Normalize before matching, none of which change which host is addressed but all of which can
+  // dodge a naive literal check (YUK-229 review):
+  //   - `[..]` IPv6 brackets;
+  //   - a trailing FQDN dot (`localhost.` / `printer.local.` / `foo.localhost.`);
+  //   - an IPv6 zone id (`fe80::1%eth0` / `%25eth0`) — everything from the first `%`.
+  let bareHost = stripIpv6Brackets(lower).replace(/\.+$/, '');
+  const zoneAt = bareHost.indexOf('%');
+  if (zoneAt !== -1) bareHost = bareHost.slice(0, zoneAt);
+  const family = ipFamily(bareHost);
+  // Fail-closed: a bracketed literal is meant to be IPv6. If it does not parse as one (malformed,
+  // or a zone form we could not normalize), refuse it rather than fall through to the hostname
+  // branch where it would be treated as an ordinary — potentially allowed — name.
+  if (wasBracketed && family !== 6) return true;
   const blockedName =
     bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
-  const family = ipFamily(bareHost);
   return blockedName || (family !== 0 && isBlockedIpAddress(bareHost));
 }
 

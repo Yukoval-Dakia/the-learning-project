@@ -225,9 +225,8 @@
 .inbox-loom .proposal-image-candidate .ic-reveal-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 2px;
-  padding: 5px 11px;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-3);
   font-size: var(--fs-meta);
   color: var(--coral-ink);
   background: var(--coral-soft);
@@ -275,7 +274,7 @@
 .inbox-loom .image-candidate-cost-note {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--s-1);
   font-size: var(--fs-meta);
   color: var(--coral-ink);
   align-self: center;

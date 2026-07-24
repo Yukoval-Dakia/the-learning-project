@@ -71,6 +71,20 @@ describe('isBlockedHostLiteral', () => {
     expect(isBlockedHostLiteral('images.example.edu')).toBe(false);
     expect(isBlockedHostLiteral('8.8.8.8')).toBe(false);
   });
+  it('strips the IPv6 zone id and fails closed on unparseable bracketed literals', () => {
+    // Zone id (%25eth0 = %eth0) must be stripped before parsing, then the link-local address is
+    // still recognized and blocked.
+    expect(isBlockedHostLiteral('[fe80::1%25eth0]')).toBe(true);
+    expect(isBlockedHostLiteral('[fe80::1%eth0]')).toBe(true);
+    expect(isBlockedHostLiteral('fe80::1%eth0')).toBe(true);
+    // Fail-closed: a bracketed literal that does not parse as IPv6 is refused, not passed through
+    // to the (potentially allowed) hostname branch.
+    expect(isBlockedHostLiteral('[garbage]')).toBe(true);
+    expect(isBlockedHostLiteral('[fe80::zz%eth0]')).toBe(true);
+    // A bracketed public IPv6 with a zone id stays allowed once the zone is stripped.
+    expect(isBlockedHostLiteral('[2606:4700:4700::1111%eth0]')).toBe(false);
+  });
+
   it('normalizes a trailing FQDN dot so localhost. / *.local. / *.localhost. cannot bypass', () => {
     expect(isBlockedHostLiteral('localhost.')).toBe(true);
     expect(isBlockedHostLiteral('printer.local.')).toBe(true);

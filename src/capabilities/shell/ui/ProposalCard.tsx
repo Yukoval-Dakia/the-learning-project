@@ -123,17 +123,61 @@ const IC_MARKDOWN_COMPONENTS: Components = {
   ),
 };
 
+// 原图对照列。三态经早返回分派（仓库规约禁嵌套三元）：已揭示→图；可加载未揭示→点击
+// 揭示 affordance；不可加载→来源纯文本降级卡。onError 翻 imgFailed → 回落。
+function ImageFigureColumn({ view }: { view: ImageCandidateView }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const loadable = view.imgSrc !== null && !imgFailed;
+
+  if (loadable && revealed) {
+    return (
+      <figure className="ic-figure">
+        <img
+          className="ic-img"
+          src={view.imgSrc ?? undefined}
+          alt={view.sourceTitle || '候选来源原图'}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onError={() => setImgFailed(true)}
+        />
+        {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
+      </figure>
+    );
+  }
+
+  if (loadable) {
+    return (
+      <div className="ic-reveal">
+        {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+        <button type="button" className="ic-reveal-btn" onClick={() => setRevealed(true)}>
+          <LoomIcon name="image" size={13} />
+          显示原图预览
+        </button>
+        <span className="ic-reveal-note">原图由外部来源提供，点击后才从来源加载</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ic-fallback">
+      <span className="ic-fallback-note">
+        {view.imgSrc === null && view.sourceUrl
+          ? '来源地址非公开图片直链，不内联加载，仅显示来源信息：'
+          : '无法内联加载原图，仅显示来源信息：'}
+      </span>
+      {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+      {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
+    </div>
+  );
+}
+
 // 专属卡：题文（summary_md 预览）与原图并排对照。
 // 安全（YUK-229 review）：外部 source_url 是 AI/外部来源写的，直渲 <img> 会在用户打开
 // inbox 时就发起被动 GET，可被用来从用户浏览器探测内网（DNS rebinding 浏览器端防不了）。
 // 双层防护：① imgSrc 已过共享字面量守卫（isPublicHttpUrl 拒私网/本机 host）；② 默认不
 // 自动加载——用户显式点「显示原图预览」才设 src，把被动探测降为主动行为。onError 仍降级。
 function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-  const loadable = view.imgSrc !== null && !imgFailed;
-  const showImage = loadable && revealed;
-
   return (
     <div className="proposal-image-candidate">
       <div className="ic-col ic-col-summary">
@@ -148,38 +192,7 @@ function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
       </div>
       <div className="ic-col ic-col-figure">
         <span className="ic-col-label">原图对照</span>
-        {showImage ? (
-          <figure className="ic-figure">
-            <img
-              className="ic-img"
-              src={view.imgSrc ?? undefined}
-              alt={view.sourceTitle || '候选来源原图'}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              onError={() => setImgFailed(true)}
-            />
-            {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
-          </figure>
-        ) : loadable ? (
-          <div className="ic-reveal">
-            {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
-            <button type="button" className="ic-reveal-btn" onClick={() => setRevealed(true)}>
-              <LoomIcon name="image" size={13} />
-              显示原图预览
-            </button>
-            <span className="ic-reveal-note">原图由外部来源提供，点击后才从来源加载</span>
-          </div>
-        ) : (
-          <div className="ic-fallback">
-            <span className="ic-fallback-note">
-              {view.imgSrc === null && view.sourceUrl
-                ? '来源地址非公开图片直链，不内联加载，仅显示来源信息：'
-                : '无法内联加载原图，仅显示来源信息：'}
-            </span>
-            {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
-            {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
-          </div>
-        )}
+        <ImageFigureColumn view={view} />
       </div>
     </div>
   );

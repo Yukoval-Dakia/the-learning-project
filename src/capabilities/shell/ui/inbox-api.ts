@@ -98,6 +98,9 @@ export interface ProposalPayloadWire {
     source_title?: string;
     summary_md?: string;
     knowledge_ids?: string[];
+    // 题型约束（sourcing run 级；accept 时经 question-kind 词表归一化设 question.kind）。
+    // Zod 侧 optional free-string，未 pin 的 run 省略——UI 目前不渲染，补齐仅为 wire 对齐 schema。
+    requested_kind?: string;
     [key: string]: unknown;
   };
   [key: string]: unknown;
