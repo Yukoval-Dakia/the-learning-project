@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-18　·　历史头部日志（2026-06-23 ~ 07-16）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
+> 更新于：2026-07-24　·　历史头部日志（2026-06-23 ~ 07-18）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-18 · 12 小时产品推进收口：26 PR 全合并 + 性能/可用性/a11y 连续打磨】** main 从遗留票清扫推进到产品 commit `f99e5382`，随后合入 cockpit closeout：12 个独立交付 PR（YUK-674/683/535/534/332/334/609/211/673/328/616 + YUK-354 C-lane；YUK-349 随子单收口）和 14 个 YUK-169 性能/体验切片全部经 1–2 轮有效 review 后自主合并。性能主线落 route code-splitting、KaTeX/Cytoscape/Markdown 按需加载、Knowledge 图谱/题目知识点选项延迟请求；体验主线落 Inbox 渐进加载与证据语义、Copilot fallback/launcher、onboarding disabled reason、Note 键盘重排、WeekHeat 非色彩通道、Vision 复核选择语义。最终权威态：GitHub 开放 PR = 0，main 与 `origin/main` 已同步；YUK-674/683/535/534/332/334/609/211/673/349/328/616 = Done，YUK-354/YUK-169 作为 umbrella 保持 In Progress。全量 gate：411 unit files / 4496 tests、338 DB files / 3400 tests、23 migration tests，API/profile/copy/style/draft/schema/partition audits 与 SPA/server/worker/migrate build 全绿。YUK-669 当前 tip containment 再验证为 private + backup 未跟踪；历史清洗仍 owner-gated。（上一条 07-16 re-grounding【更新】已滚存 → 归档文件）
+> **【更新 2026-07-24 · 迁移列车全天推进：六 PR 合并 + 两 epic 收口 + 事件总线通电】** 单日合并 #1040（YUK-452 Phase B 冷启供给）、#1042（YUK-591 vision judge 结构化输出）、#1045（fix-forward：raced-drain + listener 泄漏）、#1046（YUK-762 flake 超时 + wall-clock 定时炸弹拆除）、#1044（YUK-751 durable 事件总线，dispatch-mount 通电、单事务快照 bootstrap、迁移 0074-0076）、#1041（YUK-497 per-utterance 级联撤回，99 threads 七波闭环，撤回不变量=锚点⇔全效果事件链可补偿，全局 G 锁纪律）。YUK-497/546/567/591 → Done。**owner 两条新规则成文入 memory**：① monitor 静默=去重非死亡，长等待须 ScheduleWakeup 心跳主动核对；② bot findings 不再 important 后修一轮即合，gate 绿不等 OCR（review-loop-convergence）。流程事故一起（#1040 merge 与零未解决查询串进单命令，unresolved=19 时已合，已补分诊 + memory 硬化）。PR #1047（YUK-350，0077 grounding）已开 CI 中。新立案：YUK-762~766。
 
 ## 🎯 主线方向（当前）
 
@@ -14,11 +14,17 @@
 
 ## NOW（当前 active 线）
 
-- **07-18 自主推进已收口**：26 个 PR 全合 main，开放 PR = 0；YUK-349 与 11 个独立遗留票 Done，YUK-354/YUK-169 以 umbrella 口径保持 In Progress。当前没有代码 lane 在飞。
-- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：冷库零题仍需 owner 上传/生成内容后跑首次真实 placement 会话；本轮没有部署授权，生产态未改。
-- **安全 owner/operator lane = YUK-669**：仓库 private、当前 tip 已除 `.env.local.bak`；剩历史清洗/force-update 与 secret scanning 属显式 owner 门控，禁止 agent 自行执行。
+- **迁移列车 07-24 快照**：0074-0076 已落 main（YUK-452 placement ×2 + YUK-751 事件总线）；**PR #1047 在飞**（YUK-350 grounding，0077，body 带既有 APPROVE + soft-hint-vs-hard-veto 设计备注）——CI 绿 + threads 清零即按收敛规则合并。
+- **#1043（ADR-0048 A11 EZ-diffusion 批准稿，docs-only）**：CI 绿，**等 owner 逐 PR 授权**（docs PR 免独立 review 但 merge 仍需授权）。
+- **YUK-452 epic 尾**：Phase B + fix-forward 全落；epic 保持 In Progress（收尾清单见 epic 评论：addPlacementStarterCostComponent 零调用点待接线/删）。
 
 ## NEXT（就绪，排队）
+
+- **YUK-589（judge provenance 二期）**：#1047 落 main 后 rebase worktree agent-a4b5491eaa05fff02，**renumber 0074_yuk589 → 0078**；PR body 必带 `JUDGE_PROVENANCE_SECRET` 部署注记（openssl rand -hex 32，distinct from INTERNAL_TOKEN）。
+- **YUK-751 effect-slice**（worktree agent-aa45ca5635aa08991，rebase-ready）：⚠️ 硬前置 = **YUK-766 灾备恢复语义拍板**（真 handler 上线前必须决定 checkpoint/delivery 备份策略）。
+- **YUK-763 placement 快照漂移修复**（High）：cost_component_claim_idx + nonterminal_uq 谓词未捕获，污染所有 lane 的 db:generate；由 YUK-452 lane 出专门迁移。
+- **07-23 gated 决策已拍板的可执行队列**（按 30-ticket grounding 序）：YUK-608（异源 verify）/229（图题专属卡）/230（接受即自动复核）/562（练习作答页）/594（异步主路径）/444（解冻最小契约）/437（稳定选项 ID）/679（两者都 port）/757（copilot 对齐 claude code）/758（夜会 manifest DAG）。
+- **测试跟进批**：YUK-764（durable teaching_check 未来缺口）/765（E1/E2 回归测试）。
 
 - **YUK-221 真实 paper ordinal**：决策、迁移回填、写路径与 DB/migration 验收已完整写入 Todo；下一轮可独立 grab，避免和 12 小时收口混开未 review 的 PR。
 - **YUK-354 / YUK-169 umbrella 余项**：按已有形态轴和 redraw brief 继续 slice-by-slice；UI 仍逐刀做 design-doc pre-flight。
@@ -44,6 +50,10 @@
 
 ## BLOCKED-ON（在等什么）
 
+- **#1043 merge** ← owner 逐 PR 授权（docs-only，CI 绿已 5 天量级）。
+- **YUK-751 effect-slice 开工** ← YUK-766 灾备语义 owner/design 拍板。
+- **YUK-405 教研团两周窗** ← owner 本周上传内容（07-23 拍板「本周内启动」）。
+
 - **YUK-505 规划脑 deliberative panel → runtime 前必须先 amend 拓扑**：六月四角色 fan-out 设计与七月 YUK-572「单 director + ≤1 conditional scout」anti-swarm 契约冲突（drift 审计 07-16 Contradicted ②）；须裁「独立 gated planning job vs 单-director 规划模式」，不得隐式扩 YUK-572 spawn 面。
 - **profile P2 翻 flag**（misconceptionRecurrence / B4 answer_class filter）← 需数据 + judge 校准。
 - **matcher 接 live caller** ← 题库规模 + Step2 feeder 验证。
@@ -52,12 +62,14 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞：0**（GitHub 权威查询，2026-07-18 收口）。本轮 #836/#867-891 共 26 个 PR 均已合并。
-- **main**：与 `origin/main` 精确一致；最终 full test/build/audits 全绿。这里刻意不嵌自身 closeout PR 的 SHA，避免文档合并后立刻自制造漂移。
-- **外部/owner 门控**：YUK-669 历史清洗；GitHub Actions 因账户 billing/spending 零步失败，Cursor/CodeRabbit review 配额耗尽。本轮每个 PR 仍由 OCR/Codex 等 1–2 轮有效 review 覆盖。
-- **本地工作树**：仅 owner 既有 `.codex/hooks.json`、`AGENTS.md`、四个 `.codex/hooks/*` 未跟踪脚本与 `docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md`；本轮未暂存、未改写。
+- **PR 在飞：2** — #1047（YUK-350，CI 中）· #1043（ADR-0048，owner-gated）。
+- **本 session 常驻 agents**：exec-1040-wave（executor，待命，下一单 YUK-589 rebase）· review-452-followup（评审，待命）。监视器 bfryu7pca 盯 #1043/#1047 + ScheduleWakeup 心跳兜底。
+- **worktrees**：agent-ab7f62c4f8745ef19（YUK-497，已合并可清）· agent-ad81f208c3821a8e6（YUK-751 PR2，已合并可清）· agent-a86cca6be64ea5a48（YUK-350，在飞 #1047 勿动）· agent-a4b5491eaa05fff02（YUK-589，待 rebase）· agent-aa45ca5635aa08991（effect-slice，待 YUK-766）· agent-a65c5174267a76894（YUK-452，已合并可清）。/private/tmp 侧 wt-yuk452-followup、wt-yuk762 已清。
+- **外部/owner 门控**：YUK-669 历史清洗不变；主 checkout 仍带 owner 未提交改动（.codex/、AGENTS.md、src/ 多文件）——本 session 未触碰，仅 add 了 PLAN.md/.remember。
 
 ## ✅ 最近已落（防遗落，下次别重做）
+
+- **07-24 迁移列车日（六 PR 合并）**：#1040/#1042/#1045/#1046/#1044/#1041 全落 main（YUK-452 Phase B · YUK-591 · fix-forward · flake+定时炸弹 · YUK-751 事件总线通电 · YUK-497 级联撤回）。技术要点存 `.remember/today-2026-07-24*.md`：G→supply→row 锁序、单事务快照 bootstrap（INSERT..SELECT 取代 horizon/xmin 机械）、物化工具类五角全堵、rerun 不重解析 merge-ref 的坑、本地宽松 vitest mock vs CI 严格。
 
 - **07-18 12 小时产品推进（#836/#867-891，26 PR）**：遗留正确性/供给/投影/会话链清扫 + SPA 重分块/重依赖按需加载 + Inbox/Copilot/onboarding/notes/today/record 可用性与 a11y 连续打磨；最终 main `f99e5382`，开放 PR 0，完整验证数字与 issue 状态见头部【更新】。
 - **🔴 YUK-669 凭证泄露事故遏制（2026-07-16，Urgent）**：仓库一度 PUBLIC + tracked `.env.local.bak`（Neon/Postgres · `CLAUDE_CODE_OAUTH_TOKEN` · Tavily · Vercel OIDC 真凭证）。owner 已**轮换全部 4 系统凭证** + 仓库转 PRIVATE（0 forks）；**#827 已合**（`7f17e9ed`，`git rm --cached` + gitignore `.env*.bak`，tip 已除净）。取证：`.env.local.bak` 是唯一真泄露文件，其余 grep 命中全假阳性。**剩 owner 门控**：历史清除（`af4651d9` 在多分支，需 filter-repo + force-push）+ 启用 GitHub secret scanning（当前 DISABLED）。全程零凭证值落地。
