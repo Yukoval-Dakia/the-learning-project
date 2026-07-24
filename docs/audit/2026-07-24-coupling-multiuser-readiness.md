@@ -193,3 +193,29 @@
 - **推论**：多用户 ≠ 微服务；数百学习者在单 Postgres 内无压力。D1/D2/D3/D4 是为「多用户的模块化单体」铺路。
 
 **随裁定生效的开发守则（owner：「接下来的开发也要避免深度耦合了」）**：新增代码禁跨包深 import（查询走 kernel/manifest 接口、事实走事件）；不向 god file 添肉；新锁 key 预留租户维度；「单用户 by-design」处置一律记债留痕（YUK-767 台账）。守则随 agent 派单附带执行。
+
+---
+
+## 附 2：量化重测 @ f9af38e8（D9 口径首跑，owner 点名执行，2026-07-24）
+
+正文中被弃用的 metrics-refresh 判词由本节取代。全部数字在干净 worktree、钉死 `f9af38e8`、每项带复现命令测得（命令存 session 记录，此处存结论）。
+
+| 指标 | 07-22 牌面 | 现值 @f9af38e8 | 判词 |
+|---|---|---|---|
+| `@/server/**` 直穿 import（非测试） | ~735 | **882**（另测试 298） | **恶化** |
+| writeEvent facade | 2 走 facade / 82 直穿 | **141 走 kernel / 0 直穿** | **改善**（Card 1 events 腿坐实） |
+| kernel http facade | 55 / 124 直穿 | 71 / **154 直穿**（2.2×） | 停滞（Card 1 http 腿未动 → D3） |
+| 跨包深 import（X≠Y 非测试） | ~190（口径虚高） | **65 行 / 48 文件**（practice 19/16 居首） | 口径修正 |
+| actions.ts | 1839 | 1870（switch 18 case） | 持平（D5 待动） |
+| registry.ts | 919 | **1914** | **恶化（翻倍）**——YUK-591 结构化输出所致，**新 god file** |
+| task-prompts.ts | 1098 | **25** | **改善**（Card 3 坐实） |
+| runner.ts | 1395 | 1419 | 微恶化（Card 7 未动） |
+| runTask DI 强转 | 22+ 文件 | **0**（守卫测试锁死；makeRunTaskFn 22 文件） | **改善**（Card 4 坐实） |
+| ui/*-api.ts | 12 文件 ~1947 行 | **15 文件 2368 行** | **恶化**（D8 tripwire 已到 +3 文件——引爆条件满足） |
+| event-subscriptions | —（新） | 1066 行非测试；fan-in **1** / fan-out **3** | 新热点但**耦合健康**：体积风险非耦合风险 |
+| cron/singleton | 28 | 28 capability 声明 + 10 infra schedule = **38** | 口径修正（多用户债台账按 38 计） |
+
+**对决策菜单的影响**：
+- **D8 tripwire 已触发**（12→15 文件，超过「再 +2 即启动」线）——typed client codegen 从「记债」升级为「可启动」，仍待 owner 确认时点。
+- **D3（Card 1 http 腿）紧迫性上调**：`@/server` 直穿总量在涨（735→882），facade 停滞期每个新 PR 都在加债；lint ban 越早落越省。
+- **新增观察项：registry.ts 治理**——1914 行已超 actions.ts，成为头号 god file；其膨胀源（per-task 结构化输出 schema 内联）应评估外置（可并入 D5 的分批盘子或单开小票）。
