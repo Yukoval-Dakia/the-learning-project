@@ -92,6 +92,10 @@ export const JOB_EVENT_KINDS = [
   'question_block',
   'learning_session',
   'ingestion_operation',
+  // YUK-594 (durable judge main path) — durable judge_run progress/verdict stream
+  // (src/capabilities/practice/server/judge-run-status.ts JUDGE_RUN_TABLE). Added
+  // here or the generic GET /api/jobs/judge_run/<id>/events SSE 400s.
+  'judge_run',
 ] as const;
 
 export const JOB_EVENT_KIND_SET = new Set<string>(JOB_EVENT_KINDS);

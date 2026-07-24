@@ -107,6 +107,20 @@ export interface JudgeAnswerParams {
    * behavior). This is the structured-jsonb axis id — NOT a question_part id.
    */
   part_ref?: string | null;
+  /**
+   * YUK-594 (D7/D9) — durable-run scoped call overrides. Set ONLY by the
+   * `judge_run` pg-boss handler (never the sync HTTP paths). Two effects, both
+   * applied in the invoker's runner wrapper (invoker.ts observedRunTaskFn):
+   *   - `enableTransientRetry:false` is FORCED on the runner ctx (D7 single-
+   *     transient-layer: queue redelivery is the durable handler's ONLY transient
+   *     layer, so the vision judges' in-process transient retry stays off →
+   *     worst-case paid calls per logical judge = 1 + JOB_RETRY_LIMIT).
+   *   - `providerOverride` (when present) is merged into `RunTaskCtx.override.
+   *     provider` so the final redelivery can cross to the fallback lane
+   *     (anthropic-sub). Reuses the existing per-call `resolveTaskProvider`
+   *     override seam — no new plumbing (YUK-594 D9). Omitted → default lane.
+   */
+  durable?: { providerOverride?: string };
 }
 
 export interface JudgeAnswerResult {

@@ -1,0 +1,109 @@
+// YUK-594 (durable judge main path, W1) — durable judge_run 的事件契约 + 状态派生。
+//
+// 蓝本：copilot-run-status.ts（YUK-364/575）。judge_run 是 copilot_run 的更薄
+// 同胞——单次无状态 LLM 判分调用，无对话记忆 / 无工具循环 / 无取消 chip 语义，
+// 故词表与 reducer 都更简（queued → started → running → done|failed）。
+//
+// run handle = judge_run id（W2 submit 面：= 该次作答 attempt/outcome event id，
+// 见 submit.ts enqueueDurableJudge）。状态不落瘦表，而是从 `job_events`
+// （business_table='judge_run', business_id=run_id）的 replay 末事件派生——
+// job_events 即 SoT，与 copilot_run / ingestion / echo 同型。
+//
+// 纯函数 + 无 DB 依赖（unit 分区）：仿 copilot-run-status.ts / ingestion-phase.ts
+// 的「从 replay 末事件派生」做法，unit-tested in judge-run-status.test.ts。此模块
+// 也承载 poll-tier 响应 schema（dependency-light，供 manifest 静态导入而不牵入
+// db/client——route 文件本体带 db 依赖，不可被 manifest eager-import）。
+
+import { z } from 'zod';
+
+/** job_events.business_table 标签——这一族 durable judge run 事件的归属键。 */
+export const JUDGE_RUN_TABLE = 'judge_run' as const;
+
+// job_events 是 free-form event_type（不经 domain parseEvent union）。这些是本族
+// 的事件 type 契约——SSE 客户端 + 状态派生 + 回填消费者读这套词表。
+export const JUDGE_RUN_EVENTS = {
+  /** enqueue 落地后、handler 拾起前的初态（submit dispatch 写）。 */
+  QUEUED: 'judge_run.queued',
+  /** handler 拾起、判分调用启动前。 */
+  STARTED: 'judge_run.started',
+  /** 终态：成功。payload 携 JudgeResultV2 + telemetry（回填消费者读它换真判词）。 */
+  DONE: 'judge_run.done',
+  /** 终态：失败（含耗尽 / DLQ 前的每次失败痕迹，last-writer wins）。 */
+  FAILED: 'judge_run.failed',
+} as const;
+
+export type JudgeRunEventType = (typeof JUDGE_RUN_EVENTS)[keyof typeof JUDGE_RUN_EVENTS];
+
+/**
+ * 派生状态。terminal（done/failed）一旦出现即锁定 last-writer-wins；否则按已见的
+ * 最新非终态事件推进 queued → started。空序列 → 'queued'（enqueue 即写 queued，
+ * 但消费者可能在 queued 事件到达前先订阅 → 给最保守的初态）。
+ */
+export type JudgeRunStatus = 'queued' | 'started' | 'done' | 'failed';
+
+/** replay 事件的最小读取形（只看 event_type，与 copilot-run-status 同型）。 */
+export interface JudgeRunStatusEvent {
+  event_type: string;
+}
+
+/**
+ * 从 replay/live 事件序列派生 run 状态。终态（done/failed）last-writer wins——
+ * 一次失败痕迹后又有成功（跨 provider 重投改判）则以成功为终态，反之亦然。无终态
+ * 时取已见过的最高非终态阶段。纯 + 无依赖。
+ */
+export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunStatus {
+  let status: JudgeRunStatus = 'queued';
+  for (const e of events) {
+    switch (e.event_type) {
+      case JUDGE_RUN_EVENTS.DONE:
+        // terminal，last-writer wins：一次 FAILED 后的 DONE（重投改判成功）翻回成功。
+        status = 'done';
+        break;
+      case JUDGE_RUN_EVENTS.FAILED:
+        // terminal，last-writer wins。
+        status = 'failed';
+        break;
+      case JUDGE_RUN_EVENTS.STARTED:
+        // 取最高非终态阶段：只在仍是 queued 时推到 started；已 terminal 不回退。
+        if (status === 'queued') status = 'started';
+        break;
+      case JUDGE_RUN_EVENTS.QUEUED:
+        // 初态；不覆盖已推进的阶段。
+        break;
+      default:
+        // 未知 event_type：忽略（forward-compat）。
+        break;
+    }
+  }
+  return status;
+}
+
+/** replay 事件（读取形带 payload），用于从终态事件抽出判词回填结果。 */
+export interface JudgeRunReplayEvent {
+  event_type: string;
+  payload: unknown;
+}
+
+/**
+ * 从 replay 序列抽出终态判词 payload（poll `.../status` 与回填消费者用）。返回
+ * 最后一条 DONE 的 payload（携 JudgeResultV2 + telemetry），无成功终态 → null。
+ * DONE last-writer wins（与 deriveJudgeRunStatus 同律：重投改判成功盖旧痕迹）。
+ */
+export function terminalJudgeRunResult(events: JudgeRunReplayEvent[]): unknown {
+  let result: unknown = null;
+  for (const e of events) {
+    if (e.event_type === JUDGE_RUN_EVENTS.DONE) result = e.payload;
+  }
+  return result;
+}
+
+/**
+ * poll-tier `GET /api/jobs/judge_run/[id]/status` 响应 schema。放在此 dependency-light
+ * 模块（非 route 文件）以便 manifest 静态导入而不 eager-import route 的 db 依赖。
+ */
+export const JudgeRunStatusResponseSchema = z.object({
+  run_id: z.string(),
+  status: z.enum(['queued', 'started', 'done', 'failed']),
+  /** 终态判词 payload（JudgeResultV2 + telemetry），仅 status='done' 时存在。 */
+  result: z.unknown().nullable(),
+});

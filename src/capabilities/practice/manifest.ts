@@ -96,6 +96,9 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
+// YUK-594 (durable judge main path, W1) — judge_run poll-tier status response schema
+// (lives in the db-free judge-run-status module so this eager import stays db-light).
+import { JudgeRunStatusResponseSchema } from './server/judge-run-status';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -154,6 +157,19 @@ export const practiceCapability = defineCapability({
         responses: { 200: ReviewAdviceResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/advice').then((m) => m.POST),
+      },
+      {
+        // YUK-594 (durable judge main path, W1) — poll-tier status snapshot for a
+        // durable judge_run (D2 three-tier backfill: SSE + poll + replay). Read-only
+        // job_events replay → deriveJudgeRunStatus + terminal verdict. The 202-pending
+        // contract's poll_url points here (submit.ts enqueueDurableJudge).
+        method: 'GET',
+        path: '/api/jobs/judge_run/[id]/status',
+        operationId: 'getJudgeRunStatus',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: JudgeRunStatusResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/judge-run-status-route').then((m) => m.GET),
       },
       {
         method: 'GET',
@@ -700,6 +716,10 @@ export const practiceCapability = defineCapability({
     // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
     handlers: [
       { name: 'rejudge', queue: 'llm' },
+      // YUK-594 (durable judge main path, W1) — durable judge_run（异步为主路径）。
+      // 注册留 handlers.ts 渐缩簿：形态要 includeMetadata:true 读 retryCount 驱动
+      // 跨 provider lane 决策（D9），非注册器统一配方——此处无 load 纯归属元数据。
+      { name: 'judge_run', queue: 'llm' },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
       // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。cron 错开其它夜链 job。

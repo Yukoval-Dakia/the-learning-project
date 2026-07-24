@@ -67,6 +67,8 @@ export const JudgeInvokerInputSchema = z.object({
   // grade. Narrowed in invoke() before route resolution + dispatch; absent /
   // unresolvable → whole-row (back-compat). NOT a question_part id.
   part_ref: z.string().nullable().optional(),
+  // YUK-594 (D7/D9) — durable-run scoped runner overrides (judge_run handler only).
+  durable: z.object({ providerOverride: z.string().optional() }).optional(),
 });
 
 export const JudgeInvocationTelemetrySchema = z.object({
@@ -165,10 +167,40 @@ export class JudgeInvoker {
       // provider timeout (steps/semantic swallow into 'unsupported') still records
       // that the model WAS attempted (→ historical_unknown, never deterministic).
       modelAttempted = true;
+      // YUK-594 (D7/D9) — durable runs override the runner ctx per-call: FORCE
+      // enableTransientRetry:false (queue redelivery is the durable handler's only
+      // transient layer, D7 single-transient-layer) and, on the fallback redelivery,
+      // pin RunTaskCtx.override.provider so the call crosses to the fallback lane
+      // (reuses the existing resolveTaskProvider seam — no new plumbing, D9). The
+      // sync HTTP paths never set `durable`, so callCtx passes through UNCHANGED
+      // (K2: the vision judges' sanctioned enableTransientRetry survives on them).
+      // Cast note: `enableTransientRetry` is Omit'ted from the typed RunTaskCallCtx,
+      // but judgeDefaultRunTaskFn forwards the ctx verbatim to runTask, so setting it
+      // here reaches the runner — the exact mechanism the vision judges use to opt
+      // IN (steps-judge.ts:297). We force it OFF here for the durable lane.
+      const durable = narrowed.durable;
+      let effectiveCtx = callCtx;
+      if (durable) {
+        const base = (callCtx && typeof callCtx === 'object' ? callCtx : {}) as Record<
+          string,
+          unknown
+        >;
+        effectiveCtx = {
+          ...base,
+          enableTransientRetry: false,
+          ...(durable.providerOverride
+            ? {
+                override: {
+                  ...((base.override as Record<string, unknown> | undefined) ?? {}),
+                  provider: durable.providerOverride,
+                },
+              }
+            : {}),
+        } as typeof callCtx;
+      }
       // Compute the judge result FIRST — it must NEVER be lost to a failure in the
-      // advisory provenance metadata below. Pass callCtx through UNCHANGED so the
-      // sanctioned enableTransientRetry opt-in survives to the runner (K2).
-      const taskResult = await configuredRunTaskFn(kind, taskInput, callCtx);
+      // advisory provenance metadata below.
+      const taskResult = await configuredRunTaskFn(kind, taskInput, effectiveCtx);
       // YUK-589 (J4) — the metadata (taskInputHash / judgePromptFingerprint) is
       // best-effort provenance ONLY. A throw here (a BigInt / exotic value inside
       // taskInput, or an unknown task kind) must not crash the judge call. On any

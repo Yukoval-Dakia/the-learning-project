@@ -65,6 +65,8 @@ import {
   verifyJudgePreviewProvenanceToken,
 } from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { getStartedBoss } from '@/server/boss/client';
+import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
@@ -74,6 +76,7 @@ import {
 } from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
@@ -82,7 +85,9 @@ import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
 import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
 import { scheduleReview } from '../server/fsrs';
+import { JUDGE_RUN_QUEUE, judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { collectMasteryRefineTargets } from '../server/note-refine-targets';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
@@ -222,7 +227,27 @@ async function resolveSuppliedModelExecutionProvenance(params: {
   );
 }
 
-async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<JudgedSubmit> {
+// YUK-594 (durable judge main path, W2) — durable judge_run handler reuses judgeSubmit
+// as the shared judge-resolution head. These opts are set ONLY by that worker path
+// (the sync HTTP route calls judgeSubmit() with no opts → byte-identical):
+//   - `subjectProfile`: the D5-frozen profile (resolved at enqueue, reflecting the
+//     learner's answer-time profile). Injected so the worker does NOT re-resolve
+//     (which would pick up a profile edited between enqueue and pickup).
+//   - `skipRateLimit`: the worker is not bound by the sync HTTP request budget
+//     (that gate exists to cap in-request paid AI calls; the durable lane's cap is
+//     the pg-boss retry budget).
+//   - `durable`: forces the invoker's in-process transient retry OFF (D7) and, on the
+//     fallback redelivery, crosses to the fallback provider lane (D9).
+export interface JudgeSubmitOptions {
+  subjectProfile?: SubjectProfile;
+  skipRateLimit?: boolean;
+  durable?: { providerOverride?: string };
+}
+
+export async function judgeSubmit(
+  { body, questionId, q }: ValidatedSubmit,
+  opts: JudgeSubmitOptions = {},
+): Promise<JudgedSubmit> {
   // YUK-56/YUK-98 — Resolve the judge result BEFORE the FSRS transaction.
   // If the UI already generated advice, reuse its `judge_result_v2` so final
   // submit doesn't call the judge twice. Otherwise, only explicit auto_rate
@@ -263,8 +288,10 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
   // BOTH the route gate and the invoke below. Resolving it twice would consume a
   // test's `mockResolvedValueOnce` on the first call (letting the invoke fall
   // through to the real resolver) and is a needless second DB round-trip.
+  // YUK-594 (D5) — the durable worker injects the frozen answer-time profile; the
+  // sync path resolves it fresh (opts absent → byte-identical).
   const subjectProfile = hasAnswer
-    ? await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)
+    ? (opts.subjectProfile ?? (await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)))
     : null;
   if (subjectProfile !== null) {
     const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
@@ -318,7 +345,9 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
   if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
     // YUK-694 — only explicit auto-rate requests may spend a server-side judge
     // call, and those calls share the process-wide paid-AI request budget.
-    checkRateLimit();
+    // YUK-594 — the durable worker path skips this gate (it is not bound by the
+    // sync HTTP request budget; the durable cap is the pg-boss retry budget).
+    if (!opts.skipRateLimit) checkRateLimit();
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,
@@ -332,6 +361,9 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
       // atomic single-question submits → no-op (whole-row). Narrows text +
       // structured before routing.
       part_ref: body.part_ref ?? null,
+      // YUK-594 (D7/D9) — durable-run scoped runner overrides (worker only; the sync
+      // path passes no opts → `durable` absent → invoker byte-identical).
+      ...(opts.durable ? { durable: opts.durable } : {}),
     });
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
@@ -417,7 +449,16 @@ interface PersistedSubmit {
   };
 }
 
-async function persistSubmit(
+// YUK-594 (W2) — the durable judge_run worker reuses persistSubmit as the shared
+// backfill body (review event + judge event + FSRS/θ̂/snapshot/family/calibration in
+// one tx + post-commit signals), passing `attemptEventId` = the reserved run_id so
+// the written attempt event id equals the run handle (the judge_run idempotency guard
+// keys on that event's existence). Omitted on the sync path → `newId()` → byte-identical.
+export interface PersistSubmitOptions {
+  attemptEventId?: string;
+}
+
+export async function persistSubmit(
   { body, now, questionId, q }: ValidatedSubmit,
   {
     judgeResult,
@@ -428,6 +469,7 @@ async function persistSubmit(
     finalRating,
     adviceCauseCategory,
   }: JudgedSubmit,
+  opts: PersistSubmitOptions = {},
 ): Promise<PersistedSubmit> {
   // Codex / CodeRabbit (PR #295) — `referenced_knowledge_ids` used to drive
   // FSRS scheduling verbatim from the request body, letting a stale/superset
@@ -473,7 +515,9 @@ async function persistSubmit(
   // transaction-scoped advisory lock per FSRS subject serializes read/compute/
   // upsert even when the projection row does not exist yet.
   const outcome: 'success' | 'failure' = finalRating === 'again' ? 'failure' : 'success';
-  const eventId = newId();
+  // YUK-594 (W2) — durable worker injects the reserved run_id as the attempt event id
+  // (run handle ≡ attempt event id, submit-face contract); sync path mints a fresh id.
+  const eventId = opts.attemptEventId ?? newId();
   // M2 (YUK-316)：判定锚点 event id（事务内条件写入，响应层回传给「不服判」）。
   let judgeEventId: string | null = null;
   let primaryResult: ReturnType<typeof scheduleReview>;
@@ -929,12 +973,164 @@ async function persistSubmit(
 }
 
 // ============================================================================
+// YUK-594 (durable judge main path, W2) — async-main divert for the submit face.
+// ============================================================================
+
+interface DurableDivert {
+  /** true ⇒ this submit's server-side judge call must run on the durable lane. */
+  divert: boolean;
+  /** the D5-frozen profile (resolved once here, reused as the enqueue payload). */
+  subjectProfile: SubjectProfile | null;
+}
+
+/**
+ * Decide whether this submit's judging should divert to the durable `judge_run`
+ * lane (async-main) instead of the in-request synchronous invoke. The predicate
+ * mirrors judgeSubmit's server-invoke condition EXACTLY (submit.ts:318): only a
+ * submit that WOULD spend a synchronous server-side judge call diverts —
+ *   auto_rate && no client-supplied verdict && has an answer && not photo-only on a
+ *   text-only route && the subject profile resolves.
+ * Every other submit (manual rating, client-supplied verdict, no-answer 422,
+ * photo-only-unsupported 422) has NO in-request LLM call, so there is nothing to
+ * move off the request window — it stays on the synchronous path unchanged.
+ *
+ * Cheap checks short-circuit BEFORE the profile DB read so a non-diverting submit
+ * pays no extra round-trip. Only reached when JUDGE_DURABLE_ENABLED is on.
+ */
+export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<DurableDivert> {
+  const { body, q } = validated;
+  if (!body.auto_rate) return { divert: false, subjectProfile: null };
+  if (body.judge_result_v2) return { divert: false, subjectProfile: null };
+  const answerMd = body.response_md?.trim() ?? '';
+  const hasImageAnswer = body.answer_image_refs.length > 0;
+  const hasAnswer = answerMd.length > 0 || hasImageAnswer;
+  if (!hasAnswer) return { divert: false, subjectProfile: null };
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+  if (subjectProfile === null) return { divert: false, subjectProfile: null };
+  const route = resolveQuestionJudgeRoute(q, subjectProfile);
+  const photoOnly = answerMd.length === 0 && hasImageAnswer;
+  const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(route);
+  // photo-only-unsupported stays synchronous (its 422 is a route-resolution check,
+  // no LLM call) — return the resolved profile but do NOT divert.
+  if (photoOnlyUnsupported) return { divert: false, subjectProfile };
+  return { divert: true, subjectProfile };
+}
+
+/** The 202-pending contract body returned when a submit diverts to the durable lane. */
+export interface DurableJudgePendingResponse {
+  run_id: string;
+  /** discriminant clients branch on (vs a resolved `judge` verdict). */
+  verdict: 'pending';
+  backfill: {
+    channel: 'sse';
+    url: string;
+    poll_url: string;
+  };
+}
+
+export interface EnqueueDurableJudgeDeps {
+  /** test seam — default `getStartedBoss()`. Inject a fake `{ send }` in tests. */
+  boss?: { send: (name: string, data: unknown) => Promise<string | null> };
+  now?: Date;
+}
+
+/**
+ * Reserve a run_id, record the queued marker, freeze the submit inputs (D5 profile),
+ * enqueue the `judge_run` job, and return the 202-pending contract. The attempt is
+ * durably enqueued (frozen into the job payload) — the worker persists the review
+ * event (id = run_id) + verdict + FSRS atomically on backfill; nothing is lost on a
+ * worker outage (the payload survives; the run replays on recovery).
+ *
+ * run_id ≡ the (worker-written) attempt/outcome event id — a submit-face contract
+ * (NOT universal; W3 faces define their own anchor). Mirrors copilot's dispatch:
+ * an enqueue-link failure after the queued marker is compensated with a terminal
+ * FAILED job_event so the run doesn't sit forever `queued` (chat.ts F2).
+ */
+export async function enqueueDurableJudge(
+  validated: ValidatedSubmit,
+  subjectProfile: SubjectProfile,
+  deps: EnqueueDurableJudgeDeps = {},
+): Promise<Response> {
+  const runId = newId();
+  const now = deps.now ?? new Date();
+  const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
+  const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
+  let queuedMarkerWritten = false;
+  try {
+    // Queued marker: consumers see the run received (before the worker picks it up).
+    await writeJobEvent(db, {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.QUEUED,
+      payload: {
+        caller: 'submit',
+        question_id: validated.questionId,
+        session_id: validated.body.session_id ?? null,
+      },
+    });
+    queuedMarkerWritten = true;
+
+    const boss = deps.boss ?? (await getStartedBoss());
+    await boss.send(JUDGE_RUN_QUEUE, {
+      run_id: runId,
+      caller: 'submit',
+      submit: {
+        body: validated.body,
+        question_id: validated.questionId,
+        subject_profile: subjectProfile,
+        submitted_at: now.toISOString(),
+      },
+    });
+
+    const responseBody: DurableJudgePendingResponse = {
+      run_id: runId,
+      verdict: 'pending',
+      backfill: { channel: 'sse', url: eventsUrl, poll_url: pollUrl },
+    };
+    return Response.json(responseBody, {
+      status: 202,
+      headers: { Location: eventsUrl },
+    });
+  } catch (err) {
+    // Enqueue-link failure compensation: if the queued marker committed but the
+    // send (or anything after) threw, the run would sit `queued` forever. Write a
+    // terminal FAILED so deriveJudgeRunStatus → failed instead of a stuck queued.
+    if (queuedMarkerWritten) {
+      try {
+        await writeJobEvent(db, {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.FAILED,
+          payload: { reason: 'enqueue_failed', run_id: runId },
+        });
+      } catch (compErr) {
+        console.error('[submit] durable judge enqueue-failure compensation failed', runId, compErr);
+      }
+    }
+    return errorResponse(err);
+  }
+}
+
+// ============================================================================
 // Route — compose the three phases and shape the wire response.
 // ============================================================================
 
 export async function createAttempt(req: Request): Promise<Response> {
   try {
     const validated = await validateSubmit(req);
+    // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
+    // AND this submit would spend a synchronous server-side judge call, move the judge
+    // to the durable `judge_run` lane and return 202-pending; the verdict + FSRS land
+    // on the worker's backfill event. Flag OFF (default) → the whole block is skipped
+    // → byte-identical synchronous behavior (the flag-off regression anchor).
+    // `shouldEnqueueBackgroundJobs()` keeps the test/CI env on the synchronous path
+    // (no worker to drain the queue), same guard the copilot durable dispatch uses.
+    if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
+      const gate = await resolveDurableDivert(validated);
+      if (gate.divert && gate.subjectProfile !== null) {
+        return await enqueueDurableJudge(validated, gate.subjectProfile);
+      }
+    }
     const judged = await judgeSubmit(validated);
     const persisted = await persistSubmit(validated, judged);
     const { body, now, questionId, activityRef } = validated;
