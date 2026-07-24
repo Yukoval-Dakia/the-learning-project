@@ -1,6 +1,6 @@
 # Durable judge as the main path (YUK-594)
 
-Status: **RULED — owner ballot closed 2026-07-25 (D1-D9 decided, see §5).** Refs YUK-594. Docs-only; no production code in this PR.
+Status: **RULED — owner ballot closed 2026-07-24 (D1-D9 decided, see §5).** Refs YUK-594. Docs-only; no production code in this PR.
 
 Author pass: Fable. Grounded against `main` @ `90d605e2` (all `file:line` below verified on that base; drift from the ticket triage is called out inline).
 
@@ -19,7 +19,7 @@ This inverts the emphasis of the original ticket (which framed async as "for the
 The judge sensor cannot survive endpoint-down inside a synchronous HTTP route because the two real down-shapes are physically too slow for the sync wall clock:
 
 - cloudflared edge severs the connection at **~100s** (production ingress ceiling).
-- Per-attempt abort fires at **90s** (`RETRY_ELAPSED_CAP_MS = 10_000` at `src/server/ai/agent-run-error.ts:51`; the in-process transient-retry gate at `runner.ts:784` requires `elapsedMs < RETRY_ELAPSED_CAP_MS`).
+- Per-attempt abort fires at **90s** — the vision judge tasks pin `budget.timeout: 90_000` (`src/ai/registry.ts:1153` et al.), applied by the abort timer `setTimeout(() => abortController.abort(), def.budget.timeout)` at `runner.ts:547`. And the in-process transient-retry gate (`runner.ts:773`) only retries when `elapsedMs < RETRY_ELAPSED_CAP_MS` where `RETRY_ELAPSED_CAP_MS = 10_000` (`src/server/ai/agent-run-error.ts:51`) — so a failure that surfaces after ~90s is already past both the abort and the 10s retry-eligibility cap.
 - Endpoint-down manifests as either connection-refused (>3min) or 500-hard-error (177s) — both arrive *after* the 90s abort has already turned the failure permanent, and both blow past the 10s retry-elapsed cap.
 
 Conclusion (承重): endpoint-down tolerance **requires a wall clock longer than 100s** ⇒ judge must run in a background durable job (pg-boss), not in the request window. Moving the worker is **necessary but not sufficient** — the durable layer must *also* widen the retry budget (cross-provider retry, longer elapsed cap, queue redelivery), because a busy worker or a still-down endpoint otherwise just relocates the same failure.
@@ -78,7 +78,7 @@ When judging completes, the terminal `job_event` — `judge_run.done` (verdict) 
 Backfill contract is **three-tier** so no client is stranded:
 1. **SSE** (`.../events`) — live, primary. Same stream copilot uses.
 2. **Poll** (`.../status`) — a thin GET that runs `deriveJudgeRunStatus(computeReplay(...))` and returns `{status, result?}`. For clients that can't hold an SSE connection (mobile background, flaky links). *Ruled D2 (§5): three-tier adopted.*
-3. **Replay** — reconnect with Last-Event-ID; the terminal event is retained (`RETENTION_7D`, `src/server/boss/queue-config.ts`) so a client offline at completion still gets the verdict on next fetch.
+3. **Replay** — reconnect with Last-Event-ID; the terminal `job_event` is retained `RETENTION_7D` (`src/server/boss/queue-config.ts`) so a client offline at completion still gets the verdict on next fetch **within 7 days**. Past that window the progress stream is gone — but **`job_events` is only the progress stream, NOT the source of truth.** The durable source of truth is the **domain event** the worker wrote on backfill: the `review` event (id = run_id) for submit/paper/solve, the `probe_result` event for probe — these live in the permanent domain event log, not under the 7d job_events retention. So the recovery contract is: the `.../status` endpoint (and any late client) resolves a run by (a) checking `job_events` for a terminal `done`/`attempt_failed`, and (b) **falling back to the domain event keyed by run_id** when job_events has aged out. See §3.6 for the exact `/status`-beyond-retention behavior. (The `advice` face has no domain event; a >7d advice run is simply "expired — resubmit for a fresh preview", which is harmless since it never persisted anything.)
 
 ### 1.3 Degraded scenario matrix
 
@@ -96,11 +96,17 @@ Backfill contract is **three-tier** so no client is stranded:
 
 For each of the five sync HTTP callers: pending UX, the write-timing decision (record-unjudged-then-backfill vs block), and the YUK-444 interaction.
 
-### Shared write-timing principle (applies to all five)
+### Shared write-timing principle — only the paths that make a *server-side* judge call defer
 
-Today the judge verdict is resolved **before** the state write and embedded into it (submit.ts's `judgeSubmit` at :140 runs the invoke, `persistSubmit` at :300 then writes the `review` event + upserts FSRS with the verdict inline). Under async-main, we **invert to record-unjudged-then-backfill**:
+**Grounded correction (thread):** async-main does **not** make every submit "unjudged with no rating". The split判据 is precise — *does this request make a synchronous server-side judge (LLM) call?* Only those paths move to the durable lane. On the submit face this is exactly `judgeSubmit`'s server-invoke condition (submit.ts:318, mirrored by `resolveDurableDivert` in #1068): **`auto_rate && no client-supplied `judge_result_v2` && has an answer && not photo-only-on-a-text-only-route && the subject profile resolves`**. Everything else is untouched:
 
-1. On submit: write the attempt/outcome event with `judge: pending` (unjudged), enqueue `judge_run`, return 202. FSRS is **not** advanced yet (an unjudged attempt has no rating).
+- **Manual rating (non-`auto_rate`)** — `finalRating` is `body.rating` (submit.ts:365); the judge is never called. This path writes the `review` event + advances FSRS **synchronously and immediately**, exactly as today. It does NOT go async.
+- **Client-supplied `judge_result_v2`** — verdict already in hand, no LLM call, stays synchronous.
+- **No-answer 422 / photo-only-unsupported 422** — route-resolution checks, no LLM call, stay synchronous.
+
+So the surfaces/paths that actually defer are: **`auto_rate` submits, probe-answer, paper-submit, solve-session** (all of which always/conditionally make a server judge call), plus the advice preview (§2.3). For *those* paths only, we **invert to record-unjudged-then-backfill**:
+
+1. On submit: write the attempt/outcome event with `judge: pending` (unjudged), enqueue `judge_run`, return 202. FSRS is **not** advanced yet (an unjudged attempt has no rating). (Manual-rating submits are unaffected — they already advanced FSRS synchronously above.)
 2. On judge completion: the worker writes the verdict as a **follow-up event** chained to the attempt, and *then* performs the FSRS transition.
 
 This preserves the existing single-owner event invariants (ADR-0005 writeEvent, upsertFsrsState single-owner) — the verdict/FSRS write simply moves from the request tx to the worker tx. It also inherits the existing "recorded-but-unjudged" path that submit.ts already has for photo-only-unsupported (`submit.ts` F4 lineage) — that path proves an attempt can legitimately exist without a verdict.
@@ -109,8 +115,9 @@ This preserves the existing single-owner event invariants (ADR-0005 writeEvent, 
 
 ### 2.1 practice submit (`submit.ts:322`)
 
-- **Pending UX:** answer card shows "判题中"; the question stays in the session as answered-pending. No score/feedback yet.
-- **Write timing:** attempt/`review` event written unjudged at submit; FSRS transition deferred to the worker's backfill event. `auto_rate` case → §2.3.
+- **Applies only to the `auto_rate` server-judge path** (`resolveDurableDivert`, submit.ts:318 / #1068). A **manual-rating** submit never calls the judge — it writes the `review` event + advances FSRS synchronously with `body.rating` and is untouched by this design.
+- **Pending UX (auto_rate path):** answer card shows "判题中"; the question stays in the session as answered-pending. No score/feedback yet.
+- **Write timing (auto_rate path):** attempt/`review` event written unjudged at submit; FSRS transition + auto-rate application deferred to the worker's backfill event (RULED D4).
 - **YUK-444 synergy:** ⭐ This is the surface where deferred-reveal fits perfectly (see §2.6).
 
 ### 2.2 agency probe-answer (`probe-answer.ts:218`)
@@ -163,15 +170,25 @@ interface JudgeRunJobData {
   // fabricate a dummy domain event for advice just to have an anchor.
   run_id: string;
   caller: 'submit' | 'probe' | 'paper' | 'solve' | 'advice';  // surface; 'advice' = no-persist preview
-  question_id: string;
-  part_ref?: string | null;
-  answer_md: string;
-  student_image_refs?: string[];
-  subject_id: string;      // profile resolved at enqueue, frozen into payload (RULED D5)
-  auto_rate?: boolean;     // submit path
-  idempotency_key: string; // = run_id (see §3.2)
+  // RULED D5 — the FULL SubjectProfile is FROZEN into the payload at enqueue (JSON),
+  // NOT a subject_id to be re-resolved at pickup. This matches #1068's implemented
+  // shape (`submit.subject_profile: unknown`, re-validated worker-side via
+  // `SubjectProfileSchema.parse`). Freezing the whole profile guarantees the verdict
+  // reflects the profile active when the learner answered — never one edited between
+  // enqueue and pickup. The submit face nests its frozen inputs so the worker can
+  // reuse the SAME judgeSubmit/persistSubmit head/body (byte-parity with sync):
+  submit: {
+    body: SubmitBody;              // the validated request body (answer, auto_rate, rating, …)
+    question_id: string;
+    subject_profile: SubjectProfile;   // D5-frozen; SubjectProfileSchema.parse on the worker
+    submitted_at: string;              // ISO; the answer instant
+  };
+  // (W3 faces carry their own frozen-input shape; only the run_id anchor rule and the
+  // frozen-profile rule are universal — the rest of the payload is per-face.)
 }
 ```
+
+`run_id` for the persisting faces = the worker-written attempt/outcome event id (the idempotency anchor, §3.2); for `advice` it is a freshly-generated opaque id (§2.3). No per-field `subject_id`/`answer_md` at the top level — those live inside the frozen per-face input block.
 
 Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chokepoint the sync path uses, so route resolution / narrowing / capability-ref version pin / telemetry are unchanged. **On success:** `writeJobEvent(tx, {business_table:'judge_run', business_id:run_id, event_type:'judge_run.done', payload: JudgeResultV2 + telemetry})` **and** — for the four persisting faces — perform the deferred FSRS/mistake/probe_result write in the same tx (atomic verdict + state). The `advice` face writes only the `judge_run.done` job_event (no domain/FSRS write).
 
@@ -194,7 +211,7 @@ This is the endpoint-down payload and the part that is **new** (not just relocat
 
 - **A per-call provider override ALREADY exists** (grounded correction — earlier draft overstated this as "needs new plumbing"): `RunTaskCtx.override?: { provider?; model? }` (`runner.ts:101`) is threaded into `resolveTaskProvider(kind, ctx.override)` (called at `runner.ts:763` + `:844`), whose resolution chain is `override?.provider ?? envOverride?.provider ?? def.defaultProvider` (`providers.ts:205,214`). So the handler can pin a provider per-attempt today by passing `ctx.override = { provider: 'anthropic-sub' }` — no new runner seam required. The global `AI_PROVIDER_OVERRIDE` env (`providers.ts:155`) stays the deployment-wide switch and sits *below* the per-call override in that same chain.
 - **What is actually new** is only the durable-retry-layer **decision logic**: on redelivery, the handler must decide *when* to flip `ctx.override.provider` to the fallback (e.g. read pg-boss's retry-count / prior `attempt_failed` traces → on the last redelivery, pass `override.provider = JUDGE_FALLBACK_PROVIDER`). That's a handful of lines in the `judge_run` handler, not a runner change. The `budgetOverride` seam (`runner.ts:184`, YUK-575) is the sibling precedent for per-call overrides riding `ctx`.
-- **Retry-layer discipline (grounded, important):** in-process transient retry (`runner.ts` `transientRetries`, YUK-576) is **gated OFF for durable handlers** — queue redelivery is their ONLY transient layer, so worst-case paid inference calls per logical judge = `1 + JOB_RETRY_LIMIT = 3` (`queue-config.ts` documents this). Cross-provider retry must fit *inside* that budget: e.g. attempt 1 = mimo, redelivery 1 = mimo (transient), redelivery 2 = anthropic-sub (last-resort). Do NOT stack an in-process retry loop on top or the paid-call count multiplies.
+- **Retry-layer discipline — the durable path must EXPLICITLY force in-process transient retry OFF (concrete mechanism, not a slogan):** the two vision judges **default `enableTransientRetry: true`** — `steps-judge.ts:297` and `multimodal-direct-judge.ts:233` set it (YUK-576 opt-in, justified for the *synchronous* route where one in-process retry is the only retry layer), and the invoker's default runner is careful to *preserve* that opt-in through to the runner (`invoker.ts:150-172`, YUK-589 K2). If the durable handler simply reused the invoker, it would inherit `enableTransientRetry: true` and stack an in-process retry loop *on top of* queue redelivery → paid inference calls multiply. So the durable handler must **override it to false**. #1068 implements this by threading a `durable: {…}` marker into the invoke call, which makes the invoker force `enableTransientRetry: false` regardless of the judge's default (durable also carries the optional `providerOverride` in that same marker). Result: **queue redelivery is the ONLY transient layer**, so worst-case paid inference calls per logical judge = `1 + JOB_RETRY_LIMIT = 3` (`queue-config.ts` documents this). Cross-provider retry must fit *inside* that budget: attempt 1 = mimo, redelivery 1 = mimo (transient), redelivery 2 = anthropic-sub (last-resort).
 - **Cost lever:** owner leaned "open, no daily cap" for anthropic-sub fallback in YUK-592 — **but that was the sync scenario**; the ticket explicitly says re-evaluate for async. In async, redelivery makes retries cheaper to reason about (bounded at 3 paid calls/job) but also *automatic* (no human in the loop). Env cost lever `JUDGE_FALLBACK_PROVIDER` (default `anthropic-sub`) + the bounded `JOB_RETRY_LIMIT` as the cap, rather than an unbounded daily-spend fallback. *Ruled D7 (§5): bounded — `1 + JOB_RETRY_LIMIT` cap, anthropic-sub on final redelivery.*
 
 ### 3.5 Reuse / fork points vs copilot durable (YUK-575)
@@ -211,6 +228,17 @@ This is the endpoint-down payload and the part that is **new** (not just relocat
 
 The fork is deliberately small: judge is a single stateless LLM call (no conversation memory, no tool loop, no MCP surface), so it does *not* need `assembleCopilotRunInput`, the tool registry mount, skills resolution, or the AGENT-tier budget. The durable judge handler is much thinner than `copilot_run.ts`.
 
+### 3.6 Durable-lane correctness hardening (admission control, crash-window reconcile, dual idempotency, retention)
+
+These four are correctness requirements surfaced in review — resolved here with the recommended approach + implementation wave (no new owner ballot items; all follow from the ruled decisions).
+
+- **(a) Admission control must run HTTP-side, BEFORE enqueue (W2 contract).** Today `checkRateLimit()` lives *inside* `judgeSubmit` (submit.ts:350). On the durable path the request returns at `enqueueDurableJudge` *before* `judgeSubmit` runs — so the AI-funnel rate limit would be bypassed at the HTTP boundary and instead evaluated in the worker per redelivery (wrong layer: a retry storm could each re-consume/skip the budget). **Contract:** `checkRateLimit()` executes once at the HTTP route (`createAttempt`, before `resolveDurableDivert`/enqueue) so every submit — sync or diverted — is admission-controlled at the request boundary exactly once. The worker's reused `judgeSubmit` runs with `skipRateLimit: true` (redeliveries are already-admitted work; they must neither re-charge nor bypass the funnel). **Wave: W2** (part of the submit divert; #1068 must satisfy this before submit flips on).
+- **(b) Crash-window between attempt-marker commit and enqueue → reconcile (no lost run).** `enqueueDurableJudge` writes the `QUEUED` `job_event` (commit) and *then* `boss.send` — two separate operations, **not one tx** (pg-boss `send` is its own INSERT). The existing `catch` compensates a *thrown* `boss.send`, but a hard crash between the QUEUED commit and a durable `send` leaves a run whose latest `job_event` is `QUEUED` with **no pg-boss job to pick it up → permanent pending.** **Remediation:** a periodic **reconcile sweeper** scans `judge_run` business_ids whose latest event is `QUEUED` (never `STARTED`) older than a threshold (reuse `isDurablePickupStalled` semantics) with no live pg-boss job, and **re-enqueues** them. The repo already has the pattern to lean on — the **event-write outbox** (`docs/adr/0021-event-write-outbox-pattern.md`, `drizzle/0017_outbox_event_ingest.sql`): the cleanest form is to enqueue *through* the outbox (the QUEUED marker + the send-intent commit in one tx, a relay drains to pg-boss), which closes the window entirely. **Wave: W2-hardening** — ship the sweeper with the submit flip (a stalled-QUEUED run is a real user-visible permanent-pending, not a nicety); the full outbox-relay form can follow if the sweeper proves insufficient.
+- **(c) Two DIFFERENT idempotencies — don't conflate them.**
+  - **Redelivery idempotency (handled):** pg-boss re-runs the same job on retry. Guarded by the review event PK = `run_id`: the worker's persist tx conflicts on the existing row and returns `skipped: already_persisted` (implemented in #1068's handler). This protects the *same* logical run from double-persisting.
+  - **Request idempotency (NEW design point):** an HTTP client that times out on the 202 and **retries the POST** generates a *fresh* `run_id` (`newId()`) → a *second* `judge_run` job → double judging (double paid inference) and potentially two attempt events for one answer. The redelivery guard does NOT catch this (different run_id). **Remediation:** accept a client-supplied idempotency key (e.g. `Idempotency-Key` header, or a client-generated `submit_nonce` in the body) and dedupe server-side at `createAttempt` — first request reserves the key→run_id mapping, a retry with the same key returns the *existing* run's 202 instead of enqueuing again. Fallback if clients can't supply one: server-side dedupe on `(question_id, session_id, answer_hash)` within a short window. **Wave: W2** for the submit face (double inference is a real cost + FSRS-integrity risk); the key plumbs through to all faces in W3.
+- **(d) Retention vs the real source of truth (`/status` beyond 7d).** As §1.2 tier-3 states, `job_events` is retained only `RETENTION_7D`; the **permanent** record is the domain event (`review`/`probe_result`, keyed by `run_id`). **`/status` contract:** resolve in order — (1) terminal `job_event` (`done`/`attempt_failed`) if present; (2) else the **domain event by `run_id`** → reconstruct `done` (the verdict is embedded in the review/judge event payload); (3) else, if the run is younger than the pickup deadline, `queued`/`running` from the live `job_events`; (4) else `expired_unknown` (older than retention, no domain event ever written — a genuinely-lost run, which the reconcile sweeper (b) should have caught earlier). This makes a client offline past 7d still able to learn its verdict from the durable domain log. **Wave: W2** (the `/status` route ships in W1/W2; the domain-event fallback is part of its contract).
+
 ---
 
 ## 4. Migration waves
@@ -218,17 +246,17 @@ The fork is deliberately small: judge is a single stateless LLM call (no convers
 | Wave | Scope | Exit criteria |
 |------|-------|---------------|
 | **W1 — dark-ship the job** | Build `judge_run` handler + queue registration + `JOB_EVENT_KIND_SET` entry + `deriveJudgeRunStatus` + status/SSE routes. Enqueue behind `JUDGE_DURABLE_ENABLED=false`. No caller switched yet. | Handler unit + DB tests green; `judge_run` visible in `/api/jobs/...` SSE for a manually enqueued run; DLQ wired; `audit:flags` reconciles the new flag. |
-| **W2 — submit face to main path** | Switch `submit.ts` to enqueue + 202-pending; UI "判题中 → 回填"; FSRS deferred to backfill; resolve auto-rate (D4). | Submit returns 202-pending; attempt recorded unjudged; verdict + FSRS land on backfill event; endpoint-down soak (kill the endpoint, confirm cross-provider recovery within `1+retryLimit`). |
+| **W2 — submit face to main path** | Switch `submit.ts` to enqueue + 202-pending (auto_rate path only; manual rating stays synchronous, §2.1); UI "判题中 → 回填"; FSRS + auto-rate deferred to backfill (D4); wire the §3.6 hardening: (a) `checkRateLimit` HTTP-side before enqueue, (b) stalled-QUEUED reconcile sweeper, (c) request-idempotency key + dedupe, (d) `/status` domain-event fallback. | Submit returns 202-pending; attempt recorded unjudged; verdict + FSRS land on backfill event; endpoint-down soak (kill the endpoint, confirm cross-provider recovery within `1+retryLimit`); rate limit enforced once at HTTP boundary; a crash between QUEUED-marker and enqueue is recovered by the sweeper; a duplicate POST returns the same run (no double inference). |
 | **W3 — remaining faces** | probe-answer, solve-session, paper-submit, advice → enqueue. paper rides per-question `judge_run`. | Each surface returns pending + backfills; probe `probe_result` / solve mistake-enrollment / paper claim-release all move to worker tx; full cross-face coverage-list ticked. |
 | **W4 — remove the sync fast path** (RULED D8) | Delete the synchronous judge invoke branch at all five caller sites + the `JUDGE_DURABLE_ENABLED` gate. **Gated on the D8 validation criterion**, not folded into W2/W3. | Submit face ran fully async N=7–14 consecutive days with `judge_run_dlq` depth 0, zero flag-flip reversions, and ≥1 production endpoint-down soak with cross-provider recovery observed (§5 D8). Removal PR references YUK-594 as an owner-instructed deletion. |
 
-**Sync fast-path disposition (RULED D8 — owner-instructed deletion):** the flag-gated sync fallback (`JUDGE_DURABLE_ENABLED=false` reverts any face to synchronous judging) is **transitional only** — an escape hatch for W2/W3 while async proves out. Owner ballot (2026-07-25) overrode the "keep as permanent fallback" recommendation: once async is validated (D8 criterion), the sync path is **removed outright** in W4. This is the explicit locked-decision exception to the CLAUDE.md "demote, don't delete" product principle — owner-instructed, so it does not violate the pre-AI-feature protection. Tone owner set: aggressive and clean, no over-engineering hedge. The sync path is a temporary bridge, not a keeper.
+**Sync fast-path disposition (RULED D8 — owner-instructed deletion):** the flag-gated sync fallback (`JUDGE_DURABLE_ENABLED=false` reverts any face to synchronous judging) is **transitional only** — an escape hatch for W2/W3 while async proves out. Owner ballot (2026-07-24) overrode the "keep as permanent fallback" recommendation: once async is validated (D8 criterion), the sync path is **removed outright** in W4. This is the explicit locked-decision exception to the CLAUDE.md "demote, don't delete" product principle — owner-instructed, so it does not violate the pre-AI-feature protection. Tone owner set: aggressive and clean, no over-engineering hedge. The sync path is a temporary bridge, not a keeper.
 
 ---
 
-## 5. Decisions (RULED — owner ballot 2026-07-25)
+## 5. Decisions (RULED — owner ballot 2026-07-24)
 
-Owner ballot closed 2026-07-25. Overall tone owner set: **aggressive and clean — do not hedge for over-engineering.** All nine ruled below; each carries the ruling + the reason of record. D1-D7 and D9 ratify the recommendation; **D8 deviates from the recommendation** — see its note.
+Owner ballot closed 2026-07-24. Overall tone owner set: **aggressive and clean — do not hedge for over-engineering.** All nine ruled below; each carries the ruling + the reason of record. D1-D7 and D9 ratify the recommendation; **D8 deviates from the recommendation** — see its note.
 
 - **D1 — Scope of "async-main" — RULED: all five sync faces migrate, phased (W2 submit, W3 rest).** ✔ ratifies recommendation. The ruling covers 全部判题面; phasing manages risk without narrowing scope.
 - **D2 — Backfill channels — RULED: three-tier (SSE + poll + replay).** ✔ Single-user self-hosted with flaky Cloudflare ingress; poll fallback + retained terminal event guarantees no stranded verdict.
@@ -257,5 +285,5 @@ Owner ballot closed 2026-07-25. Overall tone owner set: **aggressive and clean �
 - Sync callers: `submit.ts:322`, `probe-answer.ts:218`, `paper-submit.ts:525`, `advice.ts:61`, `solve-session.ts:334`.
 - Chokepoint: `JudgeInvoker.invoke` `src/server/judge/invoker.ts:104`; `judgeAnswer` wrapper `question-contract.ts:288` (durable consumers: `rejudge.ts:79`, `judge-calibration-sample-core.ts:243`).
 - Durable precedent: `copilot_run.ts` (handler), `chat.ts:140-158` (202 dispatch), `copilot-run-status.ts:71` (status reducer), `durable-pickup.ts:27` (pickup stall).
-- Infra: `writer.ts:22` (`writeJobEvent`), `sse_replay.ts` (`computeReplay`), `job-events.ts:35/49` (generic SSE + `JOB_EVENT_KIND_SET`), `queue-config.ts` (`EXPIRE_LLM`/DLQ/`JOB_RETRY_LIMIT`), `ai_task_run_reconcile.ts:47` (`STUCK_RUN_THRESHOLD_MS`), `runner.ts:184` (`budgetOverride`), `runner.ts:784`/`agent-run-error.ts:51` (`RETRY_ELAPSED_CAP_MS`), `providers.ts:155` (`AI_PROVIDER_OVERRIDE`).
+- Infra: `writer.ts:22` (`writeJobEvent`), `sse_replay.ts` (`computeReplay`), `job-events.ts:35/49` (generic SSE + `JOB_EVENT_KIND_SET`), `queue-config.ts` (`EXPIRE_LLM`/DLQ/`JOB_RETRY_LIMIT`), `ai_task_run_reconcile.ts:47` (`STUCK_RUN_THRESHOLD_MS`), `runner.ts:184` (`budgetOverride`), `runner.ts:773`/`agent-run-error.ts:51` (`RETRY_ELAPSED_CAP_MS`), `runner.ts:547` + `registry.ts:1153` (90s judge `budget.timeout` abort timer), `providers.ts:155` (`AI_PROVIDER_OVERRIDE`), `RunTaskCtx.override`→`resolveTaskProvider` (`runner.ts:101/763/844`, `providers.ts:205`).
 - YUK-444 HOLD: `src/db/schema.ts:1544` (A10 confidence/calibration_curve HOLD).
