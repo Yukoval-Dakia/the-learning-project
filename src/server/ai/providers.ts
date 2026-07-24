@@ -157,6 +157,44 @@ export function isProviderLaneReady(provider: Provider): boolean {
   return Boolean(process.env[envName]);
 }
 
+// YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway /
+// openai are reserved-but-not-implemented (their wire shapes differ) and `resolveTaskProvider`
+// throws for them below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
+// is NOT in this key-auth set; `isProviderImplemented` folds it back in via `isOauthProvider`.
+const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set(['anthropic', 'xiaomi', 'zhipu']);
+
+/**
+ * YUK-608 — is `provider` actually wired to a working endpoint (vs reserved-but-not-implemented)?
+ * True for the wired key-auth providers plus every OAuth-lane provider (anthropic-sub). SINGLE
+ * source of truth: `resolveTaskProvider`'s "reserved but not implemented" guard AND override
+ * pre-flights (solve-lane) both read it, so a caller can fail-open to the default lane BEFORE
+ * dispatch instead of resolving to a provider that throws mid-call — and the wired set can never
+ * drift into two hard-coded copies.
+ */
+export function isProviderImplemented(provider: Provider): boolean {
+  return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
+}
+
+// YUK-365 / YUK-608 — providers whose registry-default model path yields a RUNNABLE model without
+// an explicit override.model: xiaomi (the mimo endpoint IS the registry default) and anthropic-sub
+// (built-in Opus 4.8 default). Every OTHER provider's registry default is a mimo id its endpoint
+// won't accept, so selecting it via override REQUIRES an explicit model.
+const PROVIDERS_WITH_RUNNABLE_DEFAULT_MODEL: ReadonlySet<Provider> = new Set([
+  'xiaomi',
+  'anthropic-sub',
+]);
+
+/**
+ * YUK-608 — does selecting `provider` via an explicit override REQUIRE an explicit model? True for
+ * every provider EXCEPT those with a runnable built-in default (xiaomi / anthropic-sub). Without
+ * this, `{ provider: 'anthropic' }` alone resolves to the registry mimo model id and 404s on the
+ * Anthropic-direct endpoint. SINGLE source of truth: `resolveTaskProvider`'s global-switch guard
+ * AND override pre-flights (solve-lane) both read it, so the rule lives in exactly one place.
+ */
+export function providerRequiresExplicitModel(provider: Provider): boolean {
+  return !PROVIDERS_WITH_RUNNABLE_DEFAULT_MODEL.has(provider);
+}
+
 /**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } forwarded as ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL.
@@ -252,11 +290,12 @@ export function resolveTaskProvider(
   //   - `anthropic-sub` is exempt: it has a built-in Opus 4.8 default (below).
   //   - `xiaomi` is exempt: it IS the mimo endpoint, so the registry default fits.
   //   - A per-call `override.model` (or AI_PROVIDER_MODEL) satisfies the guard.
-  const PROVIDERS_USING_MIMO_DEFAULT = new Set<Provider>(['xiaomi', 'anthropic-sub']);
+  // The exempt set lives in `providerRequiresExplicitModel` (single source of truth, also read by
+  // override pre-flights) so it can't drift from a second hard-coded copy.
   const cameFromEnvSwitch = !override?.provider && envOverride?.provider !== undefined;
   if (
     cameFromEnvSwitch &&
-    !PROVIDERS_USING_MIMO_DEFAULT.has(providerName) &&
+    providerRequiresExplicitModel(providerName) &&
     !override?.model &&
     !envOverride?.model
   ) {
@@ -307,8 +346,9 @@ export function resolveTaskProvider(
   // (zhipu = GLM coding plan on /api/anthropic, smoke-tested HTTP 200). openrouter
   // / gateway / openai land here as "not implemented" because their wire shapes
   // differ; revisit if a real trigger fires. ('anthropic-sub' is the oauth branch
-  // above, so it never reaches here.)
-  if (providerName !== 'anthropic' && providerName !== 'xiaomi' && providerName !== 'zhipu') {
+  // above, so it never reaches here.) The wired set lives in `isProviderImplemented`
+  // (single source of truth, also read by override pre-flights).
+  if (!isProviderImplemented(providerName)) {
     throw new Error(
       `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', and 'anthropic-sub' (subscription OAuth) are wired.`,
     );

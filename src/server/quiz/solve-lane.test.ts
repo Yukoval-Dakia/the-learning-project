@@ -16,8 +16,15 @@ import {
 
 // The credential env `anthropic-sub` (OAuth lane) requires; isProviderLaneReady reads it.
 const SUB_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
+// `anthropic` (direct, key-auth) credential env — used to isolate the needs-explicit-model branch.
+const ANTHROPIC_KEY_ENV = 'ANTHROPIC_API_KEY';
 
-const TOUCHED = [VERIFY_SOLVE_PROVIDER_ENV, VERIFY_SOLVE_MODEL_ENV, SUB_TOKEN_ENV] as const;
+const TOUCHED = [
+  VERIFY_SOLVE_PROVIDER_ENV,
+  VERIFY_SOLVE_MODEL_ENV,
+  SUB_TOKEN_ENV,
+  ANTHROPIC_KEY_ENV,
+] as const;
 
 describe('resolveSolveOverrideFromEnv (YUK-608 异源 solve/verify lane)', () => {
   beforeEach(() => {
@@ -79,5 +86,41 @@ describe('resolveSolveOverrideFromEnv (YUK-608 异源 solve/verify lane)', () =>
     expect(resolveSolveOverrideFromEnv(warn)).toEqual({});
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('not configured');
+  });
+
+  // ---- review round: fail-open completeness (implemented + runnable-model pre-flight) ----
+
+  it('fail-opens + warns on a reserved-but-not-implemented provider (openrouter)', () => {
+    // isProviderImplemented is checked BEFORE lane-readiness, so this drops even with no key set —
+    // resolveTaskProvider would throw "reserved but not implemented" at dispatch; reject here.
+    vi.stubEnv(VERIFY_SOLVE_PROVIDER_ENV, 'openrouter');
+    vi.stubEnv(VERIFY_SOLVE_MODEL_ENV, 'some-model');
+    const warn = vi.fn();
+    expect(resolveSolveOverrideFromEnv(warn)).toEqual({});
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('not implemented');
+  });
+
+  it('fail-opens + warns when a provider needing an explicit model is given none (anthropic direct)', () => {
+    // `anthropic` is implemented + lane-ready here, but its registry default model is a mimo id the
+    // Anthropic-direct endpoint would 404 on. With no VERIFY_SOLVE_MODEL_OVERRIDE → drop to default.
+    vi.stubEnv(VERIFY_SOLVE_PROVIDER_ENV, 'anthropic');
+    vi.stubEnv(ANTHROPIC_KEY_ENV, 'sk-ant-test'); // lane ready, so we isolate the model branch
+    const warn = vi.fn();
+    expect(resolveSolveOverrideFromEnv(warn)).toEqual({});
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('explicit');
+  });
+
+  it('applies a legal implemented provider + explicit model (anthropic direct + model)', () => {
+    vi.stubEnv(VERIFY_SOLVE_PROVIDER_ENV, 'anthropic');
+    vi.stubEnv(VERIFY_SOLVE_MODEL_ENV, 'claude-opus-4-8');
+    vi.stubEnv(ANTHROPIC_KEY_ENV, 'sk-ant-test');
+    const warn = vi.fn();
+    expect(resolveSolveOverrideFromEnv(warn)).toEqual({
+      provider: 'anthropic',
+      model: 'claude-opus-4-8',
+    });
+    expect(warn).not.toHaveBeenCalled();
   });
 });

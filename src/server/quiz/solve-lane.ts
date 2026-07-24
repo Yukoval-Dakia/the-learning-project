@@ -17,14 +17,24 @@
 //
 // FAIL-OPEN (owner decision, grounded in the existing solve_check conservatism): verify is an
 // AUTOMATIC supply path — a misconfigured / unavailable 异源 lane must NEVER block promotion or
-// strand a draft. So this resolver PRE-FLIGHTS the override and, if the named provider is unknown
-// or its credential lane is NOT wired in this process's env, DROPS the override entirely and logs
-// a fall-back — the solve_check leg then runs on the default (mimo) lane, still an independent
-// task/prompt, just homogeneous. (A lane that resolves but fails AT CALL TIME decays through
-// runSolveCheck's existing 'unsupported' → non-blocking path — see verify-framework.ts.) The bare
-// model-only override (no provider) is a same-provider model swap and is passed through as-is.
+// strand a draft. So this resolver PRE-FLIGHTS the override against the SAME providers.ts predicates
+// resolveTaskProvider uses (no second hard-coded copy) and DROPS the whole override + logs a
+// fall-back when the named provider is (a) unknown, (b) reserved-but-not-implemented, (c) has no
+// credential lane wired in this env, or (d) needs an explicit model it wasn't given (its registry
+// default is a mimo id a non-mimo endpoint would 404 on — an explicit override bypasses
+// resolveTaskProvider's global-switch guard, so it's caught here). The solve_check leg then runs on
+// the default (mimo) lane — still an independent task/prompt, just homogeneous. (A lane that passes
+// pre-flight but fails AT CALL TIME decays through runSolveCheck's existing 'unsupported' →
+// non-blocking path — see verify-framework.ts.) The bare model-only override (no provider) is a
+// same-provider model swap and is passed through as-is.
 
-import { type Provider, isKnownProvider, isProviderLaneReady } from '@/server/ai/providers';
+import {
+  type Provider,
+  isKnownProvider,
+  isProviderImplemented,
+  isProviderLaneReady,
+  providerRequiresExplicitModel,
+} from '@/server/ai/providers';
 
 export const VERIFY_SOLVE_PROVIDER_ENV = 'VERIFY_SOLVE_PROVIDER_OVERRIDE';
 export const VERIFY_SOLVE_MODEL_ENV = 'VERIFY_SOLVE_MODEL_OVERRIDE';
@@ -53,18 +63,38 @@ export function resolveSolveOverrideFromEnv(
   if (!provider && !model) return {};
 
   if (provider) {
+    // Every fail-open branch below drops the WHOLE override (incl. any model, which was chosen
+    // FOR this provider and could 404 on the default lane) and runs solve_check on the default
+    // lane. Ordered cheapest-first; all reuse providers.ts predicates (no second hard-coded copy).
     if (!isKnownProvider(provider)) {
-      // Unknown provider name → drop the WHOLE override (incl. any model, which was chosen for
-      // this provider and may 404 on the default lane) and run solve_check on the default lane.
       warn(
         `[quiz_verify] ${VERIFY_SOLVE_PROVIDER_ENV}='${provider}' is not a known provider; solve_check falls back to the default lane`,
       );
       return {};
     }
+    if (!isProviderImplemented(provider)) {
+      // Reserved-but-not-implemented (openrouter / gateway / openai). resolveTaskProvider would
+      // throw at dispatch; reject HERE so verify degrades to the default lane, not to a runtime
+      // 'unsupported' after the closed-book checks already passed.
+      warn(
+        `[quiz_verify] solve_check 异源 provider '${provider}' is reserved but not implemented; falling back to the default lane`,
+      );
+      return {};
+    }
     if (!isProviderLaneReady(provider)) {
-      // Known provider, but its credential env is absent on this deploy → fail-open to default.
+      // Credential env absent on this deploy (e.g. the subscription token is not wired here).
       warn(
         `[quiz_verify] solve_check 异源 lane '${provider}' is not configured (credential env missing); falling back to the default lane`,
+      );
+      return {};
+    }
+    if (!model && providerRequiresExplicitModel(provider)) {
+      // A provider with no runnable built-in default resolves to the registry mimo model id, which
+      // its non-mimo endpoint won't accept — an explicit override bypasses resolveTaskProvider's
+      // global-switch guard, so catch it here. (xiaomi / anthropic-sub self-supply a runnable
+      // default and are exempt.) Require VERIFY_SOLVE_MODEL_OVERRIDE or fail-open to default.
+      warn(
+        `[quiz_verify] solve_check 异源 provider '${provider}' needs an explicit ${VERIFY_SOLVE_MODEL_ENV} (its registry default is a mimo model id the endpoint won't accept); falling back to the default lane`,
       );
       return {};
     }
