@@ -715,7 +715,7 @@
     }
   },
   "event_subscription_checkpoint.subscriber_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -723,7 +723,7 @@
     }
   },
   "event_subscription_checkpoint.subscriber_version": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -731,7 +731,7 @@
     }
   },
   "event_subscription_checkpoint.declaration_hash": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -739,7 +739,7 @@
     }
   },
   "event_subscription_checkpoint.status": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -747,7 +747,7 @@
     }
   },
   "event_subscription_checkpoint.next_delivery_seq": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -755,7 +755,7 @@
     }
   },
   "event_subscription_checkpoint.claim_owner": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -763,7 +763,7 @@
     }
   },
   "event_subscription_checkpoint.claim_token": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -771,7 +771,7 @@
     }
   },
   "event_subscription_checkpoint.claim_lease_until": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -779,7 +779,7 @@
     }
   },
   "event_subscription_checkpoint.bootstrapped_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -787,7 +787,7 @@
     }
   },
   "event_subscription_checkpoint.activated_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
@@ -795,7 +795,7 @@
     }
   },
   "event_subscription_checkpoint.paused_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
     "resolves_when": {
       "kind": "manual",
       "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
