@@ -34,6 +34,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { MODEL_BACKED_JUDGE_ROUTES } from '@/kernel/judge';
 import { judgeAnswer } from '@/server/ai/judges/question-contract';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -44,8 +45,11 @@ export const JUDGE_CALIBRATION_SAMPLE_ACTION = 'experimental:judge_calibration_s
 export const JUDGE_CALIBRATION_RUN_SUMMARY_ACTION = 'experimental:judge_calibration_run_summary';
 export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 
-/** The LLM-backed judge routes worth double-judging (MF4① whitelist). */
-export const LLM_JUDGE_ROUTES = ['semantic', 'steps', 'multimodal_direct'] as const;
+// The LLM-backed judge routes worth double-judging (MF4① whitelist). Consumes
+// the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/kernel/judge,
+// YUK-589 route-resolve.ts) instead of a locally-owned duplicate — YUK-769
+// fixed a drift where this module's own copy omitted `unit_dimension` (its
+// LLM fallback route), silently excluding it from calibration sampling.
 const VISION_ROUTES = new Set(['steps', 'multimodal_direct']);
 const SAMPLED_OUTCOMES = ['correct', 'partial', 'incorrect'] as const;
 type SampledOutcome = (typeof SAMPLED_OUTCOMES)[number];
@@ -247,7 +251,7 @@ export async function runJudgeCalibrationSample(
   // ── Selection (MF4) ──────────────────────────────────────────────────────
   const windowStart = new Date(now.getTime() - cfg.windowDays * 24 * 3600 * 1000);
   const routeList = sql.join(
-    LLM_JUDGE_ROUTES.map((r) => sql`${r}`),
+    [...MODEL_BACKED_JUDGE_ROUTES].map((r) => sql`${r}`),
     sql`, `,
   );
   const judgeRows = await db
