@@ -24,8 +24,7 @@
 // runSolveCheck's existing 'unsupported' → non-blocking path — see verify-framework.ts.) The bare
 // model-only override (no provider) is a same-provider model swap and is passed through as-is.
 
-import type { Provider } from '@/ai/registry';
-import { isKnownProvider, isProviderLaneReady } from '@/server/ai/providers';
+import { type Provider, isKnownProvider, isProviderLaneReady } from '@/server/ai/providers';
 
 export const VERIFY_SOLVE_PROVIDER_ENV = 'VERIFY_SOLVE_PROVIDER_OVERRIDE';
 export const VERIFY_SOLVE_MODEL_ENV = 'VERIFY_SOLVE_MODEL_OVERRIDE';

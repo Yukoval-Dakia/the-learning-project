@@ -28,6 +28,11 @@
 
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 
+// YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
+// type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
+// reaching back into the registry.
+export type { Provider };
+
 /** A key-auth provider: bearer/x-api-key value read from `apiKeyEnv`, optional baseUrl. */
 interface KeyProviderConfig {
   authMode: 'key';
