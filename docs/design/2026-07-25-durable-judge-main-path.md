@@ -1,6 +1,6 @@
 # Durable judge as the main path (YUK-594)
 
-Status: **DRAFT — awaiting owner ballot.** Refs YUK-594. Docs-only; no production code in this PR.
+Status: **RULED — owner ballot closed 2026-07-25 (D1-D9 decided, see §5).** Refs YUK-594. Docs-only; no production code in this PR.
 
 Author pass: Fable. Grounded against `main` @ `90d605e2` (all `file:line` below verified on that base; drift from the ticket triage is called out inline).
 
@@ -77,7 +77,7 @@ When judging completes, the terminal `job_event` (`judge_run.done` / `judge_run.
 
 Backfill contract is **three-tier** so no client is stranded:
 1. **SSE** (`.../events`) — live, primary. Same stream copilot uses.
-2. **Poll** (`.../status`) — a thin GET that runs `deriveJudgeRunStatus(computeReplay(...))` and returns `{status, result?}`. For clients that can't hold an SSE connection (mobile background, flaky links). *Owner decision D2.*
+2. **Poll** (`.../status`) — a thin GET that runs `deriveJudgeRunStatus(computeReplay(...))` and returns `{status, result?}`. For clients that can't hold an SSE connection (mobile background, flaky links). *Ruled D2 (§5): three-tier adopted.*
 3. **Replay** — reconnect with Last-Event-ID; the terminal event is retained (`RETENTION_7D`, `src/server/boss/queue-config.ts`) so a client offline at completion still gets the verdict on next fetch.
 
 ### 1.3 Degraded scenario matrix
@@ -105,7 +105,7 @@ Today the judge verdict is resolved **before** the state write and embedded into
 
 This preserves the existing single-owner event invariants (ADR-0005 writeEvent, upsertFsrsState single-owner) — the verdict/FSRS write simply moves from the request tx to the worker tx. It also inherits the existing "recorded-but-unjudged" path that submit.ts already has for photo-only-unsupported (`submit.ts` F4 lineage) — that path proves an attempt can legitimately exist without a verdict.
 
-**Blocking alternative** (record unjudged but hold FSRS until backfill) is the recommendation and is what the above describes. A pure-optimistic alternative (guess a rating, correct later) would pollute FSRS with a provisional rating and require a reversal — rejected (violates evidence-first + FSRS is not cheaply reversible). *Owner decision D3.*
+**Blocking alternative** (record unjudged but hold FSRS until backfill) is the recommendation and is what the above describes. A pure-optimistic alternative (guess a rating, correct later) would pollute FSRS with a provisional rating and require a reversal — rejected (violates evidence-first + FSRS is not cheaply reversible). *Ruled D3 (§5): record-unjudged, defer FSRS.*
 
 ### 2.1 practice submit (`submit.ts:322`)
 
@@ -121,7 +121,7 @@ This preserves the existing single-owner event invariants (ADR-0005 writeEvent, 
 ### 2.3 rating advice (`advice.ts:61`) & the auto-rate problem
 
 - `advice.ts` exists specifically to hand the client a *suggested rating* synchronously. Under async-main it returns `{verdict: pending}` and the suggested rating arrives on the backfill event.
-- **The one real regression:** any surface with `auto_rate=true` (submit path) currently relies on "suggested wins → final rating at submit". Async breaks the synchronous availability of the suggestion. Options, all deferring FSRS to backfill: (a) auto-rate is applied by the worker at backfill time (user sees "判题中" → rating appears) — recommended; (b) auto-rate degrades to manual self-rating while async is the main path. **This is Owner decision D4** (auto-rate is a genuine UX behavior change, not a mechanical move).
+- **The one real regression:** any surface with `auto_rate=true` (submit path) currently relies on "suggested wins → final rating at submit". Async breaks the synchronous availability of the suggestion. Options, all deferring FSRS to backfill: (a) auto-rate is applied by the worker at backfill time (user sees "判题中" → rating appears); (b) auto-rate degrades to manual self-rating while async is the main path. **Ruled D4 (§5): option (a) — worker applies auto-rate at backfill.**
 
 ### 2.4 paper submit (`paper-submit.ts:525`)
 
@@ -179,7 +179,7 @@ This is the endpoint-down payload and the part that is **new** (not just relocat
 - The provider override today (`AI_PROVIDER_OVERRIDE`, `src/server/ai/providers.ts:155`) is a **global** env switch — every task routes to one provider. It is **not** per-call. So "retry on a *different* provider when the primary endpoint is down" needs new plumbing: the `judge_run` handler must be able to pin a provider per-attempt (primary mimo → on transient/endpoint-down, redeliver with `anthropic-sub` = Opus 4.8 via owner's Claude Max OAuth).
 - **Mechanism reuse:** the `budgetOverride` seam in `runner.ts:184` (YUK-575 per-call override for durable copilot) is the same shape a per-call *provider* override would take. Recommend extending that seam (or an adjacent per-call `providerOverride`) rather than reading global env inside the handler.
 - **Retry-layer discipline (grounded, important):** in-process transient retry (`runner.ts` `transientRetries`, YUK-576) is **gated OFF for durable handlers** — queue redelivery is their ONLY transient layer, so worst-case paid inference calls per logical judge = `1 + JOB_RETRY_LIMIT = 3` (`queue-config.ts` documents this). Cross-provider retry must fit *inside* that budget: e.g. attempt 1 = mimo, redelivery 1 = mimo (transient), redelivery 2 = anthropic-sub (last-resort). Do NOT stack an in-process retry loop on top or the paid-call count multiplies.
-- **Cost lever:** owner leaned "open, no daily cap" for anthropic-sub fallback in YUK-592 — **but that was the sync scenario**; the ticket explicitly says re-evaluate for async. In async, redelivery makes retries cheaper to reason about (bounded at 3 paid calls/job) but also *automatic* (no human in the loop). Recommend an env cost lever `JUDGE_FALLBACK_PROVIDER` (default `anthropic-sub`) + the existing bounded `JOB_RETRY_LIMIT` as the cap, rather than an unbounded daily-spend fallback. *Owner decision D7.*
+- **Cost lever:** owner leaned "open, no daily cap" for anthropic-sub fallback in YUK-592 — **but that was the sync scenario**; the ticket explicitly says re-evaluate for async. In async, redelivery makes retries cheaper to reason about (bounded at 3 paid calls/job) but also *automatic* (no human in the loop). Env cost lever `JUDGE_FALLBACK_PROVIDER` (default `anthropic-sub`) + the bounded `JOB_RETRY_LIMIT` as the cap, rather than an unbounded daily-spend fallback. *Ruled D7 (§5): bounded — `1 + JOB_RETRY_LIMIT` cap, anthropic-sub on final redelivery.*
 
 ### 3.5 Reuse / fork points vs copilot durable (YUK-575)
 
@@ -204,24 +204,27 @@ The fork is deliberately small: judge is a single stateless LLM call (no convers
 | **W1 — dark-ship the job** | Build `judge_run` handler + queue registration + `JOB_EVENT_KIND_SET` entry + `deriveJudgeRunStatus` + status/SSE routes. Enqueue behind `JUDGE_DURABLE_ENABLED=false`. No caller switched yet. | Handler unit + DB tests green; `judge_run` visible in `/api/jobs/...` SSE for a manually enqueued run; DLQ wired; `audit:flags` reconciles the new flag. |
 | **W2 — submit face to main path** | Switch `submit.ts` to enqueue + 202-pending; UI "判题中 → 回填"; FSRS deferred to backfill; resolve auto-rate (D4). | Submit returns 202-pending; attempt recorded unjudged; verdict + FSRS land on backfill event; endpoint-down soak (kill the endpoint, confirm cross-provider recovery within `1+retryLimit`). |
 | **W3 — remaining faces** | probe-answer, solve-session, paper-submit, advice → enqueue. paper rides per-question `judge_run`. | Each surface returns pending + backfills; probe `probe_result` / solve mistake-enrollment / paper claim-release all move to worker tx; full cross-face coverage-list ticked. |
+| **W4 — remove the sync fast path** (RULED D8) | Delete the synchronous judge invoke branch at all five caller sites + the `JUDGE_DURABLE_ENABLED` gate. **Gated on the D8 validation criterion**, not folded into W2/W3. | Submit face ran fully async N=7–14 consecutive days with `judge_run_dlq` depth 0, zero flag-flip reversions, and ≥1 production endpoint-down soak with cross-provider recovery observed (§5 D8). Removal PR references YUK-594 as an owner-instructed deletion. |
 
-**Pre-AI discipline / sync fast-path disposition:** the ticket and CLAUDE.md product principle both forbid *deleting* the synchronous path outright ("delete" = "demote from sole source," never remove). Recommendation: **keep the sync invoke as a flag-gated fallback** (`JUDGE_DURABLE_ENABLED=false` reverts any face to synchronous judging) through W2/W3, so a durable-lane regression has an instant escape hatch. Whether to *eventually* remove the sync path after async proves out is a later call — **Owner decision D8**, flagged not foreclosed. The sync path is not legacy; it's the degraded-mode fallback.
+**Sync fast-path disposition (RULED D8 — owner-instructed deletion):** the flag-gated sync fallback (`JUDGE_DURABLE_ENABLED=false` reverts any face to synchronous judging) is **transitional only** — an escape hatch for W2/W3 while async proves out. Owner ballot (2026-07-25) overrode the "keep as permanent fallback" recommendation: once async is validated (D8 criterion), the sync path is **removed outright** in W4. This is the explicit locked-decision exception to the CLAUDE.md "demote, don't delete" product principle — owner-instructed, so it does not violate the pre-AI-feature protection. Tone owner set: aggressive and clean, no over-engineering hedge. The sync path is a temporary bridge, not a keeper.
 
 ---
 
-## 5. Open decision points (owner ballot)
+## 5. Decisions (RULED — owner ballot 2026-07-25)
 
-Numbered; each with a recommendation + reason.
+Owner ballot closed 2026-07-25. Overall tone owner set: **aggressive and clean — do not hedge for over-engineering.** All nine ruled below; each carries the ruling + the reason of record. D1-D7 and D9 ratify the recommendation; **D8 deviates from the recommendation** — see its note.
 
-- **D1 — Scope of "async-main".** All five sync faces migrate, or submit-only first with the rest fast-followed? **Recommend: all five, phased (W2 submit, W3 rest).** Reason: the ruling says "全部判题面"; phasing manages risk without narrowing scope.
-- **D2 — Backfill channels.** SSE-only, or SSE + poll + replay (three-tier)? **Recommend: three-tier.** Reason: single-user self-hosted with flaky Cloudflare ingress; a poll fallback + retained terminal event guarantees no stranded verdict for cheap.
-- **D3 — Write timing.** Record-unjudged-then-backfill (FSRS deferred) vs optimistic-provisional-rating? **Recommend: record-unjudged, defer FSRS.** Reason: evidence-first; FSRS is not cheaply reversible; reuses the existing recorded-but-unjudged path.
-- **D4 — auto_rate under async.** Worker applies auto-rate at backfill (user sees rating appear) vs auto-rate degrades to manual self-rate while async is main? **Recommend: worker applies at backfill.** Reason: preserves the auto-rate product behavior; the only cost is a few-seconds delay the pending UX already communicates. (Genuine UX change — owner's call.)
-- **D5 — Profile resolution timing.** Resolve `SubjectProfile` at enqueue (freeze into payload) vs re-resolve at pickup? **Recommend: resolve at enqueue, freeze into payload.** Reason: the verdict should reflect the profile active when the learner answered, not a profile edited between enqueue and pickup (matches copilot's ambient RIDE-in-payload rationale for request-only context). Cheap, deterministic.
-- **D6 — DLQ recovery policy.** Auto-sweep re-enqueue from `judge_run_dlq`, or manual-only (existing `rejudge.ts`)? **Recommend: manual-only for W1–W3, auto-sweep later.** Reason: don't build an auto-recovery subsystem before observing real DLQ traffic (avoid 建成不通电); `rejudge.ts` already covers manual reprocessing.
-- **D7 — Cross-provider fallback cost lever.** Bounded (`JOB_RETRY_LIMIT`-capped, anthropic-sub as last redelivery) vs the YUK-592 "open, no daily cap" stance? **Recommend: bounded — cap = `1+retryLimit` paid calls/job, anthropic-sub only on the final redelivery, env `JUDGE_FALLBACK_PROVIDER`.** Reason: async makes fallback automatic (no human gate), so an unbounded daily cap is riskier than in the sync scenario where owner leaned "open"; the bounded redelivery budget is the natural cap. Re-evaluated for async per the ticket's explicit instruction.
-- **D8 — Sync fast-path fate.** Keep as flag-gated fallback indefinitely vs remove after async proves out? **Recommend: keep as fallback through W2/W3; revisit removal later.** Reason: pre-AI discipline (demote, don't delete) + it's the instant escape hatch for a durable-lane regression. Not foreclosing removal — flagging it as a separate later decision.
-- **D9 — Provider-override plumbing.** Extend the `runner.ts:184` `budgetOverride` seam to carry a per-call provider, or add a sibling `providerOverride` seam? **Recommend: sibling `providerOverride` on the same call path.** Reason: keeps budget and provider as orthogonal per-call concerns; the global `AI_PROVIDER_OVERRIDE` env stays the deployment-wide switch, the per-call override is the durable-retry-only lever.
+- **D1 — Scope of "async-main" — RULED: all five sync faces migrate, phased (W2 submit, W3 rest).** ✔ ratifies recommendation. The ruling covers 全部判题面; phasing manages risk without narrowing scope.
+- **D2 — Backfill channels — RULED: three-tier (SSE + poll + replay).** ✔ Single-user self-hosted with flaky Cloudflare ingress; poll fallback + retained terminal event guarantees no stranded verdict.
+- **D3 — Write timing — RULED: record-unjudged-then-backfill, FSRS deferred to the worker tx.** ✔ Evidence-first; FSRS is not cheaply reversible; reuses the existing recorded-but-unjudged path.
+- **D4 — auto_rate under async — RULED: worker applies auto-rate at backfill (rating appears when the verdict lands).** ✔ Preserves the auto-rate product behavior; the only cost is the few-seconds delay the pending UX already communicates.
+- **D5 — Profile resolution timing — RULED: resolve `SubjectProfile` at enqueue, freeze into the job payload.** ✔ The verdict reflects the profile active when the learner answered, not one edited between enqueue and pickup (matches copilot's ambient RIDE-in-payload rationale). Cheap, deterministic.
+- **D6 — DLQ recovery policy — RULED: manual-only for now (existing `rejudge.ts`); no auto-sweep subsystem yet.** ✔ Don't build auto-recovery before observing real DLQ traffic (避免 建成不通电).
+- **D7 — Cross-provider fallback cost lever — RULED: bounded — cap = `1 + JOB_RETRY_LIMIT` paid calls/job, `anthropic-sub` only on the final redelivery, env `JUDGE_FALLBACK_PROVIDER`.** ✔ Async makes fallback automatic (no human gate), so the bounded redelivery budget is the natural cap; the YUK-592 "open, no daily cap" stance was a sync-scenario lean, re-evaluated for async per the ticket.
+- **D8 — Sync fast-path fate — RULED: REMOVE the synchronous fast path after async validation. ⚠ DEVIATES from the recommendation (which was "keep as fallback indefinitely").** This is an **owner-instructed deletion** — the explicit, locked-decision exception to the pre-AI "demote, don't delete" discipline (CLAUDE.md Product principle). Owner directive: once async is validated, delete the sync judging path outright rather than retaining it as a permanent fallback. The flag-gated fallback is a **transitional** escape hatch (W2/W3 only), not a keeper.
+  - **Validation criterion (recommended, owner to confirm the numbers):** remove the sync path once the **submit face has run fully async for N consecutive days (suggest N = 7–14) with zero `judge_run_dlq` accumulation and zero flag-flip reversions to sync.** Concretely: (a) `judge_run_dlq` depth stays 0 across the window (no job exhausts retries), (b) `JUDGE_DURABLE_ENABLED` never toggled back to sync for an incident, (c) endpoint-down soak (§4 W2 exit) passed at least once in production with cross-provider recovery observed. When all three hold, a follow-up removal PR deletes the sync invoke branches at the five caller sites + the `JUDGE_DURABLE_ENABLED` gate.
+  - Removal is a **separate scheduled wave (W4)**, gated on the criterion above — not folded into W2/W3.
+- **D9 — Provider-override plumbing — RULED: sibling `providerOverride` seam on the same call path (alongside `budgetOverride`).** ✔ Keeps budget and provider orthogonal per-call concerns; the global `AI_PROVIDER_OVERRIDE` env stays the deployment-wide switch, the per-call override is the durable-retry-only lever.
 
 ---
 
