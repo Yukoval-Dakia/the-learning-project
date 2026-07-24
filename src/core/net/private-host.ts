@@ -156,6 +156,63 @@ export function isBlockedIpAddress(address: string): boolean {
   );
 }
 
+// A single inet_aton-style numeric octet: decimal (`127`), hex (`0x7f`), or octal (`017`).
+// `0x` / `0X` prefix ⇒ hex; a leading `0` on a multi-digit token ⇒ octal; otherwise decimal.
+// Returns the value, or null when the token is numeric-looking but malformed (empty hex `0x`,
+// a bad octal digit `08`, an over-long decimal) — the caller fails those closed.
+function parseInetOctet(token: string): number | null {
+  let value: number;
+  if (/^0[xX][0-9a-f]+$/.test(token)) {
+    value = Number.parseInt(token.slice(2), 16);
+  } else if (/^0[0-7]+$/.test(token)) {
+    value = Number.parseInt(token.slice(1), 8);
+  } else if (token === '0') {
+    value = 0;
+  } else if (/^[1-9][0-9]*$/.test(token)) {
+    value = Number.parseInt(token, 10);
+  } else {
+    return null;
+  }
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+// True when a token could only be a numeric octet attempt (decimal/hex/octal digits, optionally an
+// `0x` hex prefix) — never an ordinary DNS label. This is what keeps `abc.de` / `dead.beef`
+// (no `0x`, non-numeric) on the hostname path while catching `0x7f`, `08`, `2130706433`.
+function isNumericToken(token: string): boolean {
+  return /^(0[xX][0-9a-f]*|[0-9]+)$/.test(token);
+}
+
+// inet_aton octet-count semantics: the final token absorbs all remaining low-order bytes
+// (`127.1` ⇒ 127.0.0.1, `10.0.1` ⇒ 10.0.0.1, `2130706433` ⇒ 127.0.0.1).
+type InetResult = 'not-numeric' | 'invalid' | number;
+function parseInetIpv4(host: string): InetResult {
+  const parts = host.split('.');
+  if (!parts.every(isNumericToken)) return 'not-numeric';
+  if (parts.length === 0 || parts.length > 4) return 'invalid';
+  const values: number[] = [];
+  for (const token of parts) {
+    const value = parseInetOctet(token);
+    if (value === null) return 'invalid';
+    values.push(value);
+  }
+  const last = values[values.length - 1];
+  let addr = 0;
+  for (let i = 0; i < values.length - 1; i++) {
+    if (values[i] > 0xff) return 'invalid';
+    addr = addr * 256 + values[i];
+  }
+  const remainingOctets = 4 - (values.length - 1);
+  const lastMax = 2 ** (8 * remainingOctets) - 1;
+  if (last > lastMax) return 'invalid';
+  addr = addr * 2 ** (8 * remainingOctets) + last;
+  return addr; // 0 .. 0xffffffff
+}
+
+function numberToDottedIpv4(addr: number): string {
+  return [(addr >>> 24) & 0xff, (addr >>> 16) & 0xff, (addr >>> 8) & 0xff, addr & 0xff].join('.');
+}
+
 /**
  * True when a URL hostname (possibly `[..]`-bracketed IPv6) is a literal that must never be a
  * fetch/image target: `localhost` / `*.localhost` / `*.local`, or a blocked IP literal. This is
@@ -180,7 +237,16 @@ export function isBlockedHostLiteral(hostname: string): boolean {
   if (wasBracketed && family !== 6) return true;
   const blockedName =
     bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
-  return blockedName || (family !== 0 && isBlockedIpAddress(bareHost));
+  if (blockedName) return true;
+  if (family !== 0) return isBlockedIpAddress(bareHost);
+  // inet_aton-style numeric hosts (decimal 2130706433, hex 0x7f000001, octal 017700000001,
+  // short-dotted 127.1 / 10.0.1, mixed 0x7f.0.0.1) all address an IPv4 that a naive dotted-quad
+  // check misses. WHATWG `new URL` already normalizes these to dotted form, but this hardens the
+  // shared guard for direct / non-URL callers. A numeric-looking host that fails to parse is
+  // refused (fail-closed) rather than treated as an allowed hostname.
+  const numeric = parseInetIpv4(bareHost);
+  if (numeric === 'not-numeric') return false;
+  return numeric === 'invalid' ? true : isBlockedIpAddress(numberToDottedIpv4(numeric));
 }
 
 /**

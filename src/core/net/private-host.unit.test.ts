@@ -71,6 +71,26 @@ describe('isBlockedHostLiteral', () => {
     expect(isBlockedHostLiteral('images.example.edu')).toBe(false);
     expect(isBlockedHostLiteral('8.8.8.8')).toBe(false);
   });
+  it('blocks inet_aton-style numeric encodings of a private IPv4 (decimal/hex/octal/short/mixed)', () => {
+    // All of these address 127.0.0.1 (or 10.0.0.1) that a dotted-quad-only check would miss.
+    expect(isBlockedHostLiteral('2130706433')).toBe(true); // decimal 32-bit
+    expect(isBlockedHostLiteral('0x7f000001')).toBe(true); // hex 32-bit
+    expect(isBlockedHostLiteral('017700000001')).toBe(true); // octal 32-bit
+    expect(isBlockedHostLiteral('127.1')).toBe(true); // short dotted
+    expect(isBlockedHostLiteral('10.0.1')).toBe(true); // short dotted -> 10.0.0.1
+    expect(isBlockedHostLiteral('0x7f.0.0.1')).toBe(true); // mixed hex + decimal
+  });
+  it('fails closed on numeric-looking hosts that do not parse, without touching real domains', () => {
+    expect(isBlockedHostLiteral('0x')).toBe(true); // empty hex
+    expect(isBlockedHostLiteral('08')).toBe(true); // bad octal digit
+    expect(isBlockedHostLiteral('999999999999')).toBe(true); // overflows 32 bits
+    expect(isBlockedHostLiteral('1.2.3.4.5')).toBe(true); // too many numeric octets
+    // Real domains whose labels happen to be all-hex letters must stay on the hostname path
+    // (no 0x prefix, not pure digits) — they are NOT numeric forms.
+    expect(isBlockedHostLiteral('abc.de')).toBe(false);
+    expect(isBlockedHostLiteral('dead.beef')).toBe(false);
+    expect(isBlockedHostLiteral('example.com')).toBe(false);
+  });
   it('strips the IPv6 zone id and fails closed on unparseable bracketed literals', () => {
     // Zone id (%25eth0 = %eth0) must be stripped before parsing, then the link-local address is
     // still recognized and blocked.
@@ -121,6 +141,9 @@ describe('isPublicHttpUrl', () => {
       'http://[64:ff9b::a9fe:a9fe]/x.png',
       'http://localhost./x.png', // trailing FQDN dot must not bypass
       'http://printer.local./x.png',
+      'http://2130706433/x.png', // decimal-encoded 127.0.0.1
+      'http://0x7f000001/x.png', // hex-encoded 127.0.0.1
+      'http://127.1/x.png', // short-dotted 127.0.0.1
     ]) {
       expect(isPublicHttpUrl(url)).toBe(false);
     }
