@@ -312,6 +312,8 @@ async function releaseSubscriptionLease(db: Db, lease: SubscriptionLease): Promi
  * Discovers with an anti-join, never with a dispatch_seq watermark. Drains in
  * bounded batches (YUK-751 OCR major Tcd9r) — one tx each, re-fencing the lease,
  * like bootstrap — so a large backlog can't load/insert unboundedly in one tx.
+ * Each batch is a single set-based `INSERT … SELECT` with delivery_seq allocated by
+ * row_number() (TdYuZ) — no per-row round-trips and no app-side dispatch_seq handling.
  * The checkpoint lock serializes delivery_seq allocation for this one subscriber.
  */
 export async function discoverSubscriptionDeliveries(
@@ -347,41 +349,46 @@ export async function discoverSubscriptionDeliveries(
       const checkpoint = checkpoints[0];
       if (!checkpoint) return 0; // lease lost / no longer active → stop draining, keep what's done
 
-      const sources = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
-        select e.id, e.dispatch_seq
-        from event e
-        where e.action in (${actionList})
-          and not exists (
-            select 1
-            from event_subscription_delivery d
-            where d.subscriber_id = ${subscription.id}
-              and d.subscriber_version = ${subscription.version}
-              and d.source_event_id = e.id
-          )
-        order by e.dispatch_seq, e.id
-        limit ${DISCOVERY_BATCH_SIZE}
+      // Set-based batch (TdYuZ): the anti-join picks up to LIMIT undelivered events ordered by
+      // dispatch_seq, and row_number() allocates delivery_seq contiguously from next_delivery_seq —
+      // never crossing dispatch_seq into app code (it stays `e.dispatch_seq` in SQL). The lease fence
+      // serializes discovery per subscriber, so ON CONFLICT never fires (belt-and-braces).
+      const baseSeq = asBigint(checkpoint.next_delivery_seq);
+      const insertedRows = await tx.execute<{ delivery_seq: string }>(sql`
+        with candidates as (
+          select e.id, e.dispatch_seq,
+            (${baseSeq}::bigint - 1) + row_number() over (order by e.dispatch_seq, e.id) as delivery_seq
+          from event e
+          where e.action in (${actionList})
+            and not exists (
+              select 1
+              from event_subscription_delivery d
+              where d.subscriber_id = ${subscription.id}
+                and d.subscriber_version = ${subscription.version}
+                and d.source_event_id = e.id
+            )
+          order by e.dispatch_seq, e.id
+          limit ${DISCOVERY_BATCH_SIZE}
+        )
+        insert into event_subscription_delivery
+          (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq, status)
+        select ${subscription.id}, ${subscription.version}, c.id, c.dispatch_seq, c.delivery_seq, 'pending'
+        from candidates c
+        on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
+        returning delivery_seq
       `);
-
-      let nextDeliverySeq = asBigint(checkpoint.next_delivery_seq);
-      let inserted = 0;
-      for (const source of sources) {
-        const rows = await tx.execute(sql`
-          insert into event_subscription_delivery
-            (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq, status)
-          values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
-            ${nextDeliverySeq}, 'pending')
-          on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
-          returning source_event_id
-        `);
-        if (rows.length === 1) {
-          nextDeliverySeq += 1n;
-          inserted += 1;
-        }
-      }
+      const inserted = insertedRows.length;
       if (inserted > 0) {
+        // Advance to max(delivery_seq)+1 (robust against any gap) under the same lease fence.
         const advanced = await tx.execute(sql`
           update event_subscription_checkpoint
-          set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
+          set next_delivery_seq = (
+                select coalesce(max(delivery_seq), 0) + 1
+                from event_subscription_delivery
+                where subscriber_id = ${subscription.id}
+                  and subscriber_version = ${subscription.version}
+              ),
+              updated_at = clock_timestamp()
           where subscriber_id = ${subscription.id}
             and subscriber_version = ${subscription.version}
             and declaration_hash = ${declarationHash}
@@ -700,6 +707,14 @@ export async function runSubscriptionDispatchCycle(
   assertPositiveInteger(options.maxAttempts, 'maxAttempts');
   if (options.handlerTimeoutMs !== undefined) {
     assertPositiveFinite(options.handlerTimeoutMs, 'handlerTimeoutMs');
+    // G2 (TdYuS) — a caller-provided timeout must ALSO stay below the lease TTL (the module-load
+    // assertion only covers DEFAULT_HANDLER_TIMEOUT_MS), or a slow handler outlives its lease and a
+    // concurrent worker double-processes the delivery.
+    if (options.handlerTimeoutMs >= LEASE_TTL_SECONDS * 1000) {
+      throw new Error(
+        `event subscription dispatch option 'handlerTimeoutMs' (${options.handlerTimeoutMs}ms) must stay below the lease TTL (${LEASE_TTL_SECONDS}s)`,
+      );
+    }
   }
   if (options.retryDelaySeconds !== undefined) {
     assertPositiveFinite(options.retryDelaySeconds, 'retryDelaySeconds');
@@ -727,6 +742,11 @@ export async function runSubscriptionDispatchCycle(
       if (!lease) continue;
       try {
         await discoverSubscriptionDeliveries(db, registry, subscription, lease);
+        // G1 (TdS7R) — a long discovery can burn most of the checkpoint lease TTL. Renew it before the
+        // claim + handler so they run against a fresh lease window, not one about to expire (which
+        // would phantom lost_lease AFTER the handler's real side effects). Renewal failure = the lease
+        // is already gone → skip this subscriber (the finally still releases best-effort).
+        if (!(await renewSubscriptionLease(db, lease))) continue;
         const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
         if (!claim) continue;
 
@@ -757,7 +777,16 @@ export async function runSubscriptionDispatchCycle(
           else result.lostLease += 1; // 'lost_lease'
         }
       } finally {
-        await releaseSubscriptionLease(db, lease);
+        // G6 (TdYuW) — a release failure must NEVER mask the handler outcome or surface as the cycle's
+        // error; swallow + log (the lease self-expires at its TTL regardless).
+        try {
+          await releaseSubscriptionLease(db, lease);
+        } catch (releaseErr) {
+          console.error('[event-subscriptions] lease release failed (non-fatal)', {
+            subscriber: `${subscription.id}@v${subscription.version}`,
+            error: releaseErr,
+          });
+        }
       }
     } catch (error) {
       console.error(

@@ -209,6 +209,14 @@ describe('YUK-751 durable event subscription runtime', () => {
         handlerTimeoutMs: Number.NaN,
       }),
     ).rejects.toThrow(/handlerTimeoutMs/);
+    // G2 (TdYuS) — a finite-but-too-large caller timeout (>= lease TTL) is also rejected.
+    await expect(
+      runSubscriptionDispatchCycle(testDb(), registry(), {
+        owner: 'w',
+        maxAttempts: 2,
+        handlerTimeoutMs: 200_000,
+      }),
+    ).rejects.toThrow(/handlerTimeoutMs.*lease TTL/);
   });
 
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {

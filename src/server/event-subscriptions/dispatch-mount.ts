@@ -54,10 +54,20 @@ export async function mountSubscriptionDispatch(
       // Tc4HL — log the cycle result (counts + duration) so the dispatcher is observable; a
       // dead-lettered delivery is a real handler failure that needs attention → warn.
       const startedAt = Date.now();
-      const cycle = await runSubscriptionDispatchCycle(db, registry, { owner, maxAttempts });
-      const durationMs = Date.now() - startedAt;
-      const log = cycle.deadLettered > 0 ? console.warn : console.info;
-      log('[event-subscriptions] dispatch cycle', { ...cycle, durationMs });
+      try {
+        const cycle = await runSubscriptionDispatchCycle(db, registry, { owner, maxAttempts });
+        const durationMs = Date.now() - startedAt;
+        const log = cycle.deadLettered > 0 ? console.warn : console.info;
+        log('[event-subscriptions] dispatch cycle', { ...cycle, durationMs });
+      } catch (err) {
+        // G5 (TdYuQ) — log with context, then RETHROW so pg-boss marks the job failed (retry +
+        // visibility) instead of the error vanishing.
+        console.error('[event-subscriptions] dispatch cycle failed', {
+          durationMs: Date.now() - startedAt,
+          error: err,
+        });
+        throw err;
+      }
     },
   );
   // Tc4HM — align tz with the codebase's boss.schedule convention (Asia/Shanghai). Cadence is not

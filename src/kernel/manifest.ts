@@ -359,11 +359,13 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
       // this produced nonsensical errors like "'@v1' has invalid id" or "'foo@vundefined' has
       // invalid version" when the offending field was the empty/invalid one (YUK-751 review).
       if (subscription.id.trim().length === 0) {
-        throw new Error(`event subscription has invalid id '${subscription.id}'`);
+        throw new Error(
+          `capability '${cap.name}' has an event subscription with invalid id '${subscription.id}'`,
+        );
       }
       if (!Number.isInteger(subscription.version) || subscription.version <= 0) {
         throw new Error(
-          `event subscription '${subscription.id}' has invalid version ${subscription.version}`,
+          `capability '${cap.name}' event subscription '${subscription.id}' has invalid version ${subscription.version}`,
         );
       }
       const identity = `${subscription.id}@v${subscription.version}`;
