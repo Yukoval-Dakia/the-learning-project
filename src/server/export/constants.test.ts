@@ -49,7 +49,7 @@ describe('export constants', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 45 tables in topological order', () => {
+  it('FK_ORDER lists all 49 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,

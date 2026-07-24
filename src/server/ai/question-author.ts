@@ -21,7 +21,6 @@
 // paper by calling this repeatedly), in deliberate contrast to
 // record_promotion's pendingProposalWithCooldown.
 
-import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { z } from 'zod';
 
@@ -46,6 +45,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   bindGeneratedQuestion,
+  canonicalSourceContentHash,
   markQuestionGenerationFailed,
   prepareQuestionGeneration,
 } from '@/server/questions/question-generation-grounding';
@@ -222,7 +222,10 @@ export async function runQuestionAuthor(
   let result: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>>;
   let draft: QuestionAuthorDraftT;
   if (seed.seed_mode === 'material' && seed.material_body_md && seed.material_answer_anchor) {
-    const sourceHash = `sha256:${createHash('sha256').update(seed.material_body_md).digest('hex')}`;
+    // Inline material IS the authoritative source; hash its exact UTF-8 bytes so
+    // the recorded content_hash is byte-bound to what validates the locator.
+    const authoritativeBytes = new TextEncoder().encode(seed.material_body_md);
+    const sourceHash = canonicalSourceContentHash(authoritativeBytes);
     let generationResult: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>> | undefined;
     preparedGrounding = await prepareQuestionGeneration(db, {
       source: {
@@ -232,9 +235,9 @@ export async function runQuestionAuthor(
         content_hash: sourceHash,
         locator: seed.material_answer_anchor.locator,
       },
-      // Inline material IS the authoritative source; its UTF-8 bytes validate
-      // the locator centrally (fail-closed, never bypassed) — Finding 2.
-      authoritativeBytes: new TextEncoder().encode(seed.material_body_md),
+      // Its UTF-8 bytes validate the locator centrally (fail-closed, never
+      // bypassed) and bind the content_hash above — Finding 2.
+      authoritativeBytes,
       canonicalAnswer: seed.material_answer_anchor.canonical_answer,
       anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
       demand: { kind: 'knowledge', ref_id: validIds[0] },
@@ -313,7 +316,7 @@ export async function runQuestionAuthor(
           questionId,
           plan: preparedGrounding.plan,
           anchor: preparedGrounding.anchor,
-          generated: { kind: draft.kind, reference_md: normalized.reference_md },
+          generated: { kind: draft.kind },
         });
       }
 

@@ -77,20 +77,36 @@ export function validateSourceLocatorBytes(
     );
   }
   if (locator.kind === 'text_span' || locator.kind === 'page_text_span') {
-    // Half-open [start, end): end is exclusive, in UTF-8 bytes.
+    // Half-open [start, end): end is exclusive, in UTF-8 bytes. This function
+    // accepts the inferred TS type (not the Zod schema) and runs BEFORE Zod
+    // parsing, so it re-checks the offset bounds Zod would otherwise enforce —
+    // a negative start would wrap in Uint8Array.subarray and read from the end.
     if (locator.end <= locator.start) {
       throw new SourceLocatorValidationError('source locator end must be greater than start');
+    }
+    if (locator.start < 0) {
+      throw new SourceLocatorValidationError(
+        'source locator start must be a non-negative byte offset',
+      );
     }
     if (locator.end > authoritativeBytes.length) {
       throw new SourceLocatorValidationError(
         'source locator end exceeds authoritative source byte length',
       );
     }
-    // fatal:false so a boundary that splits a codepoint decodes to U+FFFD and
-    // therefore cannot equal the recorded exact_text — the mismatch is rejected.
-    const decoded = new TextDecoder('utf-8', { fatal: false }).decode(
-      authoritativeBytes.subarray(locator.start, locator.end),
-    );
+    // fatal:true so a boundary that splits a multibyte codepoint FAILS to decode
+    // rather than silently yielding U+FFFD — otherwise an exact_text of '�' would
+    // smuggle an illegal byte range past the equality check below.
+    let decoded: string;
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true }).decode(
+        authoritativeBytes.subarray(locator.start, locator.end),
+      );
+    } catch {
+      throw new SourceLocatorValidationError(
+        'source locator boundaries split an invalid UTF-8 sequence',
+      );
+    }
     if (decoded !== locator.exact_text) {
       throw new SourceLocatorValidationError(
         'source locator byte range does not decode to the recorded exact_text',
@@ -171,7 +187,11 @@ export function structurallyVerifyGeneratedQuestion(input: {
   binding: QuestionGenerationBindingT;
   plan: QuestionGenerationPlanT;
   anchor: QuestionAnswerAnchorT | null;
-  generated: { kind: string; reference_md: string };
+  // Only the generated `kind` participates in the structural veto. The reference
+  // answer is deliberately NOT compared here: that is objective correctness,
+  // which stays `unverified` until a proven comparator policy exists (see
+  // NO_COMPARATOR_POLICY). Carrying reference_md would falsely imply it is checked.
+  generated: { kind: string };
 }): StructuralObjectiveVerificationT {
   const vetoes: string[] = [];
   if (!matches(input.binding.plan, input.plan)) vetoes.push('generation_plan_binding_mismatch');

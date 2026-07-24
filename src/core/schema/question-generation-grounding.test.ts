@@ -114,7 +114,7 @@ describe('question generation grounding contracts (YUK-350)', () => {
       binding,
       plan,
       anchor: { ...anchor, content_hash: 'sha256:changed' },
-      generated: { kind: 'fill_blank', reference_md: '北京' },
+      generated: { kind: 'fill_blank' },
     });
 
     expect(result).toEqual({
@@ -130,7 +130,7 @@ describe('question generation grounding contracts (YUK-350)', () => {
       binding,
       plan,
       anchor,
-      generated: { kind: 'fill_blank', reference_md: '北京' },
+      generated: { kind: 'fill_blank' },
     });
 
     expect(result).toEqual({
@@ -146,7 +146,7 @@ describe('question generation grounding contracts (YUK-350)', () => {
       binding,
       plan,
       anchor: null,
-      generated: { kind: 'fill_blank', reference_md: '北京' },
+      generated: { kind: 'fill_blank' },
     });
 
     expect(result.disposition).toBe('reject');
@@ -177,12 +177,30 @@ describe('validateSourceLocatorBytes — half-open UTF-8 byte semantics (YUK-350
   });
 
   it('rejects a boundary that splits a codepoint (byte offset lands mid-character)', () => {
-    // [0, 4) cuts '而' in half → decodes to U+FFFD, never equals '学而'.
+    // [0, 4) cuts '而' in half → fatal decode throws, never reaching exact_text.
     expect(() => validateSourceLocatorBytes(textSpan(0, 4, '学而'), bytes)).toThrow(
       SourceLocatorValidationError,
     );
-    // A UTF-16-style offset (end=2 for the 2-char '学而') under-reads in bytes.
-    expect(() => validateSourceLocatorBytes(textSpan(0, 2, '学而'), bytes)).toThrow(/exact_text/);
+    // A valid multibyte span whose recorded exact_text is wrong rejects on the
+    // exact_text mismatch branch: bytes [0,6) decode to '学而', not '学之'.
+    expect(() => validateSourceLocatorBytes(textSpan(0, 6, '学之'), bytes)).toThrow(/exact_text/);
+  });
+
+  it('rejects an exact_text of U+FFFD smuggling a split byte range (fatal decode)', () => {
+    // [0, 1) is a lone UTF-8 lead byte. A lenient decoder would yield '�' and a
+    // caller could set exact_text='�' to pass — fatal decode must reject instead.
+    expect(new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, 1))).toBe('�');
+    expect(() => validateSourceLocatorBytes(textSpan(0, 1, '�'), bytes)).toThrow(
+      /split an invalid UTF-8 sequence/,
+    );
+  });
+
+  it('rejects a negative start offset (subarray would wrap from the end)', () => {
+    // The function runs before Zod, so a negative start must be caught here — a
+    // raw Uint8Array.subarray(-1, 6) would wrap and read unexpected bytes.
+    expect(() => validateSourceLocatorBytes(textSpan(-1, 6, '学而'), bytes)).toThrow(
+      /non-negative byte offset/,
+    );
   });
 
   it('treats [start, end) as half-open: end is exclusive and may equal the byte length', () => {

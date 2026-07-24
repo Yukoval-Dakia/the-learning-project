@@ -147,7 +147,7 @@ export const FK_ORDER = [
   'source_asset',
   'source_document',
   // YUK-350 — immutable authored generation provenance. Anchor precedes plan;
-  // generated questions bind exact versions/hashes. NEW tables bump 4.14 → 4.15.
+  // generated questions bind exact versions/hashes. NEW tables bump 4.15 → 4.16.
   'question_answer_anchor',
   'question_generation_plan',
   'question_generation_binding',

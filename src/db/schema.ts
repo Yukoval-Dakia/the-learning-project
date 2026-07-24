@@ -288,29 +288,54 @@ export const question_generation_plan = pgTable(
     primaryKey({ columns: [t.id, t.version] }),
     uniqueIndex('question_generation_plan_content_hash_uq').on(t.content_hash),
     index('question_generation_plan_anchor_idx').on(t.answer_anchor_id, t.answer_anchor_version),
+    // Mirror the migration's DB-level CHECK so schema.ts stays the truth source
+    // for the status invariant (matches 0077 constraint name + allowed values).
+    check(
+      'question_generation_plan_status_ck',
+      sql`${t.status} IN ('pending_generation','generated','failed','superseded')`,
+    ),
   ],
 );
 
 // Exact immutable provenance bound to the generated question. Comparator "none"
 // is an explicit default-deny policy: structural no-veto still requires review.
-export const question_generation_binding = pgTable('question_generation_binding', {
-  question_id: text('question_id').primaryKey(),
-  plan_id: text('plan_id').notNull(),
-  plan_version: integer('plan_version').notNull(),
-  plan_hash: text('plan_hash').notNull(),
-  answer_anchor_id: text('answer_anchor_id').notNull(),
-  answer_anchor_version: integer('answer_anchor_version').notNull(),
-  answer_anchor_hash: text('answer_anchor_hash').notNull(),
-  comparator_policy_id: text('comparator_policy_id').notNull(),
-  comparator_policy_version: integer('comparator_policy_version').notNull(),
-  comparator_policy_hash: text('comparator_policy_hash').notNull(),
-  validation_status: text('validation_status', {
-    enum: ['pending', 'needs_review', 'rejected', 'verified'],
-  }).notNull(),
-  structural_status: text('structural_status', { enum: ['no_veto', 'vetoed'] }).notNull(),
-  objective_correctness: text('objective_correctness', { enum: ['unverified'] }).notNull(),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-});
+export const question_generation_binding = pgTable(
+  'question_generation_binding',
+  {
+    question_id: text('question_id').primaryKey(),
+    plan_id: text('plan_id').notNull(),
+    plan_version: integer('plan_version').notNull(),
+    plan_hash: text('plan_hash').notNull(),
+    answer_anchor_id: text('answer_anchor_id').notNull(),
+    answer_anchor_version: integer('answer_anchor_version').notNull(),
+    answer_anchor_hash: text('answer_anchor_hash').notNull(),
+    comparator_policy_id: text('comparator_policy_id').notNull(),
+    comparator_policy_version: integer('comparator_policy_version').notNull(),
+    comparator_policy_hash: text('comparator_policy_hash').notNull(),
+    validation_status: text('validation_status', {
+      enum: ['pending', 'needs_review', 'rejected', 'verified'],
+    }).notNull(),
+    structural_status: text('structural_status', { enum: ['no_veto', 'vetoed'] }).notNull(),
+    objective_correctness: text('objective_correctness', { enum: ['unverified'] }).notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // Mirror the migration's DB-level CHECKs so schema.ts stays the truth source
+    // for these status invariants (matches 0077 constraint names + allowed values).
+    check(
+      'question_generation_binding_validation_status_ck',
+      sql`${t.validation_status} IN ('pending','needs_review','rejected','verified')`,
+    ),
+    check(
+      'question_generation_binding_structural_status_ck',
+      sql`${t.structural_status} IN ('no_veto','vetoed')`,
+    ),
+    check(
+      'question_generation_binding_objective_correctness_ck',
+      sql`${t.objective_correctness} = 'unverified'`,
+    ),
+  ],
+);
 
 // Phase 1c.1 Step 9.J — `ingestion_session` table DROPped. Sessions now live
 // in `learning_session(type='ingestion')` (ADR-0008). The `question_block.

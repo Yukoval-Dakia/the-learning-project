@@ -7612,7 +7612,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "question_generation_plan_status_ck": {
+          "name": "question_generation_plan_status_ck",
+          "value": "\"question_generation_plan\".\"status\" IN ('pending_generation','generated','failed','superseded')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.question_generation_binding": {
@@ -7709,7 +7714,20 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "question_generation_binding_validation_status_ck": {
+          "name": "question_generation_binding_validation_status_ck",
+          "value": "\"question_generation_binding\".\"validation_status\" IN ('pending','needs_review','rejected','verified')"
+        },
+        "question_generation_binding_structural_status_ck": {
+          "name": "question_generation_binding_structural_status_ck",
+          "value": "\"question_generation_binding\".\"structural_status\" IN ('no_veto','vetoed')"
+        },
+        "question_generation_binding_objective_correctness_ck": {
+          "name": "question_generation_binding_objective_correctness_ck",
+          "value": "\"question_generation_binding\".\"objective_correctness\" = 'unverified'"
+        }
+      },
       "isRLSEnabled": false
     }
   },

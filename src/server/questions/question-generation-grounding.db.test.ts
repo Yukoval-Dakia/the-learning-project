@@ -10,6 +10,7 @@ import {
 import { resetDb } from '../../../tests/helpers/db';
 import {
   bindGeneratedQuestion,
+  canonicalSourceContentHash,
   markQuestionGenerationFailed,
   prepareQuestionGeneration,
 } from './question-generation-grounding';
@@ -20,7 +21,9 @@ const source = {
   artifact_kind: 'source_document',
   artifact_id: 'doc_1',
   version: 3,
-  content_hash: 'sha256:doc-v3',
+  // content_hash is byte-bound to the authoritative source (Finding M4): it must
+  // equal the canonical hash of authoritativeBytes or prepare fails closed.
+  content_hash: canonicalSourceContentHash(authoritativeBytes),
   locator: { kind: 'text_span' as const, start: 0, end: 6, exact_text: '北京' },
 };
 
@@ -66,12 +69,14 @@ describe('question generation grounding persistence (YUK-350)', () => {
       generate: async () => 'generated',
     });
 
-    const binding = await bindGeneratedQuestion(db, {
-      questionId: 'q_1',
-      plan: prepared.plan,
-      anchor: prepared.anchor,
-      generated: { kind: 'fill_blank', reference_md: '北京' },
-    });
+    const binding = await db.transaction((tx) =>
+      bindGeneratedQuestion(tx, {
+        questionId: 'q_1',
+        plan: prepared.plan,
+        anchor: prepared.anchor,
+        generated: { kind: 'fill_blank' },
+      }),
+    );
 
     const [row] = await db.select().from(question_generation_binding);
     expect(row).toMatchObject({
@@ -99,23 +104,27 @@ describe('question generation grounding persistence (YUK-350)', () => {
     });
 
     await expect(
-      bindGeneratedQuestion(db, {
-        questionId: 'q_bad',
-        plan: prepared.plan,
-        anchor: { ...prepared.anchor, id: 'fabricated' },
-        generated: { kind: 'fill_blank', reference_md: '北京' },
-      }),
+      db.transaction((tx) =>
+        bindGeneratedQuestion(tx, {
+          questionId: 'q_bad',
+          plan: prepared.plan,
+          anchor: { ...prepared.anchor, id: 'fabricated' },
+          generated: { kind: 'fill_blank' },
+        }),
+      ),
     ).rejects.toThrow(/anchor/);
     await db
       .delete(question_generation_plan)
       .where(eq(question_generation_plan.id, prepared.plan.id));
     await expect(
-      bindGeneratedQuestion(db, {
-        questionId: 'q_missing',
-        plan: prepared.plan,
-        anchor: prepared.anchor,
-        generated: { kind: 'fill_blank', reference_md: '北京' },
-      }),
+      db.transaction((tx) =>
+        bindGeneratedQuestion(tx, {
+          questionId: 'q_missing',
+          plan: prepared.plan,
+          anchor: prepared.anchor,
+          generated: { kind: 'fill_blank' },
+        }),
+      ),
     ).rejects.toThrow(/persisted/);
     expect(await db.select().from(question_generation_binding)).toEqual([]);
   });
@@ -147,6 +156,25 @@ describe('question generation grounding persistence (YUK-350)', () => {
         generate,
       }),
     ).rejects.toThrow();
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(await db.select().from(question_answer_anchor)).toEqual([]);
+    expect(await db.select().from(question_generation_plan)).toEqual([]);
+  });
+
+  it('rejects a source content_hash that is not the canonical hash of the authoritative bytes (M4)', async () => {
+    await resetDb();
+    const generate = vi.fn(async () => 'generated');
+
+    await expect(
+      prepareQuestionGeneration(db, {
+        ...baseInput,
+        // Locator/bytes are valid, but the recorded provenance hash claims a
+        // different source — the byte-binding boundary must reject before writes.
+        source: { ...source, content_hash: 'sha256:claims-a-different-source' },
+        generate,
+      }),
+    ).rejects.toThrow(/content_hash does not match/);
 
     expect(generate).not.toHaveBeenCalled();
     expect(await db.select().from(question_answer_anchor)).toEqual([]);
@@ -203,7 +231,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
             questionId: 'q_loser',
             plan: prepared.plan,
             anchor: prepared.anchor,
-            generated: { kind: 'fill_blank', reference_md: '北京' },
+            generated: { kind: 'fill_blank' },
           });
         }),
       ).rejects.toThrow();
@@ -227,7 +255,7 @@ describe('question generation grounding persistence (YUK-350)', () => {
           questionId: 'q_winner',
           plan: prepared.plan,
           anchor: prepared.anchor,
-          generated: { kind: 'fill_blank', reference_md: '北京' },
+          generated: { kind: 'fill_blank' },
         });
         // Concurrent failure marker on a separate connection: it must block on
         // the locked row until this transaction commits.

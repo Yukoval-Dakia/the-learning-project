@@ -6,6 +6,7 @@ import {
   type QuestionAnswerAnchorT,
   QuestionGenerationPlan,
   type QuestionGenerationPlanT,
+  SourceLocatorValidationError,
   structurallyVerifyGeneratedQuestion,
   validateSourceLocatorBytes,
 } from '@/core/schema/question-generation-grounding';
@@ -29,6 +30,16 @@ function stableStringify(value: unknown): string {
 
 function contentHash(value: unknown): string {
   return `sha256:${createHash('sha256').update(stableStringify(value)).digest('hex')}`;
+}
+
+/**
+ * Canonical content hash of authoritative source bytes: `sha256:<hex>`. The one
+ * authority binding a persisted provenance `content_hash` to the exact bytes a
+ * locator was validated against — so a caller cannot address bytes from source A
+ * while recording a `content_hash` minted from source B.
+ */
+export function canonicalSourceContentHash(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
 export interface PrepareQuestionGenerationInput<T> {
@@ -61,6 +72,19 @@ export async function prepareQuestionGeneration<T>(
   // Fail closed on an unvalidatable locator BEFORE any anchor/plan write or
   // generation call — the generic path cannot bypass source-locator validation.
   validateSourceLocatorBytes(input.source.locator, input.authoritativeBytes);
+  // Bind the recorded provenance hash to the exact validated bytes: the caller-
+  // supplied content_hash MUST be the canonical hash of the authoritative source
+  // bytes, else the locator could address bytes from A while provenance claims B.
+  // authoritativeBytes is non-null here — validateSourceLocatorBytes fails closed
+  // on null above; the guard also narrows the type for the hash call.
+  if (
+    input.authoritativeBytes &&
+    canonicalSourceContentHash(input.authoritativeBytes) !== input.source.content_hash
+  ) {
+    throw new SourceLocatorValidationError(
+      'source content_hash does not match the canonical hash of the authoritative bytes',
+    );
+  }
   const now = new Date();
   const anchorCore = {
     id: createId(),
@@ -154,14 +178,19 @@ const NO_COMPARATOR_POLICY = {
   content_hash: 'sha256:no-proven-objective-comparator-v1',
 } as const;
 
-/** Persist the exact provenance tuple without claiming objective correctness. */
+/**
+ * Persist the exact provenance tuple without claiming objective correctness.
+ * Requires a `Tx`: the FOR UPDATE lock below only spans the select→insert→update
+ * sequence when they share one transaction — under a bare `Db` the lock releases
+ * at select end and a concurrent failure marker could interleave.
+ */
 export async function bindGeneratedQuestion(
-  db: Db | Tx,
+  db: Tx,
   input: {
     questionId: string;
     plan: QuestionGenerationPlanT;
     anchor: QuestionAnswerAnchorT;
-    generated: { kind: string; reference_md: string };
+    generated: { kind: string };
   },
 ) {
   if (
