@@ -16,7 +16,7 @@ import {
   COPILOT_RUN_TABLE,
   deriveCopilotRunStatus,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
@@ -97,6 +97,37 @@ const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db
 // 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
 function mcpMock() {
   return vi.fn(() => ({ type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME }) as never);
+}
+
+// E2 seam (YUK-765) — wrap testDb() so the Nth `job_events` INSERT rejects, simulating a post-reply
+// advisory job-event write failure. Every other operation (the `event`-table writeCopilotReply, the
+// STARTED job_event, the materializing-tool SELECT) passes straight through to the real db, so the
+// reply is genuinely durable before the advisory write blows up. `returning()` is where writeJobEvent
+// awaits, so rejecting there throws from inside writeJobEvent exactly as a real DB failure would.
+function dbFailingOnNthJobEventInsert(n: number) {
+  const real = testDb();
+  let jobEventInserts = 0;
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === 'insert') {
+        return (table: unknown) => {
+          if (table === job_events) {
+            jobEventInserts += 1;
+            if (jobEventInserts === n) {
+              return {
+                values: () => ({
+                  returning: () => Promise.reject(new Error('advisory job_event write boom')),
+                }),
+              };
+            }
+          }
+          return (target as typeof real).insert(table as never);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as typeof real;
 }
 
 const baseData: CopilotRunJobData = {
@@ -210,6 +241,90 @@ describe('runCopilotRun', () => {
     const done = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
     expect(reply?.payload).toMatchObject({ checkpoint_event_id: runId });
     expect(done?.payload).toMatchObject({ checkpoint_event_id: runId });
+  });
+
+  // YUK-765 (YUK-497 W7 · E1 / Tdtyw · commit 5859dde6) — regression pin for handleDurableFailure's
+  // anchor suppression. A terminal-FAILED can follow a PARTIAL run that ALREADY called a materializing
+  // tool (its tool_use mirror chains to runId), so the FAILED job event must SUPPRESS
+  // checkpoint_event_id exactly like the success path — otherwise the SSE events endpoint renders a
+  // revert button that 409s / orphans the materialized row. Pre-fix the FAILED payload carried the
+  // anchor UNCONDITIONALLY. streamMock({partial}) drives the graceful-degrade → handleDurableFailure.
+  it('E1 — partial-FAILED run that materialized a tool suppresses checkpoint_event_id (Tdtyw)', async () => {
+    const runId = 'copilot_user_ask_mat_fail';
+    await seedToolUseMirror(runId, 'author_question');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_mat_fail' },
+      streamTaskCollectingFn: streamMock('半程后失败', {
+        partial: true,
+        error: 'stream drop',
+      }) as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('failed');
+
+    const events = await replay(runId);
+    const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    // E1 red line — the anchor is OMITTED because the run materialized a row cascade-revert can't undo.
+    expect(failed?.payload).not.toHaveProperty('checkpoint_event_id');
+  });
+
+  // YUK-765 (E1 paired negative) — a partial-FAILED run whose only tool was propose-only (a pure event
+  // write, cascade-compensable via the deferred accept) is NOT materialized, so the FAILED anchor is
+  // RETAINED — same predicate the success path keys on. Guards the suppression against over-firing.
+  it('E1 — partial-FAILED propose-only run retains checkpoint_event_id', async () => {
+    const runId = 'copilot_user_ask_prop_fail';
+    await seedToolUseMirror(runId, 'propose_knowledge_edge');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_prop_fail' },
+      streamTaskCollectingFn: streamMock('半程后失败', {
+        partial: true,
+        error: 'stream drop',
+      }) as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('failed');
+
+    const events = await replay(runId);
+    const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({ reason: 'exhausted', checkpoint_event_id: runId });
+  });
+
+  // YUK-765 (YUK-497 W7 · E2 / TeA_G · commit 5859dde6) — once the copilot_reply domain event is
+  // persisted the run has SUCCEEDED; the trailing SSE job_events + revert anchor are ADVISORY. A throw
+  // there must degrade IN PLACE (log + still return success), NOT fall to the outer catch →
+  // handleDurableFailure, which would chain a SECOND copilot_reply AND write a bogus FAILED terminal
+  // against the same ask. The proxy fails the DONE job-event write (3rd job_events INSERT: STARTED,
+  // REPLY, DONE) — strictly after writeCopilotReply persisted the reply to the event table.
+  it('E2 — post-reply advisory job-event failure degrades in place: no 2nd reply, no FAILED (TeA_G)', async () => {
+    const runId = 'copilot_user_ask_advisory_fail';
+    const sessionId = 'sess_advisory_fail';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = await runCopilotRun({
+      db: dbFailingOnNthJobEventInsert(3),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: streamMock('这是回答') as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+
+    // The reply is durable → the run still reports success.
+    expect(result).toMatchObject({ status: 'done', reply: '这是回答' });
+    // Exactly one copilot_reply — the advisory failure did NOT re-enter the phantom-reply writer.
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    // No bogus FAILED terminal; the advisory failure never became a run failure.
+    const events = await replay(runId);
+    const types = events.map((e) => e.event_type);
+    expect(types).not.toContain(COPILOT_RUN_EVENTS.FAILED);
+    expect(types).toEqual([COPILOT_RUN_EVENTS.STARTED, COPILOT_RUN_EVENTS.REPLY]);
+    // The degrade path logged the non-fatal advisory error (evidence the in-place branch ran).
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('F1 — primary_view marker 在 domain event 与 job_events 里都被剥掉', async () => {
