@@ -1042,12 +1042,17 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               preserved_draft_status: racedDuplicate.draftStatus,
             });
             if (params.placementAttempt) {
-              await authorizeAndDispatchPlacementQuestion(
+              const racedAuthorized = await authorizeAndDispatchPlacementQuestion(
                 racedDuplicate.id,
                 canonicalContentHash,
                 questionSupplyTrace,
                 true,
               );
+              // Drain the raced duplicate's intent THIS attempt (it never enters questionIds), same
+              // as the pre-check duplicate branch. Load-bearing for a DRAFT raced duplicate: without
+              // it the intent waits for daily recovery and reconcile strands to the deadline. An
+              // ACTIVE raced duplicate settles via pool-visibility regardless (YUK-452 followup).
+              if (racedAuthorized) placementDrainOnlyIds.push(racedDuplicate.id);
             }
             continue;
           }
@@ -1269,18 +1274,22 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   }
 }
 
-function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<void> {
+export function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason ?? new Error('quiz_gen aborted'));
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason ?? new Error('quiz_gen aborted'));
-      },
-      { once: true },
-    );
+    // Remove the abort listener on the NORMAL resolve path. `{ once: true }` only auto-removes after
+    // the listener FIRES (on abort); on a normal timeout it would stay attached to the long-lived
+    // job.signal. reconcile polls this every 2s for up to 105 min, so without cleanup thousands of
+    // dead listeners accumulate on one signal (YUK-452 followup, OCR major).
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error('quiz_gen aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -1353,7 +1362,10 @@ export function buildQuizGenHandler(
             retryCount: job.retryCount,
             retryLimit: job.retryLimit,
           });
-          if (job.expireInSeconds * 1_000 !== PLACEMENT_QUEUE_EXPIRY_MS) {
+          if (
+            !Number.isFinite(job.expireInSeconds) ||
+            job.expireInSeconds * 1_000 !== PLACEMENT_QUEUE_EXPIRY_MS
+          ) {
             throw new Error('placement quiz_gen queue expiry must be 120 minutes');
           }
           placementAttempt = await acquirePlacementAttempt(db, {
