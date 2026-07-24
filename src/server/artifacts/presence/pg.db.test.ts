@@ -447,6 +447,8 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
         ],
       });
 
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
     // No active session → blur flushes. The hub_auto_sync entry survives pruning
     // and is applied; the non-hub entry is dropped (warned).
     const flush = await store.markArtifactIdleAndFlush({
@@ -459,6 +461,10 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('dropped 1 stale pending patch(es)'),
+    );
+    // The intentional TTL exemption emits a low-severity visibility breadcrumb.
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`retained 1 ${HUB_AUTO_SYNC_ACTOR_REF} pending patch(es)`),
     );
   });
 

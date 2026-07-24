@@ -269,22 +269,31 @@ function dropStalePending(
 ): { kept: SerializedQueuedPatch[]; dropped: number } {
   const kept: SerializedQueuedPatch[] = [];
   let dropped = 0;
+  let retainedPastTtl = 0;
   for (const item of pending) {
+    const pastTtl = now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS;
     // Mutation-triggered hub sync opts out of the generic force-apply ceiling,
     // so its durable deferred patch must also survive stale pending pruning
     // (YUK-768). Every other actor's patch is dropped once past the TTL.
-    if (
-      item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF &&
-      now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS
-    ) {
+    if (item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF && pastTtl) {
       dropped++;
     } else {
+      if (pastTtl) retainedPastTtl++;
       kept.push(item);
     }
   }
   if (dropped > 0) {
     console.warn(
       `[PgPresenceStore] dropped ${dropped} stale pending patch(es) for artifact ${artifactId} (age > ${EDITING_FORCE_APPLY_TIMEOUT_MS}ms)`,
+    );
+  }
+  // Visibility for the intentional TTL exemption (YUK-768): only emitted when a
+  // hub_auto_sync patch is actually retained past the ceiling — normal pruning
+  // (no over-TTL hub patch) stays silent, so this never adds noise to the
+  // high-frequency common path.
+  if (retainedPastTtl > 0) {
+    console.info(
+      `[PgPresenceStore] retained ${retainedPastTtl} ${HUB_AUTO_SYNC_ACTOR_REF} pending patch(es) past the ${EDITING_FORCE_APPLY_TIMEOUT_MS}ms force-apply ceiling for artifact ${artifactId} (exempt from stale pruning)`,
     );
   }
   return { kept, dropped };
