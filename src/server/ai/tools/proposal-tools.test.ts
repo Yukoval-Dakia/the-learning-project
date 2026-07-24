@@ -638,6 +638,71 @@ describe('Wave 3 proposal/action DomainTools', () => {
     expect(nonFailure.status).toBe('skipped:not_failure_attempt');
   }, 60_000);
 
+  // YUK-562 (process-data 通电) — the copilot attribute_mistake caller reads the
+  // attempt payload's reasoning_trace and threads it into the attribution input as
+  // reasoning_trace_md, mirroring the attribution_followup job. Present → injected;
+  // absent → key omitted (byte-identical attribution input).
+  it('YUK-562: attribute_mistake threads the attempt reasoning_trace into the attribution input', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    const attributionResult = {
+      task_run_id: 'tr_attr_trace',
+      text: JSON.stringify({
+        primary_category: 'concept',
+        secondary_categories: [],
+        analysis_md: '把结构助词误判成代词。',
+        confidence: 0.9,
+      }),
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 10, outputTokens: 20 },
+      cost_usd: 0,
+    };
+
+    // (a) attempt WITH process text → reasoning_trace_md flows into the input.
+    await db.insert(question).values({
+      id: 'q_trace',
+      kind: 'short_answer',
+      prompt_md: '解释「之」在句中的作用',
+      reference_md: '结构助词。',
+      knowledge_ids: ['k_zhi'],
+      source: 'manual',
+      difficulty: 3,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await writeEvent(db, {
+      id: 'att_trace',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_trace',
+      outcome: 'failure',
+      payload: {
+        answer_md: '代词',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_zhi'],
+        reasoning_trace: '我认为「之」在这里作代词，指代前文的人',
+      },
+      created_at: new Date(BASE.getTime() + 1_000),
+    });
+    mockRunner.runTask.mockResolvedValueOnce(attributionResult);
+
+    const withTrace = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_trace' });
+    expect(withTrace.status).toBe('written');
+    expect(mockRunner.runTask.mock.calls[0][1]).toMatchObject({
+      reasoning_trace_md: '我认为「之」在这里作代词，指代前文的人',
+    });
+
+    // (b) attempt WITHOUT process text → the key is omitted entirely.
+    await seedQuestionAndFailure();
+    mockRunner.runTask.mockResolvedValueOnce(attributionResult);
+
+    const noTrace = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
+    expect(noTrace.status).toBe('written');
+    expect(mockRunner.runTask.mock.calls[1][1]).not.toHaveProperty('reasoning_trace_md');
+  }, 60_000);
+
   it('attribute_mistake reports existing_judge when the owner path loses an attribution race', async () => {
     const db = testDb();
     await seedKnowledgeGraph();

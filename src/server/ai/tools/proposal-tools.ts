@@ -38,6 +38,7 @@ import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
 import type { Db } from '@/db/client';
 import {
   artifact,
+  event,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -950,6 +951,24 @@ async function attributeMistakeExecute(
     domainByKnowledgeId.get(knowledgeRows[0]?.id) ?? null,
   );
 
+  // YUK-562 (process-data 通电) — read the attempt payload's reasoning_trace so this
+  // copilot caller feeds the same "student self-report" section into attribution as
+  // the attribution_followup job. Behavior-compatible: present → threaded, absent /
+  // whitespace-only → key omitted (byte-identical attribution input). FailureAttempt
+  // does not expose the raw payload, so read it with a targeted select (copilot path
+  // is interactive/low-frequency; the extra round-trip is negligible).
+  const attemptPayloadRow = (
+    await ctx.db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, input.attempt_event_id))
+      .limit(1)
+  )[0];
+  const rawReasoningTrace = (
+    attemptPayloadRow?.payload as { reasoning_trace?: string | null } | null
+  )?.reasoning_trace;
+  const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
+
   let attributionTaskRan = false;
   const runTaskFn = makeRunTaskFn(ctx.db);
   await runAttributionAndWriteJudgeEvent({
@@ -964,6 +983,8 @@ async function attributeMistakeExecute(
         name: row.name,
         effective_domain: domainByKnowledgeId.get(row.id) ?? null,
       })),
+      // YUK-562 — only add the key when there is real process text (else omitted).
+      ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
     },
     runTaskFn: (kind, taskInput, taskCtx) => {
       attributionTaskRan = true;
