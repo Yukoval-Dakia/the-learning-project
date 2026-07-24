@@ -264,6 +264,9 @@ export const fastTestInclude = [
   'src/server/events/cause-policy.test.ts',
   // YUK-751 — pure loaded-subscription registry contract; no DB imports.
   'src/server/event-subscriptions/registry.unit.test.ts',
+  // YUK-751 (review TcWGF) — subscription-dispatch mount wiring; queue-config (its only DB-tainted
+  // import) is vi.mock'd, so no live DB is touched — fast unit.
+  'src/server/event-subscriptions/dispatch-mount.unit.test.ts',
   // YUK-406 Phase 0 (关系脑 conjecture engine) — pure no-DB units. 取证
   // (gatherConjectureEvidence) is a pure aggregator over injected FailureAttempt[] +
   // a mastery-projection Map; induceConjecture is a pure Opus self-consistency

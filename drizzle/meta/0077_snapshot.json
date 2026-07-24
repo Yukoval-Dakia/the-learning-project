@@ -1412,6 +1412,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "bootstrap_snapshot": {
+          "name": "bootstrap_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "claim_owner": {
           "name": "claim_owner",
           "type": "text",

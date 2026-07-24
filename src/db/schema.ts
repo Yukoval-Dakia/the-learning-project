@@ -1004,13 +1004,18 @@ export const event_subscription_checkpoint = pgTable(
     declaration_hash: text('declaration_hash').notNull(),
     status: text('status', { enum: ['bootstrapping', 'active', 'paused'] }).notNull(),
     next_delivery_seq: bigint('next_delivery_seq', { mode: 'number' }).notNull().default(1),
-    // Max event.dispatch_seq captured when the 'bootstrapping' checkpoint is created (YUK-751 review
-    // Tb7Ai). Every backfill batch is bounded by `dispatch_seq <= bootstrap_horizon_seq` so events
-    // that COMMIT while the multi-batch backfill runs (seq > horizon) are NOT swept into
-    // bootstrap_skipped — they stay for post-activation discovery. Nullable: a checkpoint that was
-    // already 'bootstrapping' before this column existed carries NULL until the backfill resumes and
-    // computes-once-and-persists it (never left unbounded).
+    // Bootstrap visibility fence, captured together in the tx that creates the 'bootstrapping'
+    // checkpoint (YUK-751 review Tb7Ai / TcWGH). `bootstrap_horizon_seq` = max(event.dispatch_seq)
+    // then; `bootstrap_snapshot` = pg_current_snapshot()::text then. A backfill batch skips an event
+    // only when dispatch_seq <= horizon AND it was VISIBLE (committed) to that snapshot
+    // (pg_visible_in_snapshot). dispatch_seq alone is NOT a snapshot: seq is allocated at insert but a
+    // low-seq tx can COMMIT after a higher-seq tx, so a genuinely-new event committing mid-bootstrap
+    // could sit <= horizon yet must NOT be skipped — the visibility check leaves it for post-activation
+    // discovery (safe direction). Both nullable: a checkpoint already 'bootstrapping' before these
+    // columns existed has NULL; on resume the backfill computes-once-and-persists the horizon and falls
+    // back to horizon-only (documented residual skew for that legacy path — never left unbounded).
     bootstrap_horizon_seq: bigint('bootstrap_horizon_seq', { mode: 'number' }),
+    bootstrap_snapshot: text('bootstrap_snapshot'),
     claim_owner: text('claim_owner'),
     claim_token: uuid('claim_token'),
     claim_lease_until: timestamp('claim_lease_until', { withTimezone: true }),

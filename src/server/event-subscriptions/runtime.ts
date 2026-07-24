@@ -14,6 +14,12 @@ type SubscriptionIdentity = Pick<LoadedEventSubscription, 'id' | 'version'>;
 // event history. Each batch commits independently; the backfill resumes across batches.
 const BOOTSTRAP_BACKFILL_BATCH_SIZE = 1_000;
 
+// Max pending deliveries materialized per discovery transaction (YUK-751 OCR major Tcd9r): the
+// anti-join over the immutable event log was unbounded, so a large backlog (e.g. first discovery for
+// a new action) loaded + inserted every row in one tx (memory + a long checkpoint-row lock).
+// Discovery now drains in bounded batches — one tx each, re-fencing the lease — exactly like bootstrap.
+const DISCOVERY_BATCH_SIZE = 1_000;
+
 // CONTRACT (YUK-751 OCR major): a handler must resolve well INSIDE the checkpoint/delivery claim
 // lease TTL (`interval '2 minutes'`). The lease is NOT renewed while the handler runs, so a handler
 // that outlives the lease lets a concurrent worker take over and double-process the same delivery.
@@ -22,6 +28,25 @@ const BOOTSTRAP_BACKFILL_BATCH_SIZE = 1_000;
 // (JS can't truly cancel it) — its side effects must be idempotent, which the delivery-key dedup
 // already assumes. Keep this value < the lease TTL if the lease duration ever changes.
 const DEFAULT_HANDLER_TIMEOUT_MS = 90_000;
+
+// Options intake guards (YUK-751 OCR minor Tcd9v). A non-finite / non-positive timeout or retry delay
+// silently corrupts the lease-TTL bound and the backoff SQL (`* interval '1 second'`), so reject them
+// at the cycle entry instead of letting NaN/negatives reach the handler race or the DB.
+function assertPositiveFinite(value: number, name: string): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `event subscription dispatch option '${name}' must be a positive finite number, got ${value}`,
+    );
+  }
+}
+
+function assertPositiveInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `event subscription dispatch option '${name}' must be a positive integer, got ${value}`,
+    );
+  }
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -128,9 +153,10 @@ export async function bootstrapSubscription(
   const needsBackfill = await db.transaction(async (tx) => {
     await tx.execute(sql`
       insert into event_subscription_checkpoint
-        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq)
+        (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq,
+         bootstrap_snapshot)
       values (${subscription.id}, ${subscription.version}, ${declarationHash}, 'bootstrapping',
-        (select coalesce(max(dispatch_seq), 0) from event))
+        (select coalesce(max(dispatch_seq), 0) from event), pg_current_snapshot()::text)
       on conflict (subscriber_id, subscriber_version) do nothing
     `);
     const checkpoints = await tx.execute<{
@@ -168,8 +194,9 @@ export async function bootstrapSubscription(
         status: 'bootstrapping' | 'active' | 'paused';
         next_delivery_seq: string;
         bootstrap_horizon_seq: string | null;
+        bootstrap_snapshot: string | null;
       }>(sql`
-        select declaration_hash, status, next_delivery_seq, bootstrap_horizon_seq
+        select declaration_hash, status, next_delivery_seq, bootstrap_horizon_seq, bootstrap_snapshot
         from event_subscription_checkpoint
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
@@ -184,13 +211,15 @@ export async function bootstrapSubscription(
         return true; // vanished / hash-rotated / already finished by a peer
       }
 
-      // Event horizon (YUK-751 review Tb7Ai). Bound every batch by dispatch_seq <= horizon so an
-      // event that COMMITS while this multi-batch backfill runs (necessarily seq > horizon, since the
-      // sequence is monotonic and horizon was the max at bootstrap start) is NOT swept into
-      // bootstrap_skipped by a later fresh-snapshot batch — it stays > horizon and post-activation
-      // discovery delivers it as pending. A legacy checkpoint already 'bootstrapping' before this
-      // column existed has NULL horizon: compute-once-and-persist it here (best-effort recovery — the
-      // invariant stays total, never unbounded).
+      // Bootstrap visibility fence (YUK-751 review TcWGH). A batch skips an event only when it is
+      // dispatch_seq <= horizon AND was VISIBLE (committed) to the creation snapshot. dispatch_seq is
+      // NOT a snapshot: seq is allocated at insert, but a low-seq tx can COMMIT after a higher-seq tx,
+      // so a genuinely-new event committing mid-bootstrap can sit <= horizon — pg_visible_in_snapshot
+      // against its xmin excludes it (it was in-flight at creation) so post-activation discovery
+      // delivers it. A legacy checkpoint from before these columns existed has a NULL horizon: compute-
+      // once-and-persist it here (best-effort). A NULL snapshot (same legacy path) falls back to
+      // horizon-only — a documented residual out-of-order skew for that legacy window only, never
+      // unbounded.
       let horizon: bigint;
       if (checkpoint.bootstrap_horizon_seq === null) {
         const horizonRows = await tx.execute<{ bootstrap_horizon_seq: string }>(sql`
@@ -206,11 +235,20 @@ export async function bootstrapSubscription(
         horizon = asBigint(checkpoint.bootstrap_horizon_seq);
       }
 
+      // xmin is the event's (immutable, append-only) inserting xid; ::text::xid8 lifts the 32-bit xid
+      // into the full-xid space the snapshot uses (correct within the current epoch — a bootstrap
+      // window can't span a 2^32 xid wrap). No snapshot (legacy) → horizon-only.
+      const visibilityClause =
+        checkpoint.bootstrap_snapshot === null
+          ? sql``
+          : sql`and pg_visible_in_snapshot(e.xmin::text::xid8, ${checkpoint.bootstrap_snapshot}::pg_snapshot)`;
+
       const events = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
         select e.id, e.dispatch_seq
         from event e
         where e.action in (${actionList})
           and e.dispatch_seq <= ${horizon}
+          ${visibilityClause}
           and not exists (
             select 1
             from event_subscription_delivery d
@@ -349,8 +387,10 @@ async function releaseSubscriptionLease(db: Db, lease: SubscriptionLease): Promi
 }
 
 /**
- * Discovers with an anti-join, never with a dispatch_seq watermark. The
- * checkpoint lock serializes delivery_seq allocation for this one subscriber.
+ * Discovers with an anti-join, never with a dispatch_seq watermark. Drains in
+ * bounded batches (YUK-751 OCR major Tcd9r) — one tx each, re-fencing the lease,
+ * like bootstrap — so a large backlog can't load/insert unboundedly in one tx.
+ * The checkpoint lock serializes delivery_seq allocation for this one subscriber.
  */
 export async function discoverSubscriptionDeliveries(
   db: Db,
@@ -360,62 +400,19 @@ export async function discoverSubscriptionDeliveries(
 ): Promise<number> {
   const declared = getDeclaredSubscription(registry, subscription);
   const declarationHash = declared.declarationHash;
-  return db.transaction(async (tx) => {
-    const checkpoints = await tx.execute<{
-      next_delivery_seq: string;
-    }>(sql`
-      select next_delivery_seq
-      from event_subscription_checkpoint
-      where subscriber_id = ${subscription.id}
-        and subscriber_version = ${subscription.version}
-        and declaration_hash = ${declarationHash}
-        and status = 'active'
-        and claim_owner = ${lease.claimOwner}
-        and claim_token = ${lease.claimToken}::uuid
-        and claim_lease_until >= clock_timestamp()
-      for update
-    `);
-    const checkpoint = checkpoints[0];
-    if (!checkpoint) return 0;
+  const actionList = sql.join(
+    declared.actions.map((action) => sql`${action}`),
+    sql`, `,
+  );
 
-    const actionList = sql.join(
-      declared.actions.map((action) => sql`${action}`),
-      sql`, `,
-    );
-    const sources = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
-      select e.id, e.dispatch_seq
-      from event e
-      where e.action in (${actionList})
-        and not exists (
-          select 1
-          from event_subscription_delivery d
-          where d.subscriber_id = ${subscription.id}
-            and d.subscriber_version = ${subscription.version}
-            and d.source_event_id = e.id
-        )
-      order by e.dispatch_seq, e.id
-    `);
-
-    let nextDeliverySeq = asBigint(checkpoint.next_delivery_seq);
-    let inserted = 0;
-    for (const source of sources) {
-      const rows = await tx.execute(sql`
-        insert into event_subscription_delivery
-          (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq, status)
-        values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
-          ${nextDeliverySeq}, 'pending')
-        on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
-        returning source_event_id
-      `);
-      if (rows.length === 1) {
-        nextDeliverySeq += 1n;
-        inserted += 1;
-      }
-    }
-    if (inserted > 0) {
-      const advanced = await tx.execute(sql`
-        update event_subscription_checkpoint
-        set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
+  let total = 0;
+  while (true) {
+    const insertedThisBatch = await db.transaction(async (tx) => {
+      const checkpoints = await tx.execute<{
+        next_delivery_seq: string;
+      }>(sql`
+        select next_delivery_seq
+        from event_subscription_checkpoint
         where subscriber_id = ${subscription.id}
           and subscriber_version = ${subscription.version}
           and declaration_hash = ${declarationHash}
@@ -423,16 +420,69 @@ export async function discoverSubscriptionDeliveries(
           and claim_owner = ${lease.claimOwner}
           and claim_token = ${lease.claimToken}::uuid
           and claim_lease_until >= clock_timestamp()
-        returning subscriber_id
+        for update
       `);
-      if (advanced.length !== 1) {
-        throw new Error(
-          `event subscription '${subscription.id}@v${subscription.version}' lost checkpoint lease during discovery`,
-        );
+      const checkpoint = checkpoints[0];
+      if (!checkpoint) return 0; // lease lost / no longer active → stop draining, keep what's done
+
+      const sources = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
+        select e.id, e.dispatch_seq
+        from event e
+        where e.action in (${actionList})
+          and not exists (
+            select 1
+            from event_subscription_delivery d
+            where d.subscriber_id = ${subscription.id}
+              and d.subscriber_version = ${subscription.version}
+              and d.source_event_id = e.id
+          )
+        order by e.dispatch_seq, e.id
+        limit ${DISCOVERY_BATCH_SIZE}
+      `);
+
+      let nextDeliverySeq = asBigint(checkpoint.next_delivery_seq);
+      let inserted = 0;
+      for (const source of sources) {
+        const rows = await tx.execute(sql`
+          insert into event_subscription_delivery
+            (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq, status)
+          values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
+            ${nextDeliverySeq}, 'pending')
+          on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
+          returning source_event_id
+        `);
+        if (rows.length === 1) {
+          nextDeliverySeq += 1n;
+          inserted += 1;
+        }
       }
-    }
-    return inserted;
-  });
+      if (inserted > 0) {
+        const advanced = await tx.execute(sql`
+          update event_subscription_checkpoint
+          set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
+          where subscriber_id = ${subscription.id}
+            and subscriber_version = ${subscription.version}
+            and declaration_hash = ${declarationHash}
+            and status = 'active'
+            and claim_owner = ${lease.claimOwner}
+            and claim_token = ${lease.claimToken}::uuid
+            and claim_lease_until >= clock_timestamp()
+          returning subscriber_id
+        `);
+        if (advanced.length !== 1) {
+          throw new Error(
+            `event subscription '${subscription.id}@v${subscription.version}' lost checkpoint lease during discovery`,
+          );
+        }
+      }
+      return inserted;
+    });
+    total += insertedThisBatch;
+    // The anti-join only surfaces UNdelivered events and the lease fence serializes discovery for this
+    // subscriber, so a zero-insert batch means the backlog is drained (or the lease is gone) — stop.
+    if (insertedThisBatch === 0) break;
+  }
+  return total;
 }
 
 /**
@@ -712,6 +762,14 @@ export async function runSubscriptionDispatchCycle(
     retryDelaySeconds?: number;
   },
 ): Promise<SubscriptionDispatchCycleResult> {
+  assertPositiveInteger(options.maxAttempts, 'maxAttempts');
+  if (options.handlerTimeoutMs !== undefined) {
+    assertPositiveFinite(options.handlerTimeoutMs, 'handlerTimeoutMs');
+  }
+  if (options.retryDelaySeconds !== undefined) {
+    assertPositiveFinite(options.retryDelaySeconds, 'retryDelaySeconds');
+  }
+
   const result: SubscriptionDispatchCycleResult = {
     dispatched: 0,
     succeeded: 0,

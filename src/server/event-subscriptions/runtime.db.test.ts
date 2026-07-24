@@ -196,6 +196,78 @@ describe('YUK-751 durable event subscription runtime', () => {
     ]);
   });
 
+  it('visibility fence: a low-seq event committed after the creation snapshot is delivered, not skipped (TcWGH)', async () => {
+    // The exact P1 race: dispatch_seq is allocated at insert but commit order can differ. A tx that
+    // allocated a LOW seq can commit AFTER a higher-seq tx and after the bootstrap snapshot — such an
+    // event sits <= horizon yet was NOT part of history, so the seq bound alone would wrongly skip it.
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set');
+    const held = postgres(url, { max: 1 });
+    try {
+      // held tx allocates the LOW dispatch_seq for 'held-lowseq' but stays open (uncommitted).
+      await held`begin`;
+      await held`
+        insert into event (id, actor_kind, actor_ref, action, subject_kind, subject_id, payload)
+        values ('held-lowseq', 'system', 'test', 'test:handled', 'event', 'held-lowseq', '{}'::jsonb)
+      `;
+      // A higher-seq event commits on the main connection → the max VISIBLE dispatch_seq is ITS seq.
+      await insertEvent('committed-highseq');
+      // Create the 'bootstrapping' checkpoint capturing horizon + snapshot NOW, while held is in-flight:
+      // the snapshot excludes held's xid; horizon = committed-highseq's seq (held not visible).
+      await testDb().execute(sql`
+        insert into event_subscription_checkpoint
+          (subscriber_id, subscriber_version, declaration_hash, status, bootstrap_horizon_seq,
+           bootstrap_snapshot)
+        values (${SUBSCRIBER.id}, ${SUBSCRIBER.version}, ${HASH}, 'bootstrapping',
+          (select max(dispatch_seq) from event), pg_current_snapshot()::text)
+      `);
+      // held commits — held-lowseq is now visible with a dispatch_seq <= horizon.
+      await held`commit`;
+    } finally {
+      await held.end();
+    }
+
+    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
+
+    // committed-highseq was visible to the creation snapshot → bootstrap_skipped. held-lowseq was
+    // in-flight at that snapshot (seq <= horizon but pg_visible_in_snapshot = false) → NOT skipped.
+    expect(await deliveryRows()).toEqual([
+      expect.objectContaining({ sourceEventId: 'committed-highseq', status: 'bootstrap_skipped' }),
+    ]);
+
+    // Discovery delivers held-lowseq as pending — the genuinely-new event is not lost.
+    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
+    const rows = await deliveryRows();
+    expect(rows).toContainEqual(
+      expect.objectContaining({ sourceEventId: 'held-lowseq', status: 'pending' }),
+    );
+    expect(rows).toContainEqual(
+      expect.objectContaining({ sourceEventId: 'committed-highseq', status: 'bootstrap_skipped' }),
+    );
+  });
+
+  it('rejects non-positive / non-finite dispatch options at intake (Tcd9v)', async () => {
+    await expect(
+      runSubscriptionDispatchCycle(testDb(), registry(), { owner: 'w', maxAttempts: 0 }),
+    ).rejects.toThrow(/maxAttempts/);
+    await expect(
+      runSubscriptionDispatchCycle(testDb(), registry(), {
+        owner: 'w',
+        maxAttempts: 2,
+        retryDelaySeconds: -1,
+      }),
+    ).rejects.toThrow(/retryDelaySeconds/);
+    await expect(
+      runSubscriptionDispatchCycle(testDb(), registry(), {
+        owner: 'w',
+        maxAttempts: 2,
+        handlerTimeoutMs: Number.NaN,
+      }),
+    ).rejects.toThrow(/handlerTimeoutMs/);
+  });
+
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {
     await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
     await insertEvent('one');

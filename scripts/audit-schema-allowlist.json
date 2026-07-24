@@ -810,6 +810,14 @@
       "expected_by": "2026-09-30"
     }
   },
+  "event_subscription_checkpoint.bootstrap_snapshot": {
+    "reason": "YUK-751 durable subscription bootstrap visibility snapshot (review TcWGH). Written via raw SQL in bootstrapSubscription (src/server/event-subscriptions/runtime.ts) alongside bootstrap_horizon_seq — the event-subscription runtime is raw sql throughout (pg_current_snapshot()::text capture, CTEs, FOR UPDATE), which audit:schema's drizzle-call scanner cannot inspect; every event_subscription_checkpoint column is allowlisted the same way.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 dispatcher raw-SQL write paths (scanner does not parse sql writes)",
+      "expected_by": "2026-09-30"
+    }
+  },
   "event_subscription_delivery.subscriber_id": {
     "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
     "resolves_when": {
