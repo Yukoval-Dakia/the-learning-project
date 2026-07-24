@@ -1042,9 +1042,13 @@ export interface EnqueueDurableJudgeDeps {
  * worker outage (the payload survives; the run replays on recovery).
  *
  * run_id ≡ the (worker-written) attempt/outcome event id — a submit-face contract
- * (NOT universal; W3 faces define their own anchor). Mirrors copilot's dispatch:
- * an enqueue-link failure after the queued marker is compensated with a terminal
- * FAILED job_event so the run doesn't sit forever `queued` (chat.ts F2).
+ * (NOT universal; W3 faces define their own anchor).
+ *
+ * Ordering (atomicity): checkRateLimit → boss.send → advisory queued marker → 202.
+ * Send-first means the durable job exists before any local state, so a crash after
+ * the send (before the 202 returns) is safe — the worker still terminalizes the run.
+ * The only residual window is a client HTTP retry after a lost 202 minting a second
+ * run_id (request-vs-redelivery idempotency); see the PR notes / W3.
  */
 export async function enqueueDurableJudge(
   validated: ValidatedSubmit,
@@ -1055,23 +1059,24 @@ export async function enqueueDurableJudge(
   const now = deps.now ?? new Date();
   const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
   const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
-  let queuedMarkerWritten = false;
   try {
-    // Queued marker: consumers see the run received (before the worker picks it up).
-    await writeJobEvent(db, {
-      business_table: JUDGE_RUN_TABLE,
-      business_id: runId,
-      event_type: JUDGE_RUN_EVENTS.QUEUED,
-      payload: {
-        caller: 'submit',
-        question_id: validated.questionId,
-        session_id: validated.body.session_id ?? null,
-      },
-    });
-    queuedMarkerWritten = true;
+    // Rate-limit the durable enqueue on the SAME in-process paid-AI budget the sync
+    // judge path uses (judgeSubmit's checkRateLimit before the invoke). A durable
+    // judge_run IS a paid inference job, so the HTTP dispatch face must gate it too —
+    // otherwise a client retry loop could flood the queue with paid jobs.
+    checkRateLimit();
 
+    // SEND FIRST — atomicity: once the job is durably in pg-boss, the worker will
+    // terminalize it (started/done/failed) even if THIS process crashes before the
+    // 202 returns. The frozen answer rides the job payload, so nothing is lost. The
+    // queued marker below is advisory early-status ONLY (never the answer's home), so
+    // ordering it AFTER the send removes the marker-written-but-no-job stuck window.
     const boss = deps.boss ?? (await getStartedBoss());
-    await boss.send(JUDGE_RUN_QUEUE, {
+    // pg-boss returns null when a send is deduped/throttled with no job actually
+    // created — a silent no-enqueue. Treat null as a failed enqueue (repo idiom,
+    // session/ingestion.ts:136-138): throw so the caller gets an error, not a 202 for
+    // a run that will never execute.
+    const jobId = await boss.send(JUDGE_RUN_QUEUE, {
       run_id: runId,
       caller: 'submit',
       submit: {
@@ -1081,6 +1086,35 @@ export async function enqueueDurableJudge(
         submitted_at: now.toISOString(),
       },
     });
+    if (!jobId) {
+      throw new ApiError(
+        'durable_enqueue_failed',
+        `judge_run enqueue returned no jobId for run ${runId}`,
+        503,
+      );
+    }
+
+    // Advisory queued marker (consumers see 'queued' before the worker's STARTED).
+    // Best-effort: the job is already durable, so a marker-write failure does NOT
+    // lose the run — the worker still runs it and writes its own started/done/failed.
+    try {
+      await writeJobEvent(db, {
+        business_table: JUDGE_RUN_TABLE,
+        business_id: runId,
+        event_type: JUDGE_RUN_EVENTS.QUEUED,
+        payload: {
+          caller: 'submit',
+          question_id: validated.questionId,
+          session_id: validated.body.session_id ?? null,
+        },
+      });
+    } catch (markerErr) {
+      console.error(
+        '[submit] durable judge queued-marker write failed (non-fatal)',
+        runId,
+        markerErr,
+      );
+    }
 
     const responseBody: DurableJudgePendingResponse = {
       run_id: runId,
@@ -1092,21 +1126,9 @@ export async function enqueueDurableJudge(
       headers: { Location: eventsUrl },
     });
   } catch (err) {
-    // Enqueue-link failure compensation: if the queued marker committed but the
-    // send (or anything after) threw, the run would sit `queued` forever. Write a
-    // terminal FAILED so deriveJudgeRunStatus → failed instead of a stuck queued.
-    if (queuedMarkerWritten) {
-      try {
-        await writeJobEvent(db, {
-          business_table: JUDGE_RUN_TABLE,
-          business_id: runId,
-          event_type: JUDGE_RUN_EVENTS.FAILED,
-          payload: { reason: 'enqueue_failed', run_id: runId },
-        });
-      } catch (compErr) {
-        console.error('[submit] durable judge enqueue-failure compensation failed', runId, compErr);
-      }
-    }
+    // Rate-limit / send failure BEFORE any durable state: nothing was enqueued and no
+    // marker was written (send-first), so there is no stuck-queued run to compensate —
+    // return the error and let the client retry.
     return errorResponse(err);
   }
 }
@@ -1125,13 +1147,21 @@ export async function createAttempt(req: Request): Promise<Response> {
     // → byte-identical synchronous behavior (the flag-off regression anchor).
     // `shouldEnqueueBackgroundJobs()` keeps the test/CI env on the synchronous path
     // (no worker to drain the queue), same guard the copilot durable dispatch uses.
+    // #8 — when the divert gate already resolved the subject profile (the
+    // photo-only-unsupported non-divert branch), reuse it for the synchronous
+    // judgeSubmit below instead of resolving it a second time.
+    let reusedProfile: SubjectProfile | null = null;
     if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
       const gate = await resolveDurableDivert(validated);
       if (gate.divert && gate.subjectProfile !== null) {
         return await enqueueDurableJudge(validated, gate.subjectProfile);
       }
+      reusedProfile = gate.subjectProfile;
     }
-    const judged = await judgeSubmit(validated);
+    const judged = await judgeSubmit(
+      validated,
+      reusedProfile ? { subjectProfile: reusedProfile } : {},
+    );
     const persisted = await persistSubmit(validated, judged);
     const { body, now, questionId, activityRef } = validated;
     const { judgeResult, judgeRoute, judgeTelemetry, suggestedRating, finalRating } = judged;
@@ -1188,7 +1218,13 @@ export async function createAttempt(req: Request): Promise<Response> {
 }
 
 export async function createAttemptResource(req: Request): Promise<Response> {
-  return canonicalResourceResponse(await createAttempt(req), {
+  const inner = await createAttempt(req);
+  // YUK-594 — a durable divert returns 202-pending, whose body has NO `review_event`;
+  // canonicalResourceResponse derives Location from `review_event.id`, so it would blow
+  // up on the pending shape. Pass the 202 through untouched — enqueueDurableJudge already
+  // set its own Location header (the run's SSE stream), which is the correct resource.
+  if (inner.status === 202) return inner;
+  return canonicalResourceResponse(inner, {
     outcome: 'created',
     location: (body) =>
       `/api/events/${encodeURIComponent(

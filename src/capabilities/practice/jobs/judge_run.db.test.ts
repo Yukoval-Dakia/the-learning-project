@@ -7,12 +7,13 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
-import { event, material_fsrs_state, question } from '@/db/schema';
+import { event, job_events, material_fsrs_state, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { terminalJudgeRunResult } from '../server/judge-run-status';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
 import { type JudgeRunDeps, type JudgeRunJobData, runJudgeRun } from './judge_run';
 
@@ -225,5 +226,85 @@ describe('runJudgeRun — backfill', () => {
     );
     expect(seenDurable).toEqual({ providerOverride: 'anthropic-sub' });
     vi.unstubAllEnvs();
+  });
+
+  it('recovery: backfill committed but DONE lost → reconstructs the FULL verdict (not a slim DONE) on re-delivery', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    await runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: mockJudgeSubmit() });
+    // Simulate a crash between the persist commit and the terminal DONE write: the
+    // attempt event exists but the DONE job_event is gone.
+    await db
+      .delete(job_events)
+      .where(and(eq(job_events.business_id, runId), eq(job_events.event_type, 'judge_run.done')));
+
+    const second = await runJudgeRun(
+      db,
+      jobData(runId, questionId),
+      { retryCount: 1, retryLimit: 2 },
+      {
+        judgeSubmitFn: mockJudgeSubmit(),
+      },
+    );
+    expect(second.status).toBe('skipped');
+
+    // The reconstructed terminal DONE carries the REAL verdict from the judge event,
+    // not a slim placeholder — poll/SSE recovery gets coarse_outcome back.
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    const result = terminalJudgeRunResult(events) as { coarse_outcome?: string } | null;
+    expect(result?.coarse_outcome).toBe('correct');
+  });
+
+  it('malformed payload (invalid submitted_at) is non-retryable — FAILED, no rethrow, no attempt', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+    const bad = jobData(runId, questionId);
+    bad.submit.submitted_at = 'not-a-date';
+
+    const result = await runJudgeRun(db, bad, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    expect(result.status).toBe('failed');
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    expect(deriveJudgeRunStatus(events)).toBe('failed');
+    expect(
+      (events.find((e) => e.event_type === 'judge_run.failed')?.payload as { reason?: string })
+        ?.reason,
+    ).toBe('non_retryable');
+    expect(await db.select().from(event).where(eq(event.id, runId))).toHaveLength(0);
+  });
+
+  it('malformed payload (bad body → ZodError) is non-retryable — FAILED, no rethrow', async () => {
+    const db = testDb();
+    const runId = newId();
+    const bad = {
+      ...jobData(runId, 'q_unused'),
+      submit: {
+        body: { not: 'valid' },
+        question_id: 'q_unused',
+        subject_profile: resolveSubjectProfile(),
+        submitted_at: new Date().toISOString(),
+      },
+    } as JudgeRunJobData;
+
+    const result = await runJudgeRun(db, bad, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    expect(result.status).toBe('failed');
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    expect(deriveJudgeRunStatus(events)).toBe('failed');
   });
 });

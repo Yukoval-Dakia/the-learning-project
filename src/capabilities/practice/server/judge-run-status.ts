@@ -98,12 +98,35 @@ export function terminalJudgeRunResult(events: JudgeRunReplayEvent[]): unknown {
 }
 
 /**
+ * 终态 DONE 判词 payload 的结构化形（judge_run handler 写、poll/SSE 回填读）。字段
+ * 全 optional + passthrough：不同判分路由携不同子集（coarse_outcome/score/feedback），
+ * 且 already_persisted 恢复路径可能只带最小集——passthrough 保 forward-compat。
+ */
+export const JudgeRunTerminalResultSchema = z
+  .object({
+    attempt_event_id: z.string(),
+    judge_event_id: z.string().nullable().optional(),
+    outcome: z.string().optional(),
+    final_rating: z.string().optional(),
+    route: z.string().nullable().optional(),
+    coarse_outcome: z.string().optional(),
+    score: z.number().nullable().optional(),
+    confidence: z.number().optional(),
+    feedback_md: z.string().optional(),
+    capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
+    telemetry: z.unknown().optional(),
+    provider_override: z.string().nullable().optional(),
+    already_persisted: z.boolean().optional(),
+  })
+  .passthrough();
+
+/**
  * poll-tier `GET /api/jobs/judge_run/[id]/status` 响应 schema。放在此 dependency-light
  * 模块（非 route 文件）以便 manifest 静态导入而不 eager-import route 的 db 依赖。
  */
 export const JudgeRunStatusResponseSchema = z.object({
   run_id: z.string(),
   status: z.enum(['queued', 'started', 'done', 'failed']),
-  /** 终态判词 payload（JudgeResultV2 + telemetry），仅 status='done' 时存在。 */
-  result: z.unknown().nullable(),
+  /** 终态判词 payload（结构化，见上），仅 status='done' 时存在，否则 null。 */
+  result: JudgeRunTerminalResultSchema.nullable(),
 });

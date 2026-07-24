@@ -22,8 +22,9 @@ import { event, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
+import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
@@ -92,11 +93,25 @@ export async function runJudgeRun(
     .where(eq(event.id, runId))
     .limit(1);
   if (priorAttempt.length > 0) {
-    await bestEffortWriteJobEvent(db, {
+    // The backfill committed. If a terminal DONE already landed (crash AFTER the
+    // DONE write), do NOT write another — a slim {already_persisted} DONE would
+    // become the last DONE and terminalJudgeRunResult would drop the real verdict
+    // (poll/SSE would lose coarse_outcome/feedback). Only when NO DONE exists
+    // (crash between the persist commit and the DONE write) do we reconstruct the
+    // FULL verdict from the persisted judge event so recovery gets the real verdict.
+    const priorEvents = await computeReplay(db, {
+      businessTable: JUDGE_RUN_TABLE,
       businessId: runId,
-      eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: { attempt_event_id: runId, already_persisted: true },
+      lastEventId: 0,
     });
+    const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
+    if (!hasDone) {
+      await bestEffortWriteJobEvent(db, {
+        businessId: runId,
+        eventType: JUDGE_RUN_EVENTS.DONE,
+        payload: await reconstructDonePayloadFromJudgeEvent(db, runId),
+      });
+    }
     return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
   }
 
@@ -122,6 +137,15 @@ export async function runJudgeRun(
     const body = CreateAttemptBodySchema.parse(data.submit.body);
     const subjectProfile = SubjectProfileSchema.parse(data.submit.subject_profile);
     const now = new Date(data.submit.submitted_at);
+    // An unparseable submitted_at yields an Invalid Date whose getTime() is NaN;
+    // feeding it into FSRS scheduling (the attempt anchor) corrupts the schedule.
+    // A malformed payload is a permanent defect, NOT a transient failure → don't
+    // burn re-deliveries on it (classified non-retryable below like the Zod parses).
+    if (Number.isNaN(now.getTime())) {
+      throw new NonRetryableJudgeRunError(
+        `judge_run ${runId} has an invalid submitted_at '${data.submit.submitted_at}'`,
+      );
+    }
     const questionId = data.submit.question_id;
     const q = await loadQuestionRow(db, questionId);
     if (!q) {
@@ -187,10 +211,13 @@ export async function runJudgeRun(
     };
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
-    const nonRetryable = err instanceof NonRetryableJudgeRunError;
+    // A malformed job payload (Zod parse of body/profile, or an invalid date) is a
+    // permanent defect: re-delivery would just re-fail identically and waste the
+    // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
+    const nonRetryable = err instanceof NonRetryableJudgeRunError || err instanceof ZodError;
     // 失败痕迹（coordinator note#1）：显式写终态 FAILED job_event，保证 replay/UI 不
     // 悬空。deriveJudgeRunStatus last-writer-wins：transient 失败先显 failed，成功重投
-    // 写 DONE 翻回 done。非 retryable（未知面/题缺失）不重投——写 FAILED 后早返。
+    // 写 DONE 翻回 done。非 retryable（未知面/题缺失/坏 payload）不重投——写 FAILED 后早返。
     await bestEffortWriteJobEvent(db, {
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.FAILED,
@@ -230,6 +257,35 @@ async function bestEffortWriteJobEvent(
 async function loadQuestionRow(db: Db, questionId: string) {
   const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * Reconstruct the terminal DONE payload from the persisted judge event when the
+ * backfill committed but the DONE job_event never landed (crash between commit and
+ * the terminal write). Reads the real verdict (coarse_outcome/score/feedback_md/
+ * capability_ref/route) off the judge event chained to the attempt (subject_id=run_id)
+ * so poll/SSE recovery gets the actual verdict, not a slim placeholder.
+ */
+async function reconstructDonePayloadFromJudgeEvent(
+  db: Db,
+  runId: string,
+): Promise<Record<string, unknown>> {
+  const [je] = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
+    .limit(1);
+  const p = (je?.payload ?? {}) as Record<string, unknown>;
+  return {
+    attempt_event_id: runId,
+    judge_event_id: je?.id ?? null,
+    already_persisted: true,
+    ...(typeof p.coarse_outcome === 'string' ? { coarse_outcome: p.coarse_outcome } : {}),
+    ...(p.score != null ? { score: p.score } : {}),
+    ...(typeof p.feedback_md === 'string' ? { feedback_md: p.feedback_md } : {}),
+    ...(p.capability_ref ? { capability_ref: p.capability_ref } : {}),
+    ...(typeof p.judge_route === 'string' ? { route: p.judge_route } : {}),
+  };
 }
 
 /** 判定为不可重投的失败（未知面 / 题缺失 / body 复校失败）——写 FAILED 后不 rethrow。 */

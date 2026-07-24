@@ -29,6 +29,11 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       businessId: runId,
       lastEventId: 0,
     });
+    // #7 — an unknown run_id has zero job_events. Reporting 200 `queued` for it is
+    // dishonest (it implies a real run is pending). 404 instead: no such judge_run.
+    if (events.length === 0) {
+      throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
+    }
     const status = deriveJudgeRunStatus(events);
     const result = status === 'done' ? terminalJudgeRunResult(events) : null;
     return Response.json({ run_id: runId, status, result });

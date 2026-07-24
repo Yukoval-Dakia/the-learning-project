@@ -42,9 +42,17 @@ describe('judgeFallbackProvider', () => {
     process.env.JUDGE_FALLBACK_PROVIDER = '';
     expect(judgeFallbackProvider()).toBeUndefined();
   });
-  it('honors an explicit provider', () => {
+  it('honors an explicit wired provider', () => {
     process.env.JUDGE_FALLBACK_PROVIDER = 'xiaomi';
     expect(judgeFallbackProvider()).toBe('xiaomi');
+  });
+  it('fail-fast throws on an unknown provider name (not a silent as-Provider cast)', () => {
+    process.env.JUDGE_FALLBACK_PROVIDER = 'bogus';
+    expect(() => judgeFallbackProvider()).toThrow(/not a wired provider/);
+  });
+  it('fail-fast throws on a reserved-but-not-wired provider (openrouter)', () => {
+    process.env.JUDGE_FALLBACK_PROVIDER = 'openrouter';
+    expect(() => judgeFallbackProvider()).toThrow(/not a wired provider/);
   });
 });
 

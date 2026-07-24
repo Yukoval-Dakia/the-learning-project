@@ -7,6 +7,7 @@
 import { newId } from '@/core/ids';
 import { event, job_events, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,6 +51,7 @@ async function buildValidated(questionId: string, body: Record<string, unknown>)
 describe('submit durable divert (W2)', () => {
   beforeEach(async () => {
     await resetDb();
+    __resetRateLimitForTests();
     vi.unstubAllEnvs();
   });
 
@@ -165,7 +167,7 @@ describe('submit durable divert (W2)', () => {
     expect(await db.select().from(event).where(eq(event.id, body.run_id))).toHaveLength(0);
   });
 
-  it('enqueue-link failure after the queued marker compensates with a terminal FAILED (not stuck queued)', async () => {
+  it('send-first: a boss.send failure writes NO durable state (no stuck-queued marker, no attempt)', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
@@ -176,17 +178,47 @@ describe('submit durable divert (W2)', () => {
     });
     const send = vi.fn().mockRejectedValue(new Error('boss down'));
 
+    // job_events is not truncated by resetDb — assert a DELTA of 0 (no new marker),
+    // pollution-proof against markers other tests in this file left behind.
+    const before = (await db.select().from(job_events)).length;
     const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
     expect(res.status).toBeGreaterThanOrEqual(500);
-    // Compensation wrote a terminal FAILED job_event so the run doesn't sit stuck
-    // queued (deriveJudgeRunStatus → failed for that business_id).
-    const failed = await db
-      .select()
-      .from(job_events)
-      .where(eq(job_events.event_type, 'judge_run.failed'));
-    expect(failed).toHaveLength(1);
-    expect((failed[0].payload as { reason?: string }).reason).toBe('enqueue_failed');
-    // No attempt/review event for a failed enqueue.
-    expect(await db.select().from(event).where(eq(event.action, 'review'))).toHaveLength(0);
+    // Send-first: the marker is written AFTER a successful send, so a send failure
+    // writes NO new job_events — nothing sits stuck queued, nothing to compensate.
+    expect(await db.select().from(job_events)).toHaveLength(before);
+  });
+
+  it('a null boss.send (dedupe/no-job) is treated as a failed enqueue (503, no new marker)', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
+    });
+    const before = (await db.select().from(job_events)).length;
+    const send = vi.fn().mockResolvedValue(null);
+    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
+    expect(res.status).toBe(503);
+    expect(await db.select().from(job_events)).toHaveLength(before);
+  });
+
+  it('rate-limits the durable enqueue on the shared paid-AI budget (does not send when over budget)', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
+    });
+    // Exhaust the in-process budget (default max 30) BEFORE the enqueue.
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    const { checkRateLimit } = await import('@/server/http/rate-limit');
+    checkRateLimit(); // fills the single slot
+    const send = vi.fn().mockResolvedValue('job-1');
+    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
+    expect(res.status).toBe(429);
+    expect(send).not.toHaveBeenCalled();
   });
 });

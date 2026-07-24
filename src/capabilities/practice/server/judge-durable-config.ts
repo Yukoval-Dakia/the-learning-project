@@ -5,6 +5,7 @@
 
 import type { Provider } from '@/ai/registry';
 import { parseFlag } from '@/core/env-flags';
+import { isProviderImplemented } from '@/server/ai/providers';
 
 /** boss 队列名（handlers.ts 注册 + submit 面 boss.send + status 路由共享）。 */
 export const JUDGE_RUN_QUEUE = 'judge_run' as const;
@@ -26,14 +27,25 @@ export function judgeDurableEnabled(): boolean {
  * RunTaskCtx.override（providers.ts resolveTaskProvider 既有 per-call seam），不发明
  * 新 plumbing。仅在最后一次重投应用（有界：付费调用 ≤ 1 + JOB_RETRY_LIMIT）。
  *
- * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。默认值经校验必须是已知
- * provider，否则 fail-fast（防打错 provider 名静默降级）。
+ * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。provider 名经 real 校验
+ * （isProviderImplemented 单一真源，YUK-608），未 wired（未知 OR reserved-but-not-
+ * implemented）⇒ fail-fast throw，绝不 `as Provider` 硬转出一个 runner 中途会炸的 lane。
  */
 export function judgeFallbackProvider(): Provider | undefined {
   const raw = process.env.JUDGE_FALLBACK_PROVIDER?.trim();
   // 默认 anthropic-sub；显式设空串 ⇒ 关闭跨 provider 兜底（留 undefined）。
   const name = raw === undefined ? 'anthropic-sub' : raw === '' ? undefined : raw;
-  return name as Provider | undefined;
+  if (name === undefined) return undefined;
+  // Real validation (fail-fast per the docblock), NOT an `as Provider` cast: reject
+  // an unknown OR reserved-but-not-wired name loudly instead of resolving to a lane
+  // resolveTaskProvider throws on mid-call. Reuses the single-source predicate so the
+  // wired set can never drift into a second hard-coded copy (#1062 export).
+  if (!isProviderImplemented(name as Provider)) {
+    throw new Error(
+      `JUDGE_FALLBACK_PROVIDER='${name}' is not a wired provider; use one isProviderImplemented() accepts (default 'anthropic-sub'), or set '' to disable cross-provider fallback.`,
+    );
+  }
+  return name as Provider;
 }
 
 /**
@@ -58,10 +70,13 @@ export function resolveDurableProviderOverride(params: {
 }
 
 /**
- * fallback provider 的凭据是否就位。anthropic-sub 需 CLAUDE_CODE_OAUTH_TOKEN；
- * key-auth provider 需其 apiKey env。无法确定的 provider 名 ⇒ 视为未配置（保守）。
+ * fallback provider 的凭据是否就位。先经 isProviderImplemented 对齐 wired 集合
+ * （reserved: openrouter/gateway/openai → 一律不可用，与 resolveTaskProvider 的
+ * "reserved but not implemented" 守卫同源，不双写）；再查具体凭据 env：anthropic-sub
+ * 需 CLAUDE_CODE_OAUTH_TOKEN，key-auth provider 需其 apiKey env。
  */
 function fallbackProviderConfigured(provider: Provider): boolean {
+  if (!isProviderImplemented(provider)) return false;
   if (provider === 'anthropic-sub') return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
   const envByProvider: Partial<Record<Provider, string>> = {
     anthropic: 'ANTHROPIC_API_KEY',
