@@ -112,6 +112,28 @@ async function writeReply(
   return id;
 }
 
+// YUK-497 wave-4 — mirror an mcp-bridge tool_use event chained to the ask (caused_by), carrying the
+// tool_name (the persisted key the anchor-suppression reads; tool_use has session_id null in prod and
+// is queried by caused_by, not session).
+async function writeToolUse(causedBy: string, toolName: string, at: Date) {
+  const id = `tool_use_${createId()}`;
+  writtenEventIds.push(id);
+  await writeEvent(db, {
+    id,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'tool_use',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { tool_name: toolName, args: {} },
+    caused_by_event_id: causedBy,
+    created_at: at,
+  });
+  return id;
+}
+
 // PR #305 review comment #2 — seed a copilot_reply that carries a skill_turn in
 // the payload (simulates what runCopilotChat writes for a teaching ask_check turn).
 // PR round-2 — optionally also carries skill_context.
@@ -383,6 +405,34 @@ describe('getRecentCopilotTurns', () => {
     // Sanity: fillerAsk (its own ask, not retracted) still renders.
     expect(turns.some((t) => t.event_id === fillerAsk)).toBe(true);
   });
+
+  it.each(['author_question', 'author_artifact', 'update_artifact', 'write_quiz'])(
+    'does NOT surface a revert checkpoint on a turn that called a materializing tool (%s) (wave-4 H1)',
+    async (materializingTool) => {
+      const now = new Date();
+      const sessionId = await createLiveCopilotSession(now);
+      // A free-form turn whose agent called a materializing tool wrote a domain row (question /
+      // artifact) OUTSIDE the ask's event chain — cascade-revert can't compensate it, so the anchor
+      // must be suppressed on replay (mirroring the live response). Keyed on the persisted tool_use
+      // mirror's tool_name under the ask.
+      const askMat = await writeAsk('出一道题', sessionId, new Date(now.getTime() - 4000));
+      await writeToolUse(askMat, materializingTool, new Date(now.getTime() - 3800));
+      const replyMat = await writeReply('好的', sessionId, askMat, new Date(now.getTime() - 3500));
+      // Contrast: a propose-only turn (reversible tool) keeps its anchor — the wave-3 win survives.
+      const askProp = await writeAsk('建议合并', sessionId, new Date(now.getTime() - 2000));
+      await writeToolUse(askProp, 'propose_knowledge_edge', new Date(now.getTime() - 1800));
+      const replyProp = await writeReply(
+        '已提议',
+        sessionId,
+        askProp,
+        new Date(now.getTime() - 1500),
+      );
+
+      const turns = await getRecentCopilotTurns(db, { now });
+      expect(turns.find((t) => t.event_id === replyMat)?.checkpoint_event_id).toBeUndefined();
+      expect(turns.find((t) => t.event_id === replyProp)?.checkpoint_event_id).toBe(askProp);
+    },
+  );
 
   it('caps to limit turns (newest kept), returned chronologically', async () => {
     const now = new Date();

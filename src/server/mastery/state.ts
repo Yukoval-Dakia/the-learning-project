@@ -61,7 +61,11 @@ import {
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
-import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+  withLearningStateLock,
+} from '@/server/advisory-locks';
 import { resolveFamilyKeyForQuestion } from './family-key';
 import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
@@ -130,38 +134,20 @@ export async function upsertMasteryState(
   db: DbLike,
   input: UpsertMasteryStateInput,
 ): Promise<void> {
-  const apply = async (tx: Tx) => {
-    await acquireLearningStateWriteLock(tx);
+  await withLearningStateLock(db, async (tx) => {
     const now = new Date();
     const subjectKind = input.subject_kind ?? 'knowledge';
-    // YUK-361 Phase 2 — precision/delta 是可选维护：只有 caller 显式传值时才写。
-    //   INSERT 缺省走 DB default（theta_precision=1, last_theta_delta=NULL）。
-    //   UPDATE 缺省不动这两列（既有 upsert caller 如直接 seed 不该重置 precision）。
-    // biome-ignore lint/suspicious/noExplicitAny: drizzle set 列子集动态拼装，类型在分支内已保真。
-    const updateSet: Record<string, any> = {
-      theta_hat: input.theta_hat,
-      evidence_count: input.evidence_count,
-      success_count: input.success_count,
-      fail_count: input.fail_count,
-      last_outcome_at: input.last_outcome_at,
-      updated_at: now,
+    // OPTIONAL-maintenance columns (YUK-361 precision/delta, YUK-436 A4 grid, YUK-449 A1 rt): written
+    // only when the caller passes them — INSERT falls back to the DB default (theta_precision=1,
+    // last_theta_delta/grid/rt NULL); UPDATE leaves them untouched (a plain seed upsert must not reset
+    // precision). Built ONCE and spread into BOTH the INSERT values and the UPDATE set so the two
+    // paths cannot drift (YUK-497 wave-4).
+    const optionalFields = {
+      ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
+      ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
+      ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
+      ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
     };
-    if (input.theta_precision !== undefined) {
-      updateSet.theta_precision = input.theta_precision;
-    }
-    if (input.last_theta_delta !== undefined) {
-      updateSet.last_theta_delta = input.last_theta_delta;
-    }
-    // A4 (YUK-436) — same optional-maintenance semantics: only write the shadow grid
-    // posterior when the caller explicitly passes it (THETA_GRID_ENABLED single-KC path).
-    if (input.theta_grid_json !== undefined) {
-      updateSet.theta_grid_json = input.theta_grid_json;
-    }
-    // A1 (YUK-449) — same optional-maintenance semantics for the per-KC correct-RT buffer:
-    // only written on an SRT-eligible correct attempt; INSERT/UPDATE skip the column otherwise.
-    if (input.rt_correct_ms !== undefined) {
-      updateSet.rt_correct_ms = input.rt_correct_ms;
-    }
     await tx
       .insert(mastery_state)
       .values({
@@ -173,21 +159,22 @@ export async function upsertMasteryState(
         success_count: input.success_count,
         fail_count: input.fail_count,
         last_outcome_at: input.last_outcome_at,
-        ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
-        ...(input.last_theta_delta !== undefined
-          ? { last_theta_delta: input.last_theta_delta }
-          : {}),
-        ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
-        ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
+        ...optionalFields,
         updated_at: now,
       })
       .onConflictDoUpdate({
         target: [mastery_state.subject_kind, mastery_state.subject_id],
-        set: updateSet,
+        set: {
+          theta_hat: input.theta_hat,
+          evidence_count: input.evidence_count,
+          success_count: input.success_count,
+          fail_count: input.fail_count,
+          last_outcome_at: input.last_outcome_at,
+          ...optionalFields,
+          updated_at: now,
+        },
       });
-  };
-  if ('rollback' in db) await apply(db);
-  else await db.transaction(apply);
+  });
 }
 
 /**

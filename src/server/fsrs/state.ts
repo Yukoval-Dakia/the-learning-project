@@ -14,7 +14,11 @@ import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
-import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+  withLearningStateLock,
+} from '@/server/advisory-locks';
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
@@ -40,8 +44,7 @@ export interface UpsertFsrsStateInput {
  * the same statement via ON CONFLICT.
  */
 export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): Promise<void> {
-  const apply = async (tx: Tx) => {
-    await acquireLearningStateWriteLock(tx);
+  await withLearningStateLock(db, async (tx) => {
     const now = new Date();
     await tx
       .insert(material_fsrs_state)
@@ -63,9 +66,7 @@ export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): 
           updated_at: now,
         },
       });
-  };
-  if ('rollback' in db) await apply(db);
-  else await db.transaction(apply);
+  });
 }
 
 /**
@@ -79,8 +80,7 @@ export async function enrollFsrsStateIfAbsent(
   db: DbLike,
   input: UpsertFsrsStateInput,
 ): Promise<boolean> {
-  const apply = async (tx: Tx): Promise<boolean> => {
-    await acquireLearningStateWriteLock(tx);
+  return withLearningStateLock(db, async (tx): Promise<boolean> => {
     const inserted = await tx
       .insert(material_fsrs_state)
       .values({
@@ -97,9 +97,7 @@ export async function enrollFsrsStateIfAbsent(
       })
       .returning({ id: material_fsrs_state.id });
     return inserted.length > 0;
-  };
-  if ('rollback' in db) return apply(db);
-  return db.transaction(apply);
+  });
 }
 
 /**

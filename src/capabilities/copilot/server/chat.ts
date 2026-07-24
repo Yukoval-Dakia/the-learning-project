@@ -106,6 +106,7 @@ import {
   type CopilotChatTriggerKind,
   type CopilotSkillContextT,
 } from './chat-contracts';
+import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export * from './chat-contracts';
 
@@ -1061,6 +1062,19 @@ async function runCopilotChatImpl(
     writeFn: write,
   });
 
+  // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
+  // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
+  // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
+  // can't diverge. Keeps user_ask_event_id for provenance. See materializing-tools.ts for the invariant.
+  // The DB-less routing unit tests pass a {}-stub db (every real db op is injected + stubbed); guard
+  // the probe on db being queryable so they need no new stub — production and the DB tests always
+  // carry a real client. An injected selectMaterializingAsksFn (a DB test) still runs since its db is
+  // real (YUK-497 wave-4, mirrors the "stub tx has no .select" seam above).
+  const turnMaterialized =
+    userAskEventId !== undefined &&
+    typeof (db as { select?: unknown }).select === 'function' &&
+    (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(userAskEventId);
+
   return {
     task_run_id: replyRunId,
     reply: cleanedReply,
@@ -1069,7 +1083,10 @@ async function runCopilotChatImpl(
     session_id: sessionId,
     reply_event_id: replyEventId,
     ...(userAskEventId
-      ? { user_ask_event_id: userAskEventId, checkpoint_event_id: userAskEventId }
+      ? {
+          user_ask_event_id: userAskEventId,
+          ...(turnMaterialized ? {} : { checkpoint_event_id: userAskEventId }),
+        }
       : {}),
     // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
     // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
