@@ -358,6 +358,11 @@ export async function deleteQuestion(
 export interface JudgePreview {
   route: string;
   score: number | null;
+  // YUK-589 — the judge's own score_meaning (e.g. 'steps_v1_weighted',
+  // 'unit_dimension_v1'), carried verbatim from advice. It is part of the
+  // digested result object, so the submit reshape MUST echo it unchanged;
+  // hardcoding it breaks the result_digest match → supplied_unverified.
+  score_meaning: string;
   coarse_outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
   confidence: number;
   feedback_md: string;
@@ -401,9 +406,7 @@ export const submitReview = (input: {
   judge_result_v2?: Omit<
     JudgePreview,
     'route' | 'suggested_rating' | 'task_run_id' | 'provenance_token'
-  > & {
-    score_meaning?: string;
-  };
+  >;
   judge_provenance_token?: string;
   judge_task_run_id?: string;
   // YUK-372 L2 — 被答 practice_stream_item.id（流作答传被答 slot id，π_i 直 join 判别子）。
