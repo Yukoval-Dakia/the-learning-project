@@ -801,6 +801,44 @@ describe('runSourceVerify', () => {
     expect((ev.payload as Record<string, unknown>).source_grounding).toBeUndefined();
   });
 
+  it('YUK-230 fails closed when a single_source_grounding row is missing image_candidate_source_asset_id (fix-forward #1063)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // single_source_grounding=true but NO image_candidate_source_asset_id — the previous
+    // gate silently skipped grounding and promoted; defense-in-depth now fails closed.
+    const { image_candidate_source_asset_id: _drop, ...noAssetMetadata } =
+      groundingMetadata('unused');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: noAssetMetadata,
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('grounded'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('failed');
+    // The paid re-check is NOT spent — there is no image to verify against.
+    expect(sourceGroundingFn).not.toHaveBeenCalled();
+    // Fail-closed: the pre-promoted row is demoted out of the pool.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('failure');
+    const payload = ev.payload as Record<string, unknown>;
+    expect(payload.overall).toBe('fail');
+    expect(payload.source_grounding).toMatchObject({ grounded: false });
+    expect(payload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'fail' }),
+      ]),
+    );
+  });
+
   it('YUK-230 skips the paid grounding re-check when a deterministic check already fails (no wasted VLM spend)', async () => {
     const db = testDb();
     await seedKnowledge('k1');

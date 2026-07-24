@@ -39,6 +39,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
+  type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
 } from '@/server/ai/judges/source-grounding-verify';
@@ -317,13 +318,14 @@ function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
 // auditable); the verify event records the verdict + triggered_by='image_candidate_accept'
 // (the accept-authorization extension).
 
-export interface SourceGroundingParams {
-  db: Db;
-  prompt_md: string;
-  reference_md: string | null;
-  sourceAssetId: string;
-  subjectProfile: SubjectProfile;
-}
+// Fix-forward #1063 (PRRT…TotCQ) — derive the seam's params from the runner's own
+// param interface (minus the runner-internal injectable seams) instead of re-declaring
+// the core fields. runSourceGroundingVerify (whose extra params are optional) stays
+// assignable to SourceGroundingFn.
+export type SourceGroundingParams = Omit<
+  RunSourceGroundingVerifyParams,
+  'runTaskFn' | 'imageFetchFn'
+>;
 export type SourceGroundingFn = (
   params: SourceGroundingParams,
 ) => Promise<SourceGroundingVerifyResult>;
@@ -474,6 +476,22 @@ export async function runSourceVerify(
     let groundingRan = false;
     let groundingSummary: string | undefined;
     let groundingConfidence: number | undefined;
+    // Defense-in-depth (fix-forward #1063 PRRT…TotCO): a row that CLAIMS
+    // single_source_grounding but carries NO image_candidate_source_asset_id cannot be
+    // grounded — the previous `&& groundingSourceAssetId` gate silently SKIPPED such a row
+    // and let it promote. Fail CLOSED instead: mark a source_grounding fail (→ overall=fail
+    // → the pre-promoted row is demoted out of the pool) and log for diagnosis. Runs only
+    // when otherwise-promotable (a row already failing another check needs no extra fail).
+    if (singleSourceGrounding && otherwisePromotable && !groundingSourceAssetId) {
+      console.warn(
+        `[source_verify] ${questionId} is single_source_grounding but has no image_candidate_source_asset_id; failing grounding closed`,
+      );
+      groundingRan = true;
+      multimodalGroundingFailed = true;
+      groundingSummary =
+        'single_source_grounding row is missing image_candidate_source_asset_id; grounding could not be verified';
+      checks.push({ check: 'source_grounding', verdict: 'fail', reason: groundingSummary });
+    }
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
       const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
       let outcome: SourceGroundingVerifyResult;
