@@ -24,6 +24,8 @@ const NOW = new Date('2026-07-25T02:30:00+08:00');
 class FakeBoss implements OrchestratorBoss {
   memberSends: { name: string; data: { stale?: boolean } }[] = [];
   tickSends = 0;
+  /** member job names for which send() returns null (models pg-boss "no job created"). */
+  nullSendJobs = new Set<string>();
   private states = new Map<string, string>();
   private counter = 0;
 
@@ -33,6 +35,7 @@ class FakeBoss implements OrchestratorBoss {
       return `tick_${this.tickSends}`;
     }
     this.memberSends.push({ name, data: data as { stale?: boolean } });
+    if (this.nullSendJobs.has(name)) return null;
     this.counter += 1;
     const id = `boss_${this.counter}`;
     this.states.set(`${name}:${id}`, 'created');
@@ -196,6 +199,64 @@ describe('orchestrator trigger semantics', () => {
     expect(runs).toHaveLength(1);
     // root a enqueued exactly once across both starts (idempotent adoption).
     expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(1);
+  });
+
+  it('⑦ cron redeliver after completion does not create a second run; manual rerun does', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const first = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'first run',
+    );
+    await completeMember(boss, first.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }); // a → completed
+
+    // A crash-recovery redeliver of the cron start job for the SAME date must NOT
+    // build a second run + re-enqueue roots (YUK-758 review ToPUE).
+    const redeliver = await runOrchestratorStart(
+      { db, boss, dag, now: NOW, localDate: () => RUN_DATE },
+      'cron',
+    );
+    expect(redeliver).toBeNull();
+    let runs = await db
+      .select()
+      .from(dag_orchestration_run)
+      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('completed');
+    expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(1);
+
+    // An explicit MANUAL rerun after completion IS allowed to create a fresh run.
+    const rerun = await runOrchestratorStart(
+      { db, boss, dag, now: NOW, localDate: () => RUN_DATE },
+      'manual',
+    );
+    expect(rerun).not.toBeNull();
+    expect(rerun?.id).not.toBe(first.id);
+    runs = await db
+      .select()
+      .from(dag_orchestration_run)
+      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
+    expect(runs).toHaveLength(2);
+  });
+
+  it('⑧ boss.send returning null marks the node failed immediately (no 3h wait) + hard downstream skips', async () => {
+    const boss = new FakeBoss();
+    boss.nullSendJobs.add('a');
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const a = await nodeRow(run.id, 'a');
+    expect(a?.status).toBe('failed');
+    expect(a?.detail).toMatch(/boss\.send returned null/);
+    expect(a?.boss_job_id).toBeNull();
+
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('skipped');
+    // b never enqueued (its only send would be its own; a's null send is recorded but no boss_job_id).
+    expect(boss.memberSends.filter((s) => s.name === 'b')).toHaveLength(0);
   });
 
   it('tick with no active run is a no-op', async () => {

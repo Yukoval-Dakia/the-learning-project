@@ -14,14 +14,16 @@ import {
   type NodeRow,
   type RunRow,
   type RunTrigger,
+  attachBossJob,
+  claimNodePending,
   createRun,
   finishRun,
   getActiveRunForDate,
+  getLatestRunForDate,
   insertNodes,
   isTerminalNodeStatus,
   listActiveRuns,
   loadNodes,
-  markNodeEnqueued,
   updateNodeStatus,
 } from './store';
 
@@ -82,34 +84,13 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
   const now = deps.now ?? new Date();
   const timeoutMs = (deps.timeoutSeconds ?? NODE_TIMEOUT_SECONDS) * 1000;
 
-  // ── ① 轮询在飞（enqueued/running）节点的 pg-boss 终态。
+  // ── ① 轮询在飞（enqueued/running）节点的 pg-boss 终态。节点间互不依赖（步骤②另行
+  //    reload 最新态，步骤①的内存改动不跨用），并行轮询省去大图每 tick 的串行往返
+  //    （YUK-758 review ToTae）。
   const inflight = await loadNodes(deps.db, deps.run.id);
-  for (const node of inflight.values()) {
-    if (node.status !== 'enqueued' && node.status !== 'running') continue;
-    const jobState = node.boss_job_id
-      ? mapBossState((await deps.boss.getJobById(node.job_name, node.boss_job_id))?.state ?? null)
-      : null;
-    if (jobState === 'succeeded') {
-      await updateNodeStatus(deps.db, node.id, { status: 'succeeded', now });
-    } else if (jobState === 'failed') {
-      await updateNodeStatus(deps.db, node.id, {
-        status: 'failed',
-        detail: 'pg-boss job failed',
-        now,
-      });
-    } else if (jobState === 'running' && node.status !== 'running') {
-      await updateNodeStatus(deps.db, node.id, { status: 'running', now });
-    } else if (jobState === null || jobState === 'enqueued') {
-      // 仍在飞（created/retry/active-not-yet）或 job 行查不到 → 超时兜底。
-      if (isNodeTimedOut(node, now, timeoutMs)) {
-        await updateNodeStatus(deps.db, node.id, {
-          status: 'failed',
-          detail: jobState === null ? 'pg-boss job not found (timeout)' : 'timeout',
-          now,
-        });
-      }
-    }
-  }
+  await Promise.all(
+    [...inflight.values()].map((node) => pollInflightNode(deps, node, now, timeoutMs)),
+  );
 
   // ── ② 用最新态评估 pending 节点是否就绪。
   const nodes = await loadNodes(deps.db, deps.run.id);
@@ -140,13 +121,63 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
 
     // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游若未 succeeded → stale。
     const stale = upstreams.some((u) => u.soft && u.up && u.up.status !== 'succeeded');
+
+    // 先原子领取（CAS pending→enqueued），只有赢家 send——杜绝并发 advanceRun 重复付费入队
+    //（YUK-758 review ToTaj）。领取失败 = 已被并发调用推进，跳过。
+    const claimed = await claimNodePending(deps.db, node.id, now);
+    if (!claimed) continue;
+
     const jobId = await deps.boss.send(jobName, stale ? { stale: true } : {});
-    await markNodeEnqueued(deps.db, node.id, { bossJobId: jobId, stale, now });
+    if (!jobId) {
+      // boss.send 返回 null（未建 job）——立即标 failed，避免节点挂到 3h 超时才被发现、
+      // 拖垮下游（YUK-758 review ToTaT）。硬下游据此跳过、软下游 stale。
+      await updateNodeStatus(deps.db, node.id, {
+        status: 'failed',
+        detail: 'boss.send returned null (job not created)',
+        now,
+      });
+      node.status = 'failed';
+      continue;
+    }
+    await attachBossJob(deps.db, node.id, { bossJobId: jobId, stale, now });
     node.status = 'enqueued';
   }
 
   // ── ③ 汇总（用②后 in-memory map；enqueue/skip 已就地更新 status）。
   return summarize(nodes);
+}
+
+/** 轮询单个在飞节点的 pg-boss 终态并落库（步骤① per-node，供 Promise.all 并行）。 */
+async function pollInflightNode(
+  deps: AdvanceDeps,
+  node: NodeRow,
+  now: Date,
+  timeoutMs: number,
+): Promise<void> {
+  if (node.status !== 'enqueued' && node.status !== 'running') return;
+  const jobState = node.boss_job_id
+    ? mapBossState((await deps.boss.getJobById(node.job_name, node.boss_job_id))?.state ?? null)
+    : null;
+  if (jobState === 'succeeded') {
+    await updateNodeStatus(deps.db, node.id, { status: 'succeeded', now });
+  } else if (jobState === 'failed') {
+    await updateNodeStatus(deps.db, node.id, {
+      status: 'failed',
+      detail: 'pg-boss job failed',
+      now,
+    });
+  } else if (jobState === 'running' && node.status !== 'running') {
+    await updateNodeStatus(deps.db, node.id, { status: 'running', now });
+  } else if (jobState === null || jobState === 'enqueued') {
+    // 仍在飞（created/retry/active-not-yet）或 job 行查不到 → 超时兜底。
+    if (isNodeTimedOut(node, now, timeoutMs)) {
+      await updateNodeStatus(deps.db, node.id, {
+        status: 'failed',
+        detail: jobState === null ? 'pg-boss job not found (timeout)' : 'timeout',
+        now,
+      });
+    }
+  }
 }
 
 function isNodeTimedOut(node: NodeRow, now: Date, timeoutMs: number): boolean {
@@ -237,6 +268,12 @@ export async function runOrchestratorStart(
 
   let run = await getActiveRunForDate(deps.db, runDate);
   if (!run) {
+    // cron 重投递防重（YUK-758 review ToPUE）：cron start job 在崩溃/重投递下会二次执行；
+    // 若今日已有**任意**状态的 run（含 tick 链已推到 completed 的），cron 绝不再建第二条
+    // 重发全部 root（重复整晚付费任务）。manual 触发例外——显式重跑允许在完成后再建新 run。
+    if (trigger === 'cron' && (await getLatestRunForDate(deps.db, runDate))) {
+      return null;
+    }
     run = await createRun(deps.db, { runDate, trigger, now });
     if (run) {
       await insertNodes(deps.db, run.id, [...deps.dag.nodes.keys()], now);
@@ -265,18 +302,32 @@ export async function runOrchestratorTick(deps: DriveDeps): Promise<void> {
 
 /** 推进一步 → 完成收尾 / 未完成调度下一 tick。 */
 async function advanceAndContinue(deps: DriveDeps & { run: RunRow }): Promise<AdvanceSummary> {
+  // 单一 now 贯穿 advance + finish（YUK-758 review ToTai）：避免 run.finished_at 因两次独立
+  // new Date() 比末节点 finished_at 略晚的时序错位。
+  const now = deps.now ?? new Date();
   const summary = await advanceRun({
     db: deps.db,
     boss: deps.boss,
     dag: deps.dag,
     run: deps.run,
-    now: deps.now,
+    now,
     timeoutSeconds: deps.timeoutSeconds,
   });
   if (summary.complete) {
-    await finishRun(deps.db, deps.run.id, 'completed', deps.now ?? new Date());
+    await finishRun(deps.db, deps.run.id, 'completed', now);
   } else {
-    await deps.boss.send(ORCHESTRATOR_QUEUE, { tick: true }, { startAfter: TICK_INTERVAL_SECONDS });
+    // tick 自调度是唯一续跑通道；send 返回 null（未建 job）会静默断链、run 卡 running（YUK-758
+    // review ToTaa）。显式检查并 loud log——次夜锚点是最终兜底，但断链须留观测痕迹不静默。
+    const tickId = await deps.boss.send(
+      ORCHESTRATOR_QUEUE,
+      { tick: true },
+      { startAfter: TICK_INTERVAL_SECONDS },
+    );
+    if (!tickId) {
+      console.error(
+        `[orchestrator] next tick send returned null for run ${deps.run.id} (${deps.run.run_date}) — tick chain broken; run stays 'running' until next anchor abandons it`,
+      );
+    }
   }
   return summary;
 }

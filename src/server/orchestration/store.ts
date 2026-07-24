@@ -6,7 +6,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, notInArray } from 'drizzle-orm';
 
 export type RunTrigger = 'cron' | 'manual';
 export type RunStatus = 'running' | 'completed' | 'abandoned';
@@ -89,16 +89,34 @@ export async function listActiveRuns(db: Db): Promise<RunRow[]> {
   return rows.map(toRunRow);
 }
 
+/**
+ * 今日**任意状态**的最近一条 run（含 completed/abandoned）。cron 触发用它防重投递重建
+ * 第二条 run（YUK-758 review ToPUE：cron start job redeliver 会绕过 running-only 单飞）。
+ */
+export async function getLatestRunForDate(db: Db, runDate: string): Promise<RunRow | null> {
+  const rows = await db
+    .select()
+    .from(dag_orchestration_run)
+    .where(eq(dag_orchestration_run.run_date, runDate))
+    .orderBy(desc(dag_orchestration_run.started_at))
+    .limit(1);
+  return rows[0] ? toRunRow(rows[0]) : null;
+}
+
 export async function finishRun(
   db: Db,
   runId: string,
   status: 'completed' | 'abandoned',
   now = new Date(),
 ): Promise<void> {
+  // Guard status='running' (YUK-758 review ToTao): concurrent finalizers (two
+  // advanceAndContinue evaluating complete, or a start abandoning while a tick
+  // completes) become an atomic CAS — only the first transition wins, no
+  // finished_at overwrite, no running↔terminal thrash.
   await db
     .update(dag_orchestration_run)
     .set({ status, finished_at: now, updated_at: now })
-    .where(eq(dag_orchestration_run.id, runId));
+    .where(and(eq(dag_orchestration_run.id, runId), eq(dag_orchestration_run.status, 'running')));
 }
 
 /** 批量落节点行（全 pending）。job 名唯一性由 unique(run_id, job_name) 兜。 */
@@ -135,22 +153,31 @@ export async function loadNodes(db: Db, runId: string): Promise<Map<string, Node
   return map;
 }
 
-/** 记节点已入队（boss.send 后）。 */
-export async function markNodeEnqueued(
+/**
+ * 原子领取一个 pending 节点用于入队（CAS pending→enqueued，YUK-758 review ToTaj）。
+ * 返回 true 表示本调用抢到该节点（后续负责 boss.send + attachBossJob）；false 表示已被
+ * 并发的 advanceRun（cron vs manual 同分钟）抢走——调用方跳过，绝不重复付费入队。
+ * 先领取再 send：只有赢家发付费 job，杜绝重复 LLM 支出。
+ */
+export async function claimNodePending(db: Db, nodeId: string, now = new Date()): Promise<boolean> {
+  const rows = await db
+    .update(dag_orchestration_node)
+    .set({ status: 'enqueued', enqueued_at: now, updated_at: now })
+    .where(and(eq(dag_orchestration_node.id, nodeId), eq(dag_orchestration_node.status, 'pending')))
+    .returning({ id: dag_orchestration_node.id });
+  return rows.length > 0;
+}
+
+/** 领取成功并 boss.send 后回填 boss_job_id + stale（节点已是 'enqueued'）。 */
+export async function attachBossJob(
   db: Db,
   nodeId: string,
-  input: { bossJobId: string | null; stale: boolean; now?: Date },
+  input: { bossJobId: string; stale: boolean; now?: Date },
 ): Promise<void> {
   const now = input.now ?? new Date();
   await db
     .update(dag_orchestration_node)
-    .set({
-      status: 'enqueued',
-      boss_job_id: input.bossJobId,
-      stale: input.stale,
-      enqueued_at: now,
-      updated_at: now,
-    })
+    .set({ boss_job_id: input.bossJobId, stale: input.stale, updated_at: now })
     .where(eq(dag_orchestration_node.id, nodeId));
 }
 
@@ -162,6 +189,15 @@ export async function updateNodeStatus(
 ): Promise<void> {
   const now = input.now ?? new Date();
   const terminal = isTerminalNodeStatus(input.status);
+  // 终态不可回退守卫（YUK-758 review ToTam）：转终态时 WHERE 排除已终态节点，堵住
+  // loadNodes→update 的 TOCTOU（并发 advanceRun 已把节点标 succeeded，陈旧调用不能拽回
+  // running/failed）。非终态转移（→running）不加守卫（幂等刷新）。
+  const guard = terminal
+    ? and(
+        eq(dag_orchestration_node.id, nodeId),
+        notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
+      )
+    : eq(dag_orchestration_node.id, nodeId);
   await db
     .update(dag_orchestration_node)
     .set({
@@ -171,7 +207,7 @@ export async function updateNodeStatus(
       ...(terminal ? { finished_at: now } : {}),
       updated_at: now,
     })
-    .where(eq(dag_orchestration_node.id, nodeId));
+    .where(guard);
 }
 
 function toRunRow(r: typeof dag_orchestration_run.$inferSelect): RunRow {

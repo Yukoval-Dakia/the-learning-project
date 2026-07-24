@@ -2591,6 +2591,13 @@ export const dag_orchestration_run = pgTable(
       .on(t.run_date)
       .where(sql`status = 'running'`),
     index('dag_orchestration_run_status_idx').on(t.status),
+    // DB 层枚举守卫（YUK-758 review ToTaI，仿 question_generation_plan_status_ck）：
+    // 单飞 partial unique 依赖 status='running'，坏 status 值会静默绕过——CHECK 兜住。
+    check('dag_orchestration_run_trigger_ck', sql`${t.trigger} IN ('cron','manual')`),
+    check(
+      'dag_orchestration_run_status_ck',
+      sql`${t.status} IN ('running','completed','abandoned')`,
+    ),
   ],
 );
 
@@ -2622,5 +2629,11 @@ export const dag_orchestration_node = pgTable(
     uniqueIndex('dag_orchestration_node_run_job_uq').on(t.run_id, t.job_name),
     // 推进扫描：按 run 取某状态的节点。
     index('dag_orchestration_node_run_status_idx').on(t.run_id, t.status),
+    // DB 层枚举守卫（YUK-758 review ToTaI）：CAS 转移/终态守卫皆以 status 字面为条件，
+    // 坏值会破坏推进不变量——CHECK 兜住。
+    check(
+      'dag_orchestration_node_status_ck',
+      sql`${t.status} IN ('pending','enqueued','running','succeeded','failed','skipped')`,
+    ),
   ],
 );

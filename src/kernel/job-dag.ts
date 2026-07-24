@@ -66,19 +66,30 @@ export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
   const nodes = new Map<string, JobDagNode>();
   const dependents = new Map<string, { job: string; soft: boolean }[]>();
   for (const m of members) {
+    // Self-defensive against a duplicate member name even when a caller bypasses
+    // validateComposition (buildOrchestrationDag / tests call buildJobDag directly).
+    // A silent Map overwrite would drop one capability's job from the DAG.
+    if (nodes.has(m.name)) {
+      throw new JobDagError(`duplicate DAG member name '${m.name}' (${m.owner})`);
+    }
     nodes.set(m.name, {
       name: m.name,
       owner: m.owner,
       deps: m.dependsOn.map(normalizeJobDependency),
     });
-    if (!dependents.has(m.name)) dependents.set(m.name, []);
+    dependents.set(m.name, []);
   }
   for (const node of nodes.values()) {
     for (const dep of node.deps) {
       const list = dependents.get(dep.job);
-      // buildJobDag 假定已校验：dep.job 一定是成员。防御式兜底建空桶。
-      if (list) list.push({ job: node.name, soft: dep.soft });
-      else dependents.set(dep.job, [{ job: node.name, soft: dep.soft }]);
+      // buildJobDag 契约：调用前已过 validateJobDag（dep.job 一定是成员）。若某上游不在
+      // nodes 里，说明调用方跳过了校验——fail fast，绝不发明幻影反向边掩盖集成错误。
+      if (!list) {
+        throw new JobDagError(
+          `buildJobDag: dependency '${dep.job}' of '${node.name}' is not a declared member (was validateJobDag called?)`,
+        );
+      }
+      list.push({ job: node.name, soft: dep.soft });
     }
   }
   const roots = [...nodes.values()].filter((n) => n.deps.length === 0).map((n) => n.name);

@@ -96,6 +96,17 @@ describe('findCycle', () => {
 });
 
 describe('buildJobDag', () => {
+  it('throws on a duplicate member name (self-defensive, YUK-758 review)', () => {
+    expect(() => buildJobDag([member('a'), member('a')])).toThrow(/duplicate DAG member name 'a'/);
+  });
+
+  it('throws when a dependency is not a declared member (fail fast, not phantom edge)', () => {
+    // Caller bypassed validateJobDag: 'ghost' is referenced but never declared.
+    expect(() => buildJobDag([member('b', ['ghost'])])).toThrow(
+      /dependency 'ghost' of 'b' is not a declared member/,
+    );
+  });
+
   it('derives roots, nodes and reverse-adjacency dependents', () => {
     const dag = buildJobDag([
       member('a'),

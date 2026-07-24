@@ -159,9 +159,16 @@ export const agencyCapability = defineCapability({
       // comfortably exceeds the director's own 300s wall-clock abort budget — pg-boss's
       // queue-level expiry is a crash-recovery safety net, never the primary backstop
       // (the director's own 300s abort always fires first on a healthy run).
+      // YUK-758 DAG 成员：←**hard** research_meeting_nightly（review ToPUI）。原「05:35 固定
+      // cron，比确定性会议 04:05 晚 90min」的去重屏障在确定性会议入图后失效（会议现由 orchestrator
+      // 调度，llm 队列排队/重试可能推后其完成时刻，固定 05:35 不再保证「会议已提交 proposal」）。
+      // 入图后 orchestrator 只在 research_meeting_nightly **成功完成后**才触发本 agent lane——
+      // happens-after 硬保证，严格强于原 90min 时间差启发式（agent director 读 inbox 去重时，
+      // 确定性 lane 的 proposal 必已落库）。cron 移除；kill switch RESEARCH_MEETING_AGENT_ENABLED
+      // 仍在（flag OFF 时 handler no-op，节点照常 succeed）。
       {
         name: 'research_meeting_agent_nightly',
-        schedule: { cron: '35 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['research_meeting_nightly'],
         queue: 'agent',
         load: () =>
           import('./jobs/research_meeting_agent_nightly').then(

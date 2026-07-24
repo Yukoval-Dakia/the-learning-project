@@ -1,5 +1,5 @@
 {
-  "id": "ccfc9a64-ef28-441a-9ee9-7fd9375977b9",
+  "id": "9c267ef5-cad1-4408-a651-f90c4d8e7f9d",
   "prevId": "25748f75-328b-483a-9660-91e3d3a09fc3",
   "version": "7",
   "dialect": "postgresql",
@@ -869,7 +869,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "dag_orchestration_node_status_ck": {
+          "name": "dag_orchestration_node_status_ck",
+          "value": "\"dag_orchestration_node\".\"status\" IN ('pending','enqueued','running','succeeded','failed','skipped')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.dag_orchestration_run": {
@@ -956,7 +961,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "dag_orchestration_run_trigger_ck": {
+          "name": "dag_orchestration_run_trigger_ck",
+          "value": "\"dag_orchestration_run\".\"trigger\" IN ('cron','manual')"
+        },
+        "dag_orchestration_run_status_ck": {
+          "name": "dag_orchestration_run_status_ck",
+          "value": "\"dag_orchestration_run\".\"status\" IN ('running','completed','abandoned')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.difficulty_calibration_label": {
