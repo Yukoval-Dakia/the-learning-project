@@ -456,21 +456,18 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 // judges opt in (they are synchronous-route sensors whose catch swallows into
 // 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
 describe('budget.transientRetries (YUK-576)', () => {
-  it('the vision judges + source-grounding verifier get exactly 1 same-target transient retry', () => {
+  it('the two vision judges get exactly 1 same-target transient retry', () => {
     expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
     expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);
-    // YUK-230 — SourceGroundingVerifyTask is a synchronous-route vision call with no durable
-    // backstop, same rationale as the other two vision tasks (source_verify's fail-closed +
-    // pg-boss retry is the OUTER backstop; the 1 in-process retry absorbs a one-off blip).
-    expect(tasks.SourceGroundingVerifyTask.budget.transientRetries).toBe(1);
+    // YUK-230 — SourceGroundingVerifyTask deliberately does NOT opt in: it runs inside the
+    // durable source_verify pg-boss job (throws on transient → queue redelivery is the retry
+    // layer), so an in-process retry would stack a second transient layer (single-transient-
+    // layer principle). It is asserted to inherit 0 by the "every other task" case below.
+    expect(tasks.SourceGroundingVerifyTask.budget.transientRetries).toBe(0);
   });
 
   it('every other task inherits the DEFAULT_BUDGET 0 (no in-process retry)', () => {
-    const optedIn = new Set([
-      'StepsJudgeTask',
-      'MultimodalDirectJudgeTask',
-      'SourceGroundingVerifyTask',
-    ]);
+    const optedIn = new Set(['StepsJudgeTask', 'MultimodalDirectJudgeTask']);
     for (const [kind, def] of Object.entries(tasks)) {
       if (optedIn.has(kind)) continue;
       expect(def.budget.transientRetries, `${kind} must not opt into in-process retry`).toBe(0);

@@ -136,9 +136,16 @@ export async function runSourceGroundingVerify(
       {
         db: params.db,
         subjectProfile: params.subjectProfile,
-        // Same vision provider routing + transient retry as the multimodal judges.
+        // Same vision provider routing as the multimodal judges.
         override: visionJudgeProviderOverride(),
-        enableTransientRetry: true,
+        // NO enableTransientRetry (single-transient-layer principle, YUK-576 §3.2): unlike
+        // multimodal_direct / steps (called synchronously from the judge router, whose catch
+        // swallows failures into 'unsupported' → pg-boss never sees a throw), this runner is
+        // called from the DURABLE source_verify pg-boss job. On a transient error it returns
+        // transient_error → source_verify fails closed (demote) AND THROWS → pg-boss
+        // redelivery is the retry layer. Opting into in-process retry here would stack a
+        // second layer on top of queue redelivery (the exact anti-pattern the retry-optin pin
+        // guards). See src/server/ai/retry-optin.test.ts.
         outputFormat: OUTPUT_FORMAT,
       },
     );
