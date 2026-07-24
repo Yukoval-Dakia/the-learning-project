@@ -452,6 +452,56 @@ describe('orchestrateCascadeRevert', () => {
     expect(await countCorrectionsFor(extractEvent)).toBe(0);
   });
 
+  it('refuses (irreversible) a closure whose rate=accept accepted a proposal (wave-7 TeZZO)', async () => {
+    const db = testDb();
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    const proposeEvent = await seedEvent({
+      action: 'propose',
+      subject_kind: 'knowledge',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+    });
+    // The accept vote landed a KG mutation outside this chain → the whole closure is fail-closed.
+    const acceptRate = await seedEvent({
+      action: 'rate',
+      subject_kind: 'event',
+      caused_by_event_id: proposeEvent,
+      payload: { rating: 'accept' },
+    });
+
+    const result = await orchestrateCascadeRevert(db, checkpoint);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected refusal');
+    if (result.refusal !== 'irreversible')
+      throw new Error(`expected irreversible, got ${result.refusal}`);
+    expect(result.irreversibleEventIds).toContain(acceptRate);
+    // Nothing mutated — no half-revert of the ask→propose→rate chain.
+    expect(await countCorrectionsFor(acceptRate)).toBe(0);
+  });
+
+  it('reverts a closure whose rate=dismiss landed nothing (dismiss stays reversible) (wave-7 TeZZO)', async () => {
+    const db = testDb();
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    const proposeEvent = await seedEvent({
+      action: 'propose',
+      subject_kind: 'knowledge',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+    });
+    await seedEvent({
+      action: 'rate',
+      subject_kind: 'event',
+      caused_by_event_id: proposeEvent,
+      payload: { rating: 'dismiss' },
+    });
+
+    const result = await orchestrateCascadeRevert(db, checkpoint);
+
+    if (!result.ok) throw new Error(`expected ok, got refusal: ${result.refusal}`);
+    expect(result.ok).toBe(true);
+  });
+
   it('restores a cold-start snapshot by DELETING the FSRS row (before=null)', async () => {
     const db = testDb();
     const subjectId = newId();

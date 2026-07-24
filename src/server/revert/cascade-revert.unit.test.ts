@@ -15,6 +15,21 @@ describe('copilotAskRevertAllows', () => {
     expect(copilotAskRevertAllows(row({ action: 'rate' }), false)).toBe(true);
   });
 
+  it('refuses a rate that ACCEPTED a proposal but keeps dismiss/rollback reversible (wave-7 TeZZO)', () => {
+    // rate=accept landed a KG mutation (reparent/merge/archive) OUTSIDE the event chain → irreversible,
+    // else the revert tombstones ask→propose→rate while the mutation survives (false success).
+    expect(
+      copilotAskRevertAllows(row({ action: 'rate', payload: { rating: 'accept' } }), false),
+    ).toBe(false);
+    // dismiss / rollback / plain vote land no mutation → still reversible.
+    expect(
+      copilotAskRevertAllows(row({ action: 'rate', payload: { rating: 'dismiss' } }), false),
+    ).toBe(true);
+    expect(
+      copilotAskRevertAllows(row({ action: 'rate', payload: { rating: 'rollback' } }), false),
+    ).toBe(true);
+  });
+
   it('allows the tool_use provenance mirror a copilot ask emits (wave-3 G2)', () => {
     // mcp-bridge writes action='tool_use', subject_kind='query'. Pure episodic provenance, so it is
     // both in EVENT_LAYER_ACTIONS (classifyRow → event_layer) and admitted here, letting a

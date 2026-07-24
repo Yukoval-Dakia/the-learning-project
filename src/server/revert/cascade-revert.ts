@@ -278,6 +278,16 @@ function classifyRow(row: EventRow): RevertableEffect {
     };
   }
 
+  // rate(rating='accept') (YUK-497 wave-7, TeZZO): the vote ACCEPTED a proposal, LANDING a KG mutation
+  // (reparent / merge / archive) that materialized OUTSIDE this event chain — chained from the accept
+  // or applied imperatively by the accept applier — which a `correct`(retract) cannot compensate.
+  // Reverting the closure would tombstone ask→propose→rate while the mutation survives (a false-success
+  // revert). Fail-closed. A `dismiss` / `rollback` / plain vote lands no such effect and stays
+  // event-layer reversible below.
+  if (row.action === 'rate' && (row.payload as { rating?: string } | null)?.rating === 'accept') {
+    return { ...base, reversibility: 'irreversible' };
+  }
+
   if (EVENT_LAYER_ACTIONS.has(row.action)) {
     return { ...base, reversibility: 'event_layer' };
   }
@@ -314,6 +324,15 @@ export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean 
   const proposalKind = (row.payload as { ai_proposal?: { kind?: string } } | null)?.ai_proposal
     ?.kind;
   if (proposalKind === 'question_draft') return false;
+
+  // TeZZO — same materializing-class corner: a rate(rating='accept') accepted a proposal, landing a KG
+  // mutation OUTSIDE the ask's event chain (see classifyRow). Refuse so a direct API revert 409s
+  // honestly instead of tombstoning ask→propose→rate while the mutation survives. Keeps this allowlist a
+  // subset of classifyRow's reversible set (which now also refuses rate=accept). dismiss/rollback stay
+  // reversible via the `rate` clause below.
+  if (row.action === 'rate' && (row.payload as { rating?: string } | null)?.rating === 'accept') {
+    return false;
+  }
 
   return (
     (isRoot && row.action === COPILOT_USER_ASK_ACTION) ||
