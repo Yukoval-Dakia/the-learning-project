@@ -61,6 +61,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), ms);
   });
+  // H1 (Tdx9K) — when the timeout WINS the race, `promise` is abandoned but still pending; a later
+  // rejection would become an unhandled rejection and the worker's process-level guard would exit(1).
+  // Attach a swallow-and-log catch (the placement `void p.catch(...)` pattern). Harmless when the race
+  // already consumed the settlement — this second observer just logs; the race still drives the caller.
+  void promise.catch((err) => {
+    console.info(
+      '[event-subscriptions] subscription handler promise rejected (abandoned after timeout, or already handled)',
+      { error: err },
+    );
+  });
   return Promise.race([promise, timeout]).finally(() => {
     if (timer) clearTimeout(timer);
   });
@@ -447,7 +457,9 @@ export async function claimNextSubscriptionDelivery(
     async (tx) =>
       tx.execute<{
         source_event_id: string;
-        delivery_seq: number;
+        // H3 (Tdx9N) — postgres returns bigint as a decimal string; asBigint() below normalizes it
+        // (matches the discovery query's `delivery_seq: string` typing).
+        delivery_seq: string;
         claim_lease_until: Date;
       }>(sql`
       with candidate as (

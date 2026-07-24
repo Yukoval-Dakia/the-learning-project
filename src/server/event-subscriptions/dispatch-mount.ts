@@ -12,7 +12,12 @@ import type { PgBoss } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
+import {
+  FAST_QUEUE_OPTS,
+  JOB_RETRY_DELAY_SECONDS,
+  JOB_RETRY_LIMIT,
+  createOrUpdateQueue,
+} from '@/server/boss/queue-config';
 
 import { loadEventSubscriptionRegistry } from './registry';
 import { runSubscriptionDispatchCycle } from './runtime';
@@ -22,6 +27,16 @@ export const EVENT_SUBSCRIPTION_DISPATCH_QUEUE = 'event_subscription_dispatch';
 // pg-boss cron granularity floors at 1 minute; the lease makes the period non-load-bearing.
 const DEFAULT_DISPATCH_CRON = '* * * * *';
 const DEFAULT_DISPATCH_MAX_ATTEMPTS = 5;
+
+// H2 (Tdx9E) — explicit retry policy for the dispatch queue instead of pg-boss defaults (which would
+// retry a failed cycle immediately ×3 during a DB outage). Reuses the codebase job-retry convention
+// (JOB_RETRY_LIMIT / JOB_RETRY_DELAY_SECONDS + backoff), same as the LLM/agent job queues.
+const DISPATCH_QUEUE_OPTS = {
+  ...FAST_QUEUE_OPTS,
+  retryLimit: JOB_RETRY_LIMIT,
+  retryDelay: JOB_RETRY_DELAY_SECONDS,
+  retryBackoff: true,
+} as const;
 
 export type MountSubscriptionDispatchOptions = {
   owner?: string;
@@ -46,7 +61,7 @@ export async function mountSubscriptionDispatch(
   const maxAttempts = options.maxAttempts ?? DEFAULT_DISPATCH_MAX_ATTEMPTS;
   const cron = options.cron ?? DEFAULT_DISPATCH_CRON;
 
-  await createOrUpdateQueue(boss, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, FAST_QUEUE_OPTS);
+  await createOrUpdateQueue(boss, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, DISPATCH_QUEUE_OPTS);
   await boss.work(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
