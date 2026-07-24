@@ -140,14 +140,11 @@ export async function upsertMasteryState(
     // OPTIONAL-maintenance columns (YUK-361 precision/delta, YUK-436 A4 grid, YUK-449 A1 rt): written
     // only when the caller passes them — INSERT falls back to the DB default (theta_precision=1,
     // last_theta_delta/grid/rt NULL); UPDATE leaves them untouched (a plain seed upsert must not reset
-    // precision). Built ONCE and spread into BOTH the INSERT values and the UPDATE set so the two
-    // paths cannot drift (YUK-497 wave-4).
-    const optionalFields = {
-      ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
-      ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
-      ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
-      ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
-    };
+    // precision). Inlined IDENTICALLY into both the INSERT values and the UPDATE set — the column-name
+    // literals must stay textually visible at each write site so audit:schema's write-path scanner
+    // (scripts/audit-schema-writes.ts keys on `field:` text inside .values()/onConflict set{}) can see
+    // them; a shared `...optionalFields` spread hid rt_correct_ms and broke the audit (YUK-497 wave-4).
+    // The two blocks MUST stay in sync by hand.
     await tx
       .insert(mastery_state)
       .values({
@@ -159,7 +156,12 @@ export async function upsertMasteryState(
         success_count: input.success_count,
         fail_count: input.fail_count,
         last_outcome_at: input.last_outcome_at,
-        ...optionalFields,
+        ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
+        ...(input.last_theta_delta !== undefined
+          ? { last_theta_delta: input.last_theta_delta }
+          : {}),
+        ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
+        ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
         updated_at: now,
       })
       .onConflictDoUpdate({
@@ -170,7 +172,16 @@ export async function upsertMasteryState(
           success_count: input.success_count,
           fail_count: input.fail_count,
           last_outcome_at: input.last_outcome_at,
-          ...optionalFields,
+          ...(input.theta_precision !== undefined
+            ? { theta_precision: input.theta_precision }
+            : {}),
+          ...(input.last_theta_delta !== undefined
+            ? { last_theta_delta: input.last_theta_delta }
+            : {}),
+          ...(input.theta_grid_json !== undefined
+            ? { theta_grid_json: input.theta_grid_json }
+            : {}),
+          ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
           updated_at: now,
         },
       });
