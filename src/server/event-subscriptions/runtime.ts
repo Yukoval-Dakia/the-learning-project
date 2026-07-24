@@ -9,6 +9,30 @@ import type { LoadedEventSubscription, LoadedEventSubscriptionRegistry } from '.
 
 type SubscriptionIdentity = Pick<LoadedEventSubscription, 'id' | 'version'>;
 
+// Max un-delivered events materialized + inserted per bootstrap backfill transaction (YUK-751 OCR
+// major): bounds memory and per-tx lock duration when a new subscriber bootstraps against a large
+// event history. Each batch commits independently; the backfill resumes across batches.
+const BOOTSTRAP_BACKFILL_BATCH_SIZE = 1_000;
+
+// CONTRACT (YUK-751 OCR major): a handler must resolve well INSIDE the checkpoint/delivery claim
+// lease TTL (`interval '2 minutes'`). The lease is NOT renewed while the handler runs, so a handler
+// that outlives the lease lets a concurrent worker take over and double-process the same delivery.
+// Bounding the await below the TTL guarantees the delivery is resolved (retry_wait via
+// failSubscriptionDelivery) before the lease can expire. On timeout the handler promise is abandoned
+// (JS can't truly cancel it) — its side effects must be idempotent, which the delivery-key dedup
+// already assumes. Keep this value < the lease TTL if the lease duration ever changes.
+const DEFAULT_HANDLER_TIMEOUT_MS = 90_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 type SubscriptionLease = {
   subscriberId: string;
   subscriberVersion: number;
@@ -93,15 +117,20 @@ export async function bootstrapSubscription(
   subscription: LoadedEventSubscription,
 ): Promise<void> {
   const declared = getDeclaredSubscription(registry, subscription);
+  const actionList = sql.join(
+    declared.actions.map((action) => sql`${action}`),
+    sql`, `,
+  );
 
-  await db.transaction(async (tx) => {
+  // Ensure the checkpoint row exists + its declaration hash matches (small tx). Returns whether the
+  // historical backfill still needs to run ('bootstrapping'); 'active'/'paused' → nothing to do.
+  const needsBackfill = await db.transaction(async (tx) => {
     await tx.execute(sql`
       insert into event_subscription_checkpoint
         (subscriber_id, subscriber_version, declaration_hash, status)
       values (${subscription.id}, ${subscription.version}, ${registry.declarationHash}, 'bootstrapping')
       on conflict (subscriber_id, subscriber_version) do nothing
     `);
-
     const checkpoints = await tx.execute<{
       declaration_hash: string;
       status: 'bootstrapping' | 'active' | 'paused';
@@ -119,56 +148,94 @@ export async function bootstrapSubscription(
         `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
       );
     }
-    if (checkpoint.status === 'paused' || checkpoint.status === 'active') return;
-
-    const actionList = sql.join(
-      declared.actions.map((action) => sql`${action}`),
-      sql`, `,
-    );
-    const events = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
-      select e.id, e.dispatch_seq
-      from event e
-      where e.action in (${actionList})
-        and not exists (
-          select 1
-          from event_subscription_delivery d
-          where d.subscriber_id = ${subscription.id}
-            and d.subscriber_version = ${subscription.version}
-            and d.source_event_id = e.id
-        )
-      order by e.dispatch_seq, e.id
-    `);
-
-    const existing = await tx.execute<{ next_delivery_seq: string }>(sql`
-      select coalesce(max(delivery_seq), 0) + 1 as next_delivery_seq
-      from event_subscription_delivery
-      where subscriber_id = ${subscription.id}
-        and subscriber_version = ${subscription.version}
-    `);
-    let nextDeliverySeq = asBigint(existing[0]?.next_delivery_seq ?? 1);
-    for (const source of events) {
-      await tx.execute(sql`
-        insert into event_subscription_delivery
-          (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
-           status, completed_at)
-        values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
-          ${nextDeliverySeq}, 'bootstrap_skipped', clock_timestamp())
-        on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
-      `);
-      nextDeliverySeq += 1n;
-    }
-
-    await tx.execute(sql`
-      update event_subscription_checkpoint
-      set status = 'active',
-          next_delivery_seq = ${nextDeliverySeq},
-          bootstrapped_at = clock_timestamp(),
-          activated_at = clock_timestamp(),
-          updated_at = clock_timestamp()
-      where subscriber_id = ${subscription.id}
-        and subscriber_version = ${subscription.version}
-    `);
+    return checkpoint.status === 'bootstrapping';
   });
+  if (!needsBackfill) return;
+
+  // YUK-751 (OCR major): batch the historical backfill rather than loading the ENTIRE un-delivered
+  // event set into one long transaction (OOM + a long checkpoint-row lock on a large event history).
+  // Each batch commits in its OWN tx so progress survives a crash — the anti-join skips
+  // already-inserted deliveries and next_delivery_seq is persisted per batch, so a re-run RESUMES
+  // where it left off. The final empty batch flips the checkpoint to 'active'. The FOR UPDATE on the
+  // checkpoint serializes batches per subscriber, and the status re-check detects a peer that
+  // already finished.
+  while (true) {
+    const done = await db.transaction(async (tx) => {
+      const checkpoints = await tx.execute<{
+        declaration_hash: string;
+        status: 'bootstrapping' | 'active' | 'paused';
+        next_delivery_seq: string;
+      }>(sql`
+        select declaration_hash, status, next_delivery_seq
+        from event_subscription_checkpoint
+        where subscriber_id = ${subscription.id}
+          and subscriber_version = ${subscription.version}
+        for update
+      `);
+      const checkpoint = checkpoints[0];
+      if (
+        !checkpoint ||
+        checkpoint.declaration_hash !== registry.declarationHash ||
+        checkpoint.status !== 'bootstrapping'
+      ) {
+        return true; // vanished / hash-rotated / already finished by a peer
+      }
+
+      const events = await tx.execute<{ id: string; dispatch_seq: number }>(sql`
+        select e.id, e.dispatch_seq
+        from event e
+        where e.action in (${actionList})
+          and not exists (
+            select 1
+            from event_subscription_delivery d
+            where d.subscriber_id = ${subscription.id}
+              and d.subscriber_version = ${subscription.version}
+              and d.source_event_id = e.id
+          )
+        order by e.dispatch_seq, e.id
+        limit ${BOOTSTRAP_BACKFILL_BATCH_SIZE}
+      `);
+
+      if (events.length === 0) {
+        await tx.execute(sql`
+          update event_subscription_checkpoint
+          set status = 'active',
+              bootstrapped_at = clock_timestamp(),
+              activated_at = clock_timestamp(),
+              updated_at = clock_timestamp()
+          where subscriber_id = ${subscription.id}
+            and subscriber_version = ${subscription.version}
+        `);
+        return true;
+      }
+
+      let nextDeliverySeq = asBigint(checkpoint.next_delivery_seq);
+      for (const source of events) {
+        // RETURNING + count guard: only advance the seq on an ACTUAL insert. ON CONFLICT DO NOTHING
+        // can skip a row a prior interrupted batch already inserted, and an unconditional increment
+        // would inflate next_delivery_seq and leave permanent gaps (OCR minor — mirrors
+        // discoverSubscriptionDeliveries).
+        const inserted = await tx.execute(sql`
+          insert into event_subscription_delivery
+            (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
+             status, completed_at)
+          values (${subscription.id}, ${subscription.version}, ${source.id}, ${source.dispatch_seq},
+            ${nextDeliverySeq}, 'bootstrap_skipped', clock_timestamp())
+          on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
+          returning source_event_id
+        `);
+        if (inserted.length === 1) nextDeliverySeq += 1n;
+      }
+      await tx.execute(sql`
+        update event_subscription_checkpoint
+        set next_delivery_seq = ${nextDeliverySeq}, updated_at = clock_timestamp()
+        where subscriber_id = ${subscription.id}
+          and subscriber_version = ${subscription.version}
+      `);
+      return false; // more batches remain
+    });
+    if (done) break;
+  }
 }
 
 /** Claims a checkpoint lease, including expired-lease takeover, with registry fencing. */
@@ -499,7 +566,9 @@ export async function failSubscriptionDelivery(
   db: Db,
   claim: SubscriptionDeliveryClaim,
   error: unknown,
-  options: { maxAttempts: number },
+  // retryDelaySeconds is configurable (default 1s, current behavior) so a caller can widen the
+  // backoff away from the aggressive 1s storm without editing SQL string literals (YUK-751 review).
+  options: { maxAttempts: number; retryDelaySeconds?: number },
 ): Promise<'retry_wait' | 'dead_letter' | 'lost_lease'> {
   const message = error instanceof Error ? error.message : String(error);
   const rows = await withLockedCheckpoint(
@@ -522,7 +591,7 @@ export async function failSubscriptionDelivery(
             claimed_at = null,
             next_attempt_at = case
               when attempt_count + 1 >= ${options.maxAttempts} then null
-              else clock_timestamp() + interval '1 second'
+              else clock_timestamp() + ${options.retryDelaySeconds ?? 1} * interval '1 second'
             end,
             last_error = ${message},
             completed_at = case when attempt_count + 1 >= ${options.maxAttempts} then clock_timestamp() else null end,
@@ -609,7 +678,12 @@ export type SubscriptionDispatchCycleResult = {
 export async function runSubscriptionDispatchCycle(
   db: Db,
   registry: LoadedEventSubscriptionRegistry,
-  options: { owner: string; maxAttempts: number },
+  options: {
+    owner: string;
+    maxAttempts: number;
+    handlerTimeoutMs?: number;
+    retryDelaySeconds?: number;
+  },
 ): Promise<SubscriptionDispatchCycleResult> {
   const result: SubscriptionDispatchCycleResult = {
     dispatched: 0,
@@ -620,33 +694,54 @@ export async function runSubscriptionDispatchCycle(
   };
 
   for (const subscription of registry.subscriptions) {
-    await bootstrapSubscription(db, registry, subscription);
-    const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
-    if (!lease) continue;
+    // YUK-751 (OCR major): per-subscription error boundary. bootstrapSubscription /
+    // claimSubscriptionLease / discoverSubscriptionDeliveries / claimNextSubscriptionDelivery all
+    // sat outside any catch, so one throwing subscriber (declaration-hash mismatch, DB blip, …)
+    // aborted the WHOLE cycle and starved every other subscriber. Isolate each: log + skip, then the
+    // rest still run. The delivery HANDLER keeps its own inner catch (failSubscriptionDelivery
+    // retry/dead-letter semantics); this boundary is for the infra steps around it.
     try {
-      await discoverSubscriptionDeliveries(db, registry, subscription, lease);
-      const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
-      if (!claim) continue;
-
-      result.dispatched += 1;
+      await bootstrapSubscription(db, registry, subscription);
+      const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
+      if (!lease) continue;
       try {
-        const outcome = await subscription.handler({
-          subscriberId: subscription.id,
-          subscriberVersion: subscription.version,
-          deliverySeq: claim.deliverySeq,
-          sourceEventId: claim.sourceEventId,
-        });
-        if (await completeSubscriptionDelivery(db, claim, outcome)) {
-          if (outcome.status === 'succeeded') result.succeeded += 1;
-          else result.skipped += 1;
+        await discoverSubscriptionDeliveries(db, registry, subscription, lease);
+        const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
+        if (!claim) continue;
+
+        result.dispatched += 1;
+        try {
+          const outcome = await withTimeout(
+            subscription.handler({
+              subscriberId: subscription.id,
+              subscriberVersion: subscription.version,
+              // Serialize the bigint at the handler boundary (manifest contract is a decimal string).
+              deliverySeq: claim.deliverySeq.toString(),
+              sourceEventId: claim.sourceEventId,
+            }),
+            options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
+            `event subscription '${subscription.id}@v${subscription.version}' handler exceeded ${options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS}ms (below lease TTL) — failing delivery for retry to avoid lease-expiry double-processing`,
+          );
+          if (await completeSubscriptionDelivery(db, claim, outcome)) {
+            if (outcome.status === 'succeeded') result.succeeded += 1;
+            else result.skipped += 1;
+          }
+        } catch (error) {
+          const transition = await failSubscriptionDelivery(db, claim, error, options);
+          if (transition === 'retry_wait') result.retryScheduled += 1;
+          if (transition === 'dead_letter') result.deadLettered += 1;
         }
-      } catch (error) {
-        const transition = await failSubscriptionDelivery(db, claim, error, options);
-        if (transition === 'retry_wait') result.retryScheduled += 1;
-        if (transition === 'dead_letter') result.deadLettered += 1;
+      } finally {
+        await releaseSubscriptionLease(db, lease);
       }
-    } finally {
-      await releaseSubscriptionLease(db, lease);
+    } catch (error) {
+      console.error(
+        '[event-subscriptions] subscription dispatch step failed; skipping subscriber',
+        {
+          subscriber: `${subscription.id}@v${subscription.version}`,
+          error,
+        },
+      );
     }
   }
   return result;

@@ -276,10 +276,27 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // YUK-751 durable subscription dispatcher recovery state. All three tables are
   // reconstructed by manifest reconciliation + event-log discovery; restoring stale
   // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
+  // They are WIPE-BUT-NOT-BACKUP (see RESTORE_WIPE_ONLY_TABLES): excluded from the
+  // archive write, but explicitly wiped on restore so their ON DELETE no action FKs to
+  // event/artifact don't block the FK_ORDER parent wipe (YUK-751 review, codex P1).
   'event_subscription_checkpoint',
   'event_subscription_delivery',
   'event_subscription_effect',
 ]);
+
+// Operational tables that are EXCLUDED from the archive (above) but whose ON DELETE no action FKs
+// into FK_ORDER parents (event / artifact) would otherwise BLOCK the FK_ORDER wipe during restore —
+// residual delivery/effect rows keep `delete from "event"` / `delete from "artifact"` from
+// succeeding. restoreFromArchive wipes these FIRST (child→parent order among themselves) so the
+// parent wipe is unblocked; it does NOT restore them (the dispatcher re-bootstraps from the
+// event-log + manifest reconciliation post-restore). Excluded tables whose FKs are ON DELETE cascade
+// (artifact_edit_session, hub_sync_reconciliation) are cleared by the parent wipe and need no entry
+// here (YUK-751 review, codex P1). Order matters: effect → delivery → checkpoint.
+export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  'event_subscription_effect',
+  'event_subscription_delivery',
+  'event_subscription_checkpoint',
+];
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────
 //

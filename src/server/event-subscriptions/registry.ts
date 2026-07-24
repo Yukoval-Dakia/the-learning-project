@@ -64,16 +64,35 @@ export async function loadEventSubscriptionRegistry(
   const declarationHash = computeDeclarationHash(declarations);
 
   const loaded: LoadedEventSubscription[] = [];
-  for (const declaration of declarations) {
-    const identity = `${declaration.id}@v${declaration.version}`;
-    const factory = await declaration.load();
-    if (typeof factory !== 'function') {
-      throw new TypeError(
-        `event subscription '${identity}' loader returned a non-function factory`,
-      );
+  // Load all factories in parallel — the loaders are independent (dynamic imports with no shared
+  // state), so awaiting them serially only adds startup latency (YUK-751 review). Each load is
+  // wrapped so a dynamic-import / loader throw names the offending subscription instead of surfacing
+  // a bare import error.
+  const factories = await Promise.all(
+    declarations.map(async (declaration) => {
+      const identity = `${declaration.id}@v${declaration.version}`;
+      let factory: Awaited<ReturnType<typeof declaration.load>>;
+      try {
+        factory = await declaration.load();
+      } catch (cause) {
+        throw new Error(`event subscription '${identity}' loader failed`, { cause });
+      }
+      if (typeof factory !== 'function') {
+        throw new TypeError(
+          `event subscription '${identity}' loader returned a non-function factory`,
+        );
+      }
+      return { declaration, identity, factory };
+    }),
+  );
+  // Instantiate handlers + build the loaded list in the (sorted) declaration order.
+  for (const { declaration, identity, factory } of factories) {
+    let handler: ReturnType<typeof factory>;
+    try {
+      handler = factory(dependency);
+    } catch (cause) {
+      throw new Error(`event subscription '${identity}' factory failed`, { cause });
     }
-
-    const handler = factory(dependency);
     if (typeof handler !== 'function') {
       throw new TypeError(
         `event subscription '${identity}' factory returned a non-function handler`,

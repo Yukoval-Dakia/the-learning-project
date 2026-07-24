@@ -926,6 +926,12 @@ export const event = pgTable(
     id: text('id').primaryKey(),
     // YUK-751 — insertion-order diagnostic/tie-break coordinate. This sequence is
     // never a subscription completeness cursor; delivery rows own subscriber-local order.
+    // mode:'number' (NOT 'bigint' like `generation`): every read of dispatch_seq — and of the peer
+    // subscription seq columns — goes through raw `tx.execute` + asBigint(), never the Drizzle query
+    // builder, and the handler-facing boundary serializes to a decimal string (manifest
+    // EventSubscriptionDelivery.deliverySeq). So no JS `number` truncation path exists; the
+    // bigint-mode rationale that applies to `generation` (read via the query builder) does not apply
+    // here (YUK-751 review).
     dispatch_seq: bigint('dispatch_seq', { mode: 'number' })
       .notNull()
       .default(sql`nextval('event_dispatch_seq')`),

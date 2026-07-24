@@ -97,10 +97,13 @@ describe('loadEventSubscriptionRegistry', () => {
     expect(await hashFor([declaration('subscriber.a', 1, [`${actionA} `])])).not.toBe(original);
   });
 
-  it('propagates loader rejection without invoking later factories', async () => {
+  it('wraps a loader rejection with the subscription identity and does not invoke factories', async () => {
     const rejection = new Error('module failed to load');
     const factory = vi.fn();
 
+    // YUK-751 review: a loader throw is wrapped with the subscription identity (original as `cause`)
+    // so a dynamic-import failure names the culprit. Loaders run in parallel now, but the FACTORY
+    // invocation (factory(dependency)) is still gated on all loads succeeding.
     await expect(
       loadEventSubscriptionRegistry(
         capabilities([
@@ -111,7 +114,10 @@ describe('loadEventSubscriptionRegistry', () => {
         ]),
         {},
       ),
-    ).rejects.toBe(rejection);
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/subscriber\.a@v1.*loader failed/),
+      cause: rejection,
+    });
     expect(factory).not.toHaveBeenCalled();
   });
 

@@ -127,7 +127,10 @@ export interface ProposalKindDecl {
 export interface EventSubscriptionDelivery {
   subscriberId: string;
   subscriberVersion: number;
-  deliverySeq: bigint;
+  // Decimal string, NOT bigint: the whole delivery object is handed to user handlers, and
+  // JSON.stringify(bigint) throws. The runtime converts the DB bigint at this boundary so a handler
+  // that logs/serializes the delivery can't crash (YUK-751 review). Parse with BigInt() if needed.
+  deliverySeq: string;
   sourceEventId: string;
 }
 
@@ -352,15 +355,18 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
   const subscriptionOwner = new Map<string, string>();
   for (const cap of capabilities) {
     for (const subscription of cap.subscriptions?.handlers ?? []) {
-      const identity = `${subscription.id}@v${subscription.version}`;
+      // Validate id/version FIRST, using the raw values in the messages. Building `identity` before
+      // this produced nonsensical errors like "'@v1' has invalid id" or "'foo@vundefined' has
+      // invalid version" when the offending field was the empty/invalid one (YUK-751 review).
       if (subscription.id.trim().length === 0) {
-        throw new Error(`event subscription '${identity}' has invalid id`);
+        throw new Error(`event subscription has invalid id '${subscription.id}'`);
       }
       if (!Number.isInteger(subscription.version) || subscription.version <= 0) {
         throw new Error(
-          `event subscription '${identity}' has invalid version ${subscription.version}`,
+          `event subscription '${subscription.id}' has invalid version ${subscription.version}`,
         );
       }
+      const identity = `${subscription.id}@v${subscription.version}`;
       if (subscription.actions.length === 0) {
         throw new Error(`event subscription '${identity}' must declare at least one action`);
       }

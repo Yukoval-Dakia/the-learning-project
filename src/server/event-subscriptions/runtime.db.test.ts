@@ -469,7 +469,8 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(handler).toHaveBeenCalledWith({
       subscriberId: SUBSCRIBER.id,
       subscriberVersion: SUBSCRIBER.version,
-      deliverySeq: 1n,
+      // YUK-751 review: deliverySeq crosses the handler boundary as a decimal string (serializable).
+      deliverySeq: '1',
       sourceEventId: 'source',
     });
     expect(await deliveryRows()).toEqual([
