@@ -19,6 +19,18 @@ describe('practice attempt and appeal contracts', () => {
     }
   });
 
+  it('accepts optional supplied judge provenance evidence', () => {
+    const body = CreateAttemptBodySchema.parse({
+      question_id: 'q1',
+      rating: 'good',
+      judge_task_run_id: 'tr-1',
+      judge_provenance_token: 'signed-token',
+    });
+
+    expect(body.judge_task_run_id).toBe('tr-1');
+    expect(body.judge_provenance_token).toBe('signed-token');
+  });
+
   it('renders the three supported attempt identity forms as OpenAPI anyOf', () => {
     const document = generateOpenApiDocument([
       {

@@ -32,15 +32,16 @@ import { db as defaultDb } from '@/db/client';
 import type { Db, Tx } from '@/db/client';
 import { answer, event, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
+  resolveInvokedExecutionProvenance,
+  resolveQuestionJudgeRoute,
+} from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { checkRateLimit } from '@/server/http/rate-limit';
-import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  resolveQuestionJudgeRoute,
-} from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
   PREREQ_RISK_EMIT_ENABLED,
@@ -543,6 +544,17 @@ export async function submitPaperSlot(
           throw err;
         });
   const judgeResult = invoked?.result ?? null;
+  // YUK-589 (K1) — stamp off the honest model-attempt signal, NOT route membership.
+  // execution present → `invoked`; model attempted but no execution (LLM call /
+  // metadata / persist failed) → `historical_unknown`; no model attempted
+  // (exact/keyword, or an accelerator-resolved unit_dimension slot) →
+  // `deterministic`. No judge invoked (photo-only unsupported path) → null.
+  // Shared with submit / rejudge via one resolver.
+  let executionProvenance: Awaited<ReturnType<typeof resolveInvokedExecutionProvenance>> | null =
+    null;
+  if (invoked) {
+    executionProvenance = await resolveInvokedExecutionProvenance(db, invoked);
+  }
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
   const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';
 
@@ -785,6 +797,12 @@ export async function submitPaperSlot(
           profile_version: subjectProfile.version,
           capability_ref: invoked.result.capability_ref,
           judge_route: invoked.route,
+          // YUK-589 (Thgw3) — executionProvenance is always set inside this
+          // `invoked !== null` branch (assigned in every arm of the `if (invoked)`
+          // block above), so the prior `?? deterministicExecutionProvenance(...)`
+          // fallback was unreachable dead code (and would have re-introduced the J1
+          // provenance lie). Stamp the resolved provenance directly.
+          execution_provenance: executionProvenance,
           // visibility gate (F1/Q1). Omit when visible (default) to keep the
           // payload minimal + back-compat; set false to buffer feedback.
           ...(visibleToUser ? {} : { visible_to_user: false }),
@@ -810,6 +828,7 @@ export async function submitPaperSlot(
           ...(partRef ? { sub_ref: partRef } : {}),
         },
         caused_by_event_id: attemptEventId,
+        task_run_id: executionProvenance?.task_run_id ?? null,
         created_at: now,
       });
     }

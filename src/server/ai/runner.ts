@@ -23,13 +23,13 @@
 //     Memory module decorates input ahead of the model call and observes
 //     output after.
 
-import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { Db } from '@/db/client';
+import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
@@ -304,28 +304,17 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-function stableInputForHash(value: unknown): unknown {
-  if (value instanceof URL) return value.toString();
-  if (value instanceof Uint8Array) return { _type: 'bytes', byteLength: value.byteLength };
-  if (Array.isArray(value)) return value.map(stableInputForHash);
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = stableInputForHash((value as Record<string, unknown>)[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
 function inputHash(input: unknown): string {
-  let serialized: string;
+  // YUK-589 (K4c) — input_hash is best-effort provenance for the ai_task_runs
+  // row; it must NEVER fail a task run. `taskInputHash` (sha256Canonical) now
+  // throws for non-canonicalizable inputs (Map/Set/RegExp/function/symbol), so
+  // contain it and degrade to a stable string hash — restoring the pre-YUK-589
+  // `String(input)` fallback that a bare `taskInputHash` regressed away.
   try {
-    serialized = JSON.stringify(stableInputForHash(input)) ?? 'null';
+    return taskInputHash(input);
   } catch {
-    serialized = String(input);
+    return taskInputHash(String(input));
   }
-  return createHash('sha256').update(serialized).digest('hex');
 }
 
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by

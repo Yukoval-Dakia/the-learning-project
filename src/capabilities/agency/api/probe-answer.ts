@@ -48,12 +48,12 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { checkRateLimit } from '@/server/http/rate-limit';
-import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
   resolveQuestionJudgeRoute,
-} from '@/server/judge/route-resolve';
+} from '@/kernel/judge';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { eq } from 'drizzle-orm';
 import {
   answerProbe,

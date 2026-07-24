@@ -17,6 +17,8 @@ const CreateAttemptBodyBaseSchema = z.object({
   answer_image_refs: z.array(z.string()).default([]),
   auto_rate: z.boolean().default(false),
   judge_result_v2: JudgeResultV2.optional(),
+  judge_provenance_token: z.string().min(1).optional(),
+  judge_task_run_id: z.string().min(1).optional(),
   stream_item_id: z.string().min(1).nullable().optional(),
   part_ref: z.string().min(1).nullable().optional(),
 });

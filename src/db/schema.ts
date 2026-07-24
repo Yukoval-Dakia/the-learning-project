@@ -855,6 +855,13 @@ export const ai_task_runs = pgTable(
     provider: text('provider').notNull(),
     model: text('model').notNull(),
     input_hash: text('input_hash').notNull(),
+    // YUK-589 — judge run-bound provenance digests, written post-assembly by the
+    // JudgeInvoker (persistJudgeRunDigests). Nullable: only judge runs populate
+    // them, and legacy rows predate the columns. The supplied-verified resolver
+    // corroborates a client-supplied result against these persisted digests so a
+    // caller can never bind a real run to a prompt/result the model did not run.
+    prompt_fingerprint: text('prompt_fingerprint'),
+    result_digest: text('result_digest'),
     status: text('status').notNull().default('running'),
     finish_reason: text('finish_reason'),
     usage_json: jsonb('usage_json')

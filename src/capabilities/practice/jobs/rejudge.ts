@@ -25,6 +25,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveInvokedExecutionProvenance } from '@/kernel/judge';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { and, eq, isNull, sql } from 'drizzle-orm';
@@ -187,6 +188,15 @@ export async function handleRejudge(
   const shouldRevertTheta =
     judgeDriven && (thetaSkippedPrior || outcomeBit(priorOutcome) !== outcomeBit(newOutcome));
 
+  // YUK-589 (Thgwv) — resolve execution provenance ONLY on the overturn path. The
+  // upheld/unchanged branch above returned early and never consumes it, so computing
+  // it up front spent an ai_task_runs SELECT on every no-op rejudge. It is embedded in
+  // the new judge event's payload (below), so it is needed only here.
+  // YUK-589 (K1) — stamp off the honest model-attempt signal: execution present →
+  // `invoked`; model attempted but no execution → `historical_unknown`; no model
+  // attempted (a deterministic overturn) → `deterministic`. Shared resolver.
+  const executionProvenance = await resolveInvokedExecutionProvenance(db, invoked);
+
   let newJudgeId = '';
   let correctionId = '';
 
@@ -214,6 +224,7 @@ export async function handleRejudge(
         profile_version: invoked.result.capability_ref.version,
         capability_ref: invoked.result.capability_ref,
         judge_route: invoked.route,
+        execution_provenance: executionProvenance,
         coarse_outcome: newOutcome,
         ...(invoked.result.score != null ? { score: invoked.result.score } : {}),
         feedback_md: invoked.result.feedback_md,
@@ -221,6 +232,7 @@ export async function handleRejudge(
         attribution_pending: true,
       },
       caused_by_event_id: appeal.id,
+      task_run_id: executionProvenance?.task_run_id ?? null,
       created_at: now,
     });
 

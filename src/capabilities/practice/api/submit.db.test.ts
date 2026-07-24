@@ -18,6 +18,7 @@ import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
 import { newId } from '@/core/ids';
 import {
+  ai_task_runs,
   difficulty_calibration_label,
   event,
   item_calibration,
@@ -29,6 +30,12 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
+// YUK-589 (J1/J2) — execution-provenance regression helpers.
+import {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
+  issueJudgePreviewProvenanceToken,
+  sha256Canonical,
+} from '@/kernel/judge';
 import { runTask } from '@/server/ai/runner';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
@@ -1188,6 +1195,274 @@ describe('POST /api/review/submit', () => {
         }),
       );
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ── YUK-589 (J1/J2) — execution provenance is an audit stamp; it must be honest ──
+  // J1: an absent invoked.execution on a deterministic route (exact/keyword) stays
+  //     'deterministic' (no model was ever meant to run). A model route whose execution
+  //     is absent is 'historical_unknown' — covered on the paper-submit path where an
+  //     unsupported model verdict is still persisted (the solo auto_rate path 422s first).
+  // J2: a client-supplied result on a signed model route (steps/multimodal_direct/
+  //     unit_dimension — not just semantic) is verified against its provenance token +
+  //     the persisted ai_task_runs digests; a valid token → supplied_verified, an
+  //     absent/tampered token → supplied_unverified (fail-closed).
+  describe('YUK-589 — execution provenance honesty (J1/J2)', () => {
+    async function readJudgeExecutionProvenance(
+      questionId: string,
+    ): Promise<Record<string, unknown> | undefined> {
+      const [judgeEvent] = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+      const payload = judgeEvent?.payload as Record<string, unknown> | undefined;
+      return payload?.execution_provenance as Record<string, unknown> | undefined;
+    }
+
+    // Build a signed-token + persisted-run fixture for a model-backed supplied result.
+    async function seedSignedSuppliedRun(opts: {
+      questionId: string;
+      judgeRoute: string;
+      taskKind: string;
+      subjectProfileId: string;
+      subjectProfileVersion: string;
+      suppliedResult: JudgeResultV2Fixture;
+      secret: string;
+    }): Promise<{ token: string; taskRunId: string }> {
+      const inputHash = 'a'.repeat(64);
+      const promptFingerprint = 'b'.repeat(64);
+      const resultDigest = sha256Canonical(opts.suppliedResult);
+      const taskRunId = newId();
+      await testDb().insert(ai_task_runs).values({
+        id: taskRunId,
+        task_kind: opts.taskKind,
+        provider: 'xiaomi',
+        model: 'mock',
+        input_hash: inputHash,
+        prompt_fingerprint: promptFingerprint,
+        result_digest: resultDigest,
+        status: 'success',
+        started_at: new Date(),
+        finished_at: new Date(),
+      });
+      const token = issueJudgePreviewProvenanceToken(
+        {
+          version: 1,
+          task_run_id: taskRunId,
+          task_kind: opts.taskKind,
+          input_hash: inputHash,
+          prompt_fingerprint: promptFingerprint,
+          prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
+          subject_profile_id: opts.subjectProfileId,
+          subject_profile_version: opts.subjectProfileVersion,
+          judge_route: opts.judgeRoute,
+          result_digest: resultDigest,
+        },
+        opts.secret,
+      );
+      return { token, taskRunId };
+    }
+
+    type JudgeResultV2Fixture = {
+      coarse_outcome: 'correct';
+      score: number;
+      score_meaning: 'correctness';
+      confidence: number;
+      capability_ref: { id: string; version: string };
+      feedback_md: string;
+      evidence_json: Record<string, unknown>;
+    };
+
+    const SECRET = 'test-judge-provenance-secret-32bytes';
+
+    // J1 — a genuinely deterministic route with absent execution stays 'deterministic'.
+    it('J1: exact auto_rate (no model run) stamps execution_provenance kind=deterministic', async () => {
+      await seedQuestion('q_prov_exact', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_exact' },
+          rating: 'again',
+          response_md: '答案',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_exact');
+      expect(prov?.kind).toBe('deterministic');
+    });
+
+    // J2 — a signed steps result WITH a valid token + matching persisted run →
+    // supplied_verified. This is the core asymmetry fix: pre-J2 only 'semantic'
+    // was verified; steps/multimodal_direct/unit_dimension fell straight to
+    // supplied_unverified even with a valid token.
+    it('J2: signed steps supplied result with a valid provenance token → supplied_verified', async () => {
+      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
+      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+      const profile = resolveSubjectProfile('general');
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
+      await seedQuestion('q_prov_steps', {
+        kind: 'derivation',
+        reference_md: '推导过程',
+        knowledge_ids: [],
+      });
+      const suppliedResult: JudgeResultV2Fixture = {
+        coarse_outcome: 'correct',
+        score: 0.9,
+        score_meaning: 'correctness',
+        confidence: 0.85,
+        capability_ref: { id: 'steps', version: profile.version },
+        feedback_md: '推导正确。',
+        evidence_json: { source: 'advice' },
+      };
+      const { token, taskRunId } = await seedSignedSuppliedRun({
+        questionId: 'q_prov_steps',
+        judgeRoute: 'steps',
+        taskKind: 'StepsJudgeTask',
+        subjectProfileId: profile.id,
+        subjectProfileVersion: profile.version,
+        suppliedResult,
+        secret: SECRET,
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_steps' },
+          rating: 'good',
+          response_md: 'x=1，所以答案是 1',
+          judge_result_v2: suppliedResult,
+          judge_provenance_token: token,
+          judge_task_run_id: taskRunId,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_steps');
+      expect(prov?.kind).toBe('supplied_verified');
+      expect(prov?.task_run_id).toBe(taskRunId);
+    });
+
+    // J2 fail-closed — a tampered token → supplied_unverified (never promoted).
+    it('J2: signed steps supplied result with a tampered token → supplied_unverified', async () => {
+      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
+      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+      const profile = resolveSubjectProfile('general');
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
+      await seedQuestion('q_prov_steps_tampered', {
+        kind: 'derivation',
+        reference_md: '推导过程',
+        knowledge_ids: [],
+      });
+      const suppliedResult: JudgeResultV2Fixture = {
+        coarse_outcome: 'correct',
+        score: 0.9,
+        score_meaning: 'correctness',
+        confidence: 0.85,
+        capability_ref: { id: 'steps', version: profile.version },
+        feedback_md: '推导正确。',
+        evidence_json: { source: 'advice' },
+      };
+      const { token, taskRunId } = await seedSignedSuppliedRun({
+        questionId: 'q_prov_steps_tampered',
+        judgeRoute: 'steps',
+        taskKind: 'StepsJudgeTask',
+        subjectProfileId: profile.id,
+        subjectProfileVersion: profile.version,
+        suppliedResult,
+        secret: SECRET,
+      });
+      // Flip the final character of the signature so the round-trip verify fails.
+      const tamperedToken = token.slice(0, -1) + (token.at(-1) === 'A' ? 'B' : 'A');
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_steps_tampered' },
+          rating: 'good',
+          response_md: 'x=1，所以答案是 1',
+          judge_result_v2: suppliedResult,
+          judge_provenance_token: tamperedToken,
+          judge_task_run_id: taskRunId,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_steps_tampered');
+      expect(prov?.kind).toBe('supplied_unverified');
+      expect(prov?.task_run_id).toBeUndefined();
+    });
+
+    // J2 fail-closed — an absent token → supplied_unverified.
+    it('J2: signed steps supplied result with NO provenance token → supplied_unverified', async () => {
+      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
+      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+      const profile = resolveSubjectProfile('general');
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
+      await seedQuestion('q_prov_steps_notoken', {
+        kind: 'derivation',
+        reference_md: '推导过程',
+        knowledge_ids: [],
+      });
+      const suppliedResult: JudgeResultV2Fixture = {
+        coarse_outcome: 'correct',
+        score: 0.9,
+        score_meaning: 'correctness',
+        confidence: 0.85,
+        capability_ref: { id: 'steps', version: profile.version },
+        feedback_md: '推导正确。',
+        evidence_json: { source: 'advice' },
+      };
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_steps_notoken' },
+          rating: 'good',
+          response_md: 'x=1，所以答案是 1',
+          judge_result_v2: suppliedResult,
+          // no judge_provenance_token / judge_task_run_id
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_steps_notoken');
+      expect(prov?.kind).toBe('supplied_unverified');
+    });
+
+    // YUK-589 (K1c) — the inverse hole. A supplied MODEL result whose subject
+    // profile is unresolved (null) must NEVER fall to `deterministic` (which would
+    // falsely trust a client verdict as a no-model local compare). With no profile
+    // the model claim cannot be verified, so it fails closed to supplied_unverified.
+    it('K1c: supplied MODEL result with an unresolved (null) profile → supplied_unverified, NOT deterministic', async () => {
+      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
+      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+      // Force the profile resolution to yield null even though there is an answer.
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(null as never);
+      await seedQuestion('q_prov_nullprofile', {
+        kind: 'derivation',
+        reference_md: '推导过程',
+        knowledge_ids: [],
+      });
+      const suppliedResult: JudgeResultV2Fixture = {
+        coarse_outcome: 'correct',
+        score: 0.9,
+        score_meaning: 'correctness',
+        confidence: 0.85,
+        capability_ref: { id: 'steps', version: '1.0.0' },
+        feedback_md: '推导正确。',
+        evidence_json: { source: 'advice' },
+      };
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_nullprofile' },
+          rating: 'good',
+          response_md: 'x=1，所以答案是 1',
+          judge_result_v2: suppliedResult,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_nullprofile');
+      expect(prov?.kind).toBe('supplied_unverified');
+      expect(prov?.kind).not.toBe('deterministic');
     });
   });
 

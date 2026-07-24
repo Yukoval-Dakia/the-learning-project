@@ -70,6 +70,24 @@ export function isObjectiveQuestion(route: string): boolean {
   return OBJECTIVE_JUDGE_ROUTES.has(route);
 }
 
+// YUK-589 — reshape a judge preview into the exact JudgeResultV2 the submit
+// re-parses. The advice endpoint signed result_digest over the judge's real
+// result, so every digested field (crucially score_meaning, which varies by
+// route: steps_v1_weighted / unit_dimension_v1 / correctness) MUST be echoed
+// verbatim — hardcoding any of them breaks the digest match at submit and drops
+// the result to supplied_unverified while persisting a falsified score meaning.
+export function toSubmittedJudgeResult(pv: JudgePreview) {
+  return {
+    score: pv.score,
+    score_meaning: pv.score_meaning,
+    coarse_outcome: pv.coarse_outcome,
+    confidence: pv.confidence,
+    feedback_md: pv.feedback_md,
+    evidence_json: pv.evidence_json,
+    capability_ref: pv.capability_ref,
+  };
+}
+
 // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后退出回流（「返回流」）时是否必须把 slot 标 done。
 // auto-commit 后 review 已落库（slot 实质 done）；此时点「返回流」若只 onBack（host 仅回列表、不 PATCH
 // slot 状态）会留下「已判分但 slot 卡 in_progress」的不一致态。autoCommitted===true → 走
@@ -208,15 +226,10 @@ export function PfSolo({
         // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
         // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
         latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
-        judge_result_v2: {
-          score: pv.score,
-          score_meaning: 'correctness',
-          coarse_outcome: pv.coarse_outcome,
-          confidence: pv.confidence,
-          feedback_md: pv.feedback_md,
-          evidence_json: pv.evidence_json,
-          capability_ref: pv.capability_ref,
-        } as never,
+        judge_task_run_id: pv.task_run_id,
+        judge_provenance_token: pv.provenance_token,
+        // YUK-589 — echo the digested result VERBATIM (see toSubmittedJudgeResult).
+        judge_result_v2: toSubmittedJudgeResult(pv),
       });
       if (opts.withAppeal) {
         const anchor = res.judge?.judge_event_id;

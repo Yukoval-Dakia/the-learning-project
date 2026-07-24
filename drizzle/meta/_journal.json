@@ -547,6 +547,13 @@
       "when": 1784818800000,
       "tag": "0077_yuk350_generation_grounding",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1784818860000,
+      "tag": "0078_yuk589_ai_task_run_provenance_digests",
+      "breakpoints": true
     }
   ]
 }

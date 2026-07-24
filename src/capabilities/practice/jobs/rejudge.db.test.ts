@@ -30,7 +30,14 @@ function mockJudge(outcome: 'correct' | 'partial' | 'incorrect', feedback: strin
       : outcome === 'partial'
         ? { ...base, coarse_outcome: 'partial' as const, score: 0.5 }
         : { ...base, coarse_outcome: 'incorrect' as const, score: 0 as const };
-  return async (): Promise<JudgeAnswerResult> => ({ route: 'semantic', result });
+  // YUK-589 (K1) — semantic mock ⇒ the model WAS attempted (modelAttempted:true).
+  // With no `execution` present this keeps the existing `historical_unknown` stamp
+  // assertion (a real model run whose provenance identity is unknown).
+  return async (): Promise<JudgeAnswerResult> => ({
+    route: 'semantic',
+    result,
+    modelAttempted: true,
+  });
 }
 
 // YUK-561 S4 — rich verbatim θ̂ `before` for the seeded snapshot bracket.
@@ -321,13 +328,63 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(newJudge.action).toBe('judge');
     expect(newJudge.subject_id).toBe(attemptEventId);
     expect(newJudge.caused_by_event_id).toBe(appealEventId);
-    expect((newJudge.payload as { coarse_outcome: string }).coarse_outcome).toBe('correct');
+    const newJudgePayload = newJudge.payload as {
+      coarse_outcome: string;
+      execution_provenance: { version: number; kind: string };
+    };
+    expect(newJudgePayload.coarse_outcome).toBe('correct');
+    expect(newJudgePayload.execution_provenance).toEqual(
+      expect.objectContaining({ version: 1, kind: 'historical_unknown' }),
+    );
 
     // D15 直接生效：原 judge event 被 supersede（无 proposal 介入）。
     const truth = await getEffectiveTruth(db, judgeEventId);
     expect(truth.terminal_state).toBe('active');
     expect(truth.effective_event_id).toBe(outcome.new_judge_event_id);
     expect(truth.chain[0].state).toBe('superseded');
+  });
+
+  // YUK-589 (K1) — an overturn whose re-judge produced NO model call
+  // (modelAttempted:false — a deterministic exact/keyword verdict) must stamp
+  // `deterministic`, NOT `historical_unknown`. Pre-K1 the stamp keyed on route
+  // membership / execution-absence alone and would have lied `historical_unknown`.
+  it('改判：无模型调用（deterministic 重判）→ execution_provenance.kind=deterministic', async () => {
+    const db = testDb();
+    const { appealEventId } = await seedAppealedJudge();
+
+    const deterministicJudge: NonNullable<RejudgeDeps['judgeFn']> = async () => ({
+      route: 'exact',
+      // No model was attempted — a local string compare produced the verdict.
+      modelAttempted: false,
+      result: {
+        score_meaning: 'correctness',
+        confidence: 1,
+        capability_ref: { id: 'exact', version: '1.0.0' },
+        feedback_md: '精确匹配：正确。',
+        evidence_json: {},
+        coarse_outcome: 'correct',
+        score: 1,
+      },
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: deterministicJudge },
+    );
+    expect(outcome.status).toBe('overturned');
+    if (outcome.status !== 'overturned') return;
+
+    const [newJudge] = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, outcome.new_judge_event_id));
+    const payload = newJudge.payload as { execution_provenance: { version: number; kind: string } };
+    expect(payload.execution_provenance).toEqual(
+      expect.objectContaining({ version: 1, kind: 'deterministic' }),
+    );
+    // A deterministic stamp carries no model run reference.
+    expect(newJudge.task_run_id).toBeNull();
   });
 
   it('维持原判：appeal_upheld 留痕（带复核理由），原判定不动', async () => {

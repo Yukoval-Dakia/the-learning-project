@@ -89,6 +89,32 @@ export interface JudgeRouteQuestionRow {
 // with the invoker if a new image-aware route lands.
 export const IMAGE_CONSUMING_JUDGE_ROUTES = new Set<JudgeRoute>(['steps', 'multimodal_direct']);
 
+// YUK-589 (High-sec) — the judge routes whose verdict comes from an LLM call.
+// The invoker dispatches exactly these four through `runTaskFn`
+// (semantic → runSemanticJudge, steps → runStepsJudge, multimodal_direct →
+// runMultimodalDirectJudge, unit_dimension → runUnitDimensionJudge). `exact` /
+// `keyword` are deterministic local string comparisons that NEVER call a model;
+// `rubric` / `ai_flexible` are not yet runnable (unsupported).
+//
+// Provenance discipline: when a route's `invoked.execution` metadata is ABSENT,
+// the meaning differs by route class. For a model-backed route it means the LLM
+// call FAILED (provider timeout / crash → coarse_outcome='unsupported'), so the
+// stamp must be `historical_unknown` — NOT `deterministic`, which would falsely
+// claim no model was ever meant to run (a timeout masquerading as a no-model
+// deterministic verdict). For a genuinely deterministic route absent execution
+// is the normal, honest case. Keep in sync with the invoker dispatch table.
+export const MODEL_BACKED_JUDGE_ROUTES = new Set<JudgeRoute>([
+  'semantic',
+  'steps',
+  'multimodal_direct',
+  'unit_dimension',
+]);
+
+/** True iff the route's verdict is produced by an LLM call (see MODEL_BACKED_JUDGE_ROUTES). */
+export function isModelBackedJudgeRoute(route: string): boolean {
+  return MODEL_BACKED_JUDGE_ROUTES.has(route as JudgeRoute);
+}
+
 function parseRubric(raw: unknown): z.infer<typeof Rubric> | null {
   if (raw === null || raw === undefined) return null;
   const parsed = Rubric.safeParse(raw);

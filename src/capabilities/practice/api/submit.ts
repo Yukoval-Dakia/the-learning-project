@@ -37,8 +37,9 @@ import { emitMasteryProgressSignal } from '@/capabilities/practice/server/master
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
+import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -48,14 +49,24 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  createDefaultJudgeInvoker,
+  deterministicExecutionProvenance,
+  isModelBackedJudgeRoute,
+  judgeProvenanceSigningSecret,
+  modelExecutionProvenance,
+  resolveInvokedExecutionProvenance,
+  resolveQuestionJudgeRoute,
+  semanticInput,
+  sha256Canonical,
+  suppliedUnverifiedExecutionProvenance,
+  taskInputHash,
+  verifyJudgePreviewProvenanceToken,
+} from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
-import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  resolveQuestionJudgeRoute,
-} from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
   PREREQ_RISK_EMIT_ENABLED,
@@ -63,6 +74,7 @@ import {
 } from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import type { SubjectProfile } from '@/subjects/profile';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
@@ -80,7 +92,7 @@ type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
 // F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
-// shared from `@/server/judge/route-resolve` (IMAGE_CONSUMING_JUDGE_ROUTES) so
+// shared via the `@/kernel/judge` facade (IMAGE_CONSUMING_JUDGE_ROUTES) so
 // the photo-only gate cannot drift between this single-question flow and the
 // paper-submit flow (F1).
 
@@ -132,9 +144,82 @@ interface JudgedSubmit {
   judgeTelemetry:
     | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
     | null;
+  executionProvenance: JudgeExecutionProvenanceT | null;
   suggestedRating: Rating | null;
   finalRating: Rating;
   adviceCauseCategory: Awaited<ReturnType<typeof resolveAdviceCauseForQuestion>>;
+}
+
+// YUK-589 (J2, High-sec) — resolve execution provenance for a CLIENT-SUPPLIED judge
+// result on a model-backed route. advice.ts issues a signed provenance token for EVERY
+// model-invoked route (its condition is route-agnostic — advice.ts:82-100), so token
+// verification must cover every signed model route, not just 'semantic'. The anti-forgery
+// gate differs by route because only the semantic path can cheaply reconstruct the model's
+// task input at submit time:
+//   - semantic: recompute input_hash from semanticInput(q, profile) and bind the token's
+//     input_hash to THIS question+answer (anti-replay against a different question).
+//   - steps / multimodal_direct / unit_dimension: those runners build their task input
+//     INSIDE the runner (image plumbing, structured narrowing), so submit cannot cheaply
+//     replicate the input shape. Instead the gate is (a) token authenticity + binding of
+//     task_run_id / subject profile / route / result_digest, plus (b) modelExecutionProvenance
+//     re-querying the ai_task_runs row and corroborating the PERSISTED prompt_fingerprint +
+//     result_digest against the signed claim — that DB corroboration (the question is embedded
+//     in the persisted prompt_fingerprint) plus the result_digest binding IS the anti-forgery
+//     gate for those routes. `result_digest === sha256Canonical(suppliedJudgeResult)` prevents
+//     binding a real run to a result the model never produced.
+// Any absent token or failed check → supplied_unverified (fail-closed). execution_provenance
+// is an AUDIT STAMP on the attempt event, not a gate on trusting the verdict.
+async function resolveSuppliedModelExecutionProvenance(params: {
+  judgeRoute: string;
+  suppliedJudgeResult: JudgeResultV2T;
+  subjectProfile: SubjectProfile;
+  body: SubmitBodyT;
+  answerMd: string;
+  q: QuestionRow;
+}): Promise<JudgeExecutionProvenanceT> {
+  const { judgeRoute, suppliedJudgeResult, subjectProfile, body, answerMd, q } = params;
+  const signingSecret = judgeProvenanceSigningSecret();
+  const claims =
+    body.judge_provenance_token && signingSecret
+      ? verifyJudgePreviewProvenanceToken(body.judge_provenance_token, signingSecret)
+      : null;
+  if (claims === null) return suppliedUnverifiedExecutionProvenance(judgeRoute);
+
+  // Bindings shared by every signed model route.
+  const commonMatch =
+    claims.task_run_id === body.judge_task_run_id &&
+    claims.subject_profile_id === subjectProfile.id &&
+    claims.subject_profile_version === subjectProfile.version &&
+    claims.judge_route === judgeRoute &&
+    claims.result_digest === sha256Canonical(suppliedJudgeResult);
+  // Semantic additionally re-derives input_hash from the current question+answer;
+  // other routes defer to the DB prompt_fingerprint corroboration below.
+  const routeMatch =
+    judgeRoute === 'semantic'
+      ? claims.task_kind === 'SemanticJudgeTask' &&
+        claims.input_hash ===
+          taskInputHash({
+            question: semanticInput(q, subjectProfile),
+            answer: { content: answerMd },
+          })
+      : true;
+  if (!commonMatch || !routeMatch) return suppliedUnverifiedExecutionProvenance(judgeRoute);
+
+  return modelExecutionProvenance(
+    db,
+    {
+      task_kind: claims.task_kind,
+      task_run_id: claims.task_run_id,
+      input_hash: claims.input_hash,
+      prompt_fingerprint: claims.prompt_fingerprint,
+      prompt_template_revision: claims.prompt_template_revision,
+      // YUK-589 — corroborate the exact result the run persisted, not just a
+      // matching id/kind/input. commonMatch already proved this digest equals
+      // sha256Canonical(suppliedJudgeResult).
+      result_digest: claims.result_digest,
+    },
+    'supplied_verified',
+  );
 }
 
 async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<JudgedSubmit> {
@@ -202,6 +287,34 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeRoute = suppliedJudgeResult.capability_ref.id;
   }
   let judgeTelemetry: JudgedSubmit['judgeTelemetry'] = null;
+  let executionProvenance: JudgeExecutionProvenanceT | null = null;
+  if (suppliedJudgeResult !== null && judgeRoute !== null) {
+    // A supplied result on a MODEL-backed route (semantic/steps/multimodal_direct/
+    // unit_dimension) is verified against its signed provenance token — advice.ts signs
+    // every model route, so verification is no longer semantic-only (J2). A genuinely
+    // deterministic route (exact/keyword) needs no token: its verdict is a local string
+    // compare, so it is stamped `deterministic`.
+    if (isModelBackedJudgeRoute(judgeRoute)) {
+      // YUK-589 (K1c) — a supplied MODEL result must NEVER fall to `deterministic`.
+      // Gate on the route class FIRST; if the profile is somehow unresolved (no
+      // profile for the question's knowledge), a model result cannot be verified,
+      // so fail closed to `supplied_unverified` — never trust it as a no-model
+      // local compare. When the profile is present, run the token verification.
+      executionProvenance =
+        subjectProfile !== null
+          ? await resolveSuppliedModelExecutionProvenance({
+              judgeRoute,
+              suppliedJudgeResult,
+              subjectProfile,
+              body,
+              answerMd,
+              q,
+            })
+          : suppliedUnverifiedExecutionProvenance(judgeRoute);
+    } else {
+      executionProvenance = deterministicExecutionProvenance(judgeRoute);
+    }
+  }
   if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
     // YUK-694 — only explicit auto-rate requests may spend a server-side judge
     // call, and those calls share the process-wide paid-AI request budget.
@@ -223,6 +336,12 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
     judgeTelemetry = invoked.telemetry;
+    // YUK-589 (K1) — stamp off the honest model-attempt signal, NOT route
+    // membership. execution present → `invoked`; model attempted but no execution
+    // (LLM call/metadata/persist failed) → `historical_unknown`; no model
+    // attempted (exact/keyword, or an accelerator-resolved unit_dimension slot) →
+    // `deterministic`. Shared with paper-submit / rejudge via one resolver.
+    executionProvenance = await resolveInvokedExecutionProvenance(db, invoked);
   }
 
   // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -273,6 +392,7 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeResult,
     judgeRoute,
     judgeTelemetry,
+    executionProvenance,
     suggestedRating,
     finalRating,
     adviceCauseCategory,
@@ -303,6 +423,7 @@ async function persistSubmit(
     judgeResult,
     judgeRoute,
     judgeTelemetry,
+    executionProvenance,
     suggestedRating,
     finalRating,
     adviceCauseCategory,
@@ -579,6 +700,7 @@ async function persistSubmit(
           profile_version: judgeResult.capability_ref.version,
           capability_ref: judgeResult.capability_ref,
           judge_route: judgeRoute,
+          execution_provenance: executionProvenance ?? deterministicExecutionProvenance(judgeRoute),
           coarse_outcome: judgeResult.coarse_outcome,
           ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
           feedback_md: judgeResult.feedback_md,
@@ -590,7 +712,7 @@ async function persistSubmit(
           ...(body.part_ref ? { sub_ref: body.part_ref } : {}),
         },
         caused_by_event_id: eventId,
-        task_run_id: null,
+        task_run_id: executionProvenance?.task_run_id ?? null,
         cost_micro_usd: null,
         created_at: now,
       });

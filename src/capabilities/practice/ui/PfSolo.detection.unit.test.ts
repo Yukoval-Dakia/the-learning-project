@@ -21,7 +21,13 @@
 // No-DB unit partition（不 import db/postgres/drizzle）；node env 下 PfSolo.tsx 导入干净（无 DOM 调用）。
 
 import { describe, expect, it } from 'vitest';
-import { appealEntryAvailable, isObjectiveQuestion, shouldMarkSlotDoneOnBack } from './PfSolo';
+import {
+  appealEntryAvailable,
+  isObjectiveQuestion,
+  shouldMarkSlotDoneOnBack,
+  toSubmittedJudgeResult,
+} from './PfSolo';
+import type { JudgePreview } from './practice-api';
 
 describe('isObjectiveQuestion — PfSolo 客观题 auto-commit gate (YUK-432)', () => {
   it('(a) choice/true_false 题（route exact）→ 客观（auto-rate）', () => {
@@ -148,5 +154,57 @@ describe('appealEntryAvailable — 自动 commit 后保留「不服判」+ 捕�
         autoCommitJudgeEventId: 'judge-evt-1',
       }),
     ).toBe(false);
+  });
+});
+
+describe('toSubmittedJudgeResult — digest-transparent submit reshape (YUK-589)', () => {
+  const preview: JudgePreview = {
+    route: 'steps',
+    score: 0.6,
+    // The judge's OWN score_meaning, not the objective-default 'correctness'.
+    score_meaning: 'steps_v1_weighted',
+    coarse_outcome: 'partial',
+    confidence: 0.8,
+    feedback_md: 'partial credit',
+    evidence_json: { steps: [1, 2] },
+    capability_ref: { id: 'steps', version: '3' },
+    suggested_rating: 'hard',
+    task_run_id: 'run-1',
+    provenance_token: 'tok',
+  };
+
+  it('echoes score_meaning verbatim (never hardcodes correctness)', () => {
+    // TjMUA regression: hardcoding score_meaning:'correctness' made every
+    // steps/unit_dimension preview fail the signed result_digest match.
+    expect(toSubmittedJudgeResult(preview).score_meaning).toBe('steps_v1_weighted');
+    expect(
+      toSubmittedJudgeResult({
+        ...preview,
+        route: 'unit_dimension',
+        score_meaning: 'unit_dimension_v1',
+      }).score_meaning,
+    ).toBe('unit_dimension_v1');
+  });
+
+  it('carries exactly the digested JudgeResultV2 fields — no extra, none missing', () => {
+    // The submit digest is sha256Canonical over this object; the reshape must
+    // reproduce the judge result's field set exactly (transparent for EVERY
+    // digested field) or supplied_verified is unreachable.
+    expect(Object.keys(toSubmittedJudgeResult(preview)).sort()).toEqual([
+      'capability_ref',
+      'coarse_outcome',
+      'confidence',
+      'evidence_json',
+      'feedback_md',
+      'score',
+      'score_meaning',
+    ]);
+    // route / suggested_rating / task_run_id / provenance_token are NOT part of
+    // the digested result and must be stripped (they ride sibling wire fields).
+    const reshaped = toSubmittedJudgeResult(preview) as Record<string, unknown>;
+    expect(reshaped.route).toBeUndefined();
+    expect(reshaped.suggested_rating).toBeUndefined();
+    expect(reshaped.task_run_id).toBeUndefined();
+    expect(reshaped.provenance_token).toBeUndefined();
   });
 });

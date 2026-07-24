@@ -112,6 +112,18 @@ export interface JudgeAnswerParams {
 export interface JudgeAnswerResult {
   route: JudgeKind;
   result: JudgeResultV2T;
+  // YUK-589 (K1) — whether a model invocation was attempted for this verdict
+  // (threaded straight from the invoker). Consumers stamp `deterministic` when
+  // false, never `historical_unknown` off route membership alone.
+  modelAttempted: boolean;
+  task_run_id?: string;
+  execution?: {
+    task_kind: string;
+    task_run_id?: string;
+    input_hash: string;
+    prompt_fingerprint: string;
+    prompt_template_revision: string;
+  };
 }
 
 export function unsupportedResult(
@@ -276,5 +288,11 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
 export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswerResult> {
   const { createDefaultJudgeInvoker } = await import('@/server/judge/invoker');
   const invoked = await createDefaultJudgeInvoker().invoke(params);
-  return { route: invoked.route, result: invoked.result };
+  return {
+    route: invoked.route,
+    result: invoked.result,
+    modelAttempted: invoked.modelAttempted,
+    ...(invoked.task_run_id ? { task_run_id: invoked.task_run_id } : {}),
+    ...(invoked.execution ? { execution: invoked.execution } : {}),
+  };
 }

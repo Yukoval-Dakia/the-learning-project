@@ -62,6 +62,11 @@ const ReviewAdviceJudgeSchema = z.object({
   }),
   suggested_rating: FsrsRating.nullable(),
   telemetry: z.unknown().optional(),
+  // YUK-589 — advice.ts returns these so the client can echo them back on submit
+  // for the supplied-verified provenance path. Optional: present only for a
+  // model-invoked route with a run id and a configured signing secret.
+  task_run_id: z.string().optional(),
+  provenance_token: z.string().optional(),
 });
 
 export const ReviewAdviceResponseSchema = z.object({

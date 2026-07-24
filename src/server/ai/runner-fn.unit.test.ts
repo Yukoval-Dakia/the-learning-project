@@ -64,13 +64,28 @@ describe('bound runTask adapters', () => {
     );
   });
 
-  it('projects text-only results to exactly { text }', async () => {
+  it('projects the runner result to the TaskTextResult provenance seam', async () => {
     runTask.mockResolvedValueOnce(fullResult);
 
     const result = await makeRunTaskTextFn(db)('TaggingTask', {});
 
-    expect(result).toEqual({ text: 'answer' });
-    expect(Object.keys(result)).toEqual(['text']);
+    // YUK-589: makeRunTaskTextFn fulfils its declared TaskTextResult return —
+    // text plus the optional provenance fields its consumers read: task_run_id
+    // (the judge invoker binds run-digests to it via defaultRunTaskFn) and
+    // structured_output (the YUK-299 structured-dispatch seam). Internal
+    // finishReason/usage stay projected out.
+    expect(result).toEqual({
+      text: 'answer',
+      task_run_id: 'run-1',
+      cost_usd: 0.01,
+      structured_output: { answer: 42 },
+    });
+    expect(Object.keys(result).sort()).toEqual([
+      'cost_usd',
+      'structured_output',
+      'task_run_id',
+      'text',
+    ]);
   });
 
   it('does not expose db or transient retry in public call context', () => {
