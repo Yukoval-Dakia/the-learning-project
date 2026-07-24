@@ -15,6 +15,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { event, knowledge, question } from '@/db/schema';
@@ -27,7 +28,7 @@ import {
 } from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
-import { runSourceVerify } from './source_verify';
+import { type MultimodalGroundingParams, runSourceVerify } from './source_verify';
 
 // Solver output shape consumed by verify-framework.runSolveCheck (it only reads
 // reference_solution.final_answer + answer_equivalents).
@@ -47,6 +48,81 @@ function confidentlyWrongSolver(finalAnswer: string) {
         ? semanticJudgeOutput('incorrect', 0.95)
         : solverOutput(finalAnswer),
   }));
+}
+
+// YUK-230 — a full metadata block that (a) passes deterministic source_consistency
+// (web_sourced + grounding extract + matching url) AND (b) marks the row as a
+// single_source_grounding image_candidate row (asset id + flag) so the multimodal
+// grounding gate fires. metadataOverride replaces metadata wholesale, so return the
+// complete shape.
+function groundingMetadata(
+  sourceAssetId: string,
+  url = 'https://example.edu/wenyan/lunyu',
+): Record<string, unknown> {
+  return {
+    web_sourced: {
+      url,
+      title: '论语 注疏',
+      fetched_at: '2026-06-06T00:00:00.000Z',
+      whitelist_match: false,
+      extract: '「之」在「学而时习之」中作代词，指代所学的内容。',
+    },
+    source_ref_kind: 'url',
+    single_source_grounding: true,
+    image_candidate_source_asset_id: sourceAssetId,
+  };
+}
+
+// YUK-230 — a stubbed multimodal_direct grounding verdict. 'transient' models the
+// judge's own error branch (coarse_outcome='unsupported' + evidence_json.error), which
+// the gate re-throws as a retriable verify error rather than a content fail.
+function groundingJudge(
+  outcome: 'correct' | 'partial' | 'incorrect' | 'transient',
+): JudgeResultV2T {
+  const capability_ref = { id: 'multimodal_direct', version: '1.0.0' };
+  const evidence = { observed_md: 'x', matched_points: [], missing_points: [] };
+  if (outcome === 'transient') {
+    return {
+      score: null,
+      score_meaning: 'correctness',
+      coarse_outcome: 'unsupported',
+      confidence: 0,
+      capability_ref,
+      feedback_md: 'multimodal_direct judge unsupported: LLM call failed',
+      evidence_json: { error: 'LLM call failed: upstream 503' },
+    };
+  }
+  if (outcome === 'correct') {
+    return {
+      score: 0.92,
+      score_meaning: 'correctness',
+      coarse_outcome: 'correct',
+      confidence: 0.8,
+      capability_ref,
+      feedback_md: '题面与来源图片一致',
+      evidence_json: evidence,
+    };
+  }
+  if (outcome === 'partial') {
+    return {
+      score: 0.5,
+      score_meaning: 'correctness',
+      coarse_outcome: 'partial',
+      confidence: 0.8,
+      capability_ref,
+      feedback_md: '题面部分出现在来源图片中',
+      evidence_json: evidence,
+    };
+  }
+  return {
+    score: 0,
+    score_meaning: 'correctness',
+    coarse_outcome: 'incorrect',
+    confidence: 0.8,
+    capability_ref,
+    feedback_md: '题面未出现在来源图片中',
+    evidence_json: evidence,
+  };
 }
 
 async function seedKnowledge(id: string, domain = 'yuwen', opts: { archived?: boolean } = {}) {
@@ -517,6 +593,145 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+  });
+
+  // ── YUK-230 — multimodal grounding gate (single_source_grounding image_candidate rows) ──
+  it('YUK-230 runs the multimodal grounding re-check and promotes when the source image confirms the 题面', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active', // image_candidate accept pre-promotes structurally-sound drafts
+      metadataOverride: groundingMetadata('asset-src-1'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') })); // solve_check pass
+    const multimodalGroundingFn = vi.fn(async (_p: MultimodalGroundingParams) =>
+      groundingJudge('correct'),
+    );
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, multimodalGroundingFn });
+    expect(result.status).toBe('verified');
+    // the paid re-check ran exactly once, on the row's source_asset image.
+    expect(multimodalGroundingFn).toHaveBeenCalledTimes(1);
+    expect(multimodalGroundingFn.mock.calls[0][0]).toMatchObject({ sourceAssetId: 'asset-src-1' });
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active'); // grounded → enters the pool
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('success');
+    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toMatchObject({
+      grounded: true,
+      source_asset_id: 'asset-src-1',
+      triggered_by: 'image_candidate_accept',
+    });
+  });
+
+  it('YUK-230 demotes a pre-promoted single-source draft back to draft when grounding fails (题面 not in image)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-2'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') })); // solve_check pass
+    const multimodalGroundingFn = vi.fn(async () => groundingJudge('incorrect'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, multimodalGroundingFn });
+    expect(result.status).toBe('failed');
+
+    // 复核失败 = 打回 draft（不入练习池）— the pre-promoted active row is demoted.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+    // FSRS never enrolled (promote branch never ran).
+    const fsrs = await getFsrsState(db, 'knowledge', 'k1');
+    expect(fsrs).toBeNull();
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('failure');
+    expect((ev.payload as Record<string, unknown>).demoted).toBe(true);
+    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toMatchObject({
+      grounded: false,
+      source_asset_id: 'asset-src-2',
+      triggered_by: 'image_candidate_accept',
+    });
+    expect((ev.payload as Record<string, unknown>).summary_md).toContain('multimodal_grounding');
+  });
+
+  it('YUK-230 treats a transient grounding VLM failure as a retriable verify error (throws, draft untouched)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-3'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const multimodalGroundingFn = vi.fn(async () => groundingJudge('transient'));
+
+    // A transient VLM/infra failure (coarse_outcome='unsupported' + evidence.error) is NOT a
+    // content verdict — it throws so the catch-bottom writes a retriable outcome='error' event
+    // and pg-boss re-runs (既有 verify 错误惯例); it must NOT be conflated with 题面-not-in-image.
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, multimodalGroundingFn }),
+    ).rejects.toThrow('multimodal grounding VLM call failed (transient)');
+
+    // The draft is untouched — never promoted-terminal, never demoted (retry decides).
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+
+    // The error event is retriable (outcome='error'); the idempotency guard re-runs it.
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('error');
+  });
+
+  it('YUK-230 does NOT run the grounding re-check for a normal (non single_source_grounding) web_sourced question', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] }); // default metadata → no marker
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const multimodalGroundingFn = vi.fn(async () => groundingJudge('correct'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, multimodalGroundingFn });
+    expect(result.status).toBe('verified');
+    expect(multimodalGroundingFn).not.toHaveBeenCalled();
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toBeUndefined();
+  });
+
+  it('YUK-230 skips the paid grounding re-check when a deterministic check already fails (no wasted VLM spend)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // Missing source_ref → source_consistency fails regardless of grounding; the row is not
+    // otherwise-promotable, so the grounding gate short-circuits.
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      sourceRef: null,
+      metadataOverride: groundingMetadata('asset-src-5'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const multimodalGroundingFn = vi.fn(async () => groundingJudge('correct'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, multimodalGroundingFn });
+    expect(result.status).toBe('failed');
+    expect(multimodalGroundingFn).not.toHaveBeenCalled();
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft'); // demoted by the source_consistency fail
   });
 
   it('fails source_consistency for a web_sourced row missing its provenance block', async () => {
