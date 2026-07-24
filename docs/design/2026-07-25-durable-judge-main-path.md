@@ -31,7 +31,7 @@ Conclusion (承重): endpoint-down tolerance **requires a wall clock longer than
 | 1 | practice submit | `src/capabilities/practice/api/submit.ts:322` (in `judgeSubmit`, Phase 2, outside the FSRS txn) | :246 | **sync HTTP route** |
 | 2 | agency probe-answer | `src/capabilities/agency/api/probe-answer.ts:218` | :180 | **sync HTTP route** |
 | 3 | paper submit | `src/capabilities/practice/server/paper-submit.ts:525` | :261 | **sync HTTP route** |
-| 4 | rating advice | `src/capabilities/practice/api/advice.ts:61` | :65 | **sync HTTP route** |
+| 4 | rating advice | `src/capabilities/practice/api/advice.ts:61` | :65 | **sync HTTP route (no-persist preview — special-cased, §2.3)** |
 | 5 | solve session | `src/capabilities/practice/server/solve-session.ts:334` (via injectable `judgeFn`) | :341 | **sync HTTP route** |
 | 6 | `judgeAnswer` wrapper | `src/server/ai/judges/question-contract.ts:288` | :283 | **NOT a sync route** |
 
@@ -73,7 +73,7 @@ Every migrated caller returns, on submit:
 Location: /api/jobs/judge_run/<run_id>/events
 ```
 
-When judging completes, the terminal `job_event` (`judge_run.done` / `judge_run.failed`) carries the `JudgeResultV2` payload (coarse_outcome, score, feedback_md, capability_ref, telemetry). The client swaps its optimistic "判题中" badge for the real verdict off that event; a reconnecting/late client replays the same terminal event.
+When judging completes, the terminal `job_event` — `judge_run.done` (verdict) or the latest `judge_run.attempt_failed` (degraded, see §3.1 for why failure is written per-attempt in the handler `catch`, not on DLQ landing) — carries the payload. `done` carries the `JudgeResultV2` (coarse_outcome, score, feedback_md, capability_ref, telemetry). The client swaps its optimistic "判题中" badge for the real verdict off that event; a reconnecting/late client replays the same terminal event.
 
 Backfill contract is **three-tier** so no client is stranded:
 1. **SSE** (`.../events`) — live, primary. Same stream copilot uses.
@@ -86,7 +86,7 @@ Backfill contract is **three-tier** so no client is stranded:
 |----------|-----------|-------------------------------|----------|
 | **Queue backlog** (worker busy / batchSize serial) | run sits `queued` past a soft deadline. Copilot's `PICKUP_TIMEOUT_MS = 10_000` (`durable-pickup.ts:27`) + `isDurablePickupStalled` predicate is the ready-made primitive. | "判题排队中" (queued, not yet started). Attempt already recorded unjudged (§2). | Worker drains queue; STARTED event flips badge to "判题中". |
 | **Endpoint-down, retrying** | job threw → pg-boss redelivery in flight (`JOB_RETRY_LIMIT = 2`, `JOB_RETRY_DELAY_SECONDS = 30`, `retryBackoff: true` → ~30s→~60s between paid attempts). | "判题中(重试)" — same pending badge, optionally a retry-count hint. Attempt stays recorded unjudged. | Cross-provider retry (§3.4) or endpoint recovery lands a terminal `done`. |
-| **Exhausted / permanent failure** | retries exhausted → job routed to `judge_run_dlq` (dead-letter, per `jobQueueOpts`). Handler writes terminal `judge_run.failed`. | "本次判分暂不可用 — 已记录，稍后自动补判" — explicit degraded-final, NOT a silent wrong-answer. Attempt remains recorded but **unjudged** (never scored as wrong; that was the whole point of the F4 photo-only gate lineage). | A sweep re-enqueues from DLQ (owner decision D6), or a manual rejudge (`rejudge.ts` already exists). |
+| **Exhausted / permanent failure** | each failed attempt's `catch` wrote a `judge_run.attempt_failed` trace (§3.1); on the final attempt the job lands in `judge_run_dlq` (dead-letter, per `jobQueueOpts`) with **no further handler invocation** — the last `attempt_failed` trace is the terminal record. | "本次判分暂不可用 — 已记录，稍后可补判" — explicit degraded-final, NOT a silent wrong-answer. Attempt remains recorded but **unjudged** (never scored as wrong; that was the whole point of the F4 photo-only gate lineage). | Manual rejudge (`rejudge.ts` already exists); DLQ auto-sweep NOT built (RULED D6, manual-only). |
 | **Worker down entirely** (no `RW_WORKER`, crash-loop) | `isDurablePickupStalled` fires (pickup deadline passed, never STARTED). | "判分服务离线 — 答案已记录" | Worker restart drains the backlog; runs were durably enqueued, nothing lost. |
 | **Auto-rate needs the verdict** (submit `auto_rate=true`) | judging is now async; the suggested rating isn't available at submit time. | See §2.3 — this is the one real UX regression and needs an owner ruling. | — |
 
@@ -118,10 +118,18 @@ This preserves the existing single-owner event invariants (ADR-0005 writeEvent, 
 - **Pending UX:** probe shows "评估中". Note the ND-5 red line: `answerProbe` writes exactly ONE `experimental:probe_result` outcome event — under async that single write moves to the worker (probe recorded-pending at submit, `probe_result` written on completion).
 - **Write timing:** the probe is a placement/calibration signal (n=1 anchor); it's *inherently* tolerant of a few-seconds delay — arguably the easiest surface to migrate first after submit. The photo-only fail-closed 422 gate stays synchronous (it's a pure route-resolution check, no LLM call), so a mis-routed photo-only probe still rejects instantly.
 
-### 2.3 rating advice (`advice.ts:61`) & the auto-rate problem
+### 2.3 rating advice (`advice.ts:61`) — the no-persist preview face (special-cased)
 
-- `advice.ts` exists specifically to hand the client a *suggested rating* synchronously. Under async-main it returns `{verdict: pending}` and the suggested rating arrives on the backfill event.
-- **The one real regression:** any surface with `auto_rate=true` (submit path) currently relies on "suggested wins → final rating at submit". Async breaks the synchronous availability of the suggestion. Options, all deferring FSRS to backfill: (a) auto-rate is applied by the worker at backfill time (user sees "判题中" → rating appears); (b) auto-rate degrades to manual self-rating while async is the main path. **Ruled D4 (§5): option (a) — worker applies auto-rate at backfill.**
+**Grounded correction:** `advice.ts` is a *pre-submit RatingAdvisor preview route* (its header: "T-RA — pre-submit RatingAdvisor preview route (YUK-98)"). It calls `invoke()`, resolves a cause, optionally signs a provenance token, and returns `Response.json` — it writes **NO domain event, NO FSRS, NO attempt**. So the §2 shared "run_id = attempt/outcome event id" contract **does not hold for advice** — there is no attempt event to anchor on, and there is nothing to backfill into.
+
+Advice is therefore handled as its own case, NOT folded into the four persisting faces:
+
+- **Run handle:** advice's `judge_run` uses a **freshly-generated opaque `run_id`** (used only as the `job_events` business_id + SSE handle). Do **not** fabricate a dummy domain event just to manufacture an anchor.
+- **Backfill = pure verdict return.** The worker writes only `judge_run.done` with the `JudgeResultV2` + the provenance-token fields advice already returns; the client renders the suggested rating when the event lands. There is no deferred FSRS/mistake/probe_result write on this face (nothing persists — it's a preview).
+- **Degraded semantics (advice-specific):** on failure the preview simply doesn't resolve — client shows "评分建议暂不可用"; because nothing was recorded, there is no unjudged-attempt cleanup and no rejudge obligation (unlike the four persisting faces). The learner can still submit and get the real (also-async) verdict on the submit face.
+- **Wave placement:** advice can ride W3 with these bespoke semantics, but it is the lowest-stakes face (a preview a user may never act on) — if W3 needs trimming, advice is the safe one to defer. *(No owner ruling needed; mechanical.)*
+
+**The auto_rate regression (separate from advice, lives on the submit face):** any surface with `auto_rate=true` (submit path) currently relies on "suggested wins → final rating at submit". Async breaks the synchronous availability of the suggestion. Options, all deferring FSRS to backfill: (a) auto-rate is applied by the worker at backfill time (user sees "判题中" → rating appears); (b) auto-rate degrades to manual self-rating while async is the main path. **Ruled D4 (§5): option (a) — worker applies auto-rate at backfill.**
 
 ### 2.4 paper submit (`paper-submit.ts:525`)
 
@@ -147,19 +155,27 @@ The ticket asks to flag this and it's real: **a confidence self-assessment inter
 ```ts
 // enqueued by each migrated caller; consumed by a new worker handler
 interface JudgeRunJobData {
-  run_id: string;          // = the attempt/outcome domain event id (anchor + job_events business_id)
-  caller: 'submit' | 'probe' | 'paper' | 'advice' | 'solve';  // surface, for backfill routing
+  // For the FOUR persisting faces (submit/probe/paper/solve): run_id = the
+  // attempt/outcome domain event id — the same id anchors the backfilled verdict
+  // + FSRS write and is the job_events business_id. For the `advice` face there is
+  // NO such event (it's a pure preview, §2.3), so run_id = a freshly-generated
+  // opaque id used ONLY as the job_events business_id + SSE run handle. Do NOT
+  // fabricate a dummy domain event for advice just to have an anchor.
+  run_id: string;
+  caller: 'submit' | 'probe' | 'paper' | 'solve' | 'advice';  // surface; 'advice' = no-persist preview
   question_id: string;
   part_ref?: string | null;
   answer_md: string;
   student_image_refs?: string[];
-  subject_id: string;      // profile resolved at enqueue OR re-resolved at pickup (D5)
+  subject_id: string;      // profile resolved at enqueue, frozen into payload (RULED D5)
   auto_rate?: boolean;     // submit path
   idempotency_key: string; // = run_id (see §3.2)
 }
 ```
 
-Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chokepoint the sync path uses, so route resolution / narrowing / capability-ref version pin / telemetry are unchanged. On success: `writeJobEvent(tx, {business_table:'judge_run', business_id:run_id, event_type:'judge_run.done', payload: JudgeResultV2 + telemetry})` **and** perform the deferred FSRS/mistake/probe_result write in the same tx (atomic verdict + state). On failure: re-throw → pg-boss redelivery → eventually `judge_run.failed` + DLQ.
+Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chokepoint the sync path uses, so route resolution / narrowing / capability-ref version pin / telemetry are unchanged. **On success:** `writeJobEvent(tx, {business_table:'judge_run', business_id:run_id, event_type:'judge_run.done', payload: JudgeResultV2 + telemetry})` **and** — for the four persisting faces — perform the deferred FSRS/mistake/probe_result write in the same tx (atomic verdict + state). The `advice` face writes only the `judge_run.done` job_event (no domain/FSRS write).
+
+**On failure — write the failed trace in the `catch`, do NOT rely on DLQ to write it.** Grounded correction: under this repo's pg-boss config, a re-throw only schedules a delayed redelivery; when retries exhaust and the job lands in `<queue>_dlq`, **the handler is not invoked again**, so no terminal `job_event` gets written from the DLQ landing. The established convention is `note_generate.ts:293-305`: the handler's own `catch` writes the failed status in its own best-effort tx **before re-throwing** ("Mark failed so UI doesn't sit on 'pending' forever; pg-boss will still retry per policy because we rethrow"). So `judge_run` must, in its `catch`: (1) `writeJobEvent(..., event_type:'judge_run.attempt_failed', payload:{attempt, error, next: 'redelivery'|'dlq'})` in a best-effort tx (a cleanup throw is logged, never masks the original error), then (2) re-throw so pg-boss redelivers per `JOB_RETRY_LIMIT`. **Terminal-failed semantics:** the status reducer treats the latest `attempt_failed` as the current failed state (`deriveJudgeRunStatus`); a later successful redelivery writes `judge_run.done` which supersedes it (last-writer-wins, same as the copilot reducer). On DLQ exhaustion the last `attempt_failed` trace IS the terminal record — nothing further runs, which is exactly why the trace must be written each attempt, not deferred to the DLQ. (The handler may distinguish the final attempt via pg-boss's retry-count on the job to stamp `next:'dlq'`, but must not depend on any post-DLQ callback.)
 
 ### 3.2 Idempotency
 
@@ -176,8 +192,8 @@ Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chok
 
 This is the endpoint-down payload and the part that is **new** (not just relocated):
 
-- The provider override today (`AI_PROVIDER_OVERRIDE`, `src/server/ai/providers.ts:155`) is a **global** env switch — every task routes to one provider. It is **not** per-call. So "retry on a *different* provider when the primary endpoint is down" needs new plumbing: the `judge_run` handler must be able to pin a provider per-attempt (primary mimo → on transient/endpoint-down, redeliver with `anthropic-sub` = Opus 4.8 via owner's Claude Max OAuth).
-- **Mechanism reuse:** the `budgetOverride` seam in `runner.ts:184` (YUK-575 per-call override for durable copilot) is the same shape a per-call *provider* override would take. Recommend extending that seam (or an adjacent per-call `providerOverride`) rather than reading global env inside the handler.
+- **A per-call provider override ALREADY exists** (grounded correction — earlier draft overstated this as "needs new plumbing"): `RunTaskCtx.override?: { provider?; model? }` (`runner.ts:101`) is threaded into `resolveTaskProvider(kind, ctx.override)` (called at `runner.ts:763` + `:844`), whose resolution chain is `override?.provider ?? envOverride?.provider ?? def.defaultProvider` (`providers.ts:205,214`). So the handler can pin a provider per-attempt today by passing `ctx.override = { provider: 'anthropic-sub' }` — no new runner seam required. The global `AI_PROVIDER_OVERRIDE` env (`providers.ts:155`) stays the deployment-wide switch and sits *below* the per-call override in that same chain.
+- **What is actually new** is only the durable-retry-layer **decision logic**: on redelivery, the handler must decide *when* to flip `ctx.override.provider` to the fallback (e.g. read pg-boss's retry-count / prior `attempt_failed` traces → on the last redelivery, pass `override.provider = JUDGE_FALLBACK_PROVIDER`). That's a handful of lines in the `judge_run` handler, not a runner change. The `budgetOverride` seam (`runner.ts:184`, YUK-575) is the sibling precedent for per-call overrides riding `ctx`.
 - **Retry-layer discipline (grounded, important):** in-process transient retry (`runner.ts` `transientRetries`, YUK-576) is **gated OFF for durable handlers** — queue redelivery is their ONLY transient layer, so worst-case paid inference calls per logical judge = `1 + JOB_RETRY_LIMIT = 3` (`queue-config.ts` documents this). Cross-provider retry must fit *inside* that budget: e.g. attempt 1 = mimo, redelivery 1 = mimo (transient), redelivery 2 = anthropic-sub (last-resort). Do NOT stack an in-process retry loop on top or the paid-call count multiplies.
 - **Cost lever:** owner leaned "open, no daily cap" for anthropic-sub fallback in YUK-592 — **but that was the sync scenario**; the ticket explicitly says re-evaluate for async. In async, redelivery makes retries cheaper to reason about (bounded at 3 paid calls/job) but also *automatic* (no human in the loop). Env cost lever `JUDGE_FALLBACK_PROVIDER` (default `anthropic-sub`) + the bounded `JOB_RETRY_LIMIT` as the cap, rather than an unbounded daily-spend fallback. *Ruled D7 (§5): bounded — `1 + JOB_RETRY_LIMIT` cap, anthropic-sub on final redelivery.*
 
@@ -190,7 +206,7 @@ This is the endpoint-down payload and the part that is **new** (not just relocat
 | Status reducer (`deriveCopilotRunStatus`) | **Fork** — write a parallel `deriveJudgeRunStatus` (same shape; judge has no cancel/chip semantics, simpler) |
 | Pickup-stall detection (`isDurablePickupStalled`, `PICKUP_TIMEOUT_MS`) | **Reuse** (pure predicate, caller-agnostic) |
 | Queue config / DLQ / retry policy (`jobQueueOpts`) | **Reuse**; register at LLM tier not AGENT |
-| `budgetOverride` seam (`runner.ts:184`) | **Reuse/extend** — same seam carries a per-call provider override |
+| Per-call provider override (`RunTaskCtx.override` → `resolveTaskProvider`, `runner.ts:101/763/844`, `providers.ts:205`) | **Reuse as-is** — already per-call; handler just sets `ctx.override.provider` on the fallback redelivery (RULED D9). `budgetOverride` (`runner.ts:184`) is the sibling seam precedent. |
 | Enqueue-failure compensation (write FAILED job_event so status ≠ stuck-queued) | **Reuse pattern** (chat.ts:158+) |
 
 The fork is deliberately small: judge is a single stateless LLM call (no conversation memory, no tool loop, no MCP surface), so it does *not* need `assembleCopilotRunInput`, the tool registry mount, skills resolution, or the AGENT-tier budget. The durable judge handler is much thinner than `copilot_run.ts`.
@@ -224,7 +240,7 @@ Owner ballot closed 2026-07-25. Overall tone owner set: **aggressive and clean �
 - **D8 — Sync fast-path fate — RULED: REMOVE the synchronous fast path after async validation. ⚠ DEVIATES from the recommendation (which was "keep as fallback indefinitely").** This is an **owner-instructed deletion** — the explicit, locked-decision exception to the pre-AI "demote, don't delete" discipline (CLAUDE.md Product principle). Owner directive: once async is validated, delete the sync judging path outright rather than retaining it as a permanent fallback. The flag-gated fallback is a **transitional** escape hatch (W2/W3 only), not a keeper.
   - **Validation criterion (recommended, owner to confirm the numbers):** remove the sync path once the **submit face has run fully async for N consecutive days (suggest N = 7–14) with zero `judge_run_dlq` accumulation and zero flag-flip reversions to sync.** Concretely: (a) `judge_run_dlq` depth stays 0 across the window (no job exhausts retries), (b) `JUDGE_DURABLE_ENABLED` never toggled back to sync for an incident, (c) endpoint-down soak (§4 W2 exit) passed at least once in production with cross-provider recovery observed. When all three hold, a follow-up removal PR deletes the sync invoke branches at the five caller sites + the `JUDGE_DURABLE_ENABLED` gate.
   - Removal is a **separate scheduled wave (W4)**, gated on the criterion above — not folded into W2/W3.
-- **D9 — Provider-override plumbing — RULED: sibling `providerOverride` seam on the same call path (alongside `budgetOverride`).** ✔ Keeps budget and provider orthogonal per-call concerns; the global `AI_PROVIDER_OVERRIDE` env stays the deployment-wide switch, the per-call override is the durable-retry-only lever.
+- **D9 — Provider-override plumbing — RULED: reuse the EXISTING per-call `ctx.override` mechanism; the only new code is the durable-retry decision to switch provider on redelivery.** ✔ Grounded correction (earlier draft overstated this as "needs entirely new plumbing"): `RunTaskCtx.override` → `resolveTaskProvider` already resolves `override → env → registry` per call (`runner.ts:101/763/844`, `providers.ts:205,214`). No new runner seam. The `judge_run` handler sets `ctx.override.provider = JUDGE_FALLBACK_PROVIDER` on the fallback redelivery (decision logic keyed on retry-count / prior `attempt_failed` traces). The global `AI_PROVIDER_OVERRIDE` env remains the deployment-wide switch, below the per-call override in the same chain.
 
 ---
 
