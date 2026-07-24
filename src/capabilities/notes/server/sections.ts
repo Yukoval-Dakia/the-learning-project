@@ -14,8 +14,8 @@ import {
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
-import { ApiError } from '@/server/http/errors';
 
 type NoteSectionT = z.infer<typeof NoteSection>;
 

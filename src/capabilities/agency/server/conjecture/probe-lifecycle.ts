@@ -54,7 +54,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, desc, eq, sql } from 'drizzle-orm';
 

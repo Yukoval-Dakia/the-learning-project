@@ -11,8 +11,8 @@
 // /api/* internal-token middleware.
 
 import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 import { DraftForceEnableBodySchema } from './draft-moderation-contracts';
 

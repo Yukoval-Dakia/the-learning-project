@@ -8,8 +8,8 @@ import { classifyDocx } from '@/capabilities/ingestion/server/docx/route-classif
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_DOCX_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { getR2 } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';

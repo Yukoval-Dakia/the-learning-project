@@ -2,7 +2,7 @@ import { PDFiumLibrary, type PDFiumPageRenderOptions } from '@hyzyla/pdfium';
 import sharp from 'sharp';
 
 import { MAX_PDF_PAGES } from '@/core/limits';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 // PDF → page-image renderer (YUK-250). Server-only; imported by the route
 // handler src/capabilities/ingestion/api/pdf.ts, NOT by the pg-boss worker graph

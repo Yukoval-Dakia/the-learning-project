@@ -3,7 +3,7 @@
 // 是新栈活依赖，见 plan 裁决 a）。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { loadCopilotSummary } from '@/server/today/copilot-summary';
 
 export async function GET(): Promise<Response> {

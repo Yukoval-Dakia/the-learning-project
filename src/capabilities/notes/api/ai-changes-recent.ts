@@ -5,7 +5,7 @@
 
 import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-apply';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 export async function GET(): Promise<Response> {
   try {

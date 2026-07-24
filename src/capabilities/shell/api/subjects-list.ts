@@ -7,7 +7,7 @@
 // 字段仍逐项裁剪；promptFragments / judgePolicy 等 server-only AI 合同绝不下发。
 
 import { knowledge } from '@/db/schema';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
 import {
   type SubjectRegistry,

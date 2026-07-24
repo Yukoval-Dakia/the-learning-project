@@ -15,7 +15,7 @@ import { createIngestionPaper } from '@/capabilities/ingestion/server/make-paper
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { MakePaperBody } from './operation-schema';
 
 async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {

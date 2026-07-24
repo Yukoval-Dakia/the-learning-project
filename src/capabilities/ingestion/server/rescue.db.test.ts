@@ -10,7 +10,7 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import type { R2Client } from '@/server/r2';
 import { runRescue } from './rescue';
 

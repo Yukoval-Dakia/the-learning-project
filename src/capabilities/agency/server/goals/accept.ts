@@ -16,7 +16,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 // YUK-471 W2 — goal projection seam. The accept tx always writes the materialized_id_index
 // anchor (goalId → the propose event) so the SoT-flip guard's O(1) genesis-anchor check resolves
 // a proposal-materialized goal; the per-entity flag projectionIsWriter('goal') gates ONLY who

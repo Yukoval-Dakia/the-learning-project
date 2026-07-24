@@ -30,7 +30,7 @@ import {
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 type DbLike = Db | Tx;
 

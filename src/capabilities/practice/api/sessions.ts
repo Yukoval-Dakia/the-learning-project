@@ -1,7 +1,7 @@
 // ADR-0013 — eager create review session on /review page mount.
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
 
 export async function POST(): Promise<Response> {

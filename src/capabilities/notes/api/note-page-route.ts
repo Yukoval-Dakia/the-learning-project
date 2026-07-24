@@ -9,7 +9,7 @@
 import { NoteIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import { loadNotePage } from '@/capabilities/notes/server/note-page';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

@@ -9,7 +9,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { selection_observation } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { and, asc, eq } from 'drizzle-orm';
 
 export interface SelectionObservationInput {

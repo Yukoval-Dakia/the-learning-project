@@ -1,6 +1,6 @@
 import { getAllowedCauseIds } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { getEffectiveDomain } from './domain';
 

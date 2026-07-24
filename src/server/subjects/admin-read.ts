@@ -18,7 +18,7 @@
 
 import type { Db } from '@/db/client';
 import { subject, subject_trait, subject_trait_binding, subject_trait_journal } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import {
   type TraitDegradation,
   getSubjectTraitResolutions,

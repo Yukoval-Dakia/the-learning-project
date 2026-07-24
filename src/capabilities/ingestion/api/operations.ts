@@ -5,8 +5,8 @@ import { and, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { Ingestion } from '@/server/session';
 import {
   findIdempotentIngestionOperation,

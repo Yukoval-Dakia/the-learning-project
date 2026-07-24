@@ -27,9 +27,9 @@ import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.

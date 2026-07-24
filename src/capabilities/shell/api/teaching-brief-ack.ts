@@ -9,7 +9,7 @@
 
 import { acknowledgeTeachingBriefOutcome } from '@/capabilities/shell/server/teaching-brief-ack';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { TeachingBriefAckBodySchema } from './contracts';
 
 export async function POST(req: Request): Promise<Response> {

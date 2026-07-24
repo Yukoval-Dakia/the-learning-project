@@ -5,8 +5,8 @@ import type { PgBoss } from 'pg-boss';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-import { ApiError } from '@/server/http/errors';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
 import { assertFromState } from './guards';

@@ -6,7 +6,7 @@
 
 import { db } from '@/db/client';
 import { canonicalResourceResponse } from '@/kernel/http';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
   editSubjectTrait,

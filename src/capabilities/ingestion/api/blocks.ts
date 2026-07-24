@@ -40,7 +40,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
