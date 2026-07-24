@@ -150,7 +150,17 @@ export async function prepareQuestionGeneration<T>(
     const generated = await input.generate({ anchor, plan });
     return { anchor, plan, generated };
   } catch (error) {
-    await markQuestionGenerationFailed(db, plan);
+    // Best-effort durable failure marker: a cleanup throw (pool exhaustion, etc.)
+    // must NOT mask the original generation error — log it and always rethrow the
+    // original so the caller sees the real cause.
+    try {
+      await markQuestionGenerationFailed(db, plan);
+    } catch (cleanupError) {
+      console.error(
+        `[question-generation-grounding] failed to mark plan ${plan.id} failed during cleanup`,
+        cleanupError,
+      );
+    }
     throw error;
   }
 }

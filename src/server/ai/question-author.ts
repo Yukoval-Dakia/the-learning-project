@@ -348,7 +348,18 @@ export async function runQuestionAuthor(
 
     return { status: 'proposed', proposalId, questionId };
   } catch (error) {
-    if (preparedGrounding) await markQuestionGenerationFailed(db, preparedGrounding.plan);
+    // Best-effort durable failure marker: a cleanup throw must NOT mask the
+    // original error — log it and always rethrow the original cause.
+    if (preparedGrounding) {
+      try {
+        await markQuestionGenerationFailed(db, preparedGrounding.plan);
+      } catch (cleanupError) {
+        console.error(
+          `[question-author] failed to mark plan ${preparedGrounding.plan.id} failed during cleanup`,
+          cleanupError,
+        );
+      }
+    }
     throw error;
   }
 }

@@ -145,6 +145,35 @@ describe('question generation grounding persistence (YUK-350)', () => {
     expect(await db.select().from(question_generation_binding)).toEqual([]);
   });
 
+  it('a cleanup failure never masks the original generation error (wave-2)', async () => {
+    await resetDb();
+    // Proxy the real db so the anchor/plan tx commits normally, but the cleanup
+    // marker's update() throws — the ORIGINAL generation error must still surface.
+    const failingCleanupDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'update') {
+          return () => {
+            throw new Error('cleanup failure: update unavailable');
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as typeof db;
+
+    await expect(
+      prepareQuestionGeneration(failingCleanupDb, {
+        ...baseInput,
+        generate: async () => {
+          throw new Error('original generation failure');
+        },
+      }),
+    ).rejects.toThrow('original generation failure');
+
+    // Cleanup genuinely failed, so the plan stays pending_generation (not failed).
+    const [plan] = await db.select().from(question_generation_plan);
+    expect(plan?.status).toBe('pending_generation');
+  });
+
   it('never invokes generation when the locator fails validation before persistence', async () => {
     await resetDb();
     const generate = vi.fn(async () => 'generated');
