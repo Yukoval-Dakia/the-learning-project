@@ -31,6 +31,7 @@
 //   persistSubmit (knowledge-set resolution + FSRS txn + event write + refine
 //   trigger). POST composes the phases and shapes the wire response.
 
+import type { Provider } from '@/ai/registry';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
@@ -241,7 +242,24 @@ async function resolveSuppliedModelExecutionProvenance(params: {
 export interface JudgeSubmitOptions {
   subjectProfile?: SubjectProfile;
   skipRateLimit?: boolean;
-  durable?: { providerOverride?: string };
+  durable?: { providerOverride?: Provider };
+}
+
+/**
+ * #7 — single predicate for "would this submit spend a synchronous server-side judge
+ * call?", shared by judgeSubmit's invoke gate AND resolveDurableDivert's divert
+ * decision so the condition can't drift between them. True iff: auto_rate requested,
+ * no client-supplied verdict, the resolved route is NOT photo-only-unsupported, and a
+ * subject profile resolved. (hasAnswer is implied — a photo-only answer routes to
+ * photoOnlyUnsupported, and a no-answer submit resolves no profile / fails the gate.)
+ */
+export function wouldServerInvokeJudge(p: {
+  autoRate: boolean;
+  hasSuppliedResult: boolean;
+  photoOnlyUnsupported: boolean;
+  hasProfile: boolean;
+}): boolean {
+  return p.autoRate && !p.hasSuppliedResult && !p.photoOnlyUnsupported && p.hasProfile;
 }
 
 export async function judgeSubmit(
@@ -342,7 +360,24 @@ export async function judgeSubmit(
       executionProvenance = deterministicExecutionProvenance(judgeRoute);
     }
   }
-  if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
+  if (
+    wouldServerInvokeJudge({
+      autoRate: body.auto_rate,
+      hasSuppliedResult: judgeResult !== null,
+      photoOnlyUnsupported,
+      hasProfile: subjectProfile !== null,
+    })
+  ) {
+    // wouldServerInvokeJudge returned true ⇒ hasProfile was true ⇒ subjectProfile is
+    // non-null. TS can't see through the predicate, so narrow explicitly (the throw is
+    // unreachable — it documents the invariant the predicate guarantees).
+    if (subjectProfile === null) {
+      throw new ApiError(
+        'corrupt_state',
+        'server-invoke gate reached with no subject profile',
+        500,
+      );
+    }
     // YUK-694 — only explicit auto-rate requests may spend a server-side judge
     // call, and those calls share the process-wide paid-AI request budget.
     // YUK-594 — the durable worker path skips this gate (it is not bound by the
@@ -1010,10 +1045,16 @@ export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<
   const route = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnly = answerMd.length === 0 && hasImageAnswer;
   const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(route);
-  // photo-only-unsupported stays synchronous (its 422 is a route-resolution check,
-  // no LLM call) — return the resolved profile but do NOT divert.
-  if (photoOnlyUnsupported) return { divert: false, subjectProfile };
-  return { divert: true, subjectProfile };
+  // Shared predicate with judgeSubmit's invoke gate (#7) — photo-only-unsupported →
+  // divert:false (its 422 is a route-resolution check, no LLM call) but still return
+  // the resolved profile for the caller to reuse (#8).
+  const divert = wouldServerInvokeJudge({
+    autoRate: body.auto_rate,
+    hasSuppliedResult: body.judge_result_v2 != null,
+    photoOnlyUnsupported,
+    hasProfile: subjectProfile !== null,
+  });
+  return { divert, subjectProfile };
 }
 
 /** The 202-pending contract body returned when a submit diverts to the durable lane. */
@@ -1126,9 +1167,12 @@ export async function enqueueDurableJudge(
       headers: { Location: eventsUrl },
     });
   } catch (err) {
-    // Rate-limit / send failure BEFORE any durable state: nothing was enqueued and no
-    // marker was written (send-first), so there is no stuck-queued run to compensate —
-    // return the error and let the client retry.
+    // #8 — send-first ordering: the ONLY throws that reach here are pre-enqueue —
+    // checkRateLimit, a boss.send throw, or the null-jobId guard (null = NOT enqueued).
+    // A successful send proceeds to the 202 return; the advisory queued marker is
+    // best-effort (swallows its own errors) and never throws into this catch. So a
+    // reached catch always means NO durable job and NO marker exist — nothing to
+    // compensate; return the error and let the client retry.
     return errorResponse(err);
   }
 }

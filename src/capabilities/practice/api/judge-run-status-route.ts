@@ -14,6 +14,7 @@ import { ApiError, errorResponse } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
 import {
   JUDGE_RUN_TABLE,
+  JudgeRunTerminalResultSchema,
   deriveJudgeRunStatus,
   terminalJudgeRunResult,
 } from '../server/judge-run-status';
@@ -35,7 +36,12 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
     }
     const status = deriveJudgeRunStatus(events);
-    const result = status === 'done' ? terminalJudgeRunResult(events) : null;
+    // #12 — validate the terminal verdict through the response schema before serializing
+    // (contract-shaped output, not a raw z.unknown()). safeParse: a malformed/legacy DONE
+    // payload degrades to null rather than 500-ing the poll.
+    const rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
+    const parsed = rawResult === null ? null : JudgeRunTerminalResultSchema.safeParse(rawResult);
+    const result = parsed?.success ? parsed.data : null;
     return Response.json({ run_id: runId, status, result });
   } catch (err) {
     return errorResponse(err);

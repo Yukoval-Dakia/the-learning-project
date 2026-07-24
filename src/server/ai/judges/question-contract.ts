@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { Provider } from '@/ai/registry';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
@@ -120,7 +121,7 @@ export interface JudgeAnswerParams {
    *     (anthropic-sub). Reuses the existing per-call `resolveTaskProvider`
    *     override seam — no new plumbing (YUK-594 D9). Omitted → default lane.
    */
-  durable?: { providerOverride?: string };
+  durable?: { providerOverride?: Provider };
 }
 
 export interface JudgeAnswerResult {

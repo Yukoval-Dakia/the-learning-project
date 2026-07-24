@@ -106,7 +106,11 @@ export async function runJudgeRun(
     });
     const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
     if (!hasDone) {
-      await bestEffortWriteJobEvent(db, {
+      // #2 — MUST throw on failure (NOT best-effort): if this reconstruct write fails
+      // and we swallow it, the run stays persisted-but-terminal-less → poll/SSE sit
+      // pending forever. A throw here propagates out → pg-boss redelivers → this same
+      // guard retries the reconstruct until it lands (or DLQ surfaces it).
+      await writeTerminalJobEvent(db, {
         businessId: runId,
         eventType: JUDGE_RUN_EVENTS.DONE,
         payload: await reconstructDonePayloadFromJudgeEvent(db, runId),
@@ -115,13 +119,18 @@ export async function runJudgeRun(
     return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
   }
 
-  // started 心跳——消费者据此把 status 从 queued 推到 started。
+  // started 心跳——消费者据此把 status 从 queued 推到 started。非终态进度信号，
+  // best-effort（丢一条心跳不影响正确性；terminal DONE/FAILED 才是承重）。
   await bestEffortWriteJobEvent(db, {
     businessId: runId,
     eventType: JUDGE_RUN_EVENTS.STARTED,
     payload: { caller: data.caller, retry_count: meta.retryCount },
   });
 
+  // #2 — tracks whether the backfill tx COMMITTED. If it did but the terminal DONE
+  // write then fails, we must rethrow (not write a misleading FAILED) so pg-boss
+  // redelivers and the idempotency guard reconstructs the real DONE.
+  let persistedOk = false;
   try {
     if (data.caller !== 'submit') {
       // W2 只支持 submit 面；其它面 W3 落地。收到未知面 → 不重投（rethrow 只会
@@ -164,8 +173,15 @@ export async function runJudgeRun(
 
     // 判分（复用同步面 judgeSubmit 头：photo-only gate + invoke + rating 解析）。
     // durable:{}→invoker 强制 enableTransientRetry:false（D7）+ 末次重投切 provider（D9）。
-    // skipRateLimit：worker 不受 API request 预算限（那是同步 HTTP 面的闸）。
     // 冻结 profile（D5）直接注入，不重解析（避免 enqueue↔pickup 间画像编辑漂移）。
+    //
+    // #5 rate-limit 语义（承重）：checkRateLimit 是**进程内**单例，且 worker 与 API 是
+    // 独立进程——worker 侧不会命中 API 侧的窗口。这是**故意**的：judge_run 的唯一入队
+    // 源是 submit 的 enqueueDurableJudge，那里已 checkRateLimit（入队即已限流）；worker
+    // 只是消费已受限的队列，付费上限由 pg-boss 重投预算（1+JOB_RETRY_LIMIT）界定，不做
+    // 二次限流（skipRateLimit:true）。**W3 注意**：若将来新增非入队来源（manual
+    // re-enqueue / rejudge-style），必须让其经同一 rate-limited 入队面，或在 worker 侧
+    // 加一道粗杆闸——否则那条路径的付费调用不受控。
     const judged = await judgeSubmit(validated, {
       subjectProfile,
       skipRateLimit: true,
@@ -176,9 +192,13 @@ export async function runJudgeRun(
     // FSRS/θ̂/snapshot/family/calibration 原子 tx + post-commit 信号）。attemptEventId=
     // run_id 让 attempt event id 与 run handle 对齐（幂等守卫据它跳重投）。
     const persisted = await persistSubmit(validated, judged, { attemptEventId: runId });
+    persistedOk = true;
 
     // 终态 DONE，携判词（JudgeResultV2 + telemetry + lane provenance）供 SSE/poll 回填。
-    await bestEffortWriteJobEvent(db, {
+    // #2 — MUST throw on failure (writeTerminalJobEvent, not best-effort): swallowing a
+    // failed DONE write leaves the run persisted-but-pending forever. On a throw the
+    // catch sees persistedOk=true and rethrows for redelivery (→ guard reconstructs DONE).
+    await writeTerminalJobEvent(db, {
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.DONE,
       payload: {
@@ -211,6 +231,18 @@ export async function runJudgeRun(
     };
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
+    // #2 — the backfill COMMITTED but the terminal DONE write threw: the run SUCCEEDED,
+    // only its terminal notification failed. Do NOT write a misleading FAILED — rethrow
+    // so pg-boss redelivers and the idempotency guard reconstructs the real DONE from
+    // the persisted judge event. (Writing FAILED here would be a lie about a committed run.)
+    if (persistedOk) {
+      console.error(
+        '[judge_run] terminal DONE write failed after backfill commit — rethrowing for redelivery',
+        runId,
+        err,
+      );
+      throw err;
+    }
     // A malformed job payload (Zod parse of body/profile, or an invalid date) is a
     // permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
@@ -237,7 +269,10 @@ export async function runJudgeRun(
   }
 }
 
-/** 终态/进度 job_event best-effort 写（一条写失败不吞掉判分主结果 / 不阻重投）。 */
+/**
+ * best-effort job_event 写——仅用于**非终态**进度信号（STARTED 心跳）。丢一条心跳
+ * 不影响正确性。终态 DONE/FAILED 绝不用它（吞错会让 run 悬空）——见 writeTerminalJobEvent。
+ */
 async function bestEffortWriteJobEvent(
   db: Db,
   args: { businessId: string; eventType: string; payload: Record<string, unknown> },
@@ -252,6 +287,23 @@ async function bestEffortWriteJobEvent(
   } catch (err) {
     console.error(`[judge_run] ${args.eventType} write failed for`, args.businessId, err);
   }
+}
+
+/**
+ * #2 — terminal job_event 写，**故意不吞错**（与 bestEffort 相反）。一个失败的终态写
+ * 会让 run 卡在无终态（poll/SSE 永远 pending），故 throw 让上游触发 redelivery →
+ * 幂等守卫重建 DONE。用于 happy-path DONE + already_persisted 恢复 DONE 两处。
+ */
+async function writeTerminalJobEvent(
+  db: Db,
+  args: { businessId: string; eventType: string; payload: Record<string, unknown> },
+): Promise<void> {
+  await writeJobEvent(db, {
+    business_table: JUDGE_RUN_TABLE,
+    business_id: args.businessId,
+    event_type: args.eventType,
+    payload: args.payload,
+  });
 }
 
 async function loadQuestionRow(db: Db, questionId: string) {

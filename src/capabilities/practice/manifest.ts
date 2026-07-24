@@ -96,9 +96,12 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
-// YUK-594 (durable judge main path, W1) — judge_run poll-tier status response schema
-// (lives in the db-free judge-run-status module so this eager import stays db-light).
-import { JudgeRunStatusResponseSchema } from './server/judge-run-status';
+// YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
+// (live in the db-free judge-run-status module so this eager import stays db-light).
+import {
+  JudgeDurablePendingResponseSchema,
+  JudgeRunStatusResponseSchema,
+} from './server/judge-run-status';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -125,8 +128,14 @@ export const practiceCapability = defineCapability({
         path: '/api/review/submit',
         operationId: 'createReviewAttemptLegacy',
         request: { body: CreateAttemptBodySchema },
-        responses: { 200: AttemptResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
+        // YUK-594 — flag-on async-main divert returns 202-pending (JudgeDurablePendingResponse);
+        // registering 202 lets assertApiRouteSuccessStatus admit it (else the 202 is rejected).
+        responses: {
+          200: AttemptResponseSchema,
+          202: JudgeDurablePendingResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 202],
         deprecation: { successor: '/api/attempts', since: '@1783987200' },
         load: () => import('./api/submit').then((m) => m.POST),
       },
@@ -135,8 +144,13 @@ export const practiceCapability = defineCapability({
         path: '/api/attempts',
         operationId: 'createAttempt',
         request: { body: CreateAttemptBodySchema },
-        responses: { 201: AttemptResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 201,
+        // YUK-594 — createAttemptResource passes a 202-pending divert through (see submit.ts).
+        responses: {
+          201: AttemptResponseSchema,
+          202: JudgeDurablePendingResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [201, 202],
         load: () => import('./api/submit').then((m) => m.createAttemptResource),
       },
       {

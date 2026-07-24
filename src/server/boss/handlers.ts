@@ -3,6 +3,7 @@ import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_oc
 import { buildNoteGenerateHandler } from '@/capabilities/notes/jobs/note_generate';
 import { buildNoteVerifyHandler } from '@/capabilities/notes/jobs/note_verify';
 import { buildJudgeRunHandler } from '@/capabilities/practice/jobs/judge_run';
+import { JUDGE_RUN_QUEUE } from '@/capabilities/practice/server/judge-durable-config';
 import type { Db } from '@/db/client';
 import {
   EXPIRE_AGENT,
@@ -83,9 +84,9 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // lane 决策，非注册器统一配方）。createJobQueue 挂 judge_run_dlq（LLM 档，1h expire，
   // JOB_RETRY_LIMIT×30-60s backoff → DLQ）。dark-ship：JUDGE_DURABLE_ENABLED 默认 OFF
   // 时无人投递此队列（submit 面走同步），队列空跑无害。
-  await createJobQueue(boss, 'judge_run', EXPIRE_LLM);
+  await createJobQueue(boss, JUDGE_RUN_QUEUE, EXPIRE_LLM);
   await boss.work(
-    'judge_run',
+    JUDGE_RUN_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
     buildJudgeRunHandler(db),
   );

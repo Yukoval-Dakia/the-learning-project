@@ -5,10 +5,13 @@
 
 import type { Provider } from '@/ai/registry';
 import { parseFlag } from '@/core/env-flags';
-import { isProviderImplemented } from '@/server/ai/providers';
+import { isProviderImplemented, isProviderLaneReady } from '@/server/ai/providers';
 
 /** boss 队列名（handlers.ts 注册 + submit 面 boss.send + status 路由共享）。 */
 export const JUDGE_RUN_QUEUE = 'judge_run' as const;
+
+/** 默认跨 provider 兜底 lane（#10 — 单一常量，避免字面量双站点漂移）。 */
+export const DEFAULT_JUDGE_FALLBACK_PROVIDER: Provider = 'anthropic-sub';
 
 /**
  * YUK-594 (D8) — 异步为主路径的 kill switch。默认 OFF（dark-ship）：flag off 时
@@ -27,31 +30,33 @@ export function judgeDurableEnabled(): boolean {
  * RunTaskCtx.override（providers.ts resolveTaskProvider 既有 per-call seam），不发明
  * 新 plumbing。仅在最后一次重投应用（有界：付费调用 ≤ 1 + JOB_RETRY_LIMIT）。
  *
- * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。provider 名经 real 校验
- * （isProviderImplemented 单一真源，YUK-608），未 wired（未知 OR reserved-but-not-
- * implemented）⇒ fail-fast throw，绝不 `as Provider` 硬转出一个 runner 中途会炸的 lane。
+ * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。
+ *
+ * #3 — provider 名经 real 校验（isProviderImplemented 单一真源，YUK-608），但**非法
+ * 配置降级+log、绝不 throw**：这函数在 handler 判分路径里（最后一次重投时）调用，
+ * 抛裸 Error 会被 catch 当 retryable 误判、写乱终态。misconfig 是 operator 错，不该
+ * 让判分整体炸——记一条 warn、返回 undefined（不切 provider，走默认 lane）即可。
  */
 export function judgeFallbackProvider(): Provider | undefined {
   const raw = process.env.JUDGE_FALLBACK_PROVIDER?.trim();
-  // 默认 anthropic-sub；显式设空串 ⇒ 关闭跨 provider 兜底（留 undefined）。
-  const name = raw === undefined ? 'anthropic-sub' : raw === '' ? undefined : raw;
-  if (name === undefined) return undefined;
-  // Real validation (fail-fast per the docblock), NOT an `as Provider` cast: reject
-  // an unknown OR reserved-but-not-wired name loudly instead of resolving to a lane
-  // resolveTaskProvider throws on mid-call. Reuses the single-source predicate so the
-  // wired set can never drift into a second hard-coded copy (#1062 export).
-  if (!isProviderImplemented(name as Provider)) {
-    throw new Error(
-      `JUDGE_FALLBACK_PROVIDER='${name}' is not a wired provider; use one isProviderImplemented() accepts (default 'anthropic-sub'), or set '' to disable cross-provider fallback.`,
+  if (raw === '') return undefined; // 显式空串 ⇒ 关闭跨 provider 兜底。
+  if (raw === undefined) return DEFAULT_JUDGE_FALLBACK_PROVIDER;
+  // Real validation (not an `as Provider` cast) via the single-source predicate. On a
+  // misconfigured name: DEGRADE (warn + no fallback), never throw — a throw here would
+  // land in the handler's catch on the FINAL delivery and be mis-classified retryable.
+  if (!isProviderImplemented(raw as Provider)) {
+    console.warn(
+      `[judge_run] ignoring invalid JUDGE_FALLBACK_PROVIDER='${raw}' (not a wired provider) — no cross-provider fallback this run`,
     );
+    return undefined;
   }
-  return name as Provider;
+  return raw as Provider;
 }
 
 /**
  * 跨 provider 兜底的 lane 决策：仅在 durable 重试的**最后一次**投递上切 fallback
- * provider，且该 provider 的凭据已配置时才切（未配则保持默认 lane，绝不因缺 token
- * 让判分整体炸掉 → 有界降级）。attempt 序列（JOB_RETRY_LIMIT=2）：
+ * provider，且该 provider 的 lane 就绪（凭据配齐）才切（未配则保持默认 lane，绝不
+ * 因缺 token 把最后一次重投也判死 → 有界降级）。attempt 序列（JOB_RETRY_LIMIT=2）：
  *   retryCount 0 = mimo（首发）、1 = mimo（transient 重投）、2 = anthropic-sub（终局）。
  */
 export function resolveDurableProviderOverride(params: {
@@ -63,26 +68,9 @@ export function resolveDurableProviderOverride(params: {
   if (retryCount < retryLimit) return undefined; // 未到最后一次投递 → 不切。
   const fallback = judgeFallbackProvider();
   if (!fallback) return undefined;
-  // 有界降级：fallback provider 凭据缺失（如 anthropic-sub 无 CLAUDE_CODE_OAUTH_TOKEN）
-  // 时不切——resolveTaskProvider 会因缺 token throw，切了反而把最后一次重投也判死。
-  if (!fallbackProviderConfigured(fallback)) return undefined;
+  // #6 — reuse the exported lane-readiness predicate (credentials present) instead of a
+  // second hard-coded env map. judgeFallbackProvider already ensured it's wired; this is
+  // the bounded degrade: missing creds → stay on the default lane.
+  if (!isProviderLaneReady(fallback)) return undefined;
   return fallback;
-}
-
-/**
- * fallback provider 的凭据是否就位。先经 isProviderImplemented 对齐 wired 集合
- * （reserved: openrouter/gateway/openai → 一律不可用，与 resolveTaskProvider 的
- * "reserved but not implemented" 守卫同源，不双写）；再查具体凭据 env：anthropic-sub
- * 需 CLAUDE_CODE_OAUTH_TOKEN，key-auth provider 需其 apiKey env。
- */
-function fallbackProviderConfigured(provider: Provider): boolean {
-  if (!isProviderImplemented(provider)) return false;
-  if (provider === 'anthropic-sub') return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
-  const envByProvider: Partial<Record<Provider, string>> = {
-    anthropic: 'ANTHROPIC_API_KEY',
-    xiaomi: 'XIAOMI_API_KEY',
-    zhipu: 'ZHIPU_API_KEY',
-  };
-  const envName = envByProvider[provider];
-  return envName ? Boolean(process.env[envName]) : false;
 }
