@@ -8,7 +8,7 @@
 
 import { db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { listAdminSubjects } from '@/server/subjects/admin-read';
 
 export async function GET(): Promise<Response> {

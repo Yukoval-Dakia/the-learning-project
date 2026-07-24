@@ -30,8 +30,8 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { ApiError } from '@/server/http/errors';
 import { edgeRowToSnapshot } from '@/server/projections/gather';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { assertKnowledgeEdgeParity } from '@/server/projections/parity';

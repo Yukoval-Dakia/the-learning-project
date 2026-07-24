@@ -3,7 +3,7 @@
 // READ-ONLY：零写、零 LLM。沿 conjecture-scores.ts 读模型 → 薄 route 形态；/api/* token 校验由
 // 组合根中间件统一施加。
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { loadCoverageLattice } from '../server/coverage-lattice';
 
 export async function GET(): Promise<Response> {

@@ -7,7 +7,7 @@
 
 import { db } from '@/db/client';
 import { resourceResponse } from '@/kernel/http';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { thinCreateSubject } from '@/server/subjects/thin-create';
 import { z } from 'zod';
 

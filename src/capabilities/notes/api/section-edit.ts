@@ -1,7 +1,7 @@
 import { EditArtifactSectionBodySchema } from '@/capabilities/notes/api/contracts';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {

@@ -25,7 +25,7 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
 import { Review } from '@/server/session';

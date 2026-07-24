@@ -19,7 +19,7 @@ import { desc, gte, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { cost_ledger, tool_call_log } from '@/db/schema';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 function bjtMidnightUtc(now: Date = new Date()): Date {
   // BJT = UTC+8. Find the most recent BJT midnight and project back to UTC.

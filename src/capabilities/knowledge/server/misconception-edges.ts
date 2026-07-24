@@ -30,7 +30,7 @@ import type { AgentRef } from '@/core/schema/business';
 import { MisconceptionEdgeInsert } from '@/core/schema/misconception-edge';
 import type { Db, Tx } from '@/db/client';
 import { misconception_edge } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import {
   type MisconceptionTopologyEdge,
   checkMisconceptionEdgeTopology,

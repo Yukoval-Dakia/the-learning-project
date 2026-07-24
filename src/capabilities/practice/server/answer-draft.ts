@@ -21,7 +21,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { answer, learning_session } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 type DbLike = Db | Tx;
 

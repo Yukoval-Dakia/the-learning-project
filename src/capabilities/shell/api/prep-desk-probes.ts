@@ -4,7 +4,7 @@
 
 import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 
 export async function GET(): Promise<Response> {
   try {

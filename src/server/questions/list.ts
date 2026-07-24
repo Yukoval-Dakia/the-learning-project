@@ -34,7 +34,7 @@ import {
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 // Truncation threshold for list-item `prompt_md` (detail page serves the full

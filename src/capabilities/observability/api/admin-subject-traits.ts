@@ -5,7 +5,7 @@
 // 可见「实际在用哪份」（v3.2）。业务在 src/server/subjects/admin-read.ts。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { getAdminSubjectTraits } from '@/server/subjects/admin-read';
 import { z } from 'zod';
 

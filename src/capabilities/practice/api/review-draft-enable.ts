@@ -10,8 +10,8 @@
 // internal-token middleware.
 
 import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {

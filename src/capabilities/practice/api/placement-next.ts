@@ -25,7 +25,7 @@
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import { and, eq, inArray } from 'drizzle-orm';

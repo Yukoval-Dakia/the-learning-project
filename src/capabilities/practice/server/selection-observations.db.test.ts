@@ -7,7 +7,7 @@ import {
   recordSelectionObservation,
 } from '@/capabilities/practice/server/selection-observations';
 import { selection_observation } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

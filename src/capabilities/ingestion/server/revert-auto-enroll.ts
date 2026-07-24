@@ -21,7 +21,7 @@ import { questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
 import { learning_record, question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { archiveLearningRecord } from '@/server/records/queries';
 

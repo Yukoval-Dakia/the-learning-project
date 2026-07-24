@@ -7,7 +7,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import {
   type ProposalPresentation,
   loadProposalPresentations,

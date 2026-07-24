@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 import {
   abandonReviewSession,

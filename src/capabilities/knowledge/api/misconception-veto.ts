@@ -23,7 +23,7 @@
 import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { dismissAiProposal } from '@/server/proposals/actions';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
 

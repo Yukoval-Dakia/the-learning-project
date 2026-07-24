@@ -5,7 +5,7 @@ import {
   collectionPayload,
   deprecatedRouteResponse,
 } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { Ingestion } from '@/server/session';
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { CreateIngestionSessionBody } from './contracts';

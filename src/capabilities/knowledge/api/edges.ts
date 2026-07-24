@@ -33,8 +33,8 @@ import {
 import { db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
-import { ApiError, errorResponse } from '@/server/http/errors';
 
 export async function GET(req: Request): Promise<Response> {
   try {

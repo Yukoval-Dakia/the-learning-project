@@ -7,7 +7,7 @@
 // the session for routing; the revert target is the body's block_id).
 import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { RevertAutoEnrolledBlockBodySchema } from './contracts';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {

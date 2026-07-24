@@ -20,7 +20,7 @@
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events/corrections';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
 import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';

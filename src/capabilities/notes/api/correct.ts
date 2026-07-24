@@ -5,8 +5,8 @@ import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {

@@ -5,7 +5,7 @@
 // enum string union. Same conflict-throwing semantics; the type assertion narrows
 // the input to the allowed literal-union after the throw is skipped.
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 /**
  * Asserts that `current` is one of the `allowed` states; throws ApiError('conflict', 409)

@@ -14,7 +14,7 @@
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { dispatchPlacementStarterClaim } from '@/server/question-supply/placement-starter';
 import { materializePlacementStartersForGoal } from '@/server/question-supply/placement-starter-store';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';

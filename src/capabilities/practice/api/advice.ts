@@ -18,13 +18,13 @@ import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-ra
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
 import {
   createDefaultJudgeInvoker,
   issueJudgePreviewProvenanceToken,
   judgeProvenanceSigningSecret,
   sha256Canonical,
 } from '@/kernel/judge';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import { describe, expect, it } from 'vitest';
 
 import { classifyDocx } from './route-classify';

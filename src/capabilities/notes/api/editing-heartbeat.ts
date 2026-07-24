@@ -6,11 +6,11 @@
 
 import { EditingHeartbeatBodySchema } from '@/capabilities/notes/api/contracts';
 import { db } from '@/db/client';
+import { ApiError, errorResponse } from '@/kernel/http';
 import {
   markArtifactIdleAndFlush,
   recordEditingHeartbeat,
 } from '@/server/artifacts/editing-session';
-import { ApiError, errorResponse } from '@/server/http/errors';
 
 export async function POST(req: Request): Promise<Response> {
   try {

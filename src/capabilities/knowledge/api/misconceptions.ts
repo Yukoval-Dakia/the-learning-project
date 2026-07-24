@@ -9,7 +9,7 @@
 import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadMisconceptionsForKc } from '@/capabilities/knowledge/server/misconception-read';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

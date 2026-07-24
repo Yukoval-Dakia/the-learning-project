@@ -10,8 +10,8 @@
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { SolveSubmissionBodySchema } from './question-solve-contracts';
 

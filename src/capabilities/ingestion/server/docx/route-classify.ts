@@ -1,7 +1,7 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { type UnzipFileInfo, unzipSync } from 'fflate';
 
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 
 // YUK-258/YUK-273 — DOCX routing + converter security preflight. It runs
 // synchronously BEFORE any Pandoc/LibreOffice spawn. A .docx is a zip; we inflate

@@ -12,7 +12,7 @@ import { and, desc, eq, ilike, inArray, isNull, ne } from 'drizzle-orm';
 import { ArtifactSearchQuerySchema } from '@/capabilities/notes/api/contracts';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 // ADR-0033 D1 (YUK-306) — closed allowlist of cross-linkable artifact types.
 // type='interactive' is OPAQUE to the note block-tree mesh: it must never be

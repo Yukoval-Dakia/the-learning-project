@@ -5,7 +5,7 @@
 // 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
 
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import { editSharedTrait, resetTraitToSeed, rollbackTrait } from '@/server/subjects/trait-write';
 import { z } from 'zod';

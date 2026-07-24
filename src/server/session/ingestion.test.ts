@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { event, job_events, learning_session, question_block, source_document } from '@/db/schema';
-import { ApiError } from '@/server/http/errors';
+import { ApiError } from '@/kernel/http';
 import {
   applyExtractionResult,
   applyRescue,

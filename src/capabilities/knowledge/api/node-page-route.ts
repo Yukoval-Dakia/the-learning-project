@@ -12,7 +12,7 @@
 import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadKnowledgeNodePage } from '@/capabilities/knowledge/server/node-page';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/kernel/http';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

@@ -4,7 +4,7 @@
 
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {

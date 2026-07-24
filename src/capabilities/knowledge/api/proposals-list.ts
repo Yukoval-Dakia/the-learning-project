@@ -5,7 +5,7 @@
 
 import { LegacyKnowledgeProposalQuerySchema } from '@/capabilities/knowledge/api/contracts';
 import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/kernel/http';
 import { type ProposalStatus, listLegacyKnowledgeProposals } from '@/server/proposals/inbox';
 
 export async function GET(req: Request): Promise<Response> {
