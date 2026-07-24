@@ -34,7 +34,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { MODEL_BACKED_JUDGE_ROUTES } from '@/kernel/judge';
+import { IMAGE_CONSUMING_JUDGE_ROUTES, MODEL_BACKED_JUDGE_ROUTES } from '@/kernel/judge';
 import { judgeAnswer } from '@/server/ai/judges/question-contract';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -50,7 +50,12 @@ export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 // YUK-589 route-resolve.ts) instead of a locally-owned duplicate — YUK-769
 // fixed a drift where this module's own copy omitted `unit_dimension` (its
 // LLM fallback route), silently excluding it from calibration sampling.
-const VISION_ROUTES = new Set(['steps', 'multimodal_direct']);
+// The routes whose invoker dispatch threads student_image_refs (photo answers).
+// OCR minor (PR #1056): this used to be a locally-owned Set duplicating the
+// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/kernel/judge, YUK-589
+// route-resolve.ts) — same double-write drift risk as the MODEL_BACKED_ROUTES
+// fix above. Consume the shared predicate instead of a local copy.
+const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;
 const SAMPLED_OUTCOMES = ['correct', 'partial', 'incorrect'] as const;
 type SampledOutcome = (typeof SAMPLED_OUTCOMES)[number];
 
