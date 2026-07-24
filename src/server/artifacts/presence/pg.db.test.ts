@@ -423,6 +423,40 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     );
   });
 
+  it('YUK-768: keeps a stale hub_auto_sync deferred patch during flush while dropping a same-aged non-hub one', async () => {
+    await seedArtifact('art_hub');
+    const flushAt = at(11 * 60_000); // T0 + 11min — both entries below are >10min old
+    // Two same-aged (queuedAtMs = T0) stale entries: the mutation-triggered hub
+    // sync patch opts out of the force-apply ceiling and must survive pruning;
+    // the plain note-refine patch (no actorRef) is dropped at the TTL.
+    await testDb()
+      .insert(editing_presence)
+      .values({
+        artifact_id: 'art_hub',
+        status: 'editing',
+        last_heartbeat_at: at(10 * 60_000),
+        editing_started_at: null,
+        pending: [
+          { patch, triggerEventId: null, queuedAtMs: T0.getTime(), actorRef: 'hub_auto_sync' },
+          { patch, triggerEventId: null, queuedAtMs: T0.getTime() },
+        ],
+      });
+
+    // No active session → blur flushes. The hub_auto_sync entry survives pruning
+    // and is applied; the non-hub entry is dropped (warned).
+    const flush = await store.markArtifactIdleAndFlush({
+      db: applyDb,
+      artifactId: 'art_hub',
+      sessionId: 'gone',
+      now: flushAt,
+    });
+    expect(flush.flushed).toBe(1);
+    expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('dropped 1 stale pending patch(es)'),
+    );
+  });
+
   it('drops stale pending during enqueue load (kept fresh ones still enqueued)', async () => {
     await seedArtifact('art_mix');
     const enqueueAt = at(11 * 60_000);

@@ -36,6 +36,12 @@ export interface SerializedQueuedPatch {
   taskResult?: unknown;
   triggerEventId: string | null;
   queuedAtMs: number;
+  // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
+  // for the default note-refine AI mutator. A mutation-triggered hub sync
+  // ('hub_auto_sync') opts out of the generic force-apply ceiling, so a patch it
+  // defers must survive stale-pending pruning (YUK-768) rather than being dropped
+  // at the 10-minute TTL like an abandoned note-refine patch.
+  actorRef?: string;
 }
 
 export interface EditingSessionSnapshot {
