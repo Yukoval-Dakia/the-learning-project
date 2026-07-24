@@ -81,7 +81,10 @@
 // YUK-452 Phase B: placement_starter_claim/attempt/attempt_question/cost_component
 // 四张 admission/成本台账表进 FK_ORDER（见数组尾注记）。NEW FK_ORDER tables 必 bump：
 // 42 → 46 tables，4.14 → 4.15。
-export const SCHEMA_VERSION = '4.15';
+// YUK-350: question_answer_anchor / question_generation_plan / question_generation_binding —
+// 生成溯源三表（immutable authored generation provenance；anchor 先于 plan 先于 binding）进 FK_ORDER。
+// NEW FK_ORDER tables 必 bump：46 → 49 tables，4.15 → 4.16。
+export const SCHEMA_VERSION = '4.16';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -143,6 +146,11 @@ export const FK_ORDER = [
   'knowledge_edge',
   'source_asset',
   'source_document',
+  // YUK-350 — immutable authored generation provenance. Anchor precedes plan;
+  // generated questions bind exact versions/hashes. NEW tables bump 4.14 → 4.15.
+  'question_answer_anchor',
+  'question_generation_plan',
+  'question_generation_binding',
   'learning_session',
   'question_block',
   'question',

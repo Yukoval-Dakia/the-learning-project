@@ -83,6 +83,10 @@ const ALL_TABLES = [
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',
   'question_block',
+  // YUK-350 — immutable generation plan + answer-anchor authored data.
+  'question_generation_binding',
+  'question_generation_plan',
+  'question_answer_anchor',
   'question',
   'source_document',
   'source_asset',

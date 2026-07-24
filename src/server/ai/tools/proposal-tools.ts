@@ -34,6 +34,7 @@ import {
   type QuestionEditOpT,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
+import { SourceSpanLocator } from '@/core/schema/question-generation-grounding';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -1504,6 +1505,10 @@ type AuthorQuestionSeed =
       requested_kind?: string;
       difficulty?: number;
       material_body_md?: string;
+      material_answer_anchor?: {
+        canonical_answer: { kind: string; value: string };
+        locator: z.infer<typeof SourceSpanLocator>;
+      };
       material_url?: string;
       material_title?: string;
     };
@@ -1533,6 +1538,12 @@ const AuthorQuestionInputSchema = z.object({
   requested_kind: z.string().min(1).optional(),
   difficulty: z.number().int().min(1).max(5).optional(),
   material_body_md: z.string().min(1).max(20_000).optional(),
+  material_answer_anchor: z
+    .object({
+      canonical_answer: z.object({ kind: z.string().min(1), value: z.string().min(1) }),
+      locator: SourceSpanLocator,
+    })
+    .optional(),
   material_url: z.string().url().optional(),
   material_title: z.string().min(1).optional(),
 });
@@ -1568,6 +1579,9 @@ function validateAuthorQuestionInput(input: z.infer<typeof AuthorQuestionInputSc
       // material_title are provenance-only metadata.
       if (input.seed_mode === 'material' && !input.material_body_md) {
         throw new Error("author_question seed_mode 'material' requires material_body_md");
+      }
+      if (input.seed_mode === 'material' && !input.material_answer_anchor) {
+        throw new Error("author_question seed_mode 'material' requires material_answer_anchor");
       }
       break;
   }
@@ -1651,6 +1665,9 @@ function toAuthorQuestionSeed(input: AuthorQuestionInput): AuthorQuestionSeed {
         ...(input.requested_kind ? { requested_kind: input.requested_kind } : {}),
         ...(input.difficulty !== undefined ? { difficulty: input.difficulty } : {}),
         ...(input.material_body_md ? { material_body_md: input.material_body_md } : {}),
+        ...(input.material_answer_anchor
+          ? { material_answer_anchor: input.material_answer_anchor }
+          : {}),
         ...(input.material_url ? { material_url: input.material_url } : {}),
         ...(input.material_title ? { material_title: input.material_title } : {}),
       };
@@ -1780,6 +1797,9 @@ export async function authorQuestion(
           ...(seed.requested_kind ? { requested_kind: seed.requested_kind } : {}),
           ...(seed.difficulty !== undefined ? { difficulty: seed.difficulty } : {}),
           ...(seed.material_body_md ? { material_body_md: seed.material_body_md } : {}),
+          ...(seed.material_answer_anchor
+            ? { material_answer_anchor: seed.material_answer_anchor }
+            : {}),
           ...(seed.material_url ? { material_url: seed.material_url } : {}),
           ...(seed.material_title ? { material_title: seed.material_title } : {}),
         },

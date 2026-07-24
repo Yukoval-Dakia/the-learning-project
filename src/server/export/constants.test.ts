@@ -10,7 +10,13 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.14" (YUK-599 subject 控制面六表入备份)', () => {
+  it('SCHEMA_VERSION is "4.16" (YUK-350 generation grounding enters backup)', () => {
+    // 4.15 → 4.16 (YUK-350): immutable question_answer_anchor,
+    // question_generation_plan, and question_generation_binding authored provenance.
+    // New FK_ORDER tables require a backup schema bump.
+    // 4.14 → 4.15 (YUK-452 Phase B): placement_starter_claim/attempt/attempt_question/
+    // cost_component 四张冷启 admission/成本台账表入 FK_ORDER（丢了即 restore 后预算控制
+    // 失忆 + 付费审计断链）。NEW FK_ORDER tables 必 bump。
     // 4.13 → 4.14 (YUK-599 / YUK-597 v3 §6): NEW FK_ORDER tables ×6 — subject 控制面
     // （subject / subject_trait / subject_trait_journal / subject_trait_binding /
     // subject_control_journal / subject_name_claim）。owner 授权配置 + append-only 双
@@ -36,17 +42,14 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    // 4.14 → 4.15 (YUK-452 Phase B): placement_starter_claim/attempt/attempt_question/
-    // cost_component 四张冷启 admission/成本台账表入 FK_ORDER（丢了即 restore 后预算控制
-    // 失忆 + 付费审计断链）。NEW FK_ORDER tables 必 bump。
-    expect(SCHEMA_VERSION).toBe('4.15');
+    expect(SCHEMA_VERSION).toBe('4.16');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 42 tables in topological order', () => {
+  it('FK_ORDER lists all 45 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -90,7 +93,9 @@ describe('export constants', () => {
     // 42 → 46 (YUK-452 Phase B): added placement_starter_claim → placement_starter_attempt
     // → placement_starter_attempt_question / placement_starter_cost_component（硬 FK 父先
     // 子后），placed last as the newest additive cluster。
-    expect(FK_ORDER.length).toBe(46);
+    // 46 → 49 (YUK-350): immutable question_answer_anchor → question_generation_plan →
+    // question_generation_binding (authored generation provenance, all backed up).
+    expect(FK_ORDER.length).toBe(49);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('placement_starter_cost_component');
   });

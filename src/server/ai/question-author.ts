@@ -21,6 +21,7 @@
 // paper by calling this repeatedly), in deliberate contrast to
 // record_promotion's pendingProposalWithCooldown.
 
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { z } from 'zod';
 
@@ -29,6 +30,10 @@ import type { ToolContext } from '@/server/ai/tools/types';
 import { and, inArray, isNull } from 'drizzle-orm';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  type QuestionAnswerAnchorT,
+  validateSourceLocatorBytes,
+} from '@/core/schema/question-generation-grounding';
 import {
   QuestionAuthorDraft,
   type QuestionAuthorDraftT,
@@ -39,10 +44,20 @@ import { knowledge, question } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import {
+  bindGeneratedQuestion,
+  markQuestionGenerationFailed,
+  prepareQuestionGeneration,
+} from '@/server/questions/question-generation-grounding';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 const PROMPT_PREVIEW_CHARS = 120;
+
+// The single canonical kind a material plan defaults to when none is requested.
+// A persisted plan's kind must equal the prompt kind and the verifier's
+// comparison kind, so the default also constrains generation (see Finding 1).
+const DEFAULT_MATERIAL_QUESTION_KIND = 'short_answer';
 
 export interface QuestionAuthorSeed {
   seed_mode: 'knowledge' | 'material';
@@ -51,6 +66,11 @@ export interface QuestionAuthorSeed {
   difficulty?: number;
   /** REQUIRED for seed_mode='material' (the task has no fetch tool — critic #5). */
   material_body_md?: string;
+  /** REQUIRED source-grounded answer evidence for the material production path. */
+  material_answer_anchor?: {
+    canonical_answer: QuestionAnswerAnchorT['canonical_answer'];
+    locator: QuestionAnswerAnchorT['source']['locator'];
+  };
   /** Provenance-only metadata; never fetched (single-shot task, no Tavily). */
   material_url?: string;
   material_title?: string;
@@ -74,6 +94,22 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
     throw new Error("question_author seed_mode 'material' requires material_body_md");
   }
 
+  if (seed.seed_mode === 'material' && !seed.material_answer_anchor) {
+    throw new Error("question_author seed_mode 'material' requires material_answer_anchor");
+  }
+
+  if (seed.seed_mode === 'material' && seed.material_answer_anchor && seed.material_body_md) {
+    const locator = seed.material_answer_anchor.locator;
+    if (locator.kind !== 'text_span') {
+      throw new Error(
+        `question_author material locator '${locator.kind}' has no authoritative page content`,
+      );
+    }
+    // Inline material is its own authoritative source; validate the locator's
+    // half-open UTF-8 byte range via the shared grounding authority (Finding 2).
+    validateSourceLocatorBytes(locator, new TextEncoder().encode(seed.material_body_md));
+  }
+
   const wanted = [...new Set(seed.knowledge_ids)];
   const nodes = wanted.length
     ? await db
@@ -92,15 +128,25 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
   } catch {
     effectiveDomain = null;
   }
-  const requestedKind = seed.requested_kind
-    ? (normalizeToCanonicalKind(seed.requested_kind) ?? undefined)
-    : undefined;
+  // ONE canonical effective kind, computed at plan-creation time and threaded to
+  // BOTH the generation prompt and (on the material path) the persisted plan, so
+  // the verifier compares like-for-like (Finding 1). The material path persists
+  // a plan whose requested_kind is veto-compared, so an omitted/unrecognized kind
+  // defaults to a canonical value AND constrains the prompt to it. Knowledge
+  // seeds persist no plan, so an omitted kind stays an open prompt hint.
+  const normalizedRequestedKind = seed.requested_kind
+    ? normalizeToCanonicalKind(seed.requested_kind)
+    : null;
+  const effectiveKind =
+    seed.seed_mode === 'material'
+      ? (normalizedRequestedKind ?? DEFAULT_MATERIAL_QUESTION_KIND)
+      : normalizedRequestedKind;
 
   return {
     input: {
       seed_mode: seed.seed_mode,
       knowledge_context: nodes.map((node) => ({ id: node.id, name: node.name })),
-      ...(requestedKind ? { requested_kind: requestedKind } : {}),
+      ...(effectiveKind ? { requested_kind: effectiveKind } : {}),
       ...(seed.difficulty !== undefined ? { requested_difficulty: seed.difficulty } : {}),
       ...(seed.material_body_md
         ? {
@@ -114,6 +160,7 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
     ctx: { subjectProfile: resolveSubjectProfile(effectiveDomain) },
     validIds,
     validIdSet,
+    effectiveKind,
   };
 }
 
@@ -167,86 +214,138 @@ export async function runQuestionAuthor(
 
   const prepared = await buildQuestionAuthorPreparation(db, seed);
   if (!prepared) return { status: 'skipped:knowledge_not_found' };
-  const { input, ctx: runCtx, validIds, validIdSet } = prepared;
+  const { input, ctx: runCtx, validIds, validIdSet, effectiveKind } = prepared;
 
-  const result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
-  const draft = parseQuestionAuthorOutput(result.text);
+  let preparedGrounding:
+    | Awaited<ReturnType<typeof prepareQuestionGeneration<QuestionAuthorDraftT>>>
+    | undefined;
+  let result: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>>;
+  let draft: QuestionAuthorDraftT;
+  if (seed.seed_mode === 'material' && seed.material_body_md && seed.material_answer_anchor) {
+    const sourceHash = `sha256:${createHash('sha256').update(seed.material_body_md).digest('hex')}`;
+    let generationResult: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>> | undefined;
+    preparedGrounding = await prepareQuestionGeneration(db, {
+      source: {
+        artifact_kind: 'inline_material',
+        artifact_id: sourceHash,
+        version: 1,
+        content_hash: sourceHash,
+        locator: seed.material_answer_anchor.locator,
+      },
+      // Inline material IS the authoritative source; its UTF-8 bytes validate
+      // the locator centrally (fail-closed, never bypassed) — Finding 2.
+      authoritativeBytes: new TextEncoder().encode(seed.material_body_md),
+      canonicalAnswer: seed.material_answer_anchor.canonical_answer,
+      anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
+      demand: { kind: 'knowledge', ref_id: validIds[0] },
+      knowledgeIds: validIds,
+      // Same canonical kind used for the prompt (Finding 1): the verifier
+      // compares the generated kind against this persisted value.
+      requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
+      requestedAnswerClass: 'exact',
+      constraints: { seed_mode: 'material' },
+      planProvenance: { kind: 'human_planned', task_run_id: deps.taskRunId },
+      generate: async () => {
+        generationResult = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+        return parseQuestionAuthorOutput(generationResult.text);
+      },
+    });
+    if (!generationResult) throw new Error('QuestionAuthorTask completed without a task result');
+    draft = preparedGrounding.generated;
+    result = generationResult;
+  } else {
+    result = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+    draft = parseQuestionAuthorOutput(result.text);
+  }
 
-  // Hallucinated-id discipline: intersect the echoed knowledge_ids with the
-  // validated seed set; an empty intersection falls back to the full validated
-  // seed (the question was generated FOR those nodes — quiz_gen salvage policy).
-  const echoed = draft.knowledge_ids.filter((id) => validIdSet.has(id));
-  const questionKnowledgeIds = echoed.length > 0 ? echoed : validIds;
+  try {
+    // Hallucinated-id discipline: intersect the echoed knowledge_ids with the
+    // validated seed set; an empty intersection falls back to the full validated
+    // seed (the question was generated FOR those nodes — quiz_gen salvage policy).
+    const echoed = draft.knowledge_ids.filter((id) => validIdSet.has(id));
+    const questionKnowledgeIds = echoed.length > 0 ? echoed : validIds;
 
-  // Server-side tree hardening: regenerate node ids, reject malformed shapes,
-  // derive (and require non-empty) prompt_md / reference_md.
-  const normalized = normalizeAuthorStructured(draft.structured);
+    // Server-side tree hardening: regenerate node ids, reject malformed shapes,
+    // derive (and require non-empty) prompt_md / reference_md.
+    const normalized = normalizeAuthorStructured(draft.structured);
 
-  const now = new Date();
-  const questionId = createId();
-  const promptPreview =
-    normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
-      ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
-      : normalized.prompt_md;
+    const now = new Date();
+    const questionId = createId();
+    const promptPreview =
+      normalized.prompt_md.length > PROMPT_PREVIEW_CHARS
+        ? `${normalized.prompt_md.slice(0, PROMPT_PREVIEW_CHARS)}…`
+        : normalized.prompt_md;
 
-  let proposalId = '';
-  await db.transaction(async (tx) => {
-    await tx.insert(question).values(
-      withAnswerClass({
-        id: questionId,
-        kind: draft.kind,
-        prompt_md: normalized.prompt_md,
-        reference_md: normalized.reference_md,
-        structured: normalized.structured,
-        choices_md: draft.choices_md ?? null,
-        rubric_json: draft.rubric_json ?? null,
-        judge_kind_override: draft.judge_kind_override ?? null,
-        knowledge_ids: questionKnowledgeIds,
-        difficulty: draft.difficulty,
-        // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
-        source: 'copilot_authored',
-        source_ref: null,
-        // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
-        // until the question_draft proposal is accepted.
-        draft_status: 'draft',
-        created_by: aiAgentRef('QuestionAuthorTask', result),
-        metadata: {
-          author_question: {
+    let proposalId = '';
+    await db.transaction(async (tx) => {
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: questionId,
+          kind: draft.kind,
+          prompt_md: normalized.prompt_md,
+          reference_md: normalized.reference_md,
+          structured: normalized.structured,
+          choices_md: draft.choices_md ?? null,
+          rubric_json: draft.rubric_json ?? null,
+          judge_kind_override: draft.judge_kind_override ?? null,
+          knowledge_ids: questionKnowledgeIds,
+          difficulty: draft.difficulty,
+          // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
+          source: 'copilot_authored',
+          source_ref: null,
+          // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
+          // until the question_draft proposal is accepted.
+          draft_status: 'draft',
+          created_by: aiAgentRef('QuestionAuthorTask', result),
+          metadata: {
+            author_question: {
+              seed_mode: seed.seed_mode,
+              ...(seed.material_url ? { material_url: seed.material_url } : {}),
+              ...(seed.material_title ? { material_title: seed.material_title } : {}),
+            },
+          },
+          created_at: now,
+          updated_at: now,
+        }),
+      );
+      if (preparedGrounding) {
+        await bindGeneratedQuestion(tx, {
+          questionId,
+          plan: preparedGrounding.plan,
+          anchor: preparedGrounding.anchor,
+          generated: { kind: draft.kind, reference_md: normalized.reference_md },
+        });
+      }
+
+      proposalId = await writeAiProposal(tx, {
+        actor_ref: deps.actorRef,
+        payload: {
+          kind: 'question_draft',
+          target: { subject_kind: 'question', subject_id: questionId },
+          reason_md: `copilot 拟题（seed=${seed.seed_mode}）：${promptPreview}`,
+          evidence_refs: questionKnowledgeIds.map((id) => ({ kind: 'knowledge' as const, id })),
+          proposed_change: {
+            question_id: questionId,
+            kind: draft.kind,
+            difficulty: draft.difficulty,
+            knowledge_ids: questionKnowledgeIds,
             seed_mode: seed.seed_mode,
+            prompt_preview: promptPreview,
             ...(seed.material_url ? { material_url: seed.material_url } : {}),
-            ...(seed.material_title ? { material_title: seed.material_title } : {}),
+          },
+          rollback_plan: {
+            action: 'dismiss proposal; the draft question stays inert (never pooled)',
           },
         },
-        created_at: now,
-        updated_at: now,
-      }),
-    );
-
-    proposalId = await writeAiProposal(tx, {
-      actor_ref: deps.actorRef,
-      payload: {
-        kind: 'question_draft',
-        target: { subject_kind: 'question', subject_id: questionId },
-        reason_md: `copilot 拟题（seed=${seed.seed_mode}）：${promptPreview}`,
-        evidence_refs: questionKnowledgeIds.map((id) => ({ kind: 'knowledge' as const, id })),
-        proposed_change: {
-          question_id: questionId,
-          kind: draft.kind,
-          difficulty: draft.difficulty,
-          knowledge_ids: questionKnowledgeIds,
-          seed_mode: seed.seed_mode,
-          prompt_preview: promptPreview,
-          ...(seed.material_url ? { material_url: seed.material_url } : {}),
-        },
-        rollback_plan: {
-          action: 'dismiss proposal; the draft question stays inert (never pooled)',
-        },
-      },
-      task_run_id: deps.taskRunId,
-      caused_by_event_id: deps.causedByEventId ?? null,
-      cost_usd: result.cost_usd,
+        task_run_id: deps.taskRunId,
+        caused_by_event_id: deps.causedByEventId ?? null,
+        cost_usd: result.cost_usd,
+      });
     });
-  });
 
-  return { status: 'proposed', proposalId, questionId };
+    return { status: 'proposed', proposalId, questionId };
+  } catch (error) {
+    if (preparedGrounding) await markQuestionGenerationFailed(db, preparedGrounding.plan);
+    throw error;
+  }
 }
