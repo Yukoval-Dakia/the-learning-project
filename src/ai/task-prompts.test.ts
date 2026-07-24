@@ -41,10 +41,13 @@ describe('getTaskSystemPrompt', () => {
       );
     }
     expect(sourcingPrompt.match(/^- derivation：/gm)).toHaveLength(1);
+    // YUK-350 (owner option A) — requested_kind is a plan-stage hard constraint,
+    // consistent with the structural verifier's requested_kind_mismatch veto. The
+    // old soft "may deviate to the actual structure" framing is gone.
     const authorPrompt = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
-    expect(authorPrompt).toContain(
-      'objective_only 与 kind_required 均非 true 时，requested_kind 若出现',
-    );
+    expect(authorPrompt).toContain('requested_kind 若出现，输出的 kind **必须**等于它');
+    expect(authorPrompt).toContain('requested_kind 一旦出现就**是硬约束**');
+    expect(authorPrompt).not.toContain('将它作为答案类型与题面结构指导，不作字符串闭集目标');
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
