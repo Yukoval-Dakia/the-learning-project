@@ -5,6 +5,11 @@ import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
+// YUK-562 — reasoning_trace（学生自述解题思路）的字符上界。单一真相源，供 attempt/review payload
+// 的 zod .max()、/api/attempts 契约（contracts.ts）、及 UI 采集框（PfSolo textarea maxLength +
+// 发送前防御性截断）共用，避免超界文本经 wire 撞 zod .max() 抛 400（PR #1065 thread 修复）。
+export const REASONING_TRACE_MAX_LEN = 4000;
+
 // ---------- 通用 envelope 字段 ----------
 //
 // 所有 event 行都有的字段（除 action / subject_kind / outcome / payload 由各分支 lock）。
@@ -113,8 +118,8 @@ export const AttemptOnQuestion = z.object({
     // 卷题 / FSRS 复习 / copilot 提示等无过程文本的路径恒缺省 → 既有 attempt 读路径逐字
     // 不变（byte-identical 回归锚）。engagement 红线（零强制）在后端表现为字段全 optional。
     // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
-    // 见 attribute.ts）。max(4000) 与 hints_used 同风格封上界，挡失真大文本。
-    reasoning_trace: z.string().max(4000).optional(),
+    // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
+    reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
   }),
   ...baseOptionalFields,
 });
@@ -258,8 +263,8 @@ export const ReviewOnQuestion = z
       // （区别于 user_response_md 的最终作答）。PracticeFacePage/PfSolo 主流路径经
       // /api/attempts 写 review event，API 侧先行支持（UI 过 design pre-flight 后补）。
       // OPTIONAL：非采集面 / 历史 review 恒缺省 → 既有 review 读路径逐字不变。与 attempt
-      // 侧同风格 max(4000) 封上界。engagement 红线（零强制）= 字段 optional。
-      reasoning_trace: z.string().max(4000).optional(),
+      // 侧同风格 REASONING_TRACE_MAX_LEN 封上界。engagement 红线（零强制）= 字段 optional。
+      reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
       // YUK-444 (A10 答题置信度自评) — self_confidence: 学生在看到判定之前对本次作答的
       // 主观把握（1-5 整数，1=完全没底 … 5=十拿九稳）。PfSolo 提交后、判定揭晓前的 in-page
       // interstitial 采集（推迟揭晓的元认知语义）。**observe-only**：仅落到 review event

@@ -9,6 +9,7 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
+import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -104,7 +105,10 @@ export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
 // autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
 // 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
 export function appealEntryAvailable(opts: {
-  phase: 'answering' | 'feedback';
+  // YUK-444 — 三相后 phase 可为 'confidence'（judge 结果暂存、判定未揭晓）。入参放宽到含它，
+  // 语义上申诉入口只在 'feedback' 可用，'confidence'/'answering' 皆经下面首行 guard 返回 false
+  // （'confidence' 相位无已揭晓判定可申诉）。放宽入参即便调用点未被 phase==='feedback' 收窄也可赋值。
+  phase: 'answering' | 'confidence' | 'feedback';
   appealOpen: boolean;
   autoCommitted: boolean;
   autoCommitJudgeEventId: string | null;
@@ -157,7 +161,13 @@ export function buildCaptureFields(input: {
   selfConfidence: number | null;
 }): { reasoning_trace?: string; self_confidence?: number } {
   const out: { reasoning_trace?: string; self_confidence?: number } = {};
-  if (input.reasoningTrace.trim()) out.reasoning_trace = input.reasoningTrace;
+  if (input.reasoningTrace.trim()) {
+    // YUK-562 (PR #1065 thread 修复) — 发送前防御性截断到 REASONING_TRACE_MAX_LEN。textarea 的
+    // maxLength 是 UX 侧硬闸，但粘贴 / IME / 代理调用仍可能越界；若原样发超界文本，server 端
+    // zod .max() 会抛 400，且此刻 UI 已进 feedback/confidence 相位无法回改 → 软死锁。这里 slice
+    // 与 zod 同按 UTF-16 code unit 计长，截断后恒过 .max()（宁可少几字，不吞整次提交）。
+    out.reasoning_trace = input.reasoningTrace.slice(0, REASONING_TRACE_MAX_LEN);
+  }
   if (input.selfConfidence !== null) out.self_confidence = input.selfConfidence;
   return out;
 }
@@ -496,6 +506,9 @@ export function PfSolo({
                 <textarea
                   rows={2}
                   value={reasoningTrace}
+                  // YUK-562 — 硬闸在 REASONING_TRACE_MAX_LEN（与 server zod .max() 同源），挡住
+                  // 越界输入撞 400 软死锁；buildCaptureFields 发送前再防御性截断兜底粘贴/IME 绕过。
+                  maxLength={REASONING_TRACE_MAX_LEN}
                   placeholder="随手记下你是怎么想的——不评分，也可以留空。"
                   onChange={(e) => setReasoningTrace(e.target.value)}
                   aria-label="解题思路（可选）"

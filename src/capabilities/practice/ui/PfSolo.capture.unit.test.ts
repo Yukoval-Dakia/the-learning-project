@@ -7,6 +7,7 @@
 //
 // No-DB unit partition（不 import db/postgres/drizzle）。
 
+import { REASONING_TRACE_MAX_LEN, ReviewOnQuestion } from '@/core/schema/event/known';
 import { describe, expect, it } from 'vitest';
 import {
   buildCaptureFields,
@@ -99,6 +100,49 @@ describe('buildCaptureFields — 零强制「空值不发字段」装配 (YUK-56
       reasoning_trace: '思路：分类讨论',
       self_confidence: 3,
     });
+  });
+
+  it('超界过程文本 → 发送前防御性截断到 REASONING_TRACE_MAX_LEN（挡 400 软死锁）', () => {
+    // PR #1065 thread：原样发超界文本 → server zod .max() 抛 400，且此刻 UI 已离作答相位无法回改。
+    const over = 'x'.repeat(REASONING_TRACE_MAX_LEN + 500);
+    const fields = buildCaptureFields({ reasoningTrace: over, selfConfidence: null });
+    expect(fields.reasoning_trace).toHaveLength(REASONING_TRACE_MAX_LEN);
+  });
+
+  it('截断后的过程文本恒过 server 端 ReviewOnQuestion zod .max() 校验', () => {
+    // 截断值直接喂进 review payload 校验，坐实「不再撞 400」——slice 与 zod 同按 UTF-16 code unit 计长。
+    const fields = buildCaptureFields({
+      reasoningTrace: 'y'.repeat(REASONING_TRACE_MAX_LEN + 1),
+      selfConfidence: 2,
+    });
+    const parsed = ReviewOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: {
+          due: '2026-01-01T00:00:00.000Z',
+          stability: 1,
+          difficulty: 5,
+          elapsed_days: 0,
+          scheduled_days: 1,
+          learning_steps: 0,
+          reps: 1,
+          lapses: 0,
+          state: 'review',
+          last_review: '2026-01-01T00:00:00.000Z',
+        },
+        user_response_md: 'a',
+        referenced_knowledge_ids: ['kc1'],
+        reasoning_trace: fields.reasoning_trace,
+        self_confidence: fields.self_confidence,
+      },
+    });
+    expect(parsed.success).toBe(true);
   });
 });
 
