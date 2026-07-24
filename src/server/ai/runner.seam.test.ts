@@ -503,6 +503,45 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
   });
 });
 
+// YUK-589 (K4c) — input_hash is best-effort provenance for the ai_task_runs row;
+// it must NEVER fail a task run. `taskInputHash` now THROWS for non-canonicalizable
+// inputs (Map/Set/RegExp/function/symbol). Wave-1 replaced the runner's old
+// `try/catch → String(input)` fallback with a bare `taskInputHash`, so a throwing
+// input started failing the whole run — a regression. This pins that a throwing
+// input still completes the run (input_hash degrades to a stable string hash).
+describe('runTask — YUK-589 input_hash containment', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('completes a run whose input is non-canonicalizable (input_hash falls back, does NOT throw)', async () => {
+    // A Map is non-canonicalizable → taskInputHash(input) throws; the runner must
+    // contain it, not abort the run.
+    const throwingInput = { payload: new Map([['bad', 1]]) };
+
+    const result = await runTask(UNMIGRATED_KIND, throwingInput, { db: fakeDb });
+
+    // The run completed and persisted, and the started row carries a well-formed
+    // input_hash produced by the String(input) fallback (never an empty/failed run).
+    expect(result.text).toBe('ok');
+    expect(logMock.started).toHaveBeenCalledTimes(1);
+    const startedRow = logMock.started.mock.calls[0][1] as { input_hash: string };
+    expect(startedRow.input_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(logMock.finished).toHaveBeenCalledTimes(1);
+    const finishedRow = logMock.finished.mock.calls[0][1] as { status: string };
+    expect(finishedRow.status).toBe('success');
+  });
+});
+
 describe('runTask / streamTaskCollecting — caller-owned task run correlation', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;

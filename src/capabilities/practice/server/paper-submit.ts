@@ -35,10 +35,7 @@ import { writeEvent } from '@/kernel/events';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   createDefaultJudgeInvoker,
-  deterministicExecutionProvenance,
-  historicalUnknownExecutionProvenance,
-  isModelBackedJudgeRoute,
-  modelExecutionProvenance,
+  resolveInvokedExecutionProvenance,
   resolveQuestionJudgeRoute,
 } from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
@@ -547,21 +544,16 @@ export async function submitPaperSlot(
           throw err;
         });
   const judgeResult = invoked?.result ?? null;
-  // YUK-589 (J1) — flatten + fix the provenance stamp. Absent `invoked.execution` on a
-  // MODEL-backed route means the LLM call FAILED (provider timeout → coarse_outcome=
-  // 'unsupported'); stamping `deterministic` would be a lie (a failed model run posing as
-  // a no-model deterministic verdict), so use `historical_unknown`. Only a genuinely
-  // deterministic route (exact/keyword) is stamped `deterministic`. No judge invoked
-  // (photo-only unsupported path) → null.
-  let executionProvenance: Awaited<ReturnType<typeof modelExecutionProvenance>> | null = null;
+  // YUK-589 (K1) — stamp off the honest model-attempt signal, NOT route membership.
+  // execution present → `invoked`; model attempted but no execution (LLM call /
+  // metadata / persist failed) → `historical_unknown`; no model attempted
+  // (exact/keyword, or an accelerator-resolved unit_dimension slot) →
+  // `deterministic`. No judge invoked (photo-only unsupported path) → null.
+  // Shared with submit / rejudge via one resolver.
+  let executionProvenance: Awaited<ReturnType<typeof resolveInvokedExecutionProvenance>> | null =
+    null;
   if (invoked) {
-    if (invoked.execution) {
-      executionProvenance = await modelExecutionProvenance(db, invoked.execution, 'invoked');
-    } else if (isModelBackedJudgeRoute(invoked.route)) {
-      executionProvenance = historicalUnknownExecutionProvenance(invoked.route);
-    } else {
-      executionProvenance = deterministicExecutionProvenance(invoked.route);
-    }
+    executionProvenance = await resolveInvokedExecutionProvenance(db, invoked);
   }
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
   const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';

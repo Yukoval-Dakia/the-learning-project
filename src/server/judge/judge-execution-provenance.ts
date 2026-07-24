@@ -41,6 +41,15 @@ export function stableCanonicalValue(value: unknown): unknown {
   if (typeof value === 'bigint') {
     return { [CANON_MARKER]: { v: 1, t: 'bigint', value: value.toString() } };
   }
+  // YUK-589 (K4a) — functions and symbols are non-serializable: JSON.stringify
+  // drops a function-valued key entirely (or renders a bare function as
+  // `undefined`) and throws on a symbol, silently aliasing distinct callables /
+  // symbols. Refuse them loudly with the same fail-closed treatment as
+  // Map/Set/RegExp so the caller's guard skips the fingerprint rather than
+  // trusting a colliding hash.
+  if (typeof value === 'function' || typeof value === 'symbol') {
+    throw new Error(`non-canonicalizable value: ${typeof value}`);
+  }
   if (Array.isArray(value)) return value.map(stableCanonicalValue);
   if (value && typeof value === 'object') {
     // Date is intentionally NOT rejected: it serializes losslessly via toJSON
@@ -95,7 +104,11 @@ export function judgePromptFingerprint(input: {
       user:
         typeof input.taskInput === 'string'
           ? input.taskInput
-          : JSON.stringify(stableCanonicalValue(input.taskInput)),
+          : // YUK-589 (K4b) — JSON.stringify returns `undefined` for an undefined
+            // (or otherwise unrenderable) canonical value; the concat below would
+            // then stringify the literal "undefined", colliding distinct inputs.
+            // Mirror sha256Canonical's `?? 'null'` fallback.
+            (JSON.stringify(stableCanonicalValue(input.taskInput)) ?? 'null'),
     },
     subject_profile: { id: input.subjectProfile.id, version: input.subjectProfile.version },
     judge_route: input.judgeRoute,

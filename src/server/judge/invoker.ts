@@ -9,6 +9,7 @@ import {
   type JudgeResultV2T,
 } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import type { TaskTextResult } from '@/server/ai/provenance';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { z } from 'zod';
 import type { JudgeKind } from '../ai/judges';
@@ -86,6 +87,15 @@ export const JudgeInvokerOutputSchema = z.object({
   route: JudgeKindSchema,
   result: JudgeResultV2,
   telemetry: JudgeInvocationTelemetrySchema,
+  // YUK-589 (K1) — was a model invocation ATTEMPTED for this verdict? True iff
+  // the observed runTaskFn wrapper was actually called (a route that runs the
+  // LLM). Distinguishes an accelerator-resolved / deterministic verdict (false →
+  // `deterministic`) from a model-backed route whose call ran (true) — the latter
+  // stamps `invoked` when execution is present, else `historical_unknown`. This
+  // is the honest signal the downstream stamp keys on, NOT route membership: a
+  // unit_dimension slot resolved by the local accelerator (no runTaskFn call) is
+  // deterministic even though its route is in the model-backed set.
+  modelAttempted: z.boolean(),
   task_run_id: z.string().min(1).optional(),
   execution: z
     .object({
@@ -134,15 +144,30 @@ export class JudgeInvoker {
     const startedAt = nowMs();
     let taskRunId: string | undefined;
     let execution: JudgeInvokerOutput['execution'];
+    // YUK-589 (K1) — flipped true the moment the observed runner is actually
+    // called, so a route that never runs the LLM (accelerator-resolved
+    // unit_dimension, exact/keyword) stays `deterministic` downstream instead of
+    // being mis-stamped `historical_unknown` off route membership alone.
+    let modelAttempted = false;
+    // YUK-589 (K2) — the invoker's own default runner MUST preserve the sanctioned
+    // `enableTransientRetry` opt-in the vision judges set (steps / multimodal_direct,
+    // YUK-576). The shared makeRunTaskTextFn (defaultRunTaskFn) STRIPS it at the
+    // untrusted-caller boundary; routing the default judge dispatch through it
+    // silently disabled transient retry once invoke() began wrapping every runner.
     const configuredRunTaskFn =
-      narrowed.runTaskFn ?? this.runTaskFn ?? defaultRunTaskFn(narrowed.db);
+      narrowed.runTaskFn ?? this.runTaskFn ?? judgeDefaultRunTaskFn(narrowed.db);
     const observedRunTaskFn: NonNullable<JudgeAnswerParams['runTaskFn']> = async (
       kind,
       taskInput,
       callCtx,
     ) => {
+      // A model call is now in flight — mark it BEFORE the await so even a throwing
+      // provider timeout (steps/semantic swallow into 'unsupported') still records
+      // that the model WAS attempted (→ historical_unknown, never deterministic).
+      modelAttempted = true;
       // Compute the judge result FIRST — it must NEVER be lost to a failure in the
-      // advisory provenance metadata below.
+      // advisory provenance metadata below. Pass callCtx through UNCHANGED so the
+      // sanctioned enableTransientRetry opt-in survives to the runner (K2).
       const taskResult = await configuredRunTaskFn(kind, taskInput, callCtx);
       // YUK-589 (J4) — the metadata (taskInputHash / judgePromptFingerprint) is
       // best-effort provenance ONLY. A throw here (a BigInt / exotic value inside
@@ -216,6 +241,13 @@ export class JudgeInvoker {
           `judge run-digest persistence failed for ${narrowed.question.id}/${route} (run ${taskRunId}):`,
           err,
         );
+        // YUK-589 (K3b) — the digests did NOT persist, so the invoker output must
+        // not imply they exist. Clear execution + task_run_id (fail-closed): a
+        // later supplied-verified claim then cannot be falsely corroborated
+        // against digests the run never wrote. modelAttempted stays true (the
+        // model DID run), so the stamp is `historical_unknown`, never a lie.
+        taskRunId = undefined;
+        execution = undefined;
       }
     }
 
@@ -238,6 +270,7 @@ export class JudgeInvoker {
       route,
       result,
       telemetry,
+      modelAttempted,
       ...(taskRunId ? { task_run_id: taskRunId } : {}),
       ...(execution ? { execution } : {}),
     });
@@ -271,13 +304,9 @@ export class JudgeInvoker {
         answer_md: input.answer_md,
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
-        runTaskFn: runTaskFn
-          ? (kind, taskInput, callCtx) =>
-              runTaskFn(kind, taskInput, {
-                ...(callCtx && typeof callCtx === 'object' ? callCtx : {}),
-                subjectProfile: input.subjectProfile,
-              })
-          : undefined,
+        // YUK-589 (K5) — shared re-wrap threads the active profile onto the ctx
+        // while passing every other key (incl. enableTransientRetry) UNCHANGED.
+        runTaskFn: threadSubjectProfileCtx(runTaskFn, input.subjectProfile),
         // YUK-573 (MF6) — additive threading; omitted → runner default.
         imageFetchFn: input.imageFetchFn,
       });
@@ -290,13 +319,8 @@ export class JudgeInvoker {
         answer_md: input.answer_md,
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
-        runTaskFn: runTaskFn
-          ? (kind, taskInput, callCtx) =>
-              runTaskFn(kind, taskInput, {
-                ...(callCtx && typeof callCtx === 'object' ? callCtx : {}),
-                subjectProfile: input.subjectProfile,
-              })
-          : undefined,
+        // YUK-589 (K5) — same shared re-wrap as the steps dispatch above.
+        runTaskFn: threadSubjectProfileCtx(runTaskFn, input.subjectProfile),
         // YUK-573 (MF6) — additive threading; omitted → runner default.
         imageFetchFn: input.imageFetchFn,
       });
@@ -338,6 +362,41 @@ export class JudgeInvoker {
 
 export function createDefaultJudgeInvoker(deps: JudgeInvokerDeps = {}): JudgeInvoker {
   return new JudgeInvoker(deps);
+}
+
+// YUK-589 (K2) — the invoker's default judge task runner. Unlike the shared
+// makeRunTaskTextFn (defaultRunTaskFn), it calls runTask with the call ctx
+// PRESERVED — so the sanctioned `enableTransientRetry` opt-in the vision judges
+// set (steps / multimodal_direct, YUK-576) survives to the runner instead of
+// being stripped at the untrusted-caller boundary. task_run_id is carried
+// through so provenance metadata is still captured on the default path.
+function judgeDefaultRunTaskFn(db: Db): NonNullable<JudgeAnswerParams['runTaskFn']> {
+  return async (kind, input, callCtx) => {
+    const { runTask } = await import('../ai/runner');
+    const result = await runTask(kind, input, { ...(callCtx ?? {}), db });
+    return {
+      text: result.text,
+      task_run_id: result.task_run_id,
+      cost_usd: result.cost_usd,
+      structured_output: result.structured_output,
+    };
+  };
+}
+
+// YUK-589 (K5) — the steps + multimodal_direct dispatches both thread the active
+// SubjectProfile onto the call ctx before delegating to their runner. Extracted
+// so the two identical re-wraps cannot drift. Passes every other ctx key through
+// UNCHANGED (K2: enableTransientRetry must reach the runner).
+function threadSubjectProfileCtx(
+  fn: NonNullable<JudgeAnswerParams['runTaskFn']> | undefined,
+  subjectProfile: JudgeAnswerParams['subjectProfile'],
+): ((kind: string, taskInput: unknown, callCtx: unknown) => Promise<TaskTextResult>) | undefined {
+  if (!fn) return undefined;
+  return (kind, taskInput, callCtx) =>
+    fn(kind, taskInput, {
+      ...(callCtx && typeof callCtx === 'object' ? callCtx : {}),
+      subjectProfile,
+    });
 }
 
 function nowMs(): number {

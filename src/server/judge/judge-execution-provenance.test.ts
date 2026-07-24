@@ -71,6 +71,19 @@ describe('judge execution provenance identity', () => {
     },
   );
 
+  // YUK-589 (K4a) — functions and symbols are dropped / mis-serialized by
+  // JSON.stringify (a function-valued key vanishes; a bare function renders as
+  // `undefined`; a symbol throws), silently aliasing distinct callables/symbols.
+  // They must now throw with the same fail-closed treatment as Map/Set/RegExp so
+  // the caller's guard skips the fingerprint rather than trusting a colliding hash.
+  it.each([
+    ['function', () => 1],
+    ['symbol', Symbol('s')],
+  ])('refuses to canonicalize a %s value (throws, never aliases)', (_label, value) => {
+    expect(() => taskInputHash({ exotic: value })).toThrow(/non-canonicalizable/);
+    expect(() => sha256Canonical(value)).toThrow(/non-canonicalizable/);
+  });
+
   it('binds the prompt fingerprint to route, profile version, and rendered input', () => {
     const base = {
       taskKind: 'SemanticJudgeTask',
@@ -101,5 +114,27 @@ describe('judge execution provenance identity', () => {
         taskInput: { question: { id: 'q1' }, answer: { content: '乙' } },
       }),
     ).not.toBe(fingerprint);
+  });
+
+  // YUK-589 (K4b) — a taskInput whose canonical value renders to `undefined`
+  // (JSON.stringify(undefined) === undefined) must fall back to 'null', not
+  // collide with the literal string "undefined" the concat would otherwise
+  // produce. An undefined taskInput and a `null` taskInput both render 'null'
+  // for the user field — the fingerprint stays deterministic and does not throw.
+  it('does not stringify an undefined canonical input as the literal "undefined"', () => {
+    const base = {
+      taskKind: 'SemanticJudgeTask',
+      subjectProfile: yuwenProfile,
+      judgeRoute: 'semantic',
+    } as const;
+    expect(() => judgePromptFingerprint({ ...base, taskInput: undefined })).not.toThrow();
+    // Deterministic across calls.
+    expect(judgePromptFingerprint({ ...base, taskInput: undefined })).toBe(
+      judgePromptFingerprint({ ...base, taskInput: undefined }),
+    );
+    // Both render the 'null' fallback → identical, and neither is the "undefined" string path.
+    expect(judgePromptFingerprint({ ...base, taskInput: undefined })).toBe(
+      judgePromptFingerprint({ ...base, taskInput: null }),
+    );
   });
 });

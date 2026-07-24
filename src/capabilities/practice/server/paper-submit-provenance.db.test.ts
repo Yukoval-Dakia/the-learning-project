@@ -155,4 +155,42 @@ describe('YUK-589 — paper-submit execution provenance (J1)', () => {
     // runTask must never be spent on a deterministic route.
     expect(vi.mocked(runTask)).not.toHaveBeenCalled();
   });
+
+  // YUK-589 (K1) — the CORE fix. unit_dimension is in the MODEL_BACKED set, but on
+  // the common path it resolves via the LOCAL accelerator and never calls the LLM.
+  // Wave-1 stamped `historical_unknown` off route membership alone (route ∈ model
+  // set AND execution absent) — a lie: no model was attempted. The honest stamp is
+  // `deterministic`, keyed on the model-attempt signal (modelAttempted:false), NOT
+  // route membership.
+  it('accelerator-resolved unit_dimension → execution_provenance kind=deterministic (no model attempted)', async () => {
+    const db = testDb();
+    await seedQuestion('pq_unit_accel', {
+      judge_kind_override: 'unit_dimension',
+      kind: 'calculation',
+      prompt_md: '速度是多少？',
+      reference_md: '30 m/s',
+      metadata: { reference_value: 30, reference_unit: 'm/s' },
+    });
+    await seedPaper('paper_unit_accel', ['pq_unit_accel'], 'kc_prov');
+
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_unit_accel' });
+    const result = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_unit_accel',
+        questionId: 'pq_unit_accel',
+        // A directly parseable numeric+unit answer → accelerator resolves, no LLM fallback.
+        answerMd: '30 m/s',
+        primaryKnowledgeId: 'kc_prov',
+        secondaryKnowledgeIds: [],
+      },
+      db,
+    );
+
+    expect(result.coarseOutcome).toBe('correct');
+    const prov = await readJudgeProvenance(result.attemptEventId);
+    expect(prov?.kind).toBe('deterministic');
+    // The local accelerator produced the verdict — the LLM was never called.
+    expect(vi.mocked(runTask)).not.toHaveBeenCalled();
+  });
 });

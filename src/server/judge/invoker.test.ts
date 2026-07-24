@@ -5,7 +5,12 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 import { type JudgeInvocationTelemetry, JudgeInvoker, JudgeInvokerOutputSchema } from './invoker';
 
-const mockDb = {} as Db;
+// A no-op db whose only exercised surface is persistJudgeRunDigests'
+// `update().set().where()` chain — it must SUCCEED so a normal run keeps its
+// execution/task_run_id (YUK-589 K3b clears them only on a persist FAILURE).
+const mockDb = {
+  update: () => ({ set: () => ({ where: async () => undefined }) }),
+} as unknown as Db;
 const yuwenProfile = resolveSubjectProfile('yuwen');
 const mathProfile = resolveSubjectProfile('math');
 const physicsProfile = resolveSubjectProfile('physics');
@@ -52,6 +57,9 @@ describe('JudgeInvoker', () => {
     });
     expect(result.telemetry.elapsed_ms).toBeGreaterThanOrEqual(0);
     expect(telemetry).toEqual([result.telemetry]);
+    // YUK-589 (K1) — a deterministic exact verdict never runs the model.
+    expect(result.modelAttempted).toBe(false);
+    expect(result.execution).toBeUndefined();
     expect(JudgeInvokerOutputSchema.safeParse(result).success).toBe(true);
   });
 
@@ -119,6 +127,8 @@ describe('JudgeInvoker', () => {
     });
 
     expect(result.route).toBe('semantic');
+    // YUK-589 (K1) — a semantic verdict ran the model.
+    expect(result.modelAttempted).toBe(true);
     expect(result.task_run_id).toBe('tr-semantic');
     expect(result.execution).toMatchObject({
       task_kind: 'SemanticJudgeTask',
@@ -291,6 +301,49 @@ describe('JudgeInvoker', () => {
     expect(result.route).toBe('semantic');
     expect(result.result.coarse_outcome).toBe('correct');
     // Fail-closed: no execution identity, no task_run_id → persist skipped.
+    expect(result.execution).toBeUndefined();
+    expect(result.task_run_id).toBeUndefined();
+    // The model WAS attempted even though metadata failed → downstream stamps
+    // historical_unknown, never deterministic.
+    expect(result.modelAttempted).toBe(true);
+    expect(JudgeInvokerOutputSchema.safeParse(result).success).toBe(true);
+  });
+
+  // YUK-589 (K3b) — when persistJudgeRunDigests FAILS, the invoker must CLEAR the
+  // in-memory execution + task_run_id so the output cannot imply persisted digests
+  // exist. Otherwise a later supplied-verified claim could be falsely corroborated
+  // against digests the run never wrote. Metadata SUCCEEDS here (a real db.update
+  // throw during persist), so only the persist-fail clearing is exercised.
+  it('clears execution/task_run_id when digest persistence fails (fail-closed)', async () => {
+    const persistFailDb = {
+      // The semantic metadata path touches no db; only persistJudgeRunDigests does.
+      update() {
+        throw new Error('__PERSIST_FAILED__');
+      },
+    } as unknown as Db;
+    const runTaskFn = vi.fn().mockResolvedValue({
+      task_run_id: 'tr-persist-fail',
+      text: JSON.stringify({
+        score: 0.9,
+        coarse_outcome: 'correct',
+        confidence: 0.8,
+        feedback_md: 'ok',
+        evidence_json: { matched_points: ['p1'], missing_points: [] },
+      }),
+    });
+
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: persistFailDb,
+      question: { ...baseQuestion, id: 'q-persist-fail', judge_kind_override: 'semantic' },
+      answer_md: '答案',
+      subjectProfile: yuwenProfile,
+    });
+
+    // Verdict survives; the model ran; but the failed persist leaves NO run
+    // reference the output could falsely present as corroborated.
+    expect(result.route).toBe('semantic');
+    expect(result.result.coarse_outcome).toBe('correct');
+    expect(result.modelAttempted).toBe(true);
     expect(result.execution).toBeUndefined();
     expect(result.task_run_id).toBeUndefined();
     expect(JudgeInvokerOutputSchema.safeParse(result).success).toBe(true);
@@ -520,6 +573,40 @@ describe('JudgeInvoker', () => {
       expect.objectContaining({ subjectProfile: physicsProfile }),
     );
     expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
+    // YUK-589 (K1) — the LLM fallback ran (accelerator could not parse Chinese),
+    // so the model WAS attempted.
+    expect(result.modelAttempted).toBe(true);
+  });
+
+  // YUK-589 (K1) — the CORE regression: unit_dimension resolves via the LOCAL
+  // accelerator on the common path (numeric answer), never touching the LLM. Its
+  // route is in MODEL_BACKED_JUDGE_ROUTES, but no model was attempted, so the
+  // invoker must report modelAttempted:false + execution undefined — downstream
+  // this stamps `deterministic`, NOT `historical_unknown`. runTaskFn must not fire.
+  it('accelerator-resolved unit_dimension: no model attempted (modelAttempted:false)', async () => {
+    const runTaskFn = vi.fn();
+
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: mockDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-unit-accel',
+        kind: 'calculation',
+        prompt_md: '速度是多少？',
+        reference_md: '30 m/s',
+        metadata: { reference_value: 30, reference_unit: 'm/s' },
+      },
+      // A directly parseable numeric+unit answer → accelerator resolves, no fallback.
+      answer_md: '30 m/s',
+      subjectProfile: physicsProfile,
+    });
+
+    expect(result.route).toBe('unit_dimension');
+    expect(result.result.coarse_outcome).toBe('correct');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(result.modelAttempted).toBe(false);
+    expect(result.execution).toBeUndefined();
+    expect(result.task_run_id).toBeUndefined();
   });
 
   it('dispatches multimodal_direct route through the server runner', async () => {

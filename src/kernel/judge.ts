@@ -11,6 +11,7 @@ export {
   historicalUnknownExecutionProvenance,
   type JudgeExecutionIdentity,
   modelExecutionProvenance,
+  resolveInvokedExecutionProvenance,
   suppliedUnverifiedExecutionProvenance,
 } from '@/server/judge/execution-provenance-resolve';
 export {

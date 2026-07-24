@@ -1426,6 +1426,44 @@ describe('POST /api/review/submit', () => {
       const prov = await readJudgeExecutionProvenance('q_prov_steps_notoken');
       expect(prov?.kind).toBe('supplied_unverified');
     });
+
+    // YUK-589 (K1c) — the inverse hole. A supplied MODEL result whose subject
+    // profile is unresolved (null) must NEVER fall to `deterministic` (which would
+    // falsely trust a client verdict as a no-model local compare). With no profile
+    // the model claim cannot be verified, so it fails closed to supplied_unverified.
+    it('K1c: supplied MODEL result with an unresolved (null) profile → supplied_unverified, NOT deterministic', async () => {
+      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
+      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
+      // Force the profile resolution to yield null even though there is an answer.
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(null as never);
+      await seedQuestion('q_prov_nullprofile', {
+        kind: 'derivation',
+        reference_md: '推导过程',
+        knowledge_ids: [],
+      });
+      const suppliedResult: JudgeResultV2Fixture = {
+        coarse_outcome: 'correct',
+        score: 0.9,
+        score_meaning: 'correctness',
+        confidence: 0.85,
+        capability_ref: { id: 'steps', version: '1.0.0' },
+        feedback_md: '推导正确。',
+        evidence_json: { source: 'advice' },
+      };
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_prov_nullprofile' },
+          rating: 'good',
+          response_md: 'x=1，所以答案是 1',
+          judge_result_v2: suppliedResult,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const prov = await readJudgeExecutionProvenance('q_prov_nullprofile');
+      expect(prov?.kind).toBe('supplied_unverified');
+      expect(prov?.kind).not.toBe('deterministic');
+    });
   });
 
   // ── YUK-361 finding #2 — 手动覆盖的评分不当客观 b 校准折进 ──────────────────────

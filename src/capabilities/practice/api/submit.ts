@@ -53,10 +53,10 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   createDefaultJudgeInvoker,
   deterministicExecutionProvenance,
-  historicalUnknownExecutionProvenance,
   isModelBackedJudgeRoute,
   judgeProvenanceSigningSecret,
   modelExecutionProvenance,
+  resolveInvokedExecutionProvenance,
   resolveQuestionJudgeRoute,
   semanticInput,
   sha256Canonical,
@@ -293,17 +293,24 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     // unit_dimension) is verified against its signed provenance token — advice.ts signs
     // every model route, so verification is no longer semantic-only (J2). A genuinely
     // deterministic route (exact/keyword) needs no token: its verdict is a local string
-    // compare, so it is stamped `deterministic`. (subjectProfile is always non-null here
-    // because a supplied result requires an answer, which resolves the profile above.)
-    if (subjectProfile !== null && isModelBackedJudgeRoute(judgeRoute)) {
-      executionProvenance = await resolveSuppliedModelExecutionProvenance({
-        judgeRoute,
-        suppliedJudgeResult,
-        subjectProfile,
-        body,
-        answerMd,
-        q,
-      });
+    // compare, so it is stamped `deterministic`.
+    if (isModelBackedJudgeRoute(judgeRoute)) {
+      // YUK-589 (K1c) — a supplied MODEL result must NEVER fall to `deterministic`.
+      // Gate on the route class FIRST; if the profile is somehow unresolved (no
+      // profile for the question's knowledge), a model result cannot be verified,
+      // so fail closed to `supplied_unverified` — never trust it as a no-model
+      // local compare. When the profile is present, run the token verification.
+      executionProvenance =
+        subjectProfile !== null
+          ? await resolveSuppliedModelExecutionProvenance({
+              judgeRoute,
+              suppliedJudgeResult,
+              subjectProfile,
+              body,
+              answerMd,
+              q,
+            })
+          : suppliedUnverifiedExecutionProvenance(judgeRoute);
     } else {
       executionProvenance = deterministicExecutionProvenance(judgeRoute);
     }
@@ -329,16 +336,12 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
     judgeTelemetry = invoked.telemetry;
-    // YUK-589 (J1) — absent `invoked.execution` means different things by route class.
-    // For a MODEL-backed route it means the LLM call FAILED (provider timeout →
-    // coarse_outcome='unsupported'), so stamping `deterministic` would be a lie (a failed
-    // model run masquerading as a no-model deterministic verdict). Use `historical_unknown`
-    // there; only a genuinely deterministic route (exact/keyword) gets `deterministic`.
-    executionProvenance = invoked.execution
-      ? await modelExecutionProvenance(db, invoked.execution, 'invoked')
-      : isModelBackedJudgeRoute(invoked.route)
-        ? historicalUnknownExecutionProvenance(invoked.route)
-        : deterministicExecutionProvenance(invoked.route);
+    // YUK-589 (K1) — stamp off the honest model-attempt signal, NOT route
+    // membership. execution present → `invoked`; model attempted but no execution
+    // (LLM call/metadata/persist failed) → `historical_unknown`; no model
+    // attempted (exact/keyword, or an accelerator-resolved unit_dimension slot) →
+    // `deterministic`. Shared with paper-submit / rejudge via one resolver.
+    executionProvenance = await resolveInvokedExecutionProvenance(db, invoked);
   }
 
   // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via

@@ -305,7 +305,16 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
 }
 
 function inputHash(input: unknown): string {
-  return taskInputHash(input);
+  // YUK-589 (K4c) — input_hash is best-effort provenance for the ai_task_runs
+  // row; it must NEVER fail a task run. `taskInputHash` (sha256Canonical) now
+  // throws for non-canonicalizable inputs (Map/Set/RegExp/function/symbol), so
+  // contain it and degrade to a stable string hash — restoring the pre-YUK-589
+  // `String(input)` fallback that a bare `taskInputHash` regressed away.
+  try {
+    return taskInputHash(input);
+  } catch {
+    return taskInputHash(String(input));
+  }
 }
 
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by

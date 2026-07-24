@@ -1,7 +1,9 @@
+import type { Db } from '@/db/client';
 import { describe, expect, it } from 'vitest';
 import {
   deterministicExecutionProvenance,
   historicalUnknownExecutionProvenance,
+  modelExecutionProvenance,
   resolveModelExecutionProvenance,
   suppliedUnverifiedExecutionProvenance,
 } from './execution-provenance-resolve';
@@ -115,6 +117,29 @@ describe('model execution provenance resolution', () => {
       ...mismatch,
     });
     expect(result.kind).toBe('supplied_unverified');
+    expect(result.provider).toBeUndefined();
+    expect(result.model).toBeUndefined();
+  });
+
+  // YUK-589 (K3a) — a DB blip during the ai_task_runs lookup must be CONTAINED,
+  // never crash the submit/paper/rejudge write path. A throwing db degrades
+  // fail-closed: the supplied path → supplied_unverified, the invoked path →
+  // historical_unknown. execution_provenance is an audit stamp, not a gate.
+  const throwingDb = {
+    select() {
+      throw new Error('__DB_DOWN__');
+    },
+  } as unknown as Db;
+
+  it('degrades a supplied claim to supplied_unverified when the ai_task_runs lookup throws', async () => {
+    await expect(
+      modelExecutionProvenance(throwingDb, execution, 'supplied_verified'),
+    ).resolves.toMatchObject({ kind: 'supplied_unverified' });
+  });
+
+  it('degrades an invoked claim to historical_unknown when the ai_task_runs lookup throws', async () => {
+    const result = await modelExecutionProvenance(throwingDb, execution, 'invoked');
+    expect(result.kind).toBe('historical_unknown');
     expect(result.provider).toBeUndefined();
     expect(result.model).toBeUndefined();
   });

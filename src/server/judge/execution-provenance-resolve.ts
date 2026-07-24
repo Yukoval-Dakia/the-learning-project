@@ -89,8 +89,15 @@ export async function modelExecutionProvenance(
   execution: JudgeExecutionIdentity,
   kind: 'invoked' | 'supplied_verified' | 'supplied_unverified',
 ): Promise<JudgeExecutionProvenanceT> {
-  const [run] = execution.task_run_id
-    ? await db
+  let run: TaskRunIdentity | undefined;
+  if (execution.task_run_id) {
+    // YUK-589 (K3a) — a DB blip during the ai_task_runs lookup must NOT crash the
+    // submit/paper/rejudge write path. Contain it: on error, resolve with NO run
+    // row, which fails closed (`supplied_*` → supplied_unverified, `invoked` →
+    // historical_unknown) rather than throwing. execution_provenance is an audit
+    // stamp on the attempt event, never a gate on trusting the verdict.
+    try {
+      [run] = await db
         .select({
           id: ai_task_runs.id,
           task_kind: ai_task_runs.task_kind,
@@ -104,9 +111,43 @@ export async function modelExecutionProvenance(
         })
         .from(ai_task_runs)
         .where(eq(ai_task_runs.id, execution.task_run_id))
-        .limit(1)
-    : [];
+        .limit(1);
+    } catch (err) {
+      console.warn(
+        `ai_task_runs provenance lookup failed for ${execution.task_run_id} (kind '${kind}') — degrading fail-closed:`,
+        err,
+      );
+      run = undefined;
+    }
+  }
   return resolveModelExecutionProvenance(execution, kind, run);
+}
+
+/**
+ * YUK-589 — single source for stamping the provenance of a judge result the
+ * server JUST invoked (submit auto-rate / paper slot / rejudge overturn). The
+ * three consumers previously duplicated this 3-arm decision; the honest signal
+ * is whether a model invocation was ATTEMPTED (`invoked.modelAttempted`), NOT
+ * whether the route is model-backed — an accelerator-resolved unit_dimension
+ * slot (route ∈ model set, but no model call) is deterministic, not
+ * historical_unknown.
+ *   - execution present  → the model ran and produced provenance → `invoked`.
+ *   - model attempted, no execution → the model ran but metadata/persist failed
+ *     (or the call itself failed) → `historical_unknown` (a real model run whose
+ *     identity is unknown — never a no-model `deterministic` lie).
+ *   - no model attempted → a local/deterministic verdict → `deterministic`.
+ */
+export async function resolveInvokedExecutionProvenance(
+  db: Db,
+  invoked: { execution?: JudgeExecutionIdentity; modelAttempted: boolean; route: string },
+): Promise<JudgeExecutionProvenanceT> {
+  if (invoked.execution) {
+    return modelExecutionProvenance(db, invoked.execution, 'invoked');
+  }
+  if (invoked.modelAttempted) {
+    return historicalUnknownExecutionProvenance(invoked.route);
+  }
+  return deterministicExecutionProvenance(invoked.route);
 }
 
 /**
