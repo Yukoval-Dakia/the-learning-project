@@ -79,19 +79,29 @@ describe('ProposalCard image_candidate', () => {
     expect(container.textContent ?? '').not.toMatch(/\$\d/);
   });
 
-  it('renders the original image side-by-side with the summary preview', () => {
+  it('does not auto-load the external image: shows summary + a click-to-reveal affordance', () => {
     const { container } = renderCard(imageCandidateProposal());
+    // 默认不发被动 GET：无 <img>，只给显式「显示原图预览」按钮。
+    expect(container.querySelector('img.ic-img')).toBeNull();
+    expect(screen.getByRole('button', { name: /显示原图预览/ })).toBeTruthy();
+    // summary_md 首帧走 DeferredMarkdownRenderer 的纯文本 fallback，文本同步可见。
+    expect(screen.getByText(/正方形/)).toBeTruthy();
+  });
+
+  it('loads the image only after the user clicks reveal, with safe img attributes', async () => {
+    const { container } = renderCard(imageCandidateProposal());
+    expect(container.querySelector('img.ic-img')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /显示原图预览/ }));
     const img = container.querySelector('img.ic-img') as HTMLImageElement | null;
     expect(img).toBeTruthy();
     expect(img?.getAttribute('src')).toBe('https://example.com/geometry-01.png');
     expect(img?.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(img?.getAttribute('alt')).toBe('2024 高考几何压轴图');
-    // summary_md 首帧走 DeferredMarkdownRenderer 的纯文本 fallback，文本同步可见。
-    expect(screen.getByText(/正方形/)).toBeTruthy();
   });
 
-  it('degrades to a URL + title text card when the image fails to load', () => {
+  it('degrades to a URL + title text card when the revealed image fails to load', async () => {
     const { container } = renderCard(imageCandidateProposal());
+    await userEvent.click(screen.getByRole('button', { name: /显示原图预览/ }));
     const img = container.querySelector('img.ic-img');
     expect(img).toBeTruthy();
     fireEvent.error(img as Element);
@@ -100,13 +110,30 @@ describe('ProposalCard image_candidate', () => {
     expect(screen.getByText('https://example.com/geometry-01.png')).toBeTruthy();
   });
 
-  it('never emits an <img> for a non-http(s) source_url and shows the text fallback', () => {
+  it('never emits an <img> or reveal button for a non-http(s) source_url', () => {
     const { container } = renderCard(
       imageCandidateProposal({ sourceUrl: 'data:image/png;base64,AAAA' }),
     );
     expect(container.querySelector('img.ic-img')).toBeNull();
+    expect(screen.queryByRole('button', { name: /显示原图预览/ })).toBeNull();
     expect(container.querySelector('.ic-fallback')).toBeTruthy();
     expect(screen.getByText('data:image/png;base64,AAAA')).toBeTruthy();
+  });
+
+  it('refuses private / loopback hosts: no img, no reveal, non-public fallback note', () => {
+    for (const url of [
+      'http://localhost/x.png',
+      'http://127.0.0.1/x.png',
+      'http://192.168.1.10/scan.png',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://[::1]/x.png',
+    ]) {
+      const { container, unmount } = renderCard(imageCandidateProposal({ sourceUrl: url }));
+      expect(container.querySelector('img.ic-img')).toBeNull();
+      expect(screen.queryByRole('button', { name: /显示原图预览/ })).toBeNull();
+      expect(screen.getByText(/非公开图片直链/)).toBeTruthy();
+      unmount();
+    }
   });
 
   it('wires accept through the canonical decideProposal(accept) call unchanged', async () => {

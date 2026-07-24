@@ -33,7 +33,7 @@
 // See docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
 
 import { lookup } from 'node:dns/promises';
-import { type LookupFunction, isIP } from 'node:net';
+import type { LookupFunction } from 'node:net';
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -47,6 +47,15 @@ import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
 import { newId } from '@/core/ids';
+// YUK-229 — SSRF host-literal guard shared with the client (@/core/net/private-host). The
+// server keeps a throwing wrapper (assertPublicHttpUrl) + DNS-answer/redirect re-validation on
+// top; the literal-host + CIDR logic is single-sourced here so the two ends cannot drift.
+import {
+  ipFamily,
+  isBlockedHostLiteral,
+  isBlockedIpAddress,
+  stripIpv6Brackets,
+} from '@/core/net/private-host';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
@@ -140,7 +149,9 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 type LookupFn = typeof lookup;
 
 // FIX-7 — reject URL forms and literal destinations that can never be valid public image
-// sources. Hostnames receive a second A/AAAA answer check below.
+// sources. Hostnames receive a second A/AAAA answer check below. The literal-host + CIDR logic
+// is shared with the client via @/core/net/private-host (isBlockedHostLiteral); this wrapper
+// only adds the throwing ApiError semantics the accept path relies on.
 function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
@@ -166,11 +177,8 @@ function assertPublicHttpUrl(url: string): URL {
       400,
     );
   }
-  const bareHost = stripIpv6Brackets(parsed.hostname.toLowerCase());
-  const blockedName =
-    bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
-  const literalFamily = isIP(bareHost);
-  if (blockedName || (literalFamily !== 0 && isBlockedIpAddress(bareHost))) {
+  if (isBlockedHostLiteral(parsed.hostname)) {
+    const bareHost = stripIpv6Brackets(parsed.hostname.toLowerCase());
     throw new ApiError(
       'validation_error',
       `image_candidate source_url resolves to a non-public host (${bareHost}); refusing to fetch`,
@@ -180,117 +188,12 @@ function assertPublicHttpUrl(url: string): URL {
   return parsed;
 }
 
-function stripIpv6Brackets(host: string): string {
-  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
-}
-
-function parseIpv4Value(address: string): number | null {
-  if (isIP(address) !== 4) return null;
-  return address
-    .split('.')
-    .map(Number)
-    .reduce((value, octet) => value * 256 + octet, 0);
-}
-
-function ipv4InCidr(value: number, base: string, prefix: number): boolean {
-  const baseValue = parseIpv4Value(base);
-  if (baseValue === null) return false;
-  const blockSize = 2 ** (32 - prefix);
-  return Math.floor(value / blockSize) === Math.floor(baseValue / blockSize);
-}
-
-const BLOCKED_IPV4_CIDRS = [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.88.99.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4],
-] as const;
-
-function parseIpv6Words(address: string): number[] | null {
-  if (isIP(address) !== 6) return null;
-  let normalized = address.toLowerCase();
-  const dottedTail = normalized.match(/(?:^|:)(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  if (dottedTail) {
-    const value = parseIpv4Value(dottedTail);
-    if (value === null) return null;
-    normalized = `${normalized.slice(0, -dottedTail.length)}${(value >>> 16).toString(16)}:${(
-      value & 0xffff
-    ).toString(16)}`;
-  }
-  const halves = normalized.split('::');
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(':') : [];
-  const tail = halves[1] ? halves[1].split(':') : [];
-  const zeroCount = halves.length === 2 ? 8 - head.length - tail.length : 0;
-  if (zeroCount < 0 || (halves.length === 1 && head.length !== 8)) return null;
-  const words = [...head, ...Array.from({ length: zeroCount }, () => '0'), ...tail].map((word) =>
-    Number.parseInt(word, 16),
-  );
-  return words.length === 8 && words.every((word) => Number.isInteger(word)) ? words : null;
-}
-
-function isBlockedIpAddress(address: string): boolean {
-  const normalized = stripIpv6Brackets(address.toLowerCase());
-  const ipv4 = parseIpv4Value(normalized);
-  if (ipv4 !== null) {
-    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(ipv4, base, prefix));
-  }
-
-  const words = parseIpv6Words(normalized);
-  if (!words) return true;
-  const mappedIpv4 =
-    words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff
-      ? words[6] * 65_536 + words[7]
-      : null;
-  const compatibleIpv4 = words.slice(0, 6).every((word) => word === 0)
-    ? words[6] * 65_536 + words[7]
-    : null;
-  if (mappedIpv4 !== null) {
-    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(mappedIpv4, base, prefix));
-  }
-  if (compatibleIpv4 !== null) {
-    return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(compatibleIpv4, base, prefix));
-  }
-
-  // RFC 6052 well-known NAT64 prefix 64:ff9b::/96 embeds an IPv4 destination in
-  // the final 32 bits. Treat a mapped non-public IPv4 exactly like ::ffff:x.y.z.w;
-  // otherwise a NAT64-enabled host could reach metadata/loopback through the WKP.
-  if (words[0] === 0x0064 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0)) {
-    const nat64Ipv4 = words[6] * 65_536 + words[7];
-    if (BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(nat64Ipv4, base, prefix))) {
-      return true;
-    }
-  }
-
-  return (
-    (words[0] & 0xfe00) === 0xfc00 || // unique-local fc00::/7
-    (words[0] & 0xffc0) === 0xfe80 || // link-local fe80::/10
-    (words[0] & 0xff00) === 0xff00 || // multicast ff00::/8
-    words[0] === 0x2002 || // deprecated 6to4 (embeds an IPv4 destination)
-    (words[0] === 0x2001 && words[1] === 0) || // Teredo 2001:0000::/32
-    (words[0] === 0x2001 && words[1] === 0x0db8) || // documentation 2001:db8::/32
-    (words[0] === 0x0100 && words.slice(1, 4).every((word) => word === 0)) || // discard-only
-    (words[0] === 0x0064 && words[1] === 0xff9b && words[2] === 1) // local-use NAT64
-  );
-}
-
 type ResolvedAddress = { address: string; family: 4 | 6 };
 const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 
 async function resolvePublicAddresses(parsed: URL, lookupFn: LookupFn): Promise<ResolvedAddress[]> {
   const bareHost = stripIpv6Brackets(parsed.hostname);
-  const literalFamily = isIP(bareHost);
+  const literalFamily = ipFamily(bareHost);
   if (literalFamily === 4 || literalFamily === 6) {
     if (isBlockedIpAddress(bareHost)) {
       throw new ApiError(

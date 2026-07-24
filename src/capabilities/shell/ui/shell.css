@@ -212,6 +212,7 @@
   color: var(--ink-4);
   overflow-wrap: anywhere;
 }
+.inbox-loom .proposal-image-candidate .ic-reveal,
 .inbox-loom .proposal-image-candidate .ic-fallback {
   display: grid;
   gap: var(--s-1);
@@ -219,6 +220,24 @@
   background: var(--paper-raised);
   border: 1px dashed var(--line);
   border-radius: var(--r-2);
+  justify-items: start;
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  padding: 5px 11px;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-note {
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
 }
 .inbox-loom .proposal-image-candidate .ic-fallback-note {
   font-size: var(--fs-meta);

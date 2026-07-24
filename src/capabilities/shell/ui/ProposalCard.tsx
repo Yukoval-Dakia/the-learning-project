@@ -6,6 +6,7 @@
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
+import { isPublicHttpUrl } from '@/core/net/private-host';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -83,19 +84,12 @@ export interface ImageCandidateView {
   sourceUrl: string;
   sourceTitle: string;
   summaryMd: string;
-  /** 安全的 http(s) 图片 src，或 null（非 http(s) 协议一律走纯文本降级，绝不发不安全 <img>）。 */
+  /**
+   * 通过共享 SSRF 字面量守卫（@/core/net/private-host.isPublicHttpUrl）的安全 http(s) src，
+   * 或 null。null = 非 http(s) / 含凭据 / 字面私网·本机·链路本地 host——一律走纯文本降级，
+   * 绝不把浏览器 <img> 指向它。
+   */
   imgSrc: string | null;
-}
-
-// 只允许 http(s)：拒 data:/javascript:/blob: 等，防外部 source_url 走危险协议。
-function httpImageSrc(url: string): string | null {
-  if (url.length === 0) return null;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Display-only, defensive projection of the free-form image_candidate proposed_change. */
@@ -106,14 +100,24 @@ export function imageCandidateViewOf(change: unknown): ImageCandidateView | null
   const sourceTitle = typeof row.source_title === 'string' ? row.source_title : '';
   const summaryMd = typeof row.summary_md === 'string' ? row.summary_md : '';
   if (sourceUrl === '' && sourceTitle === '' && summaryMd === '') return null;
-  return { sourceUrl, sourceTitle, summaryMd, imgSrc: httpImageSrc(sourceUrl) };
+  return {
+    sourceUrl,
+    sourceTitle,
+    summaryMd,
+    imgSrc: sourceUrl !== '' && isPublicHttpUrl(sourceUrl) ? sourceUrl : null,
+  };
 }
 
-// 专属卡：题文（summary_md 预览）与原图并排对照。<img> 尝试渲染，onError 或非
-// http(s) 协议时降级为「URL + 标题 + summary」纯文本卡（source_url 不保证图片直链）。
+// 专属卡：题文（summary_md 预览）与原图并排对照。
+// 安全（YUK-229 review）：外部 source_url 是 AI/外部来源写的，直渲 <img> 会在用户打开
+// inbox 时就发起被动 GET，可被用来从用户浏览器探测内网（DNS rebinding 浏览器端防不了）。
+// 双层防护：① imgSrc 已过共享字面量守卫（isPublicHttpUrl 拒私网/本机 host）；② 默认不
+// 自动加载——用户显式点「显示原图预览」才设 src，把被动探测降为主动行为。onError 仍降级。
 function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const showImage = view.imgSrc !== null && !imgFailed;
+  const [revealed, setRevealed] = useState(false);
+  const loadable = view.imgSrc !== null && !imgFailed;
+  const showImage = loadable && revealed;
 
   return (
     <div className="proposal-image-candidate">
@@ -141,9 +145,22 @@ function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
             />
             {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
           </figure>
+        ) : loadable ? (
+          <div className="ic-reveal">
+            {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+            <button type="button" className="ic-reveal-btn" onClick={() => setRevealed(true)}>
+              <LoomIcon name="image" size={13} />
+              显示原图预览
+            </button>
+            <span className="ic-reveal-note">原图由外部来源提供，点击后才从来源加载</span>
+          </div>
         ) : (
           <div className="ic-fallback">
-            <span className="ic-fallback-note">无法内联加载原图，仅显示来源信息：</span>
+            <span className="ic-fallback-note">
+              {view.imgSrc === null && view.sourceUrl
+                ? '来源地址非公开图片直链，不内联加载，仅显示来源信息：'
+                : '无法内联加载原图，仅显示来源信息：'}
+            </span>
             {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
             {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
           </div>
