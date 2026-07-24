@@ -353,6 +353,54 @@ describe('runQuizVerify', () => {
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
   });
 
+  // ---------- YUK-608 (异源 solve/verify) — env → quiz_verify → runSolveCheck → ctx.override ----------
+
+  it('routes the solve_check leg onto the 异源 override lane when VERIFY_SOLVE_PROVIDER_OVERRIDE is set', async () => {
+    // vi.stubEnv DELETES on undefined / sets a real value; vi.unstubAllEnvs restores originals.
+    vi.stubEnv('VERIFY_SOLVE_PROVIDER_OVERRIDE', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'oauth-token-for-test'); // makes the lane 'ready'
+    try {
+      await seedKnowledge('k1');
+      await seedDraftQuestion({ id: 'q_iso', knowledgeId: 'k1' });
+      const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_iso');
+
+      await runQuizVerify({ db: testDb(), questionId: 'q_iso', runTaskFn });
+
+      // The solve leg (SolutionGenerateTask) must carry the scoped override into ctx.override so
+      // the runner's resolveTaskProvider routes it to anthropic-sub — the full env → handler →
+      // runSolveCheck → ctx chain.
+      const solveCall = runTaskFn.mock.calls.find((c) => c[0] === 'SolutionGenerateTask');
+      expect(solveCall).toBeDefined();
+      const ctx = solveCall?.[2] as Record<string, unknown>;
+      expect((ctx.override as { provider?: string }).provider).toBe('anthropic-sub');
+      // The closed-book QuizVerifyTask itself must NOT be moved (only the solve leg is 异源).
+      const verifyCall = runTaskFn.mock.calls.find((c) => c[0] === 'QuizVerifyTask');
+      expect((verifyCall?.[2] as Record<string, unknown>).override).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('leaves every leg on the default lane (no ctx.override) when the 异源 env is unset', async () => {
+    // Env-unset invariant: default behavior is byte-identical — the solve leg carries no override.
+    vi.stubEnv('VERIFY_SOLVE_PROVIDER_OVERRIDE', undefined);
+    vi.stubEnv('VERIFY_SOLVE_MODEL_OVERRIDE', undefined);
+    try {
+      await seedKnowledge('k1');
+      await seedDraftQuestion({ id: 'q_noiso', knowledgeId: 'k1' });
+      const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_noiso');
+
+      await runQuizVerify({ db: testDb(), questionId: 'q_noiso', runTaskFn });
+
+      for (const call of runTaskFn.mock.calls) {
+        const ctx = call[2] as Record<string, unknown>;
+        expect(ctx.override).toBeUndefined();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
     const db = testDb();
     await seedKnowledge('k1');

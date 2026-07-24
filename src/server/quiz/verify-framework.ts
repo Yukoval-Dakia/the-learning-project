@@ -34,6 +34,7 @@ import type { Db, Tx } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import type { Provider } from '@/server/ai/providers';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -173,8 +174,18 @@ export interface SolveCheckOptions {
   // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
   // biome-ignore lint/suspicious/noExplicitAny: leaf forwards the caller's Db handle to SemanticJudge.
   db?: any;
-  /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx. */
+  /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx.override.model. */
   solverModelOverride?: string;
+  /**
+   * YUK-608 (异源 solve/verify) — override the solver PROVIDER (not just the model) for
+   * the solve_check leg, so it runs on a DIFFERENT lane than the generator/verifier (e.g.
+   * `anthropic-sub` / Opus 4.8 while generation stays mimo). Threaded into ctx.override.provider
+   * for BOTH the SolutionGenerate solver call AND the semantic SemanticJudge leg. Typed as the
+   * `Provider` union (re-exported from providers.ts) so ctx.override matches the runner's
+   * RunTaskCallCtx; callers PRE-FLIGHT lane availability and fail-open to the default lane, so
+   * an unset value here just means the default provider (mimo).
+   */
+  solverProviderOverride?: Provider;
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
   imageFetchFn?: SolveCheckImageFetchFn;
   placementAuthority?: PlacementVerificationAuthority;
@@ -452,6 +463,19 @@ export async function runSolveCheck(
     };
   }
 
+  // YUK-608 (异源 solve/verify) — the per-call provider/model override for this check's
+  // paid legs. Built ONCE here so BOTH legs (SolutionGenerate solver + semantic SemanticJudge)
+  // route to the SAME lane: the runner reads ctx.override → resolveTaskProvider(kind, override).
+  // Undefined when neither knob is set → ctx.override stays absent → default-lane behavior is
+  // byte-identical to before (the env-unset invariant the callers guarantee).
+  const solverOverride: { provider?: Provider; model?: string } | undefined =
+    opts.solverProviderOverride || opts.solverModelOverride
+      ? {
+          ...(opts.solverProviderOverride ? { provider: opts.solverProviderOverride } : {}),
+          ...(opts.solverModelOverride ? { model: opts.solverModelOverride } : {}),
+        }
+      : undefined;
+
   // EFF-1 (YUK-554 review) — provenance/cost capture across the 1-2 LLM calls below.
   const taskRunIds: string[] = [];
   let costUsd: number | undefined;
@@ -505,10 +529,10 @@ export async function runSolveCheck(
       prompt_image_refs: question.image_refs ?? [],
     };
     const ctx: Record<string, unknown> = { db: opts.db, subjectProfile: opts.profile.full };
-    // OF-4(ii) 异源旋钮真接线（PR #312 验证轮 V4）：生产 runner 的模型覆盖读
-    // `ctx.override.model`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
-    // 不会被读取——那是个死旋钮。
-    if (opts.solverModelOverride) ctx.override = { model: opts.solverModelOverride };
+    // OF-4(ii) 异源旋钮真接线（PR #312 验证轮 V4）：生产 runner 的覆盖读
+    // `ctx.override`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
+    // 不会被读取——那是个死旋钮。YUK-608 把 provider 也纳入同一 override（不只 model）。
+    if (solverOverride) ctx.override = solverOverride;
     const promptImageRefs = question.image_refs ?? [];
     let taskInput: unknown = input;
     if (promptImageRefs.length > 0) {
@@ -661,7 +685,15 @@ export async function runSolveCheck(
         opts.placementAuthority && input !== null && typeof input === 'object'
           ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
           : input;
-      const r = await opts.runTaskFn(kind, authorizedInput, ctx);
+      // YUK-608 (异源 solve/verify) — runSemanticJudge builds its OWN ctx ({ subjectProfile })
+      // with no override, so the semantic leg would silently stay on the default lane while the
+      // solver leg went 异源. Inject the SAME override here so both legs of solve_check route
+      // together. `ctx` is a RunTaskCallCtx (override.provider typed Provider), so this stays
+      // type-compatible; absent override → ctx passes through untouched (default-lane byte-identical).
+      const overriddenCtx = solverOverride
+        ? { ...ctx, override: { ...ctx?.override, ...solverOverride } }
+        : ctx;
+      const r = await opts.runTaskFn(kind, authorizedInput, overriddenCtx);
       recordRun(r);
       if (kind === 'SemanticJudgeTask' && semanticInvocationId) {
         await opts.settlePaidCall?.('semantic_judge', semanticInvocationId, r);
