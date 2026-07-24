@@ -768,7 +768,11 @@ describe('runQuizGen', () => {
   ])(
     'drains a raced-duplicate placement question this attempt (%s collider) (YUK-452 followup)',
     async (colliderDraftStatus, expectEnqueued) => {
-      const now = new Date('2026-07-24T00:00:00.000Z');
+      // Real wall-clock, NOT a fixed date: acquirePlacementAttempt sets lease_expires_at =
+      // now + PLACEMENT_ATTEMPT_LEASE_MS, and assertPlacementAttemptFence compares that lease
+      // against transaction_timestamp() — a hardcoded date turns the test into a time bomb the
+      // moment real time passes fakeNow + lease.
+      const now = new Date();
       await seedKnowledge({ id: 'k-test' });
       await testDb().insert(placement_starter_claim).values({
         id: 'claim-raced',
