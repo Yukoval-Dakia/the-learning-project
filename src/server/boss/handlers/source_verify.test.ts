@@ -722,6 +722,35 @@ describe('runSourceVerify', () => {
     expect(rows[0].draft_status).toBe('active');
   });
 
+  it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-ver'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 2 round-2 — simulate an EDIT during the grounding call: the question's version is
+    // bumped past the version this run read at the top. This run's transient error must NOT
+    // demote the newer row (the demote is pinned to version = the run's read version), so the
+    // edited row stays 'active' and this stale delivery just throws (re-run against the fresh
+    // version).
+    const sourceGroundingFn = vi.fn(async () => {
+      await db.update(question).set({ version: 1 }).where(eq(question.id, qid));
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    // The version-bumped row is untouched by the stale run's demote.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    expect(rows[0].version).toBe(1);
+  });
+
   it('YUK-230 FAIL-CLOSED: a transient grounding error demotes the single-source row to draft AND throws (retriable)', async () => {
     const db = testDb();
     await seedKnowledge('k1');

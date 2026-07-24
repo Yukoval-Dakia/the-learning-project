@@ -513,6 +513,14 @@ export async function runSourceVerify(
         // the row's 'active' state — this stale run must NOT yank it back out. The NOT EXISTS
         // subquery makes the check atomic with the demote (no check-then-act TOCTOU): the
         // UPDATE demotes ONLY when no success verify event exists.
+        //
+        // VERSION GUARD (thread 2 round-2, codex): mirror the normal promote/demote branch's
+        // `current.version !== row.version` staleness check. This run's grounding verdict was
+        // computed against `row.version`; if the question was EDITED (version bumped) during the
+        // VLM call, this delivery is stale and must NOT act on the newer row — pin the demote to
+        // `version = row.version` so a bumped row is untouched (this run then throws and is
+        // re-run against the fresh version). Without it, a stale delivery could yank a freshly
+        // re-verified newer version out of the pool.
         await db
           .update(question)
           .set({ draft_status: 'draft', updated_at: new Date() })
@@ -520,6 +528,7 @@ export async function runSourceVerify(
             and(
               eq(question.id, questionId),
               eq(question.draft_status, 'active'),
+              eq(question.version, row.version),
               sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
             ),
           );
