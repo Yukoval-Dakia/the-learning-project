@@ -396,6 +396,66 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     expect((ctx.override as { model?: string }).model).toBe('mimo-v2.5');
     expect(ctx.model).toBeUndefined();
   });
+
+  // ---------- YUK-608 (异源 solve/verify) — provider override on BOTH legs ----------
+
+  it('threads a solverProviderOverride into the solver ctx.override.provider', async () => {
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: solverOutput('公元前202年'),
+    }));
+    await runSolveCheck(exactQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      solverProviderOverride: 'anthropic-sub',
+    });
+    const ctx = runTaskFn.mock.calls[0][2] as Record<string, unknown>;
+    // The runner reads ctx.override → resolveTaskProvider(kind, override); provider must ride there.
+    expect((ctx.override as { provider?: string }).provider).toBe('anthropic-sub');
+  });
+
+  it('threads BOTH provider and model into the solver ctx.override', async () => {
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: solverOutput('公元前202年'),
+    }));
+    await runSolveCheck(exactQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      solverProviderOverride: 'anthropic-sub',
+      solverModelOverride: 'claude-opus-4-8',
+    });
+    const ctx = runTaskFn.mock.calls[0][2] as Record<string, unknown>;
+    expect(ctx.override).toEqual({ provider: 'anthropic-sub', model: 'claude-opus-4-8' });
+  });
+
+  it('routes the semantic SemanticJudge leg onto the SAME 异源 lane as the solver', async () => {
+    // Exact mismatch → semantic fallback: both SolutionGenerateTask and SemanticJudgeTask run.
+    // The semantic leg builds its own ctx ({ subjectProfile }) with no override, so the check
+    // must inject the override for it too — assert the 2nd call carries the provider.
+    const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
+    await runSolveCheck(exactQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+      solverProviderOverride: 'anthropic-sub',
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    const solverCtx = runTaskFn.mock.calls[0][2] as Record<string, unknown>;
+    const judgeCtx = runTaskFn.mock.calls[1][2] as Record<string, unknown>;
+    expect(runTaskFn.mock.calls[0][0]).toBe('SolutionGenerateTask');
+    expect(runTaskFn.mock.calls[1][0]).toBe('SemanticJudgeTask');
+    expect((solverCtx.override as { provider?: string }).provider).toBe('anthropic-sub');
+    expect((judgeCtx.override as { provider?: string }).provider).toBe('anthropic-sub');
+  });
+
+  it('leaves ctx.override ABSENT when no override is set (default-lane byte-identical)', async () => {
+    // The env-unset invariant at the leaf: without either knob, ctx carries no override key.
+    const runTaskFn = confidentlyWrongExactAnswer('公元前 221 年');
+    await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile, db: fakeDb });
+    for (const call of runTaskFn.mock.calls) {
+      const ctx = call[2] as Record<string, unknown>;
+      expect(ctx.override).toBeUndefined();
+    }
+  });
 });
 
 // ---------- A1 (YUK-554 review) — reference_md fallback candidates ----------

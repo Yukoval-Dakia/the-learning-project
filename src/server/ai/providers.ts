@@ -129,6 +129,30 @@ export function isOauthProvider(provider: Provider): boolean {
 }
 
 /**
+ * YUK-608 — is `name` one of the known providers? Narrowing guard so callers that
+ * receive an untrusted provider string (env-configured overrides) can validate it
+ * before routing, without re-declaring the provider name set.
+ */
+export function isKnownProvider(name: string): name is Provider {
+  return Object.hasOwn(PROVIDERS, name);
+}
+
+/**
+ * YUK-608 — is this provider's credential lane configured in THIS process's env? An
+ * OAuth provider needs its `oauthTokenEnv`; a key provider needs its `apiKeyEnv`.
+ * Lets a caller PRE-FLIGHT an optional override lane and fail-open to the default
+ * provider when the lane isn't wired here (e.g. the subscription token is absent on
+ * a given deploy), instead of letting `resolveTaskProvider` throw mid-call. Mirrors
+ * the missing-env checks `resolveTaskProvider` performs, without allocating a binding.
+ */
+export function isProviderLaneReady(provider: Provider): boolean {
+  const config = PROVIDERS[provider];
+  if (!config) return false;
+  const envName = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+  return Boolean(process.env[envName]);
+}
+
+/**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } forwarded as ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL.
  *   - 'oauth' → { oauthTokenEnv } whose value the runner SETS as CLAUDE_CODE_OAUTH_TOKEN

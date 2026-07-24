@@ -75,6 +75,7 @@ import {
   settleAuthorizedPaidCall,
 } from '@/server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
+import { resolveSolveOverrideFromEnv } from '@/server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
@@ -496,6 +497,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     if (placementAuthority && freeChecksPass) {
       await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
     }
+    // YUK-608 (异源 solve/verify) — the solve_check leg (solver + semantic judge) runs on a
+    // provider that MAY differ from the generator/verifier so a shared model blind spot can't
+    // rubber-stamp itself. Scoped env, fail-open to the default lane (see solve-lane.ts). Resolved
+    // once here; {} when the env is unset → no override keys → default-lane behavior unchanged.
+    const solveOverride = resolveSolveOverrideFromEnv();
     const [solveSettled, teachingSettled] = await Promise.allSettled([
       freeChecksPass && tierChecks.includes('solve_check')
         ? runSolveCheck(
@@ -515,6 +521,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               profile: { id: subjectProfile.id, full: subjectProfile },
               db,
               placementAuthority,
+              ...(solveOverride.provider ? { solverProviderOverride: solveOverride.provider } : {}),
+              ...(solveOverride.model ? { solverModelOverride: solveOverride.model } : {}),
               ...(placementAuthority
                 ? {
                     beforePaidCall: async (kind, invocationId) => {
