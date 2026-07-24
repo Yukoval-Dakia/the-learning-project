@@ -302,6 +302,19 @@ function classifyRow(row: EventRow): RevertableEffect {
  * Exported for unit coverage.
  */
 export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean {
+  // Defense-in-depth (YUK-497 wave-5, TcHwW). A `question_draft` proposal MATERIALIZES its draft
+  // `question` row at PROPOSE time — runQuestionAuthor (question-author.ts) inserts the row AND writes
+  // the proposal in ONE tx (draft_status='draft', invisible to pool until accept). That row lives
+  // OUTSIDE the event chain a `correct`(retract) can compensate, unlike knowledge_node/knowledge_edge
+  // proposals whose materialization is the DEFERRED accept. Its event action is 'experimental:proposal'
+  // (writer.ts default branch), already outside the allow-list below — but refuse it EXPLICITLY on the
+  // durable payload marker so a DIRECT API revert can never half-revert (tombstone the turn's events
+  // while orphaning the still-present draft row). Mirrors the live/replay anchor suppression in
+  // materializing-tools.ts that keeps the revert button off a materializing turn.
+  const proposalKind = (row.payload as { ai_proposal?: { kind?: string } } | null)?.ai_proposal
+    ?.kind;
+  if (proposalKind === 'question_draft') return false;
+
   return (
     (isRoot && row.action === COPILOT_USER_ASK_ACTION) ||
     row.action === COPILOT_REPLY_ACTION ||

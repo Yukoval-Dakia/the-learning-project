@@ -377,6 +377,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // never surfaced as a revert failure (F5).
   const [revertPendingId, setRevertPendingId] = useState<string | null>(null);
   const [refreshFailed, setRefreshFailed] = useState(false);
+  // TchmY — a refetch that was SKIPPED (a send is streaming, so refetchTurns deferred rather than
+  // failed) is distinct from a real refetch FAILURE. Same "revert landed, screen not yet refreshed"
+  // family, but the skip is not an error — it gets a calmer copy (no alert tone).
+  const [refreshSkipped, setRefreshSkipped] = useState(false);
   const [input, setInput] = useState('');
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
@@ -520,6 +524,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setRevertPendingId(checkpointEventId);
       setError(null);
       setRefreshFailed(false);
+      setRefreshSkipped(false);
       try {
         try {
           await apiJson(
@@ -547,8 +552,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // rather than thinking the revert did nothing (YUK-497 wave-3).
         try {
           const refreshed = await refetchTurns();
-          if (!refreshed) setRefreshFailed(true);
+          // false = SKIPPED (a send is streaming) — deferred, not failed → the calmer skip banner.
+          if (!refreshed) setRefreshSkipped(true);
         } catch {
+          // The refetch itself threw → a real failure.
           setRefreshFailed(true);
         }
       } finally {
@@ -564,10 +571,13 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // refetch ONLY (the revert already committed server-side); clears the banner on success.
   const retryRefresh = useCallback(async () => {
     try {
-      // Only clear the banner when the refresh actually ran — a skip (a send started during the
-      // retry) must keep it up rather than misleading the user that it refreshed (YUK-497 wave-3).
+      // Only clear the banners when the refresh actually ran — a skip (a send started during the
+      // retry) must keep them up rather than misleading the user that it refreshed (YUK-497 wave-3).
       const refreshed = await refetchTurns();
-      if (refreshed) setRefreshFailed(false);
+      if (refreshed) {
+        setRefreshFailed(false);
+        setRefreshSkipped(false);
+      }
     } catch {
       // Keep the banner up; the revert is already durable, only the refresh is still failing.
     }
@@ -589,10 +599,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     sendingRef.current = true;
     lastUserMessageRef.current = text;
     setError(null);
-    // Clear the "revert landed, refresh failed" banner when starting a new send: otherwise it stays
-    // set (only retryRefresh success / a new revert clears it) and its suppression of the generic
-    // error banner (`error && !refreshFailed`) would mask a failure from THIS send (YUK-497 wave-2).
+    // Clear the "revert landed, refresh failed/skipped" banners when starting a new send: otherwise
+    // they stay set (only retryRefresh success / a new revert clears them) and their suppression of
+    // the generic error banner would mask a failure from THIS send (YUK-497 wave-2).
     setRefreshFailed(false);
+    setRefreshSkipped(false);
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);
@@ -1094,7 +1105,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 </div>
               </div>
             ) : null}
-            {error && !refreshFailed ? (
+            {error && !refreshFailed && !refreshSkipped ? (
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
@@ -1107,6 +1118,19 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               <div className="chat-error" data-testid="copilot-refresh-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>撤回已完成，但刷新对话失败。</span>
+                <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
+                  刷新
+                </Btn>
+              </div>
+            ) : refreshSkipped ? (
+              // TchmY — a SKIP is not an error: the revert landed, the on-screen refresh was just
+              // deferred because a reply is streaming. Calmer copy (no failure wording) + a polite
+              // role="status" live region (vs the failure banner's role="alert"), same 刷新 retry. The
+              // div keeps styling parity with the sibling chat-error banner (hence role, not <output>).
+              // biome-ignore lint/a11y/useSemanticElements: role="status" polite live region is intended; keep the div for chat-error styling parity
+              <div className="chat-error" data-testid="copilot-refresh-skipped" role="status">
+                <LoomIcon name="refresh" size={14} />
+                <span>撤回已生效，当前回复结束后可刷新查看。</span>
                 <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
                   刷新
                 </Btn>

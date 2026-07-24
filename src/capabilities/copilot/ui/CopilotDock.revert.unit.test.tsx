@@ -42,8 +42,11 @@ describe('CopilotDock checkpoint revert', () => {
     expect(source).toContain('setRefreshFailed(true)');
     expect(source).toContain('copilot-refresh-error');
     expect(source).toContain('const retryRefresh');
-    // The two banners are mutually exclusive — refreshFailed wins when both are set.
-    expect(source).toContain('error && !refreshFailed');
+    // The generic error banner is suppressed while either post-revert banner shows.
+    expect(source).toContain('error && !refreshFailed && !refreshSkipped');
+    // TchmY — a refetch SKIP (a send is streaming) is deferred, not failed → its own calmer banner.
+    expect(source).toContain('setRefreshSkipped(true)');
+    expect(source).toContain('copilot-refresh-skipped');
   });
 
   it('recomputes skill state on the post-revert refetch (wave-2 F2)', async () => {
@@ -82,10 +85,11 @@ describe('CopilotDock checkpoint revert', () => {
     );
     // refetchTurns is now typed Promise<boolean> — false on the sendingRef skip, true after replace.
     expect(source).toContain('const refetchTurns = useCallback(async (): Promise<boolean> =>');
-    // revertCheckpoint surfaces the refresh-pending banner when the refetch was SKIPPED (false).
-    expect(source).toContain('if (!refreshed) setRefreshFailed(true);');
-    // retryRefresh only clears the banner when the refetch actually ran (true).
-    expect(source).toContain('if (refreshed) setRefreshFailed(false);');
+    // revertCheckpoint surfaces the calmer SKIP banner when the refetch was SKIPPED (false) — the
+    // refetch never returns false for a failure (that throws), so this branch is skip-only (TchmY).
+    expect(source).toContain('if (!refreshed) setRefreshSkipped(true);');
+    // retryRefresh clears BOTH banners only when the refetch actually ran (true).
+    expect(source).toContain('setRefreshSkipped(false);');
   });
 
   it('surfaces the cascade refusal reason and clears refreshFailed on send (wave-2 F4)', async () => {

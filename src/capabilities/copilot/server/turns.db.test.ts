@@ -407,7 +407,7 @@ describe('getRecentCopilotTurns', () => {
   });
 
   it.each(['author_question', 'author_artifact', 'update_artifact', 'write_quiz'])(
-    'does NOT surface a revert checkpoint on a turn that called a materializing tool (%s) (wave-4 H1)',
+    'does NOT surface a revert checkpoint on the ask OR reply of a turn that called a materializing tool (%s) (wave-4 H1 / wave-5 TcHwW)',
     async (materializingTool) => {
       const now = new Date();
       const sessionId = await createLiveCopilotSession(now);
@@ -429,8 +429,13 @@ describe('getRecentCopilotTurns', () => {
       );
 
       const turns = await getRecentCopilotTurns(db, { now });
+      // Reply row (W4).
       expect(turns.find((t) => t.event_id === replyMat)?.checkpoint_event_id).toBeUndefined();
       expect(turns.find((t) => t.event_id === replyProp)?.checkpoint_event_id).toBe(askProp);
+      // W5-1a — the ASK row anchors the SAME checkpoint, so it must be suppressed for the
+      // materializing turn and kept for the propose-only turn (W4 only guarded the reply).
+      expect(turns.find((t) => t.event_id === askMat)?.checkpoint_event_id).toBeUndefined();
+      expect(turns.find((t) => t.event_id === askProp)?.checkpoint_event_id).toBe(askProp);
     },
   );
 

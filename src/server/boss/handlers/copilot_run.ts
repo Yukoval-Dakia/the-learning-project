@@ -35,6 +35,7 @@ import {
   COPILOT_RUN_TABLE,
   hasCancelRequest,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import type { Db } from '@/db/client';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
@@ -415,6 +416,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       taskRunId: result.task_run_id,
       now: new Date(),
     });
+    // W5-2 (TcR8s) — the durable path exposes checkpoint_event_id via the job-events SSE endpoint, so
+    // it must mirror the live/replay anchor suppression: if this turn called a materializing tool (its
+    // tool_use mirrors chain to runId, written above), it wrote a domain row cascade-revert can't
+    // compensate → omit the anchor so the events endpoint never renders a revert button that 409s /
+    // orphans the row. Same predicate chat.ts (live) and turns.ts (replay) key on.
+    const turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -422,7 +429,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       payload: {
         reply_md: cleanedReply,
         task_run_id: result.task_run_id,
-        checkpoint_event_id: runId,
+        ...(turnMaterialized ? {} : { checkpoint_event_id: runId }),
       },
     });
     await writeJobEvent(db, {
@@ -432,7 +439,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       payload: {
         task_run_id: result.task_run_id,
         finish_reason: result.finishReason,
-        checkpoint_event_id: runId,
+        ...(turnMaterialized ? {} : { checkpoint_event_id: runId }),
       },
     });
     return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };

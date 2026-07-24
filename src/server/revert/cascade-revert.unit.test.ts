@@ -49,4 +49,27 @@ describe('copilotAskRevertAllows', () => {
     expect(copilotAskRevertAllows(row({ action: 'attempt' }), false)).toBe(false);
     expect(copilotAskRevertAllows(row({ action: 'accept_suggestion' }), false)).toBe(false);
   });
+
+  it('refuses a materializing question_draft proposal on its payload marker (wave-5 TcHwW)', () => {
+    // runQuestionAuthor writes the draft `question` row at PROPOSE time (outside the event chain) +
+    // this proposal event, so the revert must fail-closed rather than tombstone the turn while
+    // orphaning the draft. The marker is payload.ai_proposal.kind — independent of the event action.
+    expect(
+      copilotAskRevertAllows(
+        row({
+          action: 'experimental:proposal',
+          subject_kind: 'question',
+          payload: { ai_proposal: { kind: 'question_draft' } },
+        }),
+        false,
+      ),
+    ).toBe(false);
+    // A knowledge propose (materialization DEFERRED to accept) stays reversible.
+    expect(
+      copilotAskRevertAllows(
+        row({ action: 'propose', payload: { ai_proposal: { kind: 'knowledge_node' } } }),
+        false,
+      ),
+    ).toBe(true);
+  });
 });

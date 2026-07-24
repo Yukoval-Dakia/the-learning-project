@@ -28,6 +28,10 @@ export const CopilotCheckpointRevertRefusalSchema = z.object({
     .optional(),
 });
 
+// TchmV — the revert handler builds its refusal body against THIS shape (not a loose
+// Record<string, unknown>) so a wire-field typo or shape drift fails to compile.
+export type CopilotCheckpointRevertRefusalT = z.infer<typeof CopilotCheckpointRevertRefusalSchema>;
+
 // 404 / 409 on the revert route carry EITHER the standard API error body (the route's own
 // not_found / turn_not_terminal / turn_shadow_not_terminal ApiError throws) OR the cascade
 // refusal envelope (orchestrator no_checkpoint → 404, other refusals → 409).

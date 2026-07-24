@@ -14,7 +14,7 @@ import {
 } from '@/server/session/conversation';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
-import { CopilotCheckpointParamsSchema } from './contracts';
+import { CopilotCheckpointParamsSchema, type CopilotCheckpointRevertRefusalT } from './contracts';
 
 // Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the refusal-body
 // switch makes this fail to compile (YUK-497 wave-3).
@@ -126,7 +126,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         // wave-3 (OCR) — switch on the discriminant with an exhaustive assertNever so a new
         // refusal variant with required fields fails to compile instead of silently shipping an
         // incomplete body. Wire shapes are unchanged (contracts.db pins them).
-        const body: Record<string, unknown> = {
+        const body: CopilotCheckpointRevertRefusalT = {
           ok: false,
           refusal: result.refusal,
           reason: result.reason,
