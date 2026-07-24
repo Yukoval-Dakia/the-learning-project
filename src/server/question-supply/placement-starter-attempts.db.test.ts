@@ -7,7 +7,7 @@ import {
   question,
 } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
@@ -21,6 +21,7 @@ import {
   assertPlacementAuthority,
   countEligiblePlacementQuestions,
   finishPlacementAttempt,
+  heartbeatSleep,
   placementAttemptVerificationSettled,
   placementDeliveryMetadata,
   placementFulfillmentDisposition,
@@ -683,5 +684,16 @@ describe('placement exact fulfillment', () => {
 
   it('rejects nine as an invariant violation', () => {
     expect(() => placementFulfillmentDisposition(9)).toThrow(/exceeded exact count/);
+  });
+});
+
+// YUK-452 followup — same abort-listener cleanup as defaultPlacementSleep: remove on normal resolve
+// so the heartbeat's per-cycle sleep does not leak listeners on the long-lived job.signal.
+describe('heartbeatSleep', () => {
+  it('removes its abort listener when the timeout resolves normally', async () => {
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+    await heartbeatSleep(1, controller.signal);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });

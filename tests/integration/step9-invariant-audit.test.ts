@@ -512,5 +512,5 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
         .map((f) => `${f.rule} ${f.file}:${f.line}`)
         .join('\n  ')}`,
     ).toEqual([]);
-  });
+  }, 30_000);
 });

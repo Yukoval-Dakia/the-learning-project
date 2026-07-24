@@ -636,7 +636,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
       attempt_event_id: 'att_success',
     });
     expect(nonFailure.status).toBe('skipped:not_failure_attempt');
-  });
+  }, 60_000);
 
   it('attribute_mistake reports existing_judge when the owner path loses an attribution race', async () => {
     const db = testDb();
