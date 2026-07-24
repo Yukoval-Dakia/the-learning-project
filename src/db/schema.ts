@@ -924,6 +924,19 @@ export const event = pgTable(
   'event',
   {
     id: text('id').primaryKey(),
+    // YUK-751 — insertion-order diagnostic/tie-break coordinate. This sequence is
+    // never a subscription completeness cursor; delivery rows own subscriber-local order.
+    // mode:'number' (NOT 'bigint' like `generation`): in the subscription runtime dispatch_seq never
+    // crosses into app code — bootstrap + discovery mark/allocate it entirely in set-based SQL
+    // (INSERT … SELECT), so no JS `number` read of it exists (TdYuL/TdYuZ). The peer subscription seq
+    // columns that ARE read raw (delivery_seq / next_delivery_seq via `tx.execute`) are typed `string`
+    // — postgres parses bigint as a decimal string — and normalized through asBigint(); the
+    // handler-facing boundary serializes to a decimal string (manifest
+    // EventSubscriptionDelivery.deliverySeq). So no JS `number` truncation path exists; the bigint-mode
+    // rationale that applies to `generation` (read via the query builder) does not apply here.
+    dispatch_seq: bigint('dispatch_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('event_dispatch_seq')`),
     // nullable — cron / system events may have no session
     session_id: text('session_id'),
     // 'user' | 'agent' | 'cron' | 'system' (locked Lane B contract)
@@ -966,6 +979,9 @@ export const event = pgTable(
     index('event_session_idx').on(t.session_id, t.created_at),
     index('event_actor_idx').on(t.actor_kind, t.actor_ref, t.created_at),
     index('event_caused_by_idx').on(t.caused_by_event_id),
+    uniqueIndex('event_id_dispatch_seq_unique').on(t.id, t.dispatch_seq),
+    uniqueIndex('event_dispatch_seq_unique').on(t.dispatch_seq),
+    index('event_action_dispatch_idx').on(t.action, t.dispatch_seq, t.id),
     index('event_affected_scopes_idx').using('gin', t.affected_scopes),
     // YUK-101 — partial index for the outbox poll handler. Declared in
     // hand-written migration drizzle/0017_outbox_event_ingest.sql because
@@ -976,6 +992,216 @@ export const event = pgTable(
     // See drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql. This is the index the
     // W3 question_block merge gather's top-level `payload @> {affected_blocks:[{block_id}]}`
     // containment (gather.ts gatherAndFoldQuestionBlock Q2) relies on (YUK-471 W3-C0).
+  ],
+);
+
+// YUK-751 — derived operational recovery state for manifest-declared subscribers.
+// There is deliberately no source high-water cursor: discovery anti-joins the immutable event log
+// against delivery rows, while next_delivery_seq orders each subscriber's durable local work.
+export const event_subscription_checkpoint = pgTable(
+  'event_subscription_checkpoint',
+  {
+    subscriber_id: text('subscriber_id').notNull(),
+    subscriber_version: integer('subscriber_version').notNull(),
+    declaration_hash: text('declaration_hash').notNull(),
+    status: text('status', { enum: ['bootstrapping', 'active', 'paused'] }).notNull(),
+    next_delivery_seq: bigint('next_delivery_seq', { mode: 'number' }).notNull().default(1),
+    claim_owner: text('claim_owner'),
+    claim_token: uuid('claim_token'),
+    claim_lease_until: timestamp('claim_lease_until', { withTimezone: true }),
+    bootstrapped_at: timestamp('bootstrapped_at', { withTimezone: true }),
+    activated_at: timestamp('activated_at', { withTimezone: true }),
+    paused_at: timestamp('paused_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.subscriber_id, t.subscriber_version] }),
+    check('event_subscription_checkpoint_version_positive', sql`${t.subscriber_version} > 0`),
+    check('event_subscription_checkpoint_delivery_seq_positive', sql`${t.next_delivery_seq} > 0`),
+    check(
+      'event_subscription_checkpoint_status_check',
+      sql`${t.status} IN ('bootstrapping','active','paused')`,
+    ),
+    check(
+      'event_subscription_checkpoint_claim_shape',
+      sql`(${t.claim_owner} IS NULL AND ${t.claim_token} IS NULL AND ${t.claim_lease_until} IS NULL)
+        OR (${t.claim_owner} IS NOT NULL AND ${t.claim_token} IS NOT NULL AND ${t.claim_lease_until} IS NOT NULL)`,
+    ),
+    index('event_subscription_checkpoint_status_idx').on(t.status, t.updated_at),
+    index('event_subscription_checkpoint_expired_lease_idx')
+      .on(t.claim_lease_until, t.subscriber_id, t.subscriber_version)
+      .where(sql`${t.claim_lease_until} IS NOT NULL`),
+  ],
+);
+
+export const event_subscription_delivery = pgTable(
+  'event_subscription_delivery',
+  {
+    subscriber_id: text('subscriber_id').notNull(),
+    subscriber_version: integer('subscriber_version').notNull(),
+    source_event_id: text('source_event_id').notNull(),
+    source_dispatch_seq: bigint('source_dispatch_seq', { mode: 'number' }).notNull(),
+    delivery_seq: bigint('delivery_seq', { mode: 'number' }).notNull(),
+    status: text('status', {
+      enum: [
+        'bootstrap_skipped',
+        'pending',
+        'claimed',
+        'retry_wait',
+        'succeeded',
+        'skipped',
+        'dead_letter',
+      ],
+    }).notNull(),
+    attempt_count: integer('attempt_count').notNull().default(0),
+    redrive_count: integer('redrive_count').notNull().default(0),
+    next_attempt_at: timestamp('next_attempt_at', { withTimezone: true }),
+    claim_owner: text('claim_owner'),
+    claim_token: uuid('claim_token'),
+    claim_lease_until: timestamp('claim_lease_until', { withTimezone: true }),
+    last_error: text('last_error'),
+    outcome: jsonb('outcome').$type<JsonObject>(),
+    discovered_at: timestamp('discovered_at', { withTimezone: true }).notNull().defaultNow(),
+    claimed_at: timestamp('claimed_at', { withTimezone: true }),
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.subscriber_id, t.subscriber_version, t.source_event_id] }),
+    foreignKey({
+      columns: [t.source_event_id, t.source_dispatch_seq],
+      foreignColumns: [event.id, event.dispatch_seq],
+      name: 'event_subscription_delivery_source_event_fk',
+    }),
+    foreignKey({
+      columns: [t.subscriber_id, t.subscriber_version],
+      foreignColumns: [
+        event_subscription_checkpoint.subscriber_id,
+        event_subscription_checkpoint.subscriber_version,
+      ],
+      name: 'event_subscription_delivery_checkpoint_fk',
+    }),
+    uniqueIndex('event_subscription_delivery_local_seq_uq').on(
+      t.subscriber_id,
+      t.subscriber_version,
+      t.delivery_seq,
+    ),
+    check('event_subscription_delivery_version_positive', sql`${t.subscriber_version} > 0`),
+    check('event_subscription_delivery_seq_positive', sql`${t.delivery_seq} > 0`),
+    check('event_subscription_delivery_attempt_nonnegative', sql`${t.attempt_count} >= 0`),
+    check('event_subscription_delivery_redrive_nonnegative', sql`${t.redrive_count} >= 0`),
+    check(
+      'event_subscription_delivery_status_check',
+      sql`${t.status} IN ('bootstrap_skipped','pending','claimed','retry_wait','succeeded','skipped','dead_letter')`,
+    ),
+    check(
+      'event_subscription_delivery_claim_shape',
+      sql`((${t.claim_owner} IS NULL AND ${t.claim_token} IS NULL AND ${t.claim_lease_until} IS NULL AND ${t.claimed_at} IS NULL)
+        OR (${t.claim_owner} IS NOT NULL AND ${t.claim_token} IS NOT NULL AND ${t.claim_lease_until} IS NOT NULL AND ${t.claimed_at} IS NOT NULL))
+        AND ((${t.status} = 'claimed') = (${t.claim_owner} IS NOT NULL))`,
+    ),
+    check(
+      'event_subscription_delivery_retry_shape',
+      sql`((${t.status} = 'retry_wait') = (${t.next_attempt_at} IS NOT NULL))`,
+    ),
+    check(
+      'event_subscription_delivery_completion_shape',
+      sql`((${t.status} IN ('bootstrap_skipped','succeeded','skipped','dead_letter')) = (${t.completed_at} IS NOT NULL))`,
+    ),
+    index('event_subscription_delivery_ready_idx')
+      .on(t.subscriber_id, t.subscriber_version, t.delivery_seq)
+      .where(sql`${t.status} IN ('pending','retry_wait')`),
+    index('event_subscription_delivery_expired_claim_idx')
+      .on(t.claim_lease_until, t.subscriber_id, t.subscriber_version, t.delivery_seq)
+      .where(sql`${t.status} = 'claimed'`),
+    index('event_subscription_delivery_dlq_idx')
+      .on(t.subscriber_id, t.subscriber_version, t.completed_at.desc())
+      .where(sql`${t.status} = 'dead_letter'`),
+    index('event_subscription_delivery_history_idx').on(
+      t.subscriber_id,
+      t.subscriber_version,
+      t.delivery_seq.desc(),
+    ),
+    index('event_subscription_delivery_discovery_idx').on(
+      t.subscriber_id,
+      t.subscriber_version,
+      t.source_dispatch_seq,
+      t.source_event_id,
+    ),
+  ],
+);
+
+export const event_subscription_effect = pgTable(
+  'event_subscription_effect',
+  {
+    id: text('id').primaryKey(),
+    attempt_event_id: text('attempt_event_id')
+      .notNull()
+      .references(() => event.id),
+    artifact_id: text('artifact_id')
+      .notNull()
+      .references(() => artifact.id),
+    effect_kind: text('effect_kind', { enum: ['mastery_change'] }).notNull(),
+    subscriber_id: text('subscriber_id'),
+    subscriber_version: integer('subscriber_version'),
+    source_event_id: text('source_event_id'),
+    mastery_event_ids: text('mastery_event_ids').array().notNull(),
+    evidence_ids: text('evidence_ids').array().notNull(),
+    question_id: text('question_id'),
+    status: text('status', { enum: ['reserved', 'enqueued', 'debounced', 'disabled'] }).notNull(),
+    stable_job_key: text('stable_job_key').notNull(),
+    downstream_job_id: text('downstream_job_id'),
+    reserved_at: timestamp('reserved_at', { withTimezone: true }).notNull().defaultNow(),
+    enqueued_at: timestamp('enqueued_at', { withTimezone: true }),
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    outcome: jsonb('outcome').$type<JsonObject>(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('event_subscription_effect_causal_uq').on(
+      t.attempt_event_id,
+      t.artifact_id,
+      t.effect_kind,
+    ),
+    uniqueIndex('event_subscription_effect_stable_job_key_uq').on(t.stable_job_key),
+    foreignKey({
+      columns: [t.subscriber_id, t.subscriber_version, t.source_event_id],
+      foreignColumns: [
+        event_subscription_delivery.subscriber_id,
+        event_subscription_delivery.subscriber_version,
+        event_subscription_delivery.source_event_id,
+      ],
+      name: 'event_subscription_effect_delivery_fk',
+    }),
+    check('event_subscription_effect_kind_check', sql`${t.effect_kind} = 'mastery_change'`),
+    check(
+      'event_subscription_effect_status_check',
+      sql`${t.status} IN ('reserved','enqueued','debounced','disabled')`,
+    ),
+    check(
+      'event_subscription_effect_provenance_shape',
+      sql`(${t.subscriber_id} IS NULL AND ${t.subscriber_version} IS NULL AND ${t.source_event_id} IS NULL)
+        OR (${t.subscriber_id} IS NOT NULL AND ${t.subscriber_version} IS NOT NULL AND ${t.subscriber_version} > 0 AND ${t.source_event_id} IS NOT NULL)`,
+    ),
+    check(
+      'event_subscription_effect_mastery_events_nonempty',
+      sql`cardinality(${t.mastery_event_ids}) > 0`,
+    ),
+    check('event_subscription_effect_evidence_nonempty', sql`cardinality(${t.evidence_ids}) > 0`),
+    index('event_subscription_effect_recent_enqueued_idx')
+      .on(t.artifact_id, t.effect_kind, t.enqueued_at.desc())
+      .where(sql`${t.status} = 'enqueued'`),
+    index('event_subscription_effect_provenance_idx').on(
+      t.subscriber_id,
+      t.subscriber_version,
+      t.source_event_id,
+    ),
+    index('event_subscription_effect_downstream_job_idx')
+      .on(t.downstream_job_id)
+      .where(sql`${t.downstream_job_id} IS NOT NULL`),
   ],
 );
 

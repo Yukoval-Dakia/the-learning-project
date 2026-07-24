@@ -16,6 +16,7 @@ import {
   FK_ORDER,
   MAX_INLINE_ASSETS,
   MEM0_COLLECTION_COLUMNS,
+  RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
   type TableName,
   mem0CollectionTable,
@@ -616,6 +617,15 @@ export async function restoreFromArchive({
     // transactional DDL, so the create-extension/create-table for an absent mem0
     // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
     await db.transaction(async (tx) => {
+      // YUK-751 (codex P1): wipe the operational subscription tables FIRST. They are excluded from
+      // the archive (not restored), but their ON DELETE no action FKs into event/artifact would
+      // otherwise block the FK_ORDER parent wipe below. Child→parent order among themselves
+      // (RESTORE_WIPE_ONLY_TABLES = effect → delivery → checkpoint). Not counted in `stats` (they are
+      // wiped-not-restored; a stats entry would misreport them as a backed-up table).
+      for (const t of RESTORE_WIPE_ONLY_TABLES) {
+        await tx.execute(sql.raw(`delete from "${t}"`));
+      }
+
       // Wipe in REVERSE FK order.
       for (const t of [...FK_ORDER].reverse()) {
         await tx.execute(sql.raw(`delete from "${t}"`));
@@ -655,6 +665,17 @@ export async function restoreFromArchive({
       await tx.execute(
         sql.raw(
           `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0)) + 1), false)`,
+        ),
+      );
+
+      // YUK-751 (codex P1): event.dispatch_seq is re-inserted verbatim from the archive (a FORWARD
+      // FK_ORDER table), but event_dispatch_seq is a manual sequence outside pg-dump row semantics.
+      // Without this setval the next event INSERT draws a stale nextval and collides with
+      // event_dispatch_seq_unique. GREATEST(max,0)+1 with is_called=false → the next nextval returns
+      // exactly the next free seq (1 on an empty event table). Same in-tx pattern as subject_change_seq.
+      await tx.execute(
+        sql.raw(
+          `select setval('event_dispatch_seq', (select greatest(coalesce((select max(dispatch_seq) from "event"), 0), 0) + 1), false)`,
         ),
       );
 

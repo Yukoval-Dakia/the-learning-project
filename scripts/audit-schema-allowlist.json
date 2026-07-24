@@ -705,5 +705,365 @@
       "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
       "expected_by": "2027-01-31"
     }
+  },
+  "event.dispatch_seq": {
+    "reason": "YUK-751 event insertion-order diagnostic is written by PostgreSQL DEFAULT nextval('event_dispatch_seq') after deterministic migration 0076 backfill; audit:schema scans TypeScript writes and cannot see database defaults.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 event_dispatch_seq database default and migration backfill",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.subscriber_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.subscriber_version": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.declaration_hash": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.status": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.next_delivery_seq": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.claim_owner": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.claim_token": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.claim_lease_until": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.bootstrapped_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.activated_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_checkpoint.paused_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.subscriber_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.subscriber_version": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.source_event_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.source_dispatch_seq": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.delivery_seq": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.status": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.attempt_count": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.redrive_count": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.next_attempt_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.claim_owner": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.claim_token": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.claim_lease_until": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.last_error": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.outcome": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.discovered_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.claimed_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_delivery.completed_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.attempt_event_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.artifact_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.effect_kind": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.subscriber_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.subscriber_version": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.source_event_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.mastery_event_ids": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.evidence_ids": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.question_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.status": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.stable_job_key": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.downstream_job_id": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.reserved_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.enqueued_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.completed_at": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "event_subscription_effect.outcome": {
+    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
+      "expected_by": "2026-09-30"
+    }
   }
 }

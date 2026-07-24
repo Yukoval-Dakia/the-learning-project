@@ -7,6 +7,36 @@ vi.mock('@/db/client', () => ({ db: {} }));
 
 import { notesCapability } from './manifest';
 
+describe('notes capability — mastery progress subscription (YUK-751)', () => {
+  it('declares the exact live versioned identity and keeps its loader lazy', async () => {
+    const subscription = notesCapability.subscriptions?.handlers[0];
+    expect(notesCapability.subscriptions?.handlers).toHaveLength(1);
+    expect(subscription).toMatchObject({
+      id: 'notes.mastery-progress-note-refine',
+      version: 1,
+      actions: ['experimental:mastery_progress'],
+    });
+    expect(subscription?.load).toBeInstanceOf(Function);
+
+    const factory = await subscription?.load();
+    expect(factory).toBeInstanceOf(Function);
+    const handler = factory?.({});
+    // YUK-751 review: the inactive handler now RETURNS a 'skipped' outcome (not throws), so a
+    // delivery doesn't burn retries → dead-letter; deliverySeq is a decimal string at the boundary.
+    await expect(
+      handler?.({
+        subscriberId: 'notes.mastery-progress-note-refine',
+        subscriberVersion: 1,
+        deliverySeq: '1',
+        sourceEventId: 'event-1',
+      }),
+    ).resolves.toEqual({
+      status: 'skipped',
+      reason: 'mastery-progress note-refine subscription is not active',
+    });
+  });
+});
+
 describe('notes capability — hub-sync job family (YUK-384)', () => {
   const handlers = notesCapability.jobs?.handlers ?? [];
   const byName = new Map(handlers.map((h) => [h.name, h]));

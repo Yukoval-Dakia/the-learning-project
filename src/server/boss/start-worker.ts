@@ -12,6 +12,7 @@ import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/cl
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
+import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
@@ -87,6 +88,10 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
   // （note_verify）先 ready，注册器再挂链式源。
   await registerCapabilityJobs(boss, db, capabilities);
+  // YUK-751 (review TcWGF)：给持久订阅总线通电——注册器之后挂一个周期 pg-boss job 驱动
+  // runSubscriptionDispatchCycle（registry 在此一次性加载）。checkpoint lease 跨 worker 串行化，
+  // 故 in-process 与独立 worker 同时挂载无冲突；无任何 capability 声明订阅时挂载器直接 no-op。
+  await mountSubscriptionDispatch(boss, db, capabilities);
   // YUK-599（v2 §4.3 可见性 SLA）— worker ≤60s 解析到新装配：60s 周期全量
   // reconcile（level-triggered 承重路径，判词 B）。unref 不阻退出；SIGTERM →
   // installShutdownHandler → boss.stop() → 'stopped' → 显式清定时器（v2-test-9）。

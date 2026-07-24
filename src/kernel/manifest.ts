@@ -124,11 +124,49 @@ export interface ProposalKindDecl {
   accept?: ProposalAcceptDecl;
 }
 
+export interface EventSubscriptionDelivery {
+  subscriberId: string;
+  subscriberVersion: number;
+  // Decimal string, NOT bigint: the whole delivery object is handed to user handlers, and
+  // JSON.stringify(bigint) throws. The runtime converts the DB bigint at this boundary so a handler
+  // that logs/serializes the delivery can't crash (YUK-751 review). Parse with BigInt() if needed.
+  deliverySeq: string;
+  sourceEventId: string;
+}
+
+export type EventSubscriptionOutcome =
+  | { status: 'succeeded'; detail?: Record<string, unknown> }
+  | { status: 'skipped'; reason: string; detail?: Record<string, unknown> };
+
+export type EventSubscriptionHandler = (
+  delivery: EventSubscriptionDelivery,
+) => Promise<EventSubscriptionOutcome>;
+
+/**
+ * Event subscription handler factory. As with JobHandlerFactory, `any` is a
+ * deliberate variance escape hatch so kernel stays independent of the DB
+ * implementation while capability manifests can reference concrete factories.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: deliberate variance escape hatch（见 docblock）
+export type EventSubscriptionHandlerFactory = (db: any) => EventSubscriptionHandler;
+
+export interface EventSubscriptionDecl {
+  /** Stable subscriber identity; version is tracked separately. */
+  id: string;
+  version: number;
+  /** Exact event actions consumed by this handler. */
+  actions: readonly string[];
+  /** Mandatory lazy factory loader; composition validation never invokes it. */
+  load: () => Promise<EventSubscriptionHandlerFactory>;
+}
+
 export interface CapabilityManifest {
   name: string;
   description: string;
   /** 本包拥有/骑乘的 event actions（组合期查跨包重复声明） */
   events?: { actions: string[] };
+  /** 本包消费的 event actions；订阅者可与 action owner 分属不同 capability。 */
+  subscriptions?: { handlers: EventSubscriptionDecl[] };
   /** 本包的 API 面归属元数据（真实 route 文件由外壳挂载） */
   api?: { routes: ApiRouteDecl[] };
   /** 本包的 pg-boss job 面（M4 第一实例）：注册由组合根收集挂载 */
@@ -312,6 +350,53 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         throw new Error(`event action '${action}' declared by both '${owner}' and '${cap.name}'`);
       }
       actionOwner.set(action, cap.name);
+    }
+  }
+  const subscriptionOwner = new Map<string, string>();
+  for (const cap of capabilities) {
+    for (const subscription of cap.subscriptions?.handlers ?? []) {
+      // Validate id/version FIRST, using the raw values in the messages. Building `identity` before
+      // this produced nonsensical errors like "'@v1' has invalid id" or "'foo@vundefined' has
+      // invalid version" when the offending field was the empty/invalid one (YUK-751 review).
+      if (subscription.id.trim().length === 0) {
+        throw new Error(
+          `capability '${cap.name}' has an event subscription with invalid id '${subscription.id}'`,
+        );
+      }
+      if (!Number.isInteger(subscription.version) || subscription.version <= 0) {
+        throw new Error(
+          `capability '${cap.name}' event subscription '${subscription.id}' has invalid version ${subscription.version}`,
+        );
+      }
+      const identity = `${subscription.id}@v${subscription.version}`;
+      if (subscription.actions.length === 0) {
+        throw new Error(`event subscription '${identity}' must declare at least one action`);
+      }
+      const subscribedActions = new Set<string>();
+      for (const action of subscription.actions) {
+        if (action.trim().length === 0) {
+          throw new Error(`event subscription '${identity}' declares an empty action`);
+        }
+        if (subscribedActions.has(action)) {
+          throw new Error(`event subscription '${identity}' declares duplicate action '${action}'`);
+        }
+        subscribedActions.add(action);
+        if (!actionOwner.has(action)) {
+          throw new Error(
+            `event subscription '${identity}' subscribes to undeclared event action '${action}'`,
+          );
+        }
+      }
+      if (typeof subscription.load !== 'function') {
+        throw new Error(`event subscription '${identity}' has no loader`);
+      }
+      const owner = subscriptionOwner.get(identity);
+      if (owner !== undefined) {
+        throw new Error(
+          `duplicate event subscription '${identity}' declared by both '${owner}' and '${cap.name}'`,
+        );
+      }
+      subscriptionOwner.set(identity, cap.name);
     }
   }
   const routeOwner = new Map<string, string>([

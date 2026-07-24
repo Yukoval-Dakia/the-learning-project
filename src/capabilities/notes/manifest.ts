@@ -1,3 +1,4 @@
+import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
@@ -39,6 +40,19 @@ export const notesCapability = defineCapability({
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / sections / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
     'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming/verify，dwell 已裁）。',
+  subscriptions: {
+    handlers: [
+      {
+        id: 'notes.mastery-progress-note-refine',
+        version: 1,
+        actions: [MASTERY_PROGRESS_ACTION],
+        load: () =>
+          import('./server/mastery-progress-subscription').then(
+            (m) => m.buildMasteryProgressNoteRefineSubscriber,
+          ),
+      },
+    ],
+  },
   api: {
     // M3-T4 (YUK-317)：9 条路由全带 load 懒加载 thunk（M1/M2 配方）。
     // M5-T5a (YUK-321)：/api/editing-session/* 收编。

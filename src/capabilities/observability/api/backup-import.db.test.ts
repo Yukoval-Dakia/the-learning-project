@@ -1,4 +1,4 @@
-import { FK_ORDER, SCHEMA_VERSION } from '@/server/export/constants';
+import { FK_ORDER, RESTORE_WIPE_ONLY_TABLES, SCHEMA_VERSION } from '@/server/export/constants';
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -16,6 +16,7 @@ vi.mock('@/server/r2', () => ({
 // Track DB calls: DELETE and INSERT statements
 const deleteCalls: string[] = [];
 const insertCalls: Array<{ table: string; rows: unknown[] }> = [];
+const setvalCalls: string[] = [];
 
 type QueryChunk = { value?: string[] } | { queryChunks?: QueryChunk[] };
 
@@ -50,6 +51,8 @@ vi.mock('@/db/client', () => {
       deleteCalls.push(sqlStr.trim());
     } else if (/insert into/i.test(sqlStr)) {
       insertCalls.push({ table: sqlStr, rows: [] });
+    } else if (/setval/i.test(sqlStr)) {
+      setvalCalls.push(sqlStr.trim());
     }
     return [];
   });
@@ -245,6 +248,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   beforeEach(() => {
     deleteCalls.length = 0;
     insertCalls.length = 0;
+    setvalCalls.length = 0;
     r2._store.clear();
   });
 
@@ -254,14 +258,50 @@ describe('POST /api/_/import — wipe + reinsert', () => {
       'data.json': JSON.stringify({}),
     });
     await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
-    expect(deleteCalls.length).toBe(FK_ORDER.length);
-    // First delete should be the last FK_ORDER table (reverse order)
-    expect(deleteCalls[0]).toMatch(
+    // YUK-751: the wipe-only operational tables are deleted FIRST, then the FK_ORDER reverse wipe.
+    expect(deleteCalls.length).toBe(RESTORE_WIPE_ONLY_TABLES.length + FK_ORDER.length);
+    // Wipe-only prefix, in declared child→parent order.
+    RESTORE_WIPE_ONLY_TABLES.forEach((t, i) => {
+      expect(deleteCalls[i]).toMatch(new RegExp(`delete from "${t}"`, 'i'));
+    });
+    // Then the last FK_ORDER table (reverse order) …
+    expect(deleteCalls[RESTORE_WIPE_ONLY_TABLES.length]).toMatch(
       new RegExp(`delete from "${FK_ORDER[FK_ORDER.length - 1]}"`, 'i'),
     );
+    // … down to the first FK_ORDER table last.
     expect(deleteCalls[deleteCalls.length - 1]).toMatch(
       new RegExp(`delete from "${FK_ORDER[0]}"`, 'i'),
     );
+  });
+
+  it('wipes the subscription operational tables BEFORE event/artifact so their FKs do not block the wipe (YUK-751 P1)', async () => {
+    const zip = buildZip({
+      'manifest.json': validManifest(),
+      'data.json': JSON.stringify({}),
+    });
+    await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
+    const idxOf = (re: RegExp) => deleteCalls.findIndex((s) => re.test(s));
+    const effectIdx = idxOf(/delete from "event_subscription_effect"/i);
+    const deliveryIdx = idxOf(/delete from "event_subscription_delivery"/i);
+    const checkpointIdx = idxOf(/delete from "event_subscription_checkpoint"/i);
+    const eventIdx = idxOf(/delete from "event"/i);
+    const artifactIdx = idxOf(/delete from "artifact"/i);
+    expect(effectIdx).toBeGreaterThanOrEqual(0);
+    // delivery.source_event_id → event, effect.attempt_event_id/artifact_id → event/artifact are
+    // ON DELETE no action; residual rows would block the parent wipe unless cleared first.
+    expect(effectIdx).toBeLessThan(eventIdx);
+    expect(deliveryIdx).toBeLessThan(eventIdx);
+    expect(effectIdx).toBeLessThan(artifactIdx);
+    expect(checkpointIdx).toBeLessThan(eventIdx);
+  });
+
+  it('re-syncs event_dispatch_seq on restore so post-restore INSERTs do not collide (YUK-751 P1)', async () => {
+    const zip = buildZip({
+      'manifest.json': validManifest(),
+      'data.json': JSON.stringify({}),
+    });
+    await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
+    expect(setvalCalls.some((s) => /setval\('event_dispatch_seq'/i.test(s))).toBe(true);
   });
 
   it('inserts data in FORWARD FK order', async () => {
