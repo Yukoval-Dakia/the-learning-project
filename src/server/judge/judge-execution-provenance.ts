@@ -27,6 +27,14 @@ function bytesEnvelope(value: Uint8Array): Record<string, unknown> {
 export function stableCanonicalValue(value: unknown): unknown {
   if (value instanceof URL) return value.toString();
   if (value instanceof Uint8Array) return bytesEnvelope(value);
+  // Date has NO enumerable own keys, so the plain-object branch below would
+  // canonicalize every Date to `{}` — all instants colliding in the digest.
+  // (Date.toJSON only saves a TOP-LEVEL JSON.stringify, never our key-iteration
+  // branch.) Tag it like bigint so distinct instants get distinct, non-confusable
+  // digests, and a Date never aliases its own ISO string.
+  if (value instanceof Date) {
+    return { [CANON_MARKER]: { v: 1, t: 'date', value: value.toISOString() } };
+  }
   // YUK-589 (J4) — canonicalization must be TOTAL and non-colliding, never
   // throwing for advisory metadata while silently aliasing distinct inputs.
   //  - BigInt: JSON.stringify throws on it, which would abort the whole hash.
@@ -52,9 +60,9 @@ export function stableCanonicalValue(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map(stableCanonicalValue);
   if (value && typeof value === 'object') {
-    // Date is intentionally NOT rejected: it serializes losslessly via toJSON
-    // (ISO string), so it neither throws nor collides. These exotics DO collide
-    // (JSON.stringify renders them as `{}` or a lossy shape), so refuse them.
+    // Date is handled by the tagged branch above (it would collide here). These
+    // exotics have no meaningful enumerable keys either — JSON.stringify renders
+    // them as `{}` or a lossy shape, silently colliding — so refuse them loudly.
     if (
       value instanceof Map ||
       value instanceof Set ||

@@ -153,9 +153,12 @@ export async function resolveInvokedExecutionProvenance(
 /**
  * YUK-589 — persist the prompt/result digests a judge run produced onto its
  * ai_task_runs row so the supplied-verified path can later corroborate a
- * client-supplied result against what the model actually ran. Best-effort: a
- * failed update leaves the digests null, which downgrades a later supplied claim
- * to `supplied_unverified` (fail-closed) rather than trusting it.
+ * client-supplied result against what the model actually ran. This function does
+ * NOT swallow failures — it awaits the UPDATE and lets errors propagate. The
+ * best-effort, fail-closed contract is enforced by the CALLER (JudgeInvoker):
+ * its try/catch around this call clears the in-memory execution/task_run_id on
+ * failure, so the digests stay null and a later supplied claim downgrades to
+ * `supplied_unverified` rather than being falsely trusted.
  */
 export async function persistJudgeRunDigests(
   db: Db,

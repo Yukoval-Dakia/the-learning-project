@@ -54,6 +54,30 @@ describe('judge execution provenance identity', () => {
     expect(taskInputHash({ n: 10n })).not.toBe(taskInputHash({ n: '10' }));
   });
 
+  // YUK-589 (TjjiY/Tj2RZ) — Date has NO enumerable own keys, so the plain-object
+  // branch used to render EVERY Date as `{}`, collapsing all instants to one
+  // digest. It must now hash into a deterministic, non-colliding tagged envelope.
+  it('canonicalizes Date into a deterministic, non-colliding digest without throwing', () => {
+    const d1 = new Date('2026-07-24T00:00:00.000Z');
+    const d2 = new Date('2026-07-25T00:00:00.000Z');
+    expect(() => taskInputHash({ when: d1 })).not.toThrow();
+    // Deterministic: the same instant hashes identically across calls/instances.
+    expect(taskInputHash({ when: d1 })).toBe(
+      taskInputHash({ when: new Date('2026-07-24T00:00:00.000Z') }),
+    );
+    // Distinct instants do not collide (the pre-fix `{}` made every Date equal).
+    expect(taskInputHash({ when: d1 })).not.toBe(taskInputHash({ when: d2 }));
+    // A Date and its own ISO string render to different envelopes → never alias.
+    expect(taskInputHash({ when: d1 })).not.toBe(taskInputHash({ when: d1.toISOString() }));
+    // A nested Date inside a realistic taskInput stays deterministic.
+    expect(taskInputHash({ question: { id: 'q1', at: d1 }, answer: { content: '甲' } })).toBe(
+      taskInputHash({
+        question: { id: 'q1', at: new Date('2026-07-24T00:00:00.000Z') },
+        answer: { content: '甲' },
+      }),
+    );
+  });
+
   // YUK-589 (J4c) — exotic non-plain objects (Map/Set/RegExp) silently serialized
   // as `{}` before, colliding every distinct instance. They must now throw so the
   // caller's fail-closed guard skips the fingerprint instead of trusting a
