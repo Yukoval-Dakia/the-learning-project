@@ -128,6 +128,7 @@ Question (统一题库，single source of truth)
 | `StepsJudgeTask` | mimo-v2.5 | judge router (steps@1 partial credit) | 否 | 输入 | vision-aware math derivation step judging |
 | `VariantVerifyTask` | mimo-v2.5-pro | pg-boss `variant_verify` (YUK-17 / ADR-0018) | 否 | — | second-pass content alignment for accepted mistake variant; verdict='fail' → mistake_variant.status='broken' |
 | `MultimodalDirectJudgeTask` | mimo-v2.5 | judge router (multimodal_direct route, YUK-201) | 否 | 输入 | holistic vision-aware answer judging（无 step-rubric 的带图题）|
+| `SourceGroundingVerifyTask` | mimo-v2.5 | `source_verify` 图源核验（single_source_grounding 行，YUK-230） | 否 | 输入 | 重读来源图片判「题面是否真在图里」（grounded bool），抓 image_candidate 抽题幻觉；not_grounded → 打回 draft |
 | `StructureTask` | mimo-v2.5 | OCR extraction job（tencent_ocr_extract handler, YUK-145 OC-1/2） | 否 | 输入 | N 页图 + OCR hint → 规范结构树 |
 | `TaggingTask` | mimo-v2.5 | auto-enroll **OBSERVE** path (YUK-145 OC-4) | 否 | — | 题面 + 网格 → knowledge_id 建议 + confidence。**YUK-489：ENROLL 路径改走统一 `tagKnowledge`（embedding cosine match-or-propose，非 registry task）；TaggingTask 仅留 observe 零-mutation 质量探针** |
 | `BlockAssemblyTask` | mimo-v2.5 | auto-enroll server pass (YUK-202) | 否 | — | 相邻 draft block 合并候选（propose-only）|

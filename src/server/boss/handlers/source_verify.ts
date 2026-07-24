@@ -29,7 +29,6 @@ import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
-import type { JudgeResultV2T } from '@/core/schema/capability';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
@@ -39,8 +38,10 @@ import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { runMultimodalDirectJudge } from '@/server/ai/judges/multimodal-direct-judge';
-import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
+import {
+  type SourceGroundingVerifyResult,
+  runSourceGroundingVerify,
+} from '@/server/ai/judges/source-grounding-verify';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -96,10 +97,10 @@ export interface RunSourceVerifyParams {
   questionId: string;
   runTaskFn: RunTaskFn;
   imageFetchFn?: SolveCheckImageFetchFn;
-  // YUK-230 — multimodal grounding re-check seam (single_source_grounding rows only).
-  // DB tests inject a stub to drive pass / fail / transient without real R2 / VLM spend;
-  // production defaults to defaultMultimodalGrounding (→ runMultimodalDirectJudge).
-  multimodalGroundingFn?: MultimodalGroundingFn;
+  // YUK-230 — source-grounding re-check seam (single_source_grounding rows only). DB tests
+  // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
+  // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
+  sourceGroundingFn?: SourceGroundingFn;
 }
 
 export interface RunSourceVerifyResult {
@@ -285,7 +286,7 @@ function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
   };
 }
 
-// ---------- YUK-230 multimodal grounding gate (single_source_grounding rows) ----------
+// ---------- YUK-230 source-grounding gate (single_source_grounding rows) ----------
 //
 // image_candidate accept (src/capabilities/ingestion/server/image-candidate-accept.ts)
 // materializes a web_sourced draft whose deterministic `source_consistency` n-gram check
@@ -293,76 +294,39 @@ function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
 // output, so the overlap passes (near-)trivially. Those rows carry
 // metadata.single_source_grounding=true + the source image's asset id
 // (metadata.image_candidate_source_asset_id). For them source_verify runs ONE paid
-// multimodal re-check — source image + 题面 → 「题面真在图里吗」 — through the existing
-// multimodal_direct judge (owner 2026-06-15 拍板: 能力已存在，只差接线).
+// vision re-check — re-read the source image + ask「题面是否真在图里」 — via the dedicated
+// SourceGroundingVerifyTask (runSourceGroundingVerify). This is a GROUNDING-presence
+// check, NOT answer judging: the earlier draft fed reference_md as a "student answer" to
+// the multimodal_direct answer judge, which could not catch a VLM that hallucinated a
+// self-consistent 题面 + 答案 unrelated to the image (PR #1063 review, thread 2).
 //
 // Owner 2026-07-23 决策清单② — accept = 授权自动复核一次; 复核失败 = 打回 draft（不入池）.
 //
-// Semantics matrix:
-//   coarse_outcome 'incorrect'           → NOT grounded → grounding FAIL → demote to draft
-//   coarse_outcome 'correct' | 'partial' → grounded     → grounding PASS
-//   coarse_outcome 'unsupported'         → TRANSIENT infra/model failure, NOT a content
-//     verdict. The judge never emits 'unsupported' from a SUCCESSFUL LLM parse
-//     (MultimodalDirectLlmOutput is correct|partial|incorrect only); it comes ONLY from
-//     the judge's own error branches (image fetch / LLM call / schema mismatch, all
-//     carrying evidence_json.error). Throw so the catch-bottom writes a retriable
-//     outcome='error' event and pg-boss re-runs (既有 verify 错误惯例). This MUST NOT be
-//     conflated with 「题面不在图里」 (which demotes).
+// Semantics matrix (runSourceGroundingVerify → SourceGroundingVerifyResult.status):
+//   'not_grounded'    → 题面 not in the source image → grounding FAIL → demote to draft
+//   'grounded'        → grounding PASS
+//   'transient_error' → image fetch / LLM call / output parse failed — NOT a content
+//     verdict. FAIL-CLOSED: demote the (pre-promoted active) single-source row to draft
+//     FIRST, then throw so the catch-bottom writes a retriable outcome='error' event and
+//     pg-boss re-runs (既有 verify 错误惯例); a later 'grounded' re-check re-promotes it.
+//     Without the fail-closed demote the row would stay pool-selectable during the retry
+//     window, bypassing this gate (PR #1063 review, thread 1). It is NEVER conflated with
+//     「题面不在图里」. The demote is scoped to THIS single-source row only.
 //
-// The judge is answer-correctness shaped; we repurpose it as a grounding gate by feeding
-// the source image as the prompt figure (image_refs=[assetId]) and the extracted answer
-// (reference_md, or the prompt when reference is empty) as the answer-under-test: an
-// extraction genuinely lifted from the image grades correct/partial, a fabricated or
-// mis-extracted one grades incorrect. The judge's own runTask writes its ai_task_runs +
-// cost_ledger row (real spend, auditable); the verify event records the verdict +
-// triggered_by='image_candidate_accept' (the accept-authorization extension).
+// The runner's runTask writes its own ai_task_runs + cost_ledger row (real spend,
+// auditable); the verify event records the verdict + triggered_by='image_candidate_accept'
+// (the accept-authorization extension).
 
-export interface MultimodalGroundingParams {
+export interface SourceGroundingParams {
   db: Db;
-  question: JudgeQuestionRow;
+  prompt_md: string;
+  reference_md: string | null;
   sourceAssetId: string;
   subjectProfile: SubjectProfile;
 }
-export type MultimodalGroundingFn = (params: MultimodalGroundingParams) => Promise<JudgeResultV2T>;
-
-type GroundingOutcome =
-  | { kind: 'grounded'; confidence: number; summary: string }
-  | { kind: 'not_grounded'; confidence: number; summary: string }
-  | { kind: 'transient_error'; message: string };
-
-export function classifyGroundingResult(result: JudgeResultV2T): GroundingOutcome {
-  if (result.coarse_outcome === 'incorrect') {
-    return { kind: 'not_grounded', confidence: result.confidence, summary: result.feedback_md };
-  }
-  if (result.coarse_outcome === 'correct' || result.coarse_outcome === 'partial') {
-    return { kind: 'grounded', confidence: result.confidence, summary: result.feedback_md };
-  }
-  // 'unsupported' → transient infra/model failure (see matrix above). Surface the judge's
-  // own error reason when present so the retriable error event stays diagnosable.
-  const evidence = (result.evidence_json ?? {}) as Record<string, unknown>;
-  const reason =
-    typeof evidence.error === 'string' && evidence.error.length > 0
-      ? evidence.error
-      : result.feedback_md;
-  return { kind: 'transient_error', message: reason };
-}
-
-async function defaultMultimodalGrounding(
-  params: MultimodalGroundingParams,
-): Promise<JudgeResultV2T> {
-  const answerUnderTest =
-    (params.question.reference_md ?? '').trim().length > 0
-      ? (params.question.reference_md as string)
-      : params.question.prompt_md;
-  return runMultimodalDirectJudge({
-    db: params.db,
-    // Source image as the prompt figure — the judge's defaultImageFetch resolves the asset
-    // id off source_asset + R2 (the same fetch steps@1 / auto-enroll grounding use).
-    question: { ...params.question, image_refs: [params.sourceAssetId] },
-    answer_md: answerUnderTest,
-    subjectProfile: params.subjectProfile,
-  });
-}
+export type SourceGroundingFn = (
+  params: SourceGroundingParams,
+) => Promise<SourceGroundingVerifyResult>;
 
 /**
  * Verify a single sourced draft question against the tier-2 check set. Idempotent
@@ -484,76 +448,74 @@ export async function runSourceVerify(
       checks.push(solveCheckToOutcome(solveResult));
     }
 
-    // ---- YUK-230 multimodal grounding gate (single_source_grounding rows only) ----
-    // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
-    // keeps it draft, so spending the paid VLM re-check on a doomed draft is wasted. For a
-    // single-source row this is the FINAL, real grounding gate — its source_consistency
-    // n-gram is grounding-against-self (extract === the same VLM call's output). See the
-    // MultimodalGroundingParams docblock for the full semantics matrix.
-    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
-    const groundingSourceAssetId =
-      typeof metadataRaw.image_candidate_source_asset_id === 'string'
-        ? metadataRaw.image_candidate_source_asset_id
-        : null;
+    // `otherwisePromotable` is the tier-2 promote decision BEFORE the source-grounding gate:
+    // knowledge survived, no unresolved exact mismatch, image input available, no failing
+    // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
+    // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
+    // two copy-pasted condition lists).
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
       !imageInputUnavailable &&
       !checks.some((c) => c.verdict === 'fail');
+
+    // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
+    // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
+    // keeps it draft, so spending the paid vision re-check on a doomed draft is wasted. For
+    // a single-source row this is the FINAL, real grounding gate — its source_consistency
+    // n-gram is grounding-against-self (extract === the same VLM call's output). See the
+    // SourceGroundingParams docblock for the full semantics matrix.
+    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
+    const groundingSourceAssetId =
+      typeof metadataRaw.image_candidate_source_asset_id === 'string'
+        ? metadataRaw.image_candidate_source_asset_id
+        : null;
     let multimodalGroundingFailed = false;
     let groundingRan = false;
     let groundingSummary: string | undefined;
     let groundingConfidence: number | undefined;
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
-      const groundingFn = params.multimodalGroundingFn ?? defaultMultimodalGrounding;
-      const groundingQuestion: JudgeQuestionRow = {
-        id: row.id,
-        kind: row.kind,
+      const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
+      const outcome = await groundingFn({
+        db,
         prompt_md: row.prompt_md,
         reference_md: row.reference_md,
-        rubric_json: row.rubric_json,
-        choices_md: row.choices_md,
-        judge_kind_override: row.judge_kind_override,
-        knowledge_ids: row.knowledge_ids,
-        metadata: (row.metadata ?? null) as Record<string, unknown> | null,
-        image_refs: row.image_refs,
-        figures: row.figures,
-      };
-      const groundingResult = await groundingFn({
-        db,
-        question: groundingQuestion,
         sourceAssetId: groundingSourceAssetId,
         subjectProfile,
       });
-      const outcome = classifyGroundingResult(groundingResult);
-      if (outcome.kind === 'transient_error') {
-        // TRANSIENT VLM/infra failure — NOT a content verdict. Throw so the catch-bottom
-        // records a retriable outcome='error' event and pg-boss re-runs (既有 verify 错误
-        // 惯例). The draft is untouched (never promoted). Distinct from 'not_grounded',
-        // which demotes to draft as a real content fail.
+      if (outcome.status === 'transient_error') {
+        // TRANSIENT image-fetch / VLM / parse failure — NOT a content verdict.
+        // FAIL-CLOSED (PR #1063 review thread 1): the row was pre-promoted 'active', and
+        // throwing to retry would otherwise leave it pool-selectable during the retry
+        // window, bypassing this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to
+        // THIS single-source row (WHERE draft_status='active'), committed independently of
+        // the throwing verify tx, so it survives the throw — then throw so the catch-bottom
+        // writes the retriable outcome='error' event and pg-boss re-runs; a later 'grounded'
+        // re-check re-promotes it. Scope is limited to this single_source_grounding row: no
+        // other verify error semantics change (a normal transient verify error still just
+        // throws without demoting).
+        await db
+          .update(question)
+          .set({ draft_status: 'draft', updated_at: new Date() })
+          .where(and(eq(question.id, questionId), eq(question.draft_status, 'active')));
         throw new Error(
-          `source_verify multimodal grounding VLM call failed (transient) for ${questionId}: ${outcome.message}`,
+          `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );
       }
       groundingRan = true;
       groundingConfidence = outcome.confidence;
-      groundingSummary = outcome.summary;
-      multimodalGroundingFailed = outcome.kind === 'not_grounded';
+      groundingSummary = outcome.reason_md;
+      multimodalGroundingFailed = outcome.status === 'not_grounded';
     }
 
     // Option B gate: ordinary unsupported remains non-blocking (R2), but when an
     // exact solver/reference mismatch survives because SemanticJudge was unavailable
     // or still disagreed below threshold, a web-sourced answer is not safe to auto-
     // promote. Keep it draft for review without relabelling the mismatch as a fail.
-    // YUK-230 — a single-source multimodal grounding FAIL (题面 not confirmed in the
-    // source image) also blocks promotion → the !promote demote path returns the
-    // pre-promoted cold-start draft to draft_status='draft' (not into the pool).
-    const promote =
-      knowledgeAlive &&
-      !unresolvedAnchoredExactMismatch &&
-      !imageInputUnavailable &&
-      !multimodalGroundingFailed &&
-      !checks.some((c) => c.verdict === 'fail');
+    // YUK-230 — a single-source grounding FAIL (题面 not confirmed in the source image)
+    // also blocks promotion → the !promote demote path returns the pre-promoted cold-start
+    // draft to draft_status='draft' (not into the pool).
+    const promote = otherwisePromotable && !multimodalGroundingFailed;
 
     // solve_check owns its AI run inside runSolveCheck, so this handler holds no
     // single TaskTextResult; the verify event carries the per-check verdicts as its

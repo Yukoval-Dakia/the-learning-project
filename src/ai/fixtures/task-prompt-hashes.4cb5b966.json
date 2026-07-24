@@ -2,7 +2,7 @@
   "baseCommit": "4cb5b9669e9343f5bf4a21385626edc5ed9ad257",
   "algorithm": "sha256",
   "profiles": ["general", "math", "yuwen"],
-  "taskCount": 42,
+  "taskCount": 43,
   "prompts": {
     "general:AttributionTask": "0f9775c6673779e7acef549cd19e8dd675cfe78663dd691e84066e12039130bc",
     "general:AttributionRerankTask": "691eaed6d741e974fe0c4d63a75c92891e9c2a9f244103220abb6abba16ace58",
@@ -129,6 +129,9 @@
     "yuwen:ItemPriorTask": "a607d0c4b2816da3f786c44e6524cf5254ddcfad9f015961724ecbc45df20f53",
     "yuwen:SelectionOrchestratorTask": "4ffd598a602599ec3503e8bcf8a9fa2ea5bcd1a02365f3f6c26593e5bec103ef",
     "yuwen:SourcingTask": "449c4763575cef07365585540ab1dc2de31634c1eeb419b171908e81a6bef0ce",
-    "yuwen:BlockAssemblyTask": "7ad6745c9306ddf874042b0eca335a700e2be698d6f85770929f148400b9914a"
+    "yuwen:BlockAssemblyTask": "7ad6745c9306ddf874042b0eca335a700e2be698d6f85770929f148400b9914a",
+    "general:SourceGroundingVerifyTask": "842f98e3e03047b2ec614b369131ef125e9809235d72fe6750a0010bb7da1d2a",
+    "math:SourceGroundingVerifyTask": "193b86cdf562be1691247030dd0bfbf7672856eb4b1351bb15e11c3adf88bd6f",
+    "yuwen:SourceGroundingVerifyTask": "96523c2fd01478888b093293b0ed45d2b710b9ef85ad78ec537bbca0af4c8280"
   }
 }

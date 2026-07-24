@@ -31,13 +31,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(42);
+    expect(Object.keys(tasks)).toHaveLength(43);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(42);
+    expect(Object.keys(tasks)).toHaveLength(43);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -67,8 +67,8 @@ describe('task prompt definitions', () => {
   it('matches every prompt byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('4cb5b9669e9343f5bf4a21385626edc5ed9ad257');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(42);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(126);
+    expect(promptHashOracle.taskCount).toBe(43);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(129);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
@@ -456,13 +456,21 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 // judges opt in (they are synchronous-route sensors whose catch swallows into
 // 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
 describe('budget.transientRetries (YUK-576)', () => {
-  it('the two vision judges get exactly 1 same-target transient retry', () => {
+  it('the vision judges + source-grounding verifier get exactly 1 same-target transient retry', () => {
     expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
     expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);
+    // YUK-230 — SourceGroundingVerifyTask is a synchronous-route vision call with no durable
+    // backstop, same rationale as the other two vision tasks (source_verify's fail-closed +
+    // pg-boss retry is the OUTER backstop; the 1 in-process retry absorbs a one-off blip).
+    expect(tasks.SourceGroundingVerifyTask.budget.transientRetries).toBe(1);
   });
 
   it('every other task inherits the DEFAULT_BUDGET 0 (no in-process retry)', () => {
-    const optedIn = new Set(['StepsJudgeTask', 'MultimodalDirectJudgeTask']);
+    const optedIn = new Set([
+      'StepsJudgeTask',
+      'MultimodalDirectJudgeTask',
+      'SourceGroundingVerifyTask',
+    ]);
     for (const [kind, def] of Object.entries(tasks)) {
       if (optedIn.has(kind)) continue;
       expect(def.budget.transientRetries, `${kind} must not opt into in-process retry`).toBe(0);
