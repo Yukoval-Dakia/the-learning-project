@@ -28,7 +28,7 @@
 
 1. **零身份**：无 user/learner/account 表；`mastery_state` unique 只有 `(subject_kind, subject_id)`（schema.ts:1372）、`cost_ledger` 无 principal 列（schema.ts:800-820）、`editing_presence` PK = artifact_id 单列（schema.ts:2089-2095）。
 2. **零 principal 贯穿**：auth 只有 `server/app.ts:41-47` 一个共享秘密中间件（`x-internal-token`），证明「持密」不证明「是谁」；route handler / runner / job handler 全链无身份参数（identity §1）。
-3. **单用户闸门是结构性的**：event Zod 契约硬拒 `actor_kind='user' && actor_ref!=='self'`（`src/core/schema/event/known.ts`）；备份是单一全局 FK_ORDER wipe-then-restore，无 per-user 谓词可言（schema 扫描 ASSESSMENT-1）；28 只 cron 全部全局单例扫全库（核验修正 27→28）。
+3. **单用户闸门是局部而非统一的**（07-24 codex 勘误）：`actor_kind='user' && actor_ref!=='self'` 的硬拒仅存在于个别 event schema 的 superRefine（`known.ts:443`），而 `AttemptOnQuestion`/`ReviewOnQuestion` 等 6+ 个已入 `KnownEvent` union 的 kind 接受裸 `actor_ref: z.string()`——**不存在单一 fail-closed 闸门**；备份是单一全局 FK_ORDER wipe-then-restore，无 per-user 谓词可言（schema 扫描 ASSESSMENT-1）；28 只 cron 全部全局单例扫全库（核验修正 27→28）。
 
 ---
 
@@ -75,7 +75,7 @@
 | mem0 / memory | 留缝即可（最就绪） | mem0 全链本来就带 `userId` 参数，只是钉死 `'self'`（client.ts :224/:251/:305）；`memory_reconciliation_log.user_id` 是全库唯一真 user 列 | 无需现在动；翻真值即扩展点 |
 | cost / ai_task_runs 账本 | 记债可等 | 两表均无 principal 列（CONFIRMED）；append-only 账本后补 nullable 列 + backfill `'self'` 便宜；write-side 依赖 principal 贯穿（留缝项） | 新账本类表归 D1；存量等 |
 | pg-boss cron（28 只 + 5 housekeeping） | 记债可等（新 job 留缝） | 全部全局单例、handler 扫全库（frontier_fill / coach_daily 等实测无 user WHERE，locks §2）；多用户 = 逐 handler 改写为 scope-loop，成本固定但巨大 | 新 nightly handler 写成「枚举 scope → per-scope 工作」形状，未来 user fan-out 只是 loop 参数 |
-| event Zod `actor_ref='self'` 闸门 | 留缝即可（**不现在放宽**） | 结构性禁止第二个人类 user（known.ts）；但它同时是 fail-closed 守卫 | 决策 D7：与 principal 真身份同批放宽，不提前拆闸 |
+| event `actor_ref` 校验（**非统一闸门**，勘误） | 现在要动（轻）：先补统一校验 | 'self' 硬拒仅个别 kind 有；多数 kind 收裸 string，已可解析非 self user ref | 决策 D7（修订）：逐 kind/writer 盘点 + 补统一 fail-closed 校验，然后才谈放宽 |
 | 心理测量核心（θ̂ / p(L) / FSRS） | 记债可等（新 fold 表随 D1） | 最深轴（identity §7）：mastery_state / kc_typed_state / learner_axis_state 全部 `(subject_kind, subject_id)` 单学习者键；**多用户的真分叉是 learner-θ（per-user）与 item-b（population，跨用户共享后反而更可估）**——这是产品级设计课题不是加列 | 存量等设计；新 state/fold 表从 D1 起带 user 槽 |
 | editing_presence | 记债可等 | PK = artifact_id 单列，单编辑者语义（「一 artifact 一行」docblock）；多编辑者是另一个模型不是加列；量级可忽略 | 等 |
 
@@ -125,11 +125,11 @@
 - (b) 不标。
 **★ 推荐 (a)**。存量 42 表的标注可以一次 doc-only PR 补齐（schema 扫描三栏清单已经把答案写好了）。
 
-### D7 · event Zod `actor_ref='self'` 闸门何时放宽
-**通俗解释**：事件契约今天硬性拒绝第二个人类用户。这既是多用户的闸门，也是单用户期的 fail-closed 守卫（防止乱写 actor）。
-- (a) 现在放宽为 `self | <userId>` —— 提前拆守卫，换不到任何现值。
-- (b) **保持闸门，与 principal 真身份（D1 缝的兑现日）同批放宽** —— 放宽点唯一、改动一处（known.ts）。
-**★ 推荐 (b)**。
+### D7 · event `actor_ref` 校验（07-24 codex 勘误后修订）
+**通俗解释**：原稿声称「事件契约统一硬拒第二个人类用户、未来只改 known.ts 一处」——**该前提是错的**：'self' 硬拒仅存在于个别 event kind 的 superRefine（known.ts:443），AttemptOnQuestion/ReviewOnQuestion 等 6+ 个 kind 接受任意 actor_ref 字符串，今天就能写入非 'self' 的 user ref。所以 D7 不是「何时放宽」而是「先把闸门建起来」。
+- (a) **先补统一校验**：union 级（或共享 base schema 级）加 fail-closed 规则 `actor_kind='user' ⇒ actor_ref='self'`，逐 kind/writer 盘点存量豁免；将来放宽时才真正「只改一处」。
+- (b) 维持现状（无统一闸门），依赖 writer 侧纪律。
+**★ 推荐 (a)**（轻量；也是 D1 缝的前置——principal 兑现日闸门若不统一，放宽就会漏 kind）。
 
 ### D8 · Card 6（typed client）tripwire
 **通俗解释**：手写 wire 类型双写在恶化（12→15 文件，本窗口 +297 行），但 codegen 基建（openapi.ts）也确实还只是雏形。定一根引爆线，避免「每次 review 都惋惜一遍但永不动手」。
@@ -169,7 +169,7 @@
 | 锁排序纪律对 user 前缀不变 | advisory-locks.ts:26 + locks §B 结论 |
 | 全局 G 锁（#1041 后） | YUK-767 再审清单第 1 条；`.remember/today-2026-07-24.md`（G→supply→row 统一序 / withLearningStateLock×5） |
 | 28 cron 全局单例 | `git grep af2c95ab -- src/capabilities/*/manifest.ts`（核验修正 27→28）+ handlers.ts:77-116 housekeeping ×5 |
-| event Zod 'self' 闸门 | src/core/schema/event/known.ts（schema 扫描；定性、commit-insensitive） |
+| event actor_ref 校验现状（非统一闸门，07-24 勘误） | src/core/schema/event/known.ts:443（superRefine 仅个别 kind）+ 6+ kind 裸 z.string()（codex 勘误核验） |
 | 备份全局 wipe-then-restore | archive.ts:620/:626 + constants.ts FK_ORDER（schema 扫描 ASSESSMENT-1） |
 | 跨包耦合 65–76 | 核验 pass 复测 65 + card-deck ~76 @ af2c95ab；牌面 190 判为口径混入 `@/server/**` |
 | 牌组各卡数字 | card-deck-status（af2c95ab 权威）；metrics-refresh stale 判词全部弃用 |
