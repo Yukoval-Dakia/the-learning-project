@@ -57,7 +57,11 @@ export type VerifyCheck =
   | 'dedup' // not a near-duplicate of an existing pool question
   | 'grounding' // tier-4 legacy: fact grounding vs self-reported source_refs
   | 'copy_safety' // tier-4 legacy: originality vs source snippets
-  | 'knowledge_hit'; // the question actually tests its knowledge_ids
+  | 'knowledge_hit' // the question actually tests its knowledge_ids
+  | 'source_grounding'; // YUK-230: image-sourced 题面 actually appears in its source image
+//   (multimodal re-check on single_source_grounding rows; NOT in any CHECK_SETS_BY_TIER —
+//   it is a conditional gate source_verify pushes only for image_candidate rows, so it has
+//   a live consumer without being a tier check).
 
 // ---------- tier → check-set config ----------
 //

@@ -18,8 +18,10 @@ export const SourceGroundingVerifyOutput = z.object({
   // the image (the hallucination signal).
   grounded: z.boolean(),
   confidence: z.number().min(0).max(1),
-  // What the model actually saw in the image that is relevant to the 题面 (evidence).
-  observed_md: z.string(),
+  // What the model actually saw in the image that is relevant to the 题面 (evidence). The
+  // prompt requires it「即使图片模糊也尽量给出」, so .min(1) matches that contract — an empty
+  // observed_md is a malformed output → parse fail → transient_error (PR #1063 thread 6).
+  observed_md: z.string().min(1),
   // Why grounded / not grounded — cites the image evidence.
   reason_md: z.string().min(1),
 });

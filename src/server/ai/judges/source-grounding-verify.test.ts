@@ -177,4 +177,13 @@ describe('parseSourceGroundingResult — structured/text dispatch', () => {
       }),
     ).toThrow();
   });
+
+  it('throws on an empty observed_md (thread 6 — .min(1) matches the prompt contract)', () => {
+    expect(() =>
+      parseSourceGroundingResult({
+        text: '{}',
+        structured_output: { grounded: true, confidence: 0.8, observed_md: '', reason_md: 'r' },
+      }),
+    ).toThrow();
+  });
 });

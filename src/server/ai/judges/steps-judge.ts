@@ -5,10 +5,10 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
+import { defaultStructuredRunTaskFn, extractJsonObject } from './judge-output-parse';
 import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
@@ -95,25 +95,6 @@ export async function defaultImageFetch(
   return out;
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: RunTaskCtx,
-): Promise<{ text: string; structured_output?: unknown }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx);
-  return { text: result.text, structured_output: result.structured_output };
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('steps judge output did not contain a JSON object');
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
 /**
  * YUK-591 — three-state dispatch over the task result (symmetric with
  * multimodal-direct-judge.ts parseMultimodalDirectResult). Exported for the unit
@@ -129,7 +110,9 @@ export function parseStepsResult(result: {
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return StepsLlmOutput.parse(result.structured_output);
   }
-  return StepsLlmOutput.parse(extractJsonObject(result.text));
+  // YUK-230 thread 7 — shared helper; the 'steps judge output' label keeps the thrown
+  // message byte-identical to the pre-consolidation text (evidence_json.error contract).
+  return StepsLlmOutput.parse(extractJsonObject(result.text, 'steps judge output'));
 }
 
 function composeJudgeResult(
@@ -267,7 +250,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     student_image_count: studentImages.length,
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.

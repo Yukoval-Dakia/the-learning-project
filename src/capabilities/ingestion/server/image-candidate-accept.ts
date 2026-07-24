@@ -863,12 +863,12 @@ export async function acceptImageCandidateProposal(
     // the same VLM call's output, not an independent re-read of the image), but it carries
     // the reference / confidence / wrong-answer context so the overlap is no longer an
     // identity. We mark single_source_grounding: true so the limitation is explicit AND so
-    // source_verify runs the independent multimodal grounding re-check on these rows.
+    // source_verify runs the independent source-grounding re-check on these rows.
     // YUK-230 — that re-check is now WIRED: source_verify reads single_source_grounding +
-    // image_candidate_source_asset_id (stamped below) and runs runMultimodalDirectJudge on
-    // the source image + 题面 (「题面真在图里吗」); a grounding fail demotes the draft out of
-    // the pool. The paid re-check is the automatic extension of THIS user accept (owner
-    // 2026-07-23 决策清单②: accept = 授权自动复核一次).
+    // image_candidate_source_asset_id (stamped below) and runs runSourceGroundingVerify
+    // (dedicated grounding task, NOT the answer judge) on the source image + 题面 (「题面真在
+    // 图里吗」); a grounding fail demotes the draft out of the pool. The paid re-check is the
+    // automatic extension of THIS user accept (owner 2026-07-23 决策清单②: accept = 授权自动复核一次).
     const extractRaw = visionRawText.trim().length > 0 ? visionRawText : promptMd;
     const webSourced: WebSourcedProvenanceT = {
       url: change.source_url,

@@ -591,11 +591,19 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect(ev.outcome).toBe('success');
-    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toMatchObject({
+    const okPayload = ev.payload as Record<string, unknown>;
+    expect(okPayload.overall).toBe('pass');
+    expect(okPayload.source_grounding).toMatchObject({
       grounded: true,
       source_asset_id: 'asset-src-1',
       triggered_by: 'image_candidate_accept',
     });
+    // thread 3 — the grounding verdict is a first-class check (drives the unified overall).
+    expect(okPayload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'pass' }),
+      ]),
+    );
   });
 
   it('YUK-230 demotes a pre-promoted single-source draft back to draft when the 题面 is NOT in the image (VLM hallucination)', async () => {
@@ -627,13 +635,91 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect(ev.outcome).toBe('failure');
-    expect((ev.payload as Record<string, unknown>).demoted).toBe(true);
-    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toMatchObject({
+    const failPayload = ev.payload as Record<string, unknown>;
+    expect(failPayload.demoted).toBe(true);
+    expect(failPayload.source_grounding).toMatchObject({
       grounded: false,
       source_asset_id: 'asset-src-2',
       triggered_by: 'image_candidate_accept',
     });
-    expect((ev.payload as Record<string, unknown>).summary_md).toContain('multimodal_grounding');
+    // thread 3 — grounding fail is a failing check, so the unified overall is 'fail' (not
+    // 'needs_review') and the summary names source_grounding, matching the outcome.
+    expect(failPayload.overall).toBe('fail');
+    expect(failPayload.failure_class).toBe('validation_failure');
+    expect(failPayload.summary_md).toContain('source_grounding');
+    expect(failPayload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'fail' }),
+      ]),
+    );
+  });
+
+  it('YUK-230 FAIL-CLOSED: a BARE throw from the grounding fn is treated as transient (demote + throw)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-bare'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 1 — a bug/regression that makes the grounding fn THROW (instead of returning a
+    // discriminated result) must NOT bypass fail-closed. The handler wraps the call and folds
+    // a bare throw into the same transient path (demote → throw).
+    const sourceGroundingFn = vi.fn(async () => {
+      throw new Error('unexpected grounding fn crash');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft'); // fail-closed demote fired despite the bare throw
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('error');
+  });
+
+  it('YUK-230 overlapping delivery: a transient run does NOT yank a row a concurrent run already verified+promoted', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-race'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 2 — simulate the race window: WHILE this (stale) run is inside the grounding call,
+    // a CONCURRENT run terminally verifies + promotes the question (writes a source_verify
+    // outcome='success' event). This run then gets a transient error. The fail-closed demote
+    // MUST skip (NOT EXISTS success guard) so the concurrent run's active row is not pulled.
+    const sourceGroundingFn = vi.fn(async () => {
+      await db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: qid,
+        outcome: 'success',
+        payload: { question_id: qid, promoted: true },
+        caused_by_event_id: null,
+        created_at: new Date(),
+      });
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    // The row stays 'active' — the concurrent success event blocked the demote.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
   });
 
   it('YUK-230 FAIL-CLOSED: a transient grounding error demotes the single-source row to draft AND throws (retriable)', async () => {
@@ -683,7 +769,7 @@ describe('runSourceVerify', () => {
       .select()
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
-    expect((ev.payload as Record<string, unknown>).multimodal_grounding).toBeUndefined();
+    expect((ev.payload as Record<string, unknown>).source_grounding).toBeUndefined();
   });
 
   it('YUK-230 skips the paid grounding re-check when a deterministic check already fails (no wasted VLM spend)', async () => {

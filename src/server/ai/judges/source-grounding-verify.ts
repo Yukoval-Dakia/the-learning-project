@@ -23,9 +23,13 @@ import {
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
+import {
+  type StructuredTaskResult,
+  defaultStructuredRunTaskFn,
+  extractJsonObject,
+} from './judge-output-parse';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
 
@@ -36,11 +40,13 @@ import { defaultImageFetch } from './steps-judge';
 const outputSchema = tasks.SourceGroundingVerifyTask.structuredOutputSchema;
 const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
 
+// Concrete `{ text, images }` input (NOT `... | unknown`, which collapses the whole union
+// to `unknown` and erases the documented shape — PR #1063 review thread 8).
 export type SourceGroundingRunTaskFn = (
   kind: string,
-  input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
+  input: { text: string; images: Array<{ data: string; mediaType: string }> },
   ctx: unknown,
-) => Promise<{ text: string; structured_output?: unknown }>;
+) => Promise<StructuredTaskResult>;
 
 export type SourceGroundingImageFetchFn = (
   assetIds: string[],
@@ -63,25 +69,6 @@ export type SourceGroundingVerifyResult =
   | { status: 'not_grounded'; confidence: number; observed_md: string; reason_md: string }
   | { status: 'transient_error'; message: string };
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: RunTaskCtx,
-): Promise<{ text: string; structured_output?: unknown }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx);
-  return { text: result.text, structured_output: result.structured_output };
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('source_grounding_verify output did not contain a JSON object');
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
 /**
  * Three-state dispatch over the task result (mirrors the multimodal/steps judges):
  * structured_output present → Zod-parse it (the Zod pass is NOT optional — outputFormat
@@ -89,14 +76,15 @@ function extractJsonObject(text: string): unknown {
  * text. `.parse` (throwing) is kept so a malformed output surfaces as a transient_error
  * in the caller rather than a silent grounded/not_grounded. Exported for the unit test.
  */
-export function parseSourceGroundingResult(result: {
-  text: string;
-  structured_output?: unknown;
-}): SourceGroundingVerifyOutputT {
+export function parseSourceGroundingResult(
+  result: StructuredTaskResult,
+): SourceGroundingVerifyOutputT {
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return SourceGroundingVerifyOutput.parse(result.structured_output);
   }
-  return SourceGroundingVerifyOutput.parse(extractJsonObject(result.text));
+  return SourceGroundingVerifyOutput.parse(
+    extractJsonObject(result.text, 'source_grounding_verify output'),
+  );
 }
 
 export async function runSourceGroundingVerify(
@@ -127,8 +115,8 @@ export async function runSourceGroundingVerify(
     image_present: true,
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
-  let taskResult: { text: string; structured_output?: unknown };
+  const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
+  let taskResult: StructuredTaskResult;
   try {
     taskResult = await runTaskFn(
       'SourceGroundingVerifyTask',

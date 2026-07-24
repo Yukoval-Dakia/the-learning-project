@@ -476,28 +476,53 @@ export async function runSourceVerify(
     let groundingConfidence: number | undefined;
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
       const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
-      const outcome = await groundingFn({
-        db,
-        prompt_md: row.prompt_md,
-        reference_md: row.reference_md,
-        sourceAssetId: groundingSourceAssetId,
-        subjectProfile,
-      });
+      let outcome: SourceGroundingVerifyResult;
+      try {
+        outcome = await groundingFn({
+          db,
+          prompt_md: row.prompt_md,
+          reference_md: row.reference_md,
+          sourceAssetId: groundingSourceAssetId,
+          subjectProfile,
+        });
+      } catch (err) {
+        // PR #1063 review thread 1 — a BARE throw from the grounding fn (a bug, or a future
+        // change that stops returning the discriminated result) must NOT bypass fail-closed.
+        // Fold it into the SAME transient_error branch (demote → throw) as a returned
+        // transient_error, so an unexpected throw can never silently leave a pre-promoted row
+        // in the pool.
+        outcome = {
+          status: 'transient_error',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (outcome.status === 'transient_error') {
-        // TRANSIENT image-fetch / VLM / parse failure — NOT a content verdict.
-        // FAIL-CLOSED (PR #1063 review thread 1): the row was pre-promoted 'active', and
-        // throwing to retry would otherwise leave it pool-selectable during the retry
-        // window, bypassing this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to
-        // THIS single-source row (WHERE draft_status='active'), committed independently of
-        // the throwing verify tx, so it survives the throw — then throw so the catch-bottom
-        // writes the retriable outcome='error' event and pg-boss re-runs; a later 'grounded'
-        // re-check re-promotes it. Scope is limited to this single_source_grounding row: no
-        // other verify error semantics change (a normal transient verify error still just
-        // throws without demoting).
+        // TRANSIENT image-fetch / VLM / parse failure (or a bare throw, above) — NOT a content
+        // verdict. FAIL-CLOSED (thread 1): the row was pre-promoted 'active', and throwing to
+        // retry would otherwise leave it pool-selectable during the retry window, bypassing
+        // this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to THIS single-source
+        // row, committed independently of the throwing verify tx so it survives the throw —
+        // then throw so the catch-bottom writes the retriable outcome='error' event and
+        // pg-boss re-runs; a later 'grounded' re-check re-promotes it. Scope is limited to this
+        // single_source_grounding row: no other verify error semantics change.
+        //
+        // OVERLAPPING-DELIVERY GUARD (thread 2, codex): pg-boss can have TWO deliveries of the
+        // same question in flight (this run passed the top idempotency check before a
+        // concurrent run committed). If that concurrent run has SINCE terminally verified +
+        // promoted this question (a source_verify outcome='success' event now exists), it owns
+        // the row's 'active' state — this stale run must NOT yank it back out. The NOT EXISTS
+        // subquery makes the check atomic with the demote (no check-then-act TOCTOU): the
+        // UPDATE demotes ONLY when no success verify event exists.
         await db
           .update(question)
           .set({ draft_status: 'draft', updated_at: new Date() })
-          .where(and(eq(question.id, questionId), eq(question.draft_status, 'active')));
+          .where(
+            and(
+              eq(question.id, questionId),
+              eq(question.draft_status, 'active'),
+              sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
+            ),
+          );
         throw new Error(
           `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );
@@ -506,6 +531,15 @@ export async function runSourceVerify(
       groundingConfidence = outcome.confidence;
       groundingSummary = outcome.reason_md;
       multimodalGroundingFailed = outcome.status === 'not_grounded';
+      // PR #1063 review thread 3 — push the grounding verdict as a real check so
+      // toUnifiedVerifyResult's roll-up sees a failing check and yields overall='fail'
+      // (previously grounding fail lived only in `promote` + the summary, so a not_grounded
+      // row projected overall='needs_review' while its summary said "failed" — a mismatch).
+      checks.push({
+        check: 'source_grounding',
+        verdict: multimodalGroundingFailed ? 'fail' : 'pass',
+        reason: outcome.reason_md,
+      });
     }
 
     // Option B gate: ordinary unsupported remains non-blocking (R2), but when an
@@ -532,23 +566,21 @@ export async function runSourceVerify(
     // needs_review). The promote predicate is unchanged. The summary names the failing
     // check (or the knowledge-archived gate), giving draft-review.ts a驳回理由 it never
     // had for tier-2 drafts before. SUPERSET: the existing payload keys below are kept.
+    // YUK-230 (thread 3) — grounding fail is now a failing check in `checks[]`, so the generic
+    // `failingCheck` branch names it (`source_grounding — <reason_md>`); no separate grounding
+    // summary branch is needed, and toUnifiedVerifyResult's roll-up sees the failing check.
     const failingCheck = checks.find((c) => c.verdict === 'fail');
     const sourceSummaryMd = promote
       ? 'tier-2 source verify passed'
       : failingCheck
         ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
-        : multimodalGroundingFailed
-          ? // YUK-230 — grounding fail names the reason draft-review.ts surfaces.
-            `tier-2 source verify failed: multimodal_grounding — 题面未在来源图片中被复核确认${
-              groundingSummary ? `: ${groundingSummary}` : ''
-            }`
-          : unresolvedAnchoredExactMismatch
-            ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
-            : imageInputUnavailable
-              ? 'tier-2 source verify needs review: prompt image content was unavailable'
-              : !knowledgeAlive
-                ? 'referenced knowledge point archived after sourcing; not promoted'
-                : 'tier-2 source verify did not promote';
+        : unresolvedAnchoredExactMismatch
+          ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
+          : imageInputUnavailable
+            ? 'tier-2 source verify needs review: prompt image content was unavailable'
+            : !knowledgeAlive
+              ? 'referenced knowledge point archived after sourcing; not promoted'
+              : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,
@@ -693,14 +725,14 @@ export async function runSourceVerify(
                   archived_knowledge_ids: archivedKnowledgeIds,
                 },
               }),
-          // YUK-230 — the multimodal grounding re-check verdict (single_source_grounding
-          // rows only; absent otherwise). triggered_by records the accept-authorization
-          // extension (owner 2026-07-23 决策清单②). The real VLM cost is on the judge's own
-          // ai_task_runs + cost_ledger row (MultimodalDirectJudgeTask); this is the audit
-          // trail on the verify event.
+          // YUK-230 — the source-grounding re-check verdict (single_source_grounding rows
+          // only; absent otherwise). triggered_by records the accept-authorization extension
+          // (owner 2026-07-23 决策清单②). The real VLM cost is on the runner's own ai_task_runs
+          // + cost_ledger row (SourceGroundingVerifyTask); this is the audit trail on the
+          // verify event (mirrored by the source_grounding entry in checks[]).
           ...(groundingRan
             ? {
-                multimodal_grounding: {
+                source_grounding: {
                   grounded: !multimodalGroundingFailed,
                   ...(groundingConfidence !== undefined ? { confidence: groundingConfidence } : {}),
                   ...(groundingSummary ? { summary_md: groundingSummary } : {}),
