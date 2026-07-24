@@ -6,9 +6,9 @@ import {
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
+import { defaultStructuredRunTaskFn, extractJsonObject } from './judge-output-parse';
 import type { JudgeQuestionRow } from './question-contract';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
@@ -57,25 +57,6 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
   };
 }
 
-async function defaultRunTaskFn(
-  kind: string,
-  input: unknown,
-  ctx: RunTaskCtx,
-): Promise<{ text: string; structured_output?: unknown }> {
-  const { runTask } = await import('@/server/ai/runner');
-  const result = await runTask(kind, input, ctx);
-  return { text: result.text, structured_output: result.structured_output };
-}
-
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('multimodal_direct judge output did not contain a JSON object');
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
 /**
  * YUK-591 — three-state dispatch over the task result (mirrors variant_verify's
  * parseVariantVerifyResult). Exported so the unit test can feed constructed
@@ -99,7 +80,11 @@ export function parseMultimodalDirectResult(result: {
   if (result.structured_output !== undefined && result.structured_output !== null) {
     return MultimodalDirectLlmOutput.parse(result.structured_output);
   }
-  return MultimodalDirectLlmOutput.parse(extractJsonObject(result.text));
+  // YUK-230 thread 7 — shared helper; the 'multimodal_direct judge output' label keeps the
+  // thrown message byte-identical to the pre-consolidation text (evidence_json.error contract).
+  return MultimodalDirectLlmOutput.parse(
+    extractJsonObject(result.text, 'multimodal_direct judge output'),
+  );
 }
 
 /**
@@ -205,7 +190,7 @@ export async function runMultimodalDirectJudge(
     student_image_count: studentImages.length,
   });
 
-  const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
+  const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.

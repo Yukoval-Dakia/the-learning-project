@@ -31,13 +31,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(42);
+    expect(Object.keys(tasks)).toHaveLength(43);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(42);
+    expect(Object.keys(tasks)).toHaveLength(43);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -67,8 +67,8 @@ describe('task prompt definitions', () => {
   it('matches every prompt byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('4cb5b9669e9343f5bf4a21385626edc5ed9ad257');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(42);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(126);
+    expect(promptHashOracle.taskCount).toBe(43);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(129);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
@@ -459,6 +459,11 @@ describe('budget.transientRetries (YUK-576)', () => {
   it('the two vision judges get exactly 1 same-target transient retry', () => {
     expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
     expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);
+    // YUK-230 — SourceGroundingVerifyTask deliberately does NOT opt in: it runs inside the
+    // durable source_verify pg-boss job (throws on transient → queue redelivery is the retry
+    // layer), so an in-process retry would stack a second transient layer (single-transient-
+    // layer principle). It is asserted to inherit 0 by the "every other task" case below.
+    expect(tasks.SourceGroundingVerifyTask.budget.transientRetries).toBe(0);
   });
 
   it('every other task inherits the DEFAULT_BUDGET 0 (no in-process retry)', () => {

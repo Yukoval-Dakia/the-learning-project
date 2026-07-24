@@ -38,6 +38,10 @@ import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import {
+  type SourceGroundingVerifyResult,
+  runSourceGroundingVerify,
+} from '@/server/ai/judges/source-grounding-verify';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -51,7 +55,7 @@ import {
   checksForTier,
   runSolveCheck,
 } from '@/server/quiz/verify-framework';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {
@@ -93,6 +97,10 @@ export interface RunSourceVerifyParams {
   questionId: string;
   runTaskFn: RunTaskFn;
   imageFetchFn?: SolveCheckImageFetchFn;
+  // YUK-230 — source-grounding re-check seam (single_source_grounding rows only). DB tests
+  // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
+  // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
+  sourceGroundingFn?: SourceGroundingFn;
 }
 
 export interface RunSourceVerifyResult {
@@ -278,6 +286,48 @@ function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
   };
 }
 
+// ---------- YUK-230 source-grounding gate (single_source_grounding rows) ----------
+//
+// image_candidate accept (src/capabilities/ingestion/server/image-candidate-accept.ts)
+// materializes a web_sourced draft whose deterministic `source_consistency` n-gram check
+// is GROUNDING-AGAINST-SELF: the stored `extract` is the SAME single VLM call's own
+// output, so the overlap passes (near-)trivially. Those rows carry
+// metadata.single_source_grounding=true + the source image's asset id
+// (metadata.image_candidate_source_asset_id). For them source_verify runs ONE paid
+// vision re-check — re-read the source image + ask「题面是否真在图里」 — via the dedicated
+// SourceGroundingVerifyTask (runSourceGroundingVerify). This is a GROUNDING-presence
+// check, NOT answer judging: the earlier draft fed reference_md as a "student answer" to
+// the multimodal_direct answer judge, which could not catch a VLM that hallucinated a
+// self-consistent 题面 + 答案 unrelated to the image (PR #1063 review, thread 2).
+//
+// Owner 2026-07-23 决策清单② — accept = 授权自动复核一次; 复核失败 = 打回 draft（不入池）.
+//
+// Semantics matrix (runSourceGroundingVerify → SourceGroundingVerifyResult.status):
+//   'not_grounded'    → 题面 not in the source image → grounding FAIL → demote to draft
+//   'grounded'        → grounding PASS
+//   'transient_error' → image fetch / LLM call / output parse failed — NOT a content
+//     verdict. FAIL-CLOSED: demote the (pre-promoted active) single-source row to draft
+//     FIRST, then throw so the catch-bottom writes a retriable outcome='error' event and
+//     pg-boss re-runs (既有 verify 错误惯例); a later 'grounded' re-check re-promotes it.
+//     Without the fail-closed demote the row would stay pool-selectable during the retry
+//     window, bypassing this gate (PR #1063 review, thread 1). It is NEVER conflated with
+//     「题面不在图里」. The demote is scoped to THIS single-source row only.
+//
+// The runner's runTask writes its own ai_task_runs + cost_ledger row (real spend,
+// auditable); the verify event records the verdict + triggered_by='image_candidate_accept'
+// (the accept-authorization extension).
+
+export interface SourceGroundingParams {
+  db: Db;
+  prompt_md: string;
+  reference_md: string | null;
+  sourceAssetId: string;
+  subjectProfile: SubjectProfile;
+}
+export type SourceGroundingFn = (
+  params: SourceGroundingParams,
+) => Promise<SourceGroundingVerifyResult>;
+
 /**
  * Verify a single sourced draft question against the tier-2 check set. Idempotent
  * per (question_id) via the chained verify event guard. Promotes draft→active +
@@ -398,15 +448,117 @@ export async function runSourceVerify(
       checks.push(solveCheckToOutcome(solveResult));
     }
 
-    // Option B gate: ordinary unsupported remains non-blocking (R2), but when an
-    // exact solver/reference mismatch survives because SemanticJudge was unavailable
-    // or still disagreed below threshold, a web-sourced answer is not safe to auto-
-    // promote. Keep it draft for review without relabelling the mismatch as a fail.
-    const promote =
+    // `otherwisePromotable` is the tier-2 promote decision BEFORE the source-grounding gate:
+    // knowledge survived, no unresolved exact mismatch, image input available, no failing
+    // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
+    // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
+    // two copy-pasted condition lists).
+    const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
       !imageInputUnavailable &&
       !checks.some((c) => c.verdict === 'fail');
+
+    // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
+    // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
+    // keeps it draft, so spending the paid vision re-check on a doomed draft is wasted. For
+    // a single-source row this is the FINAL, real grounding gate — its source_consistency
+    // n-gram is grounding-against-self (extract === the same VLM call's output). See the
+    // SourceGroundingParams docblock for the full semantics matrix.
+    const singleSourceGrounding = metadataRaw.single_source_grounding === true;
+    const groundingSourceAssetId =
+      typeof metadataRaw.image_candidate_source_asset_id === 'string'
+        ? metadataRaw.image_candidate_source_asset_id
+        : null;
+    let multimodalGroundingFailed = false;
+    let groundingRan = false;
+    let groundingSummary: string | undefined;
+    let groundingConfidence: number | undefined;
+    if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
+      const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
+      let outcome: SourceGroundingVerifyResult;
+      try {
+        outcome = await groundingFn({
+          db,
+          prompt_md: row.prompt_md,
+          reference_md: row.reference_md,
+          sourceAssetId: groundingSourceAssetId,
+          subjectProfile,
+        });
+      } catch (err) {
+        // PR #1063 review thread 1 — a BARE throw from the grounding fn (a bug, or a future
+        // change that stops returning the discriminated result) must NOT bypass fail-closed.
+        // Fold it into the SAME transient_error branch (demote → throw) as a returned
+        // transient_error, so an unexpected throw can never silently leave a pre-promoted row
+        // in the pool.
+        outcome = {
+          status: 'transient_error',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (outcome.status === 'transient_error') {
+        // TRANSIENT image-fetch / VLM / parse failure (or a bare throw, above) — NOT a content
+        // verdict. FAIL-CLOSED (thread 1): the row was pre-promoted 'active', and throwing to
+        // retry would otherwise leave it pool-selectable during the retry window, bypassing
+        // this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to THIS single-source
+        // row, committed independently of the throwing verify tx so it survives the throw —
+        // then throw so the catch-bottom writes the retriable outcome='error' event and
+        // pg-boss re-runs; a later 'grounded' re-check re-promotes it. Scope is limited to this
+        // single_source_grounding row: no other verify error semantics change.
+        //
+        // OVERLAPPING-DELIVERY GUARD (thread 2, codex): pg-boss can have TWO deliveries of the
+        // same question in flight (this run passed the top idempotency check before a
+        // concurrent run committed). If that concurrent run has SINCE terminally verified +
+        // promoted this question (a source_verify outcome='success' event now exists), it owns
+        // the row's 'active' state — this stale run must NOT yank it back out. The NOT EXISTS
+        // subquery makes the check atomic with the demote (no check-then-act TOCTOU): the
+        // UPDATE demotes ONLY when no success verify event exists.
+        //
+        // VERSION GUARD (thread 2 round-2, codex): mirror the normal promote/demote branch's
+        // `current.version !== row.version` staleness check. This run's grounding verdict was
+        // computed against `row.version`; if the question was EDITED (version bumped) during the
+        // VLM call, this delivery is stale and must NOT act on the newer row — pin the demote to
+        // `version = row.version` so a bumped row is untouched (this run then throws and is
+        // re-run against the fresh version). Without it, a stale delivery could yank a freshly
+        // re-verified newer version out of the pool.
+        await db
+          .update(question)
+          .set({ draft_status: 'draft', updated_at: new Date() })
+          .where(
+            and(
+              eq(question.id, questionId),
+              eq(question.draft_status, 'active'),
+              eq(question.version, row.version),
+              sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
+            ),
+          );
+        throw new Error(
+          `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
+        );
+      }
+      groundingRan = true;
+      groundingConfidence = outcome.confidence;
+      groundingSummary = outcome.reason_md;
+      multimodalGroundingFailed = outcome.status === 'not_grounded';
+      // PR #1063 review thread 3 — push the grounding verdict as a real check so
+      // toUnifiedVerifyResult's roll-up sees a failing check and yields overall='fail'
+      // (previously grounding fail lived only in `promote` + the summary, so a not_grounded
+      // row projected overall='needs_review' while its summary said "failed" — a mismatch).
+      checks.push({
+        check: 'source_grounding',
+        verdict: multimodalGroundingFailed ? 'fail' : 'pass',
+        reason: outcome.reason_md,
+      });
+    }
+
+    // Option B gate: ordinary unsupported remains non-blocking (R2), but when an
+    // exact solver/reference mismatch survives because SemanticJudge was unavailable
+    // or still disagreed below threshold, a web-sourced answer is not safe to auto-
+    // promote. Keep it draft for review without relabelling the mismatch as a fail.
+    // YUK-230 — a single-source grounding FAIL (题面 not confirmed in the source image)
+    // also blocks promotion → the !promote demote path returns the pre-promoted cold-start
+    // draft to draft_status='draft' (not into the pool).
+    const promote = otherwisePromotable && !multimodalGroundingFailed;
 
     // solve_check owns its AI run inside runSolveCheck, so this handler holds no
     // single TaskTextResult; the verify event carries the per-check verdicts as its
@@ -423,6 +575,9 @@ export async function runSourceVerify(
     // needs_review). The promote predicate is unchanged. The summary names the failing
     // check (or the knowledge-archived gate), giving draft-review.ts a驳回理由 it never
     // had for tier-2 drafts before. SUPERSET: the existing payload keys below are kept.
+    // YUK-230 (thread 3) — grounding fail is now a failing check in `checks[]`, so the generic
+    // `failingCheck` branch names it (`source_grounding — <reason_md>`); no separate grounding
+    // summary branch is needed, and toUnifiedVerifyResult's roll-up sees the failing check.
     const failingCheck = checks.find((c) => c.verdict === 'fail');
     const sourceSummaryMd = promote
       ? 'tier-2 source verify passed'
@@ -521,7 +676,9 @@ export async function runSourceVerify(
         // 'draft' so a failed-verify cold-start question leaves the pool.
         //
         // SCOPED-BY-CONSTRUCTION (no marker column needed): the ONLY question that can be 'active'
-        // when source_verify reaches this !promote branch is a cold-start pre-promote. A normal
+        // when source_verify reaches this !promote branch is a cold-start pre-promote (the same
+        // image_candidate-accept path that also carries single_source_grounding — so a YUK-230
+        // grounding FAIL is one of the reasons a pre-promoted draft lands here). A normal
         // web_sourced draft (sourcing.ts) is 'draft' here → the WHERE draft_status='active' guard
         // makes the demote a no-op; an already-verified question is short-circuited by the
         // idempotency guard above (terminal verify event) and never reaches this branch;
@@ -577,6 +734,22 @@ export async function runSourceVerify(
                   archived_knowledge_ids: archivedKnowledgeIds,
                 },
               }),
+          // YUK-230 — the source-grounding re-check verdict (single_source_grounding rows
+          // only; absent otherwise). triggered_by records the accept-authorization extension
+          // (owner 2026-07-23 决策清单②). The real VLM cost is on the runner's own ai_task_runs
+          // + cost_ledger row (SourceGroundingVerifyTask); this is the audit trail on the
+          // verify event (mirrored by the source_grounding entry in checks[]).
+          ...(groundingRan
+            ? {
+                source_grounding: {
+                  grounded: !multimodalGroundingFailed,
+                  ...(groundingConfidence !== undefined ? { confidence: groundingConfidence } : {}),
+                  ...(groundingSummary ? { summary_md: groundingSummary } : {}),
+                  source_asset_id: groundingSourceAssetId,
+                  triggered_by: 'image_candidate_accept',
+                },
+              }
+            : {}),
           verified_by: verifiedBy,
           ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
