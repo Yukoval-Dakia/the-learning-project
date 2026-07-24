@@ -4,9 +4,12 @@
 // （audit:schema write-path 契约）。
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
 import { and, desc, eq, notInArray } from 'drizzle-orm';
+
+/** db 句柄或事务句柄——需在同一事务里链式调用的写走 Tx。 */
+type DbOrTx = Db | Tx;
 
 export type RunTrigger = 'cron' | 'manual';
 export type RunStatus = 'running' | 'completed' | 'abandoned';
@@ -49,7 +52,7 @@ export interface NodeRow {
  * 推进既有 run。
  */
 export async function createRun(
-  db: Db,
+  db: DbOrTx,
   input: { runDate: string; trigger: RunTrigger; now?: Date },
 ): Promise<RunRow | null> {
   const now = input.now ?? new Date();
@@ -119,9 +122,10 @@ export async function finishRun(
     .where(and(eq(dag_orchestration_run.id, runId), eq(dag_orchestration_run.status, 'running')));
 }
 
-/** 批量落节点行（全 pending）。job 名唯一性由 unique(run_id, job_name) 兜。 */
+/** 批量落节点行（全 pending）。job 名唯一性由 unique(run_id, job_name) 兜——onConflictDoNothing
+ *  使其幂等：重复调用/补齐缺失节点安全（自愈 0 节点 run）。 */
 export async function insertNodes(
-  db: Db,
+  db: DbOrTx,
   runId: string,
   jobNames: readonly string[],
   now = new Date(),
@@ -140,6 +144,24 @@ export async function insertNodes(
       })),
     )
     .onConflictDoNothing();
+}
+
+/**
+ * 原子建 run + 落全部节点（YUK-758 review ToqXn）：createRun 与 insertNodes 同一事务，杜绝
+ * 「createRun 已提交、insertNodes 前崩溃」留下的 0 节点 run（会让 tick 永远自转不 enqueue）。
+ * createRun 撞单飞返回 null → 事务内不插节点、返回 null，调用方转为采纳赢家的 run。
+ */
+export async function createRunWithNodes(
+  db: Db,
+  input: { runDate: string; trigger: RunTrigger; jobNames: readonly string[]; now?: Date },
+): Promise<RunRow | null> {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const run = await createRun(tx, { runDate: input.runDate, trigger: input.trigger, now });
+    if (!run) return null;
+    await insertNodes(tx, run.id, input.jobNames, now);
+    return run;
+  });
 }
 
 /** 载入某 run 全部节点，映射 job_name → 行。 */

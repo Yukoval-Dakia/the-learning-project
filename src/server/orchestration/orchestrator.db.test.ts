@@ -259,6 +259,31 @@ describe('orchestrator trigger semantics', () => {
     expect(boss.memberSends.filter((s) => s.name === 'b')).toHaveLength(0);
   });
 
+  it('⑨ adopting a run committed with 0 nodes self-heals (backfills nodes + enqueues roots)', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    // Simulate the crash window: createRun committed a running run, insertNodes never ran.
+    await db.insert(dag_orchestration_run).values({
+      id: 'orphan-run',
+      run_date: RUN_DATE,
+      trigger: 'cron',
+      status: 'running',
+      started_at: NOW,
+      updated_at: NOW,
+    });
+
+    // A redelivered cron start adopts the orphan run; it must backfill the missing
+    // nodes and enqueue the root rather than spin forever on a 0-node run (ToqXn).
+    const run = await runOrchestratorStart(
+      { db, boss, dag, now: NOW, localDate: () => RUN_DATE },
+      'cron',
+    );
+    expect(run?.id).toBe('orphan-run');
+    expect((await nodeRow('orphan-run', 'a'))?.status).toBe('enqueued');
+    expect((await nodeRow('orphan-run', 'b'))?.status).toBe('pending');
+    expect(boss.memberSends.map((s) => s.name)).toEqual(['a']);
+  });
+
   it('tick with no active run is a no-op', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));

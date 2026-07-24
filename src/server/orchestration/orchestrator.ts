@@ -16,7 +16,7 @@ import {
   type RunTrigger,
   attachBossJob,
   claimNodePending,
-  createRun,
+  createRunWithNodes,
   finishRun,
   getActiveRunForDate,
   getLatestRunForDate,
@@ -274,15 +274,24 @@ export async function runOrchestratorStart(
     if (trigger === 'cron' && (await getLatestRunForDate(deps.db, runDate))) {
       return null;
     }
-    run = await createRun(deps.db, { runDate, trigger, now });
-    if (run) {
-      await insertNodes(deps.db, run.id, [...deps.dag.nodes.keys()], now);
-    } else {
+    // 原子建 run + 落节点（ToqXn）：杜绝 createRun 提交后崩溃留 0 节点 run。
+    run = await createRunWithNodes(deps.db, {
+      runDate,
+      trigger,
+      jobNames: [...deps.dag.nodes.keys()],
+      now,
+    });
+    if (!run) {
       // 撞单飞（并发 start）——采纳赢家的 run。
       run = await getActiveRunForDate(deps.db, runDate);
     }
   }
   if (!run) return null;
+
+  // 自愈补齐（ToqXn）：采纳的 run（并发赢家 / 旧部署遗留的 0 节点 run / 手工残行）可能缺节点。
+  // insertNodes 幂等（onConflictDoNothing），补齐缺失后 advanceRun 才有节点可推进——否则 0 节点
+  // run 的 complete 恒 false，tick 永远自转不 enqueue。
+  await insertNodes(deps.db, run.id, [...deps.dag.nodes.keys()], now);
 
   await advanceAndContinue({ ...deps, now, run });
   return run;
