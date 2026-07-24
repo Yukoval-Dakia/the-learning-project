@@ -110,6 +110,23 @@ import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export * from './chat-contracts';
 
+// E4 (TeA_E) — the provenance + revert-anchor fields shared by both CopilotChatResult return sites
+// (the skill-turn path and the free-form path). `user_ask_event_id` is always carried (provenance);
+// `checkpoint_event_id` (the Dock revert anchor) is exposed only when the turn is fully
+// event-chain-compensable. `suppressAnchor` is true for a turn that materialized a domain row outside
+// the ask chain — a teaching_check draft question (materializedQuestion) or a materializing tool
+// (turnMaterialized) — that cascade-revert can't undo. No ask id (a chip_trigger turn) → empty.
+function buildAskFields(
+  userAskEventId: string | undefined,
+  suppressAnchor: boolean,
+): { user_ask_event_id?: string; checkpoint_event_id?: string } {
+  if (!userAskEventId) return {};
+  return {
+    user_ask_event_id: userAskEventId,
+    ...(suppressAnchor ? {} : { checkpoint_event_id: userAskEventId }),
+  };
+}
+
 // AF S4 / YUK-203 U6 — structured carrier for a skill turn (teaching ask_check /
 // explain / end). Rides as an ADDITIVE optional field on CopilotChatResult so
 // the existing text-only consumers are byte-for-byte unaffected; the Dock reads
@@ -854,18 +871,11 @@ async function runCopilotChatImpl(
       triggered_by: req.triggered_by,
       session_id: sessionId,
       reply_event_id: replyEventId,
-      ...(userAskEventId
-        ? {
-            user_ask_event_id: userAskEventId,
-            // Suppress the revert checkpoint anchor when this ask_check materialized a
-            // source='teaching_check' draft question row: cascade revert only compensates the
-            // ask/reply event chain, NOT that question row, so exposing the Dock revert button
-            // would leave an orphan draft in the pool/review after a "successful" revert. Keep
-            // user_ask_event_id for provenance (YUK-497 wave-2, codex P2 — smallest fix; cascade
-            // scope is deliberately NOT expanded to question rows).
-            ...(materializedQuestion ? {} : { checkpoint_event_id: userAskEventId }),
-          }
-        : {}),
+      // Suppress the revert anchor when this ask_check materialized a source='teaching_check' draft
+      // question row: cascade revert only compensates the ask/reply event chain, NOT that question row,
+      // so exposing the Dock revert button would orphan the draft after a "successful" revert. See
+      // buildAskFields (YUK-497 wave-2 codex P2; cascade scope deliberately NOT expanded to question rows).
+      ...buildAskFields(userAskEventId, Boolean(materializedQuestion)),
       skill_turn: skillTurn,
     };
   }
@@ -1065,11 +1075,10 @@ async function runCopilotChatImpl(
   // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
   // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
   // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
-  // can't diverge. Keeps user_ask_event_id for provenance. See materializing-tools.ts for the invariant.
-  // The DB-less routing unit tests pass a {}-stub db (every real db op is injected + stubbed); guard
-  // the probe on db being queryable so they need no new stub — production and the DB tests always
-  // carry a real client. An injected selectMaterializingAsksFn (a DB test) still runs since its db is
-  // real (YUK-497 wave-4, mirrors the "stub tx has no .select" seam above).
+  // can't diverge. See materializing-tools.ts for the invariant. The DB-less routing unit tests pass a
+  // {}-stub db (every real db op is injected + stubbed), so the probe is guarded on db being queryable
+  // (typeof db.select === 'function') — they need no new stub; production and the DB tests always carry
+  // a real client (mirrors the "stub tx has no .select" seam above).
   let turnMaterialized: boolean;
   if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
     // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
@@ -1098,12 +1107,7 @@ async function runCopilotChatImpl(
     triggered_by: req.triggered_by,
     session_id: sessionId,
     reply_event_id: replyEventId,
-    ...(userAskEventId
-      ? {
-          user_ask_event_id: userAskEventId,
-          ...(turnMaterialized ? {} : { checkpoint_event_id: userAskEventId }),
-        }
-      : {}),
+    ...buildAskFields(userAskEventId, turnMaterialized),
     // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
     // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
     ...(streamError ? { error: streamError } : {}),

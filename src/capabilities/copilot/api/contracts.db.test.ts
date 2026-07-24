@@ -45,6 +45,17 @@ describe('Copilot declared route response contracts', () => {
         irreversible_event_ids: ['tool_1'],
       }),
     ).toMatchObject({ refusal: 'irreversible', irreversible_event_ids: ['tool_1'] });
+    // E3 (TeA-6) — the discriminated union makes `reverted` STRUCTURALLY required for a fresh 'reverted'
+    // (the old flat schema's `reverted?.optional()` let it be omitted). A 'reverted' body without the
+    // counters is now rejected.
+    expect(() =>
+      CopilotCheckpointRevertSuccessSchema.parse({
+        ok: true,
+        status: 'reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: ['c1'],
+      }),
+    ).toThrow();
   });
 
   it('parses the snake_case reverted sub-object and the 404/409 error union (review F3/F7)', () => {
