@@ -27,7 +27,7 @@ vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
 // pg.ts 必须在 mock 之后导入。
 import { artifact, editing_presence } from '@/db/schema';
 import { PgPresenceStore } from './pg';
-import { EDITING_HEARTBEAT_TIMEOUT_MS } from './types';
+import { EDITING_HEARTBEAT_TIMEOUT_MS, HUB_AUTO_SYNC_ACTOR_REF } from './types';
 
 function createDeferred() {
   let resolve!: () => void;
@@ -437,7 +437,12 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
         last_heartbeat_at: at(10 * 60_000),
         editing_started_at: null,
         pending: [
-          { patch, triggerEventId: null, queuedAtMs: T0.getTime(), actorRef: 'hub_auto_sync' },
+          {
+            patch,
+            triggerEventId: null,
+            queuedAtMs: T0.getTime(),
+            actorRef: HUB_AUTO_SYNC_ACTOR_REF,
+          },
           { patch, triggerEventId: null, queuedAtMs: T0.getTime() },
         ],
       });

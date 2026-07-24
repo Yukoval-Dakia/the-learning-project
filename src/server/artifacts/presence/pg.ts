@@ -27,6 +27,7 @@ import {
   type EditingSessionSnapshot,
   type EnqueueOrApplyInput,
   type EnqueueOrApplyResult,
+  HUB_AUTO_SYNC_ACTOR_REF,
   type MarkIdleAndFlushInput,
   type MarkIdleAndFlushResult,
   type PresenceStore,
@@ -273,7 +274,7 @@ function dropStalePending(
     // so its durable deferred patch must also survive stale pending pruning
     // (YUK-768). Every other actor's patch is dropped once past the TTL.
     if (
-      item.actorRef !== 'hub_auto_sync' &&
+      item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF &&
       now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS
     ) {
       dropped++;

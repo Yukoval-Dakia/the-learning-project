@@ -14,6 +14,14 @@ export const EDITING_HEARTBEAT_TIMEOUT_MS = 30_000;
 // the old Redis key TTL did). NOT a force-apply-while-editing path.
 export const EDITING_FORCE_APPLY_TIMEOUT_MS = 10 * 60_000;
 
+// Provenance actor of a mutation-triggered hub sync. Single source of truth for
+// the `hub_auto_sync` literal WITHIN the presence module (the guard in pg.ts and
+// its regression test). Mirrors the `editing_presence.actor_ref` schema default +
+// check constraint (src/db/schema.ts) and hub-sync-reconciliation.ts's private
+// ACTOR_REF; those live in other layers and are intentionally NOT wired through
+// this import to avoid a capability→presence / schema→app coupling (YUK-768).
+export const HUB_AUTO_SYNC_ACTOR_REF = 'hub_auto_sync';
+
 export type EditingStatus = 'editing' | 'idle';
 
 // A note-refine patch deferred while the artifact is actively edited, to be
@@ -38,9 +46,9 @@ export interface SerializedQueuedPatch {
   queuedAtMs: number;
   // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
   // for the default note-refine AI mutator. A mutation-triggered hub sync
-  // ('hub_auto_sync') opts out of the generic force-apply ceiling, so a patch it
-  // defers must survive stale-pending pruning (YUK-768) rather than being dropped
-  // at the 10-minute TTL like an abandoned note-refine patch.
+  // (HUB_AUTO_SYNC_ACTOR_REF) opts out of the generic force-apply ceiling, so a
+  // patch it defers must survive stale-pending pruning (YUK-768) rather than being
+  // dropped at the 10-minute TTL like an abandoned note-refine patch.
   actorRef?: string;
 }
 
