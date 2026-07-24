@@ -704,8 +704,10 @@ export const practiceCapability = defineCapability({
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
       // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。cron 错开其它夜链 job。
       {
+        // YUK-758 DAG 成员（根）：item_calibration b 锚**种子**写者。recalibration 在其后 firm-up
+        // 同表 b_calib → item_prior 是 recalibration 的硬上游（写序：种子先、firm 后）。cron 移除。
         name: 'item_prior_backfill',
-        schedule: { cron: '20 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
@@ -718,8 +720,12 @@ export const practiceCapability = defineCapability({
       // softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM 编排），与 item_prior 同档。
       // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
       {
+        // YUK-758 DAG 成员：compose 选题（candidate-signals）实读 item_calibration.b_calib，故对
+        // recalibration_nightly 是**真硬边**（读最终标定态）。注：reference_md / answer_class **不**入
+        // compose 选题路径（reference_md 走判分/UI、answer_class 走 quiz/pool-fetch），旧 05:00/05:20
+        // 排在 compose 前是时钟巧合，不作伪边纳入（见 PR 考据表）。cron 移除，orchestrator 触发。
         name: 'practice_stream_compose_nightly',
-        schedule: { cron: '30 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['recalibration_nightly'],
         queue: 'llm',
         load: () =>
           import('./jobs/practice_stream_compose_nightly').then(
@@ -735,8 +741,11 @@ export const practiceCapability = defineCapability({
       // **成本护栏**：dispatcher 的 7d fingerprint cooldown 是唯一防 job-spam 闸（同未满足缺口
       // 7 天内只真派一次）；本 job 依赖它，绝不绕过 dispatcher 直发付费队列。
       {
+        // YUK-758 DAG 成员：supply 的缺口扫描走 discoverSupplyTargets → loadQuestionPool
+        // （src/server/quiz/pool-fetch.ts 按 answer_class 过滤检索），故对 answer_class_backfill 是
+        // **真硬边**（answer_class 新鲜 → 缺口判定准）。cron 移除，orchestrator 在 answer_class 后触发。
         name: 'question_supply_nightly',
-        schedule: { cron: '0 6 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['answer_class_backfill'],
         queue: 'llm',
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
@@ -765,8 +774,10 @@ export const practiceCapability = defineCapability({
       // 写慢，给重试余量）。recalibrateQuestion 在 job 顶层调（非 attempt tx 内），per-question
       // try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
       {
+        // YUK-758 DAG 成员：firm-up item_calibration.b_calib（track='hard'）。对 item_prior_backfill
+        // 是硬边（同表 b 锚：种子先、firm 后），且是 compose 选题实读的最终标定态上游。cron 移除。
         name: 'recalibration_nightly',
-        schedule: { cron: '50 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['item_prior_backfill'],
         queue: 'llm',
         load: () =>
           import('./jobs/recalibration_nightly').then((m) => m.buildRecalibrationNightlyHandler),
@@ -778,8 +789,11 @@ export const practiceCapability = defineCapability({
       // queue=llm：与其它慢热 backfill job 同档 DLQ 重试。幂等由 embedding IS NULL
       // 过滤保证（无 NULL 行 = no-op）；embedMany throw 留 NULL 下轮重试，不阻塞入库。
       {
+        // YUK-758 DAG 成员（根）：嵌入 question/knowledge 的 embedding 列。kc_dedup_nightly 硬门
+        // embedding IS NOT NULL → embed_backfill 是 kc_dedup 的**真硬边**上游（跨包：kc_dedup 在
+        // knowledge 包）。cron 移除，orchestrator 起步即触发。
         name: 'embed_backfill',
-        schedule: { cron: '40 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
       },
@@ -813,8 +827,10 @@ export const practiceCapability = defineCapability({
       // queue=llm: shares the established backfill DLQ/retry bucket. Idempotent via
       // the answer_class IS NULL filter (no NULL rows = no-op).
       {
+        // YUK-758 DAG 成员（根）：物化 answer_class（纯派生，无夜链上游）。question_supply_nightly 的
+        // pool-fetch 按 answer_class 过滤检索 → answer_class 是 supply 的真硬边上游。cron 移除。
         name: 'answer_class_backfill',
-        schedule: { cron: '0 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),

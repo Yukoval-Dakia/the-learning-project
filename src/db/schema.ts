@@ -2559,3 +2559,68 @@ export const subject_name_claim = pgTable(
       .where(sql`kind = 'canonical'`),
   ],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-758 — 夜间任务编排 DAG 运行态（控制面调度记录）。
+//
+// 立意：夜链任务的触发从「钟表错峰」搬进 manifest 声明的 DAG（JobDecl.dependsOn），
+// 由单锚点 orchestrator 驱动「上游成功才触发下游」。这两张表是 orchestrator 的**调度
+// 态物理隔离面**——绝不进 event 数据面（控制面/数据面分离是立票红线）。纯瞬态运维态：
+// 丢了下一夜 run 自然重建，故进 BACKUP_EXCLUDED_TABLES 非 FK_ORDER（无 SCHEMA_VERSION
+// bump）。软引用（run_id / job_name / boss_job_id 皆 text-ref，无 enforced FK，沿仓库
+// loose-coupling 惯例）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const dag_orchestration_run = pgTable(
+  'dag_orchestration_run',
+  {
+    id: text('id').primaryKey(),
+    // run 归属的本地日（YYYY-MM-DD，Asia/Shanghai）。一日至多一条 active（running）run。
+    run_date: text('run_date').notNull(),
+    // 触发来源：'cron'（锚点 cron 开闸）| 'manual'（手动整链重跑）。
+    trigger: text('trigger', { enum: ['cron', 'manual'] }).notNull(),
+    // running（推进中）| completed（全节点终态）| abandoned（被新 run 顶替 / 超期收尾）。
+    status: text('status', { enum: ['running', 'completed', 'abandoned'] }).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // 单飞：一日至多一条 running run（DB 层兜住 cron 与 manual 撞车 / 双 worker 竞态）。
+    uniqueIndex('dag_orchestration_run_active_per_day_uq')
+      .on(t.run_date)
+      .where(sql`status = 'running'`),
+    index('dag_orchestration_run_status_idx').on(t.status),
+  ],
+);
+
+export const dag_orchestration_node = pgTable(
+  'dag_orchestration_node',
+  {
+    id: text('id').primaryKey(),
+    // 软引用 dag_orchestration_run.id（text-ref，无 enforced FK）。
+    run_id: text('run_id').notNull(),
+    // 图成员 job 名（= boss 队列名 = JobDecl.name）。
+    job_name: text('job_name').notNull(),
+    // pending（未就绪）| enqueued（已 boss.send，等 pg-boss 消费）| running（pg-boss active）|
+    // succeeded | failed | skipped（硬上游失败/跳过 → 本节点不跑）。
+    status: text('status', {
+      enum: ['pending', 'enqueued', 'running', 'succeeded', 'failed', 'skipped'],
+    }).notNull(),
+    // enqueue 后回填的 pg-boss job id（轮询终态用 boss.getJobById）。
+    boss_job_id: text('boss_job_id'),
+    // 是否带 stale 入队（软上游未成功但硬上游齐 → 照跑并在 job payload 标 stale:true）。
+    stale: boolean('stale').notNull().default(false),
+    // skipped/failed 的可读原因（观测痕迹，如 "upstream 'x' failed"）。
+    detail: text('detail'),
+    enqueued_at: timestamp('enqueued_at', { withTimezone: true }),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // 每 run 每 job 恰一节点行（幂等推进的锚）。
+    uniqueIndex('dag_orchestration_node_run_job_uq').on(t.run_id, t.job_name),
+    // 推进扫描：按 run 取某状态的节点。
+    index('dag_orchestration_node_run_status_idx').on(t.run_id, t.status),
+  ],
+);

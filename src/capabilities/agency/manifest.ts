@@ -87,14 +87,24 @@ export const agencyCapability = defineCapability({
     // 收集挂载（T3），此处声明是唯一归属源。
     handlers: [
       {
+        // YUK-758 DAG 成员：dreaming 读 proposal inbox 作去重基线。对上游 propose 生产者
+        // 是**软边**（上游失败 dreaming 照跑、带 stale——它只是少看几条 pending，仍正确产出）。
+        // 编码上游 = 现钟表序下 dreaming(旧 03:15) 实际能看到的两只 producer（edge_propose 02:30
+        // / maintenance 03:00）；其余 producer 旧序在 dreaming 之后，非其上游。cron 移除，改由
+        // orchestrator 触发。
         name: 'dreaming_nightly',
-        schedule: { cron: '15 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [
+          { job: 'knowledge_edge_propose_nightly', soft: true },
+          { job: 'knowledge_maintenance_nightly', soft: true },
+        ],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
       },
       {
+        // YUK-758 DAG 成员（根）：coach_daily 读在线 mastery/session 态，无 in-scope 夜链上游
+        // （旧 03:45 错峰是时钟巧合）。cron 移除，orchestrator 起步即触发。
         name: 'coach_daily',
-        schedule: { cron: '45 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
@@ -105,8 +115,10 @@ export const agencyCapability = defineCapability({
         load: () => import('./jobs/coach_weekly').then((m) => m.buildCoachWeeklyHandler),
       },
       {
+        // YUK-758 DAG 成员（根）：propose-only 生产者，读 tree/goals 产 goal_scope 提议入人审
+        // inbox，不消费其它夜链 job 的 live 产物（旧 03:50 错峰是时钟巧合）。cron 移除。
         name: 'goal_scope_propose_nightly',
-        schedule: { cron: '50 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/goal_scope_propose_nightly').then(
@@ -116,11 +128,12 @@ export const agencyCapability = defineCapability({
       // YUK-406 Phase 0 (关系脑) / YUK-440 (A13) — nightly 教研例会 conjecture
       // proposer. Single proposer of `conjecture` proposals: deterministic 取证 →
       // Opus N=3 self-consistency induction → propose ≤3. queue:'llm' (it runs the
-      // anthropic-sub OAuth Opus lane). At 04:05 it sits between goal_scope (03:50)
-      // and Sunday's coach_weekly (04:30), without colliding with 04:10 verify recovery.
+      // anthropic-sub OAuth Opus lane).
+      // YUK-758 DAG 成员（根）：propose-only conjecture 生产者，读取证据自induce，不消费其它夜链
+      // job 的 live 产物（旧 04:05 错峰是时钟巧合）。cron 移除，orchestrator 触发。
       {
         name: 'research_meeting_nightly',
-        schedule: { cron: '5 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/research_meeting_nightly').then(

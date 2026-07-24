@@ -290,6 +290,12 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'event_subscription_checkpoint',
   'event_subscription_delivery',
   'event_subscription_effect',
+  // YUK-758 夜间任务编排 DAG 的调度运行态（run 头 + 逐节点态）。纯瞬态运维态：一夜一条
+  // run，丢了下一夜锚点 cron 自然重建，restoring stale scheduling rows 是错的（会复活过
+  // 期的「今晚图」）。无 enforced FK（run_id/job_name/boss_job_id 皆 loose text-ref），不
+  // 阻 FK_ORDER wipe，故无需 RESTORE_WIPE_ONLY 条目。Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  'dag_orchestration_run',
+  'dag_orchestration_node',
 ]);
 
 // Operational tables that are EXCLUDED from the archive (above) but whose ON DELETE no action FKs
