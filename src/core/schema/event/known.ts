@@ -25,6 +25,14 @@ const baseOptionalFields = {
 export const MAX_HINT_INDEX = 20;
 export const MAX_HINT_COUNT = MAX_HINT_INDEX + 1;
 
+/**
+ * YUK-562 — upper bound (chars) for the process-data `reasoning_trace` field.
+ * Single source of truth: the two payload schemas below AND the /api/attempts
+ * request contract (practice/api/contracts.ts) + the solve-session write-side
+ * truncation reference it, so the bound can never drift across the write path.
+ */
+export const REASONING_TRACE_MAX_LEN = 4000;
+
 // YUK-407 (Phase 0 red line) — ReconstructionSignal: was this answer DERIVED from the
 // knowledge node's parent derivation path, or RETRIEVED from memory? Logged as an
 // OPTIONAL attempt/review payload field so the future Reconstruction-as-method (教学法
@@ -107,6 +115,14 @@ export const AttemptOnQuestion = z.object({
     // rely on this union to reject a mistyped archetype (e.g. a `numeric` payload on
     // a `choice` question parses fine here).
     attempt_payload: AttemptPayload.optional(),
+    // YUK-562 (process-data 最小采集) — reasoning_trace: 学生自述的解题思路 / 过程文本
+    // （区别于 answer_md 的最终答案）。首个 live writer 是 solve-session（把
+    // student_text_steps 额外落到这里，answer_md 的拼接行为保留、向后兼容）。OPTIONAL：
+    // 卷题 / FSRS 复习 / copilot 提示等无过程文本的路径恒缺省 → 既有 attempt 读路径逐字
+    // 不变（byte-identical 回归锚）。engagement 红线（零强制）在后端表现为字段全 optional。
+    // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
+    // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
+    reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
   }),
   ...baseOptionalFields,
 });
@@ -246,6 +262,12 @@ export const ReviewOnQuestion = z
       // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; reserved on
       // the review payload for symmetry (no live review site stamps it yet).
       reconstruction_signal: ReconstructionSignal.optional(),
+      // YUK-562 (process-data 最小采集) — reasoning_trace: 学生自述的解题思路 / 过程文本
+      // （区别于 user_response_md 的最终作答）。PracticeFacePage/PfSolo 主流路径经
+      // /api/attempts 写 review event，API 侧先行支持（UI 过 design pre-flight 后补）。
+      // OPTIONAL：非采集面 / 历史 review 恒缺省 → 既有 review 读路径逐字不变。与 attempt
+      // 侧同风格 REASONING_TRACE_MAX_LEN 封上界。engagement 红线（零强制）= 字段 optional。
+      reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
     }),
     ...baseOptionalFields,
   })

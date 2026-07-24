@@ -459,6 +459,36 @@ export async function getFailureAttemptById(
   db: DbLike,
   attemptEventId: string,
 ): Promise<FailureAttempt | null> {
+  return (await loadFailureAttemptById(db, attemptEventId))?.failure ?? null;
+}
+
+/**
+ * YUK-562 — same SINGLE-QUERY load as {@link getFailureAttemptById}, additionally
+ * surfacing the attempt payload's `reasoning_trace` (process-data self-report) so
+ * the copilot `attribute_mistake` caller can feed it into attribution WITHOUT a
+ * second round-trip. The exported {@link FailureAttempt} shape is deliberately
+ * unchanged (downstream consumers depend on it); the trace rides alongside it in
+ * the wrapper object. `reasoning_trace` is `null` when the attempt carries no
+ * process text.
+ */
+export async function getFailureAttemptWithReasoningTraceById(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<{ failure: FailureAttempt; reasoning_trace: string | null } | null> {
+  return loadFailureAttemptById(db, attemptEventId);
+}
+
+/**
+ * Shared single-query loader behind {@link getFailureAttemptById} and
+ * {@link getFailureAttemptWithReasoningTraceById}. Runs ONE select of the full
+ * attempt row and derives both the FailureAttempt projection and the raw
+ * payload's reasoning_trace from it — so the reasoning_trace is available without
+ * a second round-trip.
+ */
+async function loadFailureAttemptById(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<{ failure: FailureAttempt; reasoning_trace: string | null } | null> {
   const rows = await db.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
   const attempt = rows[0];
   if (!attempt) return null;
@@ -493,7 +523,11 @@ export async function getFailureAttemptById(
   };
   if (judge) failure.judge = judge;
   if (userCause) failure.user_cause = userCause;
-  return failure;
+  // YUK-562 — derive reasoning_trace from the SAME row (no extra query). Null when
+  // the attempt has no process text; the copilot caller trims/omits empty values.
+  const reasoning_trace =
+    (attempt.payload as { reasoning_trace?: string | null } | null)?.reasoning_trace ?? null;
+  return { failure, reasoning_trace };
 }
 
 // ============================================================================
