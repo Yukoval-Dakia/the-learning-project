@@ -111,6 +111,15 @@ export async function startConversation(
  * than leaving the row stale. Single-user tool → no `FOR UPDATE` fan-out needed.
  */
 const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
+
+export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {
+  // YUK-497 review — single-arg `hashtext` to match this PR's advisory-lock convention
+  // (acquireLearningStateWriteLock / acquireSortedAdvisoryLocks / mastery fsrs:knowledge all
+  // use hashtext); the two functions produce different keys, so this is the lone owner of
+  // COPILOT_SESSION_SELECTION_LOCK and no other lock site depends on the prior hashtextextended.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${COPILOT_SESSION_SELECTION_LOCK}))`);
+}
 
 /**
  * Resolve the single live Copilot conversation session that THIS surface would
@@ -163,6 +172,7 @@ export async function findOrCreateCopilotConversation(
   const now = opts.now ?? new Date();
 
   return db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
     // Shared reuse predicate (findReusableCopilotConversation) so this and the
     // turns reader never drift on "which session is live".
     const existing = await findReusableCopilotConversation(tx, { now });
@@ -244,6 +254,7 @@ export async function findOrCreateCopilotConversation(
  */
 export async function idleConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (!current) {
       throw new ApiError(
@@ -286,6 +297,7 @@ export async function idleConversation(db: Db, sessionId: string): Promise<void>
  */
 export async function endConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (!current) {
       throw new ApiError(
@@ -335,6 +347,7 @@ export async function abandonConversation(
   reason: AbandonReason = 'orphan_cron',
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (!current) {
       throw new ApiError(
@@ -385,6 +398,7 @@ export async function assertAcceptingTurns(
   sessionId: string,
 ): Promise<{ goalId: string | null; wasIdle: boolean }> {
   return db.transaction(async (tx) => {
+    await lockCopilotSessionSelection(tx);
     const current = await loadConversationSessionForUpdate(tx, sessionId);
     if (!current) {
       throw new ApiError(

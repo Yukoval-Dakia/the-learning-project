@@ -17,6 +17,7 @@ import {
   deriveCopilotRunStatus,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
@@ -152,6 +153,63 @@ describe('runCopilotRun', () => {
       actor_ref: 'agent:copilot',
     });
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
+  });
+
+  // W5-2 (TcR8s) — the durable path exposes checkpoint_event_id via the job-events SSE endpoint, so it
+  // must mirror the live/replay materializing-tool suppression. The mock stream skips the mcp-bridge,
+  // so seed the tool_use mirror the run would have written under runId.
+  async function seedToolUseMirror(runId: string, toolName: string) {
+    await writeEvent(testDb(), {
+      id: `tool_use_${runId}`,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'tool_use',
+      subject_kind: 'query',
+      subject_id: `tool_use_${runId}`,
+      outcome: 'success',
+      payload: { tool_name: toolName, args: {} },
+      caused_by_event_id: runId,
+      created_at: new Date(),
+    });
+  }
+
+  it('W5-2 — omits checkpoint_event_id in reply/done when the run called a materializing tool (TcR8s)', async () => {
+    const runId = 'copilot_user_ask_mat_run';
+    await seedToolUseMirror(runId, 'author_question');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_mat_run' },
+      streamTaskCollectingFn: streamMock('好的') as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('done');
+
+    const events = await replay(runId);
+    const reply = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
+    const done = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
+    expect(reply?.payload).not.toHaveProperty('checkpoint_event_id');
+    expect(done?.payload).not.toHaveProperty('checkpoint_event_id');
+  });
+
+  it('W5-2 — keeps checkpoint_event_id for a propose-only durable run (TcR8s)', async () => {
+    const runId = 'copilot_user_ask_prop_run';
+    await seedToolUseMirror(runId, 'propose_knowledge_edge');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_prop_run' },
+      streamTaskCollectingFn: streamMock('已提议') as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('done');
+
+    const events = await replay(runId);
+    const reply = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
+    const done = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
+    expect(reply?.payload).toMatchObject({ checkpoint_event_id: runId });
+    expect(done?.payload).toMatchObject({ checkpoint_event_id: runId });
   });
 
   it('F1 — primary_view marker 在 domain event 与 job_events 里都被剥掉', async () => {
@@ -499,7 +557,10 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    expect(failed?.payload).toMatchObject({
+      reason: 'exhausted',
+      checkpoint_event_id: 'run_fail',
+    });
     expect(deriveCopilotRunStatus(events)).toBe('failed');
     // phantom-prevention：写了 error copilot_reply（chained user_ask=run_id）。
     const replies = await copilotReplyEvents('sess_fail');
@@ -525,7 +586,10 @@ describe('runCopilotRun', () => {
     expect(result.status).toBe('failed');
     const events = await replay(runId);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    expect(failed?.payload).toMatchObject({
+      reason: 'exhausted',
+      checkpoint_event_id: runId,
+    });
     // 半程文本落进 phantom-preventing reply（不丢已说的话）。
     const replies = await copilotReplyEvents('sess_partial');
     expect(replies).toHaveLength(1);
@@ -558,7 +622,11 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.FAILED,
     ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'cancelled', cancelled_before_start: true });
+    expect(failed?.payload).toMatchObject({
+      reason: 'cancelled',
+      cancelled_before_start: true,
+      checkpoint_event_id: runId,
+    });
   });
 
   it('④ run handle = run_id = job_events.business_id（checkpoint_id 即 handle）', async () => {

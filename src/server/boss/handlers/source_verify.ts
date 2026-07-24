@@ -37,6 +37,7 @@ import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -447,6 +448,9 @@ export async function runSourceVerify(
 
     let wasDemoted = false;
     await db.transaction(async (tx) => {
+      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert).
+      await acquireLearningStateWriteLock(tx);
       // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
       // the question row lock, matching placement paid admission (advisory lock → plain SELECT) and
       // proposal-appliers. The prior order (row lock first, supply lock only inside the promote

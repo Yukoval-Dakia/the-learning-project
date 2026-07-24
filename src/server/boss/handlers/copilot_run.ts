@@ -35,6 +35,7 @@ import {
   COPILOT_RUN_TABLE,
   hasCancelRequest,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import type { Db } from '@/db/client';
 // YUK-364 (bot-review C5) — 共享 Tavily 远程 MCP（web grounding），与 inline copilot
 // （chat.ts runCopilotChatImpl）+ quiz_gen handler 同一份 env-gated builder。配置
@@ -235,11 +236,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // F4 — 复用 copilot-run-status 的 hasCancelRequest helper（消重内联 .some()，
   // 救活 production 零调用的 dead helper）。已请求取消则早停写 failed(cancelled)。
   if (hasCancelRequest(priorEvents)) {
+    // E1 (TeA_H) — cancelled BEFORE start: no task ran, so no materializing tool could have fired.
+    // The anchor is kept unconditionally (no probe needed) — only paths that could have run tools (the
+    // success path + handleDurableFailure's partial path) suppress it.
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'cancelled', cancelled_before_start: true },
+      payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
     });
     return { status: 'cancelled' };
   }
@@ -415,18 +419,54 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       taskRunId: result.task_run_id,
       now: new Date(),
     });
-    await writeJobEvent(db, {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.REPLY,
-      payload: { reply_md: cleanedReply, task_run_id: result.task_run_id },
-    });
-    await writeJobEvent(db, {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.DONE,
-      payload: { task_run_id: result.task_run_id, finish_reason: result.finishReason },
-    });
+    // The reply domain event is now PERSISTED → this run SUCCEEDED. Everything past here is ADVISORY
+    // (the SSE job_events + the revert anchor). E2 (TeA_G) — a throw here must NOT fall to the outer
+    // catch → handleDurableFailure, which would chain a SECOND copilot_reply error fallback to the same
+    // ask. Degrade in place: on any post-reply failure, log + still return success (the reply is durable).
+    try {
+      // W5-2 (TcR8s) — mirror the live/replay anchor suppression on the SSE job events: a materializing
+      // turn (its tool_use mirrors chain to runId) wrote a row cascade-revert can't compensate, so omit
+      // the anchor. E1 (TeA_H) — the probe is an additive read; on throw degrade like chat.ts's F1
+      // (SUPPRESS the anchor — a missing revert button beats a lying one), never fail the block.
+      let turnMaterialized: boolean;
+      try {
+        turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
+      } catch (probeErr) {
+        console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {
+          runId,
+          error: probeErr,
+        });
+        turnMaterialized = true;
+      }
+      await writeJobEvent(db, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.REPLY,
+        payload: {
+          reply_md: cleanedReply,
+          task_run_id: result.task_run_id,
+          ...(turnMaterialized ? {} : { checkpoint_event_id: runId }),
+        },
+      });
+      await writeJobEvent(db, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.DONE,
+        payload: {
+          task_run_id: result.task_run_id,
+          finish_reason: result.finishReason,
+          ...(turnMaterialized ? {} : { checkpoint_event_id: runId }),
+        },
+      });
+    } catch (advisoryErr) {
+      console.error(
+        '[copilot_run] post-reply job-event write failed (non-fatal; reply is durable)',
+        {
+          runId,
+          error: advisoryErr,
+        },
+      );
+    }
     return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };
   } catch (err) {
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
@@ -480,12 +520,32 @@ async function handleDurableFailure(
   const { err, runId, sessionId, actorRef, partialText } = args;
   const message = String((err as Error)?.message ?? err);
 
+  // E1 (Tdtyw / TeA_H) — this terminal-FAILED can follow a PARTIAL run that already called a
+  // materializing tool (its tool_use mirrors chain to runId), so the SSE anchor must be suppressed for
+  // it too, exactly like the success path. Probe degrade-gracefully: on throw, SUPPRESS (fail-safe —
+  // no revert button beats a lying one). NOTE: the enqueue_failed / cancelled_before_start paths never
+  // ran any tool, so THOSE writes keep checkpoint_event_id unconditionally (see the cancelled write).
+  let turnMaterialized: boolean;
+  try {
+    turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
+  } catch (probeErr) {
+    console.error(
+      '[copilot_run] materializing-tool probe failed (failure path); suppressing revert anchor',
+      { runId, error: probeErr },
+    );
+    turnMaterialized = true;
+  }
+
   try {
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'exhausted', error: message },
+      payload: {
+        reason: 'exhausted',
+        error: message,
+        ...(turnMaterialized ? {} : { checkpoint_event_id: runId }),
+      },
     });
   } catch (writeErr) {
     console.error('[copilot_run] terminal-failed write failed for', runId, writeErr);

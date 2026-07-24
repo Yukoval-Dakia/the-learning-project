@@ -1,0 +1,567 @@
+// YUK-497 — two-connection regressions for the GLOBAL learning-state write lock
+// ('learning-state:write', src/server/advisory-locks.ts).
+//
+// Review findings closed here (REQUEST CHANGES round on yuk-497-copilot-checkpoint-revert):
+//   1. Absent-row / check-then-insert races: every production material_fsrs_state /
+//      mastery_state writer serializes behind ONE global advisory lock at tx entry —
+//      while ANY learning-state tx is in flight, a second writer cannot even run its
+//      existence check, so noncooperative-writer and absent-row races are closed.
+//   2. Multi-key deadlock overlap: submit locks the FSRS subset (e.g. {b}) then the θ̂
+//      superset {a,b} via updateThetaForAttempt, while revert/merge sort-lock {a,b}.
+//      With the global lock FIRST at tx entry the per-key fsrs:* locks can no longer
+//      form a cycle, so overlapping writers must complete with ZERO 40P01.
+//
+// Construction mirrors onpath-lock.db.test.ts ("second session blocks"): a SECOND
+// independent DB session holds the GLOBAL lock; the contended side is fired and must
+// stay pending for LOCK_PROBE_MS, then complete after release. The contended side is
+// always a REAL production writer (the live /api/review/submit route handler, the
+// updateThetaForAttempt tx shape auto-enroll runs, the merge retire pair, and the
+// shared upsert primitives) — NOT a synthetic cooperative writer.
+
+import { and, eq, sql } from 'drizzle-orm';
+import postgres from 'postgres';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { POST as revertCheckpointPOST } from '@/capabilities/copilot/api/revert-checkpoint';
+import { repairMergeAttributionForFromId } from '@/capabilities/knowledge/server/proposals';
+import { POST as submitPOST } from '@/capabilities/practice/api/submit';
+import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { newId } from '@/core/ids';
+import {
+  event,
+  knowledge,
+  learning_session,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
+import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import {
+  retireMasteryStateOnMerge,
+  updateThetaForAttempt,
+  upsertMasteryState,
+} from '@/server/mastery/state';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '@/server/quiz/content-fingerprint';
+import { resetDb, testDb } from '../../tests/helpers/db';
+
+// The contended production writer must stay blocked at least this long. Unobstructed,
+// each writer here completes in well under 100ms, so 600ms is a comfortable margin
+// against CI jitter while still failing fast if the global-lock acquisition is missing.
+const LOCK_PROBE_MS = 600;
+const GLOBAL_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('learning-state:write'))";
+
+async function seedKnowledge(id: string) {
+  const now = new Date();
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id,
+      name: `K-${id}`,
+      domain: 'yuwen',
+      parent_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })
+    .onConflictDoNothing();
+}
+
+async function seedQuestion(id: string, knowledgeIds: string[]) {
+  const now = new Date();
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: 'short_answer',
+      prompt_md: `Prompt ${id}`,
+      reference_md: null,
+      knowledge_ids: knowledgeIds,
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+}
+
+function submitReq(body: unknown) {
+  return new Request('http://localhost/api/review/submit', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * Hold the GLOBAL learning-state lock on a SEPARATE session, fire `contended()` (a real
+ * production writer), assert it does NOT settle within LOCK_PROBE_MS, release the holder,
+ * and return the contended result (which must then complete successfully).
+ */
+async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (sql) => {
+      await sql.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    // Swallow nothing: a rejection settles too and fails the pending assertion below
+    // (and re-throws when awaited at the end).
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    release();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    await holder.end({ timeout: 5 });
+  }
+}
+
+/**
+ * Like {@link assertBlocksOnGlobalLock}, but ALSO proves lock ORDER: while the contended
+ * tx waits on the global lock, its backend must hold ZERO granted advisory locks AND zero
+ * granted locks on the `question` relation — i.e. the global lock is the FIRST lock the tx
+ * tries to take. The two counts cover both round-1 inversion shapes: F1 held knowledge_edge
+ * ADVISORY locks before G; F2 held a question ROW lock (FOR UPDATE → RowShareLock on the
+ * relation, invisible to an advisory-only probe) before G.
+ */
+async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
+  contended: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (s) => {
+      await s.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    // Order proof: every backend waiting on an advisory lock in THIS database holds no
+    // granted advisory locks (scoped to current database — the fork DBs share a cluster).
+    const rows = (await testDb().execute(sql`
+      SELECT w.pid,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.relation = 'question'::regclass::oid
+                  -- AccessShareLock is the harmless read lock the dedup path's UNLOCKED
+                  -- peek legitimately holds; the F2 inversion shape is FOR UPDATE's
+                  -- RowShareLock (and stronger), which is what must be absent while
+                  -- waiting on the global lock.
+                  AND g.mode <> 'AccessShareLock') AS granted_question_rel
+        FROM pg_locks w
+       WHERE w.locktype = 'advisory' AND NOT w.granted
+         AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `)) as unknown as Array<{
+      pid: number;
+      granted_advisory: number;
+      granted_question_rel: number;
+    }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.granted_advisory).toBe(0);
+      // F2 shape: a pre-fix dedup tx blocks on G while holding the question FOR UPDATE
+      // relation lock — this count would be >=1 and fail the regression.
+      expect(row.granted_question_rel).toBe(0);
+    }
+
+    release();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    await holder.end({ timeout: 5 });
+  }
+}
+
+/**
+ * Like {@link assertBlocksOnGlobalLock}, but proves the G-FIRST order for a caller that
+ * LEGITIMATELY holds per-entity idempotency ADVISORY locks before G (the revert endpoint holds
+ * copilot_revert + session-selection). So it does NOT require zero advisory locks; it requires
+ * zero granted ROW locks (RowShareLock+ — FOR UPDATE / FOR NO KEY UPDATE, i.e. any relation lock
+ * stronger than the harmless AccessShareLock a plain SELECT takes) while the tx waits on G. That
+ * is the F1 inversion shape: a state-row lock taken before the global lock.
+ */
+async function assertBlocksOnGlobalLockHoldingNoRowLock<T>(
+  contended: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  try {
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (s) => {
+      await s.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    // Order proof: every backend waiting on an advisory lock in THIS database holds zero granted
+    // RELATION locks stronger than AccessShareLock — i.e. G is taken before any FOR UPDATE / FOR
+    // NO KEY UPDATE state-row lock. Advisory idempotency locks (copilot_revert, session-selection)
+    // are legitimately held before G and are NOT counted here.
+    const rows = (await testDb().execute(sql`
+      SELECT w.pid,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.locktype = 'relation'
+                  AND g.mode <> 'AccessShareLock') AS granted_row_locks
+        FROM pg_locks w
+       WHERE w.locktype = 'advisory' AND NOT w.granted
+         AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `)) as unknown as Array<{ pid: number; granted_row_locks: number }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.granted_row_locks).toBe(0);
+    }
+
+    release();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    await holder.end({ timeout: 5 });
+  }
+}
+
+async function seedTerminalCopilotTurn(): Promise<string> {
+  const now = new Date();
+  const sessionId = 'copilot_current';
+  await testDb().insert(learning_session).values({
+    id: sessionId,
+    type: 'conversation',
+    status: 'active',
+    entrypoint: 'copilot',
+    updated_at: now,
+  });
+  const checkpointId = `ask_${sessionId}`;
+  await testDb()
+    .insert(event)
+    .values({
+      id: checkpointId,
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:copilot_user_ask',
+      subject_kind: 'query',
+      subject_id: checkpointId,
+      payload: { user_message: '撤回这一轮', session_id: sessionId },
+      created_at: new Date(now.getTime() - 2),
+    });
+  await testDb()
+    .insert(event)
+    .values({
+      id: `reply_${sessionId}`,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      action: 'experimental:copilot_reply',
+      subject_kind: 'query',
+      subject_id: `reply_${sessionId}`,
+      payload: { reply_md: '已完成' },
+      caused_by_event_id: checkpointId,
+      created_at: new Date(now.getTime() - 1),
+    });
+  return checkpointId;
+}
+
+describe('YUK-497 — global learning-state write lock (two-connection regressions)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRateLimitForTests();
+  });
+
+  it('the LIVE /api/review/submit route blocks behind the global lock, then lands its FSRS/θ̂ writes', async () => {
+    const kc = newId();
+    const qId = newId();
+    await seedKnowledge(kc);
+    await seedQuestion(qId, [kc]);
+
+    const res = await assertBlocksOnGlobalLock(() =>
+      submitPOST(submitReq({ mistake_id: qId, rating: 'good', latency_ms: 1200 })),
+    );
+    expect(res.status).toBeLessThan(300);
+
+    const fsrsRows = await testDb()
+      .select({ id: material_fsrs_state.id })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          eq(material_fsrs_state.subject_id, kc),
+        ),
+      );
+    expect(fsrsRows).toHaveLength(1);
+    const thetaRows = await testDb()
+      .select({ id: mastery_state.id })
+      .from(mastery_state)
+      .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, kc)));
+    expect(thetaRows).toHaveLength(1);
+  });
+
+  it('upsertFsrsState (absent-row insert path) blocks behind the global lock', async () => {
+    const kc = newId();
+    await seedKnowledge(kc);
+    const initial = initialFsrsState(new Date());
+
+    await assertBlocksOnGlobalLock(() =>
+      upsertFsrsState(testDb(), {
+        subject_kind: 'knowledge',
+        subject_id: kc,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: null,
+      }),
+    );
+
+    const rows = await testDb()
+      .select({ id: material_fsrs_state.id })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          eq(material_fsrs_state.subject_id, kc),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('upsertMasteryState (absent-row insert path) blocks behind the global lock', async () => {
+    const kc = newId();
+    await seedKnowledge(kc);
+
+    await assertBlocksOnGlobalLock(() =>
+      upsertMasteryState(testDb(), {
+        subject_id: kc,
+        theta_hat: 0.4,
+        evidence_count: 1,
+        success_count: 1,
+        fail_count: 0,
+        last_outcome_at: new Date(),
+      }),
+    );
+
+    const rows = await testDb()
+      .select({ id: mastery_state.id })
+      .from(mastery_state)
+      .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, kc)));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('updateThetaForAttempt (auto-enroll/submit tx shape) blocks behind the global lock', async () => {
+    const kcA = newId();
+    const kcB = newId();
+    const qId = newId();
+    await seedKnowledge(kcA);
+    await seedKnowledge(kcB);
+    await seedQuestion(qId, [kcA, kcB]);
+
+    await assertBlocksOnGlobalLock(() =>
+      testDb().transaction((tx) =>
+        updateThetaForAttempt(tx, {
+          knowledgeIds: [kcA, kcB],
+          questionId: qId,
+          outcome: 1,
+          difficulty: 3,
+          attemptEventId: newId(),
+          now: new Date(),
+        }),
+      ),
+    );
+
+    const rows = await testDb()
+      .select({ subject_id: mastery_state.subject_id })
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'knowledge'));
+    expect(new Set(rows.map((r) => r.subject_id))).toEqual(new Set([kcA, kcB]));
+  });
+
+  it('merge retire pair (retireMasteryStateOnMerge + retireFsrsStateOnMerge) blocks behind the global lock', async () => {
+    const from = newId();
+    const into = newId();
+    await seedKnowledge(from);
+    await seedKnowledge(into);
+    await upsertMasteryState(testDb(), {
+      subject_id: from,
+      theta_hat: 0.2,
+      evidence_count: 2,
+      success_count: 1,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+    });
+    const initial = initialFsrsState(new Date());
+    await upsertFsrsState(testDb(), {
+      subject_kind: 'knowledge',
+      subject_id: from,
+      state: initial.state,
+      due_at: initial.dueAt,
+      last_review_event_id: null,
+    });
+
+    const outcome = await assertBlocksOnGlobalLock(() =>
+      testDb().transaction(async (tx) => ({
+        mastery: await retireMasteryStateOnMerge(tx, from, into),
+        fsrs: await retireFsrsStateOnMerge(tx, from, into),
+      })),
+    );
+    expect(outcome).toEqual({ mastery: 'renamed', fsrs: 'renamed' });
+  });
+
+  it('submit subset {b}→superset {a,b} vs merge sorted {a,b}: overlapping writers never deadlock', async () => {
+    const kcA = newId();
+    const kcB = newId();
+    const qId = newId();
+    await seedKnowledge(kcA);
+    await seedKnowledge(kcB);
+    // Question labelled {a,b}; the submit body requests only {b}, so the route's
+    // per-subject FSRS pre-locks cover the SUBSET {b} while updateThetaForAttempt
+    // later locks the SUPERSET {a,b} — the exact pre-fix deadlock shape against a
+    // sorted {a,b} acquirer.
+    await seedQuestion(qId, [kcA, kcB]);
+
+    for (let i = 0; i < 6; i++) {
+      __resetRateLimitForTests();
+      const submitShaped = submitPOST(
+        submitReq({
+          mistake_id: qId,
+          rating: i % 2 === 0 ? 'good' : 'again',
+          referenced_knowledge_ids: [kcB],
+        }),
+      ).then((res) => {
+        expect(res.status).toBeLessThan(300);
+      });
+      const mergeShaped = testDb().transaction(async (tx) => {
+        // Real merge writers, sorted-{a,b} acquisition (fsrs:knowledge namespace).
+        await retireMasteryStateOnMerge(tx, kcA, kcB);
+        await retireFsrsStateOnMerge(tx, kcA, kcB);
+      });
+
+      const results = await Promise.allSettled([submitShaped, mergeShaped]);
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          const code = (r.reason as { code?: string } | undefined)?.code;
+          // 40P01 = deadlock_detected — the regression this test exists for.
+          expect(code).not.toBe('40P01');
+          throw r.reason;
+        }
+      }
+    }
+  });
+
+  it('merge-repair path (sweep/backfill tx shape) takes the global lock FIRST (review F1)', async () => {
+    const from = newId();
+    const into = newId();
+    await seedKnowledge(from);
+    await seedKnowledge(into);
+
+    // Direct repairMergeAttributionForFromId call in a bare tx = the background
+    // merge_attribution_sweep / merge-attribution-backfill shape (no applyMerge wrapper).
+    // Pre-fix this tx took knowledge_edge advisory locks inside rewireKnowledgeEdges
+    // BEFORE reaching the global lock in the retire pair.
+    const repair = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+      testDb().transaction((tx) =>
+        repairMergeAttributionForFromId(tx, from, into, new Date(), new Set([from])),
+      ),
+    );
+    expect(repair.from_id).toBe(from);
+  });
+
+  it('exact-duplicate dedup producer takes the global lock BEFORE the question row lock (review F2)', async () => {
+    const kcA = newId();
+    const kcB = newId();
+    const qId = newId();
+    await seedKnowledge(kcA);
+    await seedKnowledge(kcB);
+    await seedQuestion(qId, [kcA]);
+    const hash = `hash-${qId}`;
+    await testDb()
+      .update(question)
+      .set({ canonical_content_hash: hash, draft_status: 'active' })
+      .where(eq(question.id, qId));
+
+    // quiz_gen/sourcing/jyeoo producer shape: dedup merge as the tx's learning-state
+    // entry point. Pre-fix it row-locked the duplicate question (FOR UPDATE) before
+    // enrollFsrsStateIfAbsent reached the global lock — inverted vs the live submit tx.
+    const merged = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+      testDb().transaction((tx) =>
+        mergeExactQuestionDuplicateKnowledgeIds(tx, {
+          canonicalContentHash: hash,
+          knowledgeIds: [kcA, kcB],
+          actorRef: 'quiz_gen',
+          now: new Date(),
+        }),
+      ),
+    );
+    expect(merged).not.toBeNull();
+  });
+
+  it('copilot checkpoint revert endpoint takes the global lock BEFORE any state-row lock (review F1)', async () => {
+    const checkpointId = await seedTerminalCopilotTurn();
+
+    // The revert endpoint tx holds only its per-checkpoint + session-selection ADVISORY locks
+    // before reaching G; pre-fix the cascade pre-check's FOR NO KEY UPDATE row locks preceded G
+    // (rows→G), inverting against a concurrent learning-state writer (G→rows). While blocked on
+    // the held G it must hold ZERO RowShare+ state-row locks.
+    const response = await assertBlocksOnGlobalLockHoldingNoRowLock(() =>
+      revertCheckpointPOST(
+        new Request(`http://test/api/copilot/checkpoints/${checkpointId}/revert`, {
+          method: 'POST',
+        }),
+        { eventId: checkpointId },
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, status: 'reverted' });
+  });
+});

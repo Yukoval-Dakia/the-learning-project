@@ -61,7 +61,11 @@ import {
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+  withLearningStateLock,
+} from '@/server/advisory-locks';
 import { resolveFamilyKeyForQuestion } from './family-key';
 import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
@@ -125,62 +129,69 @@ export interface UpsertMasteryStateInput {
  * (subject_kind, subject_id) — concurrent attempts on the same KC race on the
  * `mastery_state_unique` index; the loser falls back to UPDATE in one statement.
  * Pure persistence — the θ̂ math lives in updateThetaForAttempt.
+ *
+ * LOCKING (F6/TdZQz): self-acquires the global learning-state write lock G via
+ * `withLearningStateLock` — it opens its own tx + `acquireLearningStateWriteLock` when passed a Db,
+ * or runs inside the caller's tx when passed a Tx. G is a `pg_advisory_xact_lock`, which is
+ * RE-ENTRANT within a transaction, so a caller that already holds G (e.g. the grading path, or
+ * cascade-revert) can call this safely — the re-acquire is a no-op, no deadlock.
  */
 export async function upsertMasteryState(
   db: DbLike,
   input: UpsertMasteryStateInput,
 ): Promise<void> {
-  const now = new Date();
-  const subjectKind = input.subject_kind ?? 'knowledge';
-  // YUK-361 Phase 2 — precision/delta 是可选维护：只有 caller 显式传值时才写。
-  //   INSERT 缺省走 DB default（theta_precision=1, last_theta_delta=NULL）。
-  //   UPDATE 缺省不动这两列（既有 upsert caller 如直接 seed 不该重置 precision）。
-  // biome-ignore lint/suspicious/noExplicitAny: drizzle set 列子集动态拼装，类型在分支内已保真。
-  const updateSet: Record<string, any> = {
-    theta_hat: input.theta_hat,
-    evidence_count: input.evidence_count,
-    success_count: input.success_count,
-    fail_count: input.fail_count,
-    last_outcome_at: input.last_outcome_at,
-    updated_at: now,
-  };
-  if (input.theta_precision !== undefined) {
-    updateSet.theta_precision = input.theta_precision;
-  }
-  if (input.last_theta_delta !== undefined) {
-    updateSet.last_theta_delta = input.last_theta_delta;
-  }
-  // A4 (YUK-436) — same optional-maintenance semantics: only write the shadow grid
-  // posterior when the caller explicitly passes it (THETA_GRID_ENABLED single-KC path).
-  if (input.theta_grid_json !== undefined) {
-    updateSet.theta_grid_json = input.theta_grid_json;
-  }
-  // A1 (YUK-449) — same optional-maintenance semantics for the per-KC correct-RT buffer:
-  // only written on an SRT-eligible correct attempt; INSERT/UPDATE skip the column otherwise.
-  if (input.rt_correct_ms !== undefined) {
-    updateSet.rt_correct_ms = input.rt_correct_ms;
-  }
-  await db
-    .insert(mastery_state)
-    .values({
-      id: newId(),
-      subject_kind: subjectKind,
-      subject_id: input.subject_id,
-      theta_hat: input.theta_hat,
-      evidence_count: input.evidence_count,
-      success_count: input.success_count,
-      fail_count: input.fail_count,
-      last_outcome_at: input.last_outcome_at,
-      ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
-      ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
-      ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
-      ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
-      updated_at: now,
-    })
-    .onConflictDoUpdate({
-      target: [mastery_state.subject_kind, mastery_state.subject_id],
-      set: updateSet,
-    });
+  await withLearningStateLock(db, async (tx) => {
+    const now = new Date();
+    const subjectKind = input.subject_kind ?? 'knowledge';
+    // OPTIONAL-maintenance columns (YUK-361 precision/delta, YUK-436 A4 grid, YUK-449 A1 rt): written
+    // only when the caller passes them — INSERT falls back to the DB default (theta_precision=1,
+    // last_theta_delta/grid/rt NULL); UPDATE leaves them untouched (a plain seed upsert must not reset
+    // precision). Inlined IDENTICALLY into both the INSERT values and the UPDATE set — the column-name
+    // literals must stay textually visible at each write site so audit:schema's write-path scanner
+    // (scripts/audit-schema-writes.ts keys on `field:` text inside .values()/onConflict set{}) can see
+    // them; a shared `...optionalFields` spread hid rt_correct_ms and broke the audit (YUK-497 wave-4).
+    // The two blocks MUST stay in sync by hand.
+    await tx
+      .insert(mastery_state)
+      .values({
+        id: newId(),
+        subject_kind: subjectKind,
+        subject_id: input.subject_id,
+        theta_hat: input.theta_hat,
+        evidence_count: input.evidence_count,
+        success_count: input.success_count,
+        fail_count: input.fail_count,
+        last_outcome_at: input.last_outcome_at,
+        ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
+        ...(input.last_theta_delta !== undefined
+          ? { last_theta_delta: input.last_theta_delta }
+          : {}),
+        ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
+        ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [mastery_state.subject_kind, mastery_state.subject_id],
+        set: {
+          theta_hat: input.theta_hat,
+          evidence_count: input.evidence_count,
+          success_count: input.success_count,
+          fail_count: input.fail_count,
+          last_outcome_at: input.last_outcome_at,
+          ...(input.theta_precision !== undefined
+            ? { theta_precision: input.theta_precision }
+            : {}),
+          ...(input.last_theta_delta !== undefined
+            ? { last_theta_delta: input.last_theta_delta }
+            : {}),
+          ...(input.theta_grid_json !== undefined
+            ? { theta_grid_json: input.theta_grid_json }
+            : {}),
+          ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
+          updated_at: now,
+        },
+      });
+  });
 }
 
 /**
@@ -203,6 +214,8 @@ export async function retireMasteryStateOnMerge(
   fromId: string,
   intoId: string,
 ): Promise<'noop' | 'renamed' | 'frozen'> {
+  // YUK-497 — global learning-state write lock before the per-key locks (shared tx-entry order).
+  await acquireLearningStateWriteLock(tx);
   // Sorted acquire of BOTH ids' locks (SAME namespace as updateThetaForAttempt) → no deadlock.
   await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
@@ -981,6 +994,7 @@ export async function updateThetaForAttempt(
   tx: Tx,
   input: UpdateThetaForAttemptInput,
 ): Promise<UpdateThetaForAttemptResult> {
+  await acquireLearningStateWriteLock(tx);
   const knowledgeIds = Array.from(
     new Set(input.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
   );

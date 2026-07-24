@@ -48,6 +48,7 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -358,6 +359,11 @@ async function persistSubmit(
   let primaryFsrsStateAfter: PersistedSubmit['finalFsrsStateAfter'];
 
   await db.transaction(async (tx) => {
+    // YUK-497 — global learning-state write lock FIRST (before the question row lock and the
+    // per-subject fsrs:* locks below). Every material_fsrs_state / mastery_state writer and the
+    // cascade revert acquire this same lock at tx entry, so the submit {b}→{a,b} vs revert
+    // {a,b} lock-order inversion and absent-row check-then-insert races cannot interleave.
+    await acquireLearningStateWriteLock(tx);
     await tx.execute(sql`SELECT id FROM question WHERE id = ${questionId} FOR UPDATE`);
 
     const fsrsUpdates: Array<{

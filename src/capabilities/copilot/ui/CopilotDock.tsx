@@ -100,6 +100,7 @@ interface CopilotChatResponse {
   triggered_by: string;
   session_id: string;
   reply_event_id: string;
+  checkpoint_event_id?: string;
   user_ask_event_id?: string;
   // AF S4 / YUK-203 U6 — additive optional structured-turn carrier.
   skill_turn?: SkillTurn;
@@ -120,8 +121,9 @@ interface CopilotTurnsResponse {
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'ai';
+  role: 'user' | 'ai' | 'tombstone';
   text: string;
+  checkpoint_event_id?: string;
   // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
   // skill turn. `skill_turn` drives the structured-question card + chips;
   // `session_id` is the Copilot session id the corrective accept-chip posts to;
@@ -217,10 +219,14 @@ interface MessageRowProps {
   message: ChatMessage;
   navigate: (to: string) => void;
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
+  onRevert?: (checkpointEventId: string) => void;
   // Per-row (not global) chip flags so a corrective-chip click on ONE message
   // does not re-render every other row: only the matching row sees its flag flip.
   chipPending: boolean;
   chipAcked: boolean;
+  // Per-row in-flight flag for THIS message's revert POST (mirrors chipPending) so a
+  // second click cannot fire a duplicate revert while the first is still in flight.
+  revertPending: boolean;
 }
 
 // YUK-715 — one chat row, memoized so an SSE delta (which rebuilds only the
@@ -234,24 +240,45 @@ export const MessageRow = memo(function MessageRow({
   message: m,
   navigate,
   onAcceptCorrective,
+  onRevert,
   chipPending,
   chipAcked,
+  revertPending,
 }: MessageRowProps) {
   return (
     <div
       className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
       data-testid={`copilot-msg-${m.role}`}
     >
-      <div className="msg-avatar">
-        {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
-      </div>
+      {m.role === 'tombstone' ? null : (
+        <div className="msg-avatar">
+          {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
+        </div>
+      )}
       <div className="msg-body">
-        <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+        {m.role === 'tombstone' ? null : (
+          <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+        )}
         {/* The Markdown parser is warmed only when the drawer opens. Until
             its chunk arrives, DeferredMarkdownRenderer keeps escaped plain
             text visible instead of blanking or crashing the conversation.
             Copilot has no subject profile, so dollar syntax stays plain. */}
         <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
+        {m.role === 'ai' && m.checkpoint_event_id && !m.streaming && onRevert ? (
+          <button
+            type="button"
+            className="chip"
+            data-testid="copilot-revert-button"
+            // Disabled while THIS row's revert POST is in flight — prevents a duplicate
+            // revert (mirrors the corrective chip's disabled={chipPending || chipAcked}).
+            disabled={revertPending}
+            onClick={() => {
+              if (m.checkpoint_event_id) onRevert(m.checkpoint_event_id);
+            }}
+          >
+            {revertPending ? '撤回中…' : '撤回本轮更改'}
+          </button>
+        ) : null}
         {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
             message. A NEW testid distinct from copilot-thinking (which
             only covers the pre-first-byte gap). Reuses the Dock chat
@@ -345,6 +372,15 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
+  // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
+  // never surfaced as a revert failure (F5).
+  const [revertPendingId, setRevertPendingId] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  // TchmY — a refetch that was SKIPPED (a send is streaming, so refetchTurns deferred rather than
+  // failed) is distinct from a real refetch FAILURE. Same "revert landed, screen not yet refreshed"
+  // family, but the skip is not an error — it gets a calmer copy (no alert tone).
+  const [refreshSkipped, setRefreshSkipped] = useState(false);
   const [input, setInput] = useState('');
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
@@ -396,6 +432,31 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // clobber the live in-memory list with a stale prefill.
   const replayedRef = useRef(false);
 
+  // AF S4 / YUK-203 U6 — restore skill state from a replayed message list: adopt the
+  // latest non-end AI skill_context as activeSkillRef, and surface the latest in-scope
+  // knowledge entity for the quiz chip. Newest-first scan (replayed is oldest→newest).
+  // Set-if-found (no reset) so the drawer-open prefill keeps its exact semantics; callers
+  // that must drop stale context (post-revert refetch) reset the refs before calling.
+  const restoreSkillStateFromReplay = useCallback(
+    (replayed: ReturnType<typeof replayToMessages>) => {
+      for (let i = replayed.length - 1; i >= 0; i--) {
+        const m = replayed[i];
+        if (m.role !== 'ai' || !m.skill_turn) continue;
+        if (m.skill_turn.kind === 'end') break; // ended session → leave ref null
+        if (m.skill_context) activeSkillRef.current = m.skill_context;
+        break; // found the latest skill turn — done either way
+      }
+      for (let i = replayed.length - 1; i >= 0; i--) {
+        const sc = replayed[i].skill_context;
+        if (sc?.ref.kind === 'knowledge') {
+          setFocusedKnowledgeId(sc.ref.id);
+          break;
+        }
+      }
+    },
+    [],
+  );
+
   // AF S3a — on open, prefill the message list from GET /api/copilot/turns
   // (replay-last-N). Best-effort: on failure we keep the current in-memory list
   // (graceful degradation to pre-S3a behaviour) and surface no error for the
@@ -423,29 +484,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // Only prefill if the user has not already started typing/sending in this
         // open (don't stomp a live exchange that raced the fetch).
         setMessages((prev) => (prev.length === 0 ? replayed : prev));
-        // Restore the active skill context from the last non-end skill turn so
-        // composer answers after a page refresh still route to the skill.
-        // Scan newest-first (replayed is oldest→newest, so reverse-iterate).
-        for (let i = replayed.length - 1; i >= 0; i--) {
-          const m = replayed[i];
-          if (m.role !== 'ai' || !m.skill_turn) continue;
-          if (m.skill_turn.kind === 'end') break; // ended session → stop, leave ref null
-          if (m.skill_context) {
-            activeSkillRef.current = m.skill_context;
-          }
-          break; // found the latest skill turn — done either way
-        }
-        // YUK-272 (C3) — independently surface the latest in-scope knowledge entity
-        // (from any replayed skill_context with a knowledge ref) so the quiz chip
-        // has a real knowledge id after a page refresh. Quiz turns carry no
-        // skill_turn, so the restore loop above skips them — this scan does not.
-        for (let i = replayed.length - 1; i >= 0; i--) {
-          const sc = replayed[i].skill_context;
-          if (sc?.ref.kind === 'knowledge') {
-            setFocusedKnowledgeId(sc.ref.id);
-            break;
-          }
-        }
+        // Restore activeSkillRef + the quiz chip's in-scope knowledge entity from the
+        // replayed turns so composer answers / the quiz chip survive a page refresh.
+        restoreSkillStateFromReplay(replayed);
       } catch {
         // Replay is best-effort — stay on the in-memory list.
       }
@@ -453,7 +494,94 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, restoreSkillStateFromReplay]);
+
+  // Returns true when it actually replaced the message list, false when it SKIPPED (a send is in
+  // flight). Callers use the flag so they don't report a refresh as done when it was skipped
+  // (YUK-497 wave-3).
+  const refetchTurns = useCallback(async (): Promise<boolean> => {
+    const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
+    const replayed = replayToMessages(res.turns ?? []);
+    // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
+    // while a NEW send is streaming; a full setMessages(replayed) here would drop the locally
+    // tracked streaming message (its aiId is not yet in the server replay), and send()'s later
+    // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
+    // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
+    // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
+    if (sendingRef.current) return false;
+    setMessages(replayed);
+    // A revert may have removed the turn that owned the active teaching skill / focused
+    // knowledge — reset both, then recompute from the refreshed list (the same scan the
+    // drawer-open prefill runs) so stale skill context never survives a revert.
+    activeSkillRef.current = null;
+    setFocusedKnowledgeId(null);
+    restoreSkillStateFromReplay(replayed);
+    return true;
+  }, [restoreSkillStateFromReplay]);
+
+  const revertCheckpoint = useCallback(
+    async (checkpointEventId: string) => {
+      setRevertPendingId(checkpointEventId);
+      setError(null);
+      setRefreshFailed(false);
+      setRefreshSkipped(false);
+      try {
+        try {
+          await apiJson(
+            `/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`,
+            { method: 'POST' },
+          );
+        } catch (err) {
+          // The revert POST itself failed — nothing landed. A cascade REFUSAL body ({ ok:false,
+          // refusal, reason }) carries no top-level message, so ApiError.message is only the generic
+          // "409 Conflict"; the actionable explanation (irreversible / conflict / …) lives in
+          // details.reason. Prefer it so the user sees WHY and doesn't blindly retry an irreversible
+          // revert (YUK-497 wave-2, codex P2). The per-message 撤回 button re-enables (pending
+          // cleared) so a genuinely retriable failure can still be retried.
+          const refusalReason =
+            err instanceof ApiError && typeof err.details?.reason === 'string'
+              ? err.details.reason
+              : undefined;
+          setError(refusalReason ?? (err instanceof Error ? err.message : '撤回失败'));
+          return;
+        }
+        // Revert LANDED. A refetch failure from here must NOT read as '撤回失败' — the change
+        // was reverted, only the on-screen refresh failed. Distinct state drives a refresh-only
+        // retry (retryRefresh below), never a second revert. A SKIP (refetchTurns → false, a send
+        // is streaming) also surfaces the refresh-pending banner so the user has a cue to retry
+        // rather than thinking the revert did nothing (YUK-497 wave-3).
+        try {
+          const refreshed = await refetchTurns();
+          // false = SKIPPED (a send is streaming) — deferred, not failed → the calmer skip banner.
+          if (!refreshed) setRefreshSkipped(true);
+        } catch {
+          // The refetch itself threw → a real failure.
+          setRefreshFailed(true);
+        }
+      } finally {
+        // Guarded clear (mirrors chipPending): only clear if THIS checkpoint is still the
+        // pending one, so a newer revert of a different checkpoint isn't cleared by our finally.
+        setRevertPendingId((cur) => (cur === checkpointEventId ? null : cur));
+      }
+    },
+    [refetchTurns],
+  );
+
+  // Retry affordance for the "revert landed, refresh failed" state — re-runs the turns
+  // refetch ONLY (the revert already committed server-side); clears the banner on success.
+  const retryRefresh = useCallback(async () => {
+    try {
+      // Only clear the banners when the refresh actually ran — a skip (a send started during the
+      // retry) must keep them up rather than misleading the user that it refreshed (YUK-497 wave-3).
+      const refreshed = await refetchTurns();
+      if (refreshed) {
+        setRefreshFailed(false);
+        setRefreshSkipped(false);
+      }
+    } catch {
+      // Keep the banner up; the revert is already durable, only the refresh is still failing.
+    }
+  }, [refetchTurns]);
 
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
@@ -471,6 +599,20 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     sendingRef.current = true;
     lastUserMessageRef.current = text;
     setError(null);
+    // Clear the "revert landed, refresh failed/skipped" banners when starting a new send: otherwise
+    // they stay set (only retryRefresh success / a new revert clears them) and their suppression of
+    // the generic error banner would mask a failure from THIS send (YUK-497 wave-2).
+    setRefreshFailed(false);
+    setRefreshSkipped(false);
+    // F2 (TdZCB) — a send failure is a fresh, actionable error. A revert that INTERLEAVED with this
+    // send (landing after it started, its refetch SKIPPED because the send is streaming) sets
+    // refreshSkipped, which the error-banner guard suppresses — masking this send's failure. So every
+    // send-failure path re-clears both refresh banners before surfacing the error.
+    const reportSendError = (msg: string) => {
+      setRefreshFailed(false);
+      setRefreshSkipped(false);
+      setError(msg);
+    };
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);
@@ -550,7 +692,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // No usable terminal payload — degrade to the error affordance. If a
         // partial bubble was created, drop it so we don't strand a half message.
         if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
-        setError(finalReply?.error ?? '请求失败');
+        reportSendError(finalReply?.error ?? '请求失败');
         return;
       }
 
@@ -582,6 +724,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         role: 'ai',
         // The terminal reply is authoritative (reconciles any delta drift).
         text: res2.reply,
+        checkpoint_event_id: res2.checkpoint_event_id,
         skill_turn: res2.skill_turn,
         session_id: res2.session_id,
         reply_event_id: res2.reply_event_id,
@@ -599,7 +742,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       );
       // YUK-266 (C1) — a partial-degrade reply still rendered (text persisted);
       // surface the error affordance alongside it so the user knows it was cut.
-      if (res2.error) setError(res2.error);
+      if (res2.error) reportSendError(res2.error);
     } catch (err) {
       // Network / stream error mid-flight. Drop any partial bubble and show the
       // existing 重试 affordance — the turn was best-effort.
@@ -610,7 +753,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           : err instanceof Error
             ? err.message
             : '请求失败';
-      setError(message);
+      reportSendError(message);
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -948,8 +1091,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   message={m}
                   navigate={navigate}
                   onAcceptCorrective={acceptCorrectiveChip}
+                  onRevert={revertCheckpoint}
                   chipPending={qid != null && chipPending === qid}
                   chipAcked={qid != null && chipAcked === qid}
+                  revertPending={
+                    m.checkpoint_event_id != null && revertPendingId === m.checkpoint_event_id
+                  }
                 />
               );
             })}
@@ -967,12 +1114,37 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 </div>
               </div>
             ) : null}
-            {error ? (
+            {error && !refreshFailed && !refreshSkipped ? (
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
                 <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
                   重试
+                </Btn>
+              </div>
+            ) : null}
+            {/* F5 (TdY96) — independent conditionals, not a nested ternary. The two are mutually
+                exclusive: refreshFailed wins via the !refreshFailed guard on the skip banner. */}
+            {refreshFailed ? (
+              <div className="chat-error" data-testid="copilot-refresh-error" role="alert">
+                <LoomIcon name="alert" size={14} />
+                <span>撤回已完成，但刷新对话失败。</span>
+                <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
+                  刷新
+                </Btn>
+              </div>
+            ) : null}
+            {!refreshFailed && refreshSkipped ? (
+              // TchmY — a SKIP is not an error: the revert landed, the on-screen refresh was just
+              // deferred because a reply is streaming. Calmer copy (no failure wording) + a polite
+              // role="status" live region (vs the failure banner's role="alert"), same 刷新 retry. The
+              // div keeps styling parity with the sibling chat-error banner (hence role, not <output>).
+              // biome-ignore lint/a11y/useSemanticElements: role="status" polite live region is intended; keep the div for chat-error styling parity
+              <div className="chat-error" data-testid="copilot-refresh-skipped" role="status">
+                <LoomIcon name="refresh" size={14} />
+                <span>撤回已生效，当前回复结束后可刷新查看。</span>
+                <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
+                  刷新
                 </Btn>
               </div>
             ) : null}

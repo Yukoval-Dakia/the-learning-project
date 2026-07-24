@@ -13,7 +13,7 @@
 // extension). replayToMessages transparently propagates them so ask_check cards
 // and corrective chips re-appear after a drawer reopen / page refresh.
 
-export type ReplayTurnRole = 'user' | 'ai';
+export type ReplayTurnRole = 'user' | 'ai' | 'tombstone';
 
 // Minimal inline types for replayed skill carriers. Mirror their server-side
 // counterparts (CopilotSkillContextT, SkillTurn) but are declared here so
@@ -67,6 +67,7 @@ export interface ReplayTurn {
   text: string;
   at: string;
   event_id: string;
+  checkpoint_event_id?: string;
   // AF S4 / YUK-203 U6 — present on AI turns that carried a skill result.
   skill_turn?: ReplaySkillTurn;
   session_id?: string;
@@ -79,8 +80,9 @@ export interface ReplayTurn {
 
 export interface ReplayChatMessage {
   id: string;
-  role: 'user' | 'ai';
+  role: 'user' | 'ai' | 'tombstone';
   text: string;
+  checkpoint_event_id?: string;
   // AF S4 / YUK-203 U6 — propagated from the turns API so skill cards survive
   // drawer reopen / page refresh.
   skill_turn?: ReplaySkillTurn;
@@ -104,12 +106,29 @@ export interface ReplayChatMessage {
 export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
   const out: ReplayChatMessage[] = [];
   for (const t of turns) {
+    if (t.role !== 'user' && t.role !== 'ai' && t.role !== 'tombstone') continue;
+    // Classify tombstones BEFORE the text guard — a tombstone must still render even with empty
+    // text (the user/ai text check below would otherwise drop it). Prefer the server-provided
+    // t.text (turns.ts is the source of truth) and fall back to a LOCAL COPY of the literal it
+    // emits. NOTE: this is a duplicated literal, not a shared constant — turns.ts is client/server
+    // split so it can't be imported here; if turns.ts changes the tombstone text, update both
+    // (YUK-497 wave-3).
+    if (t.role === 'tombstone') {
+      out.push({
+        id: t.event_id,
+        role: 'tombstone',
+        text: t.text || '本轮更改已撤回',
+        checkpoint_event_id: t.checkpoint_event_id ?? t.event_id,
+      });
+      continue;
+    }
+    // user / ai turns must carry real text — drop empty/malformed (best-effort prefill).
     if (typeof t.text !== 'string' || t.text.length === 0) continue;
-    if (t.role !== 'user' && t.role !== 'ai') continue;
     out.push({
       id: t.event_id,
       role: t.role,
       text: t.text,
+      checkpoint_event_id: t.checkpoint_event_id,
       skill_turn: t.skill_turn,
       session_id: t.session_id,
       reply_event_id: t.reply_event_id,

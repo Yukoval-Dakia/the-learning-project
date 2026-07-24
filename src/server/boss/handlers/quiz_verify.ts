@@ -54,6 +54,7 @@ import {
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
@@ -741,6 +742,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
 
     await db.transaction(async (tx) => {
+      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert).
+      await acquireLearningStateWriteLock(tx);
       // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
       // the question row lock, matching placement paid admission (which takes this advisory lock
       // then a plain SELECT) and proposal-appliers. The prior order (row lock, then supply lock only

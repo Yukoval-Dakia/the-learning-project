@@ -692,6 +692,12 @@ describe('runCopilotChat — skill routing (U6)', () => {
     // Either way, skill_turn.kind is present.
     expect(result.skill_turn?.kind).toBe('ask_check');
     expect(result.skill_turn?.suggested_next).toBe('continue');
+    // YUK-497 wave-2 (codex P2) — an ask_check that materialized a source='teaching_check' draft
+    // question MUST NOT expose a revert checkpoint anchor: cascade revert only compensates the
+    // ask/reply event chain, not that question row, so a Dock revert button would orphan the draft.
+    // user_ask_event_id stays (provenance); checkpoint_event_id is suppressed.
+    expect(result.user_ask_event_id).toBeDefined();
+    expect(result.checkpoint_event_id).toBeUndefined();
   });
 
   // T-C3-3 (YUK-284) — solve was extracted from the skill_context protocol. A

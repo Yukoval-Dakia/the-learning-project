@@ -140,6 +140,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(CopilotDurableRunResponseSchema.parse(await res.json())).toEqual({
       run_id: 'copilot_user_ask_RID',
       session_id: 'sess_1',
+      checkpoint_event_id: 'copilot_user_ask_RID',
     });
     // user_ask 写入 = run handle。
     expect(writeUserAskMock).toHaveBeenCalledWith(
@@ -201,7 +202,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         business_table: 'copilot_run',
         business_id: 'copilot_user_ask_F2',
         event_type: 'copilot_run.failed',
-        payload: expect.objectContaining({ reason: 'enqueue_failed' }),
+        payload: expect.objectContaining({
+          reason: 'enqueue_failed',
+          checkpoint_event_id: 'copilot_user_ask_F2',
+        }),
       }),
     );
     // 补偿：copilot_reply error domain event（chained user_ask）让该轮不是 phantom。

@@ -5,6 +5,8 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as acceptChip } from './accept-chip';
 import {
   AcceptTeachingChipResponseSchema,
+  CopilotCheckpointRevertErrorSchema,
+  CopilotCheckpointRevertSuccessSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsResponseSchema,
 } from './contracts';
@@ -14,6 +16,84 @@ import { GET as getCopilotTurns } from './turns';
 describe('Copilot declared route response contracts', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('parses reverted and already-reverted checkpoint envelopes (200 = success-only)', () => {
+    expect(
+      CopilotCheckpointRevertSuccessSchema.parse({
+        ok: true,
+        status: 'already_reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: [],
+      }),
+    ).toMatchObject({ status: 'already_reverted' });
+    // YUK-497 wave-2 — the 200 schema is success-only; a refusal (ok:false) never occurs at 200 and
+    // must be REJECTED by it. Refusals ride the 404/409 error schema instead (asserted below).
+    expect(() =>
+      CopilotCheckpointRevertSuccessSchema.parse({
+        ok: false,
+        refusal: 'irreversible',
+        reason: 'unsupported effect',
+        irreversible_event_ids: ['tool_1'],
+      }),
+    ).toThrow();
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({
+        ok: false,
+        refusal: 'irreversible',
+        reason: 'unsupported effect',
+        irreversible_event_ids: ['tool_1'],
+      }),
+    ).toMatchObject({ refusal: 'irreversible', irreversible_event_ids: ['tool_1'] });
+    // E3 (TeA-6) — the discriminated union makes `reverted` STRUCTURALLY required for a fresh 'reverted'
+    // (the old flat schema's `reverted?.optional()` let it be omitted). A 'reverted' body without the
+    // counters is now rejected.
+    expect(() =>
+      CopilotCheckpointRevertSuccessSchema.parse({
+        ok: true,
+        status: 'reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: ['c1'],
+      }),
+    ).toThrow();
+  });
+
+  it('parses the snake_case reverted sub-object and the 404/409 error union (review F3/F7)', () => {
+    // F7 — the success envelope's reverted counters are snake_case on the wire.
+    expect(
+      CopilotCheckpointRevertSuccessSchema.parse({
+        ok: true,
+        status: 'reverted',
+        checkpoint_event_id: 'ask_1',
+        compensation_event_ids: ['c1'],
+        reverted: {
+          snapshots_restored: 1,
+          structural_rows_archived: 0,
+          event_layer_compensated: 2,
+          total_nodes: 3,
+        },
+      }),
+    ).toMatchObject({ reverted: { total_nodes: 3 } });
+    // F3 — 404/409 admit BOTH the route's ApiError body and the cascade refusal envelope.
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({ error: 'turn_not_terminal', message: 'x' }),
+    ).toMatchObject({ error: 'turn_not_terminal' });
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({
+        ok: false,
+        refusal: 'no_checkpoint',
+        reason: 'nothing to revert',
+      }),
+    ).toMatchObject({ refusal: 'no_checkpoint' });
+    // F4 — the refusal envelope's optional sub-objects are snake_case (conflict_ref.*).
+    expect(
+      CopilotCheckpointRevertErrorSchema.parse({
+        ok: false,
+        refusal: 'conflict',
+        reason: 'state moved',
+        conflict_ref: { kind: 'theta', subject_kind: 'knowledge', subject_id: 'kc_1' },
+      }),
+    ).toMatchObject({ conflict_ref: { subject_id: 'kc_1' } });
   });
 
   it('parses the real turns and today-summary route envelopes', async () => {

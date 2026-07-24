@@ -59,6 +59,7 @@ function StreamingHarness({ initial }: { initial: ChatMessage[] }) {
           onAcceptCorrective={noopAccept}
           chipPending={false}
           chipAcked={false}
+          revertPending={false}
         />
       ))}
     </div>

@@ -112,6 +112,28 @@ async function writeReply(
   return id;
 }
 
+// YUK-497 wave-4 — mirror an mcp-bridge tool_use event chained to the ask (caused_by), carrying the
+// tool_name (the persisted key the anchor-suppression reads; tool_use has session_id null in prod and
+// is queried by caused_by, not session).
+async function writeToolUse(causedBy: string, toolName: string, at: Date) {
+  const id = `tool_use_${createId()}`;
+  writtenEventIds.push(id);
+  await writeEvent(db, {
+    id,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'tool_use',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { tool_name: toolName, args: {} },
+    caused_by_event_id: causedBy,
+    created_at: at,
+  });
+  return id;
+}
+
 // PR #305 review comment #2 — seed a copilot_reply that carries a skill_turn in
 // the payload (simulates what runCopilotChat writes for a teaching ask_check turn).
 // PR round-2 — optionally also carries skill_context.
@@ -187,6 +209,47 @@ async function writeReplyWithPrimaryView(
 }
 
 describe('getRecentCopilotTurns', () => {
+  it('replaces a fully retracted ask/reply pair with one tombstone', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const askId = await writeAsk('不要保留的问题', sessionId, new Date(now.getTime() - 2000));
+    const replyId = await writeReply(
+      '不要保留的回复',
+      sessionId,
+      askId,
+      new Date(now.getTime() - 1000),
+    );
+    for (const targetId of [askId, replyId]) {
+      await db.insert(event).values({
+        id: `correct_${targetId}`,
+        actor_kind: 'agent',
+        actor_ref: 'cascade_revert',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: targetId,
+        outcome: 'success',
+        payload: {
+          correction_kind: 'retract',
+          reason_md: 'test revert',
+          affected_refs: [{ kind: 'open_inquiry', id: targetId }],
+        },
+        caused_by_event_id: targetId,
+        ingest_at: now,
+        created_at: now,
+      });
+    }
+
+    expect(await getRecentCopilotTurns(db, { now })).toEqual([
+      {
+        role: 'tombstone',
+        text: '本轮更改已撤回',
+        at: new Date(now.getTime() - 2000).toISOString(),
+        event_id: askId,
+        checkpoint_event_id: askId,
+      },
+    ]);
+  });
+
   it('returns ask+reply pairs oldest→newest with role/text/at/event_id', async () => {
     // Seed a real live Copilot session so the reader can resolve it; events are
     // scoped to it via the session_id column.
@@ -211,6 +274,7 @@ describe('getRecentCopilotTurns', () => {
       text: '今天该复习哪些？',
       at: t0.toISOString(),
       event_id: askId,
+      checkpoint_event_id: askId,
     });
     // AI turns carry session_id + reply_event_id (PR round-2 CR 3360614432).
     expect(ours[1]).toEqual({
@@ -220,8 +284,160 @@ describe('getRecentCopilotTurns', () => {
       event_id: replyId,
       session_id: sessionId,
       reply_event_id: replyId,
+      checkpoint_event_id: askId,
     });
   });
+
+  it('does NOT surface a revert checkpoint on a chip-triggered reply (YUK-497 wave-2)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // A chip trigger is a user-role turn but is NOT a valid revert root (owner-locked to
+    // copilot_user_ask). A reply caused by it must therefore expose no checkpoint_event_id.
+    const chipId = `copilot_chip_trigger_${createId()}`;
+    writtenEventIds.push(chipId);
+    await writeEvent(db, {
+      id: chipId,
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'user:self',
+      action: 'experimental:copilot_chip_trigger',
+      subject_kind: 'query',
+      subject_id: chipId,
+      outcome: null,
+      payload: { surface: 'copilot', user_message: '继续讲', session_id: sessionId },
+      created_at: new Date(now.getTime() - 3000),
+    });
+    const chipReplyId = await writeReply('好的', sessionId, chipId, new Date(now.getTime() - 2000));
+    // Contrast case in the same window: a real user_ask-rooted reply DOES get a checkpoint
+    // (guards the fix against over-suppressing legitimate revert affordances).
+    const askId = await writeAsk('真问题', sessionId, new Date(now.getTime() - 1000));
+    const askReplyId = await writeReply('答案', sessionId, askId, new Date(now.getTime() - 500));
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const chipReply = turns.find((t) => t.event_id === chipReplyId);
+    const chipTurn = turns.find((t) => t.event_id === chipId);
+    const askReply = turns.find((t) => t.event_id === askReplyId);
+    expect(chipReply?.role).toBe('ai');
+    expect(chipReply?.checkpoint_event_id).toBeUndefined();
+    expect(chipTurn?.checkpoint_event_id).toBeUndefined();
+    expect(askReply?.checkpoint_event_id).toBe(askId);
+  });
+
+  it('does NOT surface a revert checkpoint on a replayed teaching ask_check reply (wave-3 G1)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // A teaching ask_check reply that materialized a source='teaching_check' draft question carries
+    // skill_turn.structured_question. Mirroring chat.ts's live F1 suppression, the REPLAY path must
+    // also omit checkpoint_event_id — else the revert button re-appears after refresh and would
+    // orphan the draft. Contrast: a plain free-form reply in the same window keeps its checkpoint.
+    const askTeach = await writeAsk('讲讲这个', sessionId, new Date(now.getTime() - 4000));
+    const replyTeach = await writeReplyWithSkillTurn(
+      '这里的「之」是代词。请作答。',
+      sessionId,
+      askTeach,
+      new Date(now.getTime() - 3500),
+      {
+        kind: 'ask_check',
+        suggested_next: 'continue',
+        structured_question: {
+          id: 'q_g1',
+          kind: 'short_answer',
+          prompt_md: '解释「之」。',
+          choices_md: null,
+        },
+      },
+    );
+    const askFree = await writeAsk('随便问', sessionId, new Date(now.getTime() - 2000));
+    const replyFree = await writeReply(
+      '随便答',
+      sessionId,
+      askFree,
+      new Date(now.getTime() - 1500),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const teachReply = turns.find((t) => t.event_id === replyTeach);
+    const freeReply = turns.find((t) => t.event_id === replyFree);
+    expect(teachReply?.role).toBe('ai');
+    expect(teachReply?.checkpoint_event_id).toBeUndefined();
+    // The suppression is scoped: a plain reply still exposes its checkpoint anchor.
+    expect(freeReply?.checkpoint_event_id).toBe(askFree);
+  });
+
+  it('hides a reply whose parent ask was retracted OUTSIDE the window (wave-3 G7)', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    // limit=1 → the reader fetches the newest 2 rows. Seed askOld (oldest, 3rd-newest → OUTSIDE the
+    // fetch), a filler ask between, then replyOld (newest) chained to askOld. Retract askOld. The
+    // reply's parent status must still be probed even though askOld fell out of the window, so the
+    // reply is hidden rather than rendered stale.
+    const askOld = await writeAsk('过期被撤回的问题', sessionId, new Date(now.getTime() - 3000));
+    const fillerAsk = await writeAsk('填充问题', sessionId, new Date(now.getTime() - 2000));
+    const replyOld = await writeReply(
+      '过期回复',
+      sessionId,
+      askOld,
+      new Date(now.getTime() - 1000),
+    );
+    // Retract askOld (the parent) — a cascade_revert correct(retract) event on it.
+    await db.insert(event).values({
+      id: `correct_${askOld}`,
+      actor_kind: 'agent',
+      actor_ref: 'cascade_revert',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: askOld,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'out-of-window revert',
+        affected_refs: [{ kind: 'open_inquiry', id: askOld }],
+      },
+      caused_by_event_id: askOld,
+      ingest_at: now,
+      created_at: now,
+    });
+    writtenEventIds.push(`correct_${askOld}`);
+
+    const turns = await getRecentCopilotTurns(db, { limit: 1, now });
+    // The reply from the out-of-window retracted ask is hidden (not shown stale).
+    expect(turns.some((t) => t.event_id === replyOld)).toBe(false);
+    // Sanity: fillerAsk (its own ask, not retracted) still renders.
+    expect(turns.some((t) => t.event_id === fillerAsk)).toBe(true);
+  });
+
+  it.each(['author_question', 'author_artifact', 'update_artifact', 'write_quiz'])(
+    'does NOT surface a revert checkpoint on the ask OR reply of a turn that called a materializing tool (%s) (wave-4 H1 / wave-5 TcHwW)',
+    async (materializingTool) => {
+      const now = new Date();
+      const sessionId = await createLiveCopilotSession(now);
+      // A free-form turn whose agent called a materializing tool wrote a domain row (question /
+      // artifact) OUTSIDE the ask's event chain — cascade-revert can't compensate it, so the anchor
+      // must be suppressed on replay (mirroring the live response). Keyed on the persisted tool_use
+      // mirror's tool_name under the ask.
+      const askMat = await writeAsk('出一道题', sessionId, new Date(now.getTime() - 4000));
+      await writeToolUse(askMat, materializingTool, new Date(now.getTime() - 3800));
+      const replyMat = await writeReply('好的', sessionId, askMat, new Date(now.getTime() - 3500));
+      // Contrast: a propose-only turn (reversible tool) keeps its anchor — the wave-3 win survives.
+      const askProp = await writeAsk('建议合并', sessionId, new Date(now.getTime() - 2000));
+      await writeToolUse(askProp, 'propose_knowledge_edge', new Date(now.getTime() - 1800));
+      const replyProp = await writeReply(
+        '已提议',
+        sessionId,
+        askProp,
+        new Date(now.getTime() - 1500),
+      );
+
+      const turns = await getRecentCopilotTurns(db, { now });
+      // Reply row (W4).
+      expect(turns.find((t) => t.event_id === replyMat)?.checkpoint_event_id).toBeUndefined();
+      expect(turns.find((t) => t.event_id === replyProp)?.checkpoint_event_id).toBe(askProp);
+      // W5-1a — the ASK row anchors the SAME checkpoint, so it must be suppressed for the
+      // materializing turn and kept for the propose-only turn (W4 only guarded the reply).
+      expect(turns.find((t) => t.event_id === askMat)?.checkpoint_event_id).toBeUndefined();
+      expect(turns.find((t) => t.event_id === askProp)?.checkpoint_event_id).toBe(askProp);
+    },
+  );
 
   it('caps to limit turns (newest kept), returned chronologically', async () => {
     const now = new Date();

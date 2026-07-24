@@ -27,6 +27,7 @@ import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
@@ -418,6 +419,9 @@ export async function acceptQuestionDraftProposal(
   const rateEventId = newId();
 
   await db.transaction(async (tx) => {
+    // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+    // material_fsrs_state / mastery_state writer and the cascade revert).
+    await acquireLearningStateWriteLock(tx);
     await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
     await tx
       .update(question)

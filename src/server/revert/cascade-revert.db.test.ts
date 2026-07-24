@@ -30,6 +30,7 @@ import type {
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { upsertFsrsState } from '../fsrs/state';
@@ -451,6 +452,56 @@ describe('orchestrateCascadeRevert', () => {
     expect(await countCorrectionsFor(extractEvent)).toBe(0);
   });
 
+  it('refuses (irreversible) a closure whose rate=accept accepted a proposal (wave-7 TeZZO)', async () => {
+    const db = testDb();
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    const proposeEvent = await seedEvent({
+      action: 'propose',
+      subject_kind: 'knowledge',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+    });
+    // The accept vote landed a KG mutation outside this chain → the whole closure is fail-closed.
+    const acceptRate = await seedEvent({
+      action: 'rate',
+      subject_kind: 'event',
+      caused_by_event_id: proposeEvent,
+      payload: { rating: 'accept' },
+    });
+
+    const result = await orchestrateCascadeRevert(db, checkpoint);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected refusal');
+    if (result.refusal !== 'irreversible')
+      throw new Error(`expected irreversible, got ${result.refusal}`);
+    expect(result.irreversibleEventIds).toContain(acceptRate);
+    // Nothing mutated — no half-revert of the ask→propose→rate chain.
+    expect(await countCorrectionsFor(acceptRate)).toBe(0);
+  });
+
+  it('reverts a closure whose rate=dismiss landed nothing (dismiss stays reversible) (wave-7 TeZZO)', async () => {
+    const db = testDb();
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    const proposeEvent = await seedEvent({
+      action: 'propose',
+      subject_kind: 'knowledge',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+    });
+    await seedEvent({
+      action: 'rate',
+      subject_kind: 'event',
+      caused_by_event_id: proposeEvent,
+      payload: { rating: 'dismiss' },
+    });
+
+    const result = await orchestrateCascadeRevert(db, checkpoint);
+
+    if (!result.ok) throw new Error(`expected ok, got refusal: ${result.refusal}`);
+    expect(result.ok).toBe(true);
+  });
+
   it('restores a cold-start snapshot by DELETING the FSRS row (before=null)', async () => {
     const db = testDb();
     const subjectId = newId();
@@ -764,6 +815,56 @@ describe('orchestrateCascadeRevert', () => {
     if (second.ok) throw new Error('expected conflict');
     expect(second.refusal).toBe('conflict');
     expect(await readTheta(kcId)).toBe(0.2); // untouched by the refused second revert
+  });
+
+  it('waits for a concurrent shared state writer and refuses instead of overwriting newer evidence', async () => {
+    const db = testDb();
+    const attemptId = newId();
+    const kcId = newId();
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: 1.1,
+      evidence_count: 2,
+      success_count: 2,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    await seedThetaBracket(attemptId, kcId, richBefore(0.2), 1.1);
+
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set');
+    const writer = postgres(url, { max: 1 });
+    try {
+      let signalAcquired: (() => void) | undefined;
+      const acquired = new Promise<void>((resolve) => {
+        signalAcquired = resolve;
+      });
+      let releaseWriter: (() => void) | undefined;
+      const release = new Promise<void>((resolve) => {
+        releaseWriter = resolve;
+      });
+      const writeNewEvidence = writer.begin(async (sql) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${kcId}`}))`;
+        await sql`UPDATE mastery_state SET theta_hat = 1.3, evidence_count = 3 WHERE subject_kind = 'knowledge' AND subject_id = ${kcId}`;
+        signalAcquired?.();
+        await release;
+      });
+      await acquired;
+
+      const revertPromise = orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
+      releaseWriter?.();
+      await writeNewEvidence;
+      const result = await revertPromise;
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected conflict');
+      expect(result.refusal).toBe('conflict');
+      expect(await readTheta(kcId)).toBe(1.3);
+      expect(await countCorrectionsFor(`${attemptId}:snapshot:theta`)).toBe(0);
+    } finally {
+      // Always release the dedicated writer connection, even if an assertion above throws.
+      await writer.end();
+    }
   });
 
   it('tx-aware: runs inside a caller tx + threads reasonContext into the retract reason_md', async () => {

@@ -1,17 +1,81 @@
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
-import { ApiIdParamsSchema } from '@/kernel/http-contracts';
+import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { z } from 'zod';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
 export { CopilotChatRequest };
 
 export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
+export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
+
+// YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
+// (no_checkpoint) / 409 (truncated / irreversible / legacy_snapshot / conflict). Declared as
+// its own schema so the manifest can map it onto those statuses instead of the bare
+// {error,message} the API_ERROR_RESPONSES spread implied for a body that is NOT an API error.
+export const CopilotCheckpointRevertRefusalSchema = z.object({
+  ok: z.literal(false),
+  refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
+  reason: z.string(),
+  // snake_case wire fields (this envelope is new in YUK-497 — align to house style now).
+  irreversible_event_ids: z.array(z.string()).optional(),
+  ref: z.object({ kind: z.literal('theta'), kc_id: z.string() }).optional(),
+  conflict_ref: z
+    .object({
+      kind: z.enum(['theta', 'fsrs']),
+      subject_kind: z.string(),
+      subject_id: z.string(),
+    })
+    .optional(),
+});
+
+// TchmV — the revert handler builds its refusal body against THIS shape (not a loose
+// Record<string, unknown>) so a wire-field typo or shape drift fails to compile.
+export type CopilotCheckpointRevertRefusalT = z.infer<typeof CopilotCheckpointRevertRefusalSchema>;
+
+// 404 / 409 on the revert route carry EITHER the standard API error body (the route's own
+// not_found / turn_not_terminal / turn_shadow_not_terminal ApiError throws) OR the cascade
+// refusal envelope (orchestrator no_checkpoint → 404, other refusals → 409).
+export const CopilotCheckpointRevertErrorSchema = z.union([
+  ApiErrorResponseSchema,
+  CopilotCheckpointRevertRefusalSchema,
+]);
+
+// Success-only body for the 200 response. The handler NEVER returns an ok:false refusal at 200 —
+// refusals are 404 (no_checkpoint) or 409 (all others) via CopilotCheckpointRevertErrorSchema — so
+// the 200 schema must not advertise a refusal shape to OpenAPI consumers (YUK-497 wave-2).
+// E3 (TeA-6) — discriminated on `status` so the shape is structurally exact: a fresh 'reverted'
+// REQUIRES the `reverted` counters; an idempotent 'already_reverted' has NO counters (nothing was
+// compensated this call). The old flat `reverted?.optional()` let a 'reverted' body omit the counters
+// and an 'already_reverted' body carry them — both nonsense the handler never emits.
+const CopilotRevertCountersSchema = z.object({
+  snapshots_restored: z.number().int().nonnegative(),
+  structural_rows_archived: z.number().int().nonnegative(),
+  event_layer_compensated: z.number().int().nonnegative(),
+  total_nodes: z.number().int().nonnegative(),
+});
+
+export const CopilotCheckpointRevertSuccessSchema = z.discriminatedUnion('status', [
+  z.object({
+    ok: z.literal(true),
+    status: z.literal('reverted'),
+    checkpoint_event_id: z.string(),
+    compensation_event_ids: z.array(z.string()),
+    reverted: CopilotRevertCountersSchema,
+  }),
+  z.object({
+    ok: z.literal(true),
+    status: z.literal('already_reverted'),
+    checkpoint_event_id: z.string(),
+    compensation_event_ids: z.array(z.string()),
+  }),
+]);
 
 export const CopilotChatStreamResponseSchema = z.string();
 
 export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
+  checkpoint_event_id: z.string(),
 });
 
 export const CopilotTurnsQuerySchema = z.object({
@@ -42,12 +106,13 @@ const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
 ]);
 
 export const CopilotTurnSchema = z.object({
-  role: z.enum(['user', 'ai']),
+  role: z.enum(['user', 'ai', 'tombstone']),
   text: z.string(),
   at: z.string().datetime(),
   event_id: z.string(),
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
+  checkpoint_event_id: z.string().optional(),
   skill_turn: CopilotTurnSkillSchema.optional(),
   skill_context: z
     .object({

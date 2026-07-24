@@ -20,10 +20,12 @@
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events/corrections';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
 import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
+import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
-export type CopilotTurnRole = 'user' | 'ai';
+export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
 // AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
 // the copilot_reply event payload so replay can surface the structured question
@@ -78,6 +80,8 @@ export interface CopilotTurn {
   // present only on AI turns (replay fills them from the event row).
   session_id?: string;
   reply_event_id?: string;
+  /** Typed user_ask root that owns this reversible turn. */
+  checkpoint_event_id?: string;
   /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
   skill_turn?: CopilotTurnSkillTurn;
   /** Present for AI turns produced by a skill (teaching / solve) — lets replay restore the skill card. */
@@ -86,10 +90,11 @@ export interface CopilotTurn {
   primary_view?: CopilotPrimaryView;
 }
 
-const USER_ACTIONS = [
-  'experimental:copilot_user_ask',
-  'experimental:copilot_chip_trigger',
-] as const;
+// The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
+// user-role turn but is NOT a revert root, so a reply caused by one must not surface a
+// checkpoint_event_id (which would render a revert button that 404s).
+const USER_ASK_ACTION = 'experimental:copilot_user_ask';
+const USER_ACTIONS = [USER_ASK_ACTION, 'experimental:copilot_chip_trigger'] as const;
 const REPLY_ACTION = 'experimental:copilot_reply';
 
 const DEFAULT_TURN_LIMIT = 20;
@@ -235,6 +240,7 @@ export async function getRecentCopilotTurns(
       action: event.action,
       payload: event.payload,
       created_at: event.created_at,
+      caused_by_event_id: event.caused_by_event_id,
     })
     .from(event)
     .where(
@@ -250,8 +256,64 @@ export async function getRecentCopilotTurns(
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit * 2);
 
+  // YUK-497 wave-3 (OCR minor) — also probe the retraction status of each reply's parent, even when
+  // that parent fell OUTSIDE this limit*2 window. Otherwise a reply whose parent was retracted
+  // out-of-window renders normally after a refresh (stale content from a reverted turn). NOTE: a
+  // reply's caused_by parent is a user_ask OR a chip_trigger, so this set is NOT ask-only (YUK-497
+  // wave-4 rename).
+  const replyParentIds = rows
+    .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+    .map((row) => row.caused_by_event_id as string);
+  // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's caused_by may be a
+  // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
+  const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
+  // TchmW — these two reads are independent (correction statuses over the window vs the materializing
+  // tool_use scan over the ask ids); run them concurrently.
+  const [statuses, asksWithMaterializingTool] = await Promise.all([
+    getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
+    // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
+    // / update_artifact / write_quiz) wrote a domain row cascade-revert can't compensate.
+    selectAsksWithMaterializingToolCall(dbArg, [...askIds]),
+  ]);
+  // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
+  // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
+  const retractedParentIds = new Set(
+    [...askIds, ...replyParentIds].filter((id) => statuses.get(id)?.state === 'retracted'),
+  );
+  // YUK-497 wave-3 — a teaching_check turn materializes a draft question via the reply's
+  // structured_question. Key it by ASK id so BOTH the ask row and the reply row suppress consistently.
+  const structuredQuestionAskIds = new Set(
+    rows
+      .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+      .filter(
+        (row) =>
+          replySkillTurn((row.payload ?? {}) as Record<string, unknown>)?.structured_question,
+      )
+      .map((row) => row.caused_by_event_id as string),
+  );
+  // Anchor exposed ⇔ every effect of the turn is event-chain-compensable (materializing-tools.ts).
+  // Suppress when the turn materialized a teaching_check draft (wave-3) OR called a materializing
+  // DOMAIN tool (wave-4) — both write rows cascade-revert can't undo. Applied to BOTH the ask row
+  // (wave-5, TcHwW — W4 only guarded the reply) and the reply row so the button can't leak via either.
+  const anchorSuppressed = (askId: string): boolean =>
+    asksWithMaterializingTool.has(askId) || structuredQuestionAskIds.has(askId);
+
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
+    const checkpointEventId = row.action === USER_ASK_ACTION ? row.id : row.caused_by_event_id;
+    if (checkpointEventId && retractedParentIds.has(checkpointEventId)) {
+      if (row.id === checkpointEventId) {
+        turns.push({
+          role: 'tombstone',
+          text: '本轮更改已撤回',
+          at: row.created_at.toISOString(),
+          event_id: row.id,
+          checkpoint_event_id: row.id,
+        });
+      }
+      continue;
+    }
+    if (statuses.get(row.id)?.state === 'retracted') continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
     if (row.action === REPLY_ACTION) {
       const text = replyText(payload);
@@ -268,6 +330,15 @@ export async function getRecentCopilotTurns(
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: session.id,
         reply_event_id: row.id,
+        // Only a reply rooted at a typed user_ask exposes a revert affordance; a chip-triggered
+        // reply's caused_by points at a chip_trigger (not a revert root). Suppress a materializing
+        // turn's anchor (anchorSuppressed) so re-exposing the button after a refresh can't 409 or
+        // orphan a row. Live suppression mirrors this exactly.
+        ...(checkpointEventId &&
+        askIds.has(checkpointEventId) &&
+        !anchorSuppressed(checkpointEventId)
+          ? { checkpoint_event_id: checkpointEventId }
+          : {}),
       };
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
@@ -276,7 +347,17 @@ export async function getRecentCopilotTurns(
     } else {
       const text = userText(payload);
       if (text === null) continue;
-      turns.push({ role: 'user', text, at: row.created_at.toISOString(), event_id: row.id });
+      turns.push({
+        role: 'user',
+        text,
+        at: row.created_at.toISOString(),
+        event_id: row.id,
+        // W5-1a (TcHwW) — the ask row anchors the SAME checkpoint the reply does, so it must honour
+        // the identical materializing suppression or the revert button leaks back in through it.
+        ...(row.action === USER_ASK_ACTION && !anchorSuppressed(row.id)
+          ? { checkpoint_event_id: row.id }
+          : {}),
+      });
     }
   }
 

@@ -421,6 +421,19 @@
     ]
   },
   {
+    "path": "/api/copilot/checkpoints/:eventId/revert",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "撤回当前 Copilot 会话中已终止的 typed user-ask 轮次",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "仅 experimental:copilot_user_ask 根；成功 200 reverted，重复调用 200 already_reverted 且不新增补偿；不支持 effect 原子拒绝。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/turns",
     "methods": [
       {

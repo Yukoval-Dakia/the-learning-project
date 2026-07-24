@@ -32,6 +32,7 @@ import { db as defaultDb } from '@/db/client';
 import type { Db, Tx } from '@/db/client';
 import { answer, event, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { checkRateLimit } from '@/server/http/rate-limit';
@@ -604,6 +605,9 @@ export async function submitPaperSlot(
   );
 
   const persistSubmission = db.transaction(async (tx) => {
+    // YUK-497 — global learning-state write lock FIRST (before the paper-session lock and the
+    // per-subject fsrs:* lock below); shared tx-entry order with submit/verify/revert writers.
+    await acquireLearningStateWriteLock(tx);
     // Lock and validate the session, then read the latest frozen slot through the
     // same helper used by the paid-judge claim so both paths share one policy.
     const { sessionStartedAt, latestFrozen } = await lockAndReadPaperSlot(tx, input, partRef);

@@ -148,7 +148,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
       // SSE 面是两条返回契约）。
       return Response.json(
-        { run_id: runId, session_id: sessionId },
+        { run_id: runId, session_id: sessionId, checkpoint_event_id: runId },
         {
           status: 202,
           headers: {
@@ -170,7 +170,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
             business_table: COPILOT_RUN_TABLE,
             business_id: runId,
             event_type: COPILOT_RUN_EVENTS.FAILED,
-            payload: { reason: 'enqueue_failed' },
+            payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
           });
           await writeCopilotReply(db, {
             sessionId,
