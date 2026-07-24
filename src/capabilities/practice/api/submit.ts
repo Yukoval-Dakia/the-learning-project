@@ -664,6 +664,13 @@ async function persistSubmit(
         // 字段 ABSENT（非 null）当调用方未带过程文本 → 既有 review event byte-identical。
         // API 侧先行；UI 采集框（PfSolo）过 design pre-flight 后接线传入 body.reasoning_trace。
         ...(body.reasoning_trace?.trim() ? { reasoning_trace: body.reasoning_trace } : {}),
+        // YUK-444 (A10 答题置信度自评) — 学生看判定前的主观把握（1-5）。Conditional spread
+        // 保持字段 ABSENT 当调用方未带（跳过 / 客观题 auto-commit）→ 既有 review event
+        // byte-identical。**observe-only**：只透传落 payload，不参与 rating / FSRS / θ̂ 任何
+        // 判分链路（本文件对 review 的 fsrs / mastery 计算完全不读它）。
+        ...(typeof body.self_confidence === 'number'
+          ? { self_confidence: body.self_confidence }
+          : {}),
         ...judgePayload,
         ...judgeAdvicePayload,
       },

@@ -260,6 +260,14 @@ export const ReviewOnQuestion = z
       // OPTIONAL：非采集面 / 历史 review 恒缺省 → 既有 review 读路径逐字不变。与 attempt
       // 侧同风格 max(4000) 封上界。engagement 红线（零强制）= 字段 optional。
       reasoning_trace: z.string().max(4000).optional(),
+      // YUK-444 (A10 答题置信度自评) — self_confidence: 学生在看到判定之前对本次作答的
+      // 主观把握（1-5 整数，1=完全没底 … 5=十拿九稳）。PfSolo 提交后、判定揭晓前的 in-page
+      // interstitial 采集（推迟揭晓的元认知语义）。**observe-only**：仅落到 review event
+      // payload 供后续分析，绝不进 θ̂ / FSRS / 判分（命名刻意用 self_confidence 而非
+      // confidence——后者已被 judge 置信度占用）。OPTIONAL：跳过 / 客观题 auto-commit /
+      // 历史 review 恒缺省 → 既有读路径逐字不变（byte-identical 回归锚）。engagement 红线
+      // （零强制）= 字段 optional。
+      self_confidence: z.number().int().min(1).max(5).optional(),
     }),
     ...baseOptionalFields,
   })

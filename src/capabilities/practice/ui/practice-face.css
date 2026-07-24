@@ -761,6 +761,96 @@
   color: var(--info);
 }
 
+/* process capture box (YUK-562 · 记下你的思路) — 作答面与提交 CTA 之间，默认折叠、可完全忽略 */
+.pfs-trace {
+  margin-top: var(--s-3);
+}
+.pfs-trace-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.pfs-trace-toggle:hover {
+  color: var(--ink);
+}
+.pfs-trace-composer {
+  margin-top: var(--s-1);
+}
+
+/* confidence self-assessment interstitial (YUK-444 · 推迟揭晓 · observe-only) */
+.pfs-conf {
+  margin-top: var(--s-5);
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: pf-rise .35s var(--ease-out) both;
+}
+.pfs-conf-q {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.pfs-conf-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.pfs-conf-btn {
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-pill);
+  min-width: 40px;
+  padding: 6px 0;
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.pfs-conf-btn:hover {
+  border-color: var(--info-line);
+  color: var(--ink);
+}
+.pfs-conf-btn.on {
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info-ink);
+  font-weight: 600;
+}
+.pfs-conf-skip {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 var(--s-2);
+  text-decoration: underline;
+  text-decoration-color: var(--ink-5);
+  text-underline-offset: 3px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.pfs-conf-skip:hover {
+  color: var(--ink-2);
+}
+.pfs-conf-hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
 /* coach drawer (解题会话) */
 .pfs-coach {
   position: fixed;

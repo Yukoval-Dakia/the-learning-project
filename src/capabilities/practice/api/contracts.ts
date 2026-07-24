@@ -16,6 +16,10 @@ const CreateAttemptBodyBaseSchema = z.object({
   // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界与
   // known.ts 的 reasoning_trace(max 4000) 对齐。
   reasoning_trace: z.string().max(4000).nullable().optional(),
+  // YUK-444 (A10 答题置信度自评) — 学生对本次作答的主观把握（1-5 整数），落到 review
+  // event payload.self_confidence。**observe-only**：server 只透传落库，绝不进 θ̂ / FSRS /
+  // 判分。OPTIONAL：跳过 / 客观题 auto-commit 省略即字段 absent → 既有提交逐字不变。
+  self_confidence: z.number().int().min(1).max(5).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),
