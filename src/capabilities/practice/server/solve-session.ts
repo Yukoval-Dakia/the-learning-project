@@ -330,6 +330,16 @@ export async function submitSolveAttempt(
   ].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
   const answerMd = answerParts.join('\n');
 
+  // YUK-562 (process-data 最小采集) — reasoning_trace 是学生自述的解题「过程」文本，取
+  // student_text_steps（区别于 answer_md 里连最终答案一起拼的全量）。answer_md 的既有
+  // 拼接行为保留不变（向后兼容 + judge 仍读 answer_md）；这里只是额外把过程步骤单独留痕，
+  // 供 attribution 通电（attribution_followup → AttributionInput.reasoning_trace_md）。
+  // 无步骤（纯手写图 / 只填最终答案）时为空串 → 下面条件写入使字段 ABSENT，payload 逐字不变。
+  const reasoningTrace = (submission.student_text_steps ?? [])
+    .filter((s) => s.trim().length > 0)
+    .join('\n')
+    .slice(0, 4000);
+
   const judgeFn = params.judgeFn ?? ((input) => createDefaultJudgeInvoker().invoke(input));
   const judged = await judgeFn({
     db,
@@ -392,6 +402,9 @@ export async function submitSolveAttempt(
         // value and IS written.
         ...(params.hintsUsed !== undefined ? { hints_used: params.hintsUsed } : {}),
         ...(params.finalHintLevel !== undefined ? { final_hint_level: params.finalHintLevel } : {}),
+        // YUK-562 — 额外写入过程文本（步骤自述），保留 answer_md 拼接不变。Conditional
+        // spread：无步骤时字段 ABSENT → byte-identical 回归锚。
+        ...(reasoningTrace.length > 0 ? { reasoning_trace: reasoningTrace } : {}),
         // provenance (stored in jsonb; stripped by the Zod contract on parse)
         source: 'solve_tutor',
         judge_route: judged.route,

@@ -11,6 +11,11 @@ const CreateAttemptBodyBaseSchema = z.object({
   mistake_id: z.string().min(1).optional(),
   rating: FsrsRating,
   response_md: z.string().max(MAX_REVIEW_RESPONSE_CHARS).nullable().optional(),
+  // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，落到 review event
+  // payload.reasoning_trace（区别于 response_md 的最终作答）。API 侧先行支持；UI 采集框
+  // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界与
+  // known.ts 的 reasoning_trace(max 4000) 对齐。
+  reasoning_trace: z.string().max(4000).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),

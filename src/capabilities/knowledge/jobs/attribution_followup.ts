@@ -116,9 +116,14 @@ export async function runAttributionFollowup(
   const payload = attempt.payload as {
     answer_md?: string | null;
     referenced_knowledge_ids?: string[];
+    // YUK-562 — 学生自述解题思路（solve-session 首个 live writer）。
+    reasoning_trace?: string | null;
   };
   const referencedKnowledgeIds =
     payload.referenced_knowledge_ids ?? (q.knowledge_ids as string[]) ?? [];
+  // YUK-562 (process-data 通电) — 有过程文本时把它带进归因输入，让 LLM 在思维层面定位错因。
+  // Conditional：无 trace 时省略 key → 序列化后的归因 prompt byte-identical（不带 trace 不变）。
+  const reasoningTraceMd = payload.reasoning_trace?.trim() ? payload.reasoning_trace : undefined;
 
   // Tree snapshot for knowledge_context. Restrict to nodes the attempt
   // referenced — the prompt is bounded; the LLM doesn't need the whole tree.
@@ -137,6 +142,8 @@ export async function runAttributionFollowup(
       reference_md: q.reference_md,
       wrong_answer_md: payload.answer_md ?? '',
       knowledge_context: pickedNodes,
+      // YUK-562 — 仅当 attempt 带过程文本时才加该 key（否则 undefined → JSON.stringify 略过）。
+      ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
     },
     referencedKnowledgeIds,
     runTaskFn,

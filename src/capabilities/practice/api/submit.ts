@@ -660,6 +660,10 @@ async function persistSubmit(
         // review event. This is the authoritative join key for StreamView verdicts;
         // non-stream callers omit it and historical events remain valid.
         ...(body.stream_item_id ? { stream_item_id: body.stream_item_id } : {}),
+        // YUK-562 (process-data 最小采集) — 学生自述解题思路。Conditional spread 保持
+        // 字段 ABSENT（非 null）当调用方未带过程文本 → 既有 review event byte-identical。
+        // API 侧先行；UI 采集框（PfSolo）过 design pre-flight 后接线传入 body.reasoning_trace。
+        ...(body.reasoning_trace?.trim() ? { reasoning_trace: body.reasoning_trace } : {}),
         ...judgePayload,
         ...judgeAdvicePayload,
       },

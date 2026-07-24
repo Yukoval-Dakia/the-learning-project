@@ -79,6 +79,13 @@ export interface AttributionInput {
   reference_md: string | null;
   wrong_answer_md: string;
   knowledge_context: Array<{ id: string; name: string; effective_domain: string | null }>;
+  // YUK-562 (process-data 通电) — 学生自述的解题思路 / 过程文本（来自 attempt payload
+  // 的 reasoning_trace，solve-session 首个 live writer）。runner 把整个 input 对象
+  // JSON.stringify 进 user message（runner.ts:304），故该字段非空时会作为「学生自述思路」
+  // 一节自动出现在归因 prompt 里，帮 LLM 在思维层面定位错因；缺省（省略 key）时 user
+  // message byte-identical → 归因 prompt 不变。system prompt（buildAttributionPrompt /
+  // Rerank）刻意不改：它被 registry.test.ts 的逐字节 hash oracle 冻结，字段名自描述即可。
+  reasoning_trace_md?: string | null;
 }
 
 export interface RunAttributionAndWriteJudgeEventParams {
