@@ -94,6 +94,19 @@ export interface RunEdgeProposeAndWriteResult {
   // overloads "nothing to do" and "error swallowed" into the same zero-stats shape,
   // so the counts alone cannot carry this bit; this flag is the disambiguator.
   ok: boolean;
+  /**
+   * YUK-779 — true once KnowledgeEdgeProposeTask was actually CALLED, false when this
+   * function returned before ever reaching it (today: the empty-knowledge-tree no-op
+   * at the top, which returns EMPTY_RESULT verbatim with `ok: true`).
+   *
+   * Why the nightly needs it separately from `ok`: `ok` answers "did anything get
+   * swallowed", NOT "did we try". The empty-tree no-op is `ok: true` with zero stats —
+   * indistinguishable from "the model ran and proposed nothing" — so a handler reading
+   * only `ok` would report a fallible unit as attempted on a night when nothing ran at
+   * all. See src/server/boss/job-yield.ts for why 「试过没有」 is the load-bearing
+   * distinction there.
+   */
+  llm_attempted: boolean;
   proposed: number;
   skipped_self_loop: number;
   skipped_unknown_node: number;
@@ -122,6 +135,10 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
   // is returned verbatim on the genuine tree-empty no-op. The catch-all path
   // overrides `ok: false` explicitly (YUK-583).
   ok: true,
+  // YUK-779: false by default — every early return that spreads EMPTY_RESULT (the
+  // empty-tree no-op, the catch-all) did NOT reach the model. Only the live path
+  // below flips it, immediately before the call.
+  llm_attempted: false,
   proposed: 0,
   skipped_self_loop: 0,
   skipped_unknown_node: 0,
@@ -142,8 +159,14 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
 export async function runEdgeProposeAndWrite(
   params: RunEdgeProposeAndWriteParams,
 ): Promise<RunEdgeProposeAndWriteResult> {
+  // YUK-779 — 必须是 try 之外的局部量：catch 也要如实回答「刚才到底调没调模型」，
+  // 否则一个**发生在 LLM 之前**的吞掉的 DB 故障会被报成「今晚没事可做」（idle），
+  // 把一次真实的吞错完全隐形——那正是本票要消灭的东西。
+  let llmAttempted = false;
   try {
     const tree = await loadTreeSnapshot(params.db);
+    // 空知识树：本函数在**调用模型之前**就收工。这是「今晚确实没事可做」，
+    // llm_attempted 保持 false（EMPTY_RESULT 的默认值）。
     if (tree.length === 0) return { ...EMPTY_RESULT };
 
     const existingEdges = await params.db
@@ -234,6 +257,8 @@ export async function runEdgeProposeAndWrite(
       }),
     };
 
+    // YUK-779: 紧挨调用之前置位，故成功与吞错两条路都能如实回答「试过」。
+    llmAttempted = true;
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {
       subjectProfile: params.subjectProfile,
     });
@@ -243,7 +268,7 @@ export async function runEdgeProposeAndWrite(
     const treeParentLinks = tree.flatMap((node) =>
       node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
     );
-    const stats = { ...EMPTY_RESULT };
+    const stats = { ...EMPTY_RESULT, llm_attempted: true };
 
     for (const p of parsed.proposals) {
       if (p.from_knowledge_id === p.to_knowledge_id) {
@@ -638,7 +663,9 @@ export async function runEdgeProposeAndWrite(
     // the watermark on this path (advancing would drop the batch's events forever,
     // reproducing the bug this issue fixes). Distinct from the tree-empty no-op
     // (ok: true) which is safe to advance past.
-    return { ...EMPTY_RESULT, ok: false };
+    // YUK-779: 带上 llmAttempted 的真实值——LLM 之前就吞掉的故障仍须计为一次失败的
+    // 尝试（见 handler 里 `llm_attempted || !ok` 的合成），绝不能滑成 idle。
+    return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
 }
 

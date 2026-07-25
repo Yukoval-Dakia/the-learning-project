@@ -193,8 +193,10 @@ export async function runGoalScopeProposeNightly(
     proposed: result.proposal_id ? 1 : 0,
     proposal_id: result.proposal_id,
     // YUK-779: surface the swallow instead of letting it collapse into proposed:0.
-    // This is the ONLY return that sets llm_attempted — the call above just happened.
-    llm_attempted: 1,
+    // NOT hardcoded 1 (PR #1076 review): runGoalScopeAndWrite can itself return before
+    // reaching the model (empty knowledge tree → `!prepared`), so the flag must come
+    // from it, not from "we got far enough to call it".
+    llm_attempted: result.llm_attempted ? 1 : 0,
     llm_failed: result.ok ? 0 : 1,
   };
 }
@@ -215,9 +217,13 @@ export function buildGoalScopeProposeNightlyHandler(
       // breaks the attempted === succeeded + failed invariant, and it is exactly the
       // arithmetic that would go live the moment the owner flips `stalled → throw`
       // (PR §4) or anything starts distinguishing `idle` from `ok`.
+      // attempted = llm_attempted OR llm_failed — see knowledge_edge_propose_nightly
+      // for the full argument; briefly: `llm_attempted` alone would report `idle` for
+      // a fault swallowed BEFORE the model was reached, hiding a real swallowed error.
+      const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
       return reportJobYield('goal_scope_propose_nightly', {
-        attempted: result.llm_attempted,
-        succeeded: result.llm_attempted - result.llm_failed,
+        attempted,
+        succeeded: attempted - result.llm_failed,
         failed: result.llm_failed,
       });
     } catch (err) {

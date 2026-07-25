@@ -146,6 +146,17 @@ describe('describeJobYield — 展示分母必须与判据分母同源（PR #107
     expect(skewed).not.toContain('all 100');
   });
 
+  it('resolved === 0 时不得印 NaN——本函数是导出的，level 由调用方给，不保证自洽', () => {
+    // 走 reportJobYield 时 {0,0,0} 必然判 idle、到不了 degraded 分支；但直接调用
+    // （测试 / 未来调用方）会让 failed/resolved 得出 NaN，印出「NaN% > 50% threshold」。
+    expect(describeJobYield('x', { attempted: 0, succeeded: 0, failed: 0 }, 'degraded')).toBeNull();
+    expect(describeJobYield('x', { attempted: 0, succeeded: 0, failed: 0 }, 'stalled')).toBeNull();
+    // 分母非零时照常出话（守卫不得误伤正常路径）。
+    expect(describeJobYield('x', { attempted: 3, succeeded: 0, failed: 3 }, 'stalled')).toContain(
+      '0/3 resolved unit(s) succeeded',
+    );
+  });
+
   it('展示的百分比与 classifyJobYield 的判定在阈值边界上不会互相矛盾', () => {
     // 恰好 50%：判据严格大于 → ok（无消息）。展示层不得暗示它越了阈值。
     const y = { attempted: 10, succeeded: 5, failed: 5 };

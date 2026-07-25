@@ -60,6 +60,21 @@ export interface RunGoalScopeAndWriteResult {
    * a failure — see src/server/boss/job-yield.ts for the full 判据.
    */
   ok: boolean;
+  /**
+   * YUK-779 — true once GoalScopeTask was actually CALLED.
+   *
+   * Same shape as runEdgeProposeAndWrite's flag, and for the same reason: this
+   * function ALSO returns before reaching the model when the knowledge tree is empty
+   * (buildGoalScopePreparation → `tree.length === 0` → null → the `!prepared` no-op),
+   * with `ok: true` and a zero result — indistinguishable from "the model declined".
+   *
+   * Today the nightly's own `skipped_no_weak` gate shadows that path (an empty tree
+   * yields no ≥5-KC domain, so the job returns before ever calling this). The flag is
+   * kept exact anyway: the shadowing is incidental — it depends on a *different*
+   * function's gate ordering, and a TOCTOU (tree non-empty at the job gate, emptied by
+   * the time this re-reads it) still reaches it.
+   */
+  llm_attempted: boolean;
 }
 
 const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
@@ -67,6 +82,9 @@ const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
   goal_id: null,
   scope_count: 0,
   ok: true,
+  // false by default — every early return spreading EMPTY_RESULT stopped short of
+  // the model. Only the live path flips it, immediately before the call.
+  llm_attempted: false,
 };
 
 async function buildGoalScopePreparation(db: Db, intent: GoalScopeIntent) {
@@ -110,6 +128,9 @@ export async function prepareGoalScopeTask(ctx: ToolContext, intent: GoalScopeIn
 export async function runGoalScopeAndWrite(
   params: RunGoalScopeAndWriteParams,
 ): Promise<RunGoalScopeAndWriteResult> {
+  // YUK-779 — 必须在 try 之外：catch 也要如实回答「刚才到底调没调模型」，否则一个
+  // 发生在 LLM 之前的吞掉的故障会被报成 idle，把真实吞错隐形。
+  let llmAttempted = false;
   try {
     const prepared = await buildGoalScopePreparation(params.db, {
       goal_title: params.goalTitle,
@@ -118,6 +139,8 @@ export async function runGoalScopeAndWrite(
     if (!prepared) return { ...EMPTY_RESULT };
     const { input, tree } = prepared;
 
+    // YUK-779: 紧挨调用之前置位，成功与吞错两条路都能如实回答「试过」。
+    llmAttempted = true;
     const result = await params.runTaskFn('GoalScopeTask', input, {
       subjectProfile: params.subjectProfile,
     });
@@ -150,13 +173,19 @@ export async function runGoalScopeAndWrite(
       created_at: new Date(),
     });
 
-    return { proposal_id: proposalId, goal_id: goalId, scope_count: scope.length, ok: true };
+    return {
+      proposal_id: proposalId,
+      goal_id: goalId,
+      scope_count: scope.length,
+      ok: true,
+      llm_attempted: true,
+    };
   } catch (err) {
     console.error('runGoalScopeAndWrite: failed (no proposal written)', err);
     await writeRetryableAiFailureLedger(params.db, 'GoalScopeTask');
     // YUK-779: `ok: false` is the ONLY thing that distinguishes this swallowed fault
     // from the benign `!prepared` no-op above (both yield proposal_id: null).
-    return { ...EMPTY_RESULT, ok: false };
+    return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
 }
 

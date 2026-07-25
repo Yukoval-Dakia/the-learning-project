@@ -131,6 +131,11 @@ export function classifyJobYield(y: JobYield): JobYieldLevel {
 export function describeJobYield(job: string, y: JobYield, level: JobYieldLevel): string | null {
   if (level !== 'stalled' && level !== 'degraded') return null;
   const resolved = y.succeeded + y.failed;
+  // `resolved > 0` 守卫（PR #1076 review）：本函数是**导出**的，level 由调用方传入，
+  // 并不保证与 classifyJobYield(y) 自洽。走 reportJobYield 时 resolved===0 必然判 idle、
+  // 到不了这里；但直接调 describeJobYield('x', {0,0,0}, 'degraded') 会让下面的
+  // failed/resolved 得出 NaN，印出「NaN% > 50% threshold」。宁可无话可说也不印 NaN。
+  if (resolved <= 0) return null;
   // 不变量成立时这段为空；不成立时如实暴露差异，而不是悄悄换个分母。
   const attemptedNote = y.attempted === resolved ? '' : ` [attempted=${y.attempted}]`;
   if (level === 'stalled') {
