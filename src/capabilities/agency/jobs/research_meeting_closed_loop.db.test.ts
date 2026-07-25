@@ -77,13 +77,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   tool: (name: string, description: string) => ({ name, description }),
 }));
 
-import { POST as PROBE_ANSWER_POST } from '@/capabilities/agency/api/probe-answer';
+import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { POST as PROPOSAL_DECISIONS_POST } from '@/capabilities/shell/api/proposal-decisions';
 import { ai_task_runs, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
 
@@ -237,26 +237,29 @@ async function taskKindCounts(): Promise<Record<string, number>> {
   return counts;
 }
 
+// Both HTTP hops go through the COMPOSITION ROOT, not through a directly-imported
+// handler (codex review P1). Importing `POST` from the capability module would keep this
+// test green even if the manifest stopped declaring the route or `toHonoPath` mangled the
+// `[id]` → `:id` conversion — the same "the seam is not covered" defect this whole file
+// exists to prevent — and it would also be a cross-capability deep import, which
+// src/capabilities/AGENTS.md forbids (capabilities talk through manifests only).
+const INTERNAL_TOKEN = 'closed-loop-test-token';
+const app = buildHonoApp(capabilities);
+
+async function apiRequest(path: string, body: unknown): Promise<Response> {
+  return app.request(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json', 'x-internal-token': INTERNAL_TOKEN },
+  });
+}
+
 async function answerProbeViaRoute(probeQuestionId: string, answerMd: string): Promise<Response> {
-  return PROBE_ANSWER_POST(
-    new Request(`http://localhost/api/conjecture/probe/${probeQuestionId}/answer`, {
-      method: 'POST',
-      body: JSON.stringify({ answer_md: answerMd }),
-      headers: { 'content-type': 'application/json' },
-    }),
-    { id: probeQuestionId },
-  );
+  return apiRequest(`/api/conjecture/probe/${probeQuestionId}/answer`, { answer_md: answerMd });
 }
 
 async function acceptViaRoute(proposalId: string): Promise<Response> {
-  return PROPOSAL_DECISIONS_POST(
-    new Request(`http://localhost/api/proposals/${proposalId}/decisions`, {
-      method: 'POST',
-      body: JSON.stringify({ decision: 'accept' }),
-      headers: { 'content-type': 'application/json' },
-    }),
-    { id: proposalId },
-  );
+  return apiRequest(`/api/proposals/${proposalId}/decisions`, { decision: 'accept' });
 }
 
 describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile (YUK-789)', () => {
@@ -273,6 +276,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     vi.stubEnv('AI_PROVIDER_MODEL', '');
     vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    // The composition root's /api/* middleware compares against this.
+    vi.stubEnv('INTERNAL_TOKEN', INTERNAL_TOKEN);
   });
 
   afterEach(() => {

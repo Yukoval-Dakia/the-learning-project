@@ -322,9 +322,15 @@ export async function installApiFixtures(
     if (method === 'POST' && /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)) {
       briefCalls.push(`POST ${url.pathname}`);
       const body = request.postDataJSON() as { decision?: string } | null;
-      // One normalized value drives BOTH the echoed decision and the derived status, so a
-      // body without `decision` can never yield the contradictory `accept`/`dismissed` pair.
-      const decision = body?.decision ?? 'accept';
+      // Mirror the server's validation instead of guessing: a body without a recognised
+      // `decision` is a 400, never a silent default to accept. Defaulting would let a client
+      // that forgot to send the payload still drive the band to probe_ready and pass the
+      // click-through spec — precisely the "fixture is more forgiving than production" hole
+      // this suite exists to close (codex review P2).
+      const decision = body?.decision;
+      if (decision !== 'accept' && decision !== 'dismiss') {
+        return fulfill(route, { error: 'validation_error', message: 'decision is required' }, 400);
+      }
       if (decision === 'accept') briefState = 'probe_ready';
       return fulfill(
         route,
