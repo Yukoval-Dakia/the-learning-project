@@ -335,6 +335,44 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(await fsrsRowCount()).toBe(0);
     });
 
+    // YUK-785 (codex #1080) — "edit" is decided by CONTENT, not payload presence. The
+    // public schema accepts a corrected_payload identical to the original (only the UI
+    // disables that button), and its claim is trimmed while the proposal's is not. Keying
+    // off presence made such a no-op skip promotion here while the brief's reader judged
+    // the SAME accept "not a rewrite" — one accept, two verdicts.
+    it.each([
+      ['identical', 'you treat the chain rule as multiplying derivatives'],
+      ['whitespace-only', '  you treat the chain rule as multiplying derivatives  '],
+    ])(
+      'flag ON — a %s corrected_payload is NOT an edit: promotes, records no correction',
+      async (_label, submitted) => {
+        process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+        const db = testDb();
+        const proposalId = await writeAiProposal(db, {
+          actor_ref: 'research_meeting',
+          payload: baseConjecture(),
+        });
+
+        const result = await acceptAiProposal(db, proposalId, {
+          corrected_payload: { claim_md: submitted },
+        });
+
+        // Treated as a PLAIN accept end to end.
+        expect(result).toMatchObject({ corrected_by_owner: false });
+        const rates = await rateEvents(proposalId);
+        expect(rates[0].payload).toMatchObject({
+          corrected_by_owner: false,
+          calibration_anchor: 'accept',
+        });
+        // A no-op is not a correction, so nothing claims the owner rewrote anything.
+        expect(rates[0].payload).not.toHaveProperty('corrected_claim_md');
+        // …and promotion is NOT skipped (the edit-skip must not swallow a no-op).
+        const miscs = await misconceptionRows();
+        expect(miscs).toHaveLength(1);
+        expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
+      },
+    );
+
     // The skip is scoped to EDIT accepts only — a plain accept still promotes, so the
     // guard above cannot quietly disable the whole dark track.
     it('flag ON — a PLAIN accept still promotes on the proposal claim (skip is edit-only)', async () => {

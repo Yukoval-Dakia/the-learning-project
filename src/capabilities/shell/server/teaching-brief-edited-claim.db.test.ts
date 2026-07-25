@@ -21,10 +21,10 @@
 import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
-import { question } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -198,6 +198,16 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       },
     });
     expect(response.brief?.finding).not.toHaveProperty('tested_claim_md');
+
+    // Cross-path agreement (codex #1080): the accept path must reach the SAME verdict,
+    // otherwise one accept carries two contradictory semantics — the brief saying
+    // "nothing was rewritten" while the rate anchor says the owner corrected the AI.
+    const [rate] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rate.payload).toMatchObject({ corrected_by_owner: false, calibration_anchor: 'accept' });
+    expect(rate.payload).not.toHaveProperty('corrected_claim_md');
   });
 
   it('a PLAIN accept is byte-identical to today — no rewrite, no disclosure key', async () => {

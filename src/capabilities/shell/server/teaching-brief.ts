@@ -180,6 +180,14 @@ type DbLike = Db | Tx;
 
 interface ConjectureFacts {
   id: string;
+  /**
+   * NORMALIZED (trimmed) proposal claim. `ConjectureProposalChange.claim_md` is
+   * `z.string().min(1).max(280)` with NO `.trim()` (proposal.ts:497) while the owner's
+   * `corrected_payload.claim_md` IS trimmed (proposal.ts:106), so the raw values are not
+   * comparable and a padded AI claim would render with stray whitespace. Trimming once
+   * here — where the facts are built — keeps every consumer (display, the rewrite
+   * comparison, the disclosure key) on the same normalized value.
+   */
   claimMd: string;
   knowledgeId: string;
   causeCategory: CauseCategoryT;
@@ -301,7 +309,7 @@ function factsFromProposalRow(
   return {
     value: {
       id: row.id,
-      claimMd: change.claim_md,
+      claimMd: change.claim_md.trim(),
       knowledgeId: change.knowledge_id,
       causeCategory: change.cause_category,
       reasonMd: row.payload.reason_md,
@@ -344,7 +352,7 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
   return {
     value: {
       id: row.id,
-      claimMd: change.claim_md,
+      claimMd: change.claim_md.trim(),
       knowledgeId: change.knowledge_id,
       causeCategory: change.cause_category,
       reasonMd: payload.reason_md,
@@ -472,14 +480,14 @@ async function loadAcceptedFinding(
     if (typeof corrected !== 'string' || corrected.trim().length === 0) continue;
     // A "rewrite" that reproduces the original verbatim tests exactly what it claims to,
     // so it earns no disclosure key (and the schema forbids tested_claim_md === claim_md).
-    // OCR (#1080) — compare TRIMMED on both sides: `corrected` is already trimmed by
-    // `corrected_payload`'s `z.string().trim()` (proposal.ts:106) but the proposal's own
-    // `claim_md` is NOT (proposal.ts:497 has no `.trim()`), so an AI claim carrying stray
-    // whitespace would otherwise make a semantically identical rewrite look like a real
-    // one and flip the copy to the "你改写前的那条判断" variant for nothing.
-    const originalClaim = proposal.claimMd.trim();
-    if (corrected === originalClaim) return { ...base, claim_md: corrected };
-    return { ...base, claim_md: corrected, tested_claim_md: originalClaim };
+    // OCR (#1080) — both sides are normalized: `corrected` is trimmed by
+    // `corrected_payload`'s `z.string().trim()` (proposal.ts:106) and `proposal.claimMd`
+    // is trimmed where ConjectureFacts is built (the proposal's own schema does not).
+    // acceptConjectureProposal now applies the SAME normalized comparison before it
+    // records a correction at all, so a fresh no-op edit never reaches this branch; this
+    // stays as the reader-side guard for rate events written BEFORE that fix.
+    if (corrected === proposal.claimMd) return { ...base, claim_md: corrected };
+    return { ...base, claim_md: corrected, tested_claim_md: proposal.claimMd };
   }
   return { ...base, claim_md: proposal.claimMd };
 }

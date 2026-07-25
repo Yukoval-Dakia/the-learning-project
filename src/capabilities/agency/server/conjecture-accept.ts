@@ -109,11 +109,25 @@ export async function acceptConjectureProposal(
     };
   }
 
-  const isEdit = opts.corrected_payload !== undefined;
-  const correctedClaim =
-    isEdit && typeof opts.corrected_payload?.claim_md === 'string'
-      ? opts.corrected_payload.claim_md
+  // YUK-785 — an "edit" is decided by CONTENT, not by payload presence. The public
+  // schema accepts a `corrected_payload` whose claim equals the original (only the UI
+  // disables that button — `ProposalDecisionInput` has no cross-field check), and
+  // `corrected_payload.claim_md` is trimmed by its schema while the proposal's own
+  // `claim_md` is not. Keying off mere presence made a no-op submission an `edit`
+  // here (skipping promotion, stamping `calibration_anchor:'edit'`) while the brief's
+  // `loadAcceptedFinding` judged the SAME accept "not a rewrite" by trim-compare —
+  // two paths disagreeing about one accept. Normalize both sides and compare: no real
+  // change ⇒ this is a PLAIN accept, so it promotes normally and records no
+  // correction. A no-op is also not a calibration signal — `calibration_anchor:'edit'`
+  // is supposed to mean "the owner disagreed with the AI's wording".
+  const originalClaim = typeof change.claim_md === 'string' ? change.claim_md.trim() : '';
+  const submittedClaim =
+    typeof opts.corrected_payload?.claim_md === 'string'
+      ? opts.corrected_payload.claim_md.trim()
       : undefined;
+  const correctedClaim =
+    submittedClaim !== undefined && submittedClaim !== originalClaim ? submittedClaim : undefined;
+  const isEdit = correctedClaim !== undefined;
 
   const now = new Date();
   const rateEventId = newId();
