@@ -301,7 +301,10 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(await misconceptionEdgeRows()).toHaveLength(1);
     });
 
-    it('flag ON — edit accept uses the owner-corrected claim as the misconception title', async () => {
+    // YUK-785 — this flag is a dark landmine: OFF today, so the title/evidence mismatch
+    // it used to mint would have shipped silently the day it is flipped. The title must
+    // be SAME-SOURCE as `evidence`, and only the induced claim has evidence.
+    it('flag ON — edit accept titles the misconception with the claim its evidence supports', async () => {
       process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
       const db = testDb();
       const proposalId = await writeAiProposal(db, {
@@ -315,7 +318,16 @@ describe('acceptConjectureProposal lifecycle', () => {
 
       const miscs = await misconceptionRows();
       expect(miscs).toHaveLength(1);
-      expect(miscs[0].title).toBe('you apply the chain rule but drop the inner factor');
+      // Same-source: the title is the induced claim that evt_a/evt_b actually evidence,
+      // NOT the owner's rewrite (which no event in this row supports).
+      expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
+      expect(miscs[0].evidence).toEqual(['evt_a', 'evt_b']);
+      // The rewrite is not lost — it stays durable on the accept rate event.
+      const rates = await rateEvents(proposalId);
+      expect(rates[0].payload).toMatchObject({
+        corrected_by_owner: true,
+        corrected_claim_md: 'you apply the chain rule but drop the inner factor',
+      });
       // Edit still does NOT confirm a weakness — soft track, no FSRS.
       expect(miscs[0].source).toBe('soft');
       expect(await fsrsRowCount()).toBe(0);

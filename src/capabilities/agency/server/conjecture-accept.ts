@@ -162,8 +162,16 @@ export async function acceptConjectureProposal(
     // DARK promotion hop. Reads recurrence_count off the persisted proposal change
     // (NOT a fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the
     // induction floor (every conjecture already recurred ≥2) — the real gate is the
-    // flag + the human accept (see misconception-promote.ts). On an EDIT accept the
-    // owner's rewritten claim becomes the misconception title.
+    // flag + the human accept (see misconception-promote.ts).
+    //
+    // YUK-785 — the title is the PROPOSAL's claim on every path, including an EDIT
+    // accept. `evidenceEventIds` below are the induction events that produced THAT
+    // claim, and nothing re-derives evidence for a rewrite, so titling the node with
+    // the owner's rewrite would label the original claim's provenance with a belief
+    // no evidence in this row supports. The rewrite is not lost: it is durable on the
+    // rate event as `corrected_claim_md` (and projected to mem0 by the outbox worker).
+    // This flag is OFF by default — the alignment is fixed BEFORE it is flipped, since
+    // the mismatch would otherwise ship silently the day someone turns it on.
     if (misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
       const evidenceEventIds = proposal.payload.evidence_refs
         .filter((ref) => ref.kind === 'event')
@@ -171,7 +179,7 @@ export async function acceptConjectureProposal(
       await promoteConjectureToMisconception(tx, {
         conjectureId,
         knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
-        claimMd: correctedClaim ?? requiredString(change.claim_md, 'claim_md', proposalId),
+        claimMd: requiredString(change.claim_md, 'claim_md', proposalId),
         causeCategory: requiredString(change.cause_category, 'cause_category', proposalId),
         confidence: Number(change.confidence),
         recurrenceCount: Number(change.recurrence_count),

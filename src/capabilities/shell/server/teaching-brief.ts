@@ -20,6 +20,24 @@ export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Bounded recent-candidate window; keeps quiet reads constant-round-trip. */
 export const TEACHING_BRIEF_CANDIDATE_WINDOW = 50;
 
+/**
+ * Every `current_outcome.summary_md` string, in one place (contract §2.2: short, factual
+ * product copy — no probabilities, no internals, no verdicts about the person).
+ *
+ * The `*_REWRITTEN` variants are the YUK-785 guard: after an owner edit the served probe
+ * still belongs to the PRE-EDIT claim, so the copy must name what was actually tested
+ * instead of asserting support/exclusion for the rewrite the reader sees above it.
+ */
+export const TEACHING_BRIEF_OUTCOME_COPY = {
+  AWAITING_DECISION: '这仍是一条待检验的判断。',
+  AWAITING_ANSWER: '判别题已备好；完成后再更新这条判断。',
+  AWAITING_ANSWER_REWRITTEN: '判别题针对的是你改写前的那条判断；你的改写还没有配套的判别题。',
+  CONFIRMED: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
+  CONFIRMED_REWRITTEN: '这次探针支持的是你改写前的那条判断；你的改写还没有被检验。',
+  RETIRED: '这条判断被这次探针排除；原计划可以继续。',
+  RETIRED_REWRITTEN: '这次探针排除的是你改写前的那条判断；你的改写还没有被检验。',
+} as const;
+
 export type TeachingBriefEvidenceRef =
   | {
       role: 'induction';
@@ -33,6 +51,20 @@ export interface TeachingBriefFindingSection {
   claim_md: string;
   knowledge_id: string;
   cause_category: CauseCategoryT;
+  /**
+   * YUK-785 — the claim the SERVED PROBE actually tests, present ONLY when the owner
+   * rewrote the claim on accept (`corrected_by_owner`), and then always ≠ `claim_md`.
+   *
+   * `corrected_payload` is `.strict()` to `claim_md` (proposal.ts) and the accept serves
+   * the probe from `proposed_change.probe_md` / `probe_reference_md` in the SAME
+   * transaction, so an edited accept mints — and later grades against — the ORIGINAL
+   * claim's probe. `claim_md` keeps the owner's own words (YUK-567's approved inline
+   * edit must stay visible); this key is how the brief says, on the wire, that the
+   * probe evidence belongs to the pre-edit claim and not to the rewrite. Absent (NOT
+   * null, NOT an echo of claim_md) whenever nothing was rewritten — contract §2.1's
+   * "不适用的键必须缺席" discipline.
+   */
+  tested_claim_md?: string;
 }
 
 export interface TeachingBriefBasisSection {
@@ -401,11 +433,25 @@ async function loadRawConjectureFacts(
   return factsFromRawProposalRow(raw);
 }
 
-async function loadAcceptedClaim(
+/**
+ * The `finding` section of an ACCEPTED conjecture's brief (probe_ready / outcome states).
+ *
+ * `claim_md` prefers the accept rate event's non-empty `corrected_claim_md` (contract §2.1
+ * + YUK-567: an owner's inline rewrite must stay visible), falling back to the proposal's
+ * own claim. YUK-785 adds the second half of that story: when the owner DID rewrite, the
+ * probe hanging off this brief was still minted from the proposal's `probe_md` and is
+ * graded against the proposal's `probe_reference_md`, so `tested_claim_md` carries the
+ * pre-edit claim and the caller degrades its outcome copy to match. `knowledge_id` and
+ * `cause_category` are never editable, so the probe's KC target can never drift.
+ */
+async function loadAcceptedFinding(
   db: DbLike,
-  proposalId: string,
-  fallback: string,
-): Promise<string> {
+  proposal: ConjectureFacts,
+): Promise<TeachingBriefFindingSection> {
+  const base = {
+    knowledge_id: proposal.knowledgeId,
+    cause_category: proposal.causeCategory,
+  };
   const rates = await db
     .select({ payload: event.payload })
     .from(event)
@@ -413,8 +459,8 @@ async function loadAcceptedClaim(
       and(
         eq(event.action, 'rate'),
         eq(event.subject_kind, 'event'),
-        eq(event.subject_id, proposalId),
-        eq(event.caused_by_event_id, proposalId),
+        eq(event.subject_id, proposal.id),
+        eq(event.caused_by_event_id, proposal.id),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
@@ -423,9 +469,13 @@ async function loadAcceptedClaim(
     const payload = toRecord(rate.payload);
     if (payload.rating !== 'accept') continue;
     const corrected = payload.corrected_claim_md;
-    if (typeof corrected === 'string' && corrected.trim().length > 0) return corrected;
+    if (typeof corrected !== 'string' || corrected.trim().length === 0) continue;
+    // A "rewrite" that reproduces the original verbatim tests exactly what it claims to,
+    // so it earns no disclosure key (and the schema forbids tested_claim_md === claim_md).
+    if (corrected === proposal.claimMd) return { ...base, claim_md: corrected };
+    return { ...base, claim_md: corrected, tested_claim_md: proposal.claimMd };
   }
-  return fallback;
+  return { ...base, claim_md: proposal.claimMd };
 }
 
 function validateProbeQuestion(
@@ -630,7 +680,10 @@ export async function loadOutcomeBrief(
     }
     const { proposal, probe, resolution } = outcome.value;
 
-    const claimMd = await loadAcceptedClaim(db, proposal.id, proposal.claimMd);
+    const finding = await loadAcceptedFinding(db, proposal);
+    // YUK-785 — the probe belongs to the pre-edit claim, so an owner rewrite must not be
+    // announced as the thing this outcome supports or excludes.
+    const rewritten = finding.tested_claim_md !== undefined;
     const evidence = dedupeEvidence([
       ...appendProbeEvidence(proposal, probe.id),
       { role: 'outcome', kind: 'event', id: result.id },
@@ -641,11 +694,7 @@ export async function loadOutcomeBrief(
       expires_at: new Date(
         result.created_at.getTime() + TEACHING_BRIEF_OUTCOME_TTL_MS,
       ).toISOString(),
-      finding: {
-        claim_md: claimMd,
-        knowledge_id: proposal.knowledgeId,
-        cause_category: proposal.causeCategory,
-      },
+      finding,
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
     };
     if (resolution === 'confirmed') {
@@ -663,7 +712,9 @@ export async function loadOutcomeBrief(
         },
         current_outcome: {
           status: 'confirmed',
-          summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
+          summary_md: rewritten
+            ? TEACHING_BRIEF_OUTCOME_COPY.CONFIRMED_REWRITTEN
+            : TEACHING_BRIEF_OUTCOME_COPY.CONFIRMED,
           probe_question_id: probe.id,
           probe_result_event_id: result.id,
         },
@@ -681,7 +732,9 @@ export async function loadOutcomeBrief(
       },
       current_outcome: {
         status: 'retired',
-        summary_md: '这条判断被这次探针排除；原计划可以继续。',
+        summary_md: rewritten
+          ? TEACHING_BRIEF_OUTCOME_COPY.RETIRED_REWRITTEN
+          : TEACHING_BRIEF_OUTCOME_COPY.RETIRED,
         probe_question_id: probe.id,
         probe_result_event_id: result.id,
       },
@@ -731,17 +784,13 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       warnSkipped('probe', probe.id, probeError);
       continue;
     }
-    const claimMd = await loadAcceptedClaim(db, proposal.id, proposal.claimMd);
+    const finding = await loadAcceptedFinding(db, proposal);
     return {
       brief_id: proposal.id,
       state: 'probe_ready',
       updated_at: probe.created_at.toISOString(),
       expires_at: null,
-      finding: {
-        claim_md: claimMd,
-        knowledge_id: proposal.knowledgeId,
-        cause_category: proposal.causeCategory,
-      },
+      finding,
       basis: {
         summary_md: proposal.reasonMd,
         evidence_trace: appendProbeEvidence(proposal, probe.id),
@@ -753,7 +802,13 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       },
       current_outcome: {
         status: 'awaiting_answer',
-        summary_md: '判别题已备好；完成后再更新这条判断。',
+        // YUK-785 — validateProbeQuestion above already proved prompt_md === the
+        // proposal's probe_md, so after a rewrite this prepared question demonstrably
+        // tests the pre-edit claim; say so rather than implying it tests the rewrite.
+        summary_md:
+          finding.tested_claim_md !== undefined
+            ? TEACHING_BRIEF_OUTCOME_COPY.AWAITING_ANSWER_REWRITTEN
+            : TEACHING_BRIEF_OUTCOME_COPY.AWAITING_ANSWER,
       },
     };
   }
@@ -963,6 +1018,8 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
       proposal.createdAt.getTime() + TEACHING_BRIEF_FINDING_TTL_MS,
     ).toISOString(),
     finding: {
+      // A `finding` is still PENDING — no accept, therefore no rewrite and no probe;
+      // `tested_claim_md` is structurally absent here (locked by the wire schema).
       claim_md: proposal.claimMd,
       knowledge_id: proposal.knowledgeId,
       cause_category: proposal.causeCategory,
@@ -978,7 +1035,7 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
     },
     current_outcome: {
       status: 'awaiting_decision',
-      summary_md: '这仍是一条待检验的判断。',
+      summary_md: TEACHING_BRIEF_OUTCOME_COPY.AWAITING_DECISION,
     },
   };
 }

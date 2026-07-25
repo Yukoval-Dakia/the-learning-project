@@ -109,7 +109,13 @@ export interface PromoteConjectureInput {
   conjectureId: string;
   /** The KC the misconception corrupts (caused_by target). */
   knowledgeId: string;
-  /** The conjecture claim — becomes the misconception title (the belief text). */
+  /**
+   * The conjecture claim — becomes the misconception title (the belief text).
+   *
+   * YUK-785: must be same-source as `evidenceEventIds`. The live accept path therefore
+   * passes the PROPOSAL's claim even when the owner rewrote it on accept — the evidence
+   * pointers below belong to the induced claim, and a rewrite has no evidence of its own.
+   */
   claimMd: string;
   causeCategory: string;
   /** Internal confidence (0-1) — becomes the salience weight, never rendered as a number. */
