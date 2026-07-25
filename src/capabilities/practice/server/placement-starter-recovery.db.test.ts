@@ -411,6 +411,92 @@ describe('sweepStalePlacementStarterClaims — stale revision guard', () => {
   });
 });
 
+describe('sweepStalePlacementStarterClaims — non-active goal guard', () => {
+  // Review PRRT…upw3: a goal retracted to 'dormant' (proposals retract path) or finished as 'done'
+  // has left the active-goal flow, but the revision guard sails through — revisions are derived
+  // from genesis/scope events, so a STATUS change does not invalidate them. Without this check the
+  // sweeper spends real money generating a batch for a goal the owner retired.
+  it.each(['dormant', 'done'] as const)(
+    'defers, never cancels, a %s goal claim',
+    async (status) => {
+      const claimId = await seedClaim();
+      await db.update(goal).set({ status }).where(eq(goal.id, 'goal-1'));
+      const { calls, dispatch } = recordingDispatch();
+
+      const result = await sweepStalePlacementStarterClaims(db, {
+        now: NOW,
+        dispatch,
+        isJobLive: noJobLive,
+        placementProbeEnabled: true,
+      });
+
+      expect(result).toMatchObject({ scannedPending: 1, goalNotActive: 1, redispatched: 0 });
+      expect(calls).toHaveLength(0);
+      const claim = await readClaim(claimId);
+      // DEFERRED, not cancelled: claim ids are deterministic and materialize is onConflictDoNothing,
+      // so a cancelled claim could never be re-created if the goal came back.
+      expect(claim.status).toBe('pending_dispatch');
+      expect(claim.next_reconcile_at.getTime()).toBe(
+        NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+      );
+    },
+  );
+
+  it('dispatches again once a dormant goal is reactivated', async () => {
+    const claimId = await seedClaim();
+    await db.update(goal).set({ status: 'dormant' }).where(eq(goal.id, 'goal-1'));
+    await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch: recordingDispatch().dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    await db.update(goal).set({ status: 'active' }).where(eq(goal.id, 'goal-1'));
+    const { calls, dispatch } = recordingDispatch();
+    const second = await sweepStalePlacementStarterClaims(db, {
+      // Past the deferral backoff.
+      now: new Date(NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS + 60_000),
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(second).toMatchObject({ goalNotActive: 0, redispatched: 1 });
+    expect(calls).toEqual([{ claimId, admitted: true }]);
+  });
+
+  // Same TOCTOU shape as the revision guard: the pre-check is lockless, so the status is re-read
+  // under the goal row lock inside the dispatch transaction.
+  it('catches a goal retracted after the pre-check, inside the dispatch transaction', async () => {
+    await seedGoal();
+    const claimId = await insertClaim(0, { id: 'claim-retracted' });
+    let admitVerdict: boolean | null = null;
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch: (async (
+        dbArg: typeof db,
+        _claimId: string,
+        admit?: (tx: never, claim: never) => Promise<boolean>,
+      ) => {
+        // Retract now — after the sweeper's pre-check passed, before admission.
+        await db.update(goal).set({ status: 'dormant' }).where(eq(goal.id, 'goal-1'));
+        admitVerdict = await dbArg.transaction((tx) =>
+          (admit as (t: unknown, c: unknown) => Promise<boolean>)(tx, undefined),
+        );
+        return admitVerdict ? 'job-should-not-happen' : null;
+      }) as never,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(admitVerdict).toBe(false);
+    expect(result).toMatchObject({ goalNotActive: 1, redispatched: 0, staleRevision: 0 });
+    expect((await readClaim(claimId)).status).toBe('pending_dispatch');
+  });
+});
+
 describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
   // The bug this guards: one shared capped scan ordered by next_reconcile_at would let a backlog
   // of untouched pending_dispatch claims monopolise every run, so a retry_scheduled zombie sorted

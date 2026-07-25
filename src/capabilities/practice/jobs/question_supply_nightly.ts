@@ -187,10 +187,46 @@ export async function runQuestionSupplyNightly(
     placementStarterRecovery = emptyPlacementStarterRecoveryResult({ errored: true });
   }
 
-  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义与 YUK-761 之前逐字一致。
-  if (supplyError !== undefined) throw supplyError;
+  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义与 YUK-761 之前逐字一致。**但先把
+  // 清扫状态喊出来**：一旦从这里 throw，下面的 return 不会发生，handler 的消费检查也就永远看不到
+  // 这一轮的 placementStarterRecovery——恰恰在「供给腿也炸了」这种最该看清全貌的时刻信号最哑。
+  if (supplyError !== undefined) {
+    surfacePlacementStarterRecovery(placementStarterRecovery, 'supply leg also failed');
+    throw supplyError;
+  }
   if (!supply) throw new Error('unreachable: supply tally missing without an error');
   return { ...supply, placementStarterRecovery };
+}
+
+/**
+ * YUK-761 — emit the recovery sweep's failure/degradation signal at the job boundary.
+ *
+ * Isolating the sweep keeps it from taking the host (and, since YUK-758, the host's whole
+ * hard-downstream DAG subtree) down. But a flag nobody reads is the same as no signal at all: the
+ * job would report success with its recovery step silently dead — precisely the 建成不通电 shape
+ * this ticket exists to close, one level up. Hence explicit, greppable lines. Deliberately never
+ * throws: staying green on a sweep failure is the entire point of the isolation.
+ *
+ * Called from BOTH exits — the normal one and the supply-error one — so the signal does not
+ * disappear exactly when the run is worst.
+ */
+function surfacePlacementStarterRecovery(
+  recovery: PlacementStarterRecoveryResult,
+  context: string,
+): void {
+  if (recovery.errored) {
+    console.error(
+      `[question_supply_nightly] placement starter recovery sweep did not complete this run (${context}); claims stay overdue for the next run`,
+    );
+  }
+  // Per-claim / per-leg failures are contained inside the sweeper and never set `errored`; surface
+  // them too, or a fully-degraded sweep (every claim failing individually) still looks healthy.
+  const { claimErrors, legErrors } = recovery;
+  if (claimErrors > 0 || legErrors > 0) {
+    console.error(
+      `[question_supply_nightly] placement starter recovery sweep degraded (${context}): ${claimErrors} claim failure(s), ${legErrors} leg failure(s)`,
+    );
+  }
 }
 
 export function buildQuestionSupplyNightlyHandler(
@@ -201,26 +237,7 @@ export function buildQuestionSupplyNightlyHandler(
     try {
       const result = await runQuestionSupplyNightly(db, deps);
       console.log('[question_supply_nightly] result', result);
-      // YUK-761 — the pg-boss caller must actually CONSUME the recovery sweep's failure signal.
-      // Isolating the sweep (above) stops it taking the host — and its DAG subtree — down, but a
-      // flag nobody reads is the same as no signal at all: the job would report success with the
-      // recovery step silently dead, which is precisely the 建成不通电 shape this ticket exists to
-      // close. So: an explicit, greppable error line at the job boundary, distinct from the
-      // routine result log. Deliberately NOT a re-throw — the host staying green on a sweep
-      // failure is the whole point of the isolation, so this is "contained BUT visible".
-      if (result.placementStarterRecovery.errored) {
-        console.error(
-          '[question_supply_nightly] placement starter recovery sweep did not complete this run; supply leg unaffected, claims stay overdue for the next run',
-        );
-      }
-      // Per-claim / per-leg failures are contained inside the sweeper and never surface as
-      // `errored`; surface them here too so a partially-degraded sweep is not silent either.
-      const { claimErrors, legErrors } = result.placementStarterRecovery;
-      if (claimErrors > 0 || legErrors > 0) {
-        console.error(
-          `[question_supply_nightly] placement starter recovery sweep degraded: ${claimErrors} claim failure(s), ${legErrors} leg failure(s)`,
-        );
-      }
+      surfacePlacementStarterRecovery(result.placementStarterRecovery, 'supply leg succeeded');
     } catch (err) {
       // PRE-discovery / dispatch 阶段的意外 throw（如 DB read 故障）冒泡 → pg-boss DLQ 重试。
       // 单个 target 的 dispatch 错已被 dispatchSupplyTargets 内部 per-target try/catch 兜住

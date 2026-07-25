@@ -145,6 +145,8 @@ export interface PlacementStarterRecoveryResult {
   goalMissing: number;
   /** pending_dispatch claims cancelled because their semantic goal revision is no longer authoritative. */
   staleRevision: number;
+  /** pending_dispatch claims deferred (never cancelled) because their goal is dormant / done. */
+  goalNotActive: number;
   /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
   claimErrors: number;
   /** Legs whose own scan query threw; the other leg still ran. */
@@ -181,6 +183,7 @@ export function emptyPlacementStarterRecoveryResult(
     lost: 0,
     goalMissing: 0,
     staleRevision: 0,
+    goalNotActive: 0,
     claimErrors: 0,
     legErrors: 0,
     redispatchSuppressed: false,
@@ -412,6 +415,7 @@ async function sweepPendingDispatch(
       scope: goal.scope_knowledge_ids,
       subjectId: goal.subject_id,
       scopeMode: goal.scope_mode,
+      status: goal.status,
     })
     .from(goal)
     .where(eq(goal.id, claim.goal_id))
@@ -423,6 +427,27 @@ async function sweepPendingDispatch(
     result.goalMissing += 1;
     console.warn(
       `[placement-starter-recovery] claim ${claim.id} references missing goal ${claim.goal_id}; skipped, cursor advanced`,
+    );
+    return;
+  }
+  // NON-ACTIVE GOAL GUARD (review PRRT…upw3). A goal retracted to 'dormant' (the proposal retract
+  // path, src/server/proposals/actions.ts) or finished as 'done' has left the active-goal flow, but
+  // its stranded claim is untouched: `resolvePlacementStarterGoalAuthority` derives the revision
+  // from genesis/scope events only, so a STATUS change does not invalidate it and the revision
+  // guard below sails straight through. Without this check the sweeper would automatically spend
+  // real money generating a placement batch for a goal the owner has retired — and again, only the
+  // sweeper can: /placement/start runs on an explicit learner action against that goal.
+  //
+  // DEFER, never cancel. 'dormant' is reversible, and cancelling would be permanent: claim ids are
+  // deterministic in (revision, subject) and materialize is `onConflictDoNothing`, so a cancelled
+  // claim can never be re-created — reactivating the goal would leave placement stuck on
+  // sourcingNeeded forever (the same trap the stale-revision guard exists to avoid, entered from
+  // the other side). Deferring costs one cheap query per window and makes reactivation just work:
+  // the next sweep sees 'active' again and dispatches.
+  if (goalRow.status !== 'active') {
+    result.goalNotActive += 1;
+    console.warn(
+      `[placement-starter-recovery] claim ${claim.id} belongs to ${goalRow.status} goal ${claim.goal_id}; deferred (not cancelled), cursor advanced`,
     );
     return;
   }
@@ -441,11 +466,10 @@ async function sweepPendingDispatch(
   // So: never dispatch a claim whose revision is no longer authoritative. Terminalize it as
   // 'cancelled' with the same 'superseded' class dispatchPlacementStarterClaimTx uses — the
   // authority only moves forward, so a stale claim is undispatchable forever and must leave the
-  // scan rather than be re-examined every window.
-  // So: never dispatch a claim whose revision is no longer authoritative. The check happens TWICE.
-  // This first one is an unlocked pre-check — cheap, and it short-circuits the overwhelmingly
-  // common case (a revision superseded long ago) without opening a dispatch transaction at all.
-  // It is NOT sufficient on its own: see the authoritative re-check inside the dispatch tx below.
+  // scan rather than be re-examined every window. The check happens TWICE: this first one is an
+  // unlocked pre-check — cheap, and it short-circuits the overwhelmingly common case (a revision
+  // superseded long ago) without opening a dispatch transaction at all. It is NOT sufficient on
+  // its own: see the authoritative re-check inside the dispatch tx below.
   const authority = await resolvePlacementStarterGoalAuthority(db, claim.goal_id);
   if (authority.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
     await cancelSupersededClaim(db, claim, now, authority.semanticGoalRevisionId, result);
@@ -456,31 +480,52 @@ async function sweepPendingDispatch(
 
   try {
     let supersededRevisionId: string | null = null;
+    let notActiveStatus: string | null = null;
     // Same admission contract as /api/placement/start's cold path: serialize against pool
     // promotion for this KC scope, then pay ONLY if the scope still has no eligible item.
     const jobId = await dispatch(db, claim.id, async (tx) => {
-      // AUTHORITATIVE STALE-REVISION RE-CHECK (review PRRT…h8a). The pre-check above is a lockless
-      // read, so a goal re-scoped between it and the dispatch transaction taking the claim row lock
-      // would still get the just-superseded revision dispatched — and that is the destructive
-      // outcome in full, not a near-miss. Redo it HERE, inside the dispatch tx, holding the goal
-      // row FOR UPDATE so a concurrent scope update must serialize against us.
+      // AUTHORITATIVE RE-CHECK of BOTH goal preconditions (review PRRT…h8a, PRRT…upw3). The two
+      // checks above are lockless reads, so a goal re-scoped OR retracted between them and the
+      // dispatch transaction taking the claim row lock would still get a paid batch dispatched —
+      // and for the revision case that is the destructive outcome in full, not a near-miss. Redo
+      // both HERE, inside the dispatch tx, holding the goal row FOR UPDATE so a concurrent scope
+      // or status update must serialize against us.
       //
       // Lock-order note (deliberate, documented): this takes claim → goal, whereas
-      // materializePlacementStartersForGoal takes goal → claim. The inversion needs a
-      // /placement/start on the SAME goal concurrent with the nightly sweep to bite; Postgres
-      // detects it and aborts one side, which lands in the per-claim guard as a contained failure
-      // with the cursor advanced — never a corrupt dispatch. Accepted over restructuring the
-      // dispatch entrypoint to hand this module a transaction of its own.
-      await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, claim.goal_id)).for('update');
-      const fresh = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
-      if (fresh.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
-        supersededRevisionId = fresh.semanticGoalRevisionId;
+      // materializePlacementStartersForGoal takes goal → claim (it locks the goal FOR UPDATE, then
+      // its claim INSERT ... ON CONFLICT DO NOTHING can wait on a claim row this sweeper holds).
+      // The inversion needs a /placement/start on the SAME goal concurrent with the nightly sweep
+      // to bite; Postgres detects the cycle and aborts ONE side, and the consequence differs by
+      // side: aborting the SWEEPER lands in the per-claim guard as a contained failure with the
+      // cursor advanced (never a corrupt dispatch), while aborting /placement/start surfaces to
+      // the learner as a 5xx they must retry — the more visible outcome of the two, and the reason
+      // this note exists rather than being waved off as internal-only. Accepted over restructuring
+      // the dispatch entrypoint to hand this module a transaction of its own.
+      const [fresh] = await tx
+        .select({ status: goal.status })
+        .from(goal)
+        .where(eq(goal.id, claim.goal_id))
+        .for('update');
+      if (!fresh || fresh.status !== 'active') {
+        notActiveStatus = fresh?.status ?? 'missing';
+        return false; // suppress dispatch; deferred (NOT cancelled — see the pre-check rationale)
+      }
+      const authorityNow = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
+      if (authorityNow.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
+        supersededRevisionId = authorityNow.semanticGoalRevisionId;
         return false; // suppress dispatch; the claim is terminalized below, outside this tx
       }
       await lockPlacementSupplyScopes(tx, knowledgeIds);
       return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
     });
-    if (supersededRevisionId !== null) {
+    if (notActiveStatus !== null) {
+      // Goal left the active flow between the pre-check and admission. Nothing was enqueued; the
+      // claim keeps its advanced cursor and is retried once the goal is active again.
+      result.goalNotActive += 1;
+      console.warn(
+        `[placement-starter-recovery] claim ${claim.id} goal ${claim.goal_id} became ${notActiveStatus} before dispatch; deferred`,
+      );
+    } else if (supersededRevisionId !== null) {
       // Admission refused for staleness, so nothing was enqueued and the claim is still
       // pending_dispatch. Terminalize it in its own transaction (same shape as the pre-check path).
       await cancelSupersededClaim(db, claim, now, supersededRevisionId, result);

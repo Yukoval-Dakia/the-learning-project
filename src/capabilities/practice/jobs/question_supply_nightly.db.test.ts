@@ -150,6 +150,46 @@ describe('runQuestionSupplyNightly', () => {
     expect(swept).toBe(1);
   });
 
+  // YUK-761 (review PRRT…uqpi) — when the supply leg throws, the function re-throws instead of
+  // returning, so the handler's consumption checks never run. The recovery signal must still be
+  // emitted before that re-throw, or it goes dark exactly when the run is worst.
+  it('surfaces a degraded recovery sweep even when the supply leg throws', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      // Both legs fail: the supply leg throws (so the function re-throws and never returns), and
+      // the sweep itself throws (so `errored` is set). The recovery line must still be emitted.
+      const explodingRecoveryDeps = {};
+      Object.defineProperty(explodingRecoveryDeps, 'now', {
+        get() {
+          throw new Error('recovery sweep blew up');
+        },
+        enumerable: true,
+      });
+      const deps = { placementRecovery: explodingRecoveryDeps };
+      Object.defineProperty(deps, 'maxPerRun', {
+        get() {
+          throw new Error('supply discovery exploded');
+        },
+        enumerable: true,
+      });
+
+      await expect(runQuestionSupplyNightly(db, deps)).rejects.toThrow('supply discovery exploded');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(
+      errors.some(
+        (line) =>
+          line.includes('placement starter recovery sweep did not complete') &&
+          line.includes('supply leg also failed'),
+      ),
+    ).toBe(true);
+  });
+
   // YUK-761 (review PRRT…jcg) — isolation without consumption is not a signal. The pg-boss caller
   // must make a failed sweep visible at the job boundary, while still NOT failing the host (that
   // is the whole point of the isolation, and since YUK-758 a failed node skips its DAG subtree).
