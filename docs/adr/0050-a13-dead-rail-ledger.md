@@ -25,15 +25,17 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 
 ### 实证（2026-07-25 复核，代码为准；**通电前仍然成立**）
 
-| 事实 | 证据 |
-|------|------|
-| reconcile 是 `upsertKcTypedState` 的**唯一生产调用者** | `src/server/conjectures/reconcile.ts:263`；全仓 grep 其余命中全在 `*.test.ts` / 注释 |
-| 它**硬编码** `confused_with_kc_id: null` | `reconcile.ts:267`（注释自陈「Phase 0 supplies NO confused_with KC」） |
-| 唯一 gate 要求该字段为真才返回 `confused-with-X` | `src/server/conjectures/typed-state.ts:49-63`（§修正-4 gate 四项合取） |
-| `upsertKcTypedState` 是 `kc_typed_state` 的**单写者**，CI 锁死 | `tests/integration/step9-invariant-audit.test.ts:218-227` |
-| 诱导侧 schema **根本没有**这个字段 | `src/core/schema/proposal.ts:496-514` `ConjectureProposalChange` 无 `confused_with_kc_id` |
+> **引用规范**：本表是 YUK-794 的实证入口，故一律用**符号锚**（函数 / 常量 / 测试名）而非行号——本 PR 自身的注释改动就把原先写死的行号顶漂了一次，行号在这张表里必然会腐。定位请用 `grep -n '<符号名>'`。
 
-⇒ **在当前代码下 `typed_state='confused-with-X'` 的行不可能被产生。** 审计原措辞「reconcile 只记账」偏轻——不是「暂时没数据」，是**闭合的死格**。下游是**已通电但恒空**的消费面：`conjecture-scores.ts:212-217` 的 `WHERE typed_state='confused-with-X'`（admin 面板半边恒空）、`evidence-mcp.ts` 的 `get_typed_state`（对夜间 director 恒返 no-evidence）。
+| 事实 | 证据（符号锚，用 grep 定位） |
+|------|------|
+| reconcile 是 `upsertKcTypedState` 的**唯一生产调用者** | `src/server/conjectures/reconcile.ts` → `reconcileConjecturePredictions()` 内对 `upsertFn(db, {…})` 的调用（`upsertFn` 默认解析为 `upsertKcTypedState`）；全仓 grep `upsertKcTypedState` 其余命中全在 `*.test.ts` / 注释 |
+| 它**硬编码** `confused_with_kc_id: null` | 同一 `upsertFn(db, {…})` 调用内的 `confused_with_kc_id: null` 字面量（紧邻注释自陈「Phase 0 supplies NO confused_with KC」）；`grep -n 'confused_with_kc_id: null' src/server/conjectures/reconcile.ts` |
+| 唯一 gate 要求该字段为真才返回 `confused-with-X` | `src/server/conjectures/typed-state.ts` → `nextTypedState()` 的四项合取 `if`（`proposed==='confused-with-X' && discriminating && recurrence_count>=CONFUSED_WITH_RECURRENCE_FLOOR && confused_with_kc_id`） |
+| `upsertKcTypedState` 是 `kc_typed_state` 的**单写者**，CI 锁死 | `tests/integration/step9-invariant-audit.test.ts` → 测试 `db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)` |
+| 诱导侧 schema **根本没有**这个字段 | `src/core/schema/proposal.ts` → `ConjectureProposalChange` 的字段列表无 `confused_with_kc_id` |
+
+⇒ **在当前代码下 `typed_state='confused-with-X'` 的行不可能被产生。** 审计原措辞「reconcile 只记账」偏轻——不是「暂时没数据」，是**闭合的死格**。下游是**已通电但恒空**的消费面：`observability/server/conjecture-scores.ts` → `loadConjectureScores()` 的第二个 query（`eq(kc_typed_state.typed_state, 'confused-with-X')`，admin 面板半边恒空）、`agency/scout/evidence-mcp.ts` 的 `get_typed_state` 工具（对夜间 director 恒返 no-evidence）。
 
 ### 裁定：**owner 2026-07-25 — 要通电。执行见 YUK-794。**
 
@@ -45,8 +47,8 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 
 1. **扩 schema**：`ConjectureProposalChange` 加 `confused_with_kc_id`（当前完全没有这个字段，null 从哪来都没有）。
 2. **改诱导 prompt**：让 LLM 在提猜想时**具名第二个 KC**（「他把 X 和 Y 搞混了」而不只是「他在 X 上有误解」）。
-3. **加校验**：具名的 KC 必须真实存在（否则写进 `confused_with_kc_id` 的是幻觉 id，且该列**无 FK**——见 `typed-state.ts:73` 自陈「soft display ref, no FK」，脏值不会被数据库挡住）。
-4. **才轮到**放开 `reconcile.ts:267` 的硬编码 null。
+3. **加校验**：具名的 KC 必须真实存在（否则写进 `confused_with_kc_id` 的是幻觉 id，且该列**无 FK**——`typed-state.ts` 的 `retireKcTypedStateOnMerge()` docblock 自陈「the pointer is a soft display ref, no FK / no unique on it」，`schema.ts` 的 `kc_typed_state` 定义亦注明「loose text ref to knowledge.id, no FK」，脏值不会被数据库挡住）。
+4. **才轮到**放开 `reconcileConjecturePredictions()` 里那个硬编码的 `confused_with_kc_id: null`。
 
 **gate 不要放开**：§修正-4 的四项合取（判别探针 + recurrence≥2 + 具名 KC）是刻意的保守设计——单次探针失败可能是该误解、也可能是无关原因。通电的正确做法是**补上「具名 KC」这个缺失的输入**，而不是把「要求具名」这个条件删掉。删条件等于把「未具名的混淆」当「已确认的混淆」写进结构态，正是这条轨要防的事。
 
@@ -64,7 +66,7 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 
 ### (b1) `experimental:prediction_score`
 
-- 生产者：`reconcile.ts:276-307`，自陈 LOG ONLY / FLIP-inert。
+- 生产者：`reconcile.ts` → `reconcileConjecturePredictions()` 末尾的 `writeEventFn(db, {…})`（写 `PREDICTION_SCORE_ACTION` 事件），自陈 LOG ONLY / FLIP-inert。
 - **有活的观测消费者**：`loadConjectureScores` 读它 → `GET /api/admin/conjecture-scores` → admin UI 表格（ADR-0049 §3 (a)）。
 - **无行为消费者**：score 从不移动任何标签/数字。原按 ADR-0046 归 Rust 数值核 deferred。
 
@@ -136,4 +138,4 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 - 也**不得**写成「结构性恒空 / 不会铸出」——裁定通电后，这条同样是错的方向；
 - `get_typed_state` 对夜间 director 的**硬警告保留**：当前的空返回**不得**被推断为「学习者没混淆」。这条在通电前后都成立，是本轮抓到的要害。
 
-修正覆盖面（共 8 处）：`observability/server/conjecture-scores.ts`、`observability/ui/conjecture-scores.tsx`、`observability/api/conjecture-scores.ts`、`observability/manifest.ts`、`observability/AGENTS.md`、`server/agency/scout/evidence-mcp.ts`、`docs/runbooks/conjecture-wire.md`、`docs/adr/0049-...md`。
+修正覆盖面（共 8 处，全部写全路径以便 grep）：`src/capabilities/observability/server/conjecture-scores.ts`、`src/capabilities/observability/ui/conjecture-scores.tsx`、`src/capabilities/observability/api/conjecture-scores.ts`、`src/capabilities/observability/manifest.ts`、`src/capabilities/observability/AGENTS.md`、`src/server/agency/scout/evidence-mcp.ts`、`docs/runbooks/conjecture-wire.md`、`docs/adr/0049-conjecture-wire-dark-loop-producer-consumer.md`。

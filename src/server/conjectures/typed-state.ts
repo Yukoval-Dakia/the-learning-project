@@ -11,7 +11,7 @@
 // post-Rust-scorer claim-survival FLIP (ADR-0046), deferred.
 //
 // REACHABILITY TODAY (ADR-0050 §(a), YUK-790): the gate's `confused-with-X` branch is currently
-// unreachable — the sole production caller (`reconcile.ts:263`) hardcodes
+// unreachable — the sole production caller (`reconcileConjecturePredictions()`) hardcodes
 // `confused_with_kc_id: null`, and the induction schema `ConjectureProposalChange` has no such
 // field to supply, so `nextTypedState` returns the soft cell every time. This is a KNOWN,
 // ledgered state, not an oversight.

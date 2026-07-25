@@ -29,7 +29,8 @@
 //     OWNER RULED 2026-07-25: ENERGIZE this rail — execution is **YUK-794**, which must land
 //     the induction side FIRST (extend `ConjectureProposalChange` with `confused_with_kc_id`,
 //     have the induction prompt NAME the second KC, validate that KC exists — the column has
-//     no FK, see typed-state.ts:73) and only THEN relax the null below. Do NOT shortcut it by
+//     no FK, see the `retireKcTypedStateOnMerge` docblock in typed-state.ts) and only THEN
+//     relax the null below. Do NOT shortcut it by
 //     relaxing the §修正-4 gate: an unnamed confusion is exactly what that gate refuses to
 //     commit, and deleting the requirement would write guesses into a structural state.
 //   - retrievability R(t) is recorded in the prediction_score EVENT (fold-replay needs

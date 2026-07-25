@@ -13,12 +13,12 @@
 //
 // ADR-0050 §(a) correction (YUK-790). An earlier version of this header claimed the reconcile
 // loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is reverse-drift: it
-// describes a future state as if it were current. Today reconcile (`reconcile.ts:263`, the ONLY
-// production caller of the single-writer `upsertKcTypedState`) hardcodes
-// `confused_with_kc_id: null`, the §修正-4 gate (`typed-state.ts:49-63`) requires a NAMED
-// confused-with KC before it will emit `confused-with-X`, and the induction schema
-// (`ConjectureProposalChange`) carries no such field at all — so no writer can produce the row
-// and this half of the panel is empty.
+// describes a future state as if it were current. Today `reconcileConjecturePredictions()`
+// (reconcile.ts — the ONLY production caller of the single-writer `upsertKcTypedState`)
+// hardcodes `confused_with_kc_id: null`, the §修正-4 gate (`nextTypedState()` in typed-state.ts)
+// requires a NAMED confused-with KC before it will emit `confused-with-X`, and the induction
+// schema (`ConjectureProposalChange`) carries no such field at all — so no writer can produce
+// the row and this half of the panel is empty.
 //
 // Owner ruled 2026-07-25: ENERGIZE it (execution = YUK-794 — extend the proposal schema, have
 // induction name the second KC, validate it, only then relax the null). Do NOT relax the gate
