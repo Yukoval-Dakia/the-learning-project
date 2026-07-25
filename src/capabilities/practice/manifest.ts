@@ -702,24 +702,30 @@ export const practiceCapability = defineCapability({
       { name: 'rejudge', queue: 'llm' },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
-      // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。cron 错开其它夜链 job。
+      // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。
       {
+        // YUK-758 DAG 成员（根）：item_calibration b 锚**种子**写者。recalibration 在其后 firm-up
+        // 同表 b_calib → item_prior 是 recalibration 的硬上游（写序：种子先、firm 后）。cron 移除。
         name: 'item_prior_backfill',
-        schedule: { cron: '20 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
       },
       // YUK-361 Phase 4 (Task 9) — hybrid 运行时夜间预产 job。每夜（用户晨起前）为「今天」
-      // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。cron 5:30 Asia/Shanghai：错开
-      // 既有夜链 job，且在数据预产链（item_prior 04:20 / embed 04:40 / recalibration 04:50 /
-      // reference 05:20）之后跑，让选题信号（θ̂ / b 锚 / 参考答案）已新鲜。（旧注「mastery
-      // 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377 复审 §6.4。）queue=llm：
-      // softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM 编排），与 item_prior 同档。
+      // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。排在数据预产链之后跑，让选题
+      // 信号（θ̂ / b 锚）已新鲜——YUK-758 起该次序由下面的 dependsOn 硬边保证，不再靠 cron
+      // 错峰。（旧注「mastery 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377
+      // 复审 §6.4。）queue=llm：softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM
+      // 编排），与 item_prior 同档。
       // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
       {
+        // YUK-758 DAG 成员：compose 选题（candidate-signals）实读 item_calibration.b_calib，故对
+        // recalibration_nightly 是**真硬边**（读最终标定态）。注：reference_md / answer_class **不**入
+        // compose 选题路径（reference_md 走判分/UI、answer_class 走 quiz/pool-fetch），旧 05:00/05:20
+        // 排在 compose 前是时钟巧合，不作伪边纳入（见 PR 考据表）。cron 移除，orchestrator 触发。
         name: 'practice_stream_compose_nightly',
-        schedule: { cron: '30 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['recalibration_nightly'],
         queue: 'llm',
         load: () =>
           import('./jobs/practice_stream_compose_nightly').then(
@@ -728,15 +734,31 @@ export const practiceCapability = defineCapability({
       },
       // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
       // （discoverSupplyTargets，零写零 LLM）→ dispatchSupplyTargets 派到既有 sourcing /
-      // quiz_gen 队列或标 manual。cron 06:00 Asia/Shanghai：错开并排在所有数据预产 job 之后
-      // （item_prior 04:20 → compose 05:30 整条 backfill 链；旧注「mastery 夜链」已删——该
-      // job 从不存在），让前沿/题池信号已新鲜、缺口判定准。
+      // quiz_gen 队列或标 manual。排在数据预产链之后跑，让前沿/题池信号已新鲜、缺口判定准
+      // ——YUK-758 起该次序由下面的 dependsOn 硬边保证，不再靠 cron 错峰。（旧注「mastery
+      // 夜链」已删——该 job 从不存在。）
       // queue=llm：派出的 sourcing / quiz_gen 本身是 LLM 重型 job，本 job 与其同档 DLQ 重试。
       // **成本护栏**：dispatcher 的 7d fingerprint cooldown 是唯一防 job-spam 闸（同未满足缺口
       // 7 天内只真派一次）；本 job 依赖它，绝不绕过 dispatcher 直发付费队列。
       {
+        // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
+        //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
+        //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
+        //    target-discovery.ts 内的**私有** loader（:664），并非 src/server/quiz/pool-fetch.ts；
+        //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
+        //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
+        //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一
+        //    would-be caller matcher 被 MATCHER_ANSWER_CLASS_FILTER=false 关着）——即便走到
+        //    也不会因未 backfill 而漏题。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
+        //  · 改声明 `recalibration_nightly` 硬边（**真读后写**）：同一个私有 loadQuestionPool
+        //    在 target-discovery.ts:684-699 批量读 item_calibration(track='hard') 的
+        //    b/b_anchor/b_calib → effectiveB(= b_calib ?? b_anchor ?? b)，该值喂 R3 的
+        //    「无近-θ̂ 锚」判定（:490-511）并直接决定是否派**付费** diagnostic 供给目标。
+        //    这与 compose 对 recalibration 的既有硬边是**同一列同一 resolver**。上游未 firm-up
+        //    就扫 → 拿陈旧 b 误判 mis-banded → 派本不需要的付费 job。经 item_prior_backfill
+        //    传递依赖（recalibration ← item_prior），整条标定链齐了才扫。cron 移除。
         name: 'question_supply_nightly',
-        schedule: { cron: '0 6 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['recalibration_nightly'],
         queue: 'llm',
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
@@ -760,26 +782,30 @@ export const practiceCapability = defineCapability({
       // YUK-372 L1 (YUK-361 Phase 6 wire-up, ADR-0043 §4) — active-PPI 难度重标定触发器。
       // recalibrateQuestion（建好但 Phase 6 无生产 caller 的离线 b 去偏引擎）的夜间触发：每夜扫
       // 「攒够标签 + 昨日起窗内有新标签」的非 draft 题，逐题 firm-up b_calib（track='hard'）。
-      // cron 04:50 Asia/Shanghai：错在 item_prior 04:20 之后、compose 05:30 之前——这样今晨 firm
-      // 的 b_calib 被当天 compose 的选题信号读到。queue=llm：与其它慢热 job 同档 DLQ 重试（慢资产
-      // 写慢，给重试余量）。recalibrateQuestion 在 job 顶层调（非 attempt tx 内），per-question
-      // try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
+      // 排在 item_prior 之后、compose/supply 之前——这样今晨 firm 的 b_calib 被当天的选题与
+      // 缺口扫描读到；YUK-758 起该次序由 dependsOn 硬边保证，不再靠 cron 错峰。queue=llm：
+      // 与其它慢热 job 同档 DLQ 重试（慢资产写慢，给重试余量）。recalibrateQuestion 在 job
+      // 顶层调（非 attempt tx 内），per-question try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
       {
+        // YUK-758 DAG 成员：firm-up item_calibration.b_calib（track='hard'）。对 item_prior_backfill
+        // 是硬边（同表 b 锚：种子先、firm 后），且是 compose 选题实读的最终标定态上游。cron 移除。
         name: 'recalibration_nightly',
-        schedule: { cron: '50 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['item_prior_backfill'],
         queue: 'llm',
         load: () =>
           import('./jobs/recalibration_nightly').then((m) => m.buildRecalibrationNightlyHandler),
       },
       // YUK-383 Phase 0 — 语义 embedding 地基 backfill。每夜嵌入 embedding IS NULL
       // 的 question + knowledge 行（存量 backfill + 次日新行 + embed-API 故障重试，
-      // §9 fallback）。cron 04:40 Asia/Shanghai：错开既有夜链——item_prior 04:20、
-      // recalibration 04:50、compose 05:30、supply 06:00（agency goal_scope 04:30）。
+      // §9 fallback）。
       // queue=llm：与其它慢热 backfill job 同档 DLQ 重试。幂等由 embedding IS NULL
       // 过滤保证（无 NULL 行 = no-op）；embedMany throw 留 NULL 下轮重试，不阻塞入库。
       {
+        // YUK-758 DAG 成员（根）：嵌入 question/knowledge 的 embedding 列。kc_dedup_nightly 硬门
+        // embedding IS NOT NULL → embed_backfill 是 kc_dedup 的**真硬边**上游（跨包：kc_dedup 在
+        // knowledge 包）。cron 移除，orchestrator 起步即触发。
         name: 'embed_backfill',
-        schedule: { cron: '40 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
       },
@@ -807,14 +833,17 @@ export const practiceCapability = defineCapability({
       },
       // YUK-390 kind Step 3 — answer_class materialization backfill. Classifies
       // answer_class IS NULL question rows via deriveAnswerClass (pure, no API),
-      // for retrieval filtering + the kind reshape. cron 05:00 Asia/Shanghai: a
-      // clear slot after the nightly chain (embed 04:40 / recalibration 04:50,
-      // before compose 05:30). No dependency on other jobs (pure derivation).
+      // for retrieval filtering + the kind reshape. No dependency on other jobs
+      // (pure derivation).
       // queue=llm: shares the established backfill DLQ/retry bucket. Idempotent via
       // the answer_class IS NULL filter (no NULL rows = no-op).
       {
+        // YUK-758 DAG 成员（根）：物化 answer_class（纯派生，无夜链上游）。**无下游硬边**——
+        // question_supply 曾被声明为其下游，但考据（review To-Iq/ToTas）证伪：supply 的读路径
+        // 不碰 answer_class（详见 question_supply_nightly 处的边考据）。本 job 保持图成员是
+        // 为了受锚点统一触发，不是因为有人等它。cron 移除。
         name: 'answer_class_backfill',
-        schedule: { cron: '0 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),

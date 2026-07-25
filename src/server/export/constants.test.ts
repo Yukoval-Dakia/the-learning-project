@@ -249,6 +249,9 @@ describe('export constants', () => {
       // YUK-384: ephemeral editor presence + operational reconciliation cursor,
       // both re-established on restore (see constants.ts rationale).
       'artifact_edit_session',
+      // YUK-758: nightly-orchestration DAG scheduling run state (transient; rebuilt each night).
+      'dag_orchestration_node',
+      'dag_orchestration_run',
       'echo_jobs',
       'editing_presence',
       'event_subscription_checkpoint',

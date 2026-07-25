@@ -14,7 +14,7 @@ async function registerAll(boss: PgBoss): Promise<void> {
 }
 
 describe('registerHandlers + registerCapabilityJobs', () => {
-  it('registers and schedules knowledge_maintenance_nightly with expiry + DLQ (YUK-237)', async () => {
+  it('registers knowledge_maintenance_nightly queue with expiry + DLQ, but no cron (YUK-758 DAG member)', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
       updateQueue: vi.fn(async () => undefined),
@@ -58,12 +58,14 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       { pollingIntervalSeconds: 2, batchSize: 1 },
       expect.any(Function),
     );
-    expect(boss.schedule).toHaveBeenCalledWith(
-      'knowledge_maintenance_nightly',
-      '0 3 * * *',
-      {},
-      { tz: 'Asia/Shanghai' },
+    // YUK-758: knowledge_maintenance_nightly is now an orchestrated DAG member
+    // (dependsOn soft edge on knowledge_edge_propose_nightly). registerCapabilityJobs
+    // still builds its queue + worker, but must NOT schedule a cron for it — the
+    // orchestrator triggers it. (A lingering cron would double-run it.)
+    const scheduledNames = (boss.schedule as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[0] as string,
     );
+    expect(scheduledNames).not.toContain('knowledge_maintenance_nightly');
   });
 
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry
