@@ -13,6 +13,7 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { computeReplay } from '@/server/events/sse_replay';
+import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from '../server/judge-durable-config';
 import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import {
@@ -26,13 +27,21 @@ import {
  * pg-boss states from which a job can still run, and therefore still produce job_events.
  *
  * W5 #TumMo — existence is NOT the question; LIVENESS is. `getJobById` returns a row for
- * terminal states too (`completed` / `failed` / `cancelled`, and notably `expired` when a
- * prolonged worker outage meant the job was never picked up). Reporting `queued` for any of
- * those tells the client to keep polling a job that will never emit another event — exactly
- * the infinite-pending trap the 404 branch exists to prevent. Mirrors `orchestrator.ts`,
- * which also inspects `state` rather than mere existence.
+ * terminal states too, so reporting `queued` for one tells the client to keep polling a job
+ * that will never emit another event — exactly the infinite-pending trap the 404 branch
+ * exists to prevent. Mirrors `orchestrator.ts`, which also inspects `state` rather than mere
+ * existence.
+ *
+ * pg-boss 12 types the field as `'created' | 'retry' | 'active' | 'completed' | 'cancelled' |
+ * 'failed'` (types.d.ts `JobWithMetadata`). There is no separate `expired` state in v12: a job
+ * the worker never picked up before its expire window lands in `failed`, which this set
+ * already excludes. The three below are the only non-terminal ones.
  */
-const LIVE_BOSS_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
+const LIVE_BOSS_STATES: ReadonlySet<JobWithMetadata['state']> = new Set([
+  'created',
+  'retry',
+  'active',
+] as const);
 
 /**
  * W4 #TtWiD — is `runId` a real, still-RUNNABLE judge_run that simply has no job_events yet?
@@ -48,13 +57,15 @@ async function durableJobIsLive(runId: string): Promise<boolean> {
     const boss = await getStartedBoss();
     const job = await boss.getJobById(JUDGE_RUN_QUEUE, runId);
     if (job === null) return false;
-    const state = (job as { state?: string }).state;
-    if (typeof state === 'string' && LIVE_BOSS_STATES.has(state)) return true;
+    // #TuwGt — no assertion needed: `getJobById` returns `JobWithMetadata | null`, whose
+    // `state` is a typed union, so the compiler checks this membership test for us.
+    const { state } = job;
+    if (LIVE_BOSS_STATES.has(state)) return true;
     // A terminal job with no job_events at all: the run really did exist, but nothing will
-    // ever finish it (typically `expired` after a long worker outage). Log it and fall
-    // through to 404 — pretending it is queued would hang the client forever.
+    // ever finish it (a long worker outage surfaces as `failed` — v12 has no `expired`).
+    // Log it and fall through to 404 — pretending it is queued would hang the client forever.
     console.warn(
-      `[judge_run] ${runId} has no job_events and its pg-boss job is not live (state=${String(state)}) — reporting not-found`,
+      `[judge_run] ${runId} has no job_events and its pg-boss job is not live (state=${state}) — reporting not-found`,
     );
     return false;
   } catch (err) {
@@ -88,7 +99,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // "does not exist" for a real run, in exactly the worker-outage scenario the durable lane
     // exists to cover. The run_id IS the pg-boss job id (`SendOptions.id` at enqueue), so ask
     // pg-boss directly before declaring the run unknown — and require the job to still be
-    // RUNNABLE, since a terminal/expired job will never emit an event either (#TumMo).
+    // RUNNABLE, since a terminal job will never emit an event either (#TumMo).
     // W5 #Tunn3 — resolution order per the design's `/status` contract (§3.6d):
     //   (1) terminal job_event  →  (2) DOMAIN event by run_id  →  (3) live queue  →  (4) 404.
     // `job_events` is the progress stream, NOT the source of truth: `prune_job_events` deletes
@@ -129,7 +140,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // return `{status:'done', result:null}` silently, so a malformed/legacy terminal payload
     // in production was undiagnosable from the response alone. Log it server-side (the raw
     // payload never leaves the server) so the degradation shows up in the logs.
-    if (parsed && !parsed.success) {
+    if (parsed !== null && !parsed.success) {
       console.warn('[judge_run] terminal DONE payload failed the result contract', {
         run_id: runId,
         error: parsed.error.message,

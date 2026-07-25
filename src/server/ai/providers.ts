@@ -196,6 +196,25 @@ export function providerRequiresExplicitModel(provider: Provider): boolean {
 }
 
 /**
+ * YUK-594 (W5 #TurRP) — the model a per-call provider CROSS-OVER must pin.
+ *
+ * `resolveTaskProvider` layers provider and model INDEPENDENTLY
+ * (`override?.model ?? envOverride?.model ?? subDefaultModel`). So a caller that hands it only
+ * `override.provider` — which is exactly what the durable judge's fallback lane does — still
+ * inherits a global `AI_PROVIDER_MODEL` from whatever lane it is crossing AWAY from. With
+ * `AI_PROVIDER_OVERRIDE=xiaomi` + `AI_PROVIDER_MODEL=<mimo id>` and a fallback to
+ * `anthropic-sub`, the last-chance retry would post a mimo model id to the subscription
+ * endpoint and fail by construction — the one delivery whose whole job is to succeed.
+ *
+ * The per-provider answer: the subscription lane has its own built-in default; every other
+ * runnable-default provider takes the task's registry model. Callers that cross providers must
+ * pass this as `override.model` so nothing is inherited across the lane boundary.
+ */
+export function crossoverModelForProvider(provider: Provider, kind: TaskKind): string {
+  return provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel;
+}
+
+/**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } forwarded as ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL.
  *   - 'oauth' → { oauthTokenEnv } whose value the runner SETS as CLAUDE_CODE_OAUTH_TOKEN

@@ -57,11 +57,11 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     vi.restoreAllMocks();
   });
 
-  // W5 #TumMo — existence is not liveness. `getJobById` returns a row for terminal states
-  // too; `expired` in particular is what a marker-less run looks like after a long worker
-  // outage. Reporting `queued` for those would make the client poll a job that can never
-  // emit another event.
-  it.each(['completed', 'failed', 'cancelled', 'expired'])(
+  // W5 #TumMo — existence is not liveness. `getJobById` returns a row for terminal states too,
+  // and reporting `queued` for one would make the client poll a job that can never emit another
+  // event. (pg-boss 12's state union has no `expired`: a job the worker never picked up before
+  // its expire window lands in `failed`, which is covered here.)
+  it.each(['completed', 'failed', 'cancelled'])(
     'does NOT report queued for a terminal pg-boss job (state=%s)',
     async (state) => {
       const runId = newId();

@@ -561,7 +561,18 @@ async function detectLateArrival(
     const rows = await tx
       .select({ lastOutcomeAt: mastery_state.last_outcome_at })
       .from(mastery_state)
-      .where(inArray(mastery_state.subject_id, thetaSubjectIds));
+      // W5 #TusVG — `subject_kind` is HALF the key. `mastery_state` is unique on
+      // (subject_kind, subject_id) and hosts hierarchical-Elo `ability_global` rows keyed by a
+      // DOMAIN id in a separate partition, so filtering on `subject_id` alone can pick up a
+      // non-knowledge row's `last_outcome_at`. A hit there would misread a perfectly ordered
+      // backfill as late and silently skip EVERY derived write. Same filter the write side
+      // uses (`updateThetaForAttempt`, mastery/state.ts:226) so the read and write agree.
+      .where(
+        and(
+          eq(mastery_state.subject_kind, 'knowledge'),
+          inArray(mastery_state.subject_id, thetaSubjectIds),
+        ),
+      );
     for (const row of rows) {
       const lastOutcomeAt = coerceJsonbDate(row.lastOutcomeAt);
       if (lastOutcomeAt !== null && lastOutcomeAt.getTime() > nowMs) return true;

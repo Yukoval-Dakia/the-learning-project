@@ -125,13 +125,27 @@ describe('JudgeInvokerInputSchema.durable.providerOverride (#14)', () => {
     subjectProfile: mathProfile,
   };
 
-  it.each(['anthropic', 'xiaomi', 'zhipu', 'openrouter', 'gateway', 'openai', 'anthropic-sub'])(
-    'accepts the known provider %s',
+  it.each(['anthropic', 'xiaomi', 'zhipu', 'anthropic-sub'])(
+    'accepts the known, IMPLEMENTED provider %s',
     (provider) => {
       expect(
         JudgeInvokerInputSchema.safeParse({ ...base, durable: { providerOverride: provider } })
           .success,
       ).toBe(true);
+    },
+  );
+
+  // W5 #TuwGv — reserved-but-unwired names pass `isKnownProvider` (it is Object.hasOwn over
+  // PROVIDERS) and used to slip through, only to throw later at resolveTaskProvider's
+  // "reserved but not implemented" guard — the downstream failure this boundary exists to
+  // stop. They must be rejected HERE.
+  it.each(['openrouter', 'gateway', 'openai'])(
+    'rejects the reserved-but-unimplemented provider %s',
+    (provider) => {
+      expect(
+        JudgeInvokerInputSchema.safeParse({ ...base, durable: { providerOverride: provider } })
+          .success,
+      ).toBe(false);
     },
   );
 
