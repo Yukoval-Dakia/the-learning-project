@@ -1,3 +1,4 @@
+import type { Provider, TaskKind } from '@/ai/registry';
 import { isAiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
@@ -10,6 +11,11 @@ import {
 } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
+import {
+  crossoverModelForProvider,
+  isKnownProvider,
+  isProviderImplemented,
+} from '@/server/ai/providers';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { z } from 'zod';
 import type { JudgeKind } from '../ai/judges';
@@ -67,6 +73,31 @@ export const JudgeInvokerInputSchema = z.object({
   // grade. Narrowed in invoke() before route resolution + dispatch; absent /
   // unresolvable → whole-row (back-compat). NOT a question_part id.
   part_ref: z.string().nullable().optional(),
+  // YUK-594 (D7/D9) — durable-run scoped runner overrides (judge_run handler only).
+  // #14 — `providerOverride` is typed `Provider` on JudgeAnswerParams.durable
+  // (question-contract.ts), so a bare `z.string()` here let an arbitrary name
+  // ("invalid-provider") pass the validation boundary and only fail downstream at
+  // `resolveTaskProvider`.
+  //
+  // W5 #TuwGv — `isKnownProvider` ALONE does not deliver that promise: it is
+  // `Object.hasOwn(PROVIDERS, name)`, which is true for the reserved-but-unwired names
+  // (`openrouter` / `gateway` / `openai`), so those passed the boundary and threw later at
+  // `resolveTaskProvider`'s "reserved but not implemented" guard — exactly the downstream
+  // failure this validation exists to prevent. Both predicates are needed, and together they
+  // match the discipline `judgeFallbackProvider` already applies on the config side. Still
+  // composed from the single-source predicates rather than a re-listed union, so a newly
+  // wired provider cannot drift a second hard-coded copy out of sync.
+  durable: z
+    .object({
+      providerOverride: z
+        .custom<Provider>(
+          (value) =>
+            typeof value === 'string' && isKnownProvider(value) && isProviderImplemented(value),
+          { message: 'providerOverride must be a known, implemented provider' },
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 export const JudgeInvocationTelemetrySchema = z.object({
@@ -165,10 +196,59 @@ export class JudgeInvoker {
       // provider timeout (steps/semantic swallow into 'unsupported') still records
       // that the model WAS attempted (→ historical_unknown, never deterministic).
       modelAttempted = true;
+      // YUK-594 (D7/D9) — durable runs override the runner ctx per-call: FORCE
+      // enableTransientRetry:false (queue redelivery is the durable handler's only
+      // transient layer, D7 single-transient-layer) and, on the fallback redelivery,
+      // pin RunTaskCtx.override.provider so the call crosses to the fallback lane
+      // (reuses the existing resolveTaskProvider seam — no new plumbing, D9). The
+      // sync HTTP paths never set `durable`, so callCtx passes through UNCHANGED
+      // (K2: the vision judges' sanctioned enableTransientRetry survives on them).
+      // Cast note: `enableTransientRetry` is Omit'ted from the typed RunTaskCallCtx,
+      // but judgeDefaultRunTaskFn forwards the ctx verbatim to runTask, so setting it
+      // here reaches the runner — the exact mechanism the vision judges use to opt
+      // IN (steps-judge.ts:297). We force it OFF here for the durable lane.
+      //
+      // W5 #TumMr — this DOES depend on the forwarding chain preserving the untyped key,
+      // and `makeRunTaskFn`/`makeRunTaskTextFn` deliberately STRIP it (runner-fn.ts:18-19),
+      // so a future refactor of judgeDefaultRunTaskFn onto those factories would silently
+      // drop the forced-off. It would NOT be silent, though: `invoker-durable.test.ts`
+      // mocks '@/server/ai/runner' and asserts `ctx.enableTransientRetry === false` at the
+      // runTask boundary, so that refactor fails CI on the D7 single-transient-layer
+      // invariant rather than degrading in production. Keep that test if this moves.
+      const durable = narrowed.durable;
+      let effectiveCtx = callCtx;
+      if (durable) {
+        const base = (callCtx && typeof callCtx === 'object' ? callCtx : {}) as Record<
+          string,
+          unknown
+        >;
+        effectiveCtx = {
+          ...base,
+          enableTransientRetry: false,
+          // W5 #TurRP — crossing lanes must pin the MODEL too, not just the provider.
+          // `resolveTaskProvider` layers the two independently
+          // (`override?.model ?? envOverride?.model ?? subDefaultModel`), so a provider-only
+          // override still inherits a global `AI_PROVIDER_MODEL` belonging to the lane we are
+          // crossing AWAY from — posting e.g. a mimo model id to the subscription endpoint on
+          // the one delivery whose entire purpose is to succeed. An explicit `model` wins the
+          // precedence chain, so nothing leaks across the boundary. A model already present on
+          // the incoming ctx (a deliberate per-call choice) is left alone.
+          ...(durable.providerOverride
+            ? {
+                override: {
+                  ...((base.override as Record<string, unknown> | undefined) ?? {}),
+                  provider: durable.providerOverride,
+                  model:
+                    (base.override as { model?: string } | undefined)?.model ??
+                    crossoverModelForProvider(durable.providerOverride, kind as TaskKind),
+                },
+              }
+            : {}),
+        } as typeof callCtx;
+      }
       // Compute the judge result FIRST — it must NEVER be lost to a failure in the
-      // advisory provenance metadata below. Pass callCtx through UNCHANGED so the
-      // sanctioned enableTransientRetry opt-in survives to the runner (K2).
-      const taskResult = await configuredRunTaskFn(kind, taskInput, callCtx);
+      // advisory provenance metadata below.
+      const taskResult = await configuredRunTaskFn(kind, taskInput, effectiveCtx);
       // YUK-589 (J4) — the metadata (taskInputHash / judgePromptFingerprint) is
       // best-effort provenance ONLY. A throw here (a BigInt / exotic value inside
       // taskInput, or an unknown task kind) must not crash the judge call. On any

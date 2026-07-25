@@ -30,6 +30,7 @@ import { JOB_EVENT_KIND_SET } from './event-contracts';
  *   - question_block     src/capabilities/ingestion/server/block-structured-edit.ts
  *   - learning_session   src/server/session/{tutor,review,conversation}.ts (SESSION_TABLE)
  *   - ingestion_operation src/capabilities/ingestion/server/operation-store.ts
+ *   - judge_run          src/capabilities/practice/server/judge-run-status.ts (JUDGE_RUN_TABLE, YUK-594)
  * 新增 writeJobEvent 写入新 business_table 时，必须在此同步追加，否则该流会 400。
  */
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {

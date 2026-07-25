@@ -42,11 +42,13 @@ const hits: number[] = [];
  *
  * Throws an {@link ApiError} with HTTP 429 when the number of hits within the
  * trailing window would exceed `AI_RATE_LIMIT_MAX`. On success it appends the
- * current timestamp to the window and returns.
+ * current timestamp to the window and returns that timestamp — the token, which
+ * {@link refundRateLimit} can hand back when the work it was spent on never happened.
  *
  * @param now injectable clock (ms since epoch) for deterministic tests.
+ * @returns the recorded timestamp (the refundable token).
  */
-export function checkRateLimit(now: number = Date.now()): void {
+export function checkRateLimit(now: number = Date.now()): number {
   const { max, windowMs } = resolveConfig();
   const windowStart = now - windowMs;
 
@@ -68,6 +70,24 @@ export function checkRateLimit(now: number = Date.now()): void {
   }
 
   hits.push(now);
+  return now;
+}
+
+/**
+ * YUK-594 (W4) — hand a token back when the paid work it was reserved for never happened.
+ *
+ * The window is a pre-paid reservation: callers that gate BEFORE dispatching (so a 429 is
+ * raised before anything is enqueued) would otherwise burn budget on every failed dispatch,
+ * and a client retry loop over a transient failure could drain the whole window and lock out
+ * unrelated AI calls. Only the caller that owns a token may refund it, and only on a path
+ * where no paid work was started.
+ *
+ * No-op when the token is no longer in the window (already evicted by age) — a refund is
+ * best-effort bookkeeping, never an error.
+ */
+export function refundRateLimit(token: number): void {
+  const idx = hits.lastIndexOf(token);
+  if (idx >= 0) hits.splice(idx, 1);
 }
 
 /** Test-only: clears the singleton window so tests don't bleed into each other. */

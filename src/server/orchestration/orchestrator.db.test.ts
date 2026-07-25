@@ -15,7 +15,15 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
-import { type OrchestratorBoss, runOrchestratorStart, runOrchestratorTick } from './orchestrator';
+import {
+  MINUTES_PER_DAY,
+  type OrchestratorBoss,
+  isWithinCatchUpWindow,
+  minutesSinceAnchor,
+  runOrchestratorCatchUp,
+  runOrchestratorStart,
+  runOrchestratorTick,
+} from './orchestrator';
 import { updateNodeStatus } from './store';
 
 const db = testDb();
@@ -47,6 +55,10 @@ class FakeBoss implements OrchestratorBoss {
   failTickSend = false;
   /** make the tick-chain send return null (pg-boss "no job created"). */
   nullTickSend = false;
+  /** every cancel(name, id) the orchestrator issued, in order. */
+  cancels: { name: string; id: string }[] = [];
+  /** member job names whose cancel() throws (models a DB hiccup / missing queue). */
+  throwOnCancelJobs = new Set<string>();
   private states = new Map<string, string>();
   /** YUK-779 — per-job pg-boss `output` (the handler's resolved value). */
   private outputs = new Map<string, unknown>();
@@ -93,6 +105,35 @@ class FakeBoss implements OrchestratorBoss {
       : { state };
   }
 
+  /**
+   * Models pg-boss v12.26.1 `cancelJobs` (plans.js):
+   *   UPDATE ... SET state = 'cancelled' WHERE name = $1 AND id = ANY($2) AND state < 'completed'
+   * `job_state` is an ORDERED enum (created < retry < active < completed < cancelled < failed),
+   * so the guard covers exactly created/retry/active and leaves terminal jobs alone. A missing
+   * id is simply 0 rows affected — never an error.
+   */
+  async cancel(name: string, id: string): Promise<void> {
+    if (this.throwOnCancelJobs.has(name)) {
+      throw new Error(`simulated cancel failure for '${name}'`);
+    }
+    this.cancels.push({ name, id });
+    const key = `${name}:${id}`;
+    const state = this.states.get(key);
+    if (state === 'created' || state === 'retry' || state === 'active') {
+      this.states.set(key, 'cancelled');
+    }
+  }
+
+  /** Would pg-boss still hand this job to a worker? (created/retry are pollable, active is running.) */
+  isExecutable(name: string, id: string): boolean {
+    const state = this.states.get(`${name}:${id}`);
+    return state === 'created' || state === 'retry';
+  }
+
+  jobState(name: string, id: string): string | undefined {
+    return this.states.get(`${name}:${id}`);
+  }
+
   setJobState(name: string, id: string, state: string): void {
     this.states.set(`${name}:${id}`, state);
   }
@@ -115,6 +156,41 @@ const member = (
   name: string,
   dependsOn: JobDagMemberInput['dependsOn'] = [],
 ): JobDagMemberInput => ({ name, owner: 'test', dependsOn });
+
+/**
+ * A `db` double whose FIRST read of `dag_orchestration_node` throws, and which is the real `db`
+ * for everything else. Used to fail exactly the stale-run `loadNodes` inside the abandon path
+ * without disturbing the rest of the start (PR #1075 OCR major).
+ */
+function dbWithOneFailingNodeLoad(real: typeof db): typeof db {
+  let armed = true;
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle's fluent builder has no public seam to wrap.
+  const anyReal = real as any;
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop !== 'select') return Reflect.get(target, prop, receiver);
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return (...args: any[]) => {
+        const builder = anyReal.select(...args);
+        return new Proxy(builder, {
+          get(b, p) {
+            if (p === 'from') {
+              return (table: unknown) => {
+                if (armed && table === dag_orchestration_node) {
+                  armed = false;
+                  throw new Error('simulated DB outage while loading nodes');
+                }
+                return b.from(table);
+              };
+            }
+            const value = b[p];
+            return typeof value === 'function' ? value.bind(b) : value;
+          },
+        });
+      };
+    },
+  }) as typeof db;
+}
 
 /** narrow a nullable run to non-null (a start that returns null is a test failure). */
 function must<T>(value: T | null | undefined, label: string): T {
@@ -933,5 +1009,482 @@ describe('orchestrator trigger semantics', () => {
       runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
     ).resolves.toBeUndefined();
     expect(boss.memberSends).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-781 A — 错过单锚点 = 整夜零运行，无补跑。
+//
+// pg-boss 不重放错过的 cron：timekeeper 每 30s 跑 cron()，`shouldSendIt()` 只在
+// 「上一次 cron 时刻距今 < 60s」时入队（dist/timekeeper.js）。整栈在 02:30±60s 停机
+// （夜间断电 / compose down 部署 / 镜像拉取慢）→ 该夜锚点根本没入过队 → 14 个成员一个不跑，
+// `dag_orchestration_run` 里连一行都没有，直到次日 02:30。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('YUK-781 A — boot catch-up for a missed anchor', () => {
+  // 全部以真实 Asia/Shanghai 时区算 —— 窗口判据用的就是这套 Intl 换算，不另设 DI seam。
+  const AT_ANCHOR = new Date('2026-07-25T02:30:00+08:00'); // 距锚点 0min
+  const HALF_HOUR_PAST = new Date('2026-07-25T03:00:00+08:00'); // 30min
+  const LAST_MINUTE_IN = new Date('2026-07-25T07:29:00+08:00'); // 299min（窗内最后一分钟）
+  const FIRST_MINUTE_OUT = new Date('2026-07-25T07:30:00+08:00'); // 300min（窗外第一分钟）
+  const NOON = new Date('2026-07-25T12:00:00+08:00'); // 570min —— 中午重启
+  const BEFORE_ANCHOR = new Date('2026-07-25T02:00:00+08:00'); // −30min
+
+  const catchUp = (boss: FakeBoss, dag: ReturnType<typeof dagOf>, now: Date) =>
+    runOrchestratorCatchUp({ db, boss, dag, now, localDate: () => RUN_DATE });
+
+  const runsForDate = () =>
+    db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.run_date, RUN_DATE));
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('A1 backfills tonight’s run when the worker boots after the anchor was missed', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+
+    const outcome = await catchUp(boss, dag, HALF_HOUR_PAST);
+
+    expect(outcome.action).toBe('started');
+    const runs = await runsForDate();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('running');
+    expect(runs[0].trigger).toBe('cron');
+    // roots actually went out, and the tick chain is armed — a run row alone is not "running".
+    expect((await nodeRow(runs[0].id, 'a'))?.status).toBe('enqueued');
+    expect((await nodeRow(runs[0].id, 'b'))?.status).toBe('pending');
+    expect(boss.memberSends.map((s) => s.name)).toEqual(['a']);
+    expect(boss.tickSends).toBe(1);
+  });
+
+  it('A2 a repeated boot creates no second run and does not fork the tick chain', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+
+    await catchUp(boss, dag, HALF_HOUR_PAST);
+    const ticksAfterFirst = boss.tickSends;
+    const outcome = await catchUp(boss, dag, HALF_HOUR_PAST);
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'run-exists' });
+    expect(await runsForDate()).toHaveLength(1);
+    // The paid root went out exactly once…
+    expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(1);
+    // …and no SECOND tick chain was armed alongside the one already living in pg-boss.
+    expect(boss.tickSends).toBe(ticksAfterFirst);
+  });
+
+  it('A3 a run that already completed today is not re-run by a later boot', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    await catchUp(boss, dag, AT_ANCHOR);
+    const run = (await runsForDate())[0];
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: AT_ANCHOR, localDate: () => RUN_DATE });
+    expect((await runsForDate())[0].status).toBe('completed');
+
+    const outcome = await catchUp(boss, dag, HALF_HOUR_PAST);
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'run-exists' });
+    expect(await runsForDate()).toHaveLength(1);
+    expect(boss.memberSends.filter((s) => s.name === 'a')).toHaveLength(1);
+  });
+
+  // The whole point of the window: without it, ANY daytime restart drags the entire nightly
+  // chain (8 paid LLM roots + downstream) into the middle of the user's day.
+  it('A4 a midday restart does NOT drag the nightly chain into daylight', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+
+    const outcome = await catchUp(boss, dag, NOON);
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'outside-window' });
+    expect(await runsForDate()).toHaveLength(0);
+    expect(boss.memberSends).toHaveLength(0);
+    expect(boss.tickSends).toBe(0);
+  });
+
+  it('A5 a boot BEFORE the anchor waits for the anchor instead of starting early', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+
+    const outcome = await catchUp(boss, dag, BEFORE_ANCHOR);
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'outside-window' });
+    expect(await runsForDate()).toHaveLength(0);
+  });
+
+  it('A6 the window is [anchor, anchor + 5h): inclusive at the anchor, exclusive at the edge', async () => {
+    const dag = dagOf(member('a'));
+
+    const atAnchor = new FakeBoss();
+    expect((await catchUp(atAnchor, dag, AT_ANCHOR)).action).toBe('started');
+    await resetDb();
+
+    const lastIn = new FakeBoss();
+    expect((await catchUp(lastIn, dag, LAST_MINUTE_IN)).action).toBe('started');
+    await resetDb();
+
+    const firstOut = new FakeBoss();
+    expect(await catchUp(firstOut, dag, FIRST_MINUTE_OUT)).toEqual({
+      action: 'skipped',
+      reason: 'outside-window',
+    });
+    expect(await runsForDate()).toHaveLength(0);
+  });
+
+  // Two worker replicas booting in the same second both pass the window + "no run today" gate.
+  // The DB partial unique (run_date) WHERE status='running' is what has to hold the line.
+  it('A7 two workers booting at once create exactly one run and enqueue each root once', async () => {
+    const bossA = new FakeBoss();
+    const bossB = new FakeBoss();
+    const dag = dagOf(member('r1'), member('r2'), member('down', ['r1']));
+
+    const [outA, outB] = await Promise.all([
+      catchUp(bossA, dag, HALF_HOUR_PAST),
+      catchUp(bossB, dag, HALF_HOUR_PAST),
+    ]);
+
+    const runs = await runsForDate();
+    expect(runs).toHaveLength(1);
+    // Both replicas converge on the same run (one created it, the other adopted it) and
+    // NEITHER errors out — the loser must lose cleanly via ON CONFLICT DO NOTHING, not by
+    // raising a 23505 out of the single-flight insert.
+    for (const out of [outA, outB]) {
+      if (out.action === 'started') expect(out.run.id).toBe(runs[0].id);
+      else expect(out.reason).toBe('run-exists');
+    }
+    expect([outA.action, outB.action]).toContain('started');
+    // Each paid root was sent exactly once ACROSS both replicas (claimNodePending CAS).
+    const allSends = [...bossA.memberSends, ...bossB.memberSends].map((s) => s.name);
+    expect(allSends.filter((n) => n === 'r1')).toHaveLength(1);
+    expect(allSends.filter((n) => n === 'r2')).toHaveLength(1);
+    expect(allSends.filter((n) => n === 'down')).toHaveLength(0);
+    expect((await nodeRow(runs[0].id, 'r1'))?.status).toBe('enqueued');
+    expect((await nodeRow(runs[0].id, 'r2'))?.status).toBe('enqueued');
+  });
+
+  // PR #1075 OCR minor — the window is an ELAPSED-time interval [0, window), not a
+  // same-calendar-day subtraction. A plain `minuteOfDay - anchorMinute` silently and
+  // permanently disables the catch-up for any anchor whose window crosses local midnight.
+  describe('minutesSinceAnchor wraps around local midnight', () => {
+    const ELEVEN_PM = 23 * 60; // an anchor moved to 23:00
+
+    it('measures elapsed time, not a same-day offset, for a late-evening anchor', () => {
+      // 00:30 local is 90 minutes AFTER a 23:00 anchor — the naive subtraction gives −1350.
+      expect(minutesSinceAnchor(new Date('2026-07-26T00:30:00+08:00'), ELEVEN_PM)).toBe(90);
+      expect(minutesSinceAnchor(new Date('2026-07-25T23:00:00+08:00'), ELEVEN_PM)).toBe(0);
+      expect(minutesSinceAnchor(new Date('2026-07-26T03:00:00+08:00'), ELEVEN_PM)).toBe(240);
+    });
+
+    it('still reports a pre-anchor moment as nearly a full day since the LAST anchor', () => {
+      // 02:00 with the live 02:30 anchor: 30min BEFORE tonight's anchor = 1410min since
+      // yesterday's. Far outside any sane window, so the catch-up correctly waits (test A5).
+      expect(minutesSinceAnchor(new Date('2026-07-25T02:00:00+08:00'))).toBe(1410);
+      expect(minutesSinceAnchor(new Date('2026-07-25T02:30:00+08:00'))).toBe(0);
+      expect(minutesSinceAnchor(new Date('2026-07-25T07:29:00+08:00'))).toBe(299);
+    });
+  });
+
+  // PR #1075 OCR major/minor — this gate exists to REFUSE, so when it cannot compute an
+  // answer it must refuse. The naive forms fail the other way: `NaN >= window` is false
+  // (→ "not outside the window" → catch up at any hour), and a >=24h window makes the
+  // mod-1440 elapsed always smaller than it (→ same). Both would fire the whole paid chain.
+  describe('isWithinCatchUpWindow fails closed', () => {
+    it('accepts only a real elapsed reading inside the window', () => {
+      expect(isWithinCatchUpWindow(0, 300)).toBe(true);
+      expect(isWithinCatchUpWindow(299, 300)).toBe(true);
+      expect(isWithinCatchUpWindow(300, 300)).toBe(false);
+      expect(isWithinCatchUpWindow(1410, 300)).toBe(false);
+    });
+
+    it('refuses (throws) rather than admitting an unreadable clock', () => {
+      expect(() => isWithinCatchUpWindow(Number.NaN, 300)).toThrow(/unreadable local clock/);
+      expect(() => isWithinCatchUpWindow(Number.POSITIVE_INFINITY, 300)).toThrow(
+        /unreadable local clock/,
+      );
+    });
+
+    it('refuses (throws) rather than honouring a window that cannot discriminate', () => {
+      expect(() => isWithinCatchUpWindow(100, MINUTES_PER_DAY)).toThrow(/must be >0 and </);
+      expect(() => isWithinCatchUpWindow(100, MINUTES_PER_DAY + 1)).toThrow(/must be >0 and </);
+      expect(() => isWithinCatchUpWindow(100, 0)).toThrow(/must be >0 and </);
+    });
+  });
+
+  // End-to-end companion to the unit tests above. Note the division of labour: an *invalid
+  // Date* makes `Intl.formatToParts` THROW (not return NaN), so this case is carried by the
+  // catch-up's swallow rather than by the finite-check — the NaN branch itself is pinned by
+  // the unit test above. What this one pins is that neither route ends in "start the chain".
+  it('A9 an unreadable clock skips instead of firing the chain at an arbitrary hour', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+
+    const outcome = await runOrchestratorCatchUp({
+      db,
+      boss,
+      dag,
+      now: new Date(Number.NaN),
+      localDate: () => RUN_DATE,
+    });
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'error' });
+    expect(await runsForDate()).toHaveLength(0);
+    expect(boss.memberSends).toHaveLength(0);
+  });
+
+  // Contract: the catch-up NEVER throws. A worker that cannot boot drains no queue at all,
+  // which is strictly worse than a missed night (start-worker.ts reconcileStuckAiTaskRuns
+  // precedent).
+  it('A8 never throws when the DB is unreachable — worker boot is not blocked', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const explodingDb = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('simulated DB outage during boot');
+        },
+      },
+    ) as never;
+
+    await expect(
+      runOrchestratorCatchUp({
+        db: explodingDb,
+        boss,
+        dag,
+        now: HALF_HOUR_PAST,
+        localDate: () => RUN_DATE,
+      }),
+    ).resolves.toEqual({ action: 'skipped', reason: 'error' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-781 B — abandon 跨日 run 时不取消其在飞 pg-boss job。
+//
+// 旧 run 的 created/retry/active job 在 abandon 后仍会执行、写业务数据，而今日新 run 会再发
+// 一遍同名成员 → 重复付费 + 旧 job 绕过新图依赖门。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
+  const YESTERDAY = '2026-07-24';
+  const LAST_NIGHT = new Date('2026-07-24T02:30:00+08:00');
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  /** 起一条"昨夜"的 run（根已 enqueue、下游仍 pending），模拟 worker 中途挂掉的残留。 */
+  async function startLastNightRun(boss: FakeBoss, dag: ReturnType<typeof dagOf>) {
+    return must(
+      await runOrchestratorStart(
+        { db, boss, dag, now: LAST_NIGHT, localDate: () => YESTERDAY },
+        'cron',
+      ),
+      'last night run',
+    );
+  }
+
+  it('B1 the old run’s enqueued job is cancelled before the run is abandoned', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+    const oldJobId = must((await nodeRow(old.id, 'a'))?.boss_job_id, 'old boss job id');
+    expect(boss.isExecutable('a', oldJobId)).toBe(true); // pg-boss would still hand it to a worker
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    // The stale job can no longer run and write business data.
+    expect(boss.cancels).toContainEqual({ name: 'a', id: oldJobId });
+    expect(boss.jobState('a', oldJobId)).toBe('cancelled');
+    expect(boss.isExecutable('a', oldJobId)).toBe(false);
+
+    const oldRun = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+    )[0];
+    expect(oldRun.status).toBe('abandoned');
+    // The abandoned run's node rows settle instead of showing phantom "enqueued" forever.
+    const oldA = await nodeRow(old.id, 'a');
+    expect(oldA?.status).toBe('failed');
+    expect(oldA?.detail).toMatch(/pg-boss job cancelled/);
+    // A never-enqueued node settles as `skipped`, not `failed` — it did not run at all, and
+    // counting it as a failure would inflate the failure tally on the read surface (YUK-774).
+    const oldB = await nodeRow(old.id, 'b');
+    expect(oldB?.status).toBe('skipped');
+    expect(oldB?.detail).toMatch(/before this node was enqueued/);
+  });
+
+  it('B2 tonight’s run re-sends the same member under a NEW id, and only that one can run', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+    const oldJobId = must((await nodeRow(old.id, 'a'))?.boss_job_id, 'old boss job id');
+
+    const fresh = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'tonight run',
+    );
+    const newJobId = must((await nodeRow(fresh.id, 'a'))?.boss_job_id, 'new boss job id');
+
+    expect(newJobId).not.toBe(oldJobId);
+    // Exactly one executable copy of member 'a' exists — no duplicate paid run, and the old
+    // copy (which is NOT bound by tonight's dependency edges) is off the table.
+    expect(boss.isExecutable('a', newJobId)).toBe(true);
+    expect(boss.isExecutable('a', oldJobId)).toBe(false);
+  });
+
+  it('B3 a job already claimed by a worker (active) is cancelled at the row level too', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const old = await startLastNightRun(boss, dag);
+    const oldJobId = must((await nodeRow(old.id, 'a'))?.boss_job_id, 'old boss job id');
+    // pg-boss handed it to a worker; the handler is mid-flight.
+    boss.setJobState('a', oldJobId, 'active');
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    // v12 cancelJobs guards on `state < 'completed'`, so active IS covered: the row flips to
+    // cancelled and its remaining retry budget is cut off. (Residual, untestable-here risk:
+    // the already-running handler is not interrupted, so its current attempt still writes.)
+    expect(boss.jobState('a', oldJobId)).toBe('cancelled');
+  });
+
+  it('B4 a cancel failure blocks neither the abandon nor tonight’s run', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+    boss.throwOnCancelJobs.add('a');
+
+    const fresh = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'tonight run',
+    );
+
+    const oldRun = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+    )[0];
+    expect(oldRun.status).toBe('abandoned'); //止损失败也不许卡住新一夜
+    expect((await nodeRow(old.id, 'a'))?.detail).toMatch(/cancel failed/);
+    expect((await nodeRow(fresh.id, 'a'))?.status).toBe('enqueued');
+  });
+
+  it('B5 an already-terminal node of the old run is not cancelled', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+    await completeMember(boss, old.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: LAST_NIGHT, localDate: () => YESTERDAY });
+    const succeededId = must((await nodeRow(old.id, 'a'))?.boss_job_id, 'succeeded job id');
+    const inflightId = must((await nodeRow(old.id, 'b'))?.boss_job_id, 'in-flight job id');
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    expect(boss.cancels.map((c) => c.id)).not.toContain(succeededId);
+    expect(boss.cancels.map((c) => c.id)).toContain(inflightId);
+    expect((await nodeRow(old.id, 'a'))?.status).toBe('succeeded'); // untouched
+  });
+
+  it('B6 today’s own active run is never cancelled by a same-day start', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    // A manual full-chain rerun / a redelivered cron on the SAME date adopts the run; the
+    // in-flight member must keep running.
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'manual');
+
+    expect(boss.cancels).toHaveLength(0);
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued');
+  });
+
+  // 同族缺口：判超时 failed 会让硬下游按「上游失败」跳过，但那只 job 在 pg-boss 侧仍是
+  // created/retry/active，之后照样执行并写数据——图上说"没跑"、实际跑了。
+  it('B7 a node judged timed out has its pg-boss job cancelled, not just marked failed', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const jobId = must((await nodeRow(run.id, 'a'))?.boss_job_id, 'boss job id');
+    boss.setJobState('a', jobId, 'retry'); // still inside pg-boss's retry budget
+
+    const wayLater = new Date(NOW.getTime() + 8 * 60 * 60 * 1000);
+    await runOrchestratorTick({ db, boss, dag, now: wayLater, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('failed');
+    expect(boss.cancels).toContainEqual({ name: 'a', id: jobId });
+    expect(boss.isExecutable('a', jobId)).toBe(false);
+  });
+
+  // PR #1075 OCR major — the per-node try/catch only isolates a NODE. A failure OUTSIDE the
+  // loop (loading the old run's nodes) used to escape `runOrchestratorStart` entirely, which
+  // skipped the abandon AND stopped tonight's run from being created — one transient DB blip
+  // turning a loss-limiter into the very "whole night doesn't run" failure this ticket fixes.
+  it('B9 a failure to load the old run’s nodes still abandons it and still starts tonight', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+
+    const fresh = must(
+      await runOrchestratorStart(
+        { db: dbWithOneFailingNodeLoad(db), boss, dag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'tonight run',
+    );
+
+    // The loss-limiter genuinely failed (nothing cancelled — loud-logged), but it did NOT take
+    // the night down with it.
+    expect(boss.cancels).toHaveLength(0);
+    const oldRun = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+    )[0];
+    expect(oldRun.status).toBe('abandoned');
+    expect(fresh.run_date).toBe(RUN_DATE);
+    expect((await nodeRow(fresh.id, 'a'))?.status).toBe('enqueued');
+  });
+
+  // PR #1075 OCR minor (TOCTOU) — while the sweep runs, the old run must already be closed.
+  // If it were still `running`, its tick chain (still sitting in pg-boss from last night) could
+  // be consumed mid-sweep and `advanceRun` would claim + send a NEW member job born after our
+  // `loadNodes` snapshot — uncancelled, and running against last night's graph.
+  it('B10 the old run is already abandoned before the cancel sweep runs', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+
+    // Observe the old run's status at the moment the first cancel is issued.
+    let statusDuringSweep: string | undefined;
+    const realCancel = boss.cancel.bind(boss);
+    boss.cancel = async (name: string, id: string) => {
+      statusDuringSweep ??= (
+        await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+      )[0]?.status;
+      await realCancel(name, id);
+    };
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    expect(boss.cancels.length).toBeGreaterThan(0); // the sweep really ran
+    expect(statusDuringSweep).toBe('abandoned'); // …and the run was already closed to new ticks
+  });
+
+  it('B8 a timed-out node whose job row is gone issues no pointless cancel', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    boss.throwOnSendJobs.add('a'); // the send never landed → no job row for the reserved id
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    const wayLater = new Date(NOW.getTime() + 8 * 60 * 60 * 1000);
+    await runOrchestratorTick({ db, boss, dag, now: wayLater, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.detail).toMatch(/not found/);
+    expect(boss.cancels).toHaveLength(0);
   });
 });

@@ -180,3 +180,43 @@ export async function dispatchPlacementStarterClaim(
     ),
   );
 }
+
+// pg-boss job states from which a further delivery may STILL arrive. 'created' and 'retry' are
+// waiting to be fetched; 'active' is being worked right now.
+//
+// This is an ALLOWLIST, not an enumeration of the terminal states, and that is the load-bearing
+// property: any state not listed — including one added by a future pg-boss, or the historical
+// 'expired' — reads as NOT live. That is the safe default here, because "not live" only ever
+// leads to a reap that is already gated behind the 6h grace window and the claim's own status
+// re-check, whereas defaulting unknown states to live would let a genuine zombie block every
+// later goal revision forever (the exact bug this sweeper exists to fix).
+//
+// On 'expired' specifically (review PRRT…nAc suggested adding it to the state union): the
+// installed pg-boss v12.26.1 `job_state` enum has exactly six states — created / retry / active /
+// completed / cancelled / failed — and 'expired' is NOT among them; it is a v9/v10 state, and v12
+// handles a timed-out job by deleting and re-inserting it as retry or failed. That was verified
+// against plans.d.ts JOB_STATES + plans.js by YUK-758; see the mapBossState docblock in
+// src/server/orchestration/orchestrator.ts for the full write-up. Naming it in the union here
+// would contradict that finding, so it is called out as the drift case the allowlist absorbs.
+const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
+
+/**
+ * True when the quiz_gen job backing a placement starter claim may still redeliver (YUK-761).
+ *
+ * The recovery sweeper MUST consult this before terminalizing a long-stale 'retry_scheduled'
+ * claim: elapsed time alone is not proof that the retry is dead. If the quiz_gen queue is paused,
+ * saturated, or the worker fleet is down, a perfectly legitimate retry can sit unfetched for far
+ * longer than the sweeper's grace window — and terminalizing the claim then would make the
+ * eventual delivery fail admission in `acquirePlacementAttempt` ("placement starter claim is
+ * exhausted"), throwing away paid generation work that was still coming.
+ *
+ * A null jobId or a job pg-boss can no longer find (deleted past `retentionSeconds`) means no
+ * redelivery source exists — not live.
+ */
+export async function isPlacementStarterJobLive(jobId: string | null): Promise<boolean> {
+  if (!jobId) return false;
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  const job = await boss.getJobById('quiz_gen', jobId);
+  return job != null && LIVE_PLACEMENT_JOB_STATES.has(job.state);
+}

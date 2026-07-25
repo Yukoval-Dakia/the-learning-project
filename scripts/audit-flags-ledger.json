@@ -213,5 +213,14 @@
     "reader_marker": "parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])",
     "file": "src/capabilities/practice/jobs/judge_calibration_sample.ts",
     "notes": "kill switch for paid judge-calibration sampling. Opt-in/default OFF; parsed via shared parseFlag."
+  },
+  "JUDGE_DURABLE_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "reader_marker": "parseFlag(process.env.JUDGE_DURABLE_ENABLED)",
+    "file": "src/capabilities/practice/server/judge-durable-config.ts",
+    "notes": "YUK-594 async-main judge kill switch. Opt-in/default OFF (dark-ship); parsed via shared parseFlag. ON ⇒ practice submit's server-side judge call diverts to the durable judge_run lane (202-pending + backfill); OFF ⇒ byte-identical synchronous judging (D8 flag-gated fallback)."
   }
 }
