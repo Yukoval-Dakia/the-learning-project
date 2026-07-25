@@ -80,6 +80,7 @@
 
 import type { Db } from '@/db/client';
 import { goal, placement_starter_claim } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import {
   PLACEMENT_PROBE_ENABLED,
   dispatchPlacementStarterClaim,
@@ -490,7 +491,24 @@ async function sweepPendingDispatch(
   // unlocked pre-check — cheap, and it short-circuits the overwhelmingly common case (a revision
   // superseded long ago) without opening a dispatch transaction at all. It is NOT sufficient on
   // its own: see the authoritative re-check inside the dispatch tx below.
-  const authority = await resolvePlacementStarterGoalAuthority(db, claim.goal_id);
+  let authority: Awaited<ReturnType<typeof resolvePlacementStarterGoalAuthority>>;
+  try {
+    authority = await resolvePlacementStarterGoalAuthority(db, claim.goal_id);
+  } catch (err) {
+    // The goal existence check above is a separate statement, so under READ COMMITTED the row can
+    // disappear in between and this resolver 404s. Vanishingly unlikely today (goals are
+    // status-retracted, not hard-deleted) and harmless either way — the cursor is already
+    // advanced — but letting it reach guardClaim would label a routine race as `claimErrors` and
+    // send whoever reads the summary looking for a bug that is not there.
+    if (err instanceof ApiError && err.code === 'not_found') {
+      result.goalMissing += 1;
+      console.warn(
+        `[placement-starter-recovery] goal ${claim.goal_id} vanished between checks; claim ${claim.id} skipped, cursor advanced`,
+      );
+      return;
+    }
+    throw err;
+  }
   if (authority.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
     await cancelSupersededClaim(db, claim, now, authority.semanticGoalRevisionId, result);
     return;
@@ -557,9 +575,12 @@ async function sweepPendingDispatch(
         goalLockBusy = true;
         return false; // decline; cursor already advanced, retried next window
       }
-      const fresh = goalRowStatus === null ? undefined : { status: goalRowStatus };
-      if (!fresh || fresh.status !== 'active') {
-        notActiveStatus = fresh?.status ?? 'missing';
+      // `goalRowStatus` is assigned on every path that reaches here — the try block always sets it
+      // and the catch either re-throws or returns. TypeScript cannot narrow across the closure, so
+      // the `??` is purely a type-level sentinel; it also keeps `notActiveStatus` non-null, which
+      // the dispatch-site branch below relies on.
+      if (goalRowStatus !== 'active') {
+        notActiveStatus = goalRowStatus ?? 'missing';
         return false; // suppress dispatch; deferred (NOT cancelled — see the pre-check rationale)
       }
       const authorityNow = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);

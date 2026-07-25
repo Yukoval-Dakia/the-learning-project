@@ -561,6 +561,14 @@ describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
     expect((await readClaim('claim-zombie')).status).toBe('exhausted');
   });
 
+  // NOTE (review PRRT…QL7): the goal-vanishes-between-the-existence-check-and-the-authority-call
+  // race is handled in production code (the not_found catch labels it `goalMissing` rather than
+  // letting guardClaim call it `claimErrors`), but it is deliberately NOT tested here. Deleting
+  // the goal before the sweep exercises the EARLIER projection guard, so such a test would pass
+  // without ever reaching the new catch — false confidence. Reproducing the real interleaving
+  // would need a seam that exists only for the test, which is not worth it for an
+  // observability-labelling fix on a race that cannot occur today (goals are status-retracted,
+  // never hard-deleted). The label assertion below covers the reachable path.
   it('advances the cursor of a goal-missing claim so it cannot squat the budget forever', async () => {
     const claimId = await seedClaim();
     await db.delete(goal).where(eq(goal.id, 'goal-1'));
