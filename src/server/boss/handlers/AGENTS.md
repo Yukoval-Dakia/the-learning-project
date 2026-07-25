@@ -28,7 +28,7 @@
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick |
-| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**真 barrier：必须在 edge_propose 之后**——edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径（YUK-377 复审 §3.2/YUK-384）。⚠️ 上游 `knowledge_edge_propose_nightly` 已迁入 DAG（锚点 02:30 触发），本 job 仍是裸 cron 02:45，barrier 靠时钟而非边 —— 若 edge_propose 跑超 15min 会读不到同夜提议 |
+| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——旧表曾写「真 barrier：edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径」，该说法**已被代码证伪**（YUK-758 review ToTt717）：`runEdgeProposeAndWrite` 的 SUPERSEDE 分支只 `writeAiProposal` 落**待接受提议**，`propose_edge.ts:614-616` 自述「leaves both live accumulators unchanged **until the user accepts it**」，夜批从不自主改 live 边；本 job 侧也只是推进自己的 reconciliation cursor。故二者是各自独立的 sweep，02:45 与锚点 02:30 的先后是**时钟巧合**，不需要编边 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | ../handlers.ts | 30d bulk DELETE（其它 prune 错开避锁）|
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
