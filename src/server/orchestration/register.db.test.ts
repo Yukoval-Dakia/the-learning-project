@@ -7,7 +7,8 @@ import type { PgBoss } from 'pg-boss';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { ORCHESTRATOR_QUEUE } from './constants';
+import { EXPIRE_AGENT, JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
+import { LAYER_STAGGER_MAX_SECONDS, NODE_TIMEOUT_SECONDS, ORCHESTRATOR_QUEUE } from './constants';
 import {
   parseOrchestratorPayload,
   registerOrchestrator,
@@ -128,6 +129,28 @@ describe('registerOrchestrator mount guard', () => {
 
     expect(boss.workedQueues).toEqual([]);
     expect(boss.scheduled).toEqual([]);
+  });
+});
+
+// YUK-758 review ToTsds — NODE_TIMEOUT_SECONDS is a literal derived from queue-config's
+// retry budget, with only a ⚠️ comment asking future editors to recompute it. That is not
+// a guard. `constants.ts` stays dependency-free on purpose (queue-config transitively
+// imports a live pg-boss, and this repo enforces a unit/DB partition to stop that spreading),
+// so the invariant is pinned HERE instead — this file is already in the DB partition.
+describe('NODE_TIMEOUT_SECONDS covers the pg-boss retry budget', () => {
+  it('exceeds the worst-case legal lifetime of an agent-tier member job', () => {
+    // Worst case: every attempt runs to the queue expiry ceiling, plus the backoff waits
+    // between them, plus the largest stagger this orchestrator can add before the job
+    // even starts. enqueued_at is stamped once at claim time and NOT reset per retry,
+    // so the node timeout is measured against this whole span.
+    const attempts = 1 + JOB_RETRY_LIMIT;
+    const retryBackoff = JOB_RETRY_DELAY_SECONDS * (2 ** JOB_RETRY_LIMIT - 1); // 30 + 60
+    const worstCase = attempts * EXPIRE_AGENT + retryBackoff + LAYER_STAGGER_MAX_SECONDS;
+
+    expect(
+      NODE_TIMEOUT_SECONDS,
+      `NODE_TIMEOUT_SECONDS (${NODE_TIMEOUT_SECONDS}s) must exceed the worst-case member lifetime (${worstCase}s). If EXPIRE_AGENT / JOB_RETRY_LIMIT / JOB_RETRY_DELAY_SECONDS / LAYER_STAGGER_MAX_SECONDS changed, recompute it — too small silently fails nodes mid-retry and permanently skips their hard downstreams.`,
+    ).toBeGreaterThan(worstCase);
   });
 });
 
