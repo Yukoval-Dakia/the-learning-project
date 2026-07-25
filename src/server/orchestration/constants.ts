@@ -4,11 +4,38 @@
 export const ORCHESTRATOR_QUEUE = 'nightly_orchestrator';
 
 /**
- * 单锚点 cron：~02:30 Asia/Shanghai 开闸建「今晚运行记录」+ enqueue 根节点。
+ * 单锚点时刻：~02:30 Asia/Shanghai 开闸建「今晚运行记录」+ enqueue 根节点。
  * 图成员 job 自身**不再**带 cron（validateComposition 强制互斥）——全由本锚点驱动。
+ *
+ * cron 串由时/分**推导**而非另写一份字面量（YUK-781）：启动期补跑闸要判「现在离锚点多久」，
+ * 两处各写一遍 02:30 会在改锚点时静默分叉（cron 挪了、补跑窗还按老时刻算）。
  */
-export const ORCHESTRATOR_CRON = '30 2 * * *';
+export const ORCHESTRATOR_ANCHOR_HOUR = 2;
+export const ORCHESTRATOR_ANCHOR_MINUTE = 30;
+export const ORCHESTRATOR_CRON = `${ORCHESTRATOR_ANCHOR_MINUTE} ${ORCHESTRATOR_ANCHOR_HOUR} * * *`;
 export const ORCHESTRATOR_TZ = 'Asia/Shanghai';
+
+/**
+ * 启动期补跑窗（秒，YUK-781 A）。worker 挂载后若「本地日尚无任何 run」**且**本地时间落在
+ * `[锚点, 锚点 + 本窗)` 内，补一次 `runOrchestratorStart(..., 'cron')`；超窗只 loud log 等次夜。
+ *
+ * **为什么必须补**：pg-boss 的 cron **不重放错过的锚点**。timekeeper 每
+ * `cronMonitorIntervalSeconds`（默认 30s）跑一次 `cron()`，`shouldSendIt()` 只在
+ * 「上一次 cron 时刻距今 < 60s」时才入队（timekeeper.js `shouldSendIt`：
+ * `prevDiff = (databaseTime - interval.prev()) / 1000; return prevDiff < 60`）。
+ * 整机/整栈在 02:30±60s 窗内是停的（夜间断电、compose down 部署、重启拉镜像慢），
+ * 该夜锚点就**根本没入过队**——14 个 DAG 成员一个都不跑，`dag_orchestration_run` 里连行都没有
+ * （不是 abandoned，是"没有"），直到次日 02:30。迁移前成员各带 03:00–06:00 独立 cron，
+ * 错过 02:30 只损失那一只。
+ *
+ * **为什么必须带窗口**：补跑是"把夜链搬到现在跑"。无窗口时中午/傍晚的一次重启会把整条夜链
+ * （8 个付费 LLM 根 + 下游）拉到白天与学习者同时在线时跑。取 5h → 最晚 07:30 起步：
+ *  · 下界考量：迁移前成员 cron 散在 02:30–05:15，夜批本就跑到 ~06:00；窗口短于 3.5h 会让
+ *    「04:00/05:00 重启」这类真实错过场景无法恢复。
+ *  · 上界考量：6h → 08:30 起步已进入白天使用时段；5h 留出约 1.5h 越过历史夜批包络即止。
+ *  · 与 NODE_TIMEOUT_SECONDS(7h) 同量级，故不会出现「窗口比单节点预算还长」的怪相。
+ */
+export const ORCHESTRATOR_CATCHUP_WINDOW_SECONDS = 5 * 60 * 60;
 
 /**
  * tick 自调度间隔（秒）。锚点起步后，orchestrator 每 tick 轮询节点态、推进就绪下游，

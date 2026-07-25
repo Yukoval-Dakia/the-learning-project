@@ -15,7 +15,11 @@ import {
   LAYER_STAGGER_MAX_SECONDS,
   LAYER_STAGGER_SECONDS,
   NODE_TIMEOUT_SECONDS,
+  ORCHESTRATOR_ANCHOR_HOUR,
+  ORCHESTRATOR_ANCHOR_MINUTE,
+  ORCHESTRATOR_CATCHUP_WINDOW_SECONDS,
   ORCHESTRATOR_QUEUE,
+  ORCHESTRATOR_TZ,
   TICK_INTERVAL_SECONDS,
 } from './constants';
 import {
@@ -48,6 +52,27 @@ export interface OrchestratorBoss {
     options?: { startAfter?: number; id?: string },
   ): Promise<string | null>;
   getJobById(name: string, id: string): Promise<{ state: string } | null>;
+  /**
+   * 取消一条已发出的成员 job（YUK-781 B）。语义以**实装** pg-boss v12.26.1 为准
+   * （node_modules/pg-boss/dist/plans.js `cancelJobs`）：
+   *
+   *   UPDATE job SET completed_on = now(), state = 'cancelled'
+   *   WHERE name = $1 AND id = ANY($2) AND state < 'completed'
+   *
+   * `job_state` 是**有序** enum（plans.js `createEnumJobState` 注释「ENUM definition order is
+   * important」，序为 created < retry < active < completed < cancelled < failed），故
+   * `state < 'completed'` 恰好覆盖 created / retry / active 三态。
+   *
+   * ⚠️ **对 active job 只切断未来、不中断当下**：DB 行被置 cancelled，但**已被 worker 领走、
+   * 正在执行的 handler 不会被打断**，其业务写入仍会落地。它跑完时的 `complete`/`fail` 因
+   * `WHERE j.state = 'active'` 守卫而变成 0 行 no-op，job 稳定停在 cancelled、不会重试。
+   * 残留风险因此是「已 active 的那一只本轮仍会写一次数据」，取消能兜住的是
+   * created/retry（含重试预算里的后续尝试）——即绝大多数残留量与全部重复付费尝试。
+   *
+   * 幂等 / 安全：不存在的 id 只是 0 行（`mapCommandResponse` 返回 affected:0，不抛）；已终态的
+   * job 不受影响（`state < 'completed'` 排除 completed/cancelled/failed）。
+   */
+  cancel(name: string, id: string): Promise<void>;
 }
 
 export interface AdvanceDeps {
@@ -310,11 +335,120 @@ async function pollInflightNode(
     }
     // 仍在飞（created/retry/active-not-yet）或超出补发窗仍查无 → 超时兜底。
     if (isNodeTimedOut(node, now, timeoutMs)) {
+      // **先取消再判死**（YUK-781 B 同族）：判 failed 会让硬下游按「上游失败」跳过，但那只
+      // job 在 pg-boss 侧仍是 created/retry/active，之后照样执行并写业务数据——图上说"没跑"、
+      // 实际跑了，且还会烧掉剩余重试预算。jobState===null 时确认无 job 行，无需多一次往返。
+      if (jobState !== null && node.boss_job_id) {
+        await cancelBossJob(
+          deps.boss,
+          node.job_name,
+          node.boss_job_id,
+          `node timed out in run ${deps.run.id}`,
+        );
+      }
       await updateNodeStatus(deps.db, node.id, {
         status: 'failed',
         detail: jobState === null ? 'pg-boss job not found (timeout)' : 'timeout',
         now,
       });
+    }
+  }
+}
+
+/**
+ * 尽力取消一条成员 job（YUK-781 B）。失败只 loud log 不抛——取消是「止损」，绝不能反过来
+ * 挡住调用方本要做的事（判超时 / 收尾 abandon 让新一夜起步）。返回是否取消成功。
+ */
+async function cancelBossJob(
+  boss: OrchestratorBoss,
+  jobName: string,
+  bossJobId: string,
+  context: string,
+): Promise<boolean> {
+  try {
+    await boss.cancel(jobName, bossJobId);
+    return true;
+  } catch (err) {
+    console.error(
+      `[orchestrator] failed to cancel pg-boss job ${bossJobId} for member '${jobName}' (${context}) — it may still execute and write data`,
+      err,
+    );
+    return false;
+  }
+}
+
+/**
+ * 收尾一条 run 时，取消它所有**非终态**节点的在飞 pg-boss job（YUK-781 B）。
+ * 调用点在 `finishRun(..., 'abandoned')` **之后**——顺序理由见那里的 TOCTOU 注释。
+ *
+ * 不做会怎样：`runOrchestratorStart` 收尾跨日残留 run 时只 `finishRun` 标 abandoned，节点对应的
+ * created/retry/active job **原封不动**。于是
+ *  · 旧 job 照常执行并写业务数据，而调度记录上这一夜已被判"放弃"；
+ *  · 新建的今日 run 会再发一遍同名成员 → 重复付费；
+ *  · 旧 job 不受**新图**上游约束（它是上一夜的图排出来的），等于绕过 DAG 依赖门跑。
+ *
+ * 顺带把节点行收敛到终态：run 已 abandoned 就不会再有 tick 碰它，留一堆永久 `enqueued` 节点
+ * 只会让观测面读出幽灵「在跑」。
+ *
+ * **终态选取**：节点状态枚举里没有 `cancelled`（加一个要动 schema + CHECK，越界），故在
+ * `failed` / `skipped` 之间按事实二选一 ——
+ *  · 已派发过 job（有 `boss_job_id`）→ `failed`：它确实被派出去且没有成功；
+ *  · 从未入队（仍 pending）→ `skipped`：它压根没跑过，记成 failed 会让读面（YUK-774）的
+ *    失败计数虚高，把「今夜被整体放弃」误读成「这么多成员跑挂了」。
+ * 真因一律进 detail，两类都可从痕迹还原。
+ *
+ * **契约：本函数不抛**（PR #1075 OCR major）。逐节点 try/catch 只挡住"某个节点"的失败；
+ * `loadNodes` 这类**逐节点之外**的失败会一路穿出 `runOrchestratorStart`，于是
+ *  · 这条残留 run 的 `finishRun(..., 'abandoned')` 被跳过（它排在本函数之后）；
+ *  · **今夜的 run 根本建不起来** —— 一次瞬时 DB 抖动把「止损」升级成「整夜不跑」，
+ *    正好与本票要修的东西同形。
+ * 止损绝不能比它要防的损失更贵，故整个函数体兜住、loud log 后返回，让 abandon 照常进行。
+ * 与 `cancelBossJob` 的 never-throw 策略同一条线。
+ */
+async function cancelRunInflightJobs(
+  deps: { db: Db; boss: OrchestratorBoss },
+  run: RunRow,
+  now: Date,
+): Promise<void> {
+  let nodes: Map<string, NodeRow>;
+  try {
+    nodes = await loadNodes(deps.db, run.id);
+  } catch (err) {
+    console.error(
+      `[orchestrator] failed to load nodes of run ${run.id} (${run.run_date}) while abandoning — its in-flight jobs are NOT cancelled and may still execute; abandoning anyway so tonight can start`,
+      err,
+    );
+    return;
+  }
+  for (const node of nodes.values()) {
+    if (isTerminalNodeStatus(node.status)) continue;
+    try {
+      if (!node.boss_job_id) {
+        await updateNodeStatus(deps.db, node.id, {
+          status: 'skipped',
+          detail: 'run abandoned before this node was enqueued',
+          now,
+        });
+        continue;
+      }
+      const cancelled = await cancelBossJob(
+        deps.boss,
+        node.job_name,
+        node.boss_job_id,
+        `run ${run.id} (${run.run_date}) abandoned`,
+      );
+      await updateNodeStatus(deps.db, node.id, {
+        status: 'failed',
+        detail: cancelled
+          ? 'run abandoned; pg-boss job cancelled'
+          : 'run abandoned; pg-boss job cancel failed (job may still execute)',
+        now,
+      });
+    } catch (err) {
+      console.error(
+        `[orchestrator] failed to settle node '${node.job_name}' (${node.id}) while abandoning run ${run.id}`,
+        err,
+      );
     }
   }
 }
@@ -399,9 +533,22 @@ export async function runOrchestratorStart(
   const runDate = (deps.localDate ?? orchestratorLocalDate)(now);
 
   // 收尾**跨日**残留 running run（上一夜 worker 挂掉遗留）——今日的不动。
+  // 除了标 abandoned，还要取消其在飞 job（YUK-781 B）：只改调度记录不动 job，旧 job 仍会执行、
+  // 写数据、与今日新 run 的同名成员重复付费，且绕过新图的依赖门。见 cancelRunInflightJobs。
+  //
+  // **顺序：先 finishRun 再取消**（PR #1075 OCR minor 的 TOCTOU）。反过来会开一个与取消扫描
+  // **等长**的窗口：扫描期间 run 仍是 running，旧 run 那条仍留在 pg-boss 里的 tick 链若此刻被
+  // 消费，`advanceRun` 可以 claim 并 send 出**新的**成员 job；它诞生在我们的 `loadNodes` 快照
+  // 之后，于是不会被取消，照跑照写——正是本条要堵的东西。`finishRun` 是 CAS(status='running')，
+  // 先落它之后任何 tick 的 `getActiveRunById`/`getActiveRunForDate` 都查不到该 run，新的推进
+  // 无法**开始**；窗口从「整轮扫描」缩到「一次已在飞的 advance」。
+  // 残留（不可消除、已知并接受）：恰好卡在 claim→send 之间的那一次 advance 仍可能漏出一只 job。
+  // 另一侧的取舍：先 finishRun 意味着扫描中途崩溃会留下「已 abandoned 但未取消」的 job——但那
+  // 恰好等于本 PR 之前的行为，是严格改善而非回退；而 TOCTOU 是持续存在的洞。
   for (const stale of await listActiveRuns(deps.db)) {
     if (stale.run_date !== runDate) {
       await finishRun(deps.db, stale.id, 'abandoned', now);
+      await cancelRunInflightJobs(deps, stale, now);
     }
   }
 
@@ -459,6 +606,135 @@ export async function runOrchestratorTick(deps: DriveDeps, runId?: string): Prom
   await insertNodes(deps.db, run.id, [...deps.dag.nodes.keys()], now);
 
   await advanceAndContinue({ ...deps, now, run });
+}
+
+/** 本地时刻的「当日第几分钟」（默认 Asia/Shanghai，该时区无 DST，无需处理跳变）。 */
+export function orchestratorLocalMinuteOfDay(now: Date, timeZone = ORCHESTRATOR_TZ): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(now);
+  const value = (type: 'hour' | 'minute') =>
+    Number(parts.find((p) => p.type === type)?.value ?? Number.NaN);
+  return value('hour') * 60 + value('minute');
+}
+
+/**
+ * 距**最近一次**锚点过去了多少分钟（0–1439）。
+ *
+ * `mod 1440` 不是装饰（PR #1075 OCR minor）：裸减法只在「锚点靠前、窗口不跨午夜」时成立。
+ * 若锚点被挪到傍晚/深夜（如 23:00），00:30 会算出 `30 - 1380 = -1350` 而被判超窗——补跑对
+ * 任何跨午夜锚点**永久失效**，且是静默的。取模后它等于 90，与「窗口是**已过时长**区间
+ * `[0, window)`」的文档语义一致。锚点在前的情形也仍正确：02:00（锚点 02:30 之前 30min）
+ * 取模后是 1410，远超 5h 窗 → 照旧不补，等今夜的锚点。
+ *
+ * 前提由 `isWithinCatchUpWindow` 强制，见那里。
+ */
+export const MINUTES_PER_DAY = 24 * 60;
+
+export function minutesSinceAnchor(
+  now: Date,
+  anchorMinuteOfDay = ORCHESTRATOR_ANCHOR_HOUR * 60 + ORCHESTRATOR_ANCHOR_MINUTE,
+  timeZone = ORCHESTRATOR_TZ,
+): number {
+  return (
+    (orchestratorLocalMinuteOfDay(now, timeZone) - anchorMinuteOfDay + MINUTES_PER_DAY) %
+    MINUTES_PER_DAY
+  );
+}
+
+/**
+ * 补跑窗口判据。**只会 fail-closed**（PR #1075 OCR major + minor）。
+ *
+ * 这道闸唯一的职责是「拦住不该补的时刻」，所以它算不出答案时必须**拒补**，绝不能放行——
+ * 而朴素写法恰恰相反地 fail-**open**：
+ *  · `orchestratorLocalMinuteOfDay` 在 Intl 拿不到 hour/minute 时返回 `NaN`（非法 tz 字串、
+ *    非法 Date 输入）。`NaN >= windowMinutes` 是 `false`，于是「超窗」判定不成立 → **照补**，
+ *    整条付费夜链可以在任意时刻开跑。这正是本窗口存在的意义的反面。
+ *  · `windowMinutes >= 1440` 时，mod-1440 的 `elapsed` 恒 `< windowMinutes`，「锚点之前」与
+ *    「锚点之后」不再可分 → 窗口形同虚设，任何时刻都补。文档写了前提但没人强制。
+ *
+ * 两者都改成**抛**：`runOrchestratorCatchUp` 的既有 try/catch 把它转成
+ * `{ skipped, reason:'error' }` + loud log，即"算不出就不补"，与 fail-closed 一致。
+ */
+export function isWithinCatchUpWindow(elapsedMinutes: number, windowMinutes: number): boolean {
+  if (!Number.isFinite(elapsedMinutes)) {
+    throw new Error(
+      `[orchestrator] cannot evaluate the catch-up window: minutes-since-anchor is ${elapsedMinutes} (unreadable local clock)`,
+    );
+  }
+  if (!(windowMinutes > 0 && windowMinutes < MINUTES_PER_DAY)) {
+    throw new Error(
+      `[orchestrator] cannot evaluate the catch-up window: ORCHESTRATOR_CATCHUP_WINDOW_SECONDS yields ${windowMinutes}min, which must be >0 and <${MINUTES_PER_DAY} (a whole-day window makes "before" and "after" the anchor indistinguishable)`,
+    );
+  }
+  return elapsedMinutes < windowMinutes;
+}
+
+/** 补跑决策结果——测试据此断言"补了/没补及为什么"，不必去刮日志。 */
+export type CatchUpOutcome =
+  | { action: 'started'; run: RunRow }
+  | { action: 'skipped'; reason: 'outside-window' | 'run-exists' | 'error' };
+
+/**
+ * 启动期错过锚点的幂等补跑（YUK-781 A）。worker 挂载完成后调一次。
+ *
+ * 判据两道，缺一不可：
+ *  ① **窗口**：本地时间须落在 `[锚点, 锚点 + ORCHESTRATOR_CATCHUP_WINDOW_SECONDS)` 内。
+ *     没有这道闸，中午/傍晚的任何一次重启都会把整条夜链（8 个付费 LLM 根 + 下游）拉到白天跑。
+ *     超窗只 loud log 留痕、等次夜锚点。
+ *  ② **当日无 run**：用 `getLatestRunForDate`（**任意**状态，含 completed/abandoned）而非
+ *     「无 active run」。两个理由：已 completed 的当日 run 不该被重跑；已有 running run 时
+ *     若走 `runOrchestratorStart` 会 adopt 它并再排一条 tick 链 —— 与 pg-boss 里既有的那条
+ *     并行自转，白烧。`runOrchestratorStart` 内部对 cron 触发另有一道同样的闸，那是并发
+ *     backstop（两副本同秒过闸）；这里这道是「不 adopt」闸，两者语义不同、都要留。
+ *
+ * **契约：本函数不抛。** 补跑是启动期的尽力止损，绝不能挡 worker boot（照 start-worker.ts
+ * 里 reconcileStuckAiTaskRuns 的先例）。调用方仍应再包一层 try/catch 作为带式加背带。
+ *
+ * 多副本并发：两个 worker 同秒 boot 会同时过①②，靠 `createRunWithNodes` 的
+ * partial unique(run_date) where status='running' 单飞——败者 `onConflictDoNothing` 返回 null
+ * 后 adopt 赢家的 run；成员 job 另有 `claimNodePending` 的 CAS 领取，故根节点也只发一次。
+ */
+export async function runOrchestratorCatchUp(deps: DriveDeps): Promise<CatchUpOutcome> {
+  try {
+    const now = deps.now ?? new Date();
+    const elapsed = minutesSinceAnchor(now);
+    const windowMinutes = ORCHESTRATOR_CATCHUP_WINDOW_SECONDS / 60;
+    // fail-closed：算不出窗口就当作"不补"（抛 → 下面的 catch → skipped/error + loud log）。
+    if (!isWithinCatchUpWindow(elapsed, windowMinutes)) {
+      console.log(
+        `[orchestrator] boot catch-up skipped: ${elapsed}min since the last ${ORCHESTRATOR_ANCHOR_HOUR}:${String(ORCHESTRATOR_ANCHOR_MINUTE).padStart(2, '0')} ${ORCHESTRATOR_TZ} anchor, outside the ${windowMinutes}min window`,
+      );
+      return { action: 'skipped', reason: 'outside-window' };
+    }
+    const runDate = (deps.localDate ?? orchestratorLocalDate)(now);
+    const existing = await getLatestRunForDate(deps.db, runDate);
+    if (existing) {
+      console.log(
+        `[orchestrator] boot catch-up skipped: run ${existing.id} already exists for ${runDate} (${existing.status})`,
+      );
+      return { action: 'skipped', reason: 'run-exists' };
+    }
+    console.warn(
+      `[orchestrator] boot catch-up: no run for ${runDate} and we are ${elapsed}min past the anchor — the anchor cron was missed (pg-boss does not replay missed crons); starting tonight's run now`,
+    );
+    const run = await runOrchestratorStart(deps, 'cron');
+    // null = 并发副本抢先建了（start 内的 cron 防重闸）——同样是"没补"，不是失败。
+    return run ? { action: 'started', run } : { action: 'skipped', reason: 'run-exists' };
+  } catch (err) {
+    // 唯一有代价的残留：若失败发生在 run 已建、续链 send 却抛之后（`advanceAndContinue` 的
+    // 「链没armed 必抛」契约），这条 run 会停在 running 且当夜不再推进。boot 路径没有 pg-boss
+    // 重投递可依赖，故只能 loud log —— 次夜锚点会 abandon 它并（YUK-781 B）取消其在飞 job。
+    // 触发它需要 orchestrator 队列自身的 send 在启动期就失败，那时 pg-boss 本已不可用。
+    console.error(
+      '[orchestrator] boot catch-up failed (non-fatal, waiting for the next anchor; a run created just before the failure may sit `running` with no tick armed)',
+      err,
+    );
+    return { action: 'skipped', reason: 'error' };
+  }
 }
 
 /**
