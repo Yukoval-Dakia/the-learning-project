@@ -13,6 +13,8 @@
 // run_id = 该次作答 attempt/outcome event id；其它面 W3 各自定锚，不写死为通用契约）。
 //
 // D5：profile 在 enqueue 时冻结进 payload（reflect 作答当下画像，不重解析）。
+// #2（round-3 codex）：**题面**同样冻结（server/judge-run-payload.ts 的快照），worker
+//   按冻结值判分/调度，故提交后编辑题目不会让判词与 FSRS 打在学习者没见过的题面上。
 // D7：in-process transient retry 对本 durable handler 保持 OFF（durable:{}→invoker
 //   强制 enableTransientRetry:false）；queue redelivery 是唯一 transient 层，worst-case
 //   付费调用 = 1 + JOB_RETRY_LIMIT。
@@ -28,6 +30,7 @@ import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
+import { FrozenQuestionSnapshotSchema, applyFrozenQuestion } from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
 /**
@@ -51,6 +54,15 @@ export interface JudgeRunJobData {
     question_id: string;
     /** D5 — enqueue 时冻结的 SubjectProfile（JSON）。worker 侧 SubjectProfileSchema 复校。 */
     subject_profile: unknown;
+    /**
+     * #2 (codex) — enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
+     * FrozenQuestionSnapshotSchema 复校后覆盖到现读行上，故提交后编辑题目不再让判分/
+     * FSRS 打在与学习者所见不同的题面上。见 server/judge-run-payload.ts。
+     *
+     * optional：本 PR 之前入队的在飞 job 没这个字段（且 flag 默认 OFF ⇒ 生产无此类
+     * job）。缺失时退回「现读行」旧行为并记一条 warn，而不是把在飞 job 判死。
+     */
+    question_snapshot?: unknown;
     /** 作答时刻（ISO）——FSRS 调度锚定作答当下，非 worker 拾取时刻。 */
     submitted_at: string;
   };
@@ -85,38 +97,11 @@ export async function runJudgeRun(
   // ── 幂等守卫 ────────────────────────────────────────────────────────────
   // 回填事务已 commit（attempt event id=run_id 已写）但终态 job_event 写前 worker
   // 崩溃 → pg-boss redeliver。此时重跑 persistSubmit 会因 event PK=run_id 冲突炸，
-  // 且会重复判分/双写 FSRS。守卫：attempt event 已存在 → 回填已发生，best-effort
-  // 补写 DONE 终态（补 SSE/poll 消费）+ 早返，绝不重判重写。
-  const priorAttempt = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(eq(event.id, runId))
-    .limit(1);
-  if (priorAttempt.length > 0) {
-    // The backfill committed. If a terminal DONE already landed (crash AFTER the
-    // DONE write), do NOT write another — a slim {already_persisted} DONE would
-    // become the last DONE and terminalJudgeRunResult would drop the real verdict
-    // (poll/SSE would lose coarse_outcome/feedback). Only when NO DONE exists
-    // (crash between the persist commit and the DONE write) do we reconstruct the
-    // FULL verdict from the persisted judge event so recovery gets the real verdict.
-    const priorEvents = await computeReplay(db, {
-      businessTable: JUDGE_RUN_TABLE,
-      businessId: runId,
-      lastEventId: 0,
-    });
-    const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
-    if (!hasDone) {
-      // #2 — MUST throw on failure (NOT best-effort): if this reconstruct write fails
-      // and we swallow it, the run stays persisted-but-terminal-less → poll/SSE sit
-      // pending forever. A throw here propagates out → pg-boss redelivers → this same
-      // guard retries the reconstruct until it lands (or DLQ surfaces it).
-      await writeTerminalJobEvent(db, {
-        businessId: runId,
-        eventType: JUDGE_RUN_EVENTS.DONE,
-        payload: await reconstructDonePayloadFromJudgeEvent(db, runId),
-      });
-    }
-    return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
+  // 且会重复判分/双写 FSRS。守卫：attempt event 已存在 → 回填已发生，补齐缺失的
+  // DONE 终态（供 SSE/poll 消费）后早返，绝不重判重写。见 recoverAlreadyPersisted；
+  // 同一条恢复路径也是 #1 重复投递竞态（catch 里）的落点。
+  if (await attemptAlreadyPersisted(db, runId)) {
+    return await recoverAlreadyPersisted(db, runId);
   }
 
   // started 心跳——消费者据此把 status 从 queued 推到 started。非终态进度信号，
@@ -141,10 +126,14 @@ export async function runJudgeRun(
     const judgeSubmit = deps.judgeSubmitFn ?? (await import('../api/submit')).judgeSubmit;
     const persistSubmit = deps.persistSubmitFn ?? (await import('../api/submit')).persistSubmit;
 
-    // 重建 ValidatedSubmit（body 复校、profile 用冻结值 D5、now=作答时刻）。question
-    // row 由 persistSubmit/judgeSubmit 侧按 id 现读（题面近不可变；D5 只钉 profile）。
+    // 重建 ValidatedSubmit（body 复校、profile 用冻结值 D5、题面用冻结快照 #2、
+    // now=作答时刻）。冻结面从「只钉 profile」扩到「profile + 题面」——见下方 #2。
     const body = CreateAttemptBodySchema.parse(data.submit.body);
     const subjectProfile = SubjectProfileSchema.parse(data.submit.subject_profile);
+    const frozenQuestion =
+      data.submit.question_snapshot === undefined || data.submit.question_snapshot === null
+        ? null
+        : FrozenQuestionSnapshotSchema.parse(data.submit.question_snapshot);
     const now = new Date(data.submit.submitted_at);
     // An unparseable submitted_at yields an Invalid Date whose getTime() is NaN;
     // feeding it into FSRS scheduling (the attempt anchor) corrupts the schedule.
@@ -156,10 +145,31 @@ export async function runJudgeRun(
       );
     }
     const questionId = data.submit.question_id;
-    const q = await loadQuestionRow(db, questionId);
-    if (!q) {
+    const live = await loadQuestionRow(db, questionId);
+    if (!live) {
       throw new NonRetryableJudgeRunError(
         `question ${questionId} not found for judge_run ${runId}`,
+      );
+    }
+    // #2 (codex) — judge against the question state the LEARNER ANSWERED, not the row as
+    // it stands at pickup. The frozen snapshot overlays every judge/scheduling-relevant
+    // column onto the live row, so an edit to prompt/reference/choices/knowledge/difficulty
+    // between the 202 and this pickup can no longer produce a verdict (and an FSRS
+    // schedule) for a different question than the one on screen. Columns the snapshot does
+    // NOT freeze (source/source_ref/…) are read live — they never reach the judge.
+    const q = frozenQuestion === null ? live : applyFrozenQuestion(live, frozenQuestion);
+    if (frozenQuestion === null) {
+      // Only reachable for a job enqueued before the snapshot landed (flag ships OFF, so
+      // no such job exists in production). Degrade to the old read-live behavior rather
+      // than failing a real in-flight attempt, but make the gap visible.
+      console.warn(
+        `[judge_run] ${runId} carries no frozen question snapshot — judging against the CURRENT question row (pre-snapshot payload)`,
+      );
+    } else if (frozenQuestion.version !== live.version) {
+      // Observability only — the snapshot already made the verdict correct; this just
+      // records that the row moved under the run.
+      console.warn(
+        `[judge_run] ${runId} question ${questionId} drifted since submit (frozen version ${frozenQuestion.version} → live ${live.version}); judged against the frozen snapshot`,
       );
     }
     const activityRef = normalizeReviewSubmitActivityRef(body).activity_ref;
@@ -243,23 +253,60 @@ export async function runJudgeRun(
       );
       throw err;
     }
-    // A malformed job payload (Zod parse of body/profile, or an invalid date) is a
-    // permanent defect: re-delivery would just re-fail identically and waste the
+    // #1 (major) — DUPLICATE-DELIVERY RACE. pg-boss can hand the same job to a second
+    // worker while the first is still inside its slow LLM call (expire window exceeded).
+    // Both pass the entry guard (no attempt event yet). Worker A commits + writes DONE;
+    // worker B's persistSubmit then dies on the event PK (id=runId already inserted).
+    // Treating that like any other failure wrote a terminal FAILED which, being the LAST
+    // terminal event, made deriveJudgeRunStatus report 'failed' FOREVER for a run that was
+    // correctly judged and persisted. A committed attempt event means "someone else already
+    // persisted this run" — exactly the entry guard's condition — so route to the SAME
+    // recovery instead: reconstruct DONE if missing, and NEVER write FAILED.
+    if (await attemptAlreadyPersisted(db, runId)) {
+      console.warn(
+        '[judge_run] persist failed but the attempt event exists — another delivery already committed this run; recovering instead of failing',
+        runId,
+        err,
+      );
+      return await recoverAlreadyPersisted(db, runId);
+    }
+    // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
+    // date) is a permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
     const nonRetryable = err instanceof NonRetryableJudgeRunError || err instanceof ZodError;
+    // #6 — the raw error message stays SERVER-SIDE. The generic SSE face
+    // (`/api/jobs/judge_run/[id]/events`) streams job_event payloads verbatim to clients, so
+    // a DB error string / internal path / provider response fragment in `payload.error` was
+    // leaking straight out. The payload now carries only a classified code; the raw message
+    // is logged here and nowhere else.
+    console.error(`[judge_run] ${runId} failed (${nonRetryable ? 'non_retryable' : 'error'})`, err);
     // 失败痕迹（coordinator note#1）：显式写终态 FAILED job_event，保证 replay/UI 不
     // 悬空。deriveJudgeRunStatus last-writer-wins：transient 失败先显 failed，成功重投
     // 写 DONE 翻回 done。非 retryable（未知面/题缺失/坏 payload）不重投——写 FAILED 后早返。
-    await bestEffortWriteJobEvent(db, {
-      businessId: runId,
-      eventType: JUDGE_RUN_EVENTS.FAILED,
-      payload: {
-        reason: nonRetryable ? 'non_retryable' : 'error',
-        error: message,
-        retry_count: meta.retryCount,
-        retry_limit: meta.retryLimit,
-      },
-    });
+    //
+    // #3 (codex) — 这条终态写**不可吞错**（原先走 bestEffort）：非 retryable 分支写完就
+    // return success，一旦这条 FAILED 写失败被吞掉，pg-boss 认为 job 成功、run 却无任何
+    // 终态 → poll/SSE 永远 pending。与 DONE 侧同语义：写失败 → 抛出 → 重投递重试终态写
+    // （耗尽则 DLQ 暴露），绝不静默成功。
+    try {
+      await writeTerminalJobEvent(db, {
+        businessId: runId,
+        eventType: JUDGE_RUN_EVENTS.FAILED,
+        payload: {
+          reason: nonRetryable ? 'non_retryable' : 'error',
+          error_code: classifyJudgeRunFailure(err),
+          retry_count: meta.retryCount,
+          retry_limit: meta.retryLimit,
+        },
+      });
+    } catch (writeErr) {
+      console.error(
+        '[judge_run] terminal FAILED write failed — rethrowing for redelivery (a swallowed terminal write leaves the run pending forever)',
+        runId,
+        writeErr,
+      );
+      throw writeErr;
+    }
     if (nonRetryable) {
       return { status: 'failed', run_id: runId, error: message };
     }
@@ -267,6 +314,51 @@ export async function runJudgeRun(
     // judge_run_dlq（handlers.ts createJobQueue 挂 DLQ）。上面已写 FAILED 终态痕迹。
     throw err;
   }
+}
+
+/**
+ * #6 — client-safe failure classification. The FAILED job_event payload is streamed
+ * verbatim over the generic SSE face, so it carries one of these coarse codes instead of
+ * the raw error text (which is logged server-side only).
+ */
+function classifyJudgeRunFailure(err: unknown): string {
+  if (err instanceof ZodError) return 'invalid_payload';
+  if (err instanceof NonRetryableJudgeRunError) return 'unprocessable_run';
+  return 'judge_failed';
+}
+
+/** 该 run 的 attempt/outcome event（id=run_id）是否已落库 ⇒ 回填已由某次投递提交。 */
+async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> {
+  const rows = await db.select({ id: event.id }).from(event).where(eq(event.id, runId)).limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * 「回填已提交」的统一恢复路径——入口幂等守卫与 catch 里的重复投递竞态（#1）共用。
+ *
+ * 若终态 DONE 已在（崩在 DONE 写**之后**）→ 不再补写：一条精简的 {already_persisted}
+ * DONE 会成为最后一条 DONE，terminalJudgeRunResult 就会丢掉真判词（poll/SSE 失去
+ * coarse_outcome/feedback）。仅当没有 DONE（崩在 commit 与 DONE 写**之间**，或本次是
+ * 竞态输家而赢家尚未写 DONE）才从已持久化的 judge event 重建**完整**判词。
+ *
+ * 这条重建写**必须抛错**（非 best-effort）：吞掉它，run 就停在已持久化但无终态，
+ * poll/SSE 永远 pending。抛出 → pg-boss 重投 → 本守卫重试直到写成功（或 DLQ 暴露）。
+ */
+async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunOutcome> {
+  const priorEvents = await computeReplay(db, {
+    businessTable: JUDGE_RUN_TABLE,
+    businessId: runId,
+    lastEventId: 0,
+  });
+  const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
+  if (!hasDone) {
+    await writeTerminalJobEvent(db, {
+      businessId: runId,
+      eventType: JUDGE_RUN_EVENTS.DONE,
+      payload: await reconstructDonePayloadFromJudgeEvent(db, runId),
+    });
+  }
+  return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
 }
 
 /**
@@ -290,9 +382,11 @@ async function bestEffortWriteJobEvent(
 }
 
 /**
- * #2 — terminal job_event 写，**故意不吞错**（与 bestEffort 相反）。一个失败的终态写
- * 会让 run 卡在无终态（poll/SSE 永远 pending），故 throw 让上游触发 redelivery →
- * 幂等守卫重建 DONE。用于 happy-path DONE + already_persisted 恢复 DONE 两处。
+ * #2 / #3 — terminal job_event 写，**故意不吞错**（与 bestEffort 相反）。一个失败的终态
+ * 写会让 run 卡在无终态（poll/SSE 永远 pending），故 throw 让上游触发 redelivery →
+ * 幂等守卫重建终态。**所有**终态写都走它：happy-path DONE、already_persisted 恢复
+ * DONE、以及 catch 里的 FAILED（#3：FAILED 曾走 bestEffort，写失败被吞 + 非 retryable
+ * 分支照常 return success ⇒ pg-boss 丢 job 而 run 无终态）。
  */
 async function writeTerminalJobEvent(
   db: Db,
@@ -352,19 +446,39 @@ export class NonRetryableJudgeRunError extends Error {
  */
 export function buildJudgeRunHandler(
   db: Db,
+  /** test seam — forwarded to runJudgeRun (production registration passes none). */
+  deps: JudgeRunDeps = {},
 ): (jobs: JobWithMetadata<JudgeRunJobData>[]) => Promise<void> {
   return async (jobs) => {
+    // #11 — per-job isolation. `batchSize:1` (handlers.ts) means today's batch is always a
+    // single job, so a throw could only ever abort "the rest of" an empty remainder. That
+    // safety is INCIDENTAL, not designed: bump batchSize and one retryable throw would
+    // abandon every later job in the batch (pg-boss fails the whole batch, and the skipped
+    // jobs never even ran). Each job now runs in its own try/catch: a failure is logged and
+    // recorded, the loop keeps draining, and the batch still fails at the end so pg-boss
+    // redelivers — retry semantics unchanged, blast radius bounded to the failing job.
+    let firstError: unknown = null;
     for (const job of jobs) {
       const data = job.data;
       if (!data?.run_id || !data?.caller || !data?.submit) {
         console.warn('[judge_run] job missing run_id/caller/submit', job.id);
         continue;
       }
-      const result = await runJudgeRun(db, data, {
-        retryCount: job.retryCount,
-        retryLimit: job.retryLimit,
-      });
-      console.log(`[judge_run] ${data.run_id} -> ${result.status}`);
+      try {
+        const result = await runJudgeRun(
+          db,
+          data,
+          { retryCount: job.retryCount, retryLimit: job.retryLimit },
+          deps,
+        );
+        console.log(`[judge_run] ${data.run_id} -> ${result.status}`);
+      } catch (err) {
+        console.error(`[judge_run] ${data.run_id} threw — continuing the batch`, err);
+        firstError ??= err;
+      }
     }
+    // Surface the failure AFTER draining so pg-boss still redelivers (retryable runs must
+    // not be silently consumed), without letting one job strand its batch-mates.
+    if (firstError !== null) throw firstError;
   };
 }

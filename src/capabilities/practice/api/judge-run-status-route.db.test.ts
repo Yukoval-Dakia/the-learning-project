@@ -4,7 +4,7 @@
 
 import { newId } from '@/core/ids';
 import { writeJobEvent } from '@/server/events/writer';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
@@ -63,5 +63,30 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     expect(body.status).toBe('done');
     expect(body.result?.coarse_outcome).toBe('correct');
     expect(body.result?.capability_ref?.id).toBe('semantic');
+  });
+
+  // #7 — a DONE whose payload fails the result contract still degrades to `result: null`
+  // (a 500 on a poll would be worse), but the degradation must be OBSERVABLE: pre-fix it
+  // was completely silent, so a malformed/legacy terminal payload in production could not
+  // be diagnosed from the response at all.
+  it('logs a warning when a DONE payload fails the result contract (degrade is observable)', async () => {
+    const runId = newId();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // `attempt_event_id` is required by JudgeRunTerminalResultSchema — this DONE is malformed.
+    await writeJobEvent(testDb(), {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.DONE,
+      payload: { coarse_outcome: 'correct' },
+    });
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; result: unknown };
+    expect(body.status).toBe('done');
+    expect(body.result).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[0])).toContain('failed the result contract');
+    warn.mockRestore();
   });
 });

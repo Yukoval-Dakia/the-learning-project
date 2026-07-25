@@ -72,6 +72,9 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     const body = (await res.json()) as { verdict?: string; run_id?: string };
     expect(body.verdict).toBe('pending');
     expect(res.headers.get('Location')).toBe(`/api/jobs/judge_run/${body.run_id}/events`);
+    // #8 — the pass-through is keyed on this EXPLICIT discriminant, not a bare 202, so an
+    // unrelated future 202 from this route still goes through the resource wrapper.
+    expect(res.headers.get('x-durable-divert')).toBe('judge');
     expect(bossSend).toHaveBeenCalledTimes(1);
   });
 

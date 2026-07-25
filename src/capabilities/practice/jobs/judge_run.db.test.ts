@@ -13,9 +13,15 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { freezeQuestionForJudge } from '../server/judge-run-payload';
 import { terminalJudgeRunResult } from '../server/judge-run-status';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
-import { type JudgeRunDeps, type JudgeRunJobData, runJudgeRun } from './judge_run';
+import {
+  type JudgeRunDeps,
+  type JudgeRunJobData,
+  buildJudgeRunHandler,
+  runJudgeRun,
+} from './judge_run';
 
 const CORRECT_VERDICT = {
   coarse_outcome: 'correct' as const,
@@ -306,5 +312,252 @@ describe('runJudgeRun — backfill', () => {
       lastEventId: 0,
     });
     expect(deriveJudgeRunStatus(events)).toBe('failed');
+  });
+
+  // #6 — the FAILED payload rides the generic SSE face verbatim, so it must carry a
+  // classified code, never the raw error text (DB strings / internal paths / provider
+  // response fragments). The raw message stays in the server log.
+  it('FAILED payload carries a classified code, NOT the raw error message', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+    const secret = 'connection to 10.0.0.7:5432 refused (/srv/app/internal/path.ts)';
+    const boom = (async () => {
+      throw new Error(secret);
+    }) as JudgeRunDeps['judgeSubmitFn'];
+
+    await expect(
+      runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: boom }),
+    ).rejects.toThrow(secret);
+
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    const failed = events.find((e) => e.event_type === 'judge_run.failed');
+    const payload = failed?.payload as Record<string, unknown>;
+    expect(payload.reason).toBe('error');
+    expect(payload.error_code).toBe('judge_failed');
+    // The client-facing payload must not contain the raw message under ANY key.
+    expect(JSON.stringify(payload)).not.toContain('10.0.0.7');
+    expect(JSON.stringify(payload)).not.toContain('/srv/app/internal');
+  });
+});
+
+// ── #2 (codex) — 题目数据冻结 ────────────────────────────────────────────────
+describe('runJudgeRun — frozen question snapshot (#2)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('judges against the question the LEARNER ANSWERED, not the row edited after the 202', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    // Freeze the row the learner saw, exactly as enqueueDurableJudge does.
+    const [answered] = await db.select().from(question).where(eq(question.id, questionId));
+    const data = jobData(runId, questionId);
+    data.submit.question_snapshot = freezeQuestionForJudge(answered);
+
+    // Between the 202 and the worker pickup, someone edits the question.
+    await db
+      .update(question)
+      .set({
+        prompt_md: 'EDITED AFTER SUBMIT',
+        reference_md: 'EDITED REFERENCE',
+        difficulty: 5,
+        knowledge_ids: ['k_edited'],
+      })
+      .where(eq(question.id, questionId));
+
+    const captured: {
+      q?: {
+        prompt_md: string;
+        reference_md: string | null;
+        difficulty: number;
+        knowledge_ids: string[];
+      };
+    } = {};
+    const capturing = (async (validated: { q: NonNullable<typeof captured.q> }) => {
+      captured.q = validated.q;
+      return { ...JUDGED_GOOD };
+    }) as JudgeRunDeps['judgeSubmitFn'];
+
+    const result = await runJudgeRun(db, data, META0, { judgeSubmitFn: capturing });
+    expect(result.status).toBe('done');
+
+    // Pre-fix this read the EDITED row and judged the learner against text they never saw.
+    expect(captured.q).toBeDefined();
+    expect(captured.q?.prompt_md).toBe(`Prompt for ${questionId}`);
+    expect(captured.q?.reference_md).toBeNull();
+    expect(captured.q?.difficulty).toBe(3);
+    expect(captured.q?.knowledge_ids).toEqual(['k1']);
+
+    // FSRS scheduled against the FROZEN knowledge tag, not the edited one.
+    const fsrs = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
+    expect(fsrs.length).toBeGreaterThan(0);
+  });
+
+  it('a payload with no snapshot (pre-snapshot in-flight job) still runs against the live row', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    // jobData() intentionally omits question_snapshot.
+    const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
+      judgeSubmitFn: mockJudgeSubmit(),
+    });
+    expect(result.status).toBe('done');
+  });
+});
+
+// ── #1 (major) — duplicate-delivery race ────────────────────────────────────
+// pg-boss can hand the same job to a second worker while the first is inside its LLM call.
+// Both clear the entry guard; the winner commits; the loser's persistSubmit dies on the
+// event PK. That must NOT terminalize the run as FAILED — the run was judged and persisted.
+describe('runJudgeRun — duplicate-delivery race (#1)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  /** persistSubmit stand-in for the RACE LOSER: the winner's attempt row lands, then the PK blows up. */
+  function losingPersist(runId: string, questionId: string): JudgeRunDeps['persistSubmitFn'] {
+    return (async () => {
+      // Worker A committed its backfill in the window between our entry guard and here.
+      await testDb().insert(event).values({
+        id: runId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'success',
+        payload: {},
+      });
+      throw new Error(
+        `duplicate key value violates unique constraint "event_pkey" (id)=(${runId})`,
+      );
+    }) as JudgeRunDeps['persistSubmitFn'];
+  }
+
+  it('a PK conflict from the winning delivery recovers instead of writing a permanent FAILED', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
+      judgeSubmitFn: mockJudgeSubmit(),
+      persistSubmitFn: losingPersist(runId, questionId),
+    });
+
+    // The loser recognises "already persisted" and recovers — it does not fail the run.
+    expect(result.status).toBe('skipped');
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    // Pre-fix: a terminal FAILED was written and, being the last terminal event, pinned
+    // deriveJudgeRunStatus to 'failed' forever for a correctly judged submission.
+    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
+    expect(deriveJudgeRunStatus(events)).toBe('done');
+  });
+
+  it('does not overwrite the winner’s real verdict when its DONE already landed', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    // Worker A ran to completion first (attempt + judge event + terminal DONE).
+    await runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: mockJudgeSubmit() });
+
+    // Worker B was already past its entry guard and now fails on the PK.
+    const stillPersisted = (async () => {
+      throw new Error('duplicate key value violates unique constraint "event_pkey"');
+    }) as JudgeRunDeps['persistSubmitFn'];
+    const second = await runJudgeRun(
+      db,
+      jobData(runId, questionId),
+      { retryCount: 1, retryLimit: 2 },
+      { judgeSubmitFn: mockJudgeSubmit(), persistSubmitFn: stillPersisted },
+    );
+    expect(second.status).toBe('skipped');
+
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
+    expect(deriveJudgeRunStatus(events)).toBe('done');
+    // A's real verdict survives — no slim recovery DONE was appended over it.
+    expect(events.filter((e) => e.event_type === 'judge_run.done')).toHaveLength(1);
+    expect((terminalJudgeRunResult(events) as { coarse_outcome?: string })?.coarse_outcome).toBe(
+      'correct',
+    );
+    // Exactly one attempt event and one judge event — no double-write.
+    expect(await db.select().from(event).where(eq(event.id, runId))).toHaveLength(1);
+  });
+});
+
+// ── #11 — per-job isolation in the batch loop ───────────────────────────────
+describe('buildJudgeRunHandler — batch isolation (#11)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a THROWING job does not abandon its batch-mates, and the batch still fails for redelivery', async () => {
+    const db = testDb();
+    const throwingQuestionId = `q_${newId()}`;
+    const goodQuestionId = `q_${newId()}`;
+    await seedQuestion(throwingQuestionId);
+    await seedQuestion(goodQuestionId);
+    const throwingRunId = newId();
+    const goodRunId = newId();
+
+    // Job 1's judge blows up with a RETRYABLE error → runJudgeRun rethrows. Pre-fix that
+    // throw escaped the loop and job 2 never ran at all (pg-boss failed the whole batch).
+    let call = 0;
+    const failFirst = (async () => {
+      call += 1;
+      if (call === 1) throw new Error('endpoint down');
+      return { ...JUDGED_GOOD };
+    }) as JudgeRunDeps['judgeSubmitFn'];
+
+    const handler = buildJudgeRunHandler(db, { judgeSubmitFn: failFirst });
+    const jobs = [
+      { id: 'j1', data: jobData(throwingRunId, throwingQuestionId), retryCount: 0, retryLimit: 2 },
+      { id: 'j2', data: jobData(goodRunId, goodQuestionId), retryCount: 0, retryLimit: 2 },
+    ] as unknown as Parameters<typeof handler>[0];
+
+    // The batch STILL fails (retry semantics unchanged — pg-boss must redeliver job 1)…
+    await expect(handler(jobs)).rejects.toThrow('endpoint down');
+
+    // …but job 2 was drained and completed its backfill instead of being abandoned.
+    expect(await db.select().from(event).where(eq(event.id, goodRunId))).toHaveLength(1);
+    const goodEvents = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: goodRunId,
+      lastEventId: 0,
+    });
+    expect(deriveJudgeRunStatus(goodEvents)).toBe('done');
+
+    // Job 1 left its terminal FAILED trace.
+    const failedEvents = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: throwingRunId,
+      lastEventId: 0,
+    });
+    expect(deriveJudgeRunStatus(failedEvents)).toBe('failed');
   });
 });

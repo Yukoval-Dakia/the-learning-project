@@ -55,6 +55,26 @@ describe('judgeFallbackProvider', () => {
     process.env.JUDGE_FALLBACK_PROVIDER = 'openrouter';
     expect(judgeFallbackProvider()).toBeUndefined();
   });
+
+  // #4 (codex) — this lane hands `RunTaskCtx.override` a provider with NO model. A wired
+  // provider whose registry default model is the mimo id ('anthropic', 'zhipu') would then
+  // be paired with that mimo model against its own endpoint and fail every time — a
+  // guaranteed-dead final retry dressed up as a fallback. Reuses the single-source
+  // `providerRequiresExplicitModel` predicate (YUK-608 / #1062), no second copy of the rule.
+  it.each(['anthropic', 'zhipu'])(
+    'degrades on a wired provider that needs an explicit model (%s)',
+    (provider) => {
+      process.env.JUDGE_FALLBACK_PROVIDER = provider;
+      expect(judgeFallbackProvider()).toBeUndefined();
+    },
+  );
+
+  it('still honors providers with a runnable built-in default model', () => {
+    process.env.JUDGE_FALLBACK_PROVIDER = 'anthropic-sub';
+    expect(judgeFallbackProvider()).toBe('anthropic-sub');
+    process.env.JUDGE_FALLBACK_PROVIDER = 'xiaomi';
+    expect(judgeFallbackProvider()).toBe('xiaomi');
+  });
 });
 
 describe('resolveDurableProviderOverride (lane decision)', () => {

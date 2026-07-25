@@ -1,3 +1,4 @@
+import type { Provider } from '@/ai/registry';
 import { isAiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
@@ -10,6 +11,7 @@ import {
 } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
+import { isKnownProvider } from '@/server/ai/providers';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { z } from 'zod';
 import type { JudgeKind } from '../ai/judges';
@@ -68,7 +70,21 @@ export const JudgeInvokerInputSchema = z.object({
   // unresolvable → whole-row (back-compat). NOT a question_part id.
   part_ref: z.string().nullable().optional(),
   // YUK-594 (D7/D9) — durable-run scoped runner overrides (judge_run handler only).
-  durable: z.object({ providerOverride: z.string().optional() }).optional(),
+  // #14 — `providerOverride` is typed `Provider` on JudgeAnswerParams.durable
+  // (question-contract.ts), so a bare `z.string()` here let an arbitrary name
+  // ("invalid-provider") pass the validation boundary and only fail downstream at
+  // `resolveTaskProvider`. Validate against the single-source `isKnownProvider` guard
+  // (providers.ts) rather than re-listing the union — a new provider can't drift a
+  // second hard-coded copy out of sync.
+  durable: z
+    .object({
+      providerOverride: z
+        .custom<Provider>((value) => typeof value === 'string' && isKnownProvider(value), {
+          message: 'providerOverride must be a known provider',
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export const JudgeInvocationTelemetrySchema = z.object({

@@ -6,6 +6,7 @@ import {
   JUDGE_RUN_EVENTS,
   type JudgeRunReplayEvent,
   type JudgeRunStatusEvent,
+  JudgeRunStatusResponseSchema,
   deriveJudgeRunStatus,
   terminalJudgeRunResult,
 } from './judge-run-status';
@@ -100,4 +101,40 @@ describe('terminalJudgeRunResult', () => {
       ]),
     ).toEqual(second);
   });
+});
+
+// #13 — the response contract now ENCODES the status↔result coupling instead of only
+// documenting it in a comment. Pre-fix the flat object admitted `status:'queued'` with a
+// populated `result`, so generated clients saw an impossible state as valid.
+describe('JudgeRunStatusResponseSchema (contract coupling)', () => {
+  const verdict = { attempt_event_id: 'run1', coarse_outcome: 'correct' };
+
+  it('accepts done + a verdict', () => {
+    expect(
+      JudgeRunStatusResponseSchema.safeParse({ run_id: 'run1', status: 'done', result: verdict })
+        .success,
+    ).toBe(true);
+  });
+
+  it('accepts done + null (the route degrades a malformed terminal payload to null)', () => {
+    expect(
+      JudgeRunStatusResponseSchema.safeParse({ run_id: 'run1', status: 'done', result: null })
+        .success,
+    ).toBe(true);
+  });
+
+  it.each(['queued', 'started', 'failed'])('accepts %s with a null result', (status) => {
+    expect(
+      JudgeRunStatusResponseSchema.safeParse({ run_id: 'run1', status, result: null }).success,
+    ).toBe(true);
+  });
+
+  it.each(['queued', 'started', 'failed'])(
+    'REJECTS %s carrying a verdict (the invariant the old flat schema allowed)',
+    (status) => {
+      expect(
+        JudgeRunStatusResponseSchema.safeParse({ run_id: 'run1', status, result: verdict }).success,
+      ).toBe(false);
+    },
+  );
 });

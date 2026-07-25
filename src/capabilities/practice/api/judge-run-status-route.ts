@@ -41,6 +41,16 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // payload degrades to null rather than 500-ing the poll.
     const rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
     const parsed = rawResult === null ? null : JudgeRunTerminalResultSchema.safeParse(rawResult);
+    // #7 — the degrade is now OBSERVABLE. A DONE whose payload fails the contract used to
+    // return `{status:'done', result:null}` silently, so a malformed/legacy terminal payload
+    // in production was undiagnosable from the response alone. Log it server-side (the raw
+    // payload never leaves the server) so the degradation shows up in the logs.
+    if (parsed && !parsed.success) {
+      console.warn('[judge_run] terminal DONE payload failed the result contract', {
+        run_id: runId,
+        error: parsed.error.message,
+      });
+    }
     const result = parsed?.success ? parsed.data : null;
     return Response.json({ run_id: runId, status, result });
   } catch (err) {

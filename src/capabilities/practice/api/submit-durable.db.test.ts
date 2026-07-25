@@ -6,7 +6,9 @@
 
 import { newId } from '@/core/ids';
 import { event, job_events, question } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
+import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
@@ -15,7 +17,12 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
 import { CreateAttemptBodySchema } from './contracts';
-import { createAttempt, enqueueDurableJudge, resolveDurableDivert } from './submit';
+import {
+  DURABLE_JUDGE_DEDUPE_WINDOW_MS,
+  createAttempt,
+  enqueueDurableJudge,
+  resolveDurableDivert,
+} from './submit';
 
 async function seedQuestion(id: string) {
   const now = new Date();
@@ -162,6 +169,17 @@ describe('submit durable divert (W2)', () => {
     expect(payload.caller).toBe('submit');
     expect(payload.submit.question_id).toBe(questionId);
     expect(payload.submit.subject_profile).toBeTruthy();
+    // #2 (codex) — the question the learner ANSWERED rides the payload too, so a later
+    // edit to the row can't retroactively change what gets judged/scheduled.
+    const snapshot = (payload.submit as { question_snapshot?: Record<string, unknown> })
+      .question_snapshot;
+    expect(snapshot).toBeTruthy();
+    expect(snapshot?.prompt_md).toBe(`Prompt for ${questionId}`);
+    expect(snapshot?.knowledge_ids).toEqual(['k1']);
+    expect(snapshot?.difficulty).toBe(3);
+
+    // #8 — the divert response carries an EXPLICIT discriminant, not just a bare 202.
+    expect(res.headers.get('x-durable-divert')).toBe('judge');
 
     // no attempt event exists yet (worker persists it on backfill).
     expect(await db.select().from(event).where(eq(event.id, body.run_id))).toHaveLength(0);
@@ -220,5 +238,152 @@ describe('submit durable divert (W2)', () => {
     const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
     expect(res.status).toBe(429);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  // #9 — the budget gate is injectable like `boss`/`now`, so the over-budget branch is
+  // reachable without module-mocking '@/server/http/rate-limit'.
+  it('honours an injected checkRateLimit seam (no send when the gate throws)', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
+    });
+    const send = vi.fn().mockResolvedValue('job-1');
+    const gate = vi.fn(() => {
+      throw new ApiError('rate_limited', 'over budget', 429);
+    });
+    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
+      boss: { send },
+      checkRateLimit: gate,
+    });
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(429);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+// ── #5 (major) — lost-202 retry dedupe ──────────────────────────────────────
+// A client that loses the 202 re-POSTs the SAME answer. Pre-fix that minted a fresh
+// run_id, which defeats the worker's run_id-keyed idempotency entirely: a SECOND paid
+// judge, a second attempt event, and a DOUBLE FSRS mutation for one submission.
+describe('submit durable enqueue — duplicate-submit dedupe (#5)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRateLimitForTests();
+    vi.unstubAllEnvs();
+  });
+
+  it('a retried identical submit rejoins the in-flight run instead of enqueuing a second paid judge', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const body = { rating: 'good', response_md: 'ans', auto_rate: true, session_id: 's1' };
+    const send = vi.fn().mockResolvedValue('job-1');
+
+    const first = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const firstBody = (await first.json()) as { run_id: string };
+
+    // The 202 never reached the client; it retries the identical submit.
+    const retry = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const retryBody = (await retry.json()) as { run_id: string; verdict: string };
+
+    expect(retry.status).toBe(202);
+    expect(retryBody.verdict).toBe('pending');
+    // Same run — the client polls the run that is already judging its answer.
+    expect(retryBody.run_id).toBe(firstBody.run_id);
+    // The decisive assertion: no second job, so no second paid call and no second attempt.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('a DIFFERENT answer to the same question still enqueues its own run', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const send = vi.fn().mockResolvedValue('job-1');
+
+    const first = await enqueueDurableJudge(
+      await buildValidated(questionId, { rating: 'good', response_md: 'ans A', auto_rate: true }),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const second = await enqueueDurableJudge(
+      await buildValidated(questionId, { rating: 'good', response_md: 'ans B', auto_rate: true }),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+
+    expect(((await first.json()) as { run_id: string }).run_id).not.toBe(
+      ((await second.json()) as { run_id: string }).run_id,
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not rejoin a run that already terminalized as failed', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const body = { rating: 'good', response_md: 'ans', auto_rate: true };
+    const send = vi.fn().mockResolvedValue('job-1');
+
+    const first = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
+
+    // The run exhausted its retries and failed — a resubmit deserves a fresh run.
+    await writeJobEvent(db, {
+      business_table: 'judge_run',
+      business_id: firstRunId,
+      event_type: 'judge_run.failed',
+      payload: { reason: 'error', error_code: 'judge_failed' },
+    });
+
+    const retry = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    expect(((await retry.json()) as { run_id: string }).run_id).not.toBe(firstRunId);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not rejoin a run whose marker fell outside the dedupe window', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const body = { rating: 'good', response_md: 'ans', auto_rate: true };
+    const send = vi.fn().mockResolvedValue('job-1');
+
+    const first = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
+
+    // Age the marker past the window: a genuine later re-drill of the same answer is a
+    // real second attempt and MUST schedule, so it may not be deduped away.
+    await db
+      .update(job_events)
+      .set({ occurred_at: new Date(Date.now() - DURABLE_JUDGE_DEDUPE_WINDOW_MS - 1_000) })
+      .where(eq(job_events.business_id, firstRunId));
+
+    const later = await enqueueDurableJudge(
+      await buildValidated(questionId, body),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    expect(((await later.json()) as { run_id: string }).run_id).not.toBe(firstRunId);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });

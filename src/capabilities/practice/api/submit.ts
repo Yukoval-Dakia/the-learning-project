@@ -42,7 +42,7 @@ import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
+import { job_events, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
   ApiError,
@@ -67,6 +67,7 @@ import {
 } from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getStartedBoss } from '@/server/boss/client';
+import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checkRateLimit } from '@/server/http/rate-limit';
@@ -79,7 +80,7 @@ import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
@@ -88,7 +89,12 @@ import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
 import { scheduleReview } from '../server/fsrs';
 import { JUDGE_RUN_QUEUE, judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { freezeQuestionForJudge, submitAnswerFingerprint } from '../server/judge-run-payload';
+import {
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
+  deriveJudgeRunStatus,
+} from '../server/judge-run-status';
 import { collectMasteryRefineTargets } from '../server/note-refine-targets';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
@@ -1057,6 +1063,16 @@ export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<
   return { divert, subjectProfile };
 }
 
+/**
+ * #8 — EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
+ * used to key on the bare `status === 202`, which silently assumes every 202 this route can
+ * ever produce is a pending-judge body with no `review_event`; the day another 202 appears
+ * for an unrelated reason, that heuristic hands the client a raw body and skips the resource
+ * wrapper. A named header is a discriminant that cannot be reached by accident.
+ */
+export const DURABLE_DIVERT_HEADER = 'x-durable-divert';
+export const DURABLE_DIVERT_JUDGE = 'judge';
+
 /** The 202-pending contract body returned when a submit diverts to the durable lane. */
 export interface DurableJudgePendingResponse {
   run_id: string;
@@ -1069,11 +1085,103 @@ export interface DurableJudgePendingResponse {
   };
 }
 
+/**
+ * Build the 202-pending response for `runId`. Shared by the fresh-enqueue path and the #5
+ * dedupe path so a rejoined run returns a byte-identical contract (same body shape, same
+ * Location, same divert header) — the client cannot tell, and must not need to.
+ */
+function durablePendingResponse(runId: string): Response {
+  const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
+  const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
+  const responseBody: DurableJudgePendingResponse = {
+    run_id: runId,
+    verdict: 'pending',
+    backfill: { channel: 'sse', url: eventsUrl, poll_url: pollUrl },
+  };
+  return Response.json(responseBody, {
+    status: 202,
+    headers: { Location: eventsUrl, [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE },
+  });
+}
+
 export interface EnqueueDurableJudgeDeps {
   /** test seam — default `getStartedBoss()`. Inject a fake `{ send }` in tests. */
   boss?: { send: (name: string, data: unknown) => Promise<string | null> };
   now?: Date;
+  /**
+   * #9 — test seam for the paid-AI budget gate, mirroring `boss`/`now`. Without it the
+   * rate-limit-exceeded branch was only reachable by module-mocking
+   * '@/server/http/rate-limit', so it was effectively untestable in isolation.
+   * Defaults to the real process-wide `checkRateLimit`.
+   */
+  checkRateLimit?: () => void;
 }
+
+/**
+ * #5 — server-side duplicate-enqueue window. A client that loses the 202 (network timeout,
+ * mobile backgrounding) re-POSTs the SAME answer; without dedupe that mints a second run_id,
+ * which defeats the worker's run_id-keyed idempotency entirely → a second PAID judge, a
+ * second attempt event, and a DOUBLE FSRS mutation on one submission.
+ *
+ * The window is deliberately SHORT. It must comfortably cover an HTTP retry after a lost
+ * response (seconds) plus the run's own lifetime (LLM call + pg-boss redelivery budget), but
+ * must NOT swallow a legitimate re-drill: a learner re-answering the same question with a
+ * byte-identical answer later in a session is a real second attempt and must schedule. Two
+ * minutes sits above the former and well below the latter.
+ */
+export const DURABLE_JUDGE_DEDUPE_WINDOW_MS = 120_000;
+
+/**
+ * #5 — find a live durable run for this exact answer inside the dedupe window, so a retried
+ * submit rejoins it instead of paying for a second judge.
+ *
+ * Anchored on the advisory QUEUED marker (which carries `question_id` + `answer_hash`).
+ * A candidate is reused unless its derived status is 'failed' — a retry after a genuine
+ * failure deserves a fresh run, but queued/started/done all mean "this submission is already
+ * being (or has been) judged", and the 202 the caller gets back points at that run's poll/SSE
+ * URLs, so a completed run hands the verdict straight back.
+ *
+ * Residual (documented, W3): the QUEUED marker is written AFTER `boss.send` and is
+ * best-effort, so a retry landing inside that sub-millisecond gap — or after a marker-write
+ * failure — still mints a second run. Closing that fully needs the client idempotency key.
+ */
+async function findReusableDurableRun(
+  questionId: string,
+  answerHash: string,
+  now: Date,
+): Promise<string | null> {
+  const since = new Date(now.getTime() - DURABLE_JUDGE_DEDUPE_WINDOW_MS);
+  const candidates = await db
+    .select({ runId: job_events.business_id })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, JUDGE_RUN_TABLE),
+        eq(job_events.event_type, JUDGE_RUN_EVENTS.QUEUED),
+        sql`${job_events.payload}->>'question_id' = ${questionId}`,
+        sql`${job_events.payload}->>'answer_hash' = ${answerHash}`,
+        gte(job_events.occurred_at, since),
+      ),
+    )
+    .orderBy(desc(job_events.id))
+    .limit(DEDUPE_CANDIDATE_SCAN_LIMIT);
+  for (const { runId } of candidates) {
+    const events = await computeReplay(db, {
+      businessTable: JUDGE_RUN_TABLE,
+      businessId: runId,
+      lastEventId: 0,
+    });
+    if (deriveJudgeRunStatus(events) !== 'failed') return runId;
+  }
+  return null;
+}
+
+/**
+ * How many recent same-answer markers to status-check before giving up and minting a new
+ * run. Bounded so a pathological retry storm can't turn each enqueue into a long scan; the
+ * newest non-failed run wins, and markers are ordered newest-first.
+ */
+const DEDUPE_CANDIDATE_SCAN_LIMIT = 5;
 
 /**
  * Reserve a run_id, record the queued marker, freeze the submit inputs (D5 profile),
@@ -1096,16 +1204,35 @@ export async function enqueueDurableJudge(
   subjectProfile: SubjectProfile,
   deps: EnqueueDurableJudgeDeps = {},
 ): Promise<Response> {
-  const runId = newId();
   const now = deps.now ?? new Date();
-  const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
-  const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
   try {
+    // #5 — BEFORE minting a run or spending budget: does this exact answer already have a
+    // live run from a lost-202 retry? If so, rejoin it — same run_id, same poll/SSE URLs —
+    // instead of paying for a second judge and corrupting FSRS with a second attempt.
+    const answerHash = submitAnswerFingerprint({
+      questionId: validated.questionId,
+      responseMd: validated.body.response_md,
+      answerImageRefs: validated.body.answer_image_refs,
+      partRef: validated.body.part_ref,
+      autoRate: validated.body.auto_rate,
+      sessionId: validated.body.session_id,
+    });
+    const reusable = await findReusableDurableRun(validated.questionId, answerHash, now);
+    if (reusable !== null) {
+      console.warn(
+        '[submit] durable judge enqueue deduped onto an in-flight run (likely a lost-202 client retry)',
+        reusable,
+      );
+      return durablePendingResponse(reusable);
+    }
+
+    const runId = newId();
     // Rate-limit the durable enqueue on the SAME in-process paid-AI budget the sync
     // judge path uses (judgeSubmit's checkRateLimit before the invoke). A durable
     // judge_run IS a paid inference job, so the HTTP dispatch face must gate it too —
     // otherwise a client retry loop could flood the queue with paid jobs.
-    checkRateLimit();
+    // #9 — injectable seam (defaults to the real gate) so the exceeded branch is testable.
+    (deps.checkRateLimit ?? checkRateLimit)();
 
     // SEND FIRST — atomicity: once the job is durably in pg-boss, the worker will
     // terminalize it (started/done/failed) even if THIS process crashes before the
@@ -1124,6 +1251,11 @@ export async function enqueueDurableJudge(
         body: validated.body,
         question_id: validated.questionId,
         subject_profile: subjectProfile,
+        // #2 (codex) — freeze the question state the learner ANSWERED into the payload.
+        // Without it the worker re-reads a mutable row at pickup, so an edit to
+        // prompt/reference/choices/knowledge/difficulty between the 202 and pickup judges
+        // (and schedules) a different question than the one on screen.
+        question_snapshot: freezeQuestionForJudge(validated.q),
         submitted_at: now.toISOString(),
       },
     });
@@ -1147,6 +1279,9 @@ export async function enqueueDurableJudge(
           caller: 'submit',
           question_id: validated.questionId,
           session_id: validated.body.session_id ?? null,
+          // #5 — the dedupe anchor. findReusableDurableRun matches on
+          // (question_id, answer_hash) within DURABLE_JUDGE_DEDUPE_WINDOW_MS.
+          answer_hash: answerHash,
         },
       });
     } catch (markerErr) {
@@ -1157,15 +1292,7 @@ export async function enqueueDurableJudge(
       );
     }
 
-    const responseBody: DurableJudgePendingResponse = {
-      run_id: runId,
-      verdict: 'pending',
-      backfill: { channel: 'sse', url: eventsUrl, poll_url: pollUrl },
-    };
-    return Response.json(responseBody, {
-      status: 202,
-      headers: { Location: eventsUrl },
-    });
+    return durablePendingResponse(runId);
   } catch (err) {
     // #8 — send-first ordering: the ONLY throws that reach here are pre-enqueue —
     // checkRateLimit, a boss.send throw, or the null-jobId guard (null = NOT enqueued).
@@ -1265,9 +1392,11 @@ export async function createAttemptResource(req: Request): Promise<Response> {
   const inner = await createAttempt(req);
   // YUK-594 — a durable divert returns 202-pending, whose body has NO `review_event`;
   // canonicalResourceResponse derives Location from `review_event.id`, so it would blow
-  // up on the pending shape. Pass the 202 through untouched — enqueueDurableJudge already
-  // set its own Location header (the run's SSE stream), which is the correct resource.
-  if (inner.status === 202) return inner;
+  // up on the pending shape. Pass it through untouched — enqueueDurableJudge already set
+  // its own Location header (the run's SSE stream), which is the correct resource.
+  // #8 — keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
+  // this route must still go through the resource wrapper rather than leak a raw body.
+  if (inner.headers.get(DURABLE_DIVERT_HEADER) === DURABLE_DIVERT_JUDGE) return inner;
   return canonicalResourceResponse(inner, {
     outcome: 'created',
     location: (body) =>

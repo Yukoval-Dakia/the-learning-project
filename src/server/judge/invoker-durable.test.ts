@@ -20,7 +20,7 @@ vi.mock('@/server/ai/runner', () => ({
   runTask: runTaskSpy,
 }));
 
-import { JudgeInvoker } from './invoker';
+import { JudgeInvoker, JudgeInvokerInputSchema } from './invoker';
 
 const mockDb = {} as Db;
 const mathProfile = resolveSubjectProfile('math');
@@ -110,5 +110,41 @@ describe('JudgeInvoker durable override (YUK-594 D7/D9)', () => {
     // The sync path is NOT forced onto the fallback lane (the vision judge keeps its
     // own provider selection; durable's forced anthropic-sub override never applies).
     expect(ctx.override?.provider).not.toBe('anthropic-sub');
+  });
+});
+
+// #14 — `durable.providerOverride` is `Provider` on JudgeAnswerParams (question-contract.ts).
+// The invoker's declared input contract used a bare `z.string()`, so an arbitrary name passed
+// the validation boundary and only blew up downstream at resolveTaskProvider. It now validates
+// through the single-source `isKnownProvider` guard rather than a second copy of the union.
+describe('JudgeInvokerInputSchema.durable.providerOverride (#14)', () => {
+  const base = {
+    db: {} as Db,
+    question: stepsQuestion,
+    answer_md: 'x=1',
+    subjectProfile: mathProfile,
+  };
+
+  it.each(['anthropic', 'xiaomi', 'zhipu', 'openrouter', 'gateway', 'openai', 'anthropic-sub'])(
+    'accepts the known provider %s',
+    (provider) => {
+      expect(
+        JudgeInvokerInputSchema.safeParse({ ...base, durable: { providerOverride: provider } })
+          .success,
+      ).toBe(true);
+    },
+  );
+
+  it('rejects an unknown provider name at the validation boundary', () => {
+    expect(
+      JudgeInvokerInputSchema.safeParse({
+        ...base,
+        durable: { providerOverride: 'invalid-provider' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('still accepts durable with no providerOverride (the non-final-delivery lane)', () => {
+    expect(JudgeInvokerInputSchema.safeParse({ ...base, durable: {} }).success).toBe(true);
   });
 });

@@ -2,7 +2,9 @@
 //
 // 蓝本：copilot-run-status.ts（YUK-364/575）。judge_run 是 copilot_run 的更薄
 // 同胞——单次无状态 LLM 判分调用，无对话记忆 / 无工具循环 / 无取消 chip 语义，
-// 故词表与 reducer 都更简（queued → started → running → done|failed）。
+// 故词表与 reducer 都更简：queued → started → done|failed。（#12 — 蓝本 copilot_run
+// 有 `running` 中间态，judge_run **没有**：单次调用无「工具循环进行中」阶段可报，
+// JudgeRunStatus / JUDGE_RUN_EVENTS / handler 三处都不产 running。）
 //
 // run handle = judge_run id（W2 submit 面：= 该次作答 attempt/outcome event id，
 // 见 submit.ts enqueueDurableJudge）。状态不落瘦表，而是从 `job_events`
@@ -123,13 +125,27 @@ export const JudgeRunTerminalResultSchema = z
 /**
  * poll-tier `GET /api/jobs/judge_run/[id]/status` 响应 schema。放在此 dependency-light
  * 模块（非 route 文件）以便 manifest 静态导入而不 eager-import route 的 db 依赖。
+ *
+ * #13 — `result` 与 `status` 的耦合由 **discriminated union 在 schema 里表达**（旧形是
+ * 平铺 object + 注释约定，schema 允许 `status:'queued'` 携非 null result，codegen/客户端
+ * 看不到这条不变量）：
+ *   - `status:'done'` → result 是结构化判词；**仍 nullable**，因为 route 对畸形/legacy
+ *     DONE payload 做 safeParse 降级（#7 现在会 warn 记录），那一路诚实地报 done+null，
+ *     不该被契约判违规。
+ *   - `queued|started|failed` → result 恒 null（无判词可给）。
  */
-export const JudgeRunStatusResponseSchema = z.object({
-  run_id: z.string(),
-  status: z.enum(['queued', 'started', 'done', 'failed']),
-  /** 终态判词 payload（结构化，见上），仅 status='done' 时存在，否则 null。 */
-  result: JudgeRunTerminalResultSchema.nullable(),
-});
+export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
+  z.object({
+    run_id: z.string(),
+    status: z.literal('done'),
+    result: JudgeRunTerminalResultSchema.nullable(),
+  }),
+  z.object({
+    run_id: z.string(),
+    status: z.enum(['queued', 'started', 'failed']),
+    result: z.null(),
+  }),
+]);
 
 /**
  * 202-pending 契约响应 schema（submit 面 async-main 分流时返回）。登记进 submit

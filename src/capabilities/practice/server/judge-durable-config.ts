@@ -5,7 +5,12 @@
 
 import type { Provider } from '@/ai/registry';
 import { parseFlag } from '@/core/env-flags';
-import { isProviderImplemented, isProviderLaneReady } from '@/server/ai/providers';
+import {
+  isKnownProvider,
+  isProviderImplemented,
+  isProviderLaneReady,
+  providerRequiresExplicitModel,
+} from '@/server/ai/providers';
 
 /** boss 队列名（handlers.ts 注册 + submit 面 boss.send + status 路由共享）。 */
 export const JUDGE_RUN_QUEUE = 'judge_run' as const;
@@ -32,25 +37,47 @@ export function judgeDurableEnabled(): boolean {
  *
  * 返回 undefined ⇒ 不切 provider（保持默认 mimo lane）。
  *
- * #3 — provider 名经 real 校验（isProviderImplemented 单一真源，YUK-608），但**非法
- * 配置降级+log、绝不 throw**：这函数在 handler 判分路径里（最后一次重投时）调用，
- * 抛裸 Error 会被 catch 当 retryable 误判、写乱终态。misconfig 是 operator 错，不该
- * 让判分整体炸——记一条 warn、返回 undefined（不切 provider，走默认 lane）即可。
+ * #3 — provider 名经 real 校验（isKnownProvider + isProviderImplemented +
+ * providerRequiresExplicitModel，全部 YUK-608 单一真源谓词），但**非法配置降级+log、
+ * 绝不 throw**：这函数在 handler 判分路径里（最后一次重投时）调用，抛裸 Error 会被
+ * catch 当 retryable 误判、写乱终态。misconfig 是 operator 错，不该让判分整体炸——记
+ * 一条 warn、返回 undefined（不切 provider，走默认 lane）即可。
+ *
+ * 「可用」的三道闸（全过才切）：① 名字是已知 provider；② 该 provider 真接了 endpoint
+ * （非 reserved）；③ 它的 registry 默认 model 可直接跑——本 lane 只递 provider、不递
+ * model，故 providerRequiresExplicitModel 为真的 provider（anthropic / zhipu）在这里
+ * 判为不可用（否则 resolveTaskProvider 会把它和 mimo model id 配对 → 必然失败）。
  */
 export function judgeFallbackProvider(): Provider | undefined {
   const raw = process.env.JUDGE_FALLBACK_PROVIDER?.trim();
   if (raw === '') return undefined; // 显式空串 ⇒ 关闭跨 provider 兜底。
   if (raw === undefined) return DEFAULT_JUDGE_FALLBACK_PROVIDER;
-  // Real validation (not an `as Provider` cast) via the single-source predicate. On a
-  // misconfigured name: DEGRADE (warn + no fallback), never throw — a throw here would
-  // land in the handler's catch on the FINAL delivery and be mis-classified retryable.
-  if (!isProviderImplemented(raw as Provider)) {
+  // #10 — real validation with NO `as Provider` cast: `isKnownProvider` is the exported
+  // narrowing guard (providers.ts) built for untrusted env strings, so `raw` is a Provider
+  // for the remaining predicates. `isProviderImplemented` then rejects reserved-but-unwired
+  // names (openrouter / gateway / openai). On a misconfigured name: DEGRADE (warn + no
+  // fallback), never throw — a throw here would land in the handler's catch on the FINAL
+  // delivery and be mis-classified retryable.
+  if (!isKnownProvider(raw) || !isProviderImplemented(raw)) {
     console.warn(
       `[judge_run] ignoring invalid JUDGE_FALLBACK_PROVIDER='${raw}' (not a wired provider) — no cross-provider fallback this run`,
     );
     return undefined;
   }
-  return raw as Provider;
+  // #4 (codex) — a provider whose registry-default model is the mimo id (anthropic / zhipu)
+  // is NOT runnable from a provider-only override: `resolveTaskProvider` would pair that
+  // provider's endpoint with the registry's mimo model and 404. This lane hands
+  // `RunTaskCtx.override` a provider WITHOUT a model, so such a provider is unusable here.
+  // Reuse the single-source predicate (YUK-608 / #1062) rather than re-deriving the rule:
+  // no model env exists for this fallback, so degrade (warn + no fallback) instead of
+  // shipping a guaranteed-failing final retry.
+  if (providerRequiresExplicitModel(raw)) {
+    console.warn(
+      `[judge_run] ignoring JUDGE_FALLBACK_PROVIDER='${raw}' — it requires an explicit model override, which this lane does not supply — no cross-provider fallback this run`,
+    );
+    return undefined;
+  }
+  return raw;
 }
 
 /**
