@@ -15,6 +15,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
+import { JUDGE_PENDING_ATTEMPT_ACTION, judgeRunJobId } from '../server/judge-run-dispatch';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
 import { CreateAttemptBodySchema } from './contracts';
 import { createAttempt, enqueueDurableJudge, resolveDurableDivert } from './submit';
@@ -180,7 +181,13 @@ describe('submit durable divert (W2)', () => {
     expect(await db.select().from(event).where(eq(event.id, body.run_id))).toHaveLength(0);
   });
 
-  it('send-first: a boss.send failure writes NO durable state (no stuck-queued marker, no attempt)', async () => {
+  // YUK-777 A2 — these two used to assert 5xx. The dispatch order changed underneath them:
+  // the answer is now recorded as immutable domain evidence BEFORE `boss.send`, so a send
+  // failure no longer means the submission was lost. Reporting a failure for an answer we
+  // have in fact accepted would push the learner to answer again and mint the duplicate
+  // attempt there is no idempotency key to collapse (YUK-800), so the honest response is the
+  // pending contract plus a recorded attempt for `judge_pending_reconcile` to pick up.
+  it('a boss.send failure still RECORDS the answer and returns pending (no stuck-queued marker)', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
@@ -195,13 +202,21 @@ describe('submit durable divert (W2)', () => {
     // pollution-proof against markers other tests in this file left behind.
     const before = (await db.select().from(job_events)).length;
     const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
-    expect(res.status).toBeGreaterThanOrEqual(500);
-    // Send-first: the marker is written AFTER a successful send, so a send failure
-    // writes NO new job_events — nothing sits stuck queued, nothing to compensate.
+    expect(res.status).toBe(202);
+    // The marker is written AFTER a successful send, so a send failure writes NO new
+    // job_events — nothing sits stuck queued.
     expect(await db.select().from(job_events)).toHaveLength(before);
+    // …but the answer IS in the permanent domain log, keyed to the run the response named.
+    const runId = ((await res.json()) as { run_id: string }).run_id;
+    const pending = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION));
+    expect(pending).toHaveLength(1);
+    expect((pending[0].payload as { run_id: string }).run_id).toBe(runId);
   });
 
-  it('a null boss.send (dedupe/no-job) is treated as a failed enqueue (503, no new marker)', async () => {
+  it('a null boss.send (dedupe/no-job) also records the answer and returns pending', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
@@ -213,8 +228,11 @@ describe('submit durable divert (W2)', () => {
     const before = (await db.select().from(job_events)).length;
     const send = vi.fn().mockResolvedValue(null);
     const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(202);
     expect(await db.select().from(job_events)).toHaveLength(before);
+    expect(
+      await db.select().from(event).where(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION)),
+    ).toHaveLength(1);
   });
 
   it('rate-limits the durable enqueue on the shared paid-AI budget (does not send when over budget)', async () => {
@@ -413,9 +431,13 @@ describe('submit durable enqueue — repeat answers are real attempts (#TtWiC)',
       { boss: { send } },
     );
     const { run_id } = (await res.json()) as { run_id: string };
-    // W4 #TtWiD — the poll route resolves a marker-less run via boss.getJobById(queue, runId),
-    // which only works because the enqueue pins SendOptions.id to the run handle.
-    expect(send.mock.calls[0]?.[2]).toEqual({ id: run_id });
+    // W4 #TtWiD — the poll route resolves a marker-less run via boss.getJobById(queue, …),
+    // which only works because the enqueue pins SendOptions.id to a value derived from the
+    // run handle. YUK-777: DERIVED, not the handle itself — pg-boss job ids are uuid columns
+    // and `newId()` is a cuid2, so the original `{ id: run_id }` threw against real pg-boss
+    // (see judge-run-dispatch-boss-contract.db.test.ts). This test passed before only because
+    // the fake `send` accepted any string.
+    expect(send.mock.calls[0]?.[2]).toEqual({ id: judgeRunJobId(run_id) });
   });
 });
 
@@ -442,7 +464,9 @@ describe('submit durable enqueue — rate-limit token refund', () => {
     const failed = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
       boss: { send: failing },
     });
-    expect(failed.status).toBeGreaterThanOrEqual(500);
+    // 202 with the answer recorded (see the dispatch-order note above) — what this test is
+    // about is the TOKEN: no job shipped, so the budget slot must come back.
+    expect(failed.status).toBe(202);
 
     const healthy = vi.fn().mockResolvedValue('job-1');
     const retry = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
@@ -465,7 +489,7 @@ describe('submit durable enqueue — rate-limit token refund', () => {
     expect(
       (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send: nullSend } }))
         .status,
-    ).toBe(503);
+    ).toBe(202);
 
     const healthy = vi.fn().mockResolvedValue('job-1');
     expect(

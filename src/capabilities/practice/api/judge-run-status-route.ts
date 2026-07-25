@@ -11,10 +11,12 @@
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { computeReplay } from '@/server/events/sse_replay';
-import type { JobWithMetadata } from 'pg-boss';
-import { JUDGE_RUN_QUEUE } from '../server/judge-durable-config';
+// YUK-777 — liveness moved to server/judge-run-dispatch.ts so the reconcile sweeper asks the
+// queue the exact same question this route does. Two copies of "is this run still going to
+// progress?" would eventually disagree, and the two consumers would then disagree about
+// whether a run needs recovering.
+import { hasPendingAttemptEvidence, resolveQueueLiveness } from '../server/judge-run-dispatch';
 import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import {
   JUDGE_RUN_TABLE,
@@ -22,62 +24,6 @@ import {
   deriveJudgeRunStatus,
   terminalJudgeRunResult,
 } from '../server/judge-run-status';
-
-/**
- * pg-boss states from which a job can still run, and therefore still produce job_events.
- *
- * W5 #TumMo — existence is NOT the question; LIVENESS is. `getJobById` returns a row for
- * terminal states too, so reporting `queued` for one tells the client to keep polling a job
- * that will never emit another event — exactly the infinite-pending trap the 404 branch
- * exists to prevent. Mirrors `orchestrator.ts`, which also inspects `state` rather than mere
- * existence.
- *
- * pg-boss 12 types the field as `'created' | 'retry' | 'active' | 'completed' | 'cancelled' |
- * 'failed'` (types.d.ts `JobWithMetadata`). There is no separate `expired` state in v12: a job
- * the worker never picked up before its expire window lands in `failed`, which this set
- * already excludes. The three below are the only non-terminal ones.
- */
-const LIVE_BOSS_STATES: ReadonlySet<JobWithMetadata['state']> = new Set([
-  'created',
-  'retry',
-  'active',
-] as const);
-
-/**
- * Can this run still make progress on the queue?
- *
- * Deliberately TRI-state. A boolean would have to fold "pg-boss says this job is dead" together
- * with "pg-boss did not answer", and those demand opposite responses: the first lets us stop a
- * client polling a corpse, while the second must change nothing — declaring a genuinely
- * in-flight run failed because a lookup blipped would be a far worse lie than the stale
- * `started` it replaces.
- *
- * `enqueueDurableJudge` pins the pg-boss job id to the run handle (`{ id: runId }`), so this is
- * a direct primary-key lookup, not a scan.
- *
- * `dead` also covers a null row: pg-boss prunes completed jobs on its own retention, so an
- * absent job is either long-finished or long-gone — either way the queue will not advance it.
- */
-type QueueLiveness = 'live' | 'dead' | 'unknown';
-
-async function resolveQueueLiveness(runId: string): Promise<QueueLiveness> {
-  try {
-    const boss = await getStartedBoss();
-    const job = await boss.getJobById(JUDGE_RUN_QUEUE, runId);
-    if (job === null) return 'dead';
-    // #TuwGt — no assertion needed: `getJobById` returns `JobWithMetadata | null`, whose
-    // `state` is a typed union, so the compiler checks this membership test for us.
-    const { state } = job;
-    if (LIVE_BOSS_STATES.has(state)) return 'live';
-    console.warn(
-      `[judge_run] ${runId} pg-boss job is not live (state=${state}) — it will not progress further`,
-    );
-    return 'dead';
-  } catch (err) {
-    console.error('[judge_run] pg-boss lookup failed while resolving run liveness', runId, err);
-    return 'unknown';
-  }
-}
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -160,11 +106,19 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // #7 — with no events at all this is simply an unknown run_id; 200 `queued` would be a
     // fabrication. With events, the run demonstrably existed, was never judged, and can no
     // longer progress — `failed` is the honest terminal answer, and it stops the poll loop.
+    // YUK-777 A2 — before declaring anything, ask whether the ANSWER was recorded. The submit
+    // face now writes an immutable pending-attempt event before it dispatches, so a run whose
+    // enqueue failed outright has no job and no job_events yet is perfectly real and will be
+    // re-dispatched by `judge_pending_reconcile`. Both branches below would have lied about
+    // it: 404 ("no such run") and `failed` ("this will never be judged").
+    if (await hasPendingAttemptEvidence(db, runId)) {
+      return Response.json({ run_id: runId, status: 'queued' as const, result: null });
+    }
     if (events.length === 0) {
       throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
     }
     console.warn(
-      `[judge_run] ${runId} is non-terminal in job_events but its queue job is dead and nothing persisted — reporting failed`,
+      `[judge_run] ${runId} is non-terminal in job_events but its queue job is dead, nothing persisted, and no pending attempt was recorded — reporting failed`,
     );
     return Response.json({ run_id: runId, status: 'failed' as const, result: null });
   } catch (err) {

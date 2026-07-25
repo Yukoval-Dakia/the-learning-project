@@ -49,6 +49,18 @@ export const JUDGE_RUN_EVENTS = {
    * （未知面 / 题缺失 / 坏 payload）。last-writer wins。
    */
   FAILED: 'judge_run.failed',
+  /**
+   * **非终态**：YUK-777 A3 的 reconcile sweeper 为一条「作答已录、判词未落」的 pending
+   * attempt 重新投递了一个 judge_run job。
+   *
+   * 它把 run 拉回 `queued`——这是诚实的：确实有一次全新的投递在飞。不这样做的话，先前
+   * 那条终态 FAILED 会一直压着，poll/SSE 客户端据此停止等待，而队列里正跑着可能写出
+   * DONE 的那次重投——与 #TtWiB 修掉的是同一个谎。
+   *
+   * payload 携 `{ job_id, attempt }`：`attempt` 是本 run 已发生的第几次恢复重投，sweeper
+   * 用它封顶恢复次数（超过即停手，转人工，D6「manual-only, 先观察真实 DLQ 流量」）。
+   */
+  REQUEUED: 'judge_run.requeued',
 } as const;
 
 export type JudgeRunEventType = (typeof JUDGE_RUN_EVENTS)[keyof typeof JUDGE_RUN_EVENTS];
@@ -94,6 +106,12 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         break;
       case JUDGE_RUN_EVENTS.QUEUED:
         // 初态；不覆盖已推进的阶段。
+        break;
+      case JUDGE_RUN_EVENTS.REQUEUED:
+        // YUK-777 A3 — sweeper 重投：**回到 queued**，包括从终态 failed 回来。这是本
+        // reducer 里唯一允许离开终态的转移，且它是对的——队列里确实有一次全新投递在飞。
+        // 唯一的替代（保持 failed）会让客户端对着一次很可能成功的重投停止等待。
+        status = 'queued';
         break;
       default:
         // 未知 event_type：忽略（forward-compat）。

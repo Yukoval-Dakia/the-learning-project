@@ -17,6 +17,44 @@ import { z } from 'zod';
 type QuestionRow = typeof question.$inferSelect;
 
 /**
+ * judge_run job 体。W2 由 submit 面投递；YUK-777 起 reconcile sweeper 也按同一形状重投。
+ *
+ * YUK-777 — 从 `jobs/judge_run.ts` 挪到这里（原地 re-export 保持既有 import 不变）：
+ * 现在有三个生产者读它（submit 面、sweeper、pending-attempt 证据行的冻结 payload），而
+ * `api/` 与 `server/` 都不该反向依赖 `jobs/`。此文件本就是「job payload 契约 + 冻结/还原
+ * helper」的家，类型跟着契约走。
+ */
+export interface JudgeRunJobData {
+  /**
+   * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
+   * event id（persistSubmit 以它做 eventId，见 opts.attemptEventId）。此「= attempt
+   * event id」契约是 submit 面特化，不对全部面通用（advice 面无 event，W3 另定）。
+   */
+  run_id: string;
+  /** 发起面（回填路由 + payload 分支判别）。W2 只有 'submit'。 */
+  caller: 'submit';
+  /** submit 面冻结输入（D5：profile 冻结进 payload，作答当下画像）。 */
+  submit: {
+    /** 冻结的 CreateAttemptBody（JSON）。worker 侧 CreateAttemptBodySchema 复校。 */
+    body: unknown;
+    question_id: string;
+    /** D5 — enqueue 时冻结的 SubjectProfile（JSON）。worker 侧 SubjectProfileSchema 复校。 */
+    subject_profile: unknown;
+    /**
+     * #2 (codex) — enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
+     * FrozenQuestionSnapshotSchema 复校后覆盖到现读行上，故提交后编辑题目不再让判分/
+     * FSRS 打在与学习者所见不同的题面上。见下方 freezeQuestionForJudge。
+     *
+     * optional：本 PR 之前入队的在飞 job 没这个字段（且 flag 默认 OFF ⇒ 生产无此类
+     * job）。缺失时退回「现读行」旧行为并记一条 warn，而不是把在飞 job 判死。
+     */
+    question_snapshot?: unknown;
+    /** 作答时刻（ISO）——FSRS 调度锚定作答当下，非 worker 拾取时刻。 */
+    submitted_at: string;
+  };
+}
+
+/**
  * #2 (codex) — **题目数据冻结**。flag-on 时 submit 只把答案/画像冻进 payload，worker
  * 拾取时重读可变的 question 行；提交后有人编辑 prompt/reference/choices/knowledge/
  * difficulty，判分与调度就打在与学习者当时所见**不同**的题面上（判词错、FSRS 脏）。
@@ -173,11 +211,13 @@ export async function reconstructDoneFromDomainEvents(
     judgePayload.capability_ref,
   );
   const route = pick<string>(isStr, embedded.route, judgePayload.judge_route);
+  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: `persistSubmit` writes it
+  // into the review event's embedded `payload.judge` block, next to the `score` it qualifies.
+  // Still `pick`ed rather than assumed: an attempt persisted before that write landed has no
+  // such key, and omitting the field for those rows is the honest answer (the terminal schema
+  // marks it optional). Inventing a default would silently mislabel a real historical score.
+  const scoreMeaning = pick<string>(isStr, embedded.score_meaning, judgePayload.score_meaning);
 
-  // NOTE: `score_meaning` is deliberately absent. It is part of JudgeResultV2 but is NOT
-  // persisted to either event today, so there is nothing honest to reconstruct — inventing a
-  // default would be worse than omitting it. The live DONE payload does carry it; only this
-  // recovery path (used when that write was lost) cannot. Persisting it is a W3 item (YUK-777).
   return {
     attempt_event_id: runId,
     judge_event_id: judgeEvent?.id ?? null,
@@ -188,6 +228,7 @@ export async function reconstructDoneFromDomainEvents(
       : {}),
     ...(coarseOutcome !== undefined ? { coarse_outcome: coarseOutcome } : {}),
     ...(score !== undefined ? { score } : {}),
+    ...(scoreMeaning !== undefined ? { score_meaning: scoreMeaning } : {}),
     ...(confidence !== undefined ? { confidence } : {}),
     ...(feedbackMd !== undefined ? { feedback_md: feedbackMd } : {}),
     ...(evidenceJson !== undefined ? { evidence_json: evidenceJson } : {}),

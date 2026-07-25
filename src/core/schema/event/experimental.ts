@@ -235,6 +235,14 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // docs/design/2026-07-07-yuk577-proactive-triggers.md §3.3. NOTE: `_dismissed`/`_opened` 承重轻
   // （只锚 nudge id，payload {}），故意 NOT reserved——走通用 hatch 即可。
   'experimental:copilot_nudge',
+  // YUK-777 A2 — record-unjudged-at-submit. The immutable answer evidence the durable
+  // judge lane writes BEFORE judging (./judge-pending-events.ts). Load-bearing on two hot
+  // paths: the reconcile sweeper re-enqueues a judge_run straight from `payload.submit`,
+  // and the late-arrival guard reads `payload.knowledge_ids` + `submit.submitted_at` as
+  // the ordering water mark. A malformed payload would strand a real learner answer with
+  // no way to recover it, so it must fail loud at the barrier, never degrade to the
+  // loose generic.
+  'experimental:judge_pending_attempt',
 ]);
 
 // ====================================================================

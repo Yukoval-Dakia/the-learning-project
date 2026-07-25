@@ -8,6 +8,7 @@ import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { judgeRunJobId } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
 
@@ -30,9 +31,12 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
   // worker-outage scenario the durable lane exists to cover.
   it('a marker-less run that pg-boss still holds reports queued, not 404', async () => {
     const runId = newId();
-    // The run_id IS the pg-boss job id (SendOptions.id at enqueue), so the route resolves it
-    // by primary key. Stub the boss client the route uses.
-    const getJobById = vi.fn().mockResolvedValue({ id: runId, state: 'created' });
+    // YUK-777 — the job id is DERIVED from the run handle, not equal to it: pg-boss job ids
+    // are uuid columns and run handles are cuid2s, so the original `{ id: runId }` would have
+    // thrown against real pg-boss. This assertion used to pass only because the fake accepted
+    // any string. The route re-derives the same uuid, so the lookup is still a PK hit.
+    const jobId = judgeRunJobId(runId);
+    const getJobById = vi.fn().mockResolvedValue({ id: jobId, state: 'created' });
     vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
       getJobById,
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
@@ -42,7 +46,7 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const body = (await res.json()) as { status: string; result: unknown };
     expect(body.status).toBe('queued');
     expect(body.result).toBeNull();
-    expect(getJobById).toHaveBeenCalledWith('judge_run', runId);
+    expect(getJobById).toHaveBeenCalledWith('judge_run', jobId);
     vi.restoreAllMocks();
   });
 

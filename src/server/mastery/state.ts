@@ -329,6 +329,43 @@ export async function globalThetaForDomain(db: DbLike, domain: string | null): P
   return row?.theta_hat ?? 0;
 }
 
+/** The `mastery_state.subject_kind` partition the hierarchical-Elo domain rows live in. */
+export const ABILITY_GLOBAL_SUBJECT_KIND = ABILITY_GLOBAL_KIND;
+
+/**
+ * YUK-777 B1 — the `ability_global` subject ids `updateThetaForAttempt` WOULD write for
+ * these KCs, exposed so an out-of-order check can cover them.
+ *
+ * Why this needs to exist: `mastery_state(subject_kind='ability_global', subject_id=<domain>)`
+ * is a SHARED row — every KC under a domain writes it (see the per-domain block below). So
+ * two attempts on SIBLING KCs of one domain collide there while sharing no knowledge id at
+ * all, which is exactly the case a KC-keyed ordering check cannot see (codex #TuxJJ): the
+ * older attempt passes, then walks the domain's θ̂ backwards and rewrites `last_outcome_at`
+ * to an earlier instant.
+ *
+ * It resolves domains with the SAME per-KC `getEffectiveDomain` call and the SAME
+ * orphan→degrade catch the write path uses, so the read domain and the write domain cannot
+ * drift apart. Flag off ⇒ `[]` without touching the DB: no global row is written either, so
+ * there is nothing to order.
+ */
+export async function resolveAbilityGlobalSubjectIds(
+  db: DbLike,
+  knowledgeIds: string[],
+): Promise<string[]> {
+  if (!HIERARCHICAL_ELO_ENABLED) return [];
+  const domains = new Set<string>();
+  for (const id of Array.from(new Set(knowledgeIds)).filter((k) => k.length > 0)) {
+    try {
+      const domain = await getEffectiveDomain(db, id);
+      if (domain !== null) domains.add(domain);
+    } catch {
+      // orphan / null-root-domain → no domain anchor for this KC, exactly as the write path
+      // degrades. A KC with no anchor contributes no global row, so it orders nothing.
+    }
+  }
+  return Array.from(domains);
+}
+
 /**
  * A2 (YUK-434) — read-side effective ability for a KC = θ_global(domain-of-KC) +
  * θ_KC, mirroring the write-path's effective-theta input.

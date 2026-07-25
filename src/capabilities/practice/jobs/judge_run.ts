@@ -31,6 +31,7 @@ import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
+import type { JudgeRunJobData } from '../server/judge-run-payload';
 import {
   FrozenQuestionSnapshotSchema,
   applyFrozenQuestion,
@@ -39,39 +40,13 @@ import {
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
 /**
- * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge）。`caller` 标面
- * （W2=submit only；W3 加 probe/paper/advice/solve）。`submit` 携冻结的 submit 输入
- * （D5：profile 冻结）；其它面 W3 各自定 payload 分支，不复用 submit 的字段形。
+ * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge），YUK-777 起 reconcile
+ * sweeper 按同一形状重投。`caller` 标面（W2=submit only；W3 加 probe/paper/advice/solve）。
+ *
+ * 定义已挪到 `../server/judge-run-payload.ts`（三个生产者共用，且 api/server 不该反向依赖
+ * jobs/）；这里 re-export 保持既有 import 面不变。
  */
-export interface JudgeRunJobData {
-  /**
-   * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
-   * event id（persistSubmit 以它做 eventId，见 opts.attemptEventId）。此「= attempt
-   * event id」契约是 submit 面特化，不对全部面通用（advice 面无 event，W3 另定）。
-   */
-  run_id: string;
-  /** 发起面（回填路由 + payload 分支判别）。W2 只有 'submit'。 */
-  caller: 'submit';
-  /** submit 面冻结输入（D5：profile 冻结进 payload，作答当下画像）。 */
-  submit: {
-    /** 冻结的 CreateAttemptBody（JSON）。worker 侧 CreateAttemptBodySchema 复校。 */
-    body: unknown;
-    question_id: string;
-    /** D5 — enqueue 时冻结的 SubjectProfile（JSON）。worker 侧 SubjectProfileSchema 复校。 */
-    subject_profile: unknown;
-    /**
-     * #2 (codex) — enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
-     * FrozenQuestionSnapshotSchema 复校后覆盖到现读行上，故提交后编辑题目不再让判分/
-     * FSRS 打在与学习者所见不同的题面上。见 server/judge-run-payload.ts。
-     *
-     * optional：本 PR 之前入队的在飞 job 没这个字段（且 flag 默认 OFF ⇒ 生产无此类
-     * job）。缺失时退回「现读行」旧行为并记一条 warn，而不是把在飞 job 判死。
-     */
-    question_snapshot?: unknown;
-    /** 作答时刻（ISO）——FSRS 调度锚定作答当下，非 worker 拾取时刻。 */
-    submitted_at: string;
-  };
-}
+export type { JudgeRunJobData } from '../server/judge-run-payload';
 
 export type JudgeRunOutcome =
   | { status: 'done'; run_id: string; coarse_outcome: string; judge_event_id: string | null }

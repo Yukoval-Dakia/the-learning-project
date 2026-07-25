@@ -14,6 +14,7 @@ import {
 } from './experimental';
 import { GenesisExperimental } from './genesis';
 import { GoalScopeUpdateExperimental, GoalStatusUpdateExperimental } from './goal-events';
+import { JudgePendingAttemptExperimental } from './judge-pending-events';
 import { SubjectRootNameUpdateExperimental } from './knowledge-node-events';
 import { KnownEvent } from './known';
 import {
@@ -46,6 +47,7 @@ export * from './mistake-variant-events';
 export * from './artifact-events';
 export * from './question-block-events';
 export * from './nudge-events';
+export * from './judge-pending-events';
 
 // ====================================================================
 // Event — 顶层 union
@@ -83,6 +85,9 @@ export * from './nudge-events';
 //      import-enroll / import-ignore / revert）fold-visible，./question-block-events.ts）
 //  11b. NudgeExperimental — copilot 主动开口触发留痕特化（YUK-577：承重非 report-only，
 //      GET /nudges 读它 + 频控 + surfacing gate 依赖 payload 承重键，./nudge-events.ts）
+//  11c. JudgePendingAttemptExperimental — durable judge 面「作答已录、判词未落」的不可变
+//      证据特化（YUK-777 A2：sweeper 从 payload.submit 逐字重投、late-arrival guard 读
+//      payload.knowledge_ids + submit.submitted_at 当水位，./judge-pending-events.ts）
 //  12. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
@@ -113,6 +118,7 @@ export const Event = z.union([
   QuestionBlockCreateExperimental,
   QuestionBlockLifecycleExperimental,
   NudgeExperimental,
+  JudgePendingAttemptExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;
