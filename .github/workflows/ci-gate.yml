@@ -113,6 +113,9 @@ jobs:
     name: usability container (shipped SPA + API fixtures)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Least privilege: this job only reads the repo and uploads a failure artifact.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,6 +159,13 @@ jobs:
       - name: Install deps
         if: steps.filter.outputs.code_changed == 'true'
         run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        if: steps.filter.outputs.code_changed == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright Chromium
         if: steps.filter.outputs.code_changed == 'true'

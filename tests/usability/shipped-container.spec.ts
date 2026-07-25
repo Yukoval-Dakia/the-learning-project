@@ -169,12 +169,13 @@ test.describe('shipped-container usability regression', () => {
       await page.keyboard.press('Tab');
       await expect(dismiss).toBeFocused();
 
-      // YUK-789 — mount-time telemetry actually left the browser. A brief that renders
-      // but never reports brief_seen is a dead funnel the old focus-only test could not see.
+      // YUK-789 — mount-time telemetry actually left the browser, with the BODY the
+      // server's strict discriminated union accepts. A count-only assertion would stay
+      // green on a payload the real endpoint 400s (dead funnel, invisible).
       expect(
-        fixture.briefCalls(),
-        'route=/today brief band must POST brief_seen on mount',
-      ).toContain('POST /api/prep-desk/brief/interaction');
+        fixture.briefInteractions(),
+        'route=/today brief band must POST a well-formed brief_seen on mount',
+      ).toEqual([{ type: 'brief_seen', brief_id: 'evt_conjecture_wy1', brief_state: 'finding' }]);
 
       // Anti-guilt wire lock (contract §8.1): no calibration / recurrence-count / backlog
       // framing inside the brief band…
@@ -213,15 +214,25 @@ test.describe('shipped-container usability regression', () => {
       // Contract §7 failure affordance stays absent on the success path.
       await expect(page.getByText('操作失败，请重试')).toHaveCount(0);
 
-      const calls = fixture.briefCalls();
-      expect(calls, 'route=/today accept must reach the decisions mutation').toContain(
-        'POST /api/proposals/evt_conjecture_wy1/decisions',
-      );
-      // The accept also records primary_action_started (the funnel's action half).
       expect(
-        calls.filter((c) => c === 'POST /api/prep-desk/brief/interaction').length,
-        'route=/today accept must record a primary_action_started alongside brief_seen',
-      ).toBeGreaterThanOrEqual(2);
+        fixture.briefCalls(),
+        'route=/today accept must reach the decisions mutation',
+      ).toContain('POST /api/proposals/evt_conjecture_wy1/decisions');
+      // The accept also records primary_action_started (the funnel's action half). Assert the
+      // exact bodies, not the request count: the same-day brief_seen must stay suppressed
+      // (one seen, not two) and the action must carry action_kind='accept_probe' with NO
+      // result_event_id — the server union rejects that field outside scoped_practice.
+      expect(
+        fixture.briefInteractions(),
+        'route=/today accept must record exactly one brief_seen + one accept_probe action',
+      ).toEqual([
+        { type: 'brief_seen', brief_id: 'evt_conjecture_wy1', brief_state: 'finding' },
+        {
+          type: 'primary_action_started',
+          brief_id: 'evt_conjecture_wy1',
+          action_kind: 'accept_probe',
+        },
+      ]);
 
       await expectNoInternalCopy(page, '/today');
     });

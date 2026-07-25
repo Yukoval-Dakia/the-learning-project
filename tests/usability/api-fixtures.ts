@@ -21,6 +21,14 @@ interface FixtureController {
    * isn't" failure this fixture set exists to catch.
    */
   briefCalls: () => string[];
+  /**
+   * YUK-789 — the parsed bodies POSTed to `/api/prep-desk/brief/interaction`, in order.
+   * Counting requests is not enough: the server body schema is a `.strict()` discriminated
+   * union (`type` × `action_kind`, with `result_event_id` required only for scoped_practice),
+   * so a malformed telemetry payload 400s in production while a count-only assertion stays
+   * green. The spec asserts the exact shapes instead.
+   */
+  briefInteractions: () => Array<Record<string, unknown>>;
 }
 
 const evidenceKeys = {
@@ -223,6 +231,7 @@ export async function installApiFixtures(
 ): Promise<FixtureController> {
   const unexpectedRequests: string[] = [];
   const briefCalls: string[] = [];
+  const briefInteractions: Array<Record<string, unknown>> = [];
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
@@ -291,6 +300,7 @@ export async function installApiFixtures(
     // render fell into the catch-all 501 and polluted unexpectedRequests.
     if (key === 'POST /api/prep-desk/brief/interaction') {
       briefCalls.push(key);
+      briefInteractions.push((request.postDataJSON() ?? {}) as Record<string, unknown>);
       return fulfill(route, {
         interaction_event_id: 'evt_brief_interaction_1',
         local_day: '2026-07-18',
@@ -393,5 +403,6 @@ export async function installApiFixtures(
     unexpectedRequests,
     mutationAttempts: () => mutationAttempts,
     briefCalls: () => [...briefCalls],
+    briefInteractions: () => [...briefInteractions],
   };
 }
