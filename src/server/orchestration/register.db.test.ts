@@ -4,7 +4,7 @@
 // 按分区纪律不得进 unit config）。boss 用 fake，断言挂载副作用而非真跑队列。
 
 import type { PgBoss } from 'pg-boss';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { EXPIRE_AGENT, JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
@@ -119,6 +119,39 @@ describe('registerOrchestrator mount guard', () => {
     await registerOrchestrator(boss as unknown as PgBoss, {} as never, caps);
     expect(boss.workedQueues).toEqual([ORCHESTRATOR_QUEUE]);
     expect(boss.scheduled).toEqual([ORCHESTRATOR_QUEUE]);
+  });
+
+  // YUK-781 A — the mount now runs a boot catch-up for a missed anchor. That catch-up is a
+  // best-effort loss-limiter; a worker that fails to boot drains NO queue at all, which is
+  // strictly worse than one missed night. So a catch-up that cannot even reach the DB must
+  // leave the mount intact (start-worker.ts reconcileStuckAiTaskRuns precedent).
+  //
+  // The clock is pinned INSIDE the catch-up window on purpose: the window gate short-circuits
+  // before any DB access, so at a wall-clock time outside 02:30–07:30 Asia/Shanghai this test
+  // would pass without ever exercising the failure path it claims to cover.
+  it('completes the mount even when the boot catch-up cannot reach the DB', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-25T03:00:00+08:00'));
+      const boss = new FakeBoss();
+      const caps = [capability('practice', [{ name: 'a', dependsOn: [] }])];
+      const explodingDb = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('simulated DB outage during worker boot');
+          },
+        },
+      ) as never;
+
+      await expect(
+        registerOrchestrator(boss as unknown as PgBoss, explodingDb, caps),
+      ).resolves.toBeUndefined();
+      expect(boss.workedQueues).toEqual([ORCHESTRATOR_QUEUE]);
+      expect(boss.scheduled).toEqual([ORCHESTRATOR_QUEUE]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not mount at all when no DAG members are declared', async () => {

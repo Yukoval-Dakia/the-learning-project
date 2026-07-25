@@ -13,7 +13,12 @@ import type { CapabilityManifest } from '@/kernel/manifest';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './constants';
 import { buildOrchestrationDag } from './members';
-import { type OrchestratorBoss, runOrchestratorStart, runOrchestratorTick } from './orchestrator';
+import {
+  type OrchestratorBoss,
+  runOrchestratorCatchUp,
+  runOrchestratorStart,
+  runOrchestratorTick,
+} from './orchestrator';
 
 /**
  * orchestrator 队列认得的 payload 形状：cron `{}` / tick `{tick:true, runId?}` /
@@ -174,6 +179,11 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
       const job = await boss.getJobById(name, id);
       return job ? { state: job.state } : null;
     },
+    // YUK-781 B — v12 `cancel(name, id)` 返回 CommandResponse（affected 计数），orchestrator
+    // 只关心「已尽力取消」，故丢弃返回值以保持窄接口。语义与残留风险见 OrchestratorBoss.cancel。
+    cancel: async (name, id) => {
+      await boss.cancel(name, id);
+    },
   };
 
   // 最后一步（见上文顺序说明）：注册消费者。
@@ -226,4 +236,16 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
   console.log(
     `[orchestrator] mounted: ${dag.nodes.size} members / ${dag.roots.length} roots; anchor cron ${ORCHESTRATOR_CRON} ${ORCHESTRATOR_TZ}`,
   );
+
+  // 错过锚点的启动期补跑（YUK-781 A）。**必须排在 boss.work 之后**：补跑会立刻排出第一拍 tick，
+  // 消费者不在就白排一分钟。pg-boss 不重放错过的 cron（timekeeper `shouldSendIt` 只认「距上一次
+  // cron 时刻 < 60s」），所以 02:30 那一刻整栈是停的 → 当夜零运行、连 run 行都没有，直到次日
+  // 02:30。窗口闸 + 当日防重闸都在 runOrchestratorCatchUp 内，且它**契约上不抛**；这层 try/catch
+  // 是带式加背带，照 start-worker.ts 里 reconcileStuckAiTaskRuns 的先例——排队消费的职责优先，
+  // 补跑失败绝不能挡 worker boot。
+  try {
+    await runOrchestratorCatchUp({ db, boss: orchestratorBoss, dag });
+  } catch (err) {
+    console.error('[orchestrator] boot catch-up threw unexpectedly (non-fatal)', err);
+  }
 }
