@@ -46,12 +46,27 @@ export interface RunGoalScopeAndWriteResult {
   /** goal id reserved for materialization (carried in target.subject_id). */
   goal_id: string | null;
   scope_count: number;
+  /**
+   * YUK-779 — success/failure discriminant, mirroring runEdgeProposeAndWrite's `ok`.
+   * `false` ONLY when this pipeline SWALLOWED an error (its catch-all below).
+   *
+   * Why it must exist: `proposal_id === null` is produced by BOTH the benign
+   * cold-start no-op (empty tree → no LLM call at all) and a swallowed LLM/parse
+   * fault. Without this flag the nightly job reports `proposed: 0` for both, so a
+   * rate-limit storm is indistinguishable from "nothing to propose tonight".
+   *
+   * NOTE the deliberate asymmetry: a benign no-op returns `ok: true`. "The fallible
+   * step returned normally without producing output" is a legitimate conclusion, not
+   * a failure — see src/server/boss/job-yield.ts for the full 判据.
+   */
+  ok: boolean;
 }
 
 const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
   proposal_id: null,
   goal_id: null,
   scope_count: 0,
+  ok: true,
 };
 
 async function buildGoalScopePreparation(db: Db, intent: GoalScopeIntent) {
@@ -135,11 +150,13 @@ export async function runGoalScopeAndWrite(
       created_at: new Date(),
     });
 
-    return { proposal_id: proposalId, goal_id: goalId, scope_count: scope.length };
+    return { proposal_id: proposalId, goal_id: goalId, scope_count: scope.length, ok: true };
   } catch (err) {
     console.error('runGoalScopeAndWrite: failed (no proposal written)', err);
     await writeRetryableAiFailureLedger(params.db, 'GoalScopeTask');
-    return { ...EMPTY_RESULT };
+    // YUK-779: `ok: false` is the ONLY thing that distinguishes this swallowed fault
+    // from the benign `!prepared` no-op above (both yield proposal_id: null).
+    return { ...EMPTY_RESULT, ok: false };
   }
 }
 

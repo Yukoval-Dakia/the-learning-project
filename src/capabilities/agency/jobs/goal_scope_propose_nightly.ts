@@ -42,6 +42,7 @@ import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
@@ -59,6 +60,12 @@ export interface GoalScopeNightlyResult {
   /** set when NO known domain has any weak node (no candidate to propose) */
   skipped_no_weak: number;
   proposal_id: string | null;
+  /**
+   * YUK-779 — 1 when runGoalScopeAndWrite SWALLOWED a fault (`ok === false`), else 0.
+   * Without it, `proposed: 0` covers both "the model had nothing to propose" and
+   * "the LLM call blew up", so a 限流风暴 reads as a normal quiet night.
+   */
+  llm_failed: number;
 }
 
 /** Weak-node convention: mastery < 0.55 (knowledge-readers.ts:321,644). A node
@@ -100,6 +107,7 @@ export async function runGoalScopeProposeNightly(
     skipped_pending: 0,
     skipped_no_weak: 0,
     proposal_id: null,
+    llm_failed: 0,
   };
 
   // PRE-LLM reads run OUTSIDE runGoalScopeAndWrite's swallow (D7 / F-1): a throw
@@ -170,16 +178,26 @@ export async function runGoalScopeProposeNightly(
     considered: 1,
     proposed: result.proposal_id ? 1 : 0,
     proposal_id: result.proposal_id,
+    // YUK-779: surface the swallow instead of letting it collapse into proposed:0.
+    llm_failed: result.ok ? 0 : 1,
   };
 }
 
 export function buildGoalScopeProposeNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runGoalScopeProposeNightly(db);
       console.log('[goal_scope_propose_nightly] result', result);
+      // YUK-779 — the fallible unit is the single LLM half. `considered` is 1 only
+      // after all three pre-LLM gates passed, so attempted stays 0 on a gated night
+      // (skipped_no_weak / existing goal / pending) → level `idle`, never an alarm.
+      return reportJobYield('goal_scope_propose_nightly', {
+        attempted: result.considered,
+        succeeded: result.considered - result.llm_failed,
+        failed: result.llm_failed,
+      });
     } catch (err) {
       console.error('[goal_scope_propose_nightly] failed', err);
       throw err;

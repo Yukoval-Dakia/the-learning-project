@@ -64,6 +64,7 @@ import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -158,6 +159,18 @@ export interface FrontierFillResult {
   skipped_tree_redundancy: number;
   /** Proposals dropped by the FRONTIER_FILL_MAX_PROPOSALS clamp. */
   skipped_over_cap: number;
+  /**
+   * YUK-779 — 1 once the LLM half was actually entered (all pre-LLM gates passed),
+   * else 0. Distinguishes "we never called the model tonight" (dense / no candidate /
+   * overflow) from "we called it".
+   */
+  llm_attempted: number;
+  /**
+   * YUK-779 — 1 when the whole-LLM-half catch below SWALLOWED a fault, else 0.
+   * Without it `proposed: 0` covers both "the model proposed nothing" and "the call
+   * blew up", so a 限流风暴 finishes `succeeded` with no trace anywhere.
+   */
+  llm_failed: number;
 }
 
 function emptyResult(): FrontierFillResult {
@@ -172,6 +185,8 @@ function emptyResult(): FrontierFillResult {
     skipped_invalid: 0,
     skipped_tree_redundancy: 0,
     skipped_over_cap: 0,
+    llm_attempted: 0,
+    llm_failed: 0,
   };
 }
 
@@ -283,6 +298,9 @@ export async function runFrontierFillAndWrite(
   //    is inside try/catch: an LLM/key/runner/parse fault → proposed:0, logged,
   //    NEVER throws out (mirror goal_scope / edge-propose).
   try {
+    // YUK-779: mark the fallible unit as entered BEFORE the call, so the counter is
+    // set on both the success and the swallow path.
+    result.llm_attempted = 1;
     const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const taskResult = await runTaskFn(
       'FrontierPrerequisiteTask',
@@ -394,6 +412,9 @@ export async function runFrontierFillAndWrite(
     //    LLM-payload-carrying error must not be serialized whole into logs; `.stack`
     //    is name+message+frames only, no custom payload props), return proposed:0.
     //    NEVER rethrow.
+    // YUK-779: keep swallowing, but RECORD it — proposed:0 alone cannot be told apart
+    // from a night where the model legitimately proposed nothing.
+    result.llm_failed = 1;
     console.error(
       '[frontier_fill_nightly] LLM half failed (no proposals written)',
       err instanceof Error ? (err.stack ?? err.message) : String(err),
@@ -426,11 +447,18 @@ function dominantDomain(
 
 export function buildFrontierFillNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runFrontierFillAndWrite(db);
       console.log('[frontier_fill_nightly] result', result);
+      // YUK-779 — the fallible unit is the single LLM half. Gated nights (dense /
+      // overflow / no candidate) never enter it → attempted 0 → level `idle`.
+      return reportJobYield('frontier_fill_nightly', {
+        attempted: result.llm_attempted,
+        succeeded: result.llm_attempted - result.llm_failed,
+        failed: result.llm_failed,
+      });
     } catch (err) {
       // Only pre-LLM DB faults reach here (the LLM half is swallowed inside
       // runFrontierFillAndWrite). Rethrow so pg-boss retries the DB fault.

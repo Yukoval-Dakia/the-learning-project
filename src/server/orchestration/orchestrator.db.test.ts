@@ -10,6 +10,7 @@
 
 import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
 import { type JobDagMemberInput, buildJobDag } from '@/kernel/job-dag';
+import { reportJobYield } from '@/server/boss/job-yield';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -47,6 +48,8 @@ class FakeBoss implements OrchestratorBoss {
   /** make the tick-chain send return null (pg-boss "no job created"). */
   nullTickSend = false;
   private states = new Map<string, string>();
+  /** YUK-779 — per-job pg-boss `output` (the handler's resolved value). */
+  private outputs = new Map<string, unknown>();
   private counter = 0;
 
   async send(
@@ -79,13 +82,24 @@ class FakeBoss implements OrchestratorBoss {
     return id;
   }
 
-  async getJobById(name: string, id: string): Promise<{ state: string } | null> {
+  async getJobById(name: string, id: string): Promise<{ state: string; output?: unknown } | null> {
     const state = this.states.get(`${name}:${id}`);
-    return state ? { state } : null;
+    if (!state) return null;
+    const key = `${name}:${id}`;
+    // Model pg-boss's jsonb round-trip so the reader is exercised on plain JSON,
+    // not on the in-memory object identity.
+    return this.outputs.has(key)
+      ? { state, output: JSON.parse(JSON.stringify(this.outputs.get(key))) }
+      : { state };
   }
 
   setJobState(name: string, id: string, state: string): void {
     this.states.set(`${name}:${id}`, state);
+  }
+
+  /** YUK-779 — stash what the handler resolved with (pg-boss stores it as job.output). */
+  setJobOutput(name: string, id: string, output: unknown): void {
+    this.outputs.set(`${name}:${id}`, output);
   }
 
   /** 该 (name,id) 是否真的存在一条 job 行。 */
@@ -128,6 +142,22 @@ async function failMember(boss: FakeBoss, runId: string, jobName: string) {
   if (node?.boss_job_id) boss.setJobState(jobName, node.boss_job_id, 'failed');
 }
 
+/**
+ * YUK-779 — 把某成员节点的 job 置为 completed **并**带上 handler 的产出报告
+ * （pg-boss 把 handler 返回值存进 job.output）。
+ */
+async function completeMemberWithYield(
+  boss: FakeBoss,
+  runId: string,
+  jobName: string,
+  y: { attempted: number; succeeded: number; failed: number },
+) {
+  const node = await nodeRow(runId, jobName);
+  if (!node?.boss_job_id) throw new Error(`no boss_job_id for '${jobName}'`);
+  boss.setJobState(jobName, node.boss_job_id, 'completed');
+  boss.setJobOutput(jobName, node.boss_job_id, reportJobYield(jobName, y));
+}
+
 describe('orchestrator trigger semantics', () => {
   beforeEach(async () => {
     await resetDb();
@@ -148,6 +178,82 @@ describe('orchestrator trigger semantics', () => {
     // root enqueued exactly once; a tick was scheduled (run not complete).
     expect(boss.memberSends.map((s) => s.name)).toEqual(['a']);
     expect(boss.tickSends).toBe(1);
+  });
+
+  // ── YUK-779: 静默空跑在 DAG 上「可见」的端到端实证 ─────────────────────────
+  // handler 返回产出报告 → pg-boss 存进 job.output → orchestrator 轮询时读回来 →
+  // 盖进节点 detail。**不改 status**：节点仍 succeeded，硬下游仍照跑。
+
+  it('YUK-779 RED — 异常空跑（试过、全败）→ 节点 detail 留痕，但仍 succeeded 且硬下游照跑', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // 限流风暴：3 格全试、全败、全被吞 → handler 仍正常 resolve。
+    await completeMemberWithYield(boss, run.id, 'a', { attempted: 3, succeeded: 0, failed: 3 });
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const a = await nodeRow(run.id, 'a');
+    // ① 失败语义**未变**：job 没 throw，节点照常转绿。
+    expect(a?.status).toBe('succeeded');
+    // ② 但「昨晚一切正常」的假象被打破了——节点上留下了真相。
+    expect(a?.detail).toContain('zero yield');
+    expect(a?.detail).toContain('all 3 attempted unit(s) failed');
+    // ③ 硬下游依然照跑（是否该改成 skip 是留给 owner 的语义决策）。
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
+  });
+
+  it('YUK-779 GREEN — 正常的零产出（空队列，压根没试）→ 节点 detail 保持 null', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // 空夜：一次可失败调用都没发生。产出同样是 0，但这是正常的。
+    await completeMemberWithYield(boss, run.id, 'a', { attempted: 0, succeeded: 0, failed: 0 });
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const a = await nodeRow(run.id, 'a');
+    expect(a?.status).toBe('succeeded');
+    expect(a?.detail).toBeNull(); // 不占 detail，不制造噪声
+  });
+
+  it('YUK-779 GREEN — 有输入但可失败步骤全部正常返回（无产出是合法结论）→ detail 保持 null', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // recalibration_nightly 的招牌夜：200 道题全部 below_threshold —— 全部正常返回。
+    await completeMemberWithYield(boss, run.id, 'a', {
+      attempted: 200,
+      succeeded: 200,
+      failed: 0,
+    });
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const a = await nodeRow(run.id, 'a');
+    expect(a?.status).toBe('succeeded');
+    expect(a?.detail).toBeNull();
+  });
+
+  it('YUK-779 — job 没带 output（旧 handler / 非夜链 job）时行为不变，绝不炸 tick', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a'); // 无 output
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('succeeded');
+    expect((await nodeRow(run.id, 'a'))?.detail).toBeNull();
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
   });
 
   it('② hard upstream success → downstream enqueues on next advance', async () => {
