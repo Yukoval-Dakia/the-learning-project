@@ -288,15 +288,23 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       ),
       tool(
         getTypedStateName,
-        // Honest tool description (ADR-0050 §(a), YUK-790): do NOT promise the director a
-        // classification the system does not yet produce. Today the only writer hardcodes
-        // confused_with_kc_id=null and the §修正-4 gate needs a NAMED confused-with KC, so this
-        // tool returns `no-evidence` (or nothing) for every KC. The hard warning below is the
-        // load-bearing part and survives energization: an empty read is the ABSENCE of a signal,
-        // never the signal "not confused" — without it the agent mistakes an unwired rail for
-        // evidence. Owner ruled 2026-07-25 to energize the rail (YUK-794); until it lands the
-        // description says "not yet produced", not "cannot be produced".
-        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only value reachable today is `no-evidence` — the `confused-with-X` and `mastered` classifications are not produced by any writer YET (that rail is pending, YUK-794). So an absent/`no-evidence` result means THE RAIL IS NOT WIRED UP YET, not that the learner is un-confused. Draw no conclusion from it either way.',
+        // Honest tool description (ADR-0050 §(a)/(b1), YUK-790): do NOT promise the director a
+        // classification the system does not yet produce. This string is RUNTIME INPUT to the
+        // research director, so a wrong causal promise lands straight in the model's reasoning.
+        //
+        // TWO INDEPENDENT rails are unwired — do NOT collapse them into one (an earlier version
+        // of this description wrongly put both behind YUK-794):
+        //   - `confused-with-X`: blocked on the INDUCTION side naming a confused-with KC
+        //     (reconcile hardcodes confused_with_kc_id=null; the §修正-4 gate in nextTypedState
+        //     demands a named KC). Pending YUK-794 / ADR-0050 §(a).
+        //   - `mastered`: FLIP-only. Per the kc_typed_state column comment in schema.ts it is
+        //     "reserved for the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT
+        //     written in this MVP" — i.e. it waits on the SCORING side, ADR-0050 §(b1) /
+        //     YUK-795. Landing YUK-794 does NOT make `mastered` start appearing.
+        //
+        // The hard warning survives both energizations: an empty read is the ABSENCE of a
+        // signal, never the signal "not confused" / "not mastered".
+        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only value reachable today is `no-evidence`. The other two are blocked on TWO SEPARATE AND UNRELATED rails: `confused-with-X` awaits the induction side naming a confused-with KC (pending, YUK-794), while `mastered` is FLIP-only — written solely by the post-Rust-scorer claim-survival FLIP (ADR-0046, pending YUK-795). Landing one does NOT unblock the other. So an absent/`no-evidence` result means THOSE RAILS ARE NOT WIRED UP YET — it is NOT evidence that the learner is un-confused, and NOT evidence that the learner has not mastered the KC. Draw no conclusion from it in either direction.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;

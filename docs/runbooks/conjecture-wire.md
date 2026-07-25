@@ -101,10 +101,18 @@ probe question 的 kind 由 conjecture 诱导期决定。当前 conjecture engin
 
 ## judge 成本观测
 
-answer route 本身**不**记成本——LLM 调用成本经 judge runner 内部的 AI 任务日志落地（`src/server/ai/log.ts`，evidence-first 既定基建）。查 probe 判分成本走 **`cost_ledger` 表**：
+answer route 本身**不**记成本——LLM 调用成本经 judge runner 内部的 AI 任务日志落地（`src/server/ai/log.ts`，evidence-first 既定基建），计费行落 **`cost_ledger` 表**。
+
+> ⚠️ **逐 probe 成本当前不可得，下面这条是「全部 judge 判分成本」的上界，含普通练习判分——不要当 probe 专属成本读。**
+>
+> 原因是结构性的，整条链没有连接键：`cost_ledger` 无任何 probe/练习判别列（只有 `task_run_id`(松耦合可空无 FK)/`task_kind`/`provider`/`model`/`cost`/`currency`/`tokens_in|out`/`outcome`/`pgboss_job_id`/`occurred_at`）；`ai_task_runs` 也无 question/subject 关联列（只有 `input_hash`/`prompt_fingerprint`/`result_digest` 这类摘要，不是按 probe 的查找键）；`experimental:probe_result` 事件**不写** `task_run_id`；`probe-answer.ts` 也**不把** invoker 的 run id 传给 `answerProbe`。而 probe 判分与普通提交判分**共用** `createDefaultJudgeInvoker`，产出的 `*JudgeTask` 完全同名 ⇒ 按 `task_kind` 聚合必然把普通练习一并计入。
+>
+> 要真正的 per-probe 成本，须先补这条关联链（属设计变更，本 runbook 不擅自设计）——见 **YUK-805**。
+
 ```sql
 -- judge task_kind 为 SemanticJudgeTask / StepsJudgeTask / MultimodalDirectJudgeTask
--- （registry.ts）。cost 是原始计费值，币种在 currency 列——聚合必须按 currency 分组，
+-- （registry.ts）。⚠️ 上界口径：含普通练习判分，非 probe 专属（见上）。
+-- cost 是原始计费值，币种在 currency 列——聚合必须按 currency 分组，
 -- 绝不裸 SUM 混币（schema.ts cost_ledger 注释）。
 SELECT task_kind, provider, model, cost, currency, tokens_in, tokens_out, occurred_at
 FROM cost_ledger
