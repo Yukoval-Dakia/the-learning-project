@@ -59,10 +59,23 @@ class FakeBoss implements OrchestratorBoss {
   cancels: { name: string; id: string }[] = [];
   /** member job names whose cancel() throws (models a DB hiccup / missing queue). */
   throwOnCancelJobs = new Set<string>();
-  private states = new Map<string, string>();
+  private states: Map<string, string>;
   /** YUK-779 — per-job pg-boss `output` (the handler's resolved value). */
   private outputs = new Map<string, unknown>();
   private counter = 0;
+
+  /**
+   * @param sharedJobs 传入即与另一个 FakeBoss **共享同一份 job 表**。
+   *
+   * 建模保真（YUK-779 PR #1076 修 A7 flake）：生产里多个 worker 副本连的是**同一个**
+   * pg-boss 库，`getJobById` 是一次 DB 查询——副本 B 一定看得见副本 A 刚插的 job。
+   * 用两个各自独立的内存 job 表建模「两个副本」是**不忠实**的：B 查不到 A 发的 job，
+   * 于是 pollInflightNode 的自愈补发把它判成「send never landed」并重发一次。
+   * 那是建模产物，不是生产会发生的事。默认仍是独立表（单副本用例不受影响）。
+   */
+  constructor(sharedJobs?: Map<string, string>) {
+    this.states = sharedJobs ?? new Map<string, string>();
+  }
 
   async send(
     name: string,
@@ -1135,8 +1148,13 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
   // Two worker replicas booting in the same second both pass the window + "no run today" gate.
   // The DB partial unique (run_date) WHERE status='running' is what has to hold the line.
   it('A7 two workers booting at once create exactly one run and enqueue each root once', async () => {
-    const bossA = new FakeBoss();
-    const bossB = new FakeBoss();
+    // 两个副本共享**同一份** job 表 —— 生产里它们连同一个 pg-boss 库（见 FakeBoss
+    // 构造器）。此前各给一份独立表，B 查不到 A 刚发的 job，自愈补发便把它判成
+    // 「send never landed」重发一次，于是 allSends 里出现两条 'r1' —— 一个纯粹的
+    // 建模产物，且只在特定交错下出现（CI 上偶发红、本地几乎必绿）。
+    const sharedJobs = new Map<string, string>();
+    const bossA = new FakeBoss(sharedJobs);
+    const bossB = new FakeBoss(sharedJobs);
     const dag = dagOf(member('r1'), member('r2'), member('down', ['r1']));
 
     const [outA, outB] = await Promise.all([
@@ -1161,6 +1179,56 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     expect(allSends.filter((n) => n === 'down')).toHaveLength(0);
     expect((await nodeRow(runs[0].id, 'r1'))?.status).toBe('enqueued');
     expect((await nodeRow(runs[0].id, 'r2'))?.status).toBe('enqueued');
+
+    // 更承重的一条：真正代表「没有重复付费」的不是 send **调用**次数，而是**落库的 job
+    // 行数**。共享 job 表让这条可断言了——即便某条路径重发，reserved id 相同 +
+    // ON CONFLICT DO NOTHING 也只会存在一行。
+    const jobKeys = [...sharedJobs.keys()];
+    expect(jobKeys.filter((k) => k.startsWith('r1:'))).toHaveLength(1);
+    expect(jobKeys.filter((k) => k.startsWith('r2:'))).toHaveLength(1);
+    expect(jobKeys.filter((k) => k.startsWith('down:'))).toHaveLength(0);
+    // 且落库的那一行用的正是节点预留的 id（意图先落库不变量）。
+    for (const root of ['r1', 'r2'] as const) {
+      const node = await nodeRow(runs[0].id, root);
+      expect(node?.boss_job_id).toBeTruthy();
+      expect(bossA.hasJob(root, node?.boss_job_id ?? '')).toBe(true);
+    }
+  });
+
+  // A7 的**确定性**姊妹用例（YUK-779 PR #1076）。A7 用 Promise.all 抢并发，「副本 B 在 A
+  // 已入队之后才轮询 r1」这个关键交错只是**偶尔**发生（CI 偶发红、本地几乎必绿）。这里用
+  // 「A 起 run → B 推一拍」把那个交错钉死，不再靠调度运气。
+  //
+  // 被钉的生产不变量：推进既有 run 的**另一个副本**不得重发已入队的根。它成立靠的是
+  // 「两个副本查同一个 pg-boss 库」—— B 的 getJobById 查得到 A 插的行，于是
+  // pollInflightNode 不走 `send never landed` 自愈补发那一支。把 bossB 换成独立 job 表
+  // （即修复前的建模）这条立刻转红，正是 CI 上那条 `[ 'r1', 'r1' ]` 的机理。
+  it('A7b 另一个副本推进同一条 run 时不重发已入队的根（确定性交错）', async () => {
+    const sharedJobs = new Map<string, string>();
+    const bossA = new FakeBoss(sharedJobs);
+    const bossB = new FakeBoss(sharedJobs);
+    const dag = dagOf(member('r1'), member('r2'), member('down', ['r1']));
+
+    const outA = await catchUp(bossA, dag, HALF_HOUR_PAST);
+    expect(outA.action).toBe('started');
+    expect(bossA.memberSends.map((s) => s.name).sort()).toEqual(['r1', 'r2']);
+
+    // 副本 B 推进同一条 run：它会轮询 A 已入队的 r1/r2。
+    await runOrchestratorTick({
+      db,
+      boss: bossB,
+      dag,
+      now: HALF_HOUR_PAST,
+      localDate: () => RUN_DATE,
+    });
+
+    // B 一条成员 job 都不该发（r1/r2 在飞、down 的硬上游未成功）。
+    expect(bossB.memberSends.map((s) => s.name)).toEqual([]);
+
+    // 全局仍是每根恰一条 job 行。
+    const jobKeys = [...sharedJobs.keys()];
+    expect(jobKeys.filter((k) => k.startsWith('r1:'))).toHaveLength(1);
+    expect(jobKeys.filter((k) => k.startsWith('r2:'))).toHaveLength(1);
   });
 
   // PR #1075 OCR minor — the window is an ELAPSED-time interval [0, window), not a

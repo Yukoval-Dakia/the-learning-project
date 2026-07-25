@@ -268,7 +268,9 @@ export async function runEdgeProposeAndWrite(
     const treeParentLinks = tree.flatMap((node) =>
       node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
     );
-    const stats = { ...EMPTY_RESULT, llm_attempted: true };
+    // 用 llmAttempted 而非硬编码 true（PR #1076 review）：其余每条出口都从这个局部量
+    // 派生，单一真相源；硬编码会在「赋值点被挪动 / 中间插入新路径」时静默漂移。
+    const stats = { ...EMPTY_RESULT, llm_attempted: llmAttempted };
 
     for (const p of parsed.proposals) {
       if (p.from_knowledge_id === p.to_knowledge_id) {

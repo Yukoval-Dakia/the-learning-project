@@ -115,7 +115,7 @@ describe('describeJobYield — 展示分母必须与判据分母同源（PR #107
     // 判据用 resolved = succeeded + failed = 8，failed/resolved = 5/8 = 62.5% > 50%。
     const msg = describeJobYield('x', { attempted: 8, succeeded: 3, failed: 5 }, 'degraded');
     expect(msg).toContain('5/8 resolved unit(s) failed');
-    expect(msg).toContain('63% > 50% threshold');
+    expect(msg).toContain('62.5% > 50% threshold');
     // 绝不能拿 attempted 当分母印出另一个数。
     expect(msg).not.toContain('/8 attempted');
   });
@@ -125,9 +125,19 @@ describe('describeJobYield — 展示分母必须与判据分母同源（PR #107
     // 旧版本会印成 5/100（5%）——读者据此会判成「几乎没失败，为什么报警」。
     const msg = describeJobYield('x', { attempted: 100, succeeded: 3, failed: 5 }, 'degraded');
     expect(msg).toContain('5/8 resolved unit(s) failed');
-    expect(msg).toContain('63% > 50% threshold');
+    expect(msg).toContain('62.5% > 50% threshold');
     expect(msg).toContain('[attempted=100]');
     expect(msg).not.toContain('5/100');
+  });
+
+  it('刚过阈值时不得印出「50% > 50%」这种自相矛盾的话（取整精度）', () => {
+    // 63/125 = 50.4% —— 判据用未取整比率判 degraded（严格 >），展示取整到整数会印成
+    // 「50% > 50% threshold」，字面为假，运维会当误报忽略。
+    const y = { attempted: 125, succeeded: 62, failed: 63 };
+    expect(classifyJobYield(y)).toBe('degraded');
+    const msg = describeJobYield('x', y, 'degraded');
+    expect(msg).toContain('50.4% > 50% threshold');
+    expect(msg).not.toContain('50% > 50% threshold');
   });
 
   it('不变量成立时不加 [attempted=…] 噪声', () => {
@@ -211,6 +221,30 @@ describe('readJobYieldReport — 防御性回读（orchestrator 侧）', () => {
         job_yield: { job: 'x', level: 'idle', attempted: 0, succeeded: 0, failed: 0 },
       }),
     ).toMatchObject({ level: 'idle', attempted: 0 });
+  });
+
+  it('违反 attempted === succeeded + failed 的三元组必须被拒（PR #1076 review）', () => {
+    // 这条不是洁癖：{attempted:0, succeeded:3, failed:5} 三个字段都过 isCount，却会在
+    // classifyJobYield 里因 attempted<=0 短路成 idle —— 把 5 次真实吞错说成
+    // 「今晚没事可做」，正好是本模块存在的理由被反过来利用。
+    const corrupted = { job: 'x', level: 'idle', attempted: 0, succeeded: 3, failed: 5 };
+    expect(readJobYieldReport({ job_yield: corrupted })).toBeUndefined();
+    // 确认危害真实存在（若放行，判档就是 idle）。
+    expect(classifyJobYield({ attempted: 0, succeeded: 3, failed: 5 })).toBe('idle');
+
+    // 另一向的失配同样拒（attempted 虚高）。
+    expect(
+      readJobYieldReport({
+        job_yield: { job: 'x', level: 'ok', attempted: 100, succeeded: 3, failed: 5 },
+      }),
+    ).toBeUndefined();
+
+    // 合法三元组照常解出（守卫不得误伤正常路径）。
+    expect(
+      readJobYieldReport({
+        job_yield: { job: 'x', level: 'ok', attempted: 8, succeeded: 3, failed: 5 },
+      }),
+    ).toMatchObject({ attempted: 8, succeeded: 3, failed: 5 });
   });
 
   it('detail 缺失/非字符串时归一为 null，其余字段照常解出', () => {

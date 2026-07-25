@@ -454,9 +454,19 @@ export function buildFrontierFillNightlyHandler(
       console.log('[frontier_fill_nightly] result', result);
       // YUK-779 — the fallible unit is the single LLM half. Gated nights (dense /
       // overflow / no candidate) never enter it → attempted 0 → level `idle`.
+      //
+      // `|| result.llm_failed` matches the two sibling handlers (PR #1076 review).
+      // It is redundant TODAY — `llm_attempted = 1` is the first statement inside the
+      // swallowing try, so nothing can fail before it — but that is a property of one
+      // statement's position, not an invariant anyone would notice breaking. Insert a
+      // DB read above it and a fault there would set llm_failed WITHOUT llm_attempted,
+      // yielding `attempted: 0` → `idle` for a real swallowed error: precisely the
+      // silent no-op this ticket exists to catch. Keeping the three handlers identical
+      // costs nothing and removes the trap.
+      const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
       return reportJobYield('frontier_fill_nightly', {
-        attempted: result.llm_attempted,
-        succeeded: result.llm_attempted - result.llm_failed,
+        attempted,
+        succeeded: attempted - result.llm_failed,
         failed: result.llm_failed,
       });
     } catch (err) {

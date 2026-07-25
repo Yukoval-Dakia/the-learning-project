@@ -141,8 +141,12 @@ export function describeJobYield(job: string, y: JobYield, level: JobYieldLevel)
   if (level === 'stalled') {
     return `${job}: zero yield — 0/${resolved} resolved unit(s) succeeded, ${y.failed} swallowed failure(s); downstream reads stale/empty data${attemptedNote}`;
   }
-  const pct = Math.round((y.failed / resolved) * 100);
-  const threshold = Math.round(YIELD_DEGRADED_FAILURE_RATE * 100);
+  // 一位小数（PR #1076 review）：判据用**未取整**的比率做严格 `>`，展示若取整到整数，
+  // failed=63/resolved=125（50.4%）会印成「50% > 50% threshold」——一句数学上为假的话，
+  // 运维照字面读会判成误报。分母已与判据同源，精度也必须跟上，否则前一轮修的一致性
+  // 又在取整这一步丢掉。
+  const pct = Math.round((y.failed / resolved) * 1000) / 10;
+  const threshold = Math.round(YIELD_DEGRADED_FAILURE_RATE * 1000) / 10;
   return `${job}: degraded yield — ${y.failed}/${resolved} resolved unit(s) failed (${pct}% > ${threshold}% threshold)${attemptedNote}`;
 }
 
@@ -197,6 +201,14 @@ export function readJobYieldReport(output: unknown): JobYieldReport | undefined 
   if (!isCount(r.attempted) || !isCount(r.succeeded) || !isCount(r.failed)) {
     return undefined;
   }
+  // 核心不变量 attempted === succeeded + failed（PR #1076 review）。没有任何正确的
+  // handler 能产出违反它的三元组，故违反 = output 被篡改/损坏，属于本函数契约里
+  // 「不认识的形状」。
+  //
+  // 这条比看起来重要：`{attempted: 0, succeeded: 3, failed: 5}` 三个字段都过 isCount，
+  // 却会在 classifyJobYield 里因 `attempted <= 0` 短路成 **idle** —— 把 5 次真实的
+  // 吞错说成「今晚没事可做」。那正是本模块存在的理由被反过来利用。
+  if (r.attempted !== r.succeeded + r.failed) return undefined;
   return {
     job: r.job,
     level: r.level,
