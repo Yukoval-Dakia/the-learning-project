@@ -124,7 +124,7 @@ export function parseOrchestratorPayload(raw: unknown): OrchestratorJobPayload {
  * 建 orchestrator 队列 + 它的死信队列（YUK-778）。
  *
  * **为什么不能继续用 `FAST_QUEUE_OPTS`**：那份 opts 只设 expire/retention，其余全部落到
- * pg-boss 的 `QUEUE_DEFAULTS`（实测 v12.26.1，plans.js:44-53 定义 + 456-458 的
+ * pg-boss 的 `QUEUE_DEFAULTS`（实测 v12.26.1，plans.js:45-54 定义 + 456-458 的
  * `COALESCE(options->>'retryLimit', 2)` 等）：`retry_limit 2 / retry_delay 0 /
  * retry_backoff false / dead_letter NULL`。FAST 档这么定是对的——housekeeping 掉一拍下个
  * cron 重跑。但 orchestrator tick 不是 housekeeping，它是**整夜唯一的驱动单点**：

@@ -7,7 +7,7 @@
 >
 > 逐边失败语义：硬边（默认）上游 failed/skipped → 下游 skipped 留痕；`soft` 边上游未成功时下游**照跑**，事实只记在 `dag_orchestration_node.stale` 上——**handler 收不到任何 stale 信号**（YUK-778 删掉了那条从来没有消费者的 `{ stale: true }` job payload；成员 job 的 payload 恒为 `{}`）。软边的全部含义就是「不阻塞」。
 >
-> 可观测（YUK-778）：run 起步 / 收尾（带节点总账，含 stale 计数）、每个 failed（error）/ skipped（warn）节点、跨日 run 被 abandon（error + 放弃前总账）都会打进程日志——两张调度态表是 `BACKUP_EXCLUDED` 且读面（YUK-774）未建，日志是当前唯一诊断出口。`nightly_orchestrator` 队列另有 `nightly_orchestrator_dlq`：tick 抛到 pg-boss 并耗尽重试预算（retryDelay 30s + backoff ×2）后残骸落 DLQ 保留 7d。
+> 可观测（YUK-778）：run 起步 / 收尾（带节点总账，含 stale 计数）、每个 failed（error）/ skipped（warn）节点、跨日 run 被 abandon（error + 放弃前总账）都会打进程日志——两张调度态表是 `BACKUP_EXCLUDED` 且读面（YUK-774）未建，日志是当前唯一诊断出口。`nightly_orchestrator` 队列另有 `nightly_orchestrator_dlq`：tick 抛到 pg-boss 并耗尽重试预算后残骸落 DLQ 保留 7d。重试退避是**带抖动的指数**（`plans.js:1653-1656`，`retry_delay_max` 为 NULL 故无上限钳）：retryDelay 30s ⇒ 第一次重投递 30–60s、第二次 60–120s。
 
 | Queue | 上游边 | 注册点 | 说明 |
 |-------|--------|--------|------|

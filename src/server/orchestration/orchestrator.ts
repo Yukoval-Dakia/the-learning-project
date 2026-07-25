@@ -328,9 +328,13 @@ async function advancePendingNode(
     const claimed = await claimNodePending(deps.db, node.id, { bossJobId, stale, now });
     if (!claimed) return false;
     // 内存行跟上刚落库的 stale（YUK-778）。本轮 summarize 读的是这张内存 map，不同步就会
-    // 少算本轮新入队的 stale 节点。今天这个漏算恰好打不到收尾日志（刚入队的节点非终态 ⇒
-    // 本轮 complete 必为 false ⇒ 那行不打），但那是靠一条**别处**的不变量兜着的巧合——
-    // 一旦有人开始在非收尾时刻读这个计数就立刻错。让内存与 DB 一致，别留这种雷。
+    // 少算本轮新入队的 stale 节点。
+    //
+    // **这不是防御性的**（独立评审 NIT）：初稿注释以为「刚入队的节点非终态 ⇒ 本轮 complete
+    // 必为 false ⇒ 收尾日志打不到这个漏算」，那条推理有洞——紧接着的 send-returns-null 分支
+    // （见下方 `if (!sentId)`）会把**刚领取的这个节点**在同一轮里落成 failed。若它恰是最后
+    // 一个非终态节点，本轮 complete 就是 true，收尾总账带着漏算的 stale 计数打出去。
+    // 故此处的同步是真在修一条可达路径，不是洁癖。
     node.stale = stale;
 
     // 同轮第 n 个入队者延后 n×间隔（封顶）。第 0 个立刻发 → 串行链上零延迟。
@@ -490,6 +494,15 @@ async function cancelRunInflightJobs(
   deps: { db: Db; boss: OrchestratorBoss },
   run: RunRow,
   now: Date,
+  /**
+   * 本次调用是否**赢下了**那条 run 的 abandon CAS（YUK-778 独立评审 MINOR）。只影响是否打
+   * 总账日志，不影响清扫本身——清扫是尽力止损，输掉 CAS 也照做（幂等，且已终态节点被跳过）。
+   *
+   * 为什么必须分开：输掉 CAS 意味着**别人**收尾了这条 run，而对手可能是 `completed`。此时
+   * 无条件打「abandoned run X left …」就会在 error 级报告一次没发生的放弃——正是本 PR 的
+   * 日志设计要杜绝的那类谎话。上面那行 ABANDONING 已经这么闸了，总账不跟上就是半道闸。
+   */
+  announce: boolean,
 ): Promise<void> {
   let nodes: Map<string, NodeRow>;
   try {
@@ -504,11 +517,13 @@ async function cancelRunInflightJobs(
   // 放弃前的节点总账（YUK-778）。这一行**就是**「昨晚为什么没跑完」的答案：它是被放弃的
   // 那一夜留下的唯一快照——下面的清扫会把每个非终态节点改写成 failed/skipped，事后再查
   // 调度表已看不出「当时卡在哪一层」。两张表又 BACKUP_EXCLUDED，日志是唯一出口。
-  console.error(
-    `[orchestrator] abandoned run ${run.id} (${run.run_date}) left ${describeNodeCensus(
-      summarize(nodes),
-    )} — settling its non-terminal nodes and cancelling their pg-boss jobs`,
-  );
+  if (announce) {
+    console.error(
+      `[orchestrator] abandoned run ${run.id} (${run.run_date}) left ${describeNodeCensus(
+        summarize(nodes),
+      )} — settling its non-terminal nodes and cancelling their pg-boss jobs`,
+    );
+  }
   for (const node of nodes.values()) {
     if (isTerminalNodeStatus(node.status)) continue;
     try {
@@ -640,12 +655,15 @@ export async function runOrchestratorStart(
     if (leftover.run_date !== runDate) {
       // 只在 CAS 真赢时才喊（YUK-778）：finishRun 的 where 带 status='running'，并发的
       // 收尾者会影响 0 行却照样 resolve，无条件打日志等于报出一次没发生的放弃。
-      if (await finishRun(deps.db, leftover.id, 'abandoned', now)) {
+      const abandoned = await finishRun(deps.db, leftover.id, 'abandoned', now);
+      if (abandoned) {
         console.error(
           `[orchestrator] ABANDONING run ${leftover.id} (${leftover.run_date}) — it was still 'running' when the ${runDate} anchor fired, i.e. that night never reached a terminal state`,
         );
       }
-      await cancelRunInflightJobs(deps, leftover, now);
+      // 清扫无条件跑（止损），但总账日志跟着同一个 CAS 结果走——见 cancelRunInflightJobs 的
+      // `announce` 参数：输掉 CAS 时对手可能是 `completed`，那时喊「abandoned」就是假消息。
+      await cancelRunInflightJobs(deps, leftover, now, abandoned);
     }
   }
 
@@ -654,7 +672,17 @@ export async function runOrchestratorStart(
     // cron 重投递防重（YUK-758 review ToPUE）：cron start job 在崩溃/重投递下会二次执行；
     // 若今日已有**任意**状态的 run（含 tick 链已推到 completed 的），cron 绝不再建第二条
     // 重发全部 root（重复整晚付费任务）。manual 触发例外——显式重跑允许在完成后再建新 run。
-    if (trigger === 'cron' && (await getLatestRunForDate(deps.db, runDate))) {
+    const guarded = trigger === 'cron' ? await getLatestRunForDate(deps.db, runDate) : null;
+    if (guarded) {
+      // 这条 return 是**「今夜整链不跑」的第四种成因**，且在本票之前同样一行日志不打
+      //（YUK-778 独立评审 MAJOR）。防重本身是对的（cron 重投递不该重发整晚付费任务），但它
+      // 也会在一个不该沉默的场景上触发：`src/server/export/constants.ts:312-316` 自述，
+      // 备份还原后残留的 `completed` run 会让本闸「skip that calendar day's chain entirely…
+      // silent」。运维看到的又是「昨晚什么都没发生」——与本票要修的那个不可区分性同形。
+      // 隔壁 runOrchestratorCatchUp 的同类跳过早就打日志了，这里补齐。
+      console.warn(
+        `[orchestrator] cron anchor for ${runDate} did NOT start a chain: run ${guarded.id} already exists for this date (${guarded.status}). This is the redeliver guard; if you did not expect a run today, check for a leftover row (e.g. an archive restore) — the guard cannot tell one from a genuine earlier start`,
+      );
       return null;
     }
     // 原子建 run + 落节点（ToqXn）：杜绝 createRun 提交后崩溃留 0 节点 run。

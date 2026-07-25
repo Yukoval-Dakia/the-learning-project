@@ -414,8 +414,7 @@ describe('orchestrator trigger semantics', () => {
     expect(b?.status).toBe('enqueued');
     expect(b?.stale).toBe(true);
     const bSend = boss.memberSends.find((s) => s.name === 'b');
-    expect(bSend?.data).toEqual({});
-    expect(bSend?.data).not.toHaveProperty('stale');
+    expect(bSend?.data).toEqual({}); // exact equality — a `stale` key would fail this
   });
 
   // The self-healing re-send (⑪) is the OTHER site that used to reconstruct the payload, from
@@ -1785,6 +1784,12 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
   // The log is this feature's ONLY output, so it must never report a transition that did not
   // happen. Both `updateNodeStatus` and `finishRun` are CAS writes whose losers still resolve;
   // gating every line on "did the row actually change" is what keeps the trail truthful.
+  //
+  // HONEST LIMITATION (YUK-778 独立评审 NIT): this case only *exercises* the gate when both ticks
+  // read the node as `enqueued` before either writes. If they serialize, the second tick's
+  // pollInflightNode returns early (node already terminal) and never reaches settleNode — the
+  // assertion still holds, but for a different reason. It is a smoke test for the composed
+  // behavior; the deterministic proof that the gate's input is correct is L7/L8.
   it('L6 a losing CAS logs nothing — concurrent ticks settle a node once and report it once', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
@@ -1819,6 +1824,36 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
       await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
     )[0];
     expect(settled.status).toBe('completed'); // the loser changed nothing
+  });
+
+  // The FOURTH way tonight can silently not run, found by the independent review of this PR:
+  // the cron redeliver guard. src/server/export/constants.ts:312-316 documents it as a known
+  // silent path (an archive restore leaves a `completed` row → the guard skips that whole
+  // calendar day). Leaving it unlogged would reproduce, for a different cause, exactly the
+  // "did it run, or did nothing happen?" ambiguity this PR exists to remove.
+  it('L9 a cron anchor stopped by the redeliver guard says so instead of returning silently', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const first = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    // Drive it to completion so the guard hits the `completed`-row branch (the restore scenario),
+    // not the "adopt the running run" branch.
+    await completeMember(boss, first.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    logs.length = 0;
+
+    const second = await runOrchestratorStart(
+      { db, boss, dag, now: NOW, localDate: () => RUN_DATE },
+      'cron',
+    );
+
+    expect(second).toBeNull(); // behavior unchanged: still no second run, still no re-sent roots
+    const guarded = linesMatching(/did NOT start a chain/, 'warn');
+    expect(guarded).toHaveLength(1);
+    expect(guarded[0]).toContain(first.id);
+    expect(guarded[0]).toContain(RUN_DATE);
   });
 
   it('L8 updateNodeStatus reports whether the terminal guard let the write through', async () => {
