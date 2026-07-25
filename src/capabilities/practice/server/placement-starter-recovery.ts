@@ -265,6 +265,45 @@ async function guardClaim(
 }
 
 /**
+ * Terminalize a claim whose semantic goal revision is no longer authoritative. 'cancelled' with the
+ * same 'superseded' class `dispatchPlacementStarterClaimTx` uses for the losing side of a
+ * single-flight race — the authority only moves forward, so a stale claim is undispatchable forever
+ * and must leave the scan rather than be re-examined every window. Locks the claim row and
+ * re-checks `pending_dispatch` first: a concurrent /placement/start may have dispatched it between
+ * the scan and here, and a dispatched claim is not ours to cancel.
+ */
+async function cancelSupersededClaim(
+  db: Db,
+  claim: ClaimRow,
+  now: Date,
+  currentRevisionId: string,
+  result: PlacementStarterRecoveryResult,
+): Promise<void> {
+  const cancelled = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ status: placement_starter_claim.status })
+      .from(placement_starter_claim)
+      .where(eq(placement_starter_claim.id, claim.id))
+      .for('update');
+    if (locked?.status !== 'pending_dispatch') return false;
+    await markPlacementStarterClaimTerminal(tx, claim.id, 'cancelled', now, {
+      class: 'superseded',
+      code: 'stale_revision',
+      message: `placement starter claim is for superseded semantic goal revision ${claim.semantic_goal_revision_id}; current is ${currentRevisionId}`,
+    });
+    return true;
+  });
+  if (cancelled) {
+    result.staleRevision += 1;
+    console.warn(
+      `[placement-starter-recovery] cancelled stale-revision claim ${claim.id} (goal ${claim.goal_id}, revision ${claim.semantic_goal_revision_id} → current ${currentRevisionId}); never dispatched`,
+    );
+  } else {
+    result.lost += 1;
+  }
+}
+
+/**
  * Overdue claims of exactly ONE status, oldest cursor first. The single-status equality plus the
  * range on next_reconcile_at keeps `placement_starter_claim_recovery_idx` usable (the status is
  * inside its partial predicate) and the ORDER BY is the index's own column order.
@@ -401,45 +440,49 @@ async function sweepPendingDispatch(
   // 'cancelled' with the same 'superseded' class dispatchPlacementStarterClaimTx uses — the
   // authority only moves forward, so a stale claim is undispatchable forever and must leave the
   // scan rather than be re-examined every window.
+  // So: never dispatch a claim whose revision is no longer authoritative. The check happens TWICE.
+  // This first one is an unlocked pre-check — cheap, and it short-circuits the overwhelmingly
+  // common case (a revision superseded long ago) without opening a dispatch transaction at all.
+  // It is NOT sufficient on its own: see the authoritative re-check inside the dispatch tx below.
   const authority = await resolvePlacementStarterGoalAuthority(db, claim.goal_id);
   if (authority.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
-    const cancelled = await db.transaction(async (tx) => {
-      const [locked] = await tx
-        .select({ status: placement_starter_claim.status })
-        .from(placement_starter_claim)
-        .where(eq(placement_starter_claim.id, claim.id))
-        .for('update');
-      // Re-check under the row lock: a concurrent /placement/start may have dispatched this claim
-      // between the scan and here, and a dispatched claim is not ours to cancel.
-      if (locked?.status !== 'pending_dispatch') return false;
-      await markPlacementStarterClaimTerminal(tx, claim.id, 'cancelled', now, {
-        class: 'superseded',
-        code: 'stale_revision',
-        message: `placement starter claim is for superseded semantic goal revision ${claim.semantic_goal_revision_id}; current is ${authority.semanticGoalRevisionId}`,
-      });
-      return true;
-    });
-    if (cancelled) {
-      result.staleRevision += 1;
-      console.warn(
-        `[placement-starter-recovery] cancelled stale-revision claim ${claim.id} (goal ${claim.goal_id}, revision ${claim.semantic_goal_revision_id} → current ${authority.semanticGoalRevisionId}); never dispatched`,
-      );
-    } else {
-      result.lost += 1;
-    }
+    await cancelSupersededClaim(db, claim, now, authority.semanticGoalRevisionId, result);
     return;
   }
 
   const knowledgeIds = await resolveGoalPlacementScope(db, goalRow);
 
   try {
+    let supersededRevisionId: string | null = null;
     // Same admission contract as /api/placement/start's cold path: serialize against pool
     // promotion for this KC scope, then pay ONLY if the scope still has no eligible item.
     const jobId = await dispatch(db, claim.id, async (tx) => {
+      // AUTHORITATIVE STALE-REVISION RE-CHECK (review PRRT…h8a). The pre-check above is a lockless
+      // read, so a goal re-scoped between it and the dispatch transaction taking the claim row lock
+      // would still get the just-superseded revision dispatched — and that is the destructive
+      // outcome in full, not a near-miss. Redo it HERE, inside the dispatch tx, holding the goal
+      // row FOR UPDATE so a concurrent scope update must serialize against us.
+      //
+      // Lock-order note (deliberate, documented): this takes claim → goal, whereas
+      // materializePlacementStartersForGoal takes goal → claim. The inversion needs a
+      // /placement/start on the SAME goal concurrent with the nightly sweep to bite; Postgres
+      // detects it and aborts one side, which lands in the per-claim guard as a contained failure
+      // with the cursor advanced — never a corrupt dispatch. Accepted over restructuring the
+      // dispatch entrypoint to hand this module a transaction of its own.
+      await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, claim.goal_id)).for('update');
+      const fresh = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
+      if (fresh.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
+        supersededRevisionId = fresh.semanticGoalRevisionId;
+        return false; // suppress dispatch; the claim is terminalized below, outside this tx
+      }
       await lockPlacementSupplyScopes(tx, knowledgeIds);
       return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
     });
-    if (jobId) {
+    if (supersededRevisionId !== null) {
+      // Admission refused for staleness, so nothing was enqueued and the claim is still
+      // pending_dispatch. Terminalize it in its own transaction (same shape as the pre-check path).
+      await cancelSupersededClaim(db, claim, now, supersededRevisionId, result);
+    } else if (jobId) {
       result.redispatched += 1;
       console.log(
         `[placement-starter-recovery] re-dispatched stranded claim ${claim.id} (goal ${claim.goal_id}, subject ${claim.subject_id}) as job ${jobId}`,

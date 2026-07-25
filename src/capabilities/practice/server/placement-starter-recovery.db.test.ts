@@ -325,6 +325,60 @@ describe('sweepStalePlacementStarterClaims — stale revision guard', () => {
     expect(second.scannedPending).toBe(0);
   });
 
+  // Review PRRT…h8a: the pre-check is a lockless read, so a goal re-scoped between it and the
+  // dispatch transaction would still get the just-superseded revision dispatched. The dispatch tx
+  // therefore redoes the comparison under a goal row lock. Here the goal is re-scoped AFTER the
+  // pre-check has already passed (simulated by mutating it from inside the dispatch seam, which
+  // runs at exactly that point), so only the in-transaction re-check can catch it.
+  it('catches a revision superseded after the pre-check, inside the dispatch transaction', async () => {
+    await seedGoal();
+    const claimId = await insertClaim(0, { id: 'claim-toctou' });
+    let admitVerdict: boolean | null = null;
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch: (async (
+        dbArg: typeof db,
+        _claimId: string,
+        admit?: (tx: never, claim: never) => Promise<boolean>,
+      ) => {
+        // Re-scope the goal now — i.e. after the sweeper's pre-check passed, before admission.
+        await db
+          .update(goal)
+          .set({ scope_knowledge_ids: ['kc-explicit', 'seed:yuwen:root'], updated_at: NOW })
+          .where(eq(goal.id, 'goal-1'));
+        admitVerdict = await dbArg.transaction((tx) =>
+          (admit as (t: unknown, c: unknown) => Promise<boolean>)(tx, undefined),
+        );
+        return admitVerdict ? 'job-should-not-happen' : null;
+      }) as never,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    // Admission refused on staleness → nothing enqueued, and the claim is terminalized.
+    expect(admitVerdict).toBe(false);
+    expect(result).toMatchObject({ staleRevision: 1, redispatched: 0, admissionSkipped: 0 });
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('cancelled');
+    expect(claim.last_error_code).toBe('stale_revision');
+
+    // The whole point of NOT dispatching the stale claim: the new revision's claim can still be
+    // established and dispatched. Cancelling the stale one leaves the (goal, subject) single-flight
+    // slot free — which is exactly what dispatching it would have destroyed.
+    const freshId = await insertClaim(1, { id: 'claim-fresh', fingerprint: 'fp-fresh' });
+    const { calls, dispatch } = recordingDispatch();
+    const second = await sweepStalePlacementStarterClaims(db, {
+      now: new Date(NOW.getTime() + 60_000),
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(second).toMatchObject({ scannedPending: 1, redispatched: 1, staleRevision: 0 });
+    expect(calls).toEqual([{ claimId: freshId, admitted: true }]);
+  });
+
   // The end-to-end shape of the hazard: two revisions stranded pending_dispatch, oldest cursor
   // first. Without the guard the stale one would be dispatched and would cancel the current one.
   it('dispatches only the current revision when two revisions are stranded together', async () => {
