@@ -55,10 +55,22 @@
 // ── Idempotency / anti-double-drive ───────────────────────────────────────────────────────
 // EVERY visited claim is ACQUIRED by a conditional UPDATE (`WHERE id = ? AND status = ? AND
 // next_reconcile_at <= now` RETURNING) that pushes `next_reconcile_at` forward — including the
-// paths that then decline to act (missing goal, still-live retry job). A claim that is visited
-// but never advanced would re-occupy the per-run budget on every subsequent run, which is the
-// same starvation failure by another route. A second sweeper pass in the same window matches
+// paths that then decline to act (missing goal, still-live retry job) AND the paths that fail.
+// A claim that is visited but never advanced would re-occupy the per-run budget on every
+// subsequent run, which is the same starvation failure by another route. So the invariant is
+// "visited ⇒ advanced", made total two ways: the re-drive leg acquires BEFORE its goal read and
+// scope resolution (both of which do DB reads that can throw), and `guardClaim` advances the
+// cursor best-effort on any escaping error. A second sweeper pass in the same window matches
 // zero rows and does nothing.
+//
+// ── Failure containment (three nested rings) ──────────────────────────────────────────────
+//   inner  — the individually risky calls (`dispatch`, the pg-boss liveness probe) are guarded
+//            where they are made, so a normal failure keeps its specific counter and semantics.
+//   claim  — `guardClaim` wraps a whole claim's handling: goal read, scope resolution, acquire,
+//            reap transaction. One poisoned claim must never abort the rest of its leg.
+//   leg    — `runLeg` wraps each scan + loop. Splitting the legs is pointless if one leg's scan
+//            failure still takes the other down with it.
+// The outermost ring lives at the CALL SITE, not here (see runQuestionSupplyNightly).
 //
 // The cursor bump deliberately does NOT touch `updated_at` or `version`: those mean "last STATE
 // transition", and the retry_scheduled zombie reap reads `updated_at` as its staleness signal —
@@ -128,6 +140,10 @@ export interface PlacementStarterRecoveryResult {
   lost: number;
   /** Claims skipped because their goal row no longer exists (scope is unresolvable). */
   goalMissing: number;
+  /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
+  claimErrors: number;
+  /** Legs whose own scan query threw; the other leg still ran. */
+  legErrors: number;
   /** True when PLACEMENT_PROBE_ENABLED is off: the paid re-drive leg did not run; the reap leg did. */
   redispatchSuppressed: boolean;
   /** True when the host caught a top-level sweep failure (see runQuestionSupplyNightly). */
@@ -159,6 +175,8 @@ export function emptyPlacementStarterRecoveryResult(
     retryJobLive: 0,
     lost: 0,
     goalMissing: 0,
+    claimErrors: 0,
+    legErrors: 0,
     redispatchSuppressed: false,
     errored: false,
     ...overrides,
@@ -190,6 +208,56 @@ async function acquireClaim(
     )
     .returning({ id: placement_starter_claim.id });
   return rows.length === 1;
+}
+
+/** Run one leg, containing a failure of its own scan so the sibling leg still runs. */
+async function runLeg(
+  result: PlacementStarterRecoveryResult,
+  leg: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  try {
+    await body();
+  } catch (err) {
+    result.legErrors += 1;
+    console.error(`[placement-starter-recovery] ${leg} leg failed; other legs unaffected`, err);
+  }
+}
+
+/**
+ * Run one claim's handling with total isolation. The inner handlers guard their own risky calls
+ * (dispatch, pg-boss probe), but the surrounding steps — goal read, scope resolution, the acquire
+ * itself, the reap transaction — can throw too, and an unguarded throw here would abort the rest
+ * of the leg. On failure the cursor is advanced best-effort so the claim waits for the next window
+ * instead of squatting a per-run slot forever (harmless if the handler already advanced it: the
+ * CAS is conditional on `next_reconcile_at <= now` and simply matches nothing).
+ */
+async function guardClaim(
+  db: Db,
+  claim: ClaimRow,
+  now: Date,
+  result: PlacementStarterRecoveryResult,
+  body: () => Promise<void>,
+): Promise<void> {
+  try {
+    await body();
+  } catch (err) {
+    result.claimErrors += 1;
+    console.error(`[placement-starter-recovery] claim ${claim.id} handling failed`, err);
+    try {
+      await acquireClaim(
+        db,
+        claim,
+        now,
+        new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS),
+      );
+    } catch (advanceErr) {
+      console.error(
+        `[placement-starter-recovery] could not advance cursor for failed claim ${claim.id}`,
+        advanceErr,
+      );
+    }
+  }
 }
 
 /**
@@ -243,18 +311,30 @@ export async function sweepStalePlacementStarterClaims(
   const result = emptyPlacementStarterRecoveryResult({ redispatchSuppressed: !canRedispatch });
 
   const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
-  const dueRetry = await selectDueClaims(db, 'retry_scheduled', now, maxPerRun);
-  result.scannedRetry = dueRetry.length;
-  for (const claim of dueRetry) {
-    await sweepRetryScheduled(db, claim, now, zombieCutoff, isJobLive, result);
-  }
+
+  // Each leg is isolated from the other: the whole point of splitting the scans is that the reap
+  // leg cannot be held hostage by the paid leg, and that has to hold for FAILURE too, not just for
+  // budget. A leg whose own scan query throws is counted and skipped; the other leg still runs.
+  await runLeg(result, 'retry_scheduled', async () => {
+    const dueRetry = await selectDueClaims(db, 'retry_scheduled', now, maxPerRun);
+    result.scannedRetry = dueRetry.length;
+    for (const claim of dueRetry) {
+      await guardClaim(db, claim, now, result, () =>
+        sweepRetryScheduled(db, claim, now, zombieCutoff, isJobLive, result),
+      );
+    }
+  });
 
   if (canRedispatch) {
-    const duePending = await selectDueClaims(db, 'pending_dispatch', now, maxPerRun);
-    result.scannedPending = duePending.length;
-    for (const claim of duePending) {
-      await sweepPendingDispatch(db, claim, now, dispatch, result);
-    }
+    await runLeg(result, 'pending_dispatch', async () => {
+      const duePending = await selectDueClaims(db, 'pending_dispatch', now, maxPerRun);
+      result.scannedPending = duePending.length;
+      for (const claim of duePending) {
+        await guardClaim(db, claim, now, result, () =>
+          sweepPendingDispatch(db, claim, now, dispatch, result),
+        );
+      }
+    });
   }
 
   // A background sweeper with no trace is undiagnosable. One summary line per run, ALWAYS — even
@@ -272,6 +352,16 @@ async function sweepPendingDispatch(
   result: PlacementStarterRecoveryResult,
 ): Promise<void> {
   const backoffAt = new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS);
+  // ACQUIRE FIRST — before the goal read, before scope resolution, before any paid work. Both of
+  // those do their own DB reads and can throw, and anything that runs BEFORE the acquire but
+  // AFTER the claim has been picked up leaves the cursor un-advanced on failure, so the claim
+  // re-occupies a per-run slot on every subsequent run: the starvation class again, entered
+  // through the error path this time. Acquire-then-decide makes "visited ⇒ advanced" total.
+  if (!(await acquireClaim(db, claim, now, backoffAt))) {
+    result.lost += 1;
+    return;
+  }
+
   const [goalRow] = await db
     .select({
       scope: goal.scope_knowledge_ids,
@@ -284,23 +374,14 @@ async function sweepPendingDispatch(
   if (!goalRow) {
     // No goal row → resolveGoalPlacementScope would silently fall through to the tier-3
     // full-active-tree fallback and admit paid work against a scope the claim was never about.
-    // Decline — but STILL advance the cursor, or this claim re-consumes a per-run slot on every
-    // future run and starves whatever sorts behind it.
-    if (await acquireClaim(db, claim, now, backoffAt)) result.goalMissing += 1;
-    else result.lost += 1;
+    // Decline; the cursor is already advanced above.
+    result.goalMissing += 1;
     console.warn(
       `[placement-starter-recovery] claim ${claim.id} references missing goal ${claim.goal_id}; skipped, cursor advanced`,
     );
     return;
   }
   const knowledgeIds = await resolveGoalPlacementScope(db, goalRow);
-
-  // ACQUIRE before any paid work, so a concurrent sweeper / a re-run inside the window sees
-  // nothing to do.
-  if (!(await acquireClaim(db, claim, now, backoffAt))) {
-    result.lost += 1;
-    return;
-  }
 
   try {
     // Same admission contract as /api/placement/start's cold path: serialize against pool

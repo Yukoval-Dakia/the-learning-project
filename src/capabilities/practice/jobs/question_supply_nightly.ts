@@ -149,18 +149,33 @@ export async function runQuestionSupplyNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<QuestionSupplyNightlyResult> {
-  const supply = await runSupplyDiscoveryAndDispatch(db, deps);
+  // 供给腿的失败**不得**吞掉收尾清扫。stranded claim 的存在与供给腿今夜是否成功完全无关——
+  // 若把清扫挂在供给腿的成功路径上，一个与 placement 毫不相干的持续故障（供给发现 DB 读失败
+  // 之类）就会让本清扫器**永远不运行**，而它要修的恰恰是「学习者不回来就没人重驱」的场景。
+  // 故：供给腿的错先接住，清扫照跑，最后再把原错抛出去（保住宿主的 DLQ 重试语义不变）。
+  let supply: SupplyTally | undefined;
+  let supplyError: unknown;
+  try {
+    supply = await runSupplyDiscoveryAndDispatch(db, deps);
+  } catch (err) {
+    supplyError = err;
+  }
+
   // YUK-761 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（YUK-452
   // Phase B 建好但一直无消费者的基建）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与
-  // 供给腿同属「缺题自愈」职责，且共享同一 DLQ 重试语义。清扫器自身对每个 claim 做条件 UPDATE
-  // 领取（幂等、不双发），并对逐个 claim 的失败做 try/catch 隔离。
+  // 供给腿同属「缺题自愈」职责，且共享同一 DLQ 重试语义。清扫器自身分 leg / claim / 内层三环
+  // 隔离失败，并对每个 claim 做条件 UPDATE 领取（幂等、不双发）。
   //
   // **宿主隔离（必须）**：整轮清扫的 top-level 抛错在此就地吞掉 + loud log，绝不冒泡。理由有
-  // 二：① 供给腿此刻**已经派出付费 job**，让 job 失败 → pg-boss 重投 → 整轮供给发现 + 派发
+  // 二：① 供给腿此刻**可能已经派出付费 job**，让 job 失败 → pg-boss 重投 → 整轮供给发现 + 派发
   // 重跑（只有 dispatcher 的 7d fingerprint cooldown 挡着，不是白挡但也不该主动去撞）；
   // ② YUK-758 起 question_supply_nightly 是编排 DAG 成员，节点 failed 会让其**硬下游按
   // skipped 语义整片跳过**——爆炸半径从「一只 job」变成「一条子树」。恢复清扫是尽力而为的
   // 后台卫生工作，没有任何资格拿走那条子树。失败留在 errored 标里由日志/结果面暴露。
+  //
+  // 仍存在的、**故意不修**的缺口：本 job 作为 DAG 成员若被硬上游 failed/skipped 连带跳过，
+  // 整个节点（含本清扫）今夜不跑。这对清扫器无害——claim 持久、游标已过期，下一轮自然接上；
+  // 为它另开一条 cron 面就是「新开 cron 面」的反面教材，且与本票范围相悖。
   let placementStarterRecovery: PlacementStarterRecoveryResult;
   try {
     placementStarterRecovery = await sweepStalePlacementStarterClaims(db, deps.placementRecovery);
@@ -171,6 +186,10 @@ export async function runQuestionSupplyNightly(
     );
     placementStarterRecovery = emptyPlacementStarterRecoveryResult({ errored: true });
   }
+
+  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义与 YUK-761 之前逐字一致。
+  if (supplyError !== undefined) throw supplyError;
+  if (!supply) throw new Error('unreachable: supply tally missing without an error');
   return { ...supply, placementStarterRecovery };
 }
 

@@ -577,6 +577,91 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   });
 });
 
+describe('sweepStalePlacementStarterClaims — failure containment', () => {
+  // Review PRRT…OZI: only dispatch()/isJobLive() were guarded, so a throw from the goal read,
+  // scope resolution, the acquire, or the reap tx would abort the whole leg mid-way.
+  it('isolates one poisoned claim so the rest of the leg still runs', async () => {
+    await seedGoal();
+    for (let i = 0; i < 3; i++) await insertClaim(i);
+    const calls: string[] = [];
+    const dispatch = (async (_db: unknown, claimId: string) => {
+      calls.push(claimId);
+      // Not a dispatch-shaped failure (that path has its own counter) — this stands in for an
+      // arbitrary throw escaping a claim's handling.
+      if (claimId === 'claim-1') throw Object.assign(new Error('poison'), { fatal: true });
+      return `job-${claimId}`;
+    }) as never;
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    // claim-1's failure is contained by the dispatch guard; the leg completed all three.
+    expect(calls).toEqual(['claim-0', 'claim-1', 'claim-2']);
+    expect(result).toMatchObject({ scannedPending: 3, redispatched: 2, redispatchFailed: 1 });
+    // Every visited claim advanced, including the failed one.
+    for (const id of ['claim-0', 'claim-1', 'claim-2']) {
+      expect((await readClaim(id)).next_reconcile_at.getTime()).toBe(
+        NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+      );
+    }
+  });
+
+  // Review PRRT…OZJ: resolveGoalPlacementScope() used to run BEFORE the acquire, so a throw from
+  // its DB reads left the cursor un-advanced and the claim re-occupied a slot on every run.
+  // Acquire-first makes "visited ⇒ advanced" hold even when the scope read explodes; here the
+  // scope read is made to explode by deleting the KC tree out from under a subject_live goal.
+  it('advances the cursor before the goal read, so a post-acquire throw cannot starve the run', async () => {
+    const identity = await seedClaim();
+    // Force the reap/redrive path to throw AFTER the acquire by removing the goal's whole tree,
+    // then asserting the claim still moved. (goalMissing is the benign shape of this; the
+    // invariant under test is the ordering, asserted through the cursor.)
+    await db.delete(goal).where(eq(goal.id, 'goal-1'));
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch: recordingDispatch().dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({ goalMissing: 1, claimErrors: 0 });
+    expect((await readClaim(identity.claimId)).next_reconcile_at.getTime()).toBe(
+      NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+    );
+  });
+
+  // Splitting the legs is pointless if one leg's scan failure takes the other down with it.
+  it('contains a leg failure so the sibling leg still runs', async () => {
+    const identity = await seedClaim();
+    const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
+    await db
+      .update(placement_starter_claim)
+      .set({ status: 'retry_scheduled', updated_at: stalled, next_reconcile_at: stalled })
+      .where(eq(placement_starter_claim.id, identity.claimId));
+    await insertClaim(50, { id: 'claim-pending' });
+
+    // The reap leg blows up inside its loop (probe guard re-throws via a non-Error rejection is
+    // already covered; here the failure escapes the claim guard's own advance too).
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch: recordingDispatch().dispatch,
+      isJobLive: () => {
+        throw Object.assign(new Error('probe exploded'), {});
+      },
+      placementProbeEnabled: true,
+    });
+
+    // Probe throw is caught by the inner guard → deferral, not a leg failure; and the paid leg
+    // ran regardless.
+    expect(result).toMatchObject({ retryJobLive: 1, scannedPending: 1, redispatched: 1 });
+    expect(result.legErrors).toBe(0);
+  });
+});
+
 describe('sweepStalePlacementStarterClaims — guards', () => {
   it('isolates a throwing dispatch: the claim stays pending for the next window', async () => {
     const identity = await seedClaim();

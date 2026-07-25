@@ -115,6 +115,38 @@ describe('runQuestionSupplyNightly', () => {
     );
   });
 
+  // YUK-761 (review PRRT…MmM / …OZH) — the converse direction. A stranded claim's existence has
+  // nothing to do with whether tonight's supply discovery succeeded, so hanging the sweep off the
+  // supply leg's SUCCESS path would let an unrelated persistent failure mean the sweeper never
+  // runs at all — while the whole point of the sweeper is the case where nobody comes back to
+  // re-drive the claim by hand. The supply error must still propagate afterwards (unchanged DLQ
+  // semantics), but only after the sweep has had its turn.
+  it('still runs the recovery sweep when the supply leg throws, then rethrows', async () => {
+    let swept = 0;
+    // A per-target dispatch error would NOT do: dispatchSupplyTargets catches those internally and
+    // tallies them as `failed`. This forces a failure that genuinely escapes the supply leg — the
+    // pre-discovery class the host's own docblock says bubbles to the DLQ.
+    const deps = {
+      placementRecovery: {
+        get now() {
+          swept += 1;
+          return new Date();
+        },
+      },
+    };
+    Object.defineProperty(deps, 'maxPerRun', {
+      get() {
+        throw new Error('supply discovery exploded');
+      },
+      enumerable: true,
+    });
+
+    // The supply error still propagates — DLQ/retry semantics are byte-identical to pre-YUK-761…
+    await expect(runQuestionSupplyNightly(db, deps)).rejects.toThrow('supply discovery exploded');
+    // …but only AFTER the sweep had its turn.
+    expect(swept).toBe(1);
+  });
+
   // ② frontier KC + zero questions → at least one sourcing_web dispatch + experimental:question_supply
   // event with status='dispatched'.
   it('dispatches a frontier_zero target to the sourcing queue and tallies it as dispatched', async () => {
