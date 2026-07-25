@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
 import type { EnqueueFn } from '@/server/question-supply/dispatcher';
+import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runQuestionSupplyNightly } from './question_supply_nightly';
@@ -72,6 +73,19 @@ describe('runQuestionSupplyNightly', () => {
       manual: 0,
       skipped: 0,
       failed: 0,
+      // YUK-761 tail step: no claims in the DB → the recovery sweep is a pure no-op, but it
+      // still RUNS (the supply leg's zero-target early return must not skip it).
+      placementStarterRecovery: {
+        scanned: 0,
+        redispatched: 0,
+        admissionSkipped: 0,
+        redispatchFailed: 0,
+        reaped: 0,
+        retryPending: 0,
+        lost: 0,
+        goalMissing: 0,
+        redispatchSuppressed: !PLACEMENT_PROBE_ENABLED,
+      },
     });
     expect(enqueued).toHaveLength(0);
   });

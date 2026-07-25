@@ -27,6 +27,11 @@ import { dispatchSupplyTargets } from '@/server/question-supply/dispatcher';
 import { runInventoryShadowDualRead } from '@/server/question-supply/inventory-projection';
 import { discoverSupplyTargets } from '@/server/question-supply/target-discovery';
 import type { Job } from 'pg-boss';
+import type {
+  PlacementStarterRecoveryDeps,
+  PlacementStarterRecoveryResult,
+} from '../server/placement-starter-recovery';
+import { sweepStalePlacementStarterClaims } from '../server/placement-starter-recovery';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 
@@ -37,6 +42,8 @@ type DepsOverride = {
    * Codex review F3 — 本轮最多派发多少个供给目标（防一次 cron 打爆付费队列）。default 25。
    */
   maxPerRun?: number;
+  /** YUK-761 — 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
+  placementRecovery?: PlacementStarterRecoveryDeps;
 };
 
 // ── 红线：per-run 派发硬顶（G-COST，Codex review F3）──────────────────────────
@@ -65,10 +72,17 @@ export interface QuestionSupplyNightlyResult {
   skipped: number;
   /** 派发抛错的目标数（status='failed'）。 */
   failed: number;
+  /**
+   * YUK-761 — 尾部 placement starter claim 恢复清扫结果（重驱 stranded pending_dispatch +
+   * 收割 zombie retry_scheduled）。见 server/placement-starter-recovery.ts。
+   */
+  placementStarterRecovery: PlacementStarterRecoveryResult;
 }
 
-function tallyByStatus(results: DispatchResult[], discovered: number): QuestionSupplyNightlyResult {
-  const out: QuestionSupplyNightlyResult = {
+type SupplyTally = Omit<QuestionSupplyNightlyResult, 'placementStarterRecovery'>;
+
+function tallyByStatus(results: DispatchResult[], discovered: number): SupplyTally {
+  const out: SupplyTally = {
     discovered,
     considered: results.length,
     deferred: Math.max(0, discovered - results.length),
@@ -96,15 +110,7 @@ function tallyByStatus(results: DispatchResult[], discovered: number): QuestionS
   return out;
 }
 
-/**
- * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面。
- * 不新增 AI task；shadow 写入失败由 discovery seam 隔离，不改变 targets 或派发。空目标早返回
- * （零派发，不触付费 job）。
- */
-export async function runQuestionSupplyNightly(
-  db: Db,
-  deps: DepsOverride = {},
-): Promise<QuestionSupplyNightlyResult> {
+async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promise<SupplyTally> {
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const targets = await discoverSupplyTargets(db, undefined, {
     observeInventory: async (input, currentTargets) => {
@@ -127,6 +133,28 @@ export async function runQuestionSupplyNightly(
   const dispatchTargets = targets.slice(0, maxPerRun);
   const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
   return tallyByStatus(results, targets.length);
+}
+
+/**
+ * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面 →
+ * **收尾**跑 placement starter claim 恢复清扫（YUK-761）。不新增 AI task；shadow 写入失败由
+ * discovery seam 隔离，不改变 targets 或派发。空目标时供给腿零派发早返回（不触付费 job），
+ * 但收尾清扫**照跑**——stranded claim 的存在与今夜有无供给缺口无关。
+ */
+export async function runQuestionSupplyNightly(
+  db: Db,
+  deps: DepsOverride = {},
+): Promise<QuestionSupplyNightlyResult> {
+  const supply = await runSupplyDiscoveryAndDispatch(db, deps);
+  // YUK-761 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（YUK-452
+  // Phase B 建好但一直无消费者的基建）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与
+  // 供给腿同属「缺题自愈」职责，且共享同一 06:00 时槽 + DLQ 重试语义。清扫器自身对每个 claim
+  // 做条件 UPDATE 领取（幂等、不双发），并对 dispatch 失败逐条 try/catch 隔离。
+  const placementStarterRecovery = await sweepStalePlacementStarterClaims(
+    db,
+    deps.placementRecovery,
+  );
+  return { ...supply, placementStarterRecovery };
 }
 
 export function buildQuestionSupplyNightlyHandler(

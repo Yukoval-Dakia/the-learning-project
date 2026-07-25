@@ -865,11 +865,14 @@ export async function finishPlacementAttempt(
       .where(eq(placement_starter_attempt_question.attempt_id, attempt.attemptId));
     // Exhaustion (YUK-452 review): the pg-boss quiz_gen job has retryLimit=2 → exactly 3
     // deliveries. When the FINAL (max_paid_attempts-th) delivery fails to satisfy, there is no
-    // further redelivery and no recovery sweeper consumes retry_scheduled, so writing
-    // retry_scheduled here would zombie the claim non-terminal forever. Terminalize as
-    // 'exhausted' (owner-locked explicit terminal failure state) so placement stops waiting on a
-    // batch that will never arrive. Non-final failures stay retry_scheduled — acquirePlacementAttempt
-    // accepts that status and the pg-boss retry re-drives the next delivery.
+    // further redelivery, so writing retry_scheduled here would zombie the claim non-terminal
+    // forever. Terminalize as 'exhausted' (owner-locked explicit terminal failure state) so
+    // placement stops waiting on a batch that will never arrive. Non-final failures stay
+    // retry_scheduled — acquirePlacementAttempt accepts that status and the pg-boss retry
+    // re-drives the next delivery. YUK-761 note: that pg-boss retry remains the ONLY re-driver of
+    // retry_scheduled; the recovery sweeper deliberately never re-dispatches this status (a second
+    // quiz_gen job would double-pay), it only REAPS a claim whose redelivery never arrived — so
+    // the eager terminalization above is still required, not superseded by the sweeper.
     const [claimRow] = await tx
       .select({ maxPaidAttempts: placement_starter_claim.max_paid_attempts })
       .from(placement_starter_claim)
