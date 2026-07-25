@@ -402,6 +402,10 @@ export const submitReview = (input: {
   // event payload.reasoning_trace（区别于 response_md 的最终作答）。OPTIONAL：wire 类型
   // 先行；UI 采集框（PfSolo）过 design pre-flight 后接线。省略即字段 absent。
   reasoning_trace?: string;
+  // YUK-444 (A10 答题置信度自评) — 学生看判定前的主观把握（1-5 整数）。服务端只透传落到
+  // review event payload.self_confidence。**observe-only**：绝不进 θ̂ / FSRS / 判分。OPTIONAL：
+  // 跳过 / 客观题 auto-commit 省略即字段 absent。
+  self_confidence?: number;
   referenced_knowledge_ids: string[];
   // YUK-589 — `task_run_id` and `provenance_token` are promoted to the sibling
   // `judge_task_run_id` / `judge_provenance_token` fields below, so they are stripped

@@ -22,6 +22,20 @@ export const MAX_DOCX_PAGES = MAX_PDF_PAGES;
 // validates before any conversion spawn.
 export const MAX_DOCX_UPLOAD_BYTES = 20_000_000;
 
+// YUK-562 — upper bound (chars) for the process-data `reasoning_trace` field.
+// Single source of truth for the whole write path: the two event payload schemas
+// (core/schema/event/known.ts), the /api/attempts request contract
+// (capabilities/practice/api/contracts.ts), the solve-session write-side
+// truncation, and the practice UI's textarea maxLength + pre-send clamp all
+// reference it, so the bound can never drift.
+//
+// It lives HERE rather than in known.ts (its original home) for the same reason
+// MAX_PDF_PAGES does: this module is pure, so the browser-side practice UI can
+// take the bound — via the @/kernel/capability-contract-schemas facade — without
+// pulling the whole event Zod schema surface into the SPA bundle graph. Moved out
+// of known.ts per PR #1069 review (capability→core deep import + bundle weight).
+export const REASONING_TRACE_MAX_LEN = 4000;
+
 // Per-image byte cap, single source of truth (YUK-250 limits pattern). Enforced
 // by the generic asset upload route (src/capabilities/ingestion/api/assets.ts) and the DOCX
 // embedded-media persist path (src/capabilities/ingestion/api/docx.ts) so an image

@@ -19,6 +19,26 @@ describe('practice attempt and appeal contracts', () => {
     }
   });
 
+  it('accepts an optional 1-5 self_confidence and rejects out-of-range/non-integer (YUK-444)', () => {
+    // observe-only capture field: present only when the learner picked a 1-5 value;
+    // absent/null when skipped → server conditional-spread keeps the event byte-identical.
+    expect(
+      CreateAttemptBodySchema.parse({ question_id: 'q1', rating: 'good', self_confidence: 3 }),
+    ).toMatchObject({ self_confidence: 3 });
+    expect(CreateAttemptBodySchema.safeParse({ question_id: 'q1', rating: 'good' }).success).toBe(
+      true,
+    );
+    for (const bad of [0, 6, 3.5]) {
+      expect(
+        CreateAttemptBodySchema.safeParse({
+          question_id: 'q1',
+          rating: 'good',
+          self_confidence: bad,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it('accepts optional supplied judge provenance evidence', () => {
     const body = CreateAttemptBodySchema.parse({
       question_id: 'q1',
