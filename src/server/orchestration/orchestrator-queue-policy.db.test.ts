@@ -42,6 +42,13 @@ beforeAll(async () => {
   // DO NOTHING`，对已存在的队列**什么都不改**；新配置全靠随后的 `updateQueue` 落地
   // （createOrUpdateQueue 的存在理由，见 queue-config.ts 的 docblock）。只测全新建队会让
   // 「生产升级后到底有没有生效」这个唯一要紧的问题完全没被覆盖，故先把队列种成旧形态。
+  //
+  // 这句种子**只在队列尚不存在时**能种出旧形态：`updateQueue` 的 `retry_delay =
+  // COALESCE(…, retry_delay)` 且 deadLetter 缺省时根本不发 `dead_letter` 的 SET，所以它
+  // 无法把一个已升级的队列**降级**回去——旧形态是靠 INSERT 落到 `QUEUE_DEFAULTS` 得来的。
+  // 标准 runner 下每次都是新库（tests/global-setup.ts 的 DROP + TEMPLATE 克隆），不成问题；
+  // 只有把 DATABASE_URL 指向常驻库（本地 compose）并重跑本文件才会踩到。届时下面三条前置
+  // 断言会在 beforeAll 里**响亮**失败，而不是变成一次假绿——那正是它们存在的理由。
   await createOrUpdateQueue(boss, ORCHESTRATOR_QUEUE, FAST_QUEUE_OPTS);
   const legacy = await boss.getQueue(ORCHESTRATOR_QUEUE);
   // 前置断言：确认种出来的确实是**旧**形态，否则下面全部测试退化成自证。
