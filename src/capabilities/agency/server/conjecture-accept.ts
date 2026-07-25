@@ -200,7 +200,10 @@ export async function acceptConjectureProposal(
       await promoteConjectureToMisconception(tx, {
         conjectureId,
         knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
-        claimMd: requiredString(change.claim_md, 'claim_md', proposalId),
+        // Trimmed for the same reason the brief trims it: the proposal's own `claim_md`
+        // has no `.trim()` (proposal.ts:497), and a padded AI claim must not become a
+        // padded misconception title. `requiredString` still owns the loud missing/型 error.
+        claimMd: requiredString(change.claim_md, 'claim_md', proposalId).trim(),
         causeCategory: requiredString(change.cause_category, 'cause_category', proposalId),
         confidence: Number(change.confidence),
         recurrenceCount: Number(change.recurrence_count),
