@@ -8,11 +8,9 @@
 // 取数、每条被访问的 claim 都推进游标（防「同一批老 claim 每夜霸占额度、后面的僵尸永不被收割」
 // 的饿死路径）。
 
-import { insertGoal } from '@/capabilities/agency/server/goals/queries';
 import { db } from '@/db/client';
 import { goal, knowledge, placement_starter_claim, question } from '@/db/schema';
-import type { PlacementStarterIdentity } from '@/server/question-supply/placement-starter-identity';
-import { materializePlacementStartersForGoal } from '@/server/question-supply/placement-starter-store';
+import { resolvePlacementStarterGoalAuthority } from '@/kernel/placement';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../../tests/helpers/db';
@@ -30,7 +28,12 @@ const noJobLive = async () => false;
 
 beforeEach(() => resetDb());
 
-async function seedGoal(): Promise<void> {
+/**
+ * Seed the KC tree once. Kept to `@/db/schema` writes — a practice-capability test may depend on
+ * `@/kernel/*`, itself, and (migration-period exemption) `@/db/*`, but not on another capability's
+ * server internals or on `@/server/**` implementations (src/capabilities/AGENTS.md).
+ */
+async function seedTree(): Promise<void> {
   await db.insert(knowledge).values([
     {
       id: 'seed:yuwen:root',
@@ -49,40 +52,48 @@ async function seedGoal(): Promise<void> {
       updated_at: CREATED,
     },
   ]);
-  await insertGoal(db, {
-    id: 'goal-1',
-    title: '读懂古文',
+}
+
+async function seedGoalRow(id: string): Promise<void> {
+  await db.insert(goal).values({
+    id,
+    title: `读懂古文 ${id}`,
     subject_id: 'yuwen',
     scope_knowledge_ids: ['kc-explicit'],
     scope_mode: 'explicit',
     sequence_hint: 0,
+    status: 'active',
     source: 'manual',
-    now: CREATED,
+    created_at: CREATED,
+    updated_at: CREATED,
   });
 }
 
-/** Materialize a real pending_dispatch claim through the production path. */
-async function seedClaim(): Promise<PlacementStarterIdentity> {
-  await seedGoal();
-  const { identities } = await db.transaction((tx) =>
-    materializePlacementStartersForGoal(tx, 'goal-1', CREATED),
-  );
-  const identity = identities[0];
-  if (!identity) throw new Error('missing placement identity');
-  return identity;
+async function seedGoal(): Promise<void> {
+  await seedTree();
+  await seedGoalRow('goal-1');
 }
 
-/** Insert a synthetic claim directly (for multi-claim ordering / starvation scenarios). */
+/** The revision id the sweeper's stale-revision guard will compare against, via the facade. */
+async function currentRevision(goalId: string): Promise<string> {
+  return (await resolvePlacementStarterGoalAuthority(db, goalId)).semanticGoalRevisionId;
+}
+
+/**
+ * Insert a claim directly. `semantic_goal_revision_id` defaults to the goal's CURRENT authoritative
+ * revision, so a claim is dispatchable unless a test deliberately makes it stale.
+ */
 async function insertClaim(
   i: number,
   overrides: Partial<typeof placement_starter_claim.$inferInsert> = {},
 ): Promise<string> {
   const id = (overrides.id as string | undefined) ?? `claim-${i}`;
+  const goalId = (overrides.goal_id as string | undefined) ?? 'goal-1';
   await db.insert(placement_starter_claim).values({
     id,
     fingerprint: `fp-${id}`,
-    goal_id: 'goal-1',
-    semantic_goal_revision_id: `rev-${id}`,
+    goal_id: goalId,
+    semantic_goal_revision_id: await currentRevision(goalId),
     subject_id: 'yuwen',
     knowledge_id: 'kc-explicit',
     demand_id: `demand-${id}`,
@@ -94,6 +105,30 @@ async function insertClaim(
     ...overrides,
   });
   return id;
+}
+
+/** One goal + one dispatchable pending_dispatch claim on it. */
+async function seedClaim(
+  overrides: Partial<typeof placement_starter_claim.$inferInsert> = {},
+): Promise<string> {
+  await seedGoal();
+  return insertClaim(0, { id: 'claim-main', ...overrides });
+}
+
+/**
+ * N goals, each with one claim. Distinct goals are REQUIRED for a multi-claim backlog: two
+ * pending claims on one goal can only differ by revision, and only one revision is authoritative
+ * (the rest are cancelled by the stale-revision guard) — plus
+ * `placement_starter_claim_revision_subject_uq` forbids sharing one.
+ */
+async function seedClaimsOnDistinctGoals(n: number): Promise<string[]> {
+  await seedTree();
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    await seedGoalRow(`goal-${i}`);
+    ids.push(await insertClaim(i, { id: `claim-${i}`, goal_id: `goal-${i}` }));
+  }
+  return ids;
 }
 
 async function readClaim(claimId: string) {
@@ -124,7 +159,7 @@ function recordingDispatch() {
 
 describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () => {
   it('re-drives an overdue stranded claim and advances its recovery cursor', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     const { calls, dispatch } = recordingDispatch();
 
     const result = await sweepStalePlacementStarterClaims(db, {
@@ -143,8 +178,8 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
       redispatchSuppressed: false,
       errored: false,
     });
-    expect(calls).toEqual([{ claimId: identity.claimId, admitted: true }]);
-    const claim = await readClaim(identity.claimId);
+    expect(calls).toEqual([{ claimId: claimId, admitted: true }]);
+    const claim = await readClaim(claimId);
     expect(claim.next_reconcile_at.getTime()).toBe(
       NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
     );
@@ -154,12 +189,12 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
   });
 
   it('leaves a claim whose next_reconcile_at is still in the future untouched', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     const future = new Date(NOW.getTime() + 60 * 60_000);
     await db
       .update(placement_starter_claim)
       .set({ next_reconcile_at: future })
-      .where(eq(placement_starter_claim.id, identity.claimId));
+      .where(eq(placement_starter_claim.id, claimId));
     const { calls, dispatch } = recordingDispatch();
 
     const result = await sweepStalePlacementStarterClaims(db, {
@@ -172,11 +207,11 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
     expect(result.scannedPending).toBe(0);
     expect(result.redispatched).toBe(0);
     expect(calls).toHaveLength(0);
-    expect((await readClaim(identity.claimId)).next_reconcile_at.getTime()).toBe(future.getTime());
+    expect((await readClaim(claimId)).next_reconcile_at.getTime()).toBe(future.getTime());
   });
 
   it('is idempotent: a second sweep inside the backoff window re-drives nothing', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     const { calls, dispatch } = recordingDispatch();
 
     await sweepStalePlacementStarterClaims(db, {
@@ -197,11 +232,11 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
     expect(second.scannedPending).toBe(0);
     expect(second.redispatched).toBe(0);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.claimId).toBe(identity.claimId);
+    expect(calls[0]?.claimId).toBe(claimId);
   });
 
   it('refuses paid admission when the goal scope already has an eligible question', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     await db.insert(question).values({
       id: 'question-warm',
       kind: 'short_answer',
@@ -223,10 +258,10 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
     });
 
     expect(result).toMatchObject({ scannedPending: 1, redispatched: 0, admissionSkipped: 1 });
-    expect(calls).toEqual([{ claimId: identity.claimId, admitted: false }]);
+    expect(calls).toEqual([{ claimId: claimId, admitted: false }]);
     // An admission-refused claim still advanced its cursor (the acquire happens BEFORE dispatch),
     // so it cannot re-occupy a per-run slot next run.
-    expect((await readClaim(identity.claimId)).next_reconcile_at.getTime()).toBe(
+    expect((await readClaim(claimId)).next_reconcile_at.getTime()).toBe(
       NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
     );
   });
@@ -252,17 +287,88 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
   });
 });
 
+describe('sweepStalePlacementStarterClaims — stale revision guard', () => {
+  // Review PRRT…ua3w. The live /placement/start path can only dispatch the CURRENT revision's
+  // claim; this sweeper is the only code that can pick up an older one. Doing so is destructive:
+  // the stale claim takes the nonterminal_uq slot, the CURRENT revision's claim then loses the
+  // 23505 race and is cancelled by dispatchPlacementStarterClaimTx — and since claim ids are
+  // deterministic in (revision, subject), re-materialize is a no-op, so the current revision can
+  // never get a claim again.
+  it('cancels a superseded-revision claim instead of dispatching it', async () => {
+    await seedGoal();
+    const staleId = await insertClaim(0, {
+      id: 'claim-stale',
+      semantic_goal_revision_id: 'rev-superseded',
+      fingerprint: 'fp-stale',
+    });
+    const { calls, dispatch } = recordingDispatch();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({ scannedPending: 1, staleRevision: 1, redispatched: 0 });
+    expect(calls).toHaveLength(0);
+    const claim = await readClaim(staleId);
+    expect(claim.status).toBe('cancelled');
+    expect(claim.last_error_code).toBe('stale_revision');
+    // Terminal → out of the scan entirely, not re-examined every window.
+    const second = await sweepStalePlacementStarterClaims(db, {
+      now: new Date(NOW.getTime() + 60_000),
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+    expect(second.scannedPending).toBe(0);
+  });
+
+  // The end-to-end shape of the hazard: two revisions stranded pending_dispatch, oldest cursor
+  // first. Without the guard the stale one would be dispatched and would cancel the current one.
+  it('dispatches only the current revision when two revisions are stranded together', async () => {
+    await seedGoal();
+    await insertClaim(0, {
+      id: 'claim-old-revision',
+      semantic_goal_revision_id: 'rev-superseded',
+      fingerprint: 'fp-old',
+      next_reconcile_at: CREATED,
+    });
+    const currentId = await insertClaim(1, {
+      id: 'claim-current-revision',
+      fingerprint: 'fp-current',
+      next_reconcile_at: new Date(CREATED.getTime() + 5_000),
+    });
+    const { calls, dispatch } = recordingDispatch();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({ scannedPending: 2, staleRevision: 1, redispatched: 1 });
+    // The stale claim was never handed to dispatch at all.
+    expect(calls).toEqual([{ claimId: currentId, admitted: true }]);
+    expect((await readClaim('claim-old-revision')).status).toBe('cancelled');
+    expect((await readClaim(currentId)).status).toBe('pending_dispatch');
+  });
+});
+
 describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
   // The bug this guards: one shared capped scan ordered by next_reconcile_at would let a backlog
   // of untouched pending_dispatch claims monopolise every run, so a retry_scheduled zombie sorted
   // behind them is NEVER reaped — the blocked-revision failure this sweeper exists to fix.
   it('reaps a zombie even when a full page of older pending claims is suppressed by the flag', async () => {
-    await seedGoal();
-    for (let i = 0; i < 3; i++) await insertClaim(i);
+    await seedClaimsOnDistinctGoals(3);
     const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
     // Sorts strictly AFTER every pending claim on the shared (next_reconcile_at, created_at) order.
+    await seedGoalRow('goal-zombie');
     await insertClaim(99, {
       id: 'claim-zombie',
+      goal_id: 'goal-zombie',
       status: 'retry_scheduled',
       pg_boss_job_id: 'boss-dead',
       updated_at: stalled,
@@ -284,11 +390,12 @@ describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
   });
 
   it('reaps a zombie even when a full page of older pending claims fills the paid leg', async () => {
-    await seedGoal();
-    for (let i = 0; i < 3; i++) await insertClaim(i);
+    await seedClaimsOnDistinctGoals(3);
     const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
+    await seedGoalRow('goal-zombie');
     await insertClaim(99, {
       id: 'claim-zombie',
+      goal_id: 'goal-zombie',
       status: 'retry_scheduled',
       pg_boss_job_id: 'boss-dead',
       updated_at: stalled,
@@ -315,7 +422,7 @@ describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
   });
 
   it('advances the cursor of a goal-missing claim so it cannot squat the budget forever', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     await db.delete(goal).where(eq(goal.id, 'goal-1'));
     const { calls, dispatch } = recordingDispatch();
 
@@ -328,7 +435,7 @@ describe('sweepStalePlacementStarterClaims — anti-starvation', () => {
 
     expect(first).toMatchObject({ scannedPending: 1, goalMissing: 1, redispatched: 0 });
     expect(calls).toHaveLength(0);
-    const claim = await readClaim(identity.claimId);
+    const claim = await readClaim(claimId);
     expect(claim.status).toBe('pending_dispatch');
     expect(claim.next_reconcile_at.getTime()).toBe(
       NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
@@ -348,7 +455,7 @@ describe('sweepStalePlacementStarterClaims — terminal and non-swept states', (
   it.each(['satisfied', 'exhausted', 'cancelled'] as const)(
     'never touches a %s claim',
     async (status) => {
-      const identity = await seedClaim();
+      const claimId = await seedClaim();
       await db
         .update(placement_starter_claim)
         .set({
@@ -357,8 +464,8 @@ describe('sweepStalePlacementStarterClaims — terminal and non-swept states', (
           exhausted_at: status === 'exhausted' ? NOW : null,
           next_reconcile_at: CREATED,
         })
-        .where(eq(placement_starter_claim.id, identity.claimId));
-      const before = await readClaim(identity.claimId);
+        .where(eq(placement_starter_claim.id, claimId));
+      const before = await readClaim(claimId);
       const { calls, dispatch } = recordingDispatch();
 
       const result = await sweepStalePlacementStarterClaims(db, {
@@ -370,19 +477,19 @@ describe('sweepStalePlacementStarterClaims — terminal and non-swept states', (
 
       expect(result).toMatchObject({ scannedPending: 0, scannedRetry: 0 });
       expect(calls).toHaveLength(0);
-      expect(await readClaim(identity.claimId)).toEqual(before);
+      expect(await readClaim(claimId)).toEqual(before);
     },
   );
 
   it.each(['queued', 'running', 'verifying'] as const)(
     'leaves an in-flight %s claim to the attempt lease machinery',
     async (status) => {
-      const identity = await seedClaim();
+      const claimId = await seedClaim();
       await db
         .update(placement_starter_claim)
         .set({ status, next_reconcile_at: CREATED })
-        .where(eq(placement_starter_claim.id, identity.claimId));
-      const before = await readClaim(identity.claimId);
+        .where(eq(placement_starter_claim.id, claimId));
+      const before = await readClaim(claimId);
       const { calls, dispatch } = recordingDispatch();
 
       const result = await sweepStalePlacementStarterClaims(db, {
@@ -394,14 +501,14 @@ describe('sweepStalePlacementStarterClaims — terminal and non-swept states', (
 
       expect(result).toMatchObject({ scannedPending: 0, scannedRetry: 0 });
       expect(calls).toHaveLength(0);
-      expect(await readClaim(identity.claimId)).toEqual(before);
+      expect(await readClaim(claimId)).toEqual(before);
     },
   );
 });
 
 describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
-  async function seedZombie(): Promise<PlacementStarterIdentity> {
-    const identity = await seedClaim();
+  async function seedZombie(): Promise<string> {
+    const claimId = await seedClaim();
     const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
     await db
       .update(placement_starter_claim)
@@ -411,12 +518,12 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
         updated_at: stalled,
         next_reconcile_at: stalled,
       })
-      .where(eq(placement_starter_claim.id, identity.claimId));
-    return identity;
+      .where(eq(placement_starter_claim.id, claimId));
+    return claimId;
   }
 
   it('reaps a retry_scheduled claim whose job can no longer redeliver, without dispatching', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
     const { calls, dispatch } = recordingDispatch();
     const probed: Array<string | null> = [];
 
@@ -434,7 +541,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
     expect(probed).toEqual(['boss-job-1']);
     // NEVER re-driven: a second quiz_gen job would double-pay against one claim.
     expect(calls).toHaveLength(0);
-    const claim = await readClaim(identity.claimId);
+    const claim = await readClaim(claimId);
     expect(claim.status).toBe('exhausted');
     expect(claim.exhausted_at?.getTime()).toBe(NOW.getTime());
     expect(claim.satisfied_at).toBeNull();
@@ -445,7 +552,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   // the grace window. Reaping then makes the eventual delivery fail admission in
   // acquirePlacementAttempt and throws away paid generation work that was still coming.
   it('does NOT reap a past-grace claim whose quiz_gen job is still live', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
     const { calls, dispatch } = recordingDispatch();
 
     const result = await sweepStalePlacementStarterClaims(db, {
@@ -457,7 +564,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
 
     expect(result).toMatchObject({ scannedRetry: 1, reaped: 0, retryJobLive: 1 });
     expect(calls).toHaveLength(0);
-    const claim = await readClaim(identity.claimId);
+    const claim = await readClaim(claimId);
     expect(claim.status).toBe('retry_scheduled');
     expect(claim.exhausted_at).toBeNull();
     // Cursor advanced so it is re-probed next window instead of squatting the budget.
@@ -467,7 +574,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   });
 
   it('fails safe and defers the reap when the pg-boss job probe throws', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
 
     const result = await sweepStalePlacementStarterClaims(db, {
       now: NOW,
@@ -479,11 +586,11 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
     });
 
     expect(result).toMatchObject({ scannedRetry: 1, reaped: 0, retryJobLive: 1 });
-    expect((await readClaim(identity.claimId)).status).toBe('retry_scheduled');
+    expect((await readClaim(claimId)).status).toBe('retry_scheduled');
   });
 
   it('leaves a freshly retry_scheduled claim alone and parks the cursor on its reap deadline', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     const recent = new Date(NOW.getTime() - 60_000);
     await db
       .update(placement_starter_claim)
@@ -493,7 +600,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
         updated_at: recent,
         next_reconcile_at: recent,
       })
-      .where(eq(placement_starter_claim.id, identity.claimId));
+      .where(eq(placement_starter_claim.id, claimId));
     const probed: Array<string | null> = [];
     const { calls, dispatch } = recordingDispatch();
 
@@ -511,7 +618,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
     expect(calls).toHaveLength(0);
     // Inside grace the probe is not even consulted — no pg-boss round trip for the common case.
     expect(probed).toHaveLength(0);
-    const claim = await readClaim(identity.claimId);
+    const claim = await readClaim(claimId);
     expect(claim.status).toBe('retry_scheduled');
     expect(claim.next_reconcile_at.getTime()).toBe(
       recent.getTime() + PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS,
@@ -521,7 +628,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   });
 
   it('reaps zombies even while the placement probe flag is off', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
 
     const result = await sweepStalePlacementStarterClaims(db, {
       now: NOW,
@@ -531,15 +638,15 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
     });
 
     expect(result).toMatchObject({ reaped: 1, redispatchSuppressed: true });
-    expect((await readClaim(identity.claimId)).status).toBe('exhausted');
+    expect((await readClaim(claimId)).status).toBe('exhausted');
   });
 
   it('treats a claim with no pg_boss_job_id as having no redelivery source', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
     await db
       .update(placement_starter_claim)
       .set({ pg_boss_job_id: null })
-      .where(eq(placement_starter_claim.id, identity.claimId));
+      .where(eq(placement_starter_claim.id, claimId));
 
     // Real probe semantics for a null job id: no job → not live. Asserted through the default
     // seam contract rather than a stub, so this pins isPlacementStarterJobLive's null branch.
@@ -551,11 +658,11 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
     });
 
     expect(result).toMatchObject({ reaped: 1 });
-    expect((await readClaim(identity.claimId)).status).toBe('exhausted');
+    expect((await readClaim(claimId)).status).toBe('exhausted');
   });
 
   it('is idempotent across reruns: a reaped claim is terminal and never re-scanned', async () => {
-    const identity = await seedZombie();
+    const claimId = await seedZombie();
     const { calls, dispatch } = recordingDispatch();
 
     await sweepStalePlacementStarterClaims(db, {
@@ -573,7 +680,7 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
 
     expect(second).toMatchObject({ scannedRetry: 0, reaped: 0 });
     expect(calls).toHaveLength(0);
-    expect((await readClaim(identity.claimId)).status).toBe('exhausted');
+    expect((await readClaim(claimId)).status).toBe('exhausted');
   });
 });
 
@@ -581,8 +688,7 @@ describe('sweepStalePlacementStarterClaims — failure containment', () => {
   // Review PRRT…OZI: only dispatch()/isJobLive() were guarded, so a throw from the goal read,
   // scope resolution, the acquire, or the reap tx would abort the whole leg mid-way.
   it('isolates one poisoned claim so the rest of the leg still runs', async () => {
-    await seedGoal();
-    for (let i = 0; i < 3; i++) await insertClaim(i);
+    await seedClaimsOnDistinctGoals(3);
     const calls: string[] = [];
     const dispatch = (async (_db: unknown, claimId: string) => {
       calls.push(claimId);
@@ -615,7 +721,7 @@ describe('sweepStalePlacementStarterClaims — failure containment', () => {
   // Acquire-first makes "visited ⇒ advanced" hold even when the scope read explodes; here the
   // scope read is made to explode by deleting the KC tree out from under a subject_live goal.
   it('advances the cursor before the goal read, so a post-acquire throw cannot starve the run', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     // Force the reap/redrive path to throw AFTER the acquire by removing the goal's whole tree,
     // then asserting the claim still moved. (goalMissing is the benign shape of this; the
     // invariant under test is the ordering, asserted through the cursor.)
@@ -629,20 +735,21 @@ describe('sweepStalePlacementStarterClaims — failure containment', () => {
     });
 
     expect(result).toMatchObject({ goalMissing: 1, claimErrors: 0 });
-    expect((await readClaim(identity.claimId)).next_reconcile_at.getTime()).toBe(
+    expect((await readClaim(claimId)).next_reconcile_at.getTime()).toBe(
       NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
     );
   });
 
   // Splitting the legs is pointless if one leg's scan failure takes the other down with it.
   it('contains a leg failure so the sibling leg still runs', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
     const stalled = new Date(NOW.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS - 60_000);
     await db
       .update(placement_starter_claim)
       .set({ status: 'retry_scheduled', updated_at: stalled, next_reconcile_at: stalled })
-      .where(eq(placement_starter_claim.id, identity.claimId));
-    await insertClaim(50, { id: 'claim-pending' });
+      .where(eq(placement_starter_claim.id, claimId));
+    await seedGoalRow('goal-pending');
+    await insertClaim(50, { id: 'claim-pending', goal_id: 'goal-pending' });
 
     // The reap leg blows up inside its loop (probe guard re-throws via a non-Error rejection is
     // already covered; here the failure escapes the claim guard's own advance too).
@@ -664,7 +771,7 @@ describe('sweepStalePlacementStarterClaims — failure containment', () => {
 
 describe('sweepStalePlacementStarterClaims — guards', () => {
   it('isolates a throwing dispatch: the claim stays pending for the next window', async () => {
-    const identity = await seedClaim();
+    const claimId = await seedClaim();
 
     const result = await sweepStalePlacementStarterClaims(db, {
       now: NOW,
@@ -676,7 +783,7 @@ describe('sweepStalePlacementStarterClaims — guards', () => {
     });
 
     expect(result).toMatchObject({ scannedPending: 1, redispatchFailed: 1, redispatched: 0 });
-    const claim = await readClaim(identity.claimId);
+    const claim = await readClaim(claimId);
     expect(claim.status).toBe('pending_dispatch');
     expect(claim.next_reconcile_at.getTime()).toBe(
       NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
@@ -684,8 +791,7 @@ describe('sweepStalePlacementStarterClaims — guards', () => {
   });
 
   it('honours the per-run cap so a backlog cannot flood the paid queue', async () => {
-    await seedGoal();
-    for (let i = 0; i < 4; i++) await insertClaim(i);
+    await seedClaimsOnDistinctGoals(4);
     const { calls, dispatch } = recordingDispatch();
 
     const result = await sweepStalePlacementStarterClaims(db, {

@@ -84,6 +84,7 @@ import {
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
+  resolvePlacementStarterGoalAuthority,
 } from '@/kernel/placement';
 import { and, asc, eq, lte } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from './placement-scope';
@@ -140,6 +141,8 @@ export interface PlacementStarterRecoveryResult {
   lost: number;
   /** Claims skipped because their goal row no longer exists (scope is unresolvable). */
   goalMissing: number;
+  /** pending_dispatch claims cancelled because their semantic goal revision is no longer authoritative. */
+  staleRevision: number;
   /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
   claimErrors: number;
   /** Legs whose own scan query threw; the other leg still ran. */
@@ -175,6 +178,7 @@ export function emptyPlacementStarterRecoveryResult(
     retryJobLive: 0,
     lost: 0,
     goalMissing: 0,
+    staleRevision: 0,
     claimErrors: 0,
     legErrors: 0,
     redispatchSuppressed: false,
@@ -381,6 +385,51 @@ async function sweepPendingDispatch(
     );
     return;
   }
+  // STALE-REVISION GUARD (review PRRT…ua3w). The live /placement/start path can only ever
+  // dispatch the CURRENT revision's claim — it dispatches exactly the ids its own materialize just
+  // produced. This sweeper is the only code that can pick up an OLD revision's claim, and doing so
+  // is actively destructive: with two revisions stranded pending_dispatch (a pg-boss outage
+  // spanning a goal edit), oldest-cursor-first dispatches the STALE one, it takes the
+  // `placement_starter_claim_nonterminal_uq` slot for (goal, subject), and the CURRENT revision's
+  // claim then loses the 23505 race and is terminalized 'cancelled' by
+  // dispatchPlacementStarterClaimTx. Its id is deterministic in (revision, subject), so
+  // re-materialize is an onConflictDoNothing no-op — the current revision can NEVER get a claim
+  // again, and if the edit dropped the old revision's synthetic KC from scope, the generated batch
+  // does not even serve the new session: permanent sourcingNeeded until the goal is edited again.
+  //
+  // So: never dispatch a claim whose revision is no longer authoritative. Terminalize it as
+  // 'cancelled' with the same 'superseded' class dispatchPlacementStarterClaimTx uses — the
+  // authority only moves forward, so a stale claim is undispatchable forever and must leave the
+  // scan rather than be re-examined every window.
+  const authority = await resolvePlacementStarterGoalAuthority(db, claim.goal_id);
+  if (authority.semanticGoalRevisionId !== claim.semantic_goal_revision_id) {
+    const cancelled = await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ status: placement_starter_claim.status })
+        .from(placement_starter_claim)
+        .where(eq(placement_starter_claim.id, claim.id))
+        .for('update');
+      // Re-check under the row lock: a concurrent /placement/start may have dispatched this claim
+      // between the scan and here, and a dispatched claim is not ours to cancel.
+      if (locked?.status !== 'pending_dispatch') return false;
+      await markPlacementStarterClaimTerminal(tx, claim.id, 'cancelled', now, {
+        class: 'superseded',
+        code: 'stale_revision',
+        message: `placement starter claim is for superseded semantic goal revision ${claim.semantic_goal_revision_id}; current is ${authority.semanticGoalRevisionId}`,
+      });
+      return true;
+    });
+    if (cancelled) {
+      result.staleRevision += 1;
+      console.warn(
+        `[placement-starter-recovery] cancelled stale-revision claim ${claim.id} (goal ${claim.goal_id}, revision ${claim.semantic_goal_revision_id} → current ${authority.semanticGoalRevisionId}); never dispatched`,
+      );
+    } else {
+      result.lost += 1;
+    }
+    return;
+  }
+
   const knowledgeIds = await resolveGoalPlacementScope(db, goalRow);
 
   try {

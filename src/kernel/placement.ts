@@ -7,6 +7,9 @@ export {
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
 } from '@/server/question-supply/placement-starter';
-export { markPlacementStarterClaimTerminal } from '@/server/question-supply/placement-starter-store';
+export {
+  markPlacementStarterClaimTerminal,
+  resolvePlacementStarterGoalAuthority,
+} from '@/server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
 export { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
