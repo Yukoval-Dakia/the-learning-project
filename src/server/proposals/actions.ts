@@ -959,8 +959,10 @@ async function dispatchAccept(
       return await acceptQuestionEditProposal(db, proposalId, proposal, opts);
     case 'conjecture':
       // Phase 0 关系脑 (YUK-406 / YUK-440) — accept = "agree with the direction",
-      // NOT a confirmed weakness; edit (opts.corrected_payload) sets
-      // corrected_by_owner + writes the owner version to mem0 CORE. Neither mints
+      // NOT a confirmed weakness; edit sets corrected_by_owner + writes the owner
+      // version to mem0 CORE. YUK-785: "edit" is decided by the CONTENT of
+      // opts.corrected_payload, not its presence — a claim that matches the proposal's
+      // once both are trimmed is a plain accept. Neither mints
       // an FSRS weakness — only a probe confirmation does (later task). ND-5: this
       // path never writes FSRS/review state. The applier records its own decision
       // signal (idempotent + fresh), so the shell just routes.
