@@ -40,6 +40,10 @@ class FakeBoss implements OrchestratorBoss {
   nullSendJobs = new Set<string>();
   /** member job names whose send() throws — models a crash/transient failure after the claim commit. */
   throwOnSendJobs = new Set<string>();
+  /** make the tick-chain send throw (models a DB hiccup while arming the next tick). */
+  failTickSend = false;
+  /** make the tick-chain send return null (pg-boss "no job created"). */
+  nullTickSend = false;
   private states = new Map<string, string>();
   private counter = 0;
 
@@ -49,8 +53,9 @@ class FakeBoss implements OrchestratorBoss {
     options?: { startAfter?: number; id?: string },
   ): Promise<string | null> {
     if (name === ORCHESTRATOR_QUEUE) {
+      if (this.failTickSend) throw new Error('simulated tick send failure');
       this.tickSends += 1;
-      return `tick_${this.tickSends}`;
+      return this.nullTickSend ? null : `tick_${this.tickSends}`;
     }
     if (this.throwOnSendJobs.has(name)) {
       throw new Error(`simulated send failure for '${name}'`);
@@ -671,6 +676,99 @@ describe('orchestrator trigger semantics', () => {
     expect((await nodeRow(run.id, 'r1'))?.status).toBe('enqueued');
     expect((await nodeRow(run.id, 'r3'))?.status).toBe('enqueued');
     expect(boss.memberSends.map((s) => s.name).sort()).toEqual(['r1', 'r3']);
+  });
+
+  // ⑱ YUK-758 review ToTk1I / ToTvY — the swallow is only legitimate once the next tick
+  // is CONFIRMED queued. If arming the chain itself fails, the error must propagate so
+  // pg-boss redelivers; swallowing it would leave the night dead AND unretried.
+  it('⑱ a failure to arm the next tick propagates instead of being swallowed', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    // The continuation send now fails.
+    boss.failTickSend = true;
+    await expect(
+      runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
+    ).rejects.toThrow();
+
+    // Run is still open, so a redelivered tick can pick it back up.
+    const stillRunning = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(stillRunning.status).toBe('running');
+  });
+
+  it('⑱b a null tick send is treated as "chain not armed" and also propagates', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    boss.nullTickSend = true;
+    await expect(
+      runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
+    ).rejects.toThrow(/tick chain not armed/);
+  });
+
+  // ⑲ YUK-758 review ToTk1N / ToTvT — the symmetric half of ToTjN: a member ADDED by a
+  // mid-run upgrade had no node row, so any existing downstream depending on it resolved
+  // its upstream to undefined and stayed pending forever, stalling the whole run.
+  it('⑲ a member added mid-run is backfilled by the tick instead of stalling its downstream', async () => {
+    const boss = new FakeBoss();
+    // Run created from the OLD graph: just `a`.
+    const oldDag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart(
+        { db, boss, dag: oldDag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+
+    // Upgrade lands mid-run: `x` is new, and `a`'s successor `y` depends on it.
+    const newDag = dagOf(member('a'), member('x'), member('y', ['x']));
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+
+    // Both new members got node rows; the new root went out.
+    expect((await nodeRow(run.id, 'x'))?.status).toBe('enqueued');
+    expect((await nodeRow(run.id, 'y'))?.status).toBe('pending');
+
+    // And the run can still converge rather than spinning forever.
+    await completeMember(boss, run.id, 'x');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'y'))?.status).toBe('enqueued');
+    await completeMember(boss, run.id, 'y');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+    const finished = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(finished.status).toBe('completed');
+  });
+
+  // ⑳ ToTk1L — the re-send window must cover a real restart, not just the millisecond
+  // crash gap: a job that provably never existed should still be recoverable an hour later.
+  it('⑳ a never-landed send is still recovered well beyond the old 5-minute window', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    boss.throwOnSendJobs.add('a');
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const reservedId = must((await nodeRow(run.id, 'a'))?.boss_job_id, 'reserved id');
+    expect(boss.hasJob('a', reservedId)).toBe(false);
+
+    // An hour later — long past the old grace, still far inside the node timeout.
+    boss.throwOnSendJobs.clear();
+    const anHourLater = new Date(NOW.getTime() + 60 * 60 * 1000);
+    await runOrchestratorTick({ db, boss, dag, now: anHourLater, localDate: () => RUN_DATE });
+
+    expect(boss.hasJob('a', reservedId)).toBe(true);
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued'); // recovered, not failed
   });
 
   it('tick with no active run is a no-op', async () => {

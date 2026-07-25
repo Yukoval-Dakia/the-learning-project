@@ -133,21 +133,22 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
         // **parse 也在 try 内**（review ToTbq）：畸形 payload 的抛出同样要留下这行日志，否则
         // 恰恰是「手工 enqueue 出错」这种最需要线索的场景反而无声——与上面那句注释的立意相悖。
         //
-        // **rethrow 只给 start 路径**（YUK-758 review 面板必修 1 的配套约束）：
-        //  · tick：advanceAndContinue 已**无条件**保证续排下一 tick（见 orchestrator.ts），
-        //    所以 pg-boss 重投递不再是恢复手段，反而有害——FAST 队列继承 pg-boss v12 默认
-        //    retry_limit=2 / retry_delay=0 / retry_backoff=false，3 次尝试数秒内背靠背烧完，
-        //    每次都会再排一条 tick → 一夜留下 3 条并行 tick 链，重复 enqueue 付费成员 job。
-        //    故 tick 失败只 log 不 rethrow，续链交给已排好的下一拍。
-        //  · start / parse 失败：若 run 创建本身就失败（listActiveRuns / createRunWithNodes 抛）
-        //    或 payload 根本没认出来，当夜**没有任何** tick 被排出，重投递是唯一恢复通道，
-        //    故 rethrow。重投递不会建重复 run——getLatestRunForDate 防重闸（ToPUE）已挡住。
-        let isTick = false;
+        // **rethrow 全路径**（YUK-758 review 面板必修 1 → 经 ToTk1I / ToTvY 收紧的最终形态）。
+        //
+        // 中间一版曾对 tick 路径「只 log 不 rethrow」，理由是「续链已由 advanceAndContinue
+        // 无条件保证，重投递只会分叉出并行 tick 链」。那个理由**有洞**：抛出可能发生在续链
+        // 排上**之前**——runOrchestratorTick 里的 localDate() / getActiveRunForDate() 裸奔调用，
+        // 以及续链 send 自身——此时既没排下一拍、又被吞掉当作成功，pg-boss 不重投递，当夜链
+        // 彻底断掉、run 停在 running 到次夜 abandon（ToTk1I / ToTvY）。
+        //
+        // 现在契约收紧到：**advanceAndContinue 正常返回 ⟺ run 已收尾 或 下一拍已确认排队**。
+        // 于是「异常能传到这里」本身就等价于「链没armed」，重投递是唯一恢复通道且**不会分叉**
+        // （没armed 意味着没有已排出的 tick 与之竞争）。推进失败但链armed 的情形已在
+        // advanceAndContinue 内部吞掉并留日志，根本到不了这里。故此处无条件 rethrow。
         try {
           // payload runtime 校验（review ToTa0 + ToTe7）：裸 `as` 会让畸形/手工 enqueue 的
           // payload 静默走进 start 分支（trigger 默认 'cron'）触发整链重跑。收窄见 parse 实现。
           const data = parseOrchestratorPayload(job.data);
-          isTick = data.tick === true;
           if (data.tick) {
             await runOrchestratorTick({ db, boss: orchestratorBoss, dag });
           } else {
@@ -158,9 +159,8 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
             );
           }
         } catch (err) {
-          console.error(`[orchestrator] job failed (tick=${isTick})`, err);
-          // parse 失败时 isTick 仍是 false → 走 rethrow，符合「没排出 tick 就要重投递」。
-          if (!isTick) throw err;
+          console.error('[orchestrator] job failed — rethrowing for pg-boss redelivery', err);
+          throw err;
         }
       }
     },

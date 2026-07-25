@@ -2605,8 +2605,13 @@ export const dag_orchestration_node = pgTable(
   'dag_orchestration_node',
   {
     id: text('id').primaryKey(),
-    // 软引用 dag_orchestration_run.id（text-ref，无 enforced FK）。
-    run_id: text('run_id').notNull(),
+    // 归属 run。**enforced FK + ON DELETE CASCADE**（YUK-758 review ToTvQ）：没有约束时可以写入
+    // 指向不存在 run 的节点行，这类孤儿既不被任何 run 管理、也不会被推进或恢复，且 restore/
+    // reset 的按表清理也未必覆盖到。CASCADE 让「删一条 run」自动带走其节点（与
+    // RESTORE_WIPE_ONLY_TABLES 的 node→run 顺序一致，二者互不冲突）。
+    run_id: text('run_id')
+      .notNull()
+      .references(() => dag_orchestration_run.id, { onDelete: 'cascade' }),
     // 图成员 job 名（= boss 队列名 = JobDecl.name）。
     job_name: text('job_name').notNull(),
     // pending（未就绪）| enqueued（已 boss.send，等 pg-boss 消费）| running（pg-boss active）|

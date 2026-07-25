@@ -60,19 +60,3 @@ export const NODE_TIMEOUT_SECONDS = 7 * 60 * 60;
  */
 export const LAYER_STAGGER_SECONDS = 120;
 export const LAYER_STAGGER_MAX_SECONDS = 15 * 60;
-
-/**
- * 「已领取但 pg-boss 查无此 job」的补发宽限窗（秒，YUK-758 review ToTaI）。
- *
- * 节点的 boss_job_id 在 boss.send **之前**就随 CAS 落库（claimNodePending），所以
- * enqueued 节点永远带 id。若之后 getJobById 查不到该 id，只有一种可能：那次 send 没落地
- * （claim 提交后、send 前崩溃/瞬时失败）。此时按同一个 id 补发即可自愈——pg-boss 的
- * insertJobs 是 `ON CONFLICT DO NOTHING`（id 为主键），**同 id 补发天然幂等**，最多存在
- * 一条真 job，绝无重复付费。
- *
- * 仍设窗而非无限补发：万一某部署把队列 retention 调得极短、已完成的 job 行被清掉，
- * 补发就会变成真的重跑。窗设 5min（崩溃窗实际是毫秒级；几分钟内没出现的 job 就是没发出去），
- * 而 pg-boss 队列 retention/deletion 默认 7d ≫ 本窗，故窗内「查无」不可能是「跑完被清」。
- * 超窗仍查不到 → 落回 NODE_TIMEOUT_SECONDS 兜底判 failed。
- */
-export const SEND_RECOVERY_GRACE_SECONDS = 5 * 60;

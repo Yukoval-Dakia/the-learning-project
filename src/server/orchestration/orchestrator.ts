@@ -16,7 +16,6 @@ import {
   LAYER_STAGGER_SECONDS,
   NODE_TIMEOUT_SECONDS,
   ORCHESTRATOR_QUEUE,
-  SEND_RECOVERY_GRACE_SECONDS,
   TICK_INTERVAL_SECONDS,
 } from './constants';
 import {
@@ -190,7 +189,22 @@ async function advancePendingNode(
       return false;
     }
 
-    const upstreams = dagNode.deps.map((d) => ({ soft: d.soft, up: nodes.get(d.job) }));
+    const upstreams = dagNode.deps.map((d) => ({ soft: d.soft, job: d.job, up: nodes.get(d.job) }));
+
+    // 防御：硬上游是当前图成员但本 run 查不到它的节点行。正常路径下 tick/start 的 insertNodes
+    // 补齐已消灭这种态（ToTk1N），此处是**最后一道**——若它仍发生，`allTerminal` 会因
+    // `u.up &&` 恒 false 让本节点永久 pending、run 卡 running 空转（ToTvT）。按 skipped 语义
+    // 收敛并留因，绝不留下无法收敛的 run。
+    const missingHard = upstreams.find((u) => !u.soft && !u.up);
+    if (missingHard) {
+      await updateNodeStatus(deps.db, node.id, {
+        status: 'skipped',
+        detail: `upstream '${missingHard.job}' has no node row in this run`,
+        now,
+      });
+      node.status = 'skipped';
+      return false;
+    }
 
     // 硬上游 failed/skipped → 本节点跳过（留因）。
     const blocked = upstreams.find(
@@ -207,11 +221,13 @@ async function advancePendingNode(
     }
 
     // 全部上游终态才可推进（否则等待）。根（无上游）此处 vacuous-true 即刻入队。
-    const allTerminal = upstreams.every((u) => u.up && isTerminalNodeStatus(u.up.status));
+    // **软**上游缺节点行时视作「已终态但未成功」——不阻塞推进（软边的本意就是上游不成功也照跑），
+    // 否则同样会把本节点钉死在 pending 上（ToTvT 的软边侧）。硬上游缺行已在上面收敛为 skipped。
+    const allTerminal = upstreams.every((u) => (u.up ? isTerminalNodeStatus(u.up.status) : u.soft));
     if (!allTerminal) return false;
 
-    // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游若未 succeeded → stale。
-    const stale = upstreams.some((u) => u.soft && u.up && u.up.status !== 'succeeded');
+    // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游未 succeeded（含缺行）→ stale。
+    const stale = upstreams.some((u) => u.soft && (!u.up || u.up.status !== 'succeeded'));
 
     // 先原子领取（CAS pending→enqueued），只有赢家 send——杜绝并发 advanceRun 重复付费入队
     //（YUK-758 review ToTaj）。领取失败 = 已被并发调用推进，跳过。
@@ -273,10 +289,16 @@ async function pollInflightNode(
     await updateNodeStatus(deps.db, node.id, { status: 'running', now });
   } else if (jobState === null || jobState === 'enqueued') {
     // job 行查不到（jobState===null 且节点带 id）→ 那次 send 没落地（claim 已提交、send 前
-    // 崩溃/瞬时失败）。窗内按**同一个预留 id** 补发自愈（YUK-758 review ToTaI）：pg-boss 的
+    // 崩溃/瞬时失败）。按**同一个预留 id** 补发自愈（YUK-758 review ToTaI）：pg-boss 的
     // job INSERT 是 ON CONFLICT DO NOTHING，同 id 补发幂等，最多只会存在一条真 job，绝无
-    // 重复付费；窗口理由见 SEND_RECOVERY_GRACE_SECONDS。
-    if (jobState === null && node.boss_job_id && withinSendRecoveryGrace(node, now)) {
+    // 重复付费。
+    //
+    // 补发窗 = 「尚未超时」（ToTk1L）。初版另设了 5min 窗，是拿「崩溃瞬间是毫秒级」推的——推错了
+    // 对象：要覆盖的是**从崩溃到下一 tick 真正观测到该节点**的间隔，含停机/重启/重投递延迟，
+    // 轻易超过 5min，于是一个**确定从未存在过**的 job 被拒绝补发、空等到超时被误判 failed，硬
+    // 下游连坐。既然补发同 id 幂等，只要还没判超时就值得补，独立窗口纯属多余，故并入超时判据。
+    // （「跑完被 retention 清掉 → 补发变重跑」不成立：队列 retention 默认 7d ≫ 节点超时 7h。）
+    if (jobState === null && node.boss_job_id && !isNodeTimedOut(node, now, timeoutMs)) {
       console.warn(
         `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
       );
@@ -294,12 +316,6 @@ async function pollInflightNode(
       });
     }
   }
-}
-
-/** 节点是否仍在「send 未落地」补发宽限窗内（自 enqueued_at 起算）。 */
-function withinSendRecoveryGrace(node: NodeRow, now: Date): boolean {
-  if (!node.enqueued_at) return false;
-  return now.getTime() - node.enqueued_at.getTime() <= SEND_RECOVERY_GRACE_SECONDS * 1000;
 }
 
 function isNodeTimedOut(node: NodeRow, now: Date, timeoutMs: number): boolean {
@@ -428,25 +444,34 @@ export async function runOrchestratorTick(deps: DriveDeps): Promise<void> {
   const runDate = (deps.localDate ?? orchestratorLocalDate)(now);
   const run = await getActiveRunForDate(deps.db, runDate);
   if (!run) return;
+
+  // 热升级新增成员的补齐（YUK-758 review ToTk1N / ToTvT）：start 路径已有这句自愈，tick 路径
+  // 原本没有。缺它时，「夜跑进行中部署新 manifest 新增成员 x，且已有成员 y 依赖 x」会让 y 的
+  // 上游解析恒为 undefined → allTerminal 恒 false → y **永久 pending** → terminal 永远凑不齐 →
+  // run 卡 running 空转到次夜。这是 ToTjN（成员被删）的**对称缺口**（成员被加）。
+  // insertNodes 幂等（onConflictDoNothing），补齐后新成员当夜即按依赖正常参与。
+  await insertNodes(deps.db, run.id, [...deps.dag.nodes.keys()], now);
+
   await advanceAndContinue({ ...deps, now, run });
 }
 
 /**
  * 推进一步 → 完成收尾 / 未完成调度下一 tick。
  *
- * **续链无条件保证**（YUK-758 review 面板必修 1）。tick 自调度是当夜**唯一**续跑通道，而本
- * 函数原本是「先 advance 后续链」的顺序结构：`advanceRun` 步骤② 整段（updateNodeStatus /
- * claimNodePending / boss.send / getJobById）以及 finishRun 都可能抛，一抛就**跳过续链**——
- * run 永久停在 running，当夜剩余节点（compose / question_supply / kc_dedup / dreaming /
- * knowledge_maintenance …）整片静默不跑，要等次夜锚点才 abandon。上一轮 ToTa4 的 per-node
- * try/catch 只覆盖了步骤①，治不了这条。
+ * **续链保证的准确契约**（YUK-758 review 面板必修 1，经 ToTk1I / ToTvY 收紧）：
+ * 本函数返回**正常**当且仅当「run 已收尾」**或**「下一 tick 已确认排队」。推进本身失败
+ * （advanceRun / finishRun 抛）只要续链排上了就**吞掉**——单点失败退化成「丢一拍」，下一 tick
+ * 从最新 DB 态重来（advanceRun 幂等）。但若**续链本身**没排上（send 抛 / 返回 null），本函数
+ * **抛出**，把「链没armed」如实上报调用方。
  *
- * 修法刻意**不是**给步骤②再套 per-node try/catch（那样仍治不了 loadNodes / finishRun 这类
- * 整段裸奔的调用）：改为在此处兜住**整个** advance+finish，异常时 log 后**照样**排下一 tick。
- * 单点推进失败于是退化成「本轮丢一拍」，下一 tick 从最新 DB 态重来（advanceRun 幂等）。
+ * 为什么这个区分是必须的：register.ts 的 tick 分支「只 log 不 rethrow」，其正当性**完全**建立在
+ * 「续链已保证」之上。早先版本把续链 send 放在 try/catch **之外**，它一抛就既没排下一拍、又被
+ * 上层吞掉当作成功 —— pg-boss 认为 tick 成功、不重投递，当夜链彻底断掉，run 停在 running 直到
+ * 次夜 abandon（ToTk1I）。现在「没armed 必抛」→ register 照常 rethrow → pg-boss 重投递即恢复；
+ * 且此时**没有任何** tick 被排出，重投递不会分叉出并行链（分叉正是当初不 rethrow 的理由）。
  *
- * ⚠️ 与 register.ts 的配套约束：本函数保证续链后，**tick 路径不得再 rethrow**——否则
- * pg-boss 的 2 次重投递会各自再排一条 tick，一夜留下 3 条并行链重复付费 enqueue。见 register.ts。
+ * 残留边角：若 send 已在 DB 落库却在返回前抛（提交后失联），重投递会多排一条链。宁可多一条
+ * 也不要零条——多链只是重复 enqueue（成员 job 侧有 CAS 领取 + 同 id 幂等兜着），零链是整夜静默。
  */
 async function advanceAndContinue(
   deps: DriveDeps & { run: RunRow },
@@ -456,6 +481,7 @@ async function advanceAndContinue(
   const now = deps.now ?? new Date();
   let summary: AdvanceSummary | null = null;
   let settled = false;
+  let advanceError: unknown = null;
   try {
     summary = await advanceRun({
       db: deps.db,
@@ -470,26 +496,33 @@ async function advanceAndContinue(
       settled = true;
     }
   } catch (err) {
-    // 吞掉是**故意**的：续链优先于本轮成功。留 loud log（FAST 队列无 DLQ，无日志即全无声）。
-    console.error(
-      `[orchestrator] advance failed for run ${deps.run.id} (${deps.run.run_date}) — scheduling the next tick anyway so the chain survives; state is re-read from DB next tick`,
-      err,
-    );
+    // 先扣住——只有在确认续链排上之后才吞（见下）。
+    advanceError = err;
   }
 
   if (!settled) {
-    // send 返回 null（未建 job）会静默断链、run 卡 running（YUK-758 review ToTaa）。显式检查并
-    // loud log——次夜锚点是最终兜底，但断链须留观测痕迹不静默。
+    // 续链 send **不**包在上面的 try 里：它失败必须能抛到调用方，让 pg-boss 重投递本 tick。
     const tickId = await deps.boss.send(
       ORCHESTRATOR_QUEUE,
       { tick: true },
       { startAfter: TICK_INTERVAL_SECONDS },
     );
     if (!tickId) {
-      console.error(
-        `[orchestrator] next tick send returned null for run ${deps.run.id} (${deps.run.run_date}) — tick chain broken; run stays 'running' until next anchor abandons it`,
+      // 返回 null = 未建 job（ToTaa）。这同样是「链没armed」，必须抛而不是只 log——只 log 会让
+      // pg-boss 把本 tick 当成功、不重投递，当夜静默断链。
+      throw new Error(
+        `[orchestrator] next tick send returned null for run ${deps.run.id} (${deps.run.run_date}) — tick chain not armed`,
       );
     }
+  }
+
+  // 到此：run 已收尾，或下一拍已确认排队。此刻才吞掉推进失败并留 loud log
+  // （FAST 队列无 DLQ，无日志即全无声）。
+  if (advanceError) {
+    console.error(
+      `[orchestrator] advance failed for run ${deps.run.id} (${deps.run.run_date}) — the next tick IS queued, so the chain survives; state is re-read from DB next tick`,
+      advanceError,
+    );
   }
   return summary;
 }
