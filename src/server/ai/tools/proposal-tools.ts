@@ -51,7 +51,10 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
-import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
+import {
+  getFailureAttemptWithReasoningTraceById,
+  getJudgeForAttempt,
+} from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
@@ -904,10 +907,14 @@ async function attributeMistakeExecute(
   raw: AttributeMistakeInput,
 ): Promise<AttributeMistakeOutput> {
   const input = AttributeMistakeInputSchema.parse(raw);
-  const failure = await getFailureAttemptById(ctx.db, input.attempt_event_id);
-  if (!failure) {
+  // YUK-562 — this loader runs the SAME single query as getFailureAttemptById and
+  // also surfaces the attempt payload's reasoning_trace, so the process-data
+  // self-report reaches attribution without a second round-trip.
+  const loaded = await getFailureAttemptWithReasoningTraceById(ctx.db, input.attempt_event_id);
+  if (!loaded) {
     return { status: 'skipped:not_failure_attempt' };
   }
+  const { failure, reasoning_trace: rawReasoningTrace } = loaded;
 
   const existingJudge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
   if (existingJudge) {
@@ -950,6 +957,12 @@ async function attributeMistakeExecute(
     domainByKnowledgeId.get(knowledgeRows[0]?.id) ?? null,
   );
 
+  // YUK-562 (process-data 通电) — feed the attempt's reasoning_trace (already loaded
+  // above, no extra query) into attribution as the "student self-report" section,
+  // mirroring the attribution_followup job. Present → threaded; absent /
+  // whitespace-only → key omitted (byte-identical attribution input).
+  const reasoningTraceMd = rawReasoningTrace?.trim() ? rawReasoningTrace : undefined;
+
   let attributionTaskRan = false;
   const runTaskFn = makeRunTaskFn(ctx.db);
   await runAttributionAndWriteJudgeEvent({
@@ -964,6 +977,8 @@ async function attributeMistakeExecute(
         name: row.name,
         effective_domain: domainByKnowledgeId.get(row.id) ?? null,
       })),
+      // YUK-562 — only add the key when there is real process text (else omitted).
+      ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
     },
     runTaskFn: (kind, taskInput, taskCtx) => {
       attributionTaskRan = true;

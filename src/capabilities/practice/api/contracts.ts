@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
 import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
 
 /** Bound text copied into judge prompts and immutable attempt events. */
@@ -11,6 +12,11 @@ const CreateAttemptBodyBaseSchema = z.object({
   mistake_id: z.string().min(1).optional(),
   rating: FsrsRating,
   response_md: z.string().max(MAX_REVIEW_RESPONSE_CHARS).nullable().optional(),
+  // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，落到 review event
+  // payload.reasoning_trace（区别于 response_md 的最终作答）。API 侧先行支持；UI 采集框
+  // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界与
+  // known.ts 的 reasoning_trace 共享 REASONING_TRACE_MAX_LEN，不会漂移。
+  reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -324,11 +325,19 @@ export async function submitSolveAttempt(
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
-  const answerParts = [
-    ...(submission.student_text_steps ?? []),
-    submission.student_final_answer_text,
-  ].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+  // 过程步骤去空一次，answer_md 拼接与 YUK-562 的 reasoning_trace 采集共用，避免重复过滤逻辑。
+  const trimmedSteps = (submission.student_text_steps ?? []).filter((s) => s.trim().length > 0);
+  const answerParts = [...trimmedSteps, submission.student_final_answer_text].filter(
+    (x): x is string => typeof x === 'string' && x.trim().length > 0,
+  );
   const answerMd = answerParts.join('\n');
+
+  // YUK-562 (process-data 最小采集) — reasoning_trace 是学生自述的解题「过程」文本，取
+  // trimmedSteps（区别于 answer_md 里连最终答案一起拼的全量）。answer_md 的既有拼接行为
+  // 保留不变（向后兼容 + judge 仍读 answer_md）；这里只是额外把过程步骤单独留痕，供
+  // attribution 通电（attribution_followup → AttributionInput.reasoning_trace_md）。
+  // 无步骤（纯手写图 / 只填最终答案）时为空串 → 下面条件写入使字段 ABSENT，payload 逐字不变。
+  const reasoningTrace = trimmedSteps.join('\n').slice(0, REASONING_TRACE_MAX_LEN);
 
   const judgeFn = params.judgeFn ?? ((input) => createDefaultJudgeInvoker().invoke(input));
   const judged = await judgeFn({
@@ -392,6 +401,9 @@ export async function submitSolveAttempt(
         // value and IS written.
         ...(params.hintsUsed !== undefined ? { hints_used: params.hintsUsed } : {}),
         ...(params.finalHintLevel !== undefined ? { final_hint_level: params.finalHintLevel } : {}),
+        // YUK-562 — 额外写入过程文本（步骤自述），保留 answer_md 拼接不变。Conditional
+        // spread：无步骤时字段 ABSENT → byte-identical 回归锚。
+        ...(reasoningTrace.length > 0 ? { reasoning_trace: reasoningTrace } : {}),
         // provenance (stored in jsonb; stripped by the Zod contract on parse)
         source: 'solve_tutor',
         judge_route: judged.route,

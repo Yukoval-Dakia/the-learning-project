@@ -87,14 +87,24 @@ export const agencyCapability = defineCapability({
     // 收集挂载（T3），此处声明是唯一归属源。
     handlers: [
       {
+        // YUK-758 DAG 成员：dreaming 读 proposal inbox 作去重基线。对上游 propose 生产者
+        // 是**软边**（上游失败 dreaming 照跑、带 stale——它只是少看几条 pending，仍正确产出）。
+        // 编码上游 = 现钟表序下 dreaming(旧 03:15) 实际能看到的两只 producer（edge_propose 02:30
+        // / maintenance 03:00）；其余 producer 旧序在 dreaming 之后，非其上游。cron 移除，改由
+        // orchestrator 触发。
         name: 'dreaming_nightly',
-        schedule: { cron: '15 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [
+          { job: 'knowledge_edge_propose_nightly', soft: true },
+          { job: 'knowledge_maintenance_nightly', soft: true },
+        ],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
       },
       {
+        // YUK-758 DAG 成员（根）：coach_daily 读在线 mastery/session 态，无 in-scope 夜链上游
+        // （旧 03:45 错峰是时钟巧合）。cron 移除，orchestrator 起步即触发。
         name: 'coach_daily',
-        schedule: { cron: '45 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
@@ -105,8 +115,10 @@ export const agencyCapability = defineCapability({
         load: () => import('./jobs/coach_weekly').then((m) => m.buildCoachWeeklyHandler),
       },
       {
+        // YUK-758 DAG 成员（根）：propose-only 生产者，读 tree/goals 产 goal_scope 提议入人审
+        // inbox，不消费其它夜链 job 的 live 产物（旧 03:50 错峰是时钟巧合）。cron 移除。
         name: 'goal_scope_propose_nightly',
-        schedule: { cron: '50 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/goal_scope_propose_nightly').then(
@@ -116,23 +128,24 @@ export const agencyCapability = defineCapability({
       // YUK-406 Phase 0 (关系脑) / YUK-440 (A13) — nightly 教研例会 conjecture
       // proposer. Single proposer of `conjecture` proposals: deterministic 取证 →
       // Opus N=3 self-consistency induction → propose ≤3. queue:'llm' (it runs the
-      // anthropic-sub OAuth Opus lane). At 04:05 it sits between goal_scope (03:50)
-      // and Sunday's coach_weekly (04:30), without colliding with 04:10 verify recovery.
+      // anthropic-sub OAuth Opus lane).
+      // YUK-758 DAG 成员（根）：propose-only conjecture 生产者，读取证据自induce，不消费其它夜链
+      // job 的 live 产物（旧 04:05 错峰是时钟巧合）。cron 移除，orchestrator 触发。
       {
         name: 'research_meeting_nightly',
-        schedule: { cron: '5 4 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/research_meeting_nightly').then(
             (m) => m.buildResearchMeetingNightlyHandler,
           ),
       },
-      // YUK-572 — agent-led 教研例会 director (shadow lane, dark-ship). Staggered a HARD
-      // 90min after the deterministic research_meeting (04:05): the ≥60min gap (a hard
-      // constraint, §3) keeps the two lanes' app-level pending-dedup TOCTOU closed — the
-      // deterministic lane has committed its proposals by the time the agent lane reads
-      // the pending inbox as its dedup base. Kill switch RESEARCH_MEETING_AGENT_ENABLED
-      // (default OFF) makes the handler a no-op; the cron stays registered.
+      // YUK-572 — agent-led 教研例会 director (shadow lane, dark-ship). The two lanes'
+      // app-level pending-dedup TOCTOU must stay closed: the deterministic lane has to have
+      // committed its proposals before the agent lane reads the pending inbox as its dedup
+      // base (§3 hard constraint). That ordering is now a DAG edge, not a clock offset —
+      // see the YUK-758 note below. Kill switch RESEARCH_MEETING_AGENT_ENABLED (default OFF)
+      // makes the handler a no-op.
       //
       // round-3 review CodeRabbit Major (A4) — queue:'agent', NOT 'llm': unlike the
       // deterministic research_meeting_nightly (a bounded parallel producer batch — no MCP
@@ -146,9 +159,16 @@ export const agencyCapability = defineCapability({
       // comfortably exceeds the director's own 300s wall-clock abort budget — pg-boss's
       // queue-level expiry is a crash-recovery safety net, never the primary backstop
       // (the director's own 300s abort always fires first on a healthy run).
+      // YUK-758 DAG 成员：←**hard** research_meeting_nightly（review ToPUI）。原「05:35 固定
+      // cron，比确定性会议 04:05 晚 90min」的去重屏障在确定性会议入图后失效（会议现由 orchestrator
+      // 调度，llm 队列排队/重试可能推后其完成时刻，固定 05:35 不再保证「会议已提交 proposal」）。
+      // 入图后 orchestrator 只在 research_meeting_nightly **成功完成后**才触发本 agent lane——
+      // happens-after 硬保证，严格强于原 90min 时间差启发式（agent director 读 inbox 去重时，
+      // 确定性 lane 的 proposal 必已落库）。cron 移除；kill switch RESEARCH_MEETING_AGENT_ENABLED
+      // 仍在（flag OFF 时 handler no-op，节点照常 succeed）。
       {
         name: 'research_meeting_agent_nightly',
-        schedule: { cron: '35 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['research_meeting_nightly'],
         queue: 'agent',
         load: () =>
           import('./jobs/research_meeting_agent_nightly').then(

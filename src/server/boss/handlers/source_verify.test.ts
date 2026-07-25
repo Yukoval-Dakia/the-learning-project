@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { event, knowledge, question } from '@/db/schema';
+import type { SourceGroundingVerifyResult } from '@/server/ai/judges/source-grounding-verify';
 import { getFsrsState } from '@/server/fsrs/state';
 import {
   buildCoverageEvidenceDemand,
@@ -27,7 +28,7 @@ import {
 } from '@/server/question-supply/evidence-demand';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
-import { runSourceVerify } from './source_verify';
+import { type SourceGroundingParams, runSourceVerify } from './source_verify';
 
 // Solver output shape consumed by verify-framework.runSolveCheck (it only reads
 // reference_solution.final_answer + answer_equivalents).
@@ -47,6 +48,46 @@ function confidentlyWrongSolver(finalAnswer: string) {
         ? semanticJudgeOutput('incorrect', 0.95)
         : solverOutput(finalAnswer),
   }));
+}
+
+// YUK-230 — a full metadata block that (a) passes deterministic source_consistency
+// (web_sourced + grounding extract + matching url) AND (b) marks the row as a
+// single_source_grounding image_candidate row (asset id + flag) so the source-grounding
+// gate fires. metadataOverride replaces metadata wholesale, so return the complete shape.
+function groundingMetadata(
+  sourceAssetId: string,
+  url = 'https://example.edu/wenyan/lunyu',
+): Record<string, unknown> {
+  return {
+    web_sourced: {
+      url,
+      title: '论语 注疏',
+      fetched_at: '2026-06-06T00:00:00.000Z',
+      whitelist_match: false,
+      extract: '「之」在「学而时习之」中作代词，指代所学的内容。',
+    },
+    source_ref_kind: 'url',
+    single_source_grounding: true,
+    image_candidate_source_asset_id: sourceAssetId,
+  };
+}
+
+// YUK-230 — a stubbed SourceGroundingVerifyResult. 'transient' models the runner's
+// image-fetch / VLM / parse error bucket, which the gate fails-closed (demote) + re-throws
+// as a retriable verify error rather than a confident「题面不在图里」content fail.
+function groundingResult(
+  status: 'grounded' | 'not_grounded' | 'transient',
+): SourceGroundingVerifyResult {
+  if (status === 'transient') {
+    return { status: 'transient_error', message: 'grounding VLM call failed: upstream 503' };
+  }
+  return {
+    status,
+    confidence: 0.8,
+    observed_md: '图片中可见「学而时习之」一句',
+    reason_md:
+      status === 'grounded' ? '题面核心内容出现在来源图片中' : '题面内容与来源图片无关（疑似幻觉）',
+  };
 }
 
 async function seedKnowledge(id: string, domain = 'yuwen', opts: { archived?: boolean } = {}) {
@@ -517,6 +558,306 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+  });
+
+  // ── YUK-230 — source-grounding gate (single_source_grounding image_candidate rows) ──
+  it('YUK-230 runs the source-grounding re-check and promotes when the source image confirms the 题面', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active', // image_candidate accept pre-promotes structurally-sound drafts
+      metadataOverride: groundingMetadata('asset-src-1'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') })); // solve_check pass
+    const sourceGroundingFn = vi.fn(async (_p: SourceGroundingParams) =>
+      groundingResult('grounded'),
+    );
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('verified');
+    // the paid re-check ran exactly once, on the row's source_asset image.
+    expect(sourceGroundingFn).toHaveBeenCalledTimes(1);
+    expect(sourceGroundingFn.mock.calls[0][0]).toMatchObject({
+      sourceAssetId: 'asset-src-1',
+      prompt_md: '「之」在「学而时习之」中作？',
+    });
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active'); // grounded → enters the pool
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('success');
+    const okPayload = ev.payload as Record<string, unknown>;
+    expect(okPayload.overall).toBe('pass');
+    expect(okPayload.source_grounding).toMatchObject({
+      grounded: true,
+      source_asset_id: 'asset-src-1',
+      triggered_by: 'image_candidate_accept',
+    });
+    // thread 3 — the grounding verdict is a first-class check (drives the unified overall).
+    expect(okPayload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'pass' }),
+      ]),
+    );
+  });
+
+  it('YUK-230 demotes a pre-promoted single-source draft back to draft when the 题面 is NOT in the image (VLM hallucination)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-2'),
+    });
+    // solve_check PASSES (the fabricated 题面+答案 are internally self-consistent) — only the
+    // dedicated grounding re-check, reading the actual image, catches that the 题面 is not in
+    // it. This is the threat model the earlier answer-judge wiring could not cover.
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('not_grounded'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('failed');
+
+    // 复核失败 = 打回 draft（不入练习池）— the pre-promoted active row is demoted.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+    // FSRS never enrolled (promote branch never ran).
+    const fsrs = await getFsrsState(db, 'knowledge', 'k1');
+    expect(fsrs).toBeNull();
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('failure');
+    const failPayload = ev.payload as Record<string, unknown>;
+    expect(failPayload.demoted).toBe(true);
+    expect(failPayload.source_grounding).toMatchObject({
+      grounded: false,
+      source_asset_id: 'asset-src-2',
+      triggered_by: 'image_candidate_accept',
+    });
+    // thread 3 — grounding fail is a failing check, so the unified overall is 'fail' (not
+    // 'needs_review') and the summary names source_grounding, matching the outcome.
+    expect(failPayload.overall).toBe('fail');
+    expect(failPayload.failure_class).toBe('validation_failure');
+    expect(failPayload.summary_md).toContain('source_grounding');
+    expect(failPayload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'fail' }),
+      ]),
+    );
+  });
+
+  it('YUK-230 FAIL-CLOSED: a BARE throw from the grounding fn is treated as transient (demote + throw)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-bare'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 1 — a bug/regression that makes the grounding fn THROW (instead of returning a
+    // discriminated result) must NOT bypass fail-closed. The handler wraps the call and folds
+    // a bare throw into the same transient path (demote → throw).
+    const sourceGroundingFn = vi.fn(async () => {
+      throw new Error('unexpected grounding fn crash');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft'); // fail-closed demote fired despite the bare throw
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('error');
+  });
+
+  it('YUK-230 overlapping delivery: a transient run does NOT yank a row a concurrent run already verified+promoted', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-race'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 2 — simulate the race window: WHILE this (stale) run is inside the grounding call,
+    // a CONCURRENT run terminally verifies + promotes the question (writes a source_verify
+    // outcome='success' event). This run then gets a transient error. The fail-closed demote
+    // MUST skip (NOT EXISTS success guard) so the concurrent run's active row is not pulled.
+    const sourceGroundingFn = vi.fn(async () => {
+      await db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: qid,
+        outcome: 'success',
+        payload: { question_id: qid, promoted: true },
+        caused_by_event_id: null,
+        created_at: new Date(),
+      });
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    // The row stays 'active' — the concurrent success event blocked the demote.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-ver'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    // thread 2 round-2 — simulate an EDIT during the grounding call: the question's version is
+    // bumped past the version this run read at the top. This run's transient error must NOT
+    // demote the newer row (the demote is pinned to version = the run's read version), so the
+    // edited row stays 'active' and this stale delivery just throws (re-run against the fresh
+    // version).
+    const sourceGroundingFn = vi.fn(async () => {
+      await db.update(question).set({ version: 1 }).where(eq(question.id, qid));
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    // The version-bumped row is untouched by the stale run's demote.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    expect(rows[0].version).toBe(1);
+  });
+
+  it('YUK-230 FAIL-CLOSED: a transient grounding error demotes the single-source row to draft AND throws (retriable)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-3'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('transient'));
+
+    // A transient image-fetch/VLM/parse failure is NOT a content verdict. Thread 1 fix:
+    // FAIL-CLOSED — demote the pre-promoted active row to draft FIRST (so it leaves the pool
+    // during the retry window, not selectable), then throw so the catch-bottom writes a
+    // retriable outcome='error' event and pg-boss re-runs. NEVER conflated with 题面-not-in-image.
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    // FAIL-CLOSED: the row is demoted out of the pool (was 'active') before the throw.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+
+    // The error event is retriable (outcome='error'); the idempotency guard re-runs it, and a
+    // later 'grounded' re-check re-promotes the row to 'active'.
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('error');
+  });
+
+  it('YUK-230 does NOT run the grounding re-check for a normal (non single_source_grounding) web_sourced question', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] }); // default metadata → no marker
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('grounded'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('verified');
+    expect(sourceGroundingFn).not.toHaveBeenCalled();
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect((ev.payload as Record<string, unknown>).source_grounding).toBeUndefined();
+  });
+
+  it('YUK-230 fails closed when a single_source_grounding row is missing image_candidate_source_asset_id (fix-forward #1063)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // single_source_grounding=true but NO image_candidate_source_asset_id — the previous
+    // gate silently skipped grounding and promoted; defense-in-depth now fails closed.
+    const { image_candidate_source_asset_id: _drop, ...noAssetMetadata } =
+      groundingMetadata('unused');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: noAssetMetadata,
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('grounded'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('failed');
+    // The paid re-check is NOT spent — there is no image to verify against.
+    expect(sourceGroundingFn).not.toHaveBeenCalled();
+    // Fail-closed: the pre-promoted row is demoted out of the pool.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+
+    const [ev] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(ev.outcome).toBe('failure');
+    const payload = ev.payload as Record<string, unknown>;
+    expect(payload.overall).toBe('fail');
+    expect(payload.source_grounding).toMatchObject({ grounded: false });
+    expect(payload.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: 'source_grounding', verdict: 'fail' }),
+      ]),
+    );
+  });
+
+  it('YUK-230 skips the paid grounding re-check when a deterministic check already fails (no wasted VLM spend)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // Missing source_ref → source_consistency fails regardless of grounding; the row is not
+    // otherwise-promotable, so the grounding gate short-circuits.
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      sourceRef: null,
+      metadataOverride: groundingMetadata('asset-src-5'),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => groundingResult('grounded'));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn });
+    expect(result.status).toBe('failed');
+    expect(sourceGroundingFn).not.toHaveBeenCalled();
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft'); // demoted by the source_consistency fail
   });
 
   it('fails source_consistency for a web_sourced row missing its provenance block', async () => {

@@ -398,6 +398,10 @@ export const submitReview = (input: {
   session_id?: string;
   rating: 'again' | 'hard' | 'good';
   response_md: string;
+  // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，服务端落到 review
+  // event payload.reasoning_trace（区别于 response_md 的最终作答）。OPTIONAL：wire 类型
+  // 先行；UI 采集框（PfSolo）过 design pre-flight 后接线。省略即字段 absent。
+  reasoning_trace?: string;
   referenced_knowledge_ids: string[];
   // YUK-589 — `task_run_id` and `provenance_token` are promoted to the sibling
   // `judge_task_run_id` / `judge_provenance_token` fields below, so they are stripped

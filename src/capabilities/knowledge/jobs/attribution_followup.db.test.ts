@@ -421,4 +421,94 @@ describe('runAttributionFollowup', () => {
     expect(ledger[0].outcome).toBe('failed_permanent');
     expect(ledger[0].task_run_id).toBe('tr_perm');
   });
+
+  // ── YUK-562 (process-data 通电): reasoning_trace → AttributionInput.reasoning_trace_md ──
+  // 归因输入经 runner.ts JSON.stringify 进 user message；attempt payload 带过程文本时，
+  // 该字段作为「学生自述思路」一节注入归因 prompt；不带 trace 时序列化输入 byte-identical
+  // （key 缺省）。这里在 runTaskFn 边界捕获输入对象验证两侧。
+
+  it('YUK-562: threads attempt reasoning_trace into the attribution input as reasoning_trace_md', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await writeEvent(db, {
+      id: attemptId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '助词，主谓间',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+        reasoning_trace: '我判断「之」在主谓之间取消句子独立性',
+      },
+      created_at: new Date(),
+    });
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_ATTRIBUTION_OUTPUT,
+    }));
+
+    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('attempted');
+    // Second arg is the task input object ({ ...AttributionInput, candidates }) the
+    // runner serializes into the model user message.
+    expect(runTaskFn.mock.calls[0]?.[1]).toMatchObject({
+      reasoning_trace_md: '我判断「之」在主谓之间取消句子独立性',
+    });
+  });
+
+  it('YUK-562: omits reasoning_trace_md entirely when the attempt has no process text (byte-identical input)', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    // seedFailureAttempt writes a payload WITHOUT reasoning_trace.
+    await seedFailureAttempt(attemptId, 'q1');
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_ATTRIBUTION_OUTPUT,
+    }));
+
+    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('attempted');
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('reasoning_trace_md');
+  });
+
+  it('YUK-562: a whitespace-only reasoning_trace is treated as absent (not injected)', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await writeEvent(db, {
+      id: attemptId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '助词，主谓间',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+        reasoning_trace: '   \n  ',
+      },
+      created_at: new Date(),
+    });
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_ATTRIBUTION_OUTPUT,
+    }));
+
+    const result = await runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('attempted');
+    expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('reasoning_trace_md');
+  });
 });

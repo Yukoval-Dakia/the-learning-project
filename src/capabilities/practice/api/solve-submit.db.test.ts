@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { learning_record, learning_session, question } from '@/db/schema';
+import { event, learning_record, learning_session, question } from '@/db/schema';
 import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -94,6 +94,52 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
       .from(learning_record)
       .where(eq(learning_record.question_id, id));
     expect(records).toHaveLength(1);
+  });
+
+  it('YUK-562: writes reasoning_trace (steps only) separately while answer_md keeps the full join', async () => {
+    const { POST } = await import('./solve-submit');
+    const { id, sessionId } = await seedAndStart();
+
+    const res = await POST(
+      new Request('http://t/x', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_text_steps: ['因式分解 (a-b)(a+b)', '约去 (a-b)'],
+          student_final_answer_text: 'a + b',
+        }),
+      }),
+      { id, sid: sessionId },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempt_event_id: string };
+
+    const [attempt] = await db.select().from(event).where(eq(event.id, body.attempt_event_id));
+    const payload = attempt.payload as { answer_md: string | null; reasoning_trace?: string };
+    // answer_md keeps the existing join (steps + final answer) — backward compatible.
+    expect(payload.answer_md).toBe('因式分解 (a-b)(a+b)\n约去 (a-b)\na + b');
+    // reasoning_trace captures ONLY the process steps, separate from the final answer.
+    expect(payload.reasoning_trace).toBe('因式分解 (a-b)(a+b)\n约去 (a-b)');
+  });
+
+  it('YUK-562: omits reasoning_trace when only a final answer (no steps) is submitted', async () => {
+    const { POST } = await import('./solve-submit');
+    const { id, sessionId } = await seedAndStart();
+
+    const res = await POST(
+      new Request('http://t/x', {
+        method: 'POST',
+        body: JSON.stringify({ student_final_answer_text: 'a + b' }),
+      }),
+      { id, sid: sessionId },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attempt_event_id: string };
+
+    const [attempt] = await db.select().from(event).where(eq(event.id, body.attempt_event_id));
+    const payload = attempt.payload as { answer_md: string | null; reasoning_trace?: string };
+    expect(payload.answer_md).toBe('a + b');
+    // No process steps → the field is ABSENT (byte-identical to the pre-YUK-562 payload).
+    expect(payload.reasoning_trace).toBeUndefined();
   });
 
   it('400 on an all-empty submission', async () => {

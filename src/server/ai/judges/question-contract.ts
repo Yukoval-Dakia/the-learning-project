@@ -14,6 +14,7 @@ import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveQuestionJudgeRoute } from '@/server/judge/route-resolve';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeKind } from '.';
+import { extractJsonObject } from './judge-output-parse';
 
 export { resolveQuestionJudgeRoute };
 
@@ -222,15 +223,6 @@ export function semanticInput(
   };
 }
 
-function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('semantic judge output did not contain a JSON object');
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
 function normalizeSemanticResult(output: SemanticJudgeOutputT): JudgeResultV2T {
   const capability_ref = { id: 'semantic', version: '1.0.0' };
   if (output.coarse_outcome === 'correct') {
@@ -285,7 +277,9 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
         subjectProfile: params.subjectProfile,
       },
     );
-    const parsed = SemanticJudgeOutput.safeParse(extractJsonObject(result.text));
+    const parsed = SemanticJudgeOutput.safeParse(
+      extractJsonObject(result.text, 'semantic judge output'),
+    );
     if (!parsed.success) {
       return unsupportedResult('semantic', 'semantic judge output unsupported', {
         validation_error: parsed.error.issues,

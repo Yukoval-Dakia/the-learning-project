@@ -718,8 +718,8 @@ export async function acceptImageCandidateProposal(
     // question against itself. The raw VLM text still comes from the same single call (we do
     // NOT spend a second VLM), but it carries the reference / wrong-answer / confidence
     // context too, so the overlap is no longer an identity. (True independent grounding —
-    // re-verifying the prompt against the IMAGE — needs a multimodal verify pass; that is
-    // out of scope for this slice; see single_source_grounding marker below.)
+    // re-verifying the prompt against the IMAGE via a multimodal verify pass — is now wired in
+    // YUK-230: source_verify runs it on single_source_grounding rows; see the marker below.)
     let visionRawText = '';
     const vision = await runVisionExtract({
       assetId: sourceAssetId,
@@ -862,10 +862,13 @@ export async function acceptImageCandidateProposal(
     // question was "grounded" against itself. The raw text is still single-source (it is
     // the same VLM call's output, not an independent re-read of the image), but it carries
     // the reference / confidence / wrong-answer context so the overlap is no longer an
-    // identity. We mark single_source_grounding: true so the limitation is explicit:
-    // true independent grounding (re-verifying the prompt against the IMAGE via a second
-    // multimodal pass) is deliberately NOT done here (single-user tool — see plan §4);
-    // the standard source_verify gate still runs.
+    // identity. We mark single_source_grounding: true so the limitation is explicit AND so
+    // source_verify runs the independent source-grounding re-check on these rows.
+    // YUK-230 — that re-check is now WIRED: source_verify reads single_source_grounding +
+    // image_candidate_source_asset_id (stamped below) and runs runSourceGroundingVerify
+    // (dedicated grounding task, NOT the answer judge) on the source image + 题面 (「题面真在
+    // 图里吗」); a grounding fail demotes the draft out of the pool. The paid re-check is the
+    // automatic extension of THIS user accept (owner 2026-07-23 决策清单②: accept = 授权自动复核一次).
     const extractRaw = visionRawText.trim().length > 0 ? visionRawText : promptMd;
     const webSourced: WebSourcedProvenanceT = {
       url: change.source_url,
@@ -992,10 +995,11 @@ export async function acceptImageCandidateProposal(
             image_candidate_source_asset_id: sourceAssetId,
             image_candidate_proposal_id: proposalId,
             // FIX-R2-6 — the prompt + the extract both originate from the SAME single VLM
-            // call (no independent re-read of the image), so source_verify's overlap is a
-            // weaker signal than for a web-text source (where extract is an independent page
-            // scrape). Marked explicitly; a future multimodal verify-against-image pass would
-            // clear this. Not done in this slice (see comment above).
+            // call (no independent re-read of the image), so source_verify's n-gram overlap is
+            // a weaker signal than for a web-text source (where extract is an independent page
+            // scrape). YUK-230 — source_verify CONSUMES this flag (+ image_candidate_source_
+            // asset_id above) to run the independent multimodal grounding re-check against the
+            // source image; a grounding fail demotes the draft out of the pool.
             single_source_grounding: true,
           },
           created_at: now,
