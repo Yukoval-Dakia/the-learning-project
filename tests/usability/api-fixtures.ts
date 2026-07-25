@@ -322,15 +322,18 @@ export async function installApiFixtures(
     if (method === 'POST' && /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)) {
       briefCalls.push(`POST ${url.pathname}`);
       const body = request.postDataJSON() as { decision?: string } | null;
-      if (body?.decision === 'accept') briefState = 'probe_ready';
+      // One normalized value drives BOTH the echoed decision and the derived status, so a
+      // body without `decision` can never yield the contradictory `accept`/`dismissed` pair.
+      const decision = body?.decision ?? 'accept';
+      if (decision === 'accept') briefState = 'probe_ready';
       return fulfill(
         route,
         {
           proposal_id: 'evt_conjecture_wy1',
           proposal_kind: 'conjecture',
-          decision: body?.decision ?? 'accept',
+          decision,
           decision_event_id: 'evt_rate_wy1',
-          proposal_status: body?.decision === 'accept' ? 'accepted' : 'dismissed',
+          proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
           created: true,
           idempotent: false,
           result: {
