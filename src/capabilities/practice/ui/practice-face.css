@@ -384,13 +384,30 @@
 }
 /* 动效降级总登记处：[data-anim="on"] 门控移除后（见文件头注释），任何带 animation 的类
    都必须在此登记，否则 prefers-reduced-motion 用户拿不到降级。
-   .pfs-conf = YUK-444 信心自评插拍卡（见下方 §confidence），同样带 pf-rise 入场动效。 */
+   .pfs-conf = YUK-444 信心自评插拍卡（见下方 §confidence），同样带 pf-rise 入场动效。
+   一次性入场动画（pf-rise / pf-glow / pf-toast-in / ladder-in）直接 animation: none，
+   都只播一次，禁用不丢信号。.pf-row.is-current .pf-node 与 .pf-gen .bar > span 同样直接
+   禁用：各自的非动画基础规则本就声明了动画静止帧的等价静态值（node 的 box-shadow 关键帧
+   0%/100% 正是非动画基础规则的 4px；生成条渐变关掉后停在既有静态双色填充而非消失），
+   所以禁用同样不丢「进行中」信号。.ladder-spin 例外——它是本文件唯一存活的「系统忙」
+   指示器，禁用会悄悄丢掉进度反馈，改用 animation-duration: 3s 大幅减速（远低于前庭
+   触发阈值）保留信号但不快转。 */
 @media (prefers-reduced-motion: reduce) {
   .pf-row.is-new .pf-item,
   .pf-notice,
   .pf-row.is-new,
-  .pfs-conf {
+  .pfs-conf,
+  .pfs-fb,
+  .pfs-appeal-reply,
+  .pfs-hint,
+  .pf-toast,
+  .ladder-card,
+  .pf-row.is-current .pf-node,
+  .pf-gen .bar > span {
     animation: none !important;
+  }
+  .ladder-spin {
+    animation-duration: 3s !important;
   }
 }
 
