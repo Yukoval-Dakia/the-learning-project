@@ -39,16 +39,24 @@ export function stripIpv6Brackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
-// Self-validating IPv4 parse (returns the 32-bit value, or null when the string is not a
-// dotted-quad literal). Deliberately treats leading-zero octets as their decimal value so a
-// form like 192.168.001.001 is classified as an IP and blocked rather than slipping through
-// as a hostname a browser might still resolve to that private address.
+// Self-validating *canonical* dotted-quad IPv4 parse (returns the 32-bit value, or null when the
+// string is not one). Matches `node:net.isIP` strictness, which is what the header claims this
+// hand-rolled parser mirrors: a multi-digit octet with a leading zero (`012`, `001`, `0177`) is
+// NOT canonical dotted-quad and is rejected here.
+//
+// This rejection is load-bearing for SSRF (YUK-229 review): inet_aton / glibc / WHATWG-URL all
+// read a leading-zero octet as OCTAL, so `012.0.0.1` addresses 10.0.0.1 (private) — reading it as
+// decimal 12.0.0.1 would classify a private destination as public and let it through. Rejecting
+// here routes such hosts to the inet_aton branch of `isBlockedHostLiteral` below, which refuses
+// the whole octal-ambiguous form. Direct `isBlockedIpAddress` callers get `true` (fail-closed)
+// for the same input, so no leading-zero form is ever treated as public.
 function parseIpv4Value(address: string): number | null {
   const parts = address.split('.');
   if (parts.length !== 4) return null;
   let value = 0;
   for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
+    // `0` alone, or 1-3 digits with no leading zero.
+    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
     const octet = Number(part);
     if (octet > 255) return null;
     value = value * 256 + octet;
@@ -240,12 +248,22 @@ export function isBlockedHostLiteral(hostname: string): boolean {
   if (blockedName) return true;
   if (family !== 0) return isBlockedIpAddress(bareHost);
   // inet_aton-style numeric hosts (decimal 2130706433, hex 0x7f000001, octal 017700000001,
-  // short-dotted 127.1 / 10.0.1, mixed 0x7f.0.0.1) all address an IPv4 that a naive dotted-quad
-  // check misses. WHATWG `new URL` already normalizes these to dotted form, but this hardens the
-  // shared guard for direct / non-URL callers. A numeric-looking host that fails to parse is
-  // refused (fail-closed) rather than treated as an allowed hostname.
+  // short-dotted 127.1 / 10.0.1, mixed 0x7f.0.0.1, and leading-zero-octet quads 012.0.0.1 /
+  // 0177.0.0.1 that `parseIpv4Value` deliberately refuses) all address an IPv4 that a naive
+  // dotted-quad check misses. WHATWG `new URL` already normalizes these to dotted form, but this
+  // hardens the shared guard for direct / non-URL callers. A numeric-looking host that fails to
+  // parse is refused (fail-closed) rather than treated as an allowed hostname.
   const numeric = parseInetIpv4(bareHost);
   if (numeric === 'not-numeric') return false;
+  // Fail closed on an octal-ambiguous octet — a decimal-looking token with a leading zero
+  // (`012`, `0177`, `001`, `069`). Stacks disagree on these: inet_aton / glibc / WHATWG-URL read
+  // them as OCTAL (`012.0.0.1` = 10.0.0.1, private), while a naive decimal reader sees 12.0.0.1
+  // (public). Rather than pick a winner and hope every downstream fetcher agrees, refuse the
+  // whole form — no legitimate public image host is written with a leading-zero octet, so this
+  // costs nothing and removes the parser-differential bypass class outright. Reached only after
+  // the `isNumericToken` gate inside `parseInetIpv4`, so ordinary hostnames (`01.example.com`)
+  // never land here. Hex (`0x7f`) is unambiguous across parsers and stays on the parse path.
+  if (bareHost.split('.').some((token) => /^0[0-9]+$/.test(token))) return true;
   return numeric === 'invalid' ? true : isBlockedIpAddress(numberToDottedIpv4(numeric));
 }
 

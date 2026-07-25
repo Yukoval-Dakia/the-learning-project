@@ -25,6 +25,12 @@ describe('ipFamily', () => {
     expect(ipFamily('12345::')).toBe(0); // segment > 4 hex digits is not valid IPv6
     expect(ipFamily('1.2.3.4.5')).toBe(0);
     expect(ipFamily('256.1.1.1')).toBe(0);
+    // Leading-zero octets are not canonical dotted-quad (matches node:net.isIP, which returns 0
+    // for all of these). They are octal under inet/WHATWG semantics and are handled by the
+    // inet_aton branch of isBlockedHostLiteral instead.
+    expect(ipFamily('012.0.0.1')).toBe(0);
+    expect(ipFamily('0177.0.0.1')).toBe(0);
+    expect(ipFamily('192.168.001.001')).toBe(0);
   });
 });
 
@@ -79,6 +85,31 @@ describe('isBlockedHostLiteral', () => {
     expect(isBlockedHostLiteral('127.1')).toBe(true); // short dotted
     expect(isBlockedHostLiteral('10.0.1')).toBe(true); // short dotted -> 10.0.0.1
     expect(isBlockedHostLiteral('0x7f.0.0.1')).toBe(true); // mixed hex + decimal
+  });
+  // YUK-229 review — leading-zero octet bypass. inet_aton / glibc / WHATWG all read a
+  // leading-zero octet as OCTAL, so these dotted-quads address loopback / RFC1918 destinations.
+  // Reading them as decimal (12.0.0.1, 177.0.0.1) would classify them public and let them through.
+  it('blocks leading-zero (octal) dotted-quad octets using inet semantics, not decimal', () => {
+    expect(isBlockedHostLiteral('0177.0.0.1')).toBe(true); // octal 0177 = 127 -> 127.0.0.1
+    expect(isBlockedHostLiteral('012.0.0.1')).toBe(true); // octal 012 = 10 -> 10.0.0.1
+    expect(isBlockedHostLiteral('0x7f.1')).toBe(true); // hex 0x7f + short dotted -> 127.0.0.1
+    expect(isBlockedHostLiteral('010.0.0.1')).toBe(true); // octal 010 = 8; blocked fail-closed
+    expect(isBlockedHostLiteral('192.168.001.001')).toBe(true); // octal 001 = 1 -> 192.168.1.1
+    expect(isBlockedHostLiteral('0300.0250.0.1')).toBe(true); // octal -> 192.168.0.1
+    // A leading-zero token with a non-octal digit is malformed under inet semantics (WHATWG URL
+    // rejects the host outright) — fail closed rather than silently reading it as decimal.
+    expect(isBlockedHostLiteral('069.254.0.1')).toBe(true);
+    // Canonical public IPv4 and hostnames are untouched by the stricter dotted-quad parse.
+    expect(isBlockedHostLiteral('127.0.0.1')).toBe(true);
+    expect(isBlockedHostLiteral('8.8.8.8')).toBe(false);
+    expect(isBlockedHostLiteral('93.184.216.34')).toBe(false);
+    expect(isBlockedHostLiteral('images.example.edu')).toBe(false);
+  });
+  it('fails closed when a leading-zero literal is passed straight to isBlockedIpAddress', () => {
+    // isBlockedIpAddress's contract is "callers pass an actual IP literal"; a leading-zero form
+    // is not one, so it must be treated as blocked rather than parsed as decimal.
+    expect(isBlockedIpAddress('012.0.0.1')).toBe(true);
+    expect(isBlockedIpAddress('0177.0.0.1')).toBe(true);
   });
   it('fails closed on numeric-looking hosts that do not parse, without touching real domains', () => {
     expect(isBlockedHostLiteral('0x')).toBe(true); // empty hex
@@ -144,8 +175,23 @@ describe('isPublicHttpUrl', () => {
       'http://2130706433/x.png', // decimal-encoded 127.0.0.1
       'http://0x7f000001/x.png', // hex-encoded 127.0.0.1
       'http://127.1/x.png', // short-dotted 127.0.0.1
+      'http://0177.0.0.1/x.png', // octal leading-zero octet -> 127.0.0.1
+      'http://012.0.0.1/x.png', // octal leading-zero octet -> 10.0.0.1
+      'http://0x7f.1/x.png', // hex octet + short dotted -> 127.0.0.1
     ]) {
       expect(isPublicHttpUrl(url)).toBe(false);
     }
+  });
+  it('pins that WHATWG URL parsing normalizes leading-zero octets to octal before the guard', () => {
+    // Documents why the leading-zero fail-closed rule lives in isBlockedHostLiteral (the
+    // direct/non-URL entry point) rather than here: `new URL` has already resolved the ambiguity
+    // to octal by the time isPublicHttpUrl inspects the hostname, so the guard only ever sees a
+    // canonical dotted-quad and returns the same verdict the browser/fetch would act on.
+    expect(new URL('http://012.0.0.1/x.png').hostname).toBe('10.0.0.1');
+    expect(new URL('http://0177.0.0.1/x.png').hostname).toBe('127.0.0.1');
+    // 010 is octal 8 — a genuinely public address once normalized, so it is correctly allowed
+    // through the URL path even though the raw literal is refused fail-closed.
+    expect(new URL('http://010.0.0.1/x.png').hostname).toBe('8.0.0.1');
+    expect(isPublicHttpUrl('http://010.0.0.1/x.png')).toBe(true);
   });
 });
