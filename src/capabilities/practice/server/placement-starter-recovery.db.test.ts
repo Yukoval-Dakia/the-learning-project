@@ -824,13 +824,66 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   });
 });
 
+describe('sweepStalePlacementStarterClaims — concurrent dispatch attribution', () => {
+  // Review PRRT…0VF: dispatchPlacementStarterClaimTx re-reads the claim FOR UPDATE and, when the
+  // status is no longer 'pending_dispatch', early-returns the EXISTING pg_boss_job_id without ever
+  // calling admit. Reachable in the ordinary case — a learner hitting /placement/start during the
+  // sweep window — because the sweeper's acquire moves only the cursor, never the status. Counting
+  // that as `redispatched` credits the sweeper for a dispatch it did not perform.
+  it('does not claim credit when a concurrent path dispatched the claim first', async () => {
+    const claimId = await seedClaim();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      // Stands in for dispatchPlacementStarterClaimTx's early return: never INVOKES admit (the
+      // real early return precedes the admit call), hands back the job id of whoever actually
+      // dispatched. Not invoking admit is the whole point — that is the signal the sweeper reads.
+      dispatch: (async () => 'job-from-placement-start') as never,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      scannedPending: 1,
+      dispatchedElsewhere: 1,
+      redispatched: 0,
+      admissionSkipped: 0,
+    });
+    expect((await readClaim(claimId)).next_reconcile_at.getTime()).toBe(
+      NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+    );
+  });
+
+  it('still counts a dispatch it actually drove as redispatched', async () => {
+    await seedClaim();
+    const { calls, dispatch } = recordingDispatch();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(result).toMatchObject({ redispatched: 1, dispatchedElsewhere: 0 });
+  });
+});
+
 describe('sweepStalePlacementStarterClaims — failure containment', () => {
   // Review PRRT…OZI: only dispatch()/isJobLive() were guarded, so a throw from the goal read,
   // scope resolution, the acquire, or the reap tx would abort the whole leg mid-way.
   it('isolates one poisoned claim so the rest of the leg still runs', async () => {
     await seedClaimsOnDistinctGoals(3);
     const calls: string[] = [];
-    const dispatch = (async (_db: unknown, claimId: string) => {
+    const dispatch = (async (
+      dbArg: typeof db,
+      claimId: string,
+      admit?: (tx: never, claim: never) => Promise<boolean>,
+    ) => {
+      // Invoke admit like the real dispatch does, so these count as sweeper-driven dispatches
+      // rather than concurrent ones (see the attribution suite above).
+      if (admit) await dbArg.transaction((tx) => admit(tx as never, undefined as never));
       calls.push(claimId);
       // Not a dispatch-shaped failure (that path has its own counter) — this stands in for an
       // arbitrary throw escaping a claim's handling.

@@ -147,6 +147,8 @@ export interface PlacementStarterRecoveryResult {
   staleRevision: number;
   /** pending_dispatch claims deferred (never cancelled) because their goal is dormant / done. */
   goalNotActive: number;
+  /** Claims a concurrent /placement/start (or another sweeper) dispatched first; this sweeper stood down. */
+  dispatchedElsewhere: number;
   /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
   claimErrors: number;
   /** Legs whose own scan query threw; the other leg still ran. */
@@ -184,6 +186,7 @@ export function emptyPlacementStarterRecoveryResult(
     goalMissing: 0,
     staleRevision: 0,
     goalNotActive: 0,
+    dispatchedElsewhere: 0,
     claimErrors: 0,
     legErrors: 0,
     redispatchSuppressed: false,
@@ -481,9 +484,18 @@ async function sweepPendingDispatch(
   try {
     let supersededRevisionId: string | null = null;
     let notActiveStatus: string | null = null;
+    // Whether OUR admission callback ran at all. `dispatchPlacementStarterClaimTx` re-reads the
+    // claim FOR UPDATE and early-returns `claim.pg_boss_job_id` when the status is no longer
+    // 'pending_dispatch' — WITHOUT calling admit. So a non-null return does not by itself mean we
+    // dispatched: a /placement/start that landed between our acquire (which moves only the cursor,
+    // never the status) and our dispatch call would have dispatched it, and we would be handed
+    // that job's id. Without this flag the sweeper credits itself for someone else's dispatch and
+    // logs "re-dispatched" for a claim it never drove (review PRRT…0VF).
+    let admitInvoked = false;
     // Same admission contract as /api/placement/start's cold path: serialize against pool
     // promotion for this KC scope, then pay ONLY if the scope still has no eligible item.
     const jobId = await dispatch(db, claim.id, async (tx) => {
+      admitInvoked = true;
       // AUTHORITATIVE RE-CHECK of BOTH goal preconditions (review PRRT…h8a, PRRT…upw3). The two
       // checks above are lockless reads, so a goal re-scoped OR retracted between them and the
       // dispatch transaction taking the claim row lock would still get a paid batch dispatched —
@@ -518,7 +530,18 @@ async function sweepPendingDispatch(
       await lockPlacementSupplyScopes(tx, knowledgeIds);
       return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
     });
-    if (notActiveStatus !== null) {
+    if (!admitInvoked) {
+      // Early return inside dispatchPlacementStarterClaimTx: the claim was no longer
+      // 'pending_dispatch' when it took the row lock. Someone else — a concurrent
+      // /placement/start, or another sweeper — owns this dispatch. Counted separately so
+      // `redispatched` stays an honest count of what THIS sweeper actually drove.
+      result.dispatchedElsewhere += 1;
+      console.log(
+        jobId
+          ? `[placement-starter-recovery] claim ${claim.id} was already dispatched concurrently as job ${jobId}; sweeper stood down`
+          : `[placement-starter-recovery] claim ${claim.id} left pending_dispatch concurrently before the sweeper could drive it; stood down`,
+      );
+    } else if (notActiveStatus !== null) {
       // Goal left the active flow between the pre-check and admission. Nothing was enqueued; the
       // claim keeps its advanced cursor and is retried once the goal is active again.
       result.goalNotActive += 1;
