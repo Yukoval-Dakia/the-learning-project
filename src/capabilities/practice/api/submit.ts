@@ -31,6 +31,7 @@
 //   persistSubmit (knowledge-set resolution + FSRS txn + event write + refine
 //   trigger). POST composes the phases and shapes the wire response.
 
+import type { Provider } from '@/ai/registry';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
@@ -40,8 +41,8 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
-import { db } from '@/db/client';
-import { question } from '@/db/schema';
+import { type Tx, db } from '@/db/client';
+import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
   ApiError,
@@ -65,8 +66,10 @@ import {
   verifyJudgePreviewProvenanceToken,
 } from '@/kernel/judge';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { getStartedBoss } from '@/server/boss/client';
+import { writeJobEvent } from '@/server/events/writer';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { checkRateLimit } from '@/server/http/rate-limit';
+import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
   PREREQ_RISK_EMIT_ENABLED,
@@ -74,15 +77,19 @@ import {
 } from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
 import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
-import { scheduleReview } from '../server/fsrs';
+import { initialFsrsState, scheduleReview } from '../server/fsrs';
+import { JUDGE_RUN_QUEUE, judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
+import { freezeQuestionForJudge } from '../server/judge-run-payload';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { collectMasteryRefineTargets } from '../server/note-refine-targets';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
@@ -222,7 +229,44 @@ async function resolveSuppliedModelExecutionProvenance(params: {
   );
 }
 
-async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<JudgedSubmit> {
+// YUK-594 (durable judge main path, W2) — durable judge_run handler reuses judgeSubmit
+// as the shared judge-resolution head. These opts are set ONLY by that worker path
+// (the sync HTTP route calls judgeSubmit() with no opts → byte-identical):
+//   - `subjectProfile`: the D5-frozen profile (resolved at enqueue, reflecting the
+//     learner's answer-time profile). Injected so the worker does NOT re-resolve
+//     (which would pick up a profile edited between enqueue and pickup).
+//   - `skipRateLimit`: the worker is not bound by the sync HTTP request budget
+//     (that gate exists to cap in-request paid AI calls; the durable lane's cap is
+//     the pg-boss retry budget).
+//   - `durable`: forces the invoker's in-process transient retry OFF (D7) and, on the
+//     fallback redelivery, crosses to the fallback provider lane (D9).
+export interface JudgeSubmitOptions {
+  subjectProfile?: SubjectProfile;
+  skipRateLimit?: boolean;
+  durable?: { providerOverride?: Provider };
+}
+
+/**
+ * #7 — single predicate for "would this submit spend a synchronous server-side judge
+ * call?", shared by judgeSubmit's invoke gate AND resolveDurableDivert's divert
+ * decision so the condition can't drift between them. True iff: auto_rate requested,
+ * no client-supplied verdict, the resolved route is NOT photo-only-unsupported, and a
+ * subject profile resolved. (hasAnswer is implied — a photo-only answer routes to
+ * photoOnlyUnsupported, and a no-answer submit resolves no profile / fails the gate.)
+ */
+export function wouldServerInvokeJudge(p: {
+  autoRate: boolean;
+  hasSuppliedResult: boolean;
+  photoOnlyUnsupported: boolean;
+  hasProfile: boolean;
+}): boolean {
+  return p.autoRate && !p.hasSuppliedResult && !p.photoOnlyUnsupported && p.hasProfile;
+}
+
+export async function judgeSubmit(
+  { body, questionId, q }: ValidatedSubmit,
+  opts: JudgeSubmitOptions = {},
+): Promise<JudgedSubmit> {
   // YUK-56/YUK-98 — Resolve the judge result BEFORE the FSRS transaction.
   // If the UI already generated advice, reuse its `judge_result_v2` so final
   // submit doesn't call the judge twice. Otherwise, only explicit auto_rate
@@ -263,8 +307,10 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
   // BOTH the route gate and the invoke below. Resolving it twice would consume a
   // test's `mockResolvedValueOnce` on the first call (letting the invoke fall
   // through to the real resolver) and is a needless second DB round-trip.
+  // YUK-594 (D5) — the durable worker injects the frozen answer-time profile; the
+  // sync path resolves it fresh (opts absent → byte-identical).
   const subjectProfile = hasAnswer
-    ? await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)
+    ? (opts.subjectProfile ?? (await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)))
     : null;
   if (subjectProfile !== null) {
     const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
@@ -315,10 +361,29 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
       executionProvenance = deterministicExecutionProvenance(judgeRoute);
     }
   }
-  if (body.auto_rate && judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
+  if (
+    wouldServerInvokeJudge({
+      autoRate: body.auto_rate,
+      hasSuppliedResult: judgeResult !== null,
+      photoOnlyUnsupported,
+      hasProfile: subjectProfile !== null,
+    })
+  ) {
+    // wouldServerInvokeJudge returned true ⇒ hasProfile was true ⇒ subjectProfile is
+    // non-null. TS can't see through the predicate, so narrow explicitly (the throw is
+    // unreachable — it documents the invariant the predicate guarantees).
+    if (subjectProfile === null) {
+      throw new ApiError(
+        'corrupt_state',
+        'server-invoke gate reached with no subject profile',
+        500,
+      );
+    }
     // YUK-694 — only explicit auto-rate requests may spend a server-side judge
     // call, and those calls share the process-wide paid-AI request budget.
-    checkRateLimit();
+    // YUK-594 — the durable worker path skips this gate (it is not bound by the
+    // sync HTTP request budget; the durable cap is the pg-boss retry budget).
+    if (!opts.skipRateLimit) checkRateLimit();
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,
@@ -332,6 +397,9 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
       // atomic single-question submits → no-op (whole-row). Narrows text +
       // structured before routing.
       part_ref: body.part_ref ?? null,
+      // YUK-594 (D7/D9) — durable-run scoped runner overrides (worker only; the sync
+      // path passes no opts → `durable` absent → invoker byte-identical).
+      ...(opts.durable ? { durable: opts.durable } : {}),
     });
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
@@ -415,9 +483,106 @@ interface PersistedSubmit {
   finalFsrsStateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
     last_review: Date | null;
   };
+  /**
+   * W5 — true when the out-of-order guard fired: the attempt's evidence (review + judge
+   * event) was recorded, but EVERY derived write was skipped because newer evidence for this
+   * material already exists. Surfaced so the durable handler can stamp it on the terminal
+   * job_event (observability: a verdict landed, but the schedule intentionally did not move).
+   * Always false unless `enforceAttemptOrdering` was requested.
+   */
+  lateArrival: boolean;
 }
 
-async function persistSubmit(
+// YUK-594 (W2) — the durable judge_run worker reuses persistSubmit as the shared
+// backfill body (review event + judge event + FSRS/θ̂/snapshot/family/calibration in
+// one tx + post-commit signals), passing `attemptEventId` = the reserved run_id so
+// the written attempt event id equals the run handle (the judge_run idempotency guard
+// keys on that event's existence). Omitted on the sync path → `newId()` → byte-identical.
+export interface PersistSubmitOptions {
+  attemptEventId?: string;
+  /**
+   * W5 — enable the out-of-order (late-arrival) guard. Set ONLY by the durable worker.
+   *
+   * The hazard exists exactly where a verdict is DEFERRED: the durable lane can commit an
+   * older attempt after a newer one already advanced the same material. Two concurrent
+   * SYNCHRONOUS submits cannot produce it — each carries `now = request time` and they
+   * serialize on the learning-state lock, so the later writer always has the later stamp.
+   * Gating the check here keeps the sync path byte-identical AND free of the two extra
+   * reads the detection costs.
+   */
+  enforceAttemptOrdering?: boolean;
+}
+
+/**
+ * W5 #Tuey8 — has any material this attempt would WRITE already absorbed a newer attempt?
+ *
+ * The detection domain must be the **union of every write set**, not a convenient subset.
+ * The first cut only walked the FSRS updates, but `updateThetaForAttempt` writes θ̂ for the
+ * FULL `q.knowledge_ids`, while FSRS writes only `requested ∩ labels`. On a multi-tag question
+ * where two async submits referenced different `referenced_knowledge_ids` — or where the newer
+ * attempt only advanced KCs outside this attempt's FSRS subset — those KCs carried a newer θ̂
+ * that the narrow check never looked at, so a stale answer still updated a fresher posterior.
+ *
+ * Two per-KC "newest observation" sources, matching the two write targets:
+ *   - `material_fsrs_state.state.last_review` — the FSRS axis (jsonb ⇒ needs date coercion).
+ *   - `mastery_state.last_outcome_at`         — the θ̂ axis.
+ */
+async function detectLateArrival(
+  tx: Tx,
+  input: {
+    now: Date;
+    fsrsSubjectKind: FsrsSubjectKind;
+    fsrsSubjectIds: string[];
+    knowledgeIds: string[];
+  },
+): Promise<boolean> {
+  const { now, fsrsSubjectKind, fsrsSubjectIds, knowledgeIds } = input;
+  const nowMs = now.getTime();
+
+  if (fsrsSubjectIds.length > 0) {
+    const rows = await tx
+      .select({ state: material_fsrs_state.state })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, fsrsSubjectKind),
+          inArray(material_fsrs_state.subject_id, fsrsSubjectIds),
+        ),
+      );
+    for (const row of rows) {
+      const lastReview = coerceJsonbDate(row.state?.last_review ?? null);
+      if (lastReview !== null && lastReview.getTime() > nowMs) return true;
+    }
+  }
+
+  // θ̂ is written for the question's FULL label set, independent of the FSRS subset.
+  const thetaSubjectIds = Array.from(new Set(knowledgeIds)).filter((id) => id.length > 0);
+  if (thetaSubjectIds.length > 0) {
+    const rows = await tx
+      .select({ lastOutcomeAt: mastery_state.last_outcome_at })
+      .from(mastery_state)
+      // W5 #TusVG — `subject_kind` is HALF the key. `mastery_state` is unique on
+      // (subject_kind, subject_id) and hosts hierarchical-Elo `ability_global` rows keyed by a
+      // DOMAIN id in a separate partition, so filtering on `subject_id` alone can pick up a
+      // non-knowledge row's `last_outcome_at`. A hit there would misread a perfectly ordered
+      // backfill as late and silently skip EVERY derived write. Same filter the write side
+      // uses (`updateThetaForAttempt`, mastery/state.ts:226) so the read and write agree.
+      .where(
+        and(
+          eq(mastery_state.subject_kind, 'knowledge'),
+          inArray(mastery_state.subject_id, thetaSubjectIds),
+        ),
+      );
+    for (const row of rows) {
+      const lastOutcomeAt = coerceJsonbDate(row.lastOutcomeAt);
+      if (lastOutcomeAt !== null && lastOutcomeAt.getTime() > nowMs) return true;
+    }
+  }
+
+  return false;
+}
+
+export async function persistSubmit(
   { body, now, questionId, q }: ValidatedSubmit,
   {
     judgeResult,
@@ -428,6 +593,7 @@ async function persistSubmit(
     finalRating,
     adviceCauseCategory,
   }: JudgedSubmit,
+  opts: PersistSubmitOptions = {},
 ): Promise<PersistedSubmit> {
   // Codex / CodeRabbit (PR #295) — `referenced_knowledge_ids` used to drive
   // FSRS scheduling verbatim from the request body, letting a stale/superset
@@ -473,11 +639,15 @@ async function persistSubmit(
   // transaction-scoped advisory lock per FSRS subject serializes read/compute/
   // upsert even when the projection row does not exist yet.
   const outcome: 'success' | 'failure' = finalRating === 'again' ? 'failure' : 'success';
-  const eventId = newId();
+  // YUK-594 (W2) — durable worker injects the reserved run_id as the attempt event id
+  // (run handle ≡ attempt event id, submit-face contract); sync path mints a fresh id.
+  const eventId = opts.attemptEventId ?? newId();
   // M2 (YUK-316)：判定锚点 event id（事务内条件写入，响应层回传给「不服判」）。
   let judgeEventId: string | null = null;
   let primaryResult: ReturnType<typeof scheduleReview>;
   let primaryFsrsStateAfter: PersistedSubmit['finalFsrsStateAfter'];
+  // W5 — hoisted out of the tx so the POST-COMMIT signals can honour it too (#TuezA).
+  let lateArrival = false;
 
   await db.transaction(async (tx) => {
     // YUK-497 — global learning-state write lock FIRST (before the question row lock and the
@@ -498,6 +668,43 @@ async function persistSubmit(
       // the primary's before would survive the loop → partial revert).
       before: FsrsStateSchemaT | null;
     }> = [];
+
+    // ── W4 #TtWiA / W5 #Tuey8 — out-of-order (late) backfill guard ────────────────────
+    // The durable lane decouples "when the learner answered" from "when the verdict lands".
+    // An earlier run whose judge failed goes into 30s/60s redelivery while a LATER attempt on
+    // the same material succeeds first; the older run then commits with an EARLIER `now` and
+    // writes on top of the newer state. The tx lock serializes writes but cannot restore time
+    // order, so last_review / due / θ̂ / snapshots all get walked backwards.
+    //
+    // **ONE SWITCH, not per-item triage** (coordinator ruling, W5). The first cut tried to
+    // decide per derived write which ones were safe to keep; that produced two rounds of
+    // same-family holes (a detection domain narrower than the write domain, then a
+    // post-commit signal that read the newer attempt's Δθ̂). The surface is now binary:
+    //
+    //   late ⇒ write ONLY the immutable evidence (review event + judge event).
+    //          EVERY derived write is skipped — FSRS, θ̂, snapshot brackets, family
+    //          observation, calibration label, and all post-commit signals.
+    //
+    // Rationale: derived state is a pure function of the evidence log, so anything skipped
+    // here is recoverable by replaying/recomputing from the events that DID land, whereas a
+    // backwards write corrupts state that later attempts build on. Recording the attempt is
+    // non-negotiable (immutable evidence); everything else can wait for a correct recompute.
+    //
+    // Detection covers the UNION of every write domain — see detectLateArrival.
+    lateArrival = opts.enforceAttemptOrdering
+      ? await detectLateArrival(tx, {
+          now,
+          fsrsSubjectKind,
+          fsrsSubjectIds,
+          knowledgeIds: q.knowledge_ids,
+        })
+      : false;
+    if (lateArrival) {
+      console.warn(
+        '[submit] late-arriving attempt — recording the evidence ONLY; every derived write is skipped (newer evidence already exists for this material)',
+        { eventId, questionId, submittedAt: now.toISOString() },
+      );
+    }
 
     for (const subjectId of [...fsrsSubjectIds].sort()) {
       await tx.execute(
@@ -561,11 +768,47 @@ async function persistSubmit(
         // `before` non-null for a knowledge subject whose own row was absent (else revert
         // would UPSERT a row that did not exist pre-attempt — table-shape drift).
         before: snapshotFsrsBefore,
+        // NOTE the explicit `new Date(...)`: `FsrsStateSchema.last_review` is typed `Date`
+        // via `z.coerce.date()`, but this row comes straight out of jsonb, so at RUNTIME the
+        // value is still the ISO string it was stored as — the static type lies here.
+        // Normalize before anyone calls a Date method on it.
       });
     }
     const primaryUpdate = fsrsUpdates[0];
     primaryResult = primaryUpdate.result;
     primaryFsrsStateAfter = primaryUpdate.stateAfter;
+
+    // ── Late-arrival: report the UNCHANGED schedule ───────────────────────────────────
+    // `lateArrival` was decided BEFORE this loop (see the guard above the FSRS section).
+    // Nothing derived gets written, so neither the event payload nor the HTTP response may
+    // claim an advance. `due` needs the same jsonb coercion as `last_review` — `dueAt` is
+    // consumed as a real Date by the sync response shaping (`finalResult.dueAt.getTime()`),
+    // and a raw ISO string would throw there.
+    if (lateArrival) {
+      for (const update of fsrsUpdates) {
+        if (update.before) {
+          // Warm card: report the prior schedule verbatim — it is what a reader will find.
+          update.result = {
+            nextState: update.before,
+            dueAt: coerceJsonbDate(update.before.due) ?? now,
+          };
+          update.stateAfter = update.before;
+        } else {
+          // W5 #TumMl — COLD card (no row existed). The earlier version `continue`d here,
+          // which left the freshly COMPUTED schedule in place: the upsert is skipped for
+          // every subject, so the event payload advertised a brand-new schedule that was
+          // never persisted — a due date no reader could ever observe. A never-reviewed
+          // card whose attempt wrote nothing is still New, so report the never-reviewed
+          // baseline. (`fsrs_state_after` is required + non-nullable by ReviewOnQuestion,
+          // so "report nothing" is not available; this is the honest value.)
+          const initial = initialFsrsState(now);
+          update.result = { nextState: initial.state, dueAt: initial.dueAt };
+          update.stateAfter = { ...initial.state, last_review: initial.state.last_review ?? null };
+        }
+      }
+      primaryResult = fsrsUpdates[0].result;
+      primaryFsrsStateAfter = fsrsUpdates[0].stateAfter;
+    }
 
     // YUK-56 — Embed judge result on the review event's payload (the same
     // jsonb-payload-embed pattern shared by the judge-writing routes).
@@ -728,14 +971,18 @@ async function persistSubmit(
         created_at: now,
       });
     }
-    for (const update of fsrsUpdates) {
-      await upsertFsrsState(tx, {
-        subject_kind: update.subject_kind,
-        subject_id: update.subject_id,
-        state: update.stateAfter,
-        due_at: update.result.dueAt,
-        last_review_event_id: eventId,
-      });
+    // W4 #TtWiA — a late arrival records the attempt but must not walk the schedule
+    // backwards, so the FSRS upsert (and the θ̂ update below) are skipped entirely.
+    if (!lateArrival) {
+      for (const update of fsrsUpdates) {
+        await upsertFsrsState(tx, {
+          subject_kind: update.subject_kind,
+          subject_id: update.subject_id,
+          state: update.stateAfter,
+          due_at: update.result.dueAt,
+          last_review_event_id: eventId,
+        });
+      }
     }
     // YUK-361 finding #3 修复 — 在 updateThetaForAttempt **之前**捕获 primary knowledge
     // 的 PRE-attempt θ̂（作答当下的能力估计）。家族残差必须对着作答前的 θ̂ 算（mirror
@@ -755,26 +1002,35 @@ async function persistSubmit(
     // q.knowledge_ids，差集 KC 靠模块自锁兜住）。outcome 复用上面的 success/failure
     // 派生（review 路径 finalRating 二分，无 partial）。写独立 mastery_state 表，
     // 不碰 event/learning_record count——hermetic 不破。
-    const thetaResult = await updateThetaForAttempt(tx, {
-      knowledgeIds: q.knowledge_ids,
-      questionId,
-      outcome: outcome === 'success' ? 1 : 0,
-      difficulty: q.difficulty,
-      attemptEventId: eventId,
-      now,
-      // A1 (YUK-433) — thread the solo review latency (ms) into the SRT credit path.
-      // SRT is now LIVE (SRT_ENABLED=true, P1 go-live YUK-361): when latency_ms is
-      // present, fast-correct moves θ̂ more than slow-correct (continuous srtOutcome).
-      // body.latency_ms is number|null|undefined; undefined coerces to undefined →
-      // binary fallback (paper path passes nothing; solo attempts lacking RT → binary).
-      responseTimeMs: body.latency_ms ?? undefined,
-      // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
-      kind: q.kind,
-      source: q.source,
-      // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
-      // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
-      familyPrimaryKnowledgeId: primaryKnowledgeId,
-    });
+    // W4 #TtWiA — θ̂ is as order-sensitive as FSRS (a late attempt would move the posterior
+    // backwards onto an estimate that already absorbed a newer observation), so the late
+    // path skips it too and contributes no θ̂ snapshots.
+    const thetaResult = lateArrival
+      ? {
+          theta_snapshots: [] as Awaited<
+            ReturnType<typeof updateThetaForAttempt>
+          >['theta_snapshots'],
+        }
+      : await updateThetaForAttempt(tx, {
+          knowledgeIds: q.knowledge_ids,
+          questionId,
+          outcome: outcome === 'success' ? 1 : 0,
+          difficulty: q.difficulty,
+          attemptEventId: eventId,
+          now,
+          // A1 (YUK-433) — thread the solo review latency (ms) into the SRT credit path.
+          // SRT is now LIVE (SRT_ENABLED=true, P1 go-live YUK-361): when latency_ms is
+          // present, fast-correct moves θ̂ more than slow-correct (continuous srtOutcome).
+          // body.latency_ms is number|null|undefined; undefined coerces to undefined →
+          // binary fallback (paper path passes nothing; solo attempts lacking RT → binary).
+          responseTimeMs: body.latency_ms ?? undefined,
+          // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
+          kind: q.kind,
+          source: q.source,
+          // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
+          // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
+          familyPrimaryKnowledgeId: primaryKnowledgeId,
+        });
 
     // YUK-561 S2 (revert-bracket §4.1 / O2 dual-sibling) — A-class snapshot append,
     // now as TWO independent sibling brackets (θ̂ + FSRS) so a judge-overturn can
@@ -787,18 +1043,24 @@ async function persistSubmit(
     // effort family/calibration SAVEPOINTs below so a SAVEPOINT rollback never touches
     // it. `ingest_at:now` + deterministic ids (inside the helper) give the outbox
     // opt-out + retried-tx idempotency (§6.7).
-    await writeAttemptSnapshotBrackets(tx, {
-      attemptEventId: eventId,
-      sessionId: body.session_id ?? null,
-      now,
-      thetaSnapshots: thetaResult.theta_snapshots,
-      fsrsSnapshots: fsrsUpdates.map((update) => ({
-        subject_kind: update.subject_kind,
-        subject_id: update.subject_id,
-        before: update.before,
-        after: update.stateAfter,
-      })),
-    });
+    // W4 #TtWiA — a late arrival moved NOTHING, so it gets NO revert bracket. The helper's
+    // "write each segment iff it moved" rule keys on the ARRAY being non-empty, not on
+    // `before !== after`, so passing the unchanged updates through would mint a checkpoint +
+    // snapshot describing a transition that never happened — reversible state for a no-op.
+    if (!lateArrival) {
+      await writeAttemptSnapshotBrackets(tx, {
+        attemptEventId: eventId,
+        sessionId: body.session_id ?? null,
+        now,
+        thetaSnapshots: thetaResult.theta_snapshots,
+        fsrsSnapshots: fsrsUpdates.map((update) => ({
+          subject_kind: update.subject_kind,
+          subject_id: update.subject_id,
+          before: update.before,
+          after: update.stateAfter,
+        })),
+      });
+    }
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
     // 同 tx（计数与作答一致），但 best-effort：绝不让它 fail 上面的 θ̂/FSRS/event 主路径。
@@ -823,7 +1085,10 @@ async function persistSubmit(
     // 捕到了也救不回（捕 JS 错 ≠ 解毒 PG tx）。tx.transaction(...) 经 drizzle 转成
     // SAVEPOINT，family 写失败只回滚 savepoint，主 attempt 写完整保留可 COMMIT。
     // 同 Phase 3 telemetry-in-tx bug 同类修复。
-    if (body.auto_rate) {
+    // W5 — family observation + calibration label are DERIVED estimates (b_personalized /
+    // difficulty labels) anchored on `thetaBefore`, which for a late arrival is a posterior
+    // that already absorbed a newer attempt. Same switch as everything else derived.
+    if (body.auto_rate && !lateArrival) {
       try {
         await tx.transaction(async (sp) => {
           await recordFamilyObservationForAttempt(sp, {
@@ -877,6 +1142,31 @@ async function persistSubmit(
   // 衍生题触发——流内普通题（manual/ingestion）作答是死线。新触发器按
   // question.knowledge_ids 派生 labeled notes（D6 后 error_rate 的替代信号源），
   // source_ref 直指来源笔记的旧线保留；triggers 层 1h debounce 防风暴。
+  // ── W5 #TuezA — post-commit signals are derived writes too ────────────────────────────
+  // `emitMasteryProgressSignal` reads `mastery_state` AFTER commit and reports its
+  // `last_theta_delta` as "this attempt's Δθ̂", with caused_by pointing at THIS attempt. On a
+  // late arrival we deliberately skipped `updateThetaForAttempt`, so that delta belongs to the
+  // NEWER attempt — emitting it would manufacture mis-attributed experiment data (the exact
+  // signal ADR-0040 exists to keep honest). The note-refine trigger hangs off the same
+  // "mastery progressed" premise, and the wrong-streak nudge / prereq-risk producer are the
+  // same class. One switch: a late attempt emits no derived signals at all.
+  if (lateArrival) {
+    console.warn(
+      '[submit] late-arriving attempt — skipping post-commit derived signals (mastery-progress, note-refine, wrong-streak, prereq-risk)',
+      { eventId, questionId },
+    );
+    return {
+      eventId,
+      judgeEventId,
+      outcome,
+      fsrsSubjectKind,
+      fsrsSubjectIds,
+      finalResult,
+      finalFsrsStateAfter,
+      lateArrival,
+    };
+  }
+
   if (outcome === 'success') {
     // ADR-0040 决定2 — p(L) delta 埋点（READ-only 旁路）。触发条件 outcome===success
     // **未变**（PHASE-DEFERRED：跨阈 gating 待 N 周埋点选出阈值后才上）。这里只 READ
@@ -936,7 +1226,311 @@ async function persistSubmit(
     fsrsSubjectIds,
     finalResult,
     finalFsrsStateAfter,
+    lateArrival,
   };
+}
+
+// ============================================================================
+// YUK-594 (durable judge main path, W2) — async-main divert for the submit face.
+// ============================================================================
+
+/**
+ * W4 #TtWiA — coerce a timestamp read out of the `material_fsrs_state.state` jsonb blob to a
+ * real Date.
+ *
+ * The column is jsonb, so `due` / `last_review` arrive as ISO STRINGS even though
+ * `FsrsStateSchema` types them `Date` — its `z.coerce.date()` only applies where the schema is
+ * actually parsed, which this read path does not do. The static type lies, so any code calling
+ * a Date method on these values must coerce first.
+ *
+ * Returns null for absent or unparseable input. For the ordering comparison that matters: an
+ * unusable timestamp must NOT be treated as "newer than this attempt", which would wrongly
+ * suppress a legitimate FSRS advance.
+ */
+function coerceJsonbDate(value: Date | string | null | undefined): Date | null {
+  if (value === null || value === undefined) return null;
+  const asDate = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(asDate.getTime()) ? null : asDate;
+}
+
+interface DurableDivert {
+  /** true ⇒ this submit's server-side judge call must run on the durable lane. */
+  divert: boolean;
+  /** the D5-frozen profile (resolved once here, reused as the enqueue payload). */
+  subjectProfile: SubjectProfile | null;
+}
+
+/**
+ * Decide whether this submit's judging should divert to the durable `judge_run`
+ * lane (async-main) instead of the in-request synchronous invoke. The predicate
+ * mirrors judgeSubmit's server-invoke condition EXACTLY (submit.ts:318): only a
+ * submit that WOULD spend a synchronous server-side judge call diverts —
+ *   auto_rate && no client-supplied verdict && has an answer && not photo-only on a
+ *   text-only route && the subject profile resolves.
+ * Every other submit (manual rating, client-supplied verdict, no-answer 422,
+ * photo-only-unsupported 422) has NO in-request LLM call, so there is nothing to
+ * move off the request window — it stays on the synchronous path unchanged.
+ *
+ * Cheap checks short-circuit BEFORE the profile DB read so a non-diverting submit
+ * pays no extra round-trip. Only reached when JUDGE_DURABLE_ENABLED is on.
+ *
+ * W4 #TtWh_ — `/api/attempts` is a SHARED entry point, not the practice-solo face alone, so
+ * "would spend a judge call" is necessary but NOT sufficient to divert. See
+ * {@link sessionAdmitsDurableDivert}.
+ */
+export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<DurableDivert> {
+  const { body, q } = validated;
+  if (!body.auto_rate) return { divert: false, subjectProfile: null };
+  if (body.judge_result_v2) return { divert: false, subjectProfile: null };
+  const answerMd = body.response_md?.trim() ?? '';
+  const hasImageAnswer = body.answer_image_refs.length > 0;
+  const hasAnswer = answerMd.length > 0 || hasImageAnswer;
+  if (!hasAnswer) return { divert: false, subjectProfile: null };
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+  if (subjectProfile === null) return { divert: false, subjectProfile: null };
+  const route = resolveQuestionJudgeRoute(q, subjectProfile);
+  const photoOnly = answerMd.length === 0 && hasImageAnswer;
+  const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(route);
+  // Shared predicate with judgeSubmit's invoke gate (#7) — photo-only-unsupported →
+  // divert:false (its 422 is a route-resolution check, no LLM call) but still return
+  // the resolved profile for the caller to reuse (#8).
+  // W4 #TtZ8c — `!== undefined && !== null` (the repo bans loose `!=`) and now identical to
+  // judgeSubmit's `judgeResult !== null` call site, so the two gates read the same.
+  const wouldJudge = wouldServerInvokeJudge({
+    autoRate: body.auto_rate,
+    hasSuppliedResult: body.judge_result_v2 !== undefined && body.judge_result_v2 !== null,
+    photoOnlyUnsupported,
+    hasProfile: subjectProfile !== null,
+  });
+  if (!wouldJudge) return { divert: false, subjectProfile };
+  // W2 scope is the PRACTICE submit face only; the session gate keeps every other caller on
+  // this shared route synchronous until W3 gives it the async protocol.
+  const divert = await sessionAdmitsDurableDivert(body.session_id ?? null);
+  return { divert, subjectProfile };
+}
+
+/**
+ * W4 #TtWh_ (codex P1) — may a submit from THIS session be answered with a 202-pending?
+ *
+ * `/api/attempts` is shared. The placement probe posts through it with `auto_rate:true`
+ * (`onboarding/ui/placement-api.ts` submitProbeAnswer) and then — `ScreenPlacement.tsx:192-194`
+ * — immediately calls `/question-selections` for the next item. `placement-next.ts` computes
+ * the answered set from PERSISTED review/attempt events keyed by `session_id`, so under a 202
+ * the current question is not yet in the exclusion set: answeredCount stalls, the termination
+ * check keeps the old value, and the probe can re-serve the question it just answered. The
+ * W2 divert was written for the practice face and this shared entry point was the leak.
+ *
+ * The gate is an ALLOWLIST, not a placement deny-list: any session type that is not explicitly
+ * admitted stays synchronous. A future caller mounting on this route therefore cannot silently
+ * inherit the async contract — it has to opt in here, which is the point at which someone has
+ * to check that its client actually tolerates a pending verdict.
+ *
+ * A submit with NO session_id is ad-hoc solo practice (the practice face's own shape) → admitted.
+ */
+export async function sessionAdmitsDurableDivert(sessionId: string | null): Promise<boolean> {
+  if (sessionId === null) return true;
+  const rows = await db
+    .select({ type: learning_session.type })
+    .from(learning_session)
+    .where(eq(learning_session.id, sessionId))
+    .limit(1);
+  const type = rows[0]?.type ?? null;
+  // Unknown session id → treat as NOT admitted. The synchronous path is always correct; it is
+  // only slower, so an unresolvable session must fail closed.
+  if (type === null) return false;
+  return DURABLE_DIVERT_SESSION_TYPES.has(type);
+}
+
+/**
+ * The session types whose clients are known to tolerate the 202-pending contract. W2 =
+ * practice review only. W3 admits the remaining faces as each one's client learns to wait for
+ * the backfill (design §4/§5, YUK-777).
+ */
+const DURABLE_DIVERT_SESSION_TYPES: ReadonlySet<string> = new Set(['review']);
+
+/**
+ * #8 — EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
+ * used to key on the bare `status === 202`, which silently assumes every 202 this route can
+ * ever produce is a pending-judge body with no `review_event`; the day another 202 appears
+ * for an unrelated reason, that heuristic hands the client a raw body and skips the resource
+ * wrapper. A named header is a discriminant that cannot be reached by accident.
+ */
+export const DURABLE_DIVERT_HEADER = 'x-durable-divert';
+export const DURABLE_DIVERT_JUDGE = 'judge';
+
+/** The 202-pending contract body returned when a submit diverts to the durable lane. */
+export interface DurableJudgePendingResponse {
+  run_id: string;
+  /** discriminant clients branch on (vs a resolved `judge` verdict). */
+  verdict: 'pending';
+  backfill: {
+    channel: 'sse';
+    url: string;
+    poll_url: string;
+  };
+}
+
+/** Build the 202-pending response for `runId` (body + Location + the #8 divert header). */
+function durablePendingResponse(runId: string): Response {
+  const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
+  const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
+  const responseBody: DurableJudgePendingResponse = {
+    run_id: runId,
+    verdict: 'pending',
+    backfill: { channel: 'sse', url: eventsUrl, poll_url: pollUrl },
+  };
+  return Response.json(responseBody, {
+    status: 202,
+    headers: { Location: eventsUrl, [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE },
+  });
+}
+
+export interface EnqueueDurableJudgeDeps {
+  /** test seam — default `getStartedBoss()`. Inject a fake `{ send }` in tests. */
+  boss?: {
+    send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
+  };
+  now?: Date;
+  /**
+   * #9 — test seam for the paid-AI budget gate, mirroring `boss`/`now`. Without it the
+   * rate-limit-exceeded branch was only reachable by module-mocking
+   * '@/server/http/rate-limit', so it was effectively untestable in isolation.
+   * Defaults to the real process-wide `checkRateLimit`; returns the recorded token.
+   */
+  checkRateLimit?: () => number;
+  /** W4 #TtZ8e — paired refund seam for the failed-enqueue path. */
+  refundRateLimit?: (token: number) => void;
+}
+
+/**
+ * Reserve a run_id, enqueue the `judge_run` job, record the queued marker, and return the
+ * 202-pending contract. The attempt is durably enqueued (frozen into the job payload) — the
+ * worker persists the review event (id = run_id) + verdict + FSRS atomically on backfill;
+ * nothing is lost on a worker outage (the payload survives; the run replays on recovery).
+ *
+ * run_id ≡ the (worker-written) attempt/outcome event id — a submit-face contract
+ * (NOT universal; W3 faces define their own anchor). It is ALSO the pg-boss job id
+ * (`SendOptions.id`, the YUK-758 orchestrator idiom), which lets the poll route ask pg-boss
+ * whether a marker-less run really exists — see W4 #TtWiD below.
+ *
+ * Ordering (atomicity): checkRateLimit → boss.send → advisory queued marker → 202.
+ * Send-first means the durable job exists before any local state, so a crash after the send
+ * (before the 202 returns) is safe — the worker still terminalizes the run.
+ *
+ * **Idempotency is NOT solved here.** A client HTTP retry after a lost 202 mints a second
+ * run_id, which the worker's run_id-keyed guard cannot collapse → a second paid judge + a
+ * second attempt. W4 #TtWiC removed the short-window answer-hash dedupe that briefly stood in
+ * for a real key: without a stable per-request idempotency key it could not tell a retry from
+ * a genuine re-answer, and PfSolo explicitly supports re-answering the same question, so it
+ * swallowed real attempts (no new immutable attempt, no FSRS advance). Closing this needs a
+ * client-supplied `Idempotency-Key` threaded onto the run — a HARD prerequisite before
+ * `JUDGE_DURABLE_ENABLED` is flipped on (YUK-777).
+ */
+export async function enqueueDurableJudge(
+  validated: ValidatedSubmit,
+  subjectProfile: SubjectProfile,
+  deps: EnqueueDurableJudgeDeps = {},
+): Promise<Response> {
+  // W5 #Tunns — the answer time is the one captured at request parse (`validateSubmit`),
+  // NOT a fresh clock read here. Between those two points this path awaits profile
+  // resolution, the session-type lookup and possibly a cold pg-boss start, so two concurrent
+  // submits can reach this line in the opposite order they arrived — handing the EARLIER
+  // answer the LATER `submitted_at`. That stamp is what the worker's late-arrival detection
+  // and FSRS/θ̂ scheduling order by, so an inverted pair would skip the genuinely newer
+  // attempt or apply the older one on top of it. `deps.now` still overrides for tests.
+  const now = deps.now ?? validated.now;
+  const runId = newId();
+  // Rate-limit the durable enqueue on the SAME in-process paid-AI budget the sync judge path
+  // uses (judgeSubmit's checkRateLimit before the invoke). A durable judge_run IS a paid
+  // inference job, so the HTTP dispatch face must gate it too.
+  // #9 — injectable seam (defaults to the real gate) so the exceeded branch is testable.
+  //
+  // W4 #TtZ8e/#TtZ8k — the gate must stay BEFORE the send (moving it after would enqueue a
+  // paid job and THEN 429 the client, who would retry and enqueue another), so the token is
+  // REFUNDED when the enqueue fails. Pre-fix the timestamp was pushed unconditionally: a
+  // transient `boss.send` failure burned budget with no job to show for it, and each client
+  // retry burned another, so repeated pg-boss blips could exhaust the shared window and block
+  // every judge call — sync and durable alike — until it rolled over.
+  let rateLimitToken: number | null = null;
+  try {
+    rateLimitToken = (deps.checkRateLimit ?? checkRateLimit)();
+
+    // SEND FIRST — atomicity: once the job is durably in pg-boss, the worker will
+    // terminalize it (started/done/failed) even if THIS process crashes before the
+    // 202 returns. The frozen answer rides the job payload, so nothing is lost. The
+    // queued marker below is advisory early-status ONLY (never the answer's home), so
+    // ordering it AFTER the send removes the marker-written-but-no-job stuck window.
+    const boss = deps.boss ?? (await getStartedBoss());
+    // `id: runId` pins the pg-boss job id to the run handle (YUK-758 orchestrator idiom) so
+    // the poll route can distinguish "queued but marker not yet written" from "unknown run".
+    // NOTE the semantics that gives `null`: with an explicit id, null means the INSERT hit
+    // ON CONFLICT DO NOTHING, i.e. a job with this id ALREADY exists. `runId` is a freshly
+    // minted id, so that is unreachable in practice; either way nothing new was enqueued for
+    // this request, so treating null as a failed enqueue (repo idiom, session/ingestion.ts)
+    // stays correct — we must not hand back a 202 for a run this request did not create.
+    const jobId = await boss.send(
+      JUDGE_RUN_QUEUE,
+      {
+        run_id: runId,
+        caller: 'submit',
+        submit: {
+          body: validated.body,
+          question_id: validated.questionId,
+          subject_profile: subjectProfile,
+          // #2 (codex) — freeze the question state the learner ANSWERED into the payload.
+          // Without it the worker re-reads a mutable row at pickup, so an edit to
+          // prompt/reference/choices/knowledge/difficulty between the 202 and pickup judges
+          // (and schedules) a different question than the one on screen.
+          question_snapshot: freezeQuestionForJudge(validated.q),
+          submitted_at: now.toISOString(),
+        },
+      },
+      { id: runId },
+    );
+    if (!jobId) {
+      throw new ApiError(
+        'durable_enqueue_failed',
+        `judge_run enqueue returned no jobId for run ${runId}`,
+        503,
+      );
+    }
+    // The job is durable from here on: the budget token was genuinely spent, so it must NOT
+    // be refunded even if the marker write below fails.
+    rateLimitToken = null;
+
+    // Advisory queued marker (consumers see 'queued' before the worker's STARTED).
+    // Best-effort: the job is already durable, so a marker-write failure does NOT lose the
+    // run — the worker still runs it and writes its own started/done/failed, and the poll
+    // route falls back to pg-boss for the window where neither exists (W4 #TtWiD).
+    try {
+      await writeJobEvent(db, {
+        business_table: JUDGE_RUN_TABLE,
+        business_id: runId,
+        event_type: JUDGE_RUN_EVENTS.QUEUED,
+        payload: {
+          caller: 'submit',
+          question_id: validated.questionId,
+          session_id: validated.body.session_id ?? null,
+        },
+      });
+    } catch (markerErr) {
+      console.error(
+        '[submit] durable judge queued-marker write failed (non-fatal; poll falls back to pg-boss)',
+        runId,
+        markerErr,
+      );
+    }
+
+    return durablePendingResponse(runId);
+  } catch (err) {
+    // Send-first ordering: the ONLY throws that reach here are pre-enqueue — checkRateLimit,
+    // a boss.send throw, or the null-jobId guard (null = nothing enqueued for this request).
+    // A successful send nulls `rateLimitToken` and proceeds to the 202; the advisory marker
+    // is best-effort and never throws into this catch. So a reached catch always means NO
+    // durable job exists — nothing to compensate, but the budget token must go back.
+    if (rateLimitToken !== null) (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
+    return errorResponse(err);
+  }
 }
 
 // ============================================================================
@@ -946,7 +1540,28 @@ async function persistSubmit(
 export async function createAttempt(req: Request): Promise<Response> {
   try {
     const validated = await validateSubmit(req);
-    const judged = await judgeSubmit(validated);
+    // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
+    // AND this submit would spend a synchronous server-side judge call, move the judge
+    // to the durable `judge_run` lane and return 202-pending; the verdict + FSRS land
+    // on the worker's backfill event. Flag OFF (default) → the whole block is skipped
+    // → byte-identical synchronous behavior (the flag-off regression anchor).
+    // `shouldEnqueueBackgroundJobs()` keeps the test/CI env on the synchronous path
+    // (no worker to drain the queue), same guard the copilot durable dispatch uses.
+    // #8 — when the divert gate already resolved the subject profile (the
+    // photo-only-unsupported non-divert branch), reuse it for the synchronous
+    // judgeSubmit below instead of resolving it a second time.
+    let reusedProfile: SubjectProfile | null = null;
+    if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
+      const gate = await resolveDurableDivert(validated);
+      if (gate.divert && gate.subjectProfile !== null) {
+        return await enqueueDurableJudge(validated, gate.subjectProfile);
+      }
+      reusedProfile = gate.subjectProfile;
+    }
+    const judged = await judgeSubmit(
+      validated,
+      reusedProfile ? { subjectProfile: reusedProfile } : {},
+    );
     const persisted = await persistSubmit(validated, judged);
     const { body, now, questionId, activityRef } = validated;
     const { judgeResult, judgeRoute, judgeTelemetry, suggestedRating, finalRating } = judged;
@@ -1003,7 +1618,15 @@ export async function createAttempt(req: Request): Promise<Response> {
 }
 
 export async function createAttemptResource(req: Request): Promise<Response> {
-  return canonicalResourceResponse(await createAttempt(req), {
+  const inner = await createAttempt(req);
+  // YUK-594 — a durable divert returns 202-pending, whose body has NO `review_event`;
+  // canonicalResourceResponse derives Location from `review_event.id`, so it would blow
+  // up on the pending shape. Pass it through untouched — enqueueDurableJudge already set
+  // its own Location header (the run's SSE stream), which is the correct resource.
+  // #8 — keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
+  // this route must still go through the resource wrapper rather than leak a raw body.
+  if (inner.headers.get(DURABLE_DIVERT_HEADER) === DURABLE_DIVERT_JUDGE) return inner;
+  return canonicalResourceResponse(inner, {
     outcome: 'created',
     location: (body) =>
       `/api/events/${encodeURIComponent(
