@@ -78,14 +78,21 @@ export interface UiPageDecl {
 
 /**
  * pg-boss job handler 工厂——与各包 buildXHandler(db) 形态一致：
- * `(db) => (jobs) => Promise<void>`。参数刻意用 any：kernel 不 import
+ * `(db) => (jobs) => Promise<unknown>`。参数刻意用 any：kernel 不 import
  * pg-boss/db 类型（unit 分区纯净），而 TS strictFunctionTypes 参数逆变下
  * unknown 无法零适配接收 `(db: Db) => (jobs: Job<T>[]) => …` 的具体工厂；
  * any 让包 manifest 直接引用既有工厂函数，窄化 cast 集中在注册器
  * （server/boss/register-capability-jobs.ts）一处。
+ *
+ * 返回 `Promise<unknown>` 而非 `Promise<void>`（YUK-779）：pg-boss 的
+ * `WorkHandler<ReqData, ResData = any>` 本就允许 handler resolve 出一个值，并在
+ * batchSize:1 时把它存进 job 的 `output` 列（manager.js `complete(name, jobIds,
+ * jobIds.length === 1 ? result : undefined)`）。夜链 handler 借此把「本轮产出报告」
+ * 随 job 终态带出（见 src/server/boss/job-yield.ts）。`void` 会把这条既有能力
+ * 挡在类型系统外；`unknown` 对旧的 `Promise<void>` 工厂完全后向兼容（协变位）。
  */
 // biome-ignore lint/suspicious/noExplicitAny: deliberate variance escape hatch（见 docblock）
-export type JobHandlerFactory = (db: any) => (jobs: any) => Promise<void>;
+export type JobHandlerFactory = (db: any) => (jobs: any) => Promise<unknown>;
 
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'

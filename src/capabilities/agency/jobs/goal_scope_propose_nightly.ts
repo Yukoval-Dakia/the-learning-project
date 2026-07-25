@@ -42,6 +42,7 @@ import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
@@ -59,6 +60,23 @@ export interface GoalScopeNightlyResult {
   /** set when NO known domain has any weak node (no candidate to propose) */
   skipped_no_weak: number;
   proposal_id: string | null;
+  /**
+   * YUK-779 — 1 when runGoalScopeAndWrite SWALLOWED a fault (`ok === false`), else 0.
+   * Without it, `proposed: 0` covers both "the model had nothing to propose" and
+   * "the LLM call blew up", so a 限流风暴 reads as a normal quiet night.
+   */
+  llm_failed: number;
+  /**
+   * YUK-779 — 1 once runGoalScopeAndWrite was actually CALLED, else 0.
+   *
+   * Deliberately NOT `considered`: gate 2 (已有 live goal) and gate 3 (已有 pending
+   * 提案) both return `considered: 1` while short-circuiting **before** the LLM half
+   * ever runs. Feeding `considered` into the yield tally would claim a fallible unit
+   * was attempted on nights where nothing was ever called — breaking the
+   * `attempted === succeeded + failed` invariant that the whole 判据 rests on
+   * (job-yield.ts). See the handler below for the exact hazard that creates.
+   */
+  llm_attempted: number;
 }
 
 /** Weak-node convention: mastery < 0.55 (knowledge-readers.ts:321,644). A node
@@ -100,6 +118,10 @@ export async function runGoalScopeProposeNightly(
     skipped_pending: 0,
     skipped_no_weak: 0,
     proposal_id: null,
+    llm_failed: 0,
+    // Every early return spreads `empty`, so each pre-LLM gate (no weak domain /
+    // live goal / pending proposal) correctly reports "the model was never called".
+    llm_attempted: 0,
   };
 
   // PRE-LLM reads run OUTSIDE runGoalScopeAndWrite's swallow (D7 / F-1): a throw
@@ -170,16 +192,40 @@ export async function runGoalScopeProposeNightly(
     considered: 1,
     proposed: result.proposal_id ? 1 : 0,
     proposal_id: result.proposal_id,
+    // YUK-779: surface the swallow instead of letting it collapse into proposed:0.
+    // NOT hardcoded 1 (PR #1076 review): runGoalScopeAndWrite can itself return before
+    // reaching the model (empty knowledge tree → `!prepared`), so the flag must come
+    // from it, not from "we got far enough to call it".
+    llm_attempted: result.llm_attempted ? 1 : 0,
+    llm_failed: result.ok ? 0 : 1,
   };
 }
 
 export function buildGoalScopeProposeNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runGoalScopeProposeNightly(db);
       console.log('[goal_scope_propose_nightly] result', result);
+      // YUK-779 — the fallible unit is the single LLM half, counted by `llm_attempted`.
+      //
+      // Must NOT be `considered` (PR #1076 review): gates 2/3 return `considered: 1`
+      // while short-circuiting before the LLM ever runs. Using it would report
+      // {attempted:1, succeeded:1, failed:0} on a gated night — level `ok` instead of
+      // the truthful `idle`. Benign while `ok` and `idle` are both silent, but it
+      // breaks the attempted === succeeded + failed invariant, and it is exactly the
+      // arithmetic that would go live the moment the owner flips `stalled → throw`
+      // (PR §4) or anything starts distinguishing `idle` from `ok`.
+      // attempted = llm_attempted OR llm_failed — see knowledge_edge_propose_nightly
+      // for the full argument; briefly: `llm_attempted` alone would report `idle` for
+      // a fault swallowed BEFORE the model was reached, hiding a real swallowed error.
+      const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
+      return reportJobYield('goal_scope_propose_nightly', {
+        attempted,
+        succeeded: attempted - result.llm_failed,
+        failed: result.llm_failed,
+      });
     } catch (err) {
       console.error('[goal_scope_propose_nightly] failed', err);
       throw err;

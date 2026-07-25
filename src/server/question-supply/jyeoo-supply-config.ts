@@ -8,6 +8,7 @@
 // optional `jyeooSupply` field (src/subjects/math/profile.ts); everything else here
 // (dg mapping, CLI args, kill switch) is deterministic config. Pure — no IO, no DB.
 
+import { parseFlag } from '@/core/env-flags';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import type { DifficultyBand } from './target-discovery';
@@ -25,12 +26,12 @@ export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch' as const;
 // would otherwise promote unchecked).
 export const JYEOO_SOURCE_HOST = 'www.jyeoo.com';
 
-// Kill switch (P4). Dark-ship OPT-IN, default OFF — mirrors QUESTION_SUPPLY_REFILL_ENABLED
-// (accepts both 'true' and '1'). OFF ⇒ the dispatcher skips jyeoo_fetch and falls back to
-// sourcing_web (chooseAutoRoute), and the handler no-ops if a job still reaches it.
+// Kill switch (P4). Dark-ship OPT-IN, default OFF — parsed through the shared repo-wide flag
+// grammar (YUK-586): 'true'/'1' enable, 'false'/'0' disable, case-insensitive and whitespace-
+// trimmed, anything else keeps the declared default. OFF ⇒ the dispatcher skips jyeoo_fetch and
+// falls back to sourcing_web (chooseAutoRoute), and the handler no-ops if a job still reaches it.
 export function jyeooFetchEnabled(): boolean {
-  const raw = process.env.JYEOO_FETCH_ENABLED;
-  return raw === 'true' || raw === '1';
+  return parseFlag(process.env.JYEOO_FETCH_ENABLED);
 }
 
 // Path to the jyeoo-rs binary. Configurable so prod/NAS can pin an absolute path and

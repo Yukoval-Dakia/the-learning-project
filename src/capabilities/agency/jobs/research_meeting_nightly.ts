@@ -41,6 +41,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { enrichEvidenceCells } from '@/server/conjectures/enrich';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import type { EnrichedEvidenceCell } from '@/server/conjectures/evidence';
@@ -70,6 +71,17 @@ export interface ResearchMeetingResult {
   considered: number;
   /** conjectures actually proposed (a cell whose induction failed is dropped). */
   conjectures_created: number;
+  /**
+   * YUK-779 — cells whose induction/write THREW and was swallowed by the per-cell
+   * catch below. Invariant: `cells_failed + conjectures_created === considered`.
+   *
+   * Before this counter existed the swallow was visible only as
+   * `considered > conjectures_created`, which the job never asserted on — under a
+   * 限流风暴 every cell failed, the job returned `conjectures_created: 0` and still
+   * finished `succeeded`, so the DAG node went green and hard downstream ran on
+   * stale data.
+   */
+  cells_failed: number;
   /** pending conjectures already open at run start (the dedup base). */
   pending_before: number;
   /** prior probe outcomes scored + ledger-updated this run (U8 reconcile, A13). */
@@ -261,6 +273,7 @@ export async function runResearchMeetingNightly(
     return {
       considered: 0,
       conjectures_created: 0,
+      cells_failed: 0,
       pending_before: knownConjectureKeys.size,
       reconciled: reconcileResult.reconciled,
       reconcile_skipped: reconcileResult.skipped,
@@ -302,32 +315,37 @@ export async function runResearchMeetingNightly(
 
   // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
   const cellResults = await Promise.all(
-    enrichedTopCells.map(async (cell): Promise<{ created: number; cost_usd: number }> => {
-      let incurredCostUsd = 0;
-      try {
-        const induced = await induceConjectureFn({
-          cells: [cell],
-          samples: RESEARCH_MEETING_SAMPLES,
-          runTaskFn,
-          // YUK-786: render the prompt in the cell's OWN subject voice. An
-          // untagged KC (subject_id null) stays on the neutral `general`
-          // profile — inheriting a concrete subject would re-introduce exactly
-          // the wrong-subject steer this ticket removed from the prompt copy.
-          subjectProfile: resolveSubjectProfile(cell.subject_id),
-        });
-        // Count the Opus induction spend immediately — it was incurred regardless of
-        // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
-        incurredCostUsd = induced.cost_usd;
-        await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
-        return { created: 1, cost_usd: incurredCostUsd };
-      } catch (err) {
-        console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
-        await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
-        return { created: 0, cost_usd: incurredCostUsd };
-      }
-    }),
+    enrichedTopCells.map(
+      async (cell): Promise<{ created: number; failed: number; cost_usd: number }> => {
+        let incurredCostUsd = 0;
+        try {
+          const induced = await induceConjectureFn({
+            cells: [cell],
+            samples: RESEARCH_MEETING_SAMPLES,
+            runTaskFn,
+            // YUK-786: render the prompt in the cell's OWN subject voice. An
+            // untagged KC (subject_id null) stays on the neutral `general`
+            // profile — inheriting a concrete subject would re-introduce exactly
+            // the wrong-subject steer this ticket removed from the prompt copy.
+            subjectProfile: resolveSubjectProfile(cell.subject_id),
+          });
+          // Count the Opus induction spend immediately — it was incurred regardless of
+          // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
+          incurredCostUsd = induced.cost_usd;
+          await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
+          return { created: 1, failed: 0, cost_usd: incurredCostUsd };
+        } catch (err) {
+          console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
+          await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
+          // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
+          // so the handler can tell "no evidence tonight" from "every cell blew up".
+          return { created: 0, failed: 1, cost_usd: incurredCostUsd };
+        }
+      },
+    ),
   );
   const created = cellResults.reduce((sum, result) => sum + result.created, 0);
+  const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
 
   // Observability scan event — NOT cost-bearing: each conjecture proposal event already
@@ -345,6 +363,7 @@ export async function runResearchMeetingNightly(
     payload: {
       considered: topCells.length,
       conjectures_created: created,
+      cells_failed: cellsFailed,
       pending_before: knownConjectureKeys.size,
     },
     caused_by_event_id: triggerEventId,
@@ -357,6 +376,7 @@ export async function runResearchMeetingNightly(
   return {
     considered: topCells.length,
     conjectures_created: created,
+    cells_failed: cellsFailed,
     pending_before: knownConjectureKeys.size,
     reconciled: reconcileResult.reconciled,
     reconcile_skipped: reconcileResult.skipped,
@@ -367,11 +387,20 @@ export async function runResearchMeetingNightly(
 
 export function buildResearchMeetingNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runResearchMeetingNightly(db);
       console.log('[research_meeting_nightly] result', result);
+      // YUK-779 — the fallible units are the top-K cells. An empty night early-returns
+      // with considered:0 → level `idle` (no alarm); a 限流风暴 fails every cell →
+      // considered:3 / created:0 → level `stalled` (loud) and the report rides the job
+      // output into the DAG node detail.
+      return reportJobYield('research_meeting_nightly', {
+        attempted: result.considered,
+        succeeded: result.conjectures_created,
+        failed: result.cells_failed,
+      });
     } catch (err) {
       console.error('[research_meeting_nightly] failed', err);
       throw err;

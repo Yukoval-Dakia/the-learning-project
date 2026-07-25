@@ -7,6 +7,7 @@ import type {
   InduceConjectureInput,
   InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
+import { classifyJobYield } from '@/server/boss/job-yield';
 import { conjectureKey } from '@/server/conjectures/evidence';
 import type { EnrichedEvidenceCell, EvidenceCell } from '@/server/conjectures/evidence';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
@@ -303,8 +304,105 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
     expect(result.considered).toBe(2);
     expect(result.conjectures_created).toBe(1); // one failed, one succeeded
+    expect(result.cells_failed).toBe(1); // YUK-779 — the swallow is now COUNTED
     expect(writeAiProposalFn).toHaveBeenCalledTimes(1);
     expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+    // Partial progress is NOT an alarm: one of two cells landed, so the run still
+    // advanced the state. (2 units is below YIELD_DEGRADED_MIN_SAMPLE anyway.)
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created,
+        failed: result.cells_failed,
+      }),
+    ).toBe('ok');
+  });
+
+  // ── YUK-779: 静默空跑的红/绿实证 ───────────────────────────────────────────
+  // 两侧必须同时成立才算修好：全败要报，空夜不能报。
+
+  it('RED — 限流风暴（每一格 AI 调用都失败）→ 全部被吞、job 仍返回，但判为 stalled', async () => {
+    const writeAiProposalFn = vi.fn(async () => 'prop_x');
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      ),
+      // 429 风暴：同一批里每一格都失败。
+      induceConjectureFn: vi.fn(async () => {
+        throw new Error('429 rate_limit_error');
+      }),
+      writeAiProposalFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    // 刻意保留的吞错语义没变：run 正常返回，没有抛出（handler 仍会以 succeeded 收尾）。
+    expect(result.considered).toBe(RESEARCH_MEETING_MAX_CONJECTURES);
+    expect(result.conjectures_created).toBe(0);
+    expect(result.cells_failed).toBe(RESEARCH_MEETING_MAX_CONJECTURES);
+    expect(writeAiProposalFn).not.toHaveBeenCalled();
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(RESEARCH_MEETING_MAX_CONJECTURES);
+
+    // ★ 判据命中：试过、且一个都没成 —— 这就是静默空跑。
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created,
+        failed: result.cells_failed,
+      }),
+    ).toBe('stalled');
+  });
+
+  it('GREEN — 空夜（无 recurring evidence，压根没调 AI）→ 判为 idle，绝不报警', async () => {
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
+      induceConjectureFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    // 产出同样是 0 —— 但成因完全不同：一次 AI 调用都没发生。
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(result.considered).toBe(0);
+    expect(result.conjectures_created).toBe(0);
+    expect(result.cells_failed).toBe(0);
+
+    // ★ 这正是判据要保护的一侧：正常的零产出不得报警。
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created,
+        failed: result.cells_failed,
+      }),
+    ).toBe('idle');
+  });
+
+  it('GREEN — 全部候选已有 pending conjecture（dedup 挡住）→ 同样是 idle', async () => {
+    // 另一条「正常的零产出」路径：有失败证据，但每个 cell 都被 dedup 去掉了。
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
+      loadKnownConjectureKeysFn: vi.fn(
+        async () =>
+          new Set([
+            conjectureKey('concept_confusion', 'k_a'),
+            conjectureKey('concept_confusion', 'k_b'),
+          ]),
+      ),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+    expect(result.considered).toBe(0);
+    expect(result.cells_failed).toBe(0);
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created,
+        failed: result.cells_failed,
+      }),
+    ).toBe('idle');
   });
 
   it('induces independent top cells concurrently', async () => {

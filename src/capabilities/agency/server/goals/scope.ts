@@ -46,12 +46,45 @@ export interface RunGoalScopeAndWriteResult {
   /** goal id reserved for materialization (carried in target.subject_id). */
   goal_id: string | null;
   scope_count: number;
+  /**
+   * YUK-779 — success/failure discriminant, mirroring runEdgeProposeAndWrite's `ok`.
+   * `false` ONLY when this pipeline SWALLOWED an error (its catch-all below).
+   *
+   * Why it must exist: `proposal_id === null` is produced by BOTH the benign
+   * cold-start no-op (empty tree → no LLM call at all) and a swallowed LLM/parse
+   * fault. Without this flag the nightly job reports `proposed: 0` for both, so a
+   * rate-limit storm is indistinguishable from "nothing to propose tonight".
+   *
+   * NOTE the deliberate asymmetry: a benign no-op returns `ok: true`. "The fallible
+   * step returned normally without producing output" is a legitimate conclusion, not
+   * a failure — see src/server/boss/job-yield.ts for the full 判据.
+   */
+  ok: boolean;
+  /**
+   * YUK-779 — true once GoalScopeTask was actually CALLED.
+   *
+   * Same shape as runEdgeProposeAndWrite's flag, and for the same reason: this
+   * function ALSO returns before reaching the model when the knowledge tree is empty
+   * (buildGoalScopePreparation → `tree.length === 0` → null → the `!prepared` no-op),
+   * with `ok: true` and a zero result — indistinguishable from "the model declined".
+   *
+   * Today the nightly's own `skipped_no_weak` gate shadows that path (an empty tree
+   * yields no ≥5-KC domain, so the job returns before ever calling this). The flag is
+   * kept exact anyway: the shadowing is incidental — it depends on a *different*
+   * function's gate ordering, and a TOCTOU (tree non-empty at the job gate, emptied by
+   * the time this re-reads it) still reaches it.
+   */
+  llm_attempted: boolean;
 }
 
 const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
   proposal_id: null,
   goal_id: null,
   scope_count: 0,
+  ok: true,
+  // false by default — every early return spreading EMPTY_RESULT stopped short of
+  // the model. Only the live path flips it, immediately before the call.
+  llm_attempted: false,
 };
 
 async function buildGoalScopePreparation(db: Db, intent: GoalScopeIntent) {
@@ -95,6 +128,9 @@ export async function prepareGoalScopeTask(ctx: ToolContext, intent: GoalScopeIn
 export async function runGoalScopeAndWrite(
   params: RunGoalScopeAndWriteParams,
 ): Promise<RunGoalScopeAndWriteResult> {
+  // YUK-779 — 必须在 try 之外：catch 也要如实回答「刚才到底调没调模型」，否则一个
+  // 发生在 LLM 之前的吞掉的故障会被报成 idle，把真实吞错隐形。
+  let llmAttempted = false;
   try {
     const prepared = await buildGoalScopePreparation(params.db, {
       goal_title: params.goalTitle,
@@ -103,6 +139,8 @@ export async function runGoalScopeAndWrite(
     if (!prepared) return { ...EMPTY_RESULT };
     const { input, tree } = prepared;
 
+    // YUK-779: 紧挨调用之前置位，成功与吞错两条路都能如实回答「试过」。
+    llmAttempted = true;
     const result = await params.runTaskFn('GoalScopeTask', input, {
       subjectProfile: params.subjectProfile,
     });
@@ -135,11 +173,23 @@ export async function runGoalScopeAndWrite(
       created_at: new Date(),
     });
 
-    return { proposal_id: proposalId, goal_id: goalId, scope_count: scope.length };
+    return {
+      proposal_id: proposalId,
+      goal_id: goalId,
+      scope_count: scope.length,
+      ok: true,
+      // 从局部量派生而非硬编码 true（PR #1076 review），与 runEdgeProposeAndWrite 的
+      // 同名字段一致：其余出口（EMPTY_RESULT 默认、`!prepared` 早返、catch-all）都从
+      // llmAttempted 取值，唯独这里硬编码就成了同一含义的第二个真源。它今天等价，
+      // 靠的是「赋值点恰好在上面几行」——那是**位置**，不是不变量。
+      llm_attempted: llmAttempted,
+    };
   } catch (err) {
     console.error('runGoalScopeAndWrite: failed (no proposal written)', err);
     await writeRetryableAiFailureLedger(params.db, 'GoalScopeTask');
-    return { ...EMPTY_RESULT };
+    // YUK-779: `ok: false` is the ONLY thing that distinguishes this swallowed fault
+    // from the benign `!prepared` no-op above (both yield proposal_id: null).
+    return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
 }
 

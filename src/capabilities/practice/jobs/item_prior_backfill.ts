@@ -20,6 +20,7 @@ import { knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { inArray } from 'drizzle-orm';
 
@@ -116,11 +117,20 @@ export async function runItemPriorBackfill(
 
 export function buildItemPriorBackfillHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runItemPriorBackfill(db);
       console.log('[item_prior_backfill] result', result);
+      // YUK-779 — the counters already existed; nothing acted on them. An empty
+      // candidate set early-returns with considered:0 → level `idle`; a 限流风暴
+      // fails every question → calibrated:0 → level `stalled` (loud + job output).
+      // Invariant holds: considered === calibrated + skipped_failed.
+      return reportJobYield('item_prior_backfill', {
+        attempted: result.considered,
+        succeeded: result.calibrated,
+        failed: result.skipped_failed,
+      });
     } catch (err) {
       console.error('[item_prior_backfill] failed', err);
       throw err;

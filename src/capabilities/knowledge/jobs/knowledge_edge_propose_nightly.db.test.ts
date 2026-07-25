@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { classifyJobYield } from '@/server/boss/job-yield';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
   loadEdgeProposeWatermark,
@@ -22,6 +23,89 @@ describe('knowledge_edge_propose_nightly handler', () => {
     expect(result.attempts_considered).toBe(0);
     expect(result.proposed).toBe(0);
     expect(runTaskFn).not.toHaveBeenCalled();
+    // YUK-779: 真空尾——模型没被调用，不得计入 attempted。
+    expect(result.llm_attempted).toBe(0);
+  });
+
+  // YUK-779 (PR #1076 review) — 有失败样本、但知识树为空（KC 被删/事件成孤儿）时，
+  // runEdgeProposeAndWrite 在**调用模型之前**就返回 EMPTY_RESULT(ok:true)。
+  // 外层曾无条件 llm_attempted:1，于是把「今晚没事可做」报成一次成功的尝试。
+  it('空知识树（有失败事件但无 KC 行）→ 模型未被调用，llm_attempted 必须是 0', async () => {
+    const now = new Date();
+    const qId = createId();
+    const attemptId = createId();
+    // 刻意**不插** knowledge 行：loadTreeSnapshot 返回空 → 提案函数在 LLM 前收工。
+    const orphanKc = createId();
+    await db.insert(question).values({
+      id: qId,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: null,
+      knowledge_ids: [orphanKc],
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(event).values({
+      id: attemptId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: qId,
+      outcome: 'failure',
+      payload: { answer_md: 'w', answer_image_refs: [], referenced_knowledge_ids: [orphanKc] },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    await db.insert(event).values({
+      id: `judge_${attemptId}`,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: 'x',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: [orphanKc],
+      },
+      caused_by_event_id: attemptId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(now.getTime() + 500),
+    });
+
+    const runTaskFn = vi.fn(async () => ({ text: '{"proposals":[]}' }));
+    const result = await runKnowledgeEdgeProposeNightly(db, { runTaskFn });
+
+    // 真空尾判据不适用——确实有失败样本进了批次。
+    expect(result.attempts_considered).toBeGreaterThan(0);
+    // 但模型一次都没被调用（空树在它之前收工）。
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(result.llm_attempted).toBe(0);
+    expect(result.llm_failed).toBe(0);
+
+    // ★ 端到端：这一夜必须判 idle（正常的零产出）。
+    const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
+    expect(
+      classifyJobYield({
+        attempted,
+        succeeded: attempted - result.llm_failed,
+        failed: result.llm_failed,
+      }),
+    ).toBe('idle');
+    // 反证：修前无条件 llm_attempted:1 会把同一夜报成 ok（而非真相 idle）。
+    expect(classifyJobYield({ attempted: 1, succeeded: 1, failed: 0 })).toBe('ok');
   });
 
   it('runs propose pass once across the batch of recent failures', async () => {

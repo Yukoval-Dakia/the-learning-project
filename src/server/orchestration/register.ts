@@ -31,6 +31,42 @@ export interface OrchestratorJobPayload {
 }
 
 /**
+ * pg-boss → {@link OrchestratorBoss} 适配器（**生产**实现）。
+ *
+ * 独立导出而非内联在 registerOrchestrator 里（YUK-779 PR #1076 review）：内联的匿名对象
+ * 字面量**任何测试都够不着**，于是 orchestrator 的 DB 测试只能注入 FakeBoss —— 而 FakeBoss
+ * 是 OrchestratorBoss 的替身，它**绕过**了这个适配器。结果是「测试替身比生产实现更完整」：
+ * FakeBoss 实现了 output 透传，生产适配器却把 output 丢了，测试全绿而生产链路是断的。
+ * 具名导出让适配器本身成为被测对象（见 register.db.test.ts 的 toOrchestratorBoss 用例）。
+ *
+ * `output` 字段来源已核实到 pg-boss v12.26.1 实装（不是照猜）：
+ *  · `plans.js:385` —— `JOB_COLUMNS_ALL` 里 `output` 是**不带 alias** 的裸列名
+ *    （同批其它列如 `retry_limit as "retryLimit"` 都改了名，唯独 output 没有）；
+ *  · `manager.js:1561-1578` —— `getJobById` 直接返回该 SELECT 的行，除 CockroachDB 的
+ *    数值归一化外不做任何字段改写；
+ *  · `types.d.ts` `JobWithMetadata.output: object`。
+ * DB 列是 nullable jsonb，handler 返回 void 时为 `null`，故此处按 `unknown` 透传，由
+ * readJobYieldReport 做防御性解析（它对 null/畸形一律返回 undefined）。
+ */
+export function toOrchestratorBoss(boss: PgBoss): OrchestratorBoss {
+  return {
+    send: (name, data, options) => boss.send(name, data, options ?? {}),
+    getJobById: async (name, id) => {
+      const job = await boss.getJobById(name, id);
+      // YUK-779: `output` 必须透传 —— 夜链 handler 的产出报告经由它抵达
+      // orchestrator 并盖进 dag_orchestration_node.detail。丢了它整条可见性链路断掉，
+      // 且**不会有任何测试报警**（FakeBoss 走的是另一条路），故此处是承重的一行。
+      return job ? { state: job.state, output: job.output } : null;
+    },
+    // YUK-781 B — v12 `cancel(name, id)` 返回 CommandResponse（affected 计数），orchestrator
+    // 只关心「已尽力取消」，故丢弃返回值以保持窄接口。语义与残留风险见 OrchestratorBoss.cancel。
+    cancel: async (name, id) => {
+      await boss.cancel(name, id);
+    },
+  };
+}
+
+/**
  * orchestrator job payload 的 runtime 收窄（YUK-758 review ToTa0 + ToTe7）。
  *
  * **恰好三种形状**互斥放行：`{}`（cron 锚点）/ `{ tick: true }`（自调度 tick）/
@@ -173,18 +209,7 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
   // 单锚点 cron（图成员自身已无 cron，validateComposition 强制）。
   await boss.schedule(ORCHESTRATOR_QUEUE, ORCHESTRATOR_CRON, {}, { tz: ORCHESTRATOR_TZ });
 
-  const orchestratorBoss: OrchestratorBoss = {
-    send: (name, data, options) => boss.send(name, data, options ?? {}),
-    getJobById: async (name, id) => {
-      const job = await boss.getJobById(name, id);
-      return job ? { state: job.state } : null;
-    },
-    // YUK-781 B — v12 `cancel(name, id)` 返回 CommandResponse（affected 计数），orchestrator
-    // 只关心「已尽力取消」，故丢弃返回值以保持窄接口。语义与残留风险见 OrchestratorBoss.cancel。
-    cancel: async (name, id) => {
-      await boss.cancel(name, id);
-    },
-  };
+  const orchestratorBoss: OrchestratorBoss = toOrchestratorBoss(boss);
 
   // 最后一步（见上文顺序说明）：注册消费者。
   await boss.work(
