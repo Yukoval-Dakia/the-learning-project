@@ -145,6 +145,17 @@ function newerEventRow(a: EventRow, b: EventRow): boolean {
   );
 }
 
+/**
+ * YUK-562 — the attempt payload's process-data self-report ("how the learner
+ * thought"), or null when the attempt carries no process text. Kept OFF the
+ * {@link FailureAttempt} bare type on purpose (that shape is a stable contract
+ * downstream consumers depend on); readers that want the trace opt in via the
+ * wrapper shape below.
+ */
+function reasoningTraceFromRow(row: EventRow): string | null {
+  return (row.payload as { reasoning_trace?: string | null } | null)?.reasoning_trace ?? null;
+}
+
 function failureEvidenceFromRow(row: EventRow): {
   answer_md: string | null;
   answer_image_refs: string[];
@@ -180,6 +191,38 @@ export async function getFailureAttempts(
   db: DbLike,
   opts: GetFailureAttemptsOpts = {},
 ): Promise<FailureAttempt[]> {
+  return (await loadFailureAttempts(db, opts)).map((row) => row.failure);
+}
+
+/**
+ * YUK-786 — the LIST sibling of {@link getFailureAttemptWithReasoningTraceById}:
+ * the same rows {@link getFailureAttempts} returns, each paired with the attempt
+ * payload's `reasoning_trace` (YUK-562 process data). Same wrapper shape as the
+ * by-id reader, for the same reason: the exported {@link FailureAttempt} type is
+ * a stable contract and must NOT grow a field, so the trace rides alongside it.
+ *
+ * No extra round-trip — the trace is derived from the SAME attempt rows the base
+ * reader already selects. The nightly 教研例会 job uses this so conjecture
+ * induction can see the learner's own account of how they thought, which is the
+ * single most load-bearing piece of first-hand evidence for a mind-model claim.
+ */
+export async function getFailureAttemptsWithReasoningTrace(
+  db: DbLike,
+  opts: GetFailureAttemptsOpts = {},
+): Promise<FailureAttemptWithReasoningTrace[]> {
+  return loadFailureAttempts(db, opts);
+}
+
+/** {@link FailureAttempt} + the opt-in YUK-562 process-data self-report. */
+export type FailureAttemptWithReasoningTrace = {
+  failure: FailureAttempt;
+  reasoning_trace: string | null;
+};
+
+async function loadFailureAttempts(
+  db: DbLike,
+  opts: GetFailureAttemptsOpts = {},
+): Promise<FailureAttemptWithReasoningTrace[]> {
   const unbounded = opts.limit === null;
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
   const perQuestionLimit = opts.perQuestionLimit;
@@ -361,7 +404,9 @@ export async function getFailureAttempts(
         correction_state: uc.truth,
       };
     }
-    return result;
+    // YUK-786 — derived from the SAME row (no second query); the bare projection
+    // above stays byte-identical for every legacy caller.
+    return { failure: result, reasoning_trace: reasoningTraceFromRow(a) };
   });
 }
 
@@ -525,9 +570,7 @@ async function loadFailureAttemptById(
   if (userCause) failure.user_cause = userCause;
   // YUK-562 — derive reasoning_trace from the SAME row (no extra query). Null when
   // the attempt has no process text; the copilot caller trims/omits empty values.
-  const reasoning_trace =
-    (attempt.payload as { reasoning_trace?: string | null } | null)?.reasoning_trace ?? null;
-  return { failure, reasoning_trace };
+  return { failure, reasoning_trace: reasoningTraceFromRow(attempt) };
 }
 
 // ============================================================================

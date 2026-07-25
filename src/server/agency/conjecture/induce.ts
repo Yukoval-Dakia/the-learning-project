@@ -28,18 +28,30 @@
 import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
-import type { EvidenceCell } from '@/server/conjectures/evidence';
+import type { EnrichedEvidenceCell } from '@/server/conjectures/evidence';
+import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 
 export interface InduceConjectureInput {
-  /** Deterministic 取证 cells for ONE candidate (the job passes one salient cell). */
-  cells: EvidenceCell[];
+  /**
+   * 取证 cells for ONE candidate (the job passes one salient cell), each carrying
+   * its YUK-786 grounding packet. The ENRICHED type is required, not optional:
+   * a bare cell is 7 opaque scalars, and inducing a domain-specific claim from
+   * that is the exact failure mode this contract exists to make unrepresentable.
+   */
+  cells: EnrichedEvidenceCell[];
   /** N self-consistency samples (>= 1). The nightly job passes 3. */
   samples: number;
   /** injected runner — the job wraps the real runTask (with db); faked in tests. */
   runTaskFn: TaskTextRunFn;
   /** prior conjecture claim being updated, if any (owner-correction anchor feed). */
   priorClaimMd?: string;
+  /**
+   * YUK-786 — subject context for the prompt render, resolved by the job from
+   * the cell's KC domain. Omitted ⇒ the neutral `general` profile (an untagged
+   * KC must not inherit a concrete subject's voice).
+   */
+  subjectProfile?: SubjectProfile;
 }
 
 export interface InduceConjectureResult {
@@ -235,19 +247,30 @@ async function deduplicateClaims(
 export async function induceConjecture(
   input: InduceConjectureInput,
 ): Promise<InduceConjectureResult> {
-  const { cells, samples, runTaskFn, priorClaimMd } = input;
+  const { cells, samples, runTaskFn, priorClaimMd, subjectProfile } = input;
   if (samples < 1) throw new Error('induceConjecture: samples must be >= 1');
   if (cells.length === 0) throw new Error('induceConjecture: cells must be non-empty');
 
   const taskInput = {
     evidence_cells: cells.map((c) => ({
       knowledge_id: c.knowledge_id,
+      // YUK-786 grounding: the KC as a NAME + its subject, so the claim is
+      // induced about a real knowledge point in a real subject rather than
+      // about a UUID whose domain the model has to guess.
+      knowledge_name: c.knowledge_name,
+      subject_id: c.subject_id,
+      subject_display_name: c.subject_display_name,
       cause_category: c.cause_category,
       recurrence_count: c.recurrence_count,
       theta_hat: c.theta_hat,
       theta_precision: c.theta_precision,
       baseline_p: c.baseline_p,
       evidence_event_ids: c.evidence_event_ids,
+      // First-hand evidence: what was asked, what the owner answered, how they
+      // say they thought, and what the attribution was. Free text arrives
+      // already truncated + `<untrusted_learner_text>`-delimited by the enrich
+      // step — it is DATA for analysis, never instruction.
+      evidence_samples: c.samples,
     })),
     ...(priorClaimMd ? { prior_claim_md: priorClaimMd } : {}),
   };
@@ -263,6 +286,9 @@ export async function induceConjecture(
       runTaskFn('MindModelInductionTask', taskInput, {
         override: { provider: 'anthropic-sub' as const },
         outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
+        // YUK-786 — the prompt renders from the SubjectProfile; without this the
+        // renderer falls back to `general` even when the cell's KC is tagged.
+        ...(subjectProfile ? { subjectProfile } : {}),
       }),
     ),
   );

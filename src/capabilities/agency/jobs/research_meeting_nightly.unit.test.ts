@@ -8,7 +8,8 @@ import type {
   InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { conjectureKey } from '@/server/conjectures/evidence';
-import type { FailureAttempt } from '@/server/events/queries';
+import type { EnrichedEvidenceCell, EvidenceCell } from '@/server/conjectures/evidence';
+import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { describe, expect, it, vi } from 'vitest';
@@ -100,10 +101,56 @@ function failuresForKcs(kcs: string[], category = 'concept_confusion'): FailureA
   ]);
 }
 
+/**
+ * YUK-786 — the job now reads through the trace-bearing LIST reader, so the
+ * fixtures ride in that wrapper shape. `reasoning_trace` is derived per attempt
+ * so the assertions below can prove the job routes it into the enrich step.
+ */
+function withTraces(failures: FailureAttempt[]): FailureAttemptWithReasoningTrace[] {
+  return failures.map((f) => ({
+    failure: f,
+    reasoning_trace: `trace of ${f.attempt_event_id}`,
+  }));
+}
+
+/**
+ * YUK-786 — stand-in for the PRE-LLM grounding read (the real one hits the DB).
+ * Echoes the cell fields the enrich step would resolve so the job's pass-through
+ * is observable without a container.
+ */
+function fakeEnrich(
+  _db: unknown,
+  input: {
+    cells: EvidenceCell[];
+    failures: FailureAttempt[];
+    reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
+  },
+): Promise<EnrichedEvidenceCell[]> {
+  return Promise.resolve(
+    input.cells.map((cell) => ({
+      ...cell,
+      knowledge_name: `name of ${cell.knowledge_id}`,
+      subject_id: 'yuwen',
+      subject_display_name: '语文',
+      samples: cell.evidence_event_ids.map((attemptId) => ({
+        attempt_event_id: attemptId,
+        question_id: `q_${attemptId}`,
+        question_prompt_md: `<untrusted_learner_text>prompt of ${attemptId}</untrusted_learner_text>`,
+        answer_md: null,
+        reasoning_trace: input.reasoningTraceByAttemptId?.get(attemptId) ?? null,
+        cause_category: cell.cause_category,
+        cause_source: 'agent',
+        cause_analysis_md: 'agent analysis',
+      })),
+    })),
+  );
+}
+
 function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeetingDeps {
   return {
     now: () => NOW,
-    getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+    enrichEvidenceCellsFn: vi.fn(fakeEnrich),
+    getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
     getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
     loadKnownConjectureKeysFn: vi.fn(async () => new Set<string>()),
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
@@ -155,7 +202,9 @@ describe('runResearchMeetingNightly', () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
       // 5 distinct KCs → 5 cells, but only RESEARCH_MEETING_MAX_CONJECTURES proposed.
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
       writeAiProposalFn,
     });
 
@@ -171,7 +220,7 @@ describe('runResearchMeetingNightly', () => {
       return 'prop_x';
     });
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
       getMasteryProjectionFn: vi.fn(
         async () => new Map<string, MasteryProjection>([['k_a', projection(0.42)]]),
       ),
@@ -209,7 +258,7 @@ describe('runResearchMeetingNightly', () => {
   it('snapshots baseline_p_at_induction to the cold-start neutral 0.5 when no mastery row', async () => {
     const captured: WriteAiProposalInput[] = [];
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_cold'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_cold']))),
       getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
       writeAiProposalFn: vi.fn(async (_db: unknown, input: WriteAiProposalInput) => {
         captured.push(input);
@@ -225,7 +274,7 @@ describe('runResearchMeetingNightly', () => {
   it('dedups: a cause×KC with a pending conjecture is not re-proposed', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
       loadKnownConjectureKeysFn: vi.fn(
         async () => new Set([conjectureKey('concept_confusion', 'k_a')]),
       ),
@@ -242,7 +291,7 @@ describe('runResearchMeetingNightly', () => {
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     let call = 0;
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
         call += 1;
         if (call === 1) throw new Error('opus lane blew up');
@@ -262,7 +311,9 @@ describe('runResearchMeetingNightly', () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      ),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -280,7 +331,7 @@ describe('runResearchMeetingNightly', () => {
   it('proposes nothing when there is no recurring evidence (no failures)', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => []),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
       writeAiProposalFn,
     });
     const result = await runResearchMeetingNightly({} as never, deps);
@@ -294,7 +345,7 @@ describe('runResearchMeetingNightly', () => {
     const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
     const reconcileFn = vi.fn(async () => ({ reconciled: 3, skipped: 0 }));
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => []),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
       writeEventFn,
       induceConjectureFn,
       reconcileFn,
@@ -312,10 +363,71 @@ describe('runResearchMeetingNightly', () => {
     expect(result.trigger_event_id).toBe(''); // '' sentinel: no anchor event exists
   });
 
+  // YUK-786 — the PRE-LLM grounding stage must actually be in the path: the
+  // trace-bearing reader feeds enrich, and the ENRICHED cell (not the bare one)
+  // is what reaches induction, in the KC's own subject voice.
+  it('enriches the top cells PRE-LLM and hands the grounded cell to induction', async () => {
+    const captured: InduceConjectureInput[] = [];
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      enrichEvidenceCellsFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        captured.push(input);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    // enrich saw the reasoning traces the list reader carried…
+    expect(enrichEvidenceCellsFn).toHaveBeenCalledTimes(1);
+    const enrichInput = enrichEvidenceCellsFn.mock.calls[0][1];
+    expect(enrichInput.cells).toHaveLength(1);
+    expect(enrichInput.reasoningTraceByAttemptId?.get('a_k_a_0')).toBe('trace of a_k_a_0');
+
+    // …and induction received the grounded cell, not the 7-scalar one.
+    expect(captured).toHaveLength(1);
+    const cell = captured[0].cells[0];
+    expect(cell.knowledge_name).toBe('name of k_a');
+    expect(cell.subject_display_name).toBe('语文');
+    expect(cell.samples.map((s) => s.reasoning_trace)).toEqual([
+      'trace of a_k_a_0',
+      'trace of b_k_a_0',
+    ]);
+    // Prompt renders in the cell's OWN subject, resolved from its KC domain.
+    expect(captured[0].subjectProfile?.id).toBe('yuwen');
+  });
+
+  it('enriches only the top-K cells (the grounding read is bounded by the salience cap)', async () => {
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn,
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+    expect(enrichEvidenceCellsFn.mock.calls[0][1].cells).toHaveLength(
+      RESEARCH_MEETING_MAX_CONJECTURES,
+    );
+  });
+
+  it('does not run the grounding read on an empty night', async () => {
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
+      enrichEvidenceCellsFn,
+    });
+    await runResearchMeetingNightly({} as never, deps);
+    expect(enrichEvidenceCellsFn).not.toHaveBeenCalled();
+  });
+
   it('runs the A13 reconcile loop and surfaces the reconciled count (U8)', async () => {
     const reconcileFn = vi.fn(async () => ({ reconciled: 2, skipped: 1 }));
     // No failures → empty propose half, isolating the reconcile wiring assertion.
-    const deps = baseDeps({ reconcileFn, getFailureAttemptsFn: vi.fn(async () => []) });
+    const deps = baseDeps({ reconcileFn, getFailureAttemptsWithTraceFn: vi.fn(async () => []) });
     const result = await runResearchMeetingNightly({} as never, deps);
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);

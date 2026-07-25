@@ -1,0 +1,173 @@
+// YUK-786 — conjecture induction GROUNDING: turn the deterministic (but opaque)
+// EvidenceCell into an evidence packet a domain-specific claim can actually be
+// induced FROM.
+//
+// The problem this closes: `gatherConjectureEvidence` folds FailureAttempt[]
+// into cells and keeps only `attempt_event_id` in `evidence_event_ids`. Every
+// piece of natural language the upstream reader already carried —
+// `question_id`, `answer_md`, `judge.cause` — was dropped, and the KC arrived at
+// the LLM as a bare UUID with no subject tag. The induction prompt still asks
+// for a domain-specific claim + a whole discriminating probe + its grading gold,
+// and `ConjectureDraft.probe_md` is `min(1)` (no "insufficient evidence" exit),
+// so the model could only invent the subject and the misconception.
+//
+// This module is the READ half (it needs `db`); the shape it fills lives in the
+// PURE `evidence` sibling so that module keeps its no-IO unit-testability. The
+// nightly 例会 job calls this in its PRE-LLM read stage, AFTER the top-K salience
+// cap — so the query fan-out is bounded by K cells × SAMPLES_PER_CELL attempts,
+// not by the whole 14-day failure window.
+//
+// Untrusted-text discipline: question prompts, learner answers, reasoning traces
+// and written attributions are all authored outside the system prompt, so every
+// one of them is truncated + `<untrusted_learner_text>`-delimited through the
+// SAME helpers the evidence MCP read tools use (scout spec §2 — one
+// implementation, not two).
+
+import type { Db, Tx } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
+import type { FailureAttempt } from '@/server/events/queries';
+import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
+import { inArray } from 'drizzle-orm';
+
+import {
+  UNTRUSTED_TEXT_CHAR_CAP,
+  truncateNullable,
+  wrapTruncatedLearnerText,
+} from '@/server/agency/scout/untrusted-text';
+import type {
+  ConjectureEvidenceSample,
+  EnrichedEvidenceCell,
+  EvidenceCell,
+} from '@/server/conjectures/evidence';
+
+type DbLike = Db | Tx;
+
+/**
+ * Representative attempts carried per cell. The cell's `recurrence_count` is the
+ * full tally (>= 2) and stays authoritative; this caps only how many attempts
+ * are QUOTED to the model. 3 is enough to show a repeated pattern rather than a
+ * one-off, while keeping the packet inside the induction budget: at most
+ * RESEARCH_MEETING_MAX_CONJECTURES(3) × 3 samples × 3 text fields × 2000 chars.
+ */
+export const CONJECTURE_EVIDENCE_SAMPLES_PER_CELL = 3;
+
+export interface EnrichEvidenceCellsInput {
+  /** the top-K salient cells (post recurrence floor + dedup + salience cap). */
+  cells: EvidenceCell[];
+  /** the failure attempts the cells were folded from (the job already has them). */
+  failures: FailureAttempt[];
+  /** attempt_event_id → YUK-562 process-data self-report, when present. */
+  reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
+  /** override the per-cell quote cap (tests). */
+  samplesPerCell?: number;
+}
+
+/**
+ * Attach the grounding packet (KC name + subject identity + first-hand attempt
+ * samples) to each cell. Rows that cannot be resolved degrade to `null` fields
+ * rather than throwing: absent evidence is itself signal the model must see, and
+ * a missing question row must not take down the whole nightly run.
+ */
+export async function enrichEvidenceCells(
+  db: DbLike,
+  input: EnrichEvidenceCellsInput,
+): Promise<EnrichedEvidenceCell[]> {
+  const { cells, failures } = input;
+  if (cells.length === 0) return [];
+  const samplesPerCell = input.samplesPerCell ?? CONJECTURE_EVIDENCE_SAMPLES_PER_CELL;
+  const traceByAttemptId = input.reasoningTraceByAttemptId ?? new Map<string, string | null>();
+
+  const failureByAttemptId = new Map(failures.map((f) => [f.attempt_event_id, f]));
+
+  // Pick the representative attempts FIRST so the question fetch is bounded by
+  // the quote cap, not by the cell's full recurrence tally.
+  const quotedByCellKey = new Map<string, FailureAttempt[]>();
+  for (const cell of cells) {
+    const quoted: FailureAttempt[] = [];
+    for (const attemptId of cell.evidence_event_ids) {
+      if (quoted.length >= samplesPerCell) break;
+      const failure = failureByAttemptId.get(attemptId);
+      if (failure) quoted.push(failure);
+    }
+    quotedByCellKey.set(cell.key, quoted);
+  }
+
+  const knowledgeIds = [...new Set(cells.map((cell) => cell.knowledge_id))];
+  const questionIds = [
+    ...new Set([...quotedByCellKey.values()].flat().map((failure) => failure.question_id)),
+  ];
+
+  const [knowledgeRows, questionRows] = await Promise.all([
+    knowledgeIds.length > 0
+      ? db
+          .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+          .from(knowledge)
+          .where(inArray(knowledge.id, knowledgeIds))
+      : Promise.resolve([]),
+    questionIds.length > 0
+      ? db
+          .select({ id: question.id, prompt_md: question.prompt_md })
+          .from(question)
+          .where(inArray(question.id, questionIds))
+      : Promise.resolve([]),
+  ]);
+
+  const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
+  const promptByQuestionId = new Map(questionRows.map((row) => [row.id, row.prompt_md]));
+
+  return cells.map((cell) => {
+    const kc = knowledgeById.get(cell.knowledge_id);
+    // `resolveKnownSubjectId` (NOT `resolveSubjectProfile`) decides identity: an
+    // untagged / unknown domain must read as "subject unknown", never silently
+    // inherit the default profile — a fabricated subject label is exactly the
+    // failure this ticket exists to stop.
+    const subjectId = resolveKnownSubjectId(kc?.domain ?? null);
+    return {
+      ...cell,
+      knowledge_name: kc?.name ?? null,
+      subject_id: subjectId,
+      subject_display_name:
+        subjectId === null ? null : resolveSubjectProfile(subjectId).displayName,
+      samples: (quotedByCellKey.get(cell.key) ?? []).map((failure) =>
+        toEvidenceSample(failure, promptByQuestionId, traceByAttemptId),
+      ),
+    };
+  });
+}
+
+function toEvidenceSample(
+  failure: FailureAttempt,
+  promptByQuestionId: ReadonlyMap<string, string>,
+  traceByAttemptId: ReadonlyMap<string, string | null>,
+): ConjectureEvidenceSample {
+  const cause = effectiveCauseForFailureAttempt(failure);
+  // Owner notes and judge analysis occupy the same slot — the effective cause
+  // policy already decides which one has the last word on attribution — but only
+  // the owner's notes are LEARNER-authored, so only they get the untrusted
+  // delimiter (mirrors get_attempt_details, which wraps user_notes and returns
+  // judge.cause plain). The judge's analysis is still truncated: it is unbounded
+  // LLM prose and would otherwise be the one uncapped field in the packet.
+  const causeText =
+    cause === null
+      ? null
+      : cause.user_notes !== null
+        ? wrapTruncatedLearnerText(cause.user_notes, UNTRUSTED_TEXT_CHAR_CAP)
+        : truncateNullable(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
+  return {
+    attempt_event_id: failure.attempt_event_id,
+    question_id: failure.question_id,
+    question_prompt_md: wrapTruncatedLearnerText(
+      promptByQuestionId.get(failure.question_id) ?? null,
+      UNTRUSTED_TEXT_CHAR_CAP,
+    ),
+    answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
+    reasoning_trace: wrapTruncatedLearnerText(
+      traceByAttemptId.get(failure.attempt_event_id) ?? null,
+      UNTRUSTED_TEXT_CHAR_CAP,
+    ),
+    cause_category: cause?.primary_category ?? null,
+    cause_source: cause?.source ?? null,
+    cause_analysis_md: causeText,
+  };
+}

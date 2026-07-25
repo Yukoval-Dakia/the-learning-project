@@ -10,12 +10,17 @@
 // and this deterministic flow never calls MCP tools (a13-design critic #1).
 //
 // Per run:
-//   1. (PRE-LLM, retryable) read recent failures + per-KC mastery projection + the
-//      set of cause×KC keys that already have a PENDING conjecture (dedup);
+//   1. (PRE-LLM, retryable) read recent failures (with their YUK-562 reasoning
+//      traces) + per-KC mastery projection + the set of cause×KC keys that
+//      already have a PENDING conjecture (dedup);
 //   2. deterministic 取证 (gatherConjectureEvidence) → salience-sorted cells;
 //   3. take the top-K cells (RESEARCH_MEETING_MAX_CONJECTURES) — the structural
 //      per-run propose cap;
-//   4. for each cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
+//   4. (PRE-LLM, retryable) GROUND those K cells (enrichEvidenceCells, YUK-786):
+//      KC name + subject identity + the first-hand attempt evidence (question,
+//      the owner's wrong answer, their reasoning trace, the attribution). Without
+//      this the LLM sees 7 opaque scalars and can only invent the domain;
+//   5. for each cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
 //      OAuth lane) → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
 //
 // Failure asymmetry (D7 / F-1): the PRE-LLM reads run OUTSIDE the per-cell swallow —
@@ -36,12 +41,14 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { enrichEvidenceCells } from '@/server/conjectures/enrich';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
-import type { EvidenceCell } from '@/server/conjectures/evidence';
-import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
+import type { EnrichedEvidenceCell } from '@/server/conjectures/evidence';
+import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
 import {
@@ -81,14 +88,21 @@ export interface ResearchMeetingResult {
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 type WriteAiProposalFn = (db: Db, input: WriteAiProposalInput) => Promise<string>;
 type InduceConjectureFn = typeof induceConjecture;
-type GetFailureAttemptsFn = typeof getFailureAttempts;
+type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
+type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
 type WriteRetryableAiFailureLedgerFn = (db: Db, taskKind: string) => Promise<void>;
 
 export interface ResearchMeetingDeps {
   now?: () => Date;
-  getFailureAttemptsFn?: GetFailureAttemptsFn;
+  /**
+   * YUK-786: the trace-bearing LIST reader. The bare `FailureAttempt` projection
+   * is unchanged — the YUK-562 reasoning_trace rides in the wrapper alongside it.
+   */
+  getFailureAttemptsWithTraceFn?: GetFailureAttemptsWithTraceFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
+  /** YUK-786: PRE-LLM grounding read (KC name + subject + first-hand samples). */
+  enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
   /** dedup base: cause×KC keys with a PENDING conjecture (default reads the inbox). */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
   /** injected runner — defaults to the real db-bound runTask. */
@@ -130,7 +144,7 @@ function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
 function buildConjectureProposalInput(
-  cell: EvidenceCell,
+  cell: EnrichedEvidenceCell,
   induced: InduceConjectureResult,
   triggerEventId: string,
 ): WriteAiProposalInput {
@@ -187,8 +201,10 @@ export async function runResearchMeetingNightly(
   deps: ResearchMeetingDeps = {},
 ): Promise<ResearchMeetingResult> {
   const now = deps.now?.() ?? new Date();
-  const getFailureAttemptsFn = deps.getFailureAttemptsFn ?? getFailureAttempts;
+  const getFailureAttemptsWithTraceFn =
+    deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
+  const enrichEvidenceCellsFn = deps.enrichEvidenceCellsFn ?? enrichEvidenceCells;
   const loadKnownConjectureKeysFn =
     deps.loadKnownConjectureKeysFn ?? defaultLoadKnownConjectureKeys;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
@@ -213,10 +229,18 @@ export async function runResearchMeetingNightly(
 
   // ── PRE-LLM reads (OUTSIDE the per-cell swallow — a throw here is retryable) ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const failures: FailureAttempt[] = await getFailureAttemptsFn(db, {
+  // YUK-786: same rows as before, each paired with its YUK-562 reasoning_trace —
+  // the owner's own account of how they thought, which is the single most
+  // load-bearing piece of first-hand evidence for a mind-model claim. Derived
+  // from the attempt rows the reader already selects (no extra round-trip).
+  const failureRows = await getFailureAttemptsWithTraceFn(db, {
     includeReviewFailures: true,
     since,
   });
+  const failures: FailureAttempt[] = failureRows.map((row) => row.failure);
+  const reasoningTraceByAttemptId = new Map(
+    failureRows.map((row) => [row.failure.attempt_event_id, row.reasoning_trace]),
+  );
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
@@ -245,6 +269,17 @@ export async function runResearchMeetingNightly(
     };
   }
 
+  // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
+  // Runs AFTER the top-K cap so the fan-out is bounded by K cells rather than by
+  // the whole failure window. A throw here is the same class of retryable DB
+  // fault as the reads above, and it happens BEFORE the anchor event write, so a
+  // pg-boss retry re-runs a clean slate.
+  const enrichedTopCells = await enrichEvidenceCellsFn(db, {
+    cells: topCells,
+    failures,
+    reasoningTraceByAttemptId,
+  });
+
   // Anchor the run (provenance for each proposal + the scan subject).
   const triggerEventId = `research_meeting_${newId()}`;
   await writeEventFn(db, {
@@ -267,13 +302,18 @@ export async function runResearchMeetingNightly(
 
   // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
   const cellResults = await Promise.all(
-    topCells.map(async (cell): Promise<{ created: number; cost_usd: number }> => {
+    enrichedTopCells.map(async (cell): Promise<{ created: number; cost_usd: number }> => {
       let incurredCostUsd = 0;
       try {
         const induced = await induceConjectureFn({
           cells: [cell],
           samples: RESEARCH_MEETING_SAMPLES,
           runTaskFn,
+          // YUK-786: render the prompt in the cell's OWN subject voice. An
+          // untagged KC (subject_id null) stays on the neutral `general`
+          // profile — inheriting a concrete subject would re-introduce exactly
+          // the wrong-subject steer this ticket removed from the prompt copy.
+          subjectProfile: resolveSubjectProfile(cell.subject_id),
         });
         // Count the Opus induction spend immediately — it was incurred regardless of
         // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).

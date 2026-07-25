@@ -34,14 +34,19 @@ import {
   GET_TRACES_LOCAL_NAME,
   REPORT_FINDINGS_LOCAL_NAME,
 } from './tool-names';
-import { wrapUntrustedLearnerText } from './untrusted-text';
+import {
+  UNTRUSTED_TEXT_CHAR_CAP,
+  truncate,
+  truncateNullable,
+  wrapUntrustedLearnerText,
+} from './untrusted-text';
 
 // Hard-coded per-tool upper bounds (scout spec §2). Exported for the db test pins.
 export const EVIDENCE_LIMITS = {
   /** answer_md / user_notes char cap in get_attempt_details. */
-  attemptTextChars: 2000,
+  attemptTextChars: UNTRUSTED_TEXT_CHAR_CAP,
   /** prompt_md / reference_md char cap in get_question. */
-  questionTextChars: 2000,
+  questionTextChars: UNTRUSTED_TEXT_CHAR_CAP,
   /** get_probe_history row cap (newest-first). */
   probeHistoryRows: 20,
   /** get_typed_state row cap. */
@@ -100,14 +105,6 @@ export interface EvidenceServer {
 
 function textResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
-}
-
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) : text;
-}
-
-function truncateNullable(text: string | null, max: number): string | null {
-  return text === null ? null : truncate(text, max);
 }
 
 // probe_result payloads carry the learner's raw probe answer (answer_md) — learner

@@ -10,6 +10,7 @@
 | `ingestion/` | OCR / Tencent Mark / Vision rescue / 抽取 pipeline + session 状态机（见 AGENTS.md）|
 | `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|
 | `events/` | event 写入 + 查询（事件驱动核的 IO 层）|
+| `conjectures/` | 关系脑取证：`evidence.ts` 纯聚合（cause×KC cell）、`enrich.ts` 归纳前 grounding 读（KC 名/学科/一手错题证据，YUK-786）、`reconcile.ts` A13 结算、`hard-confirm.ts`/`typed-state.ts` |
 | `session/` | learning_session envelope + 状态守卫（ingestion/review/conversation）|
 | `proposals/` | propose event 的 accept/dismiss/retract actions（破坏性动作落地点）|
 | `artifacts/` | Living Note body-blocks / sections / editing-session / hub-dismiss |

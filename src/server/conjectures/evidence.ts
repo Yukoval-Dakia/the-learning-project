@@ -66,6 +66,63 @@ export interface EvidenceCell {
   has_owner_cause: boolean;
 }
 
+// ── YUK-786 grounding packet ────────────────────────────────────────────────
+//
+// An EvidenceCell alone is 7 opaque scalars (UUIDs / an enum / numbers): zero
+// natural language, zero subject identity. The induction prompt nevertheless
+// asks for a DOMAIN-SPECIFIC claim + a whole discriminating question + its
+// machine-grading gold reference — so the model had no grounded way to produce
+// one and invented the subject. These types carry the first-hand evidence that
+// `gatherConjectureEvidence`'s upstream (FailureAttempt) already had and threw
+// away when it folded attempts into a cell.
+//
+// The TYPES live here (this module stays PURE — no DB import); the db-reading
+// builder lives in the `enrich` sibling and is called by the nightly job's
+// PRE-LLM read stage.
+
+/**
+ * One representative failure attempt behind a cell, in the shape the LLM sees.
+ * Every learner-authored / question-authored free-text field is already
+ * truncated + wrapped in `<untrusted_learner_text>` by the enrich step — the
+ * strings here are DATA, never instruction.
+ */
+export interface ConjectureEvidenceSample {
+  attempt_event_id: string;
+  question_id: string;
+  /** question.prompt_md — what was actually asked (wrapped + truncated). */
+  question_prompt_md: string | null;
+  /** the learner's own wrong answer (wrapped + truncated). */
+  answer_md: string | null;
+  /** YUK-562 process data: the learner's account of HOW they thought. */
+  reasoning_trace: string | null;
+  /** effective cause category for this attempt (owner cause wins over judge). */
+  cause_category: string | null;
+  /** 'user' when the owner attributed it, 'agent' when the judge did. */
+  cause_source: string | null;
+  /**
+   * The written attribution. Owner notes are learner-authored ⇒ truncated AND
+   * delimited; a judge's `analysis_md` is agent-authored ⇒ truncated only
+   * (mirrors get_attempt_details, which wraps user_notes and returns judge.cause
+   * plain).
+   */
+  cause_analysis_md: string | null;
+}
+
+/** The db-resolved context an {@link EvidenceCell} is missing. */
+export interface EvidenceCellEnrichment {
+  /** knowledge.name — the human-readable knowledge point, not the UUID. */
+  knowledge_name: string | null;
+  /** canonical subject id resolved from knowledge.domain, or null when untagged. */
+  subject_id: string | null;
+  /** the subject's display name (e.g. 语文), or null when untagged. */
+  subject_display_name: string | null;
+  /** first-hand evidence samples, capped; may be empty when rows are missing. */
+  samples: ConjectureEvidenceSample[];
+}
+
+/** An {@link EvidenceCell} carrying its grounding packet (YUK-786). */
+export type EnrichedEvidenceCell = EvidenceCell & EvidenceCellEnrichment;
+
 export interface GatherConjectureEvidenceInput {
   /** Recent failure attempts (caller fetched via getFailureAttempts({ since })). */
   failures: FailureAttempt[];
