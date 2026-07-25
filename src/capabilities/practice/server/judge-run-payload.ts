@@ -1,15 +1,14 @@
 // YUK-594 (durable judge main path) — durable judge_run job-payload contract：
-// **提交当下冻结**的判分输入（题面快照 + 作答指纹），以及消费侧的还原 helper。
+// **提交当下冻结**的判分输入（题面快照），以及消费侧的还原 helper。
 //
 // 为什么单独一个模块：submit 面（api/submit.ts，生产者）与 worker 面
 // （jobs/judge_run.ts，消费者）必须共用同一份「冻结哪些字段」的定义，否则两边各写
 // 一份必然漂移。放 server/ 层与既有的 judge-durable-config / judge-run-status 同向
 // （api → server、jobs → server），不让 api 反向依赖 jobs。
 //
-// 依赖轻：只吃 db schema 的行类型 + zod + 既有的 sha256Canonical，无 db client。
+// 依赖轻：只吃 db schema 的行类型 + zod，无 db client。
 
 import type { question } from '@/db/schema';
-import { sha256Canonical } from '@/server/judge/judge-execution-provenance';
 import { z } from 'zod';
 
 type QuestionRow = typeof question.$inferSelect;
@@ -29,19 +28,37 @@ type QuestionRow = typeof question.$inferSelect;
  * （version-mismatch-then-fail 会把学习者已提交的答案直接丢掉，更差）。version /
  * updated_at 仍冻一份，纯作可观测锚（worker 侧检出漂移记一条 warn）。
  */
+/**
+ * W4 #TtZ8l — the four jsonb columns are typed to their actual SHAPE, not `z.unknown()`.
+ *
+ * This schema is not decoration: the worker runs `FrozenQuestionSnapshotSchema.parse()` on
+ * the deserialized payload, and the parsed result is overlaid onto a live row through a cast.
+ * `z.unknown()` accepts literally anything, so a corrupted payload sailed through validation
+ * and only blew up later inside the judge — where it was classified `judge_failed`
+ * (RETRYABLE) and burned the whole redelivery budget re-failing on a permanent defect.
+ * Typing the shape moves that failure to the validation boundary, where it is correctly
+ * classified `invalid_payload` (non-retryable) and terminalizes immediately.
+ *
+ * Kept deliberately loose INSIDE each container (`z.record`/`z.array` of unknown rather than
+ * the full RubricT / StructuredQuestionT / FigureRefT trees): the goal is to catch structural
+ * corruption, not to re-litigate the domain schemas here — a second copy of those trees would
+ * be exactly the double-write this file exists to avoid.
+ */
+const JsonObjectSchema = z.record(z.string(), z.unknown());
+
 export const FrozenQuestionSnapshotSchema = z.object({
   kind: z.string(),
   prompt_md: z.string(),
   reference_md: z.string().nullable(),
-  rubric_json: z.unknown(),
+  rubric_json: JsonObjectSchema.nullable(),
   choices_md: z.array(z.string()).nullable(),
   judge_kind_override: z.string().nullable(),
   knowledge_ids: z.array(z.string()),
   difficulty: z.number(),
-  metadata: z.unknown(),
-  figures: z.array(z.unknown()),
+  metadata: JsonObjectSchema.nullable(),
+  figures: z.array(JsonObjectSchema),
   image_refs: z.array(z.string()),
-  structured: z.unknown(),
+  structured: JsonObjectSchema.nullable(),
   /** 可观测锚：作答当下的行代际（不做 staleness 判死，只用于 drift warn）。 */
   version: z.number(),
   /** 可观测锚：作答当下的 updated_at（ISO）。 */
@@ -81,7 +98,9 @@ export function freezeQuestionForJudge(q: QuestionRow): FrozenQuestionSnapshot {
  * 覆盖后 `q` 的判分 + 调度相关字段全部是作答当下的值。
  *
  * 单处 cast：快照就是这些列自己的 JSON 往返（jsonb / text / int，无 Date），形状与
- * QuestionRow 同构；zod 侧只能表到 unknown，故在这里一次性收窄并说明理由。
+ * QuestionRow 同构。schema 已把四个 jsonb 列收到「对象/数组」这一层（#TtZ8l），足以在
+ * 边界拦住结构性损坏；但它刻意不复刻 RubricT / StructuredQuestionT / FigureRefT 的完整
+ * 树（那会变成本文件要避免的双写），故最后这一步收窄仍需一次显式 cast。
  */
 export function applyFrozenQuestion(
   live: QuestionRow,
@@ -91,27 +110,12 @@ export function applyFrozenQuestion(
   return { ...live, ...frozenColumns } as QuestionRow;
 }
 
-/**
- * #5 — 作答身份指纹，服务端短窗 dedupe 的键（配合 question_id）。覆盖「同一次作答」
- * 的全部判分输入：作答文本 / 作答图片 / 作答的 sub-node / 是否自动判分 / 归属活动。
- * 复用既有的 `sha256Canonical`（判分 provenance 同一套稳定序列化），不另写哈希。
- *
- * 不含时间戳/随机量——重试必须命中同一指纹，这正是 dedupe 生效的前提。
- */
-export function submitAnswerFingerprint(input: {
-  questionId: string;
-  responseMd: string | null | undefined;
-  answerImageRefs: string[];
-  partRef: string | null | undefined;
-  autoRate: boolean;
-  sessionId: string | null | undefined;
-}): string {
-  return sha256Canonical({
-    question_id: input.questionId,
-    response_md: input.responseMd ?? '',
-    answer_image_refs: [...input.answerImageRefs].sort(),
-    part_ref: input.partRef ?? null,
-    auto_rate: input.autoRate,
-    session_id: input.sessionId ?? null,
-  });
-}
+// W4 #TtWiC — `submitAnswerFingerprint` lived here as the key for a short-window
+// (question_id, answer_hash) enqueue dedupe. It is GONE, not merely unused: content-derived
+// request identity cannot distinguish a client retry from a genuine re-answer, and PfSolo
+// explicitly supports re-answering the same question (PfSolo.tsx), so the dedupe swallowed
+// real repeat attempts — no new immutable attempt row, no FSRS advance — while also ignoring
+// persistence-relevant fields (referenced_knowledge_ids / stream_item_id / latency_ms) that
+// make two same-text submits semantically different. Trading correctness of normal use for
+// cost savings on an abnormal path is the wrong trade. Idempotency returns as a client-
+// supplied Idempotency-Key in W3 (YUK-777).

@@ -7,7 +7,7 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
-import { event, job_events, material_fsrs_state, question } from '@/db/schema';
+import { event, job_events, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
@@ -165,7 +165,11 @@ describe('runJudgeRun — backfill', () => {
     expect(judgeEvents).toHaveLength(1);
   });
 
-  it('judge failure writes a terminal FAILED trace AND rethrows for re-delivery (no attempt written)', async () => {
+  // W4 #TtWiB — a RETRYABLE failure with budget left must leave a NON-terminal trace.
+  // Pre-fix it wrote terminal FAILED, so poll/SSE clients correctly concluded the run was
+  // dead and stopped waiting — while pg-boss had a redelivery queued that would likely
+  // write DONE. The run must stay 'started' until the budget is actually spent.
+  it('a RETRYABLE judge failure leaves a non-terminal trace (run stays in flight) and rethrows', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
@@ -175,6 +179,7 @@ describe('runJudgeRun — backfill', () => {
       throw new Error('endpoint down');
     }) as JudgeRunDeps['judgeSubmitFn'];
 
+    // retryCount 0 < retryLimit 2 → pg-boss will deliver this job again.
     await expect(
       runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: boom }),
     ).rejects.toThrow('endpoint down');
@@ -182,13 +187,51 @@ describe('runJudgeRun — backfill', () => {
     // no attempt persisted (backfill never reached).
     const attempts = await db.select().from(event).where(eq(event.id, runId));
     expect(attempts).toHaveLength(0);
-    // terminal FAILED trace so replay/UI is not stuck queued.
+
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    // The failure IS recorded (observable, SSE can render "retrying")…
+    expect(events.some((e) => e.event_type === 'judge_run.attempt_failed')).toBe(true);
+    // …but NOT as a terminal event: no FAILED, and the derived status keeps clients waiting.
+    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
+    expect(deriveJudgeRunStatus(events)).toBe('started');
+  });
+
+  it('the FINAL delivery (budget spent) writes the terminal FAILED', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const runId = newId();
+
+    const boom = (async () => {
+      throw new Error('endpoint down');
+    }) as JudgeRunDeps['judgeSubmitFn'];
+
+    // retryCount === retryLimit → no further delivery; next stop is judge_run_dlq.
+    await expect(
+      runJudgeRun(
+        db,
+        jobData(runId, questionId),
+        { retryCount: 2, retryLimit: 2 },
+        {
+          judgeSubmitFn: boom,
+        },
+      ),
+    ).rejects.toThrow('endpoint down');
+
     const events = await computeReplay(db, {
       businessTable: 'judge_run',
       businessId: runId,
       lastEventId: 0,
     });
     expect(deriveJudgeRunStatus(events)).toBe('failed');
+    expect(
+      (events.find((e) => e.event_type === 'judge_run.failed')?.payload as { reason?: string })
+        ?.reason,
+    ).toBe('retries_exhausted');
   });
 
   it('non-retryable caller (unknown face) writes FAILED without rethrowing', async () => {
@@ -317,32 +360,52 @@ describe('runJudgeRun — backfill', () => {
   // #6 — the FAILED payload rides the generic SSE face verbatim, so it must carry a
   // classified code, never the raw error text (DB strings / internal paths / provider
   // response fragments). The raw message stays in the server log.
-  it('FAILED payload carries a classified code, NOT the raw error message', async () => {
+  it('failure payloads carry a classified code, NOT the raw error message (both tiers)', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
-    const runId = newId();
     const secret = 'connection to 10.0.0.7:5432 refused (/srv/app/internal/path.ts)';
     const boom = (async () => {
       throw new Error(secret);
     }) as JudgeRunDeps['judgeSubmitFn'];
 
+    // Both the non-terminal retry trace and the terminal one ride the generic SSE face
+    // verbatim, so BOTH must be redacted.
+    const retryableRunId = newId();
     await expect(
-      runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: boom }),
+      runJudgeRun(db, jobData(retryableRunId, questionId), META0, { judgeSubmitFn: boom }),
+    ).rejects.toThrow(secret);
+    const terminalRunId = newId();
+    await expect(
+      runJudgeRun(
+        db,
+        jobData(terminalRunId, questionId),
+        { retryCount: 2, retryLimit: 2 },
+        {
+          judgeSubmitFn: boom,
+        },
+      ),
     ).rejects.toThrow(secret);
 
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    const failed = events.find((e) => e.event_type === 'judge_run.failed');
+    const replay = async (runId: string) =>
+      await computeReplay(db, { businessTable: 'judge_run', businessId: runId, lastEventId: 0 });
+
+    const attemptFailed = (await replay(retryableRunId)).find(
+      (e) => e.event_type === 'judge_run.attempt_failed',
+    );
+    const attemptPayload = attemptFailed?.payload as Record<string, unknown>;
+    expect(attemptPayload.error_code).toBe('judge_failed');
+
+    const failed = (await replay(terminalRunId)).find((e) => e.event_type === 'judge_run.failed');
     const payload = failed?.payload as Record<string, unknown>;
-    expect(payload.reason).toBe('error');
+    expect(payload.reason).toBe('retries_exhausted');
     expect(payload.error_code).toBe('judge_failed');
-    // The client-facing payload must not contain the raw message under ANY key.
-    expect(JSON.stringify(payload)).not.toContain('10.0.0.7');
-    expect(JSON.stringify(payload)).not.toContain('/srv/app/internal');
+
+    // The client-facing payloads must not contain the raw message under ANY key.
+    for (const p of [attemptPayload, payload]) {
+      expect(JSON.stringify(p)).not.toContain('10.0.0.7');
+      expect(JSON.stringify(p)).not.toContain('/srv/app/internal');
+    }
   });
 });
 
@@ -416,6 +479,94 @@ describe('runJudgeRun — frozen question snapshot (#2)', () => {
       judgeSubmitFn: mockJudgeSubmit(),
     });
     expect(result.status).toBe('done');
+  });
+});
+
+// ── W4 #TtWiA (codex P1) — out-of-order FSRS/θ̂ backfill ────────────────────
+// The durable lane decouples "when the learner answered" from "when the verdict lands". An
+// earlier run whose judge failed goes into 30s/60s redelivery while a LATER attempt on the
+// same KC succeeds first; the older run then arrives carrying an EARLIER submitted_at and
+// reschedules on top of the newer state. The tx lock serializes writes but cannot restore
+// time order, so last_review / due / θ̂ / snapshots all get walked backwards.
+describe('runJudgeRun — late-arriving backfill (#TtWiA)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('records the late attempt but does NOT regress FSRS or θ̂', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+
+    // The NEWER attempt lands first (its run succeeded while the older one was retrying).
+    const newerRunId = newId();
+    const newerData = jobData(newerRunId, questionId);
+    newerData.submit.submitted_at = new Date('2026-07-20T10:00:00Z').toISOString();
+    await runJudgeRun(db, newerData, META0, { judgeSubmitFn: mockJudgeSubmit() });
+
+    const afterNewer = (
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
+    )[0];
+    expect(afterNewer).toBeTruthy();
+    const thetaAfterNewer = (
+      await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k1'))
+    )[0]?.theta_hat;
+
+    // Now the OLDER run finally succeeds on redelivery, with an earlier answer timestamp.
+    const olderRunId = newId();
+    const olderData = jobData(olderRunId, questionId);
+    olderData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
+    const result = await runJudgeRun(db, olderData, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    expect(result.status).toBe('done');
+
+    // The attempt IS recorded — it is immutable evidence and must never be dropped.
+    expect(await db.select().from(event).where(eq(event.id, olderRunId))).toHaveLength(1);
+
+    // …but the schedule was NOT walked backwards onto the older attempt.
+    const afterOlder = (
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
+    )[0];
+    expect(afterOlder.due_at.getTime()).toBe(afterNewer.due_at.getTime());
+    expect(afterOlder.last_review_event_id).toBe(afterNewer.last_review_event_id);
+    // θ̂ is equally order-sensitive and is skipped on the same branch.
+    const thetaAfterOlder = (
+      await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k1'))
+    )[0]?.theta_hat;
+    expect(thetaAfterOlder).toBe(thetaAfterNewer);
+
+    // And NO revert bracket is minted for the late attempt. writeAttemptSnapshotBrackets
+    // writes a segment iff its snapshot ARRAY is non-empty (not iff before !== after), so
+    // passing the unchanged updates through would create a checkpoint + snapshot describing
+    // a transition that never happened — reversible state for a no-op.
+    const brackets = await db.select().from(event).where(eq(event.subject_id, olderRunId));
+    expect(brackets.map((e) => e.action)).not.toContain('experimental:state_snapshot');
+    expect(brackets.map((e) => e.action)).not.toContain('experimental:grading_checkpoint');
+  });
+
+  it('an IN-ORDER backfill still advances FSRS normally (the guard is not a blanket skip)', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+
+    const firstRunId = newId();
+    const firstData = jobData(firstRunId, questionId);
+    firstData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
+    await runJudgeRun(db, firstData, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    const afterFirst = (
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
+    )[0];
+
+    const secondRunId = newId();
+    const secondData = jobData(secondRunId, questionId);
+    secondData.submit.submitted_at = new Date('2026-07-20T10:00:00Z').toISOString();
+    await runJudgeRun(db, secondData, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    const afterSecond = (
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
+    )[0];
+
+    // The later attempt owns the schedule now.
+    expect(afterSecond.last_review_event_id).toBe(secondRunId);
+    expect(afterSecond.last_review_event_id).not.toBe(afterFirst.last_review_event_id);
   });
 });
 
@@ -552,12 +703,54 @@ describe('buildJudgeRunHandler — batch isolation (#11)', () => {
     });
     expect(deriveJudgeRunStatus(goodEvents)).toBe('done');
 
-    // Job 1 left its terminal FAILED trace.
+    // Job 1 left a NON-terminal failure trace — it still has retry budget (W4 #TtWiB), so
+    // it must not be reported as dead while pg-boss has a redelivery queued.
     const failedEvents = await computeReplay(db, {
       businessTable: 'judge_run',
       businessId: throwingRunId,
       lastEventId: 0,
     });
-    expect(deriveJudgeRunStatus(failedEvents)).toBe('failed');
+    expect(failedEvents.some((e) => e.event_type === 'judge_run.attempt_failed')).toBe(true);
+    expect(deriveJudgeRunStatus(failedEvents)).toBe('started');
+  });
+
+  // W4 #TtZ8i (OCR major) — a malformed job used to be silently `continue`d, which pg-boss
+  // treats as a successful consume: the job vanished with NO terminal event, stranding the
+  // run pending forever, and `runJudgeRun`'s own malformed-payload guard never even ran.
+  it('a malformed job WITH a run_id is terminalized instead of silently dropped', async () => {
+    const db = testDb();
+    const runId = newId();
+    const handler = buildJudgeRunHandler(db);
+    const jobs = [
+      { id: 'j-malformed', data: { run_id: runId }, retryCount: 0, retryLimit: 2 },
+    ] as unknown as Parameters<typeof handler>[0];
+
+    // Terminalized, so the batch is consumed (a redelivery could not improve a bad payload).
+    await handler(jobs);
+
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: runId,
+      lastEventId: 0,
+    });
+    expect(deriveJudgeRunStatus(events)).toBe('failed');
+    const payload = events.find((e) => e.event_type === 'judge_run.failed')?.payload as {
+      reason?: string;
+      error_code?: string;
+    };
+    expect(payload?.reason).toBe('non_retryable');
+    expect(payload?.error_code).toBe('invalid_payload');
+  });
+
+  it('a malformed job with NO run_id fails the batch so pg-boss routes it to the DLQ', async () => {
+    const db = testDb();
+    const handler = buildJudgeRunHandler(db);
+    const jobs = [
+      { id: 'j-no-run-id', data: { caller: 'submit' }, retryCount: 0, retryLimit: 2 },
+    ] as unknown as Parameters<typeof handler>[0];
+
+    // Nothing to terminalize against → the ONLY honest move is to fail the job, so the
+    // malformed payload becomes visible to an operator in the DLQ rather than disappearing.
+    await expect(handler(jobs)).rejects.toThrow('missing run_id');
   });
 });

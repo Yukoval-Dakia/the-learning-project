@@ -6,6 +6,11 @@
 // 有 `running` 中间态，judge_run **没有**：单次调用无「工具循环进行中」阶段可报，
 // JudgeRunStatus / JUDGE_RUN_EVENTS / handler 三处都不产 running。）
 //
+// **事件 ≠ 状态**（W4 #TtWiB）：事件词表比状态多一条 `attempt_failed`——一次投递失败
+// 但重投预算未耗尽。它是**非终态**痕迹（reducer 视同 started），只有 done / failed
+// 能终结 run。状态枚举因此不变：客户端看到 attempt_failed 可以显示「重试中」，但绝
+// 不能据此停止等待。
+//
 // run handle = judge_run id（W2 submit 面：= 该次作答 attempt/outcome event id，
 // 见 submit.ts enqueueDurableJudge）。状态不落瘦表，而是从 `job_events`
 // （business_table='judge_run', business_id=run_id）的 replay 末事件派生——
@@ -28,9 +33,21 @@ export const JUDGE_RUN_EVENTS = {
   QUEUED: 'judge_run.queued',
   /** handler 拾起、判分调用启动前。 */
   STARTED: 'judge_run.started',
+  /**
+   * **非终态**：一次投递失败，但重投预算未耗尽（pg-boss 会再送一次）。
+   *
+   * W4 #TtWiB — 之前这里只有终态 FAILED，可重试失败也写它；而 FAILED 在本词表与
+   * reducer 里都是**终态**，poll/SSE 客户端据此合理地停止等待并报失败，尽管 pg-boss
+   * 已排好重投、下一次很可能写出 DONE。故拆出这条非终态痕迹：留下失败证据（可观测、
+   * 可 SSE 展示「重试中」），但不把 run 判死。
+   */
+  ATTEMPT_FAILED: 'judge_run.attempt_failed',
   /** 终态：成功。payload 携 JudgeResultV2 + telemetry（回填消费者读它换真判词）。 */
   DONE: 'judge_run.done',
-  /** 终态：失败（含耗尽 / DLQ 前的每次失败痕迹，last-writer wins）。 */
+  /**
+   * **终态**：失败且不会再有下一次投递——重投预算耗尽（进 DLQ）或非重试类失败
+   * （未知面 / 题缺失 / 坏 payload）。last-writer wins。
+   */
   FAILED: 'judge_run.failed',
 } as const;
 
@@ -67,6 +84,12 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         break;
       case JUDGE_RUN_EVENTS.STARTED:
         // 取最高非终态阶段：只在仍是 queued 时推到 started；已 terminal 不回退。
+        if (status === 'queued') status = 'started';
+        break;
+      case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
+        // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
+        // 必须继续等（下一次投递可能写 DONE）。与 STARTED 同级：把 queued 推到 started
+        // （确实已经跑过一次了），绝不推向 failed——只有终态 FAILED 能判死。
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.QUEUED:

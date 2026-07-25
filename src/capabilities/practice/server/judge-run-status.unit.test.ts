@@ -103,6 +103,50 @@ describe('terminalJudgeRunResult', () => {
   });
 });
 
+// W4 #TtWiB — ATTEMPT_FAILED is a NON-terminal trace. A retryable failure that still has
+// redelivery budget must keep clients waiting; only a terminal FAILED may end the run.
+describe('deriveJudgeRunStatus — non-terminal attempt_failed (#TtWiB)', () => {
+  it('an attempt failure alone does NOT terminalize the run', () => {
+    expect(
+      deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.QUEUED), ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED)]),
+    ).toBe('started');
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.QUEUED),
+        ev(JUDGE_RUN_EVENTS.STARTED),
+        ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED),
+      ]),
+    ).toBe('started');
+  });
+
+  it('a retry that succeeds after an attempt failure lands on done', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.STARTED),
+        ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED),
+        ev(JUDGE_RUN_EVENTS.STARTED),
+        ev(JUDGE_RUN_EVENTS.DONE),
+      ]),
+    ).toBe('done');
+  });
+
+  it('the terminal FAILED after an exhausted retry chain still terminalizes', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED),
+        ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED),
+        ev(JUDGE_RUN_EVENTS.FAILED),
+      ]),
+    ).toBe('failed');
+  });
+
+  it('does not walk a terminal state backwards', () => {
+    expect(
+      deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.DONE), ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED)]),
+    ).toBe('done');
+  });
+});
+
 // #13 — the response contract now ENCODES the status↔result coupling instead of only
 // documenting it in a comment. Pre-fix the flat object admitted `status:'queued'` with a
 // populated `result`, so generated clients saw an impossible state as valid.

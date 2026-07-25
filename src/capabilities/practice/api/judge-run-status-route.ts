@@ -11,13 +11,38 @@
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { getStartedBoss } from '@/server/boss/client';
 import { computeReplay } from '@/server/events/sse_replay';
+import { JUDGE_RUN_QUEUE } from '../server/judge-durable-config';
 import {
   JUDGE_RUN_TABLE,
   JudgeRunTerminalResultSchema,
   deriveJudgeRunStatus,
   terminalJudgeRunResult,
 } from '../server/judge-run-status';
+
+/**
+ * W4 #TtWiD — is `runId` a real, still-enqueued judge_run that simply has no job_events yet?
+ *
+ * `enqueueDurableJudge` pins the pg-boss job id to the run handle (`{ id: runId }`), so this
+ * is a direct primary-key lookup, not a scan. Only consulted when the event trail is empty.
+ *
+ * Fails CLOSED to `false`: if pg-boss is unreachable we cannot assert the run exists, and a
+ * 404 (the pre-existing behaviour) is a safer answer than a fabricated `queued`.
+ */
+async function durableJobExists(runId: string): Promise<boolean> {
+  try {
+    const boss = await getStartedBoss();
+    return (await boss.getJobById(JUDGE_RUN_QUEUE, runId)) !== null;
+  } catch (err) {
+    console.error(
+      '[judge_run] pg-boss lookup failed while resolving a marker-less run',
+      runId,
+      err,
+    );
+    return false;
+  }
+}
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -32,7 +57,18 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     });
     // #7 — an unknown run_id has zero job_events. Reporting 200 `queued` for it is
     // dishonest (it implies a real run is pending). 404 instead: no such judge_run.
+    //
+    // W4 #TtWiD — but "zero job_events" is NOT the same as "no such run". The queued marker
+    // is written AFTER `boss.send` and is best-effort, so a transient DB blip on that write
+    // leaves a genuinely-enqueued run with no events at all. If the worker is ALSO down (no
+    // STARTED to heal it) the poll URL we just advertised in the 202 would 404 — reporting
+    // "does not exist" for a real run, in exactly the worker-outage scenario the durable lane
+    // exists to cover. The run_id IS the pg-boss job id (`SendOptions.id` at enqueue), so ask
+    // pg-boss directly before declaring the run unknown.
     if (events.length === 0) {
+      if (await durableJobExists(runId)) {
+        return Response.json({ run_id: runId, status: 'queued' as const, result: null });
+      }
       throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
     }
     const status = deriveJudgeRunStatus(events);

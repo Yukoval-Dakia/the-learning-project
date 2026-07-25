@@ -169,7 +169,7 @@ describe('runJudgeRun — terminal FAILED write failure (#3)', () => {
     expect(types).toContain('judge_run.failed');
   });
 
-  it('a RETRYABLE judge failure whose terminal FAILED write throws still rethrows for redelivery', async () => {
+  it('an EXHAUSTED judge failure whose terminal FAILED write throws still rethrows for redelivery', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
     await seedQuestion(db, questionId);
@@ -179,13 +179,16 @@ describe('runJudgeRun — terminal FAILED write failure (#3)', () => {
       throw new Error('endpoint down');
     }) as JudgeRunDeps['judgeSubmitFn'];
 
+    // retryCount === retryLimit → this is the terminal tier, so the FAILED write happens here
+    // (W4 #TtWiB moved retryable failures onto the non-terminal attempt_failed trace, which is
+    // best-effort by design — the original error already forces redelivery).
     // Either error reaching pg-boss redelivers the run; what matters is that the handler
     // does NOT resolve successfully with no terminal event on record.
     await expect(
       runJudgeRun(
         db,
         jobData(runId, questionId),
-        { retryCount: 0, retryLimit: 2 },
+        { retryCount: 2, retryLimit: 2 },
         { judgeSubmitFn: boom },
       ),
     ).rejects.toThrow();

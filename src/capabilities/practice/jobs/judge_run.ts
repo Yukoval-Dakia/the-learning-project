@@ -24,7 +24,7 @@ import { event, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
@@ -274,15 +274,46 @@ export async function runJudgeRun(
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
     const nonRetryable = err instanceof NonRetryableJudgeRunError || err instanceof ZodError;
+    // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
+    // the budget is not spent. That question, not "did something fail", decides whether the
+    // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"
+    // rule into "every failure writes terminal FAILED", which told poll/SSE clients the run
+    // was dead while pg-boss had a redelivery queued that would likely write DONE.
+    const willRetry = !nonRetryable && meta.retryCount < meta.retryLimit;
     // #6 — the raw error message stays SERVER-SIDE. The generic SSE face
     // (`/api/jobs/judge_run/[id]/events`) streams job_event payloads verbatim to clients, so
     // a DB error string / internal path / provider response fragment in `payload.error` was
     // leaking straight out. The payload now carries only a classified code; the raw message
     // is logged here and nowhere else.
-    console.error(`[judge_run] ${runId} failed (${nonRetryable ? 'non_retryable' : 'error'})`, err);
-    // 失败痕迹（coordinator note#1）：显式写终态 FAILED job_event，保证 replay/UI 不
-    // 悬空。deriveJudgeRunStatus last-writer-wins：transient 失败先显 failed，成功重投
-    // 写 DONE 翻回 done。非 retryable（未知面/题缺失/坏 payload）不重投——写 FAILED 后早返。
+    console.error(
+      `[judge_run] ${runId} attempt failed (${nonRetryable ? 'non_retryable' : 'error'}; ${
+        willRetry ? 'retry pending' : 'terminal'
+      })`,
+      err,
+    );
+
+    if (willRetry) {
+      // NON-terminal trace: evidence that this delivery failed, without judging the run dead.
+      // deriveJudgeRunStatus keeps it at 'started', so clients stay subscribed for the retry.
+      // Best-effort on purpose: we rethrow below regardless, so pg-boss redelivers either way
+      // — losing a progress breadcrumb cannot strand the run (unlike a terminal write).
+      await bestEffortWriteJobEvent(db, {
+        businessId: runId,
+        eventType: JUDGE_RUN_EVENTS.ATTEMPT_FAILED,
+        payload: {
+          error_code: classifyJudgeRunFailure(err),
+          retry_count: meta.retryCount,
+          retry_limit: meta.retryLimit,
+        },
+      });
+      // rethrow → pg-boss 按策略重投（JOB_RETRY_LIMIT=2，30s→60s backoff）。
+      throw err;
+    }
+
+    // Terminal: either non-retryable (unknown face / missing question / bad payload — a
+    // redelivery would re-fail identically) or the retry budget is spent and the next stop is
+    // `judge_run_dlq`. Either way no further delivery will change the outcome, so the run is
+    // honestly dead and replay/UI must be told.
     //
     // #3 (codex) — 这条终态写**不可吞错**（原先走 bestEffort）：非 retryable 分支写完就
     // return success，一旦这条 FAILED 写失败被吞掉，pg-boss 认为 job 成功、run 却无任何
@@ -293,7 +324,7 @@ export async function runJudgeRun(
         businessId: runId,
         eventType: JUDGE_RUN_EVENTS.FAILED,
         payload: {
-          reason: nonRetryable ? 'non_retryable' : 'error',
+          reason: nonRetryable ? 'non_retryable' : 'retries_exhausted',
           error_code: classifyJudgeRunFailure(err),
           retry_count: meta.retryCount,
           retry_limit: meta.retryLimit,
@@ -310,8 +341,8 @@ export async function runJudgeRun(
     if (nonRetryable) {
       return { status: 'failed', run_id: runId, error: message };
     }
-    // rethrow → pg-boss 按策略重投（JOB_RETRY_LIMIT=2，30s→60s backoff），耗尽进
-    // judge_run_dlq（handlers.ts createJobQueue 挂 DLQ）。上面已写 FAILED 终态痕迹。
+    // Budget spent: rethrow so pg-boss completes the failure and routes to judge_run_dlq
+    // (handlers.ts createJobQueue). The terminal FAILED trace above is already committed.
     throw err;
   }
 }
@@ -416,10 +447,17 @@ async function reconstructDonePayloadFromJudgeEvent(
   db: Db,
   runId: string,
 ): Promise<Record<string, unknown>> {
+  // W4 #TtZ8j — ORDER BY is load-bearing, not cosmetic. Several judge events can share one
+  // `subject_id`: an appeal-driven rejudge writes a NEW judge event against the same review
+  // event and wins by newest (D6 newest-wins, documented in submit.ts). Without an explicit
+  // order the DB returns an arbitrary row, so this reconstruction could resurrect a
+  // superseded verdict. `created_at DESC, id DESC` matches the D6 read order (the id
+  // tie-break keeps it deterministic when two events share a timestamp).
   const [je] = await db
     .select()
     .from(event)
     .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
+    .orderBy(desc(event.created_at), desc(event.id))
     .limit(1);
   const p = (je?.payload ?? {}) as Record<string, unknown>;
   return {
@@ -461,7 +499,52 @@ export function buildJudgeRunHandler(
     for (const job of jobs) {
       const data = job.data;
       if (!data?.run_id || !data?.caller || !data?.submit) {
-        console.warn('[judge_run] job missing run_id/caller/submit', job.id);
+        // W4 #TtZ8i — a silent `continue` returned success to pg-boss, which CONSUMED the job
+        // with no terminal job_event anywhere: the file's core invariant (every run reaches
+        // DONE/FAILED for poll/SSE) was violated precisely where nothing could ever fix it,
+        // and `runJudgeRun`'s own malformed-payload guard (which DOES write FAILED) was
+        // bypassed by this earlier check so the safety net never fired.
+        //
+        // With a run_id we can still terminalize honestly. Without one there is no business_id
+        // to key an event on, so the only correct move is to fail the job: pg-boss retries and
+        // then routes to `judge_run_dlq`, where an operator can actually see the malformed
+        // payload — infinitely better than dropping it on the floor.
+        console.error('[judge_run] job missing run_id/caller/submit', job.id, {
+          has_run_id: Boolean(data?.run_id),
+          has_caller: Boolean(data?.caller),
+          has_submit: Boolean(data?.submit),
+        });
+        if (data?.run_id) {
+          // Same semantics as runJudgeRun's non-retryable branch: terminalize and CONSUME the
+          // job. A malformed payload cannot improve on redelivery, so retrying would only
+          // re-write the same FAILED twice more before the DLQ.
+          try {
+            await writeTerminalJobEvent(db, {
+              businessId: data.run_id,
+              eventType: JUDGE_RUN_EVENTS.FAILED,
+              payload: {
+                reason: 'non_retryable',
+                error_code: 'invalid_payload',
+                retry_count: job.retryCount,
+                retry_limit: job.retryLimit,
+              },
+            });
+          } catch (writeErr) {
+            // The terminal write is the whole point here — if it fails, fail the job so a
+            // redelivery can retry it rather than leaving the run pending forever.
+            console.error(
+              '[judge_run] terminal FAILED write failed for malformed job',
+              data.run_id,
+              writeErr,
+            );
+            firstError ??= writeErr;
+          }
+          continue;
+        }
+        // No run_id ⇒ nothing to terminalize against. Fail the job so it reaches the DLQ.
+        firstError ??= new Error(
+          `judge_run job ${job.id} missing run_id — cannot terminalize; routing to the DLQ`,
+        );
         continue;
       }
       try {

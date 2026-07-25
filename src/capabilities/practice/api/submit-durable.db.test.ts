@@ -5,7 +5,7 @@
 // and enqueueDurableJudge's 202-pending contract + queued job_event + frozen payload.
 
 import { newId } from '@/core/ids';
-import { event, job_events, question } from '@/db/schema';
+import { event, job_events, learning_session, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
@@ -17,12 +17,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
 import { CreateAttemptBodySchema } from './contracts';
-import {
-  DURABLE_JUDGE_DEDUPE_WINDOW_MS,
-  createAttempt,
-  enqueueDurableJudge,
-  resolveDurableDivert,
-} from './submit';
+import { createAttempt, enqueueDurableJudge, resolveDurableDivert } from './submit';
 
 async function seedQuestion(id: string) {
   const now = new Date();
@@ -264,18 +259,125 @@ describe('submit durable divert (W2)', () => {
   });
 });
 
-// ── #5 (major) — lost-202 retry dedupe ──────────────────────────────────────
-// A client that loses the 202 re-POSTs the SAME answer. Pre-fix that minted a fresh
-// run_id, which defeats the worker's run_id-keyed idempotency entirely: a SECOND paid
-// judge, a second attempt event, and a DOUBLE FSRS mutation for one submission.
-describe('submit durable enqueue — duplicate-submit dedupe (#5)', () => {
+// ── W4 #TtWh_ (codex P1) — the shared /api/attempts entry point ────────────────────
+// The placement probe posts through the SAME route with auto_rate:true, then immediately
+// calls /question-selections for the next item. placement-next computes the answered set
+// from PERSISTED review/attempt events, so under a 202 the just-answered question is not in
+// the exclusion set: answeredCount stalls and the probe can re-serve it. W2's divert was
+// written for the practice face; this shared entry point was the leak.
+describe('submit durable divert — session gate (#TtWh_)', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRateLimitForTests();
     vi.unstubAllEnvs();
   });
 
-  it('a retried identical submit rejoins the in-flight run instead of enqueuing a second paid judge', async () => {
+  async function seedSession(type: string): Promise<string> {
+    const sessionId = newId();
+    const now = new Date();
+    await testDb()
+      .insert(learning_session)
+      .values({
+        id: sessionId,
+        type,
+        status: type === 'placement' ? 'started' : 'started',
+        warnings: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    return sessionId;
+  }
+
+  it('a PLACEMENT session does NOT divert (the probe needs a persisted verdict before /next)', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const sessionId = await seedSession('placement');
+    const gate = await resolveDurableDivert(
+      await buildValidated(questionId, {
+        rating: 'good',
+        response_md: 'ans',
+        auto_rate: true,
+        session_id: sessionId,
+      }),
+    );
+    expect(gate.divert).toBe(false);
+    // The profile still resolves — only the async protocol is withheld, and the caller
+    // reuses the profile for the synchronous judge.
+    expect(gate.subjectProfile).not.toBeNull();
+  });
+
+  it('a REVIEW session diverts (the practice face is W2 scope)', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const sessionId = await seedSession('review');
+    const gate = await resolveDurableDivert(
+      await buildValidated(questionId, {
+        rating: 'good',
+        response_md: 'ans',
+        auto_rate: true,
+        session_id: sessionId,
+      }),
+    );
+    expect(gate.divert).toBe(true);
+  });
+
+  it('no session_id (ad-hoc solo practice) diverts', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const gate = await resolveDurableDivert(
+      await buildValidated(questionId, { rating: 'good', response_md: 'ans', auto_rate: true }),
+    );
+    expect(gate.divert).toBe(true);
+  });
+
+  it('fails CLOSED: an unadmitted session type and an unknown session id both stay synchronous', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    // The gate is an allowlist, so a future caller mounting on this shared route cannot
+    // silently inherit the async contract — it has to opt in explicitly.
+    const conversationSession = await seedSession('conversation');
+    expect(
+      (
+        await resolveDurableDivert(
+          await buildValidated(questionId, {
+            rating: 'good',
+            response_md: 'ans',
+            auto_rate: true,
+            session_id: conversationSession,
+          }),
+        )
+      ).divert,
+    ).toBe(false);
+    expect(
+      (
+        await resolveDurableDivert(
+          await buildValidated(questionId, {
+            rating: 'good',
+            response_md: 'ans',
+            auto_rate: true,
+            session_id: `unknown_${newId()}`,
+          }),
+        )
+      ).divert,
+    ).toBe(false);
+  });
+});
+
+// ── W4 #TtWiC — a repeat answer is a REAL attempt, never a deduped retry ────────────
+// Round 3 added a 120s (question_id, answer_hash) dedupe as a stand-in for request
+// idempotency. Without a stable per-request key it could not tell a lost-202 retry from a
+// genuine re-answer, and PfSolo explicitly supports re-answering the same question — so it
+// silently swallowed real attempts: no second run, no immutable attempt row, no FSRS advance.
+// These tests pin the reverted behaviour so the shortcut cannot come back.
+describe('submit durable enqueue — repeat answers are real attempts (#TtWiC)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRateLimitForTests();
+    vi.unstubAllEnvs();
+  });
+
+  it('re-answering the same question with the SAME text enqueues its own run', async () => {
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
     const body = { rating: 'good', response_md: 'ans', auto_rate: true, session_id: 's1' };
@@ -286,104 +388,110 @@ describe('submit durable enqueue — duplicate-submit dedupe (#5)', () => {
       resolveSubjectProfile(),
       { boss: { send } },
     );
-    const firstBody = (await first.json()) as { run_id: string };
-
-    // The 202 never reached the client; it retries the identical submit.
-    const retry = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    const retryBody = (await retry.json()) as { run_id: string; verdict: string };
-
-    expect(retry.status).toBe(202);
-    expect(retryBody.verdict).toBe('pending');
-    // Same run — the client polls the run that is already judging its answer.
-    expect(retryBody.run_id).toBe(firstBody.run_id);
-    // The decisive assertion: no second job, so no second paid call and no second attempt.
-    expect(send).toHaveBeenCalledTimes(1);
-  });
-
-  it('a DIFFERENT answer to the same question still enqueues its own run', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const send = vi.fn().mockResolvedValue('job-1');
-
-    const first = await enqueueDurableJudge(
-      await buildValidated(questionId, { rating: 'good', response_md: 'ans A', auto_rate: true }),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
+    // A learner re-practising the same item, seconds later, with an identical answer.
     const second = await enqueueDurableJudge(
-      await buildValidated(questionId, { rating: 'good', response_md: 'ans B', auto_rate: true }),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-
-    expect(((await first.json()) as { run_id: string }).run_id).not.toBe(
-      ((await second.json()) as { run_id: string }).run_id,
-    );
-    expect(send).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not rejoin a run that already terminalized as failed', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const body = { rating: 'good', response_md: 'ans', auto_rate: true };
-    const send = vi.fn().mockResolvedValue('job-1');
-
-    const first = await enqueueDurableJudge(
       await buildValidated(questionId, body),
       resolveSubjectProfile(),
       { boss: { send } },
     );
-    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
 
-    // The run exhausted its retries and failed — a resubmit deserves a fresh run.
-    await writeJobEvent(db, {
-      business_table: 'judge_run',
-      business_id: firstRunId,
-      event_type: 'judge_run.failed',
-      payload: { reason: 'error', error_code: 'judge_failed' },
+    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
+    const secondRunId = ((await second.json()) as { run_id: string }).run_id;
+    // Distinct runs → two attempts → FSRS advances twice, which is the correct product
+    // behaviour. The dedupe collapsed these into one run and dropped the second attempt.
+    expect(secondRunId).not.toBe(firstRunId);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('pins the run handle to the pg-boss job id so a marker-less run stays resolvable', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const send = vi.fn().mockResolvedValue('job-1');
+    const res = await enqueueDurableJudge(
+      await buildValidated(questionId, { rating: 'good', response_md: 'ans', auto_rate: true }),
+      resolveSubjectProfile(),
+      { boss: { send } },
+    );
+    const { run_id } = (await res.json()) as { run_id: string };
+    // W4 #TtWiD — the poll route resolves a marker-less run via boss.getJobById(queue, runId),
+    // which only works because the enqueue pins SendOptions.id to the run handle.
+    expect(send.mock.calls[0]?.[2]).toEqual({ id: run_id });
+  });
+});
+
+// ── W4 #TtZ8e/#TtZ8k (OCR major) — a failed enqueue must not burn paid-AI budget ────
+describe('submit durable enqueue — rate-limit token refund', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRateLimitForTests();
+    vi.unstubAllEnvs();
+  });
+
+  it('refunds the budget token when boss.send throws', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
     });
+    // A single-slot window makes the leak observable: pre-fix the failed send consumed the
+    // only token, so the NEXT (healthy) enqueue was 429'd by a job that never existed.
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    const failing = vi.fn().mockRejectedValue(new Error('boss down'));
+    const failed = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
+      boss: { send: failing },
+    });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
 
-    const retry = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    expect(((await retry.json()) as { run_id: string }).run_id).not.toBe(firstRunId);
-    expect(send).toHaveBeenCalledTimes(2);
+    const healthy = vi.fn().mockResolvedValue('job-1');
+    const retry = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
+      boss: { send: healthy },
+    });
+    expect(retry.status).toBe(202);
+    expect(healthy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not rejoin a run whose marker fell outside the dedupe window', async () => {
-    const db = testDb();
+  it('refunds the budget token when boss.send returns null (nothing enqueued)', async () => {
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
-    const body = { rating: 'good', response_md: 'ans', auto_rate: true };
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
+    });
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    const nullSend = vi.fn().mockResolvedValue(null);
+    expect(
+      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send: nullSend } }))
+        .status,
+    ).toBe(503);
+
+    const healthy = vi.fn().mockResolvedValue('job-1');
+    expect(
+      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send: healthy } }))
+        .status,
+    ).toBe(202);
+  });
+
+  it('does NOT refund once the job is durably enqueued (the token was really spent)', async () => {
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const validated = await buildValidated(questionId, {
+      rating: 'good',
+      response_md: 'ans',
+      auto_rate: true,
+    });
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const send = vi.fn().mockResolvedValue('job-1');
-
-    const first = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
-
-    // Age the marker past the window: a genuine later re-drill of the same answer is a
-    // real second attempt and MUST schedule, so it may not be deduped away.
-    await db
-      .update(job_events)
-      .set({ occurred_at: new Date(Date.now() - DURABLE_JUDGE_DEDUPE_WINDOW_MS - 1_000) })
-      .where(eq(job_events.business_id, firstRunId));
-
-    const later = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    expect(((await later.json()) as { run_id: string }).run_id).not.toBe(firstRunId);
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(
+      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } })).status,
+    ).toBe(202);
+    // The single slot is now legitimately consumed — the next enqueue must be rejected.
+    const blocked = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
+      boss: { send },
+    });
+    expect(blocked.status).toBe(429);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
