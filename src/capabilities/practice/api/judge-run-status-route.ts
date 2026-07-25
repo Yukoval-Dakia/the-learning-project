@@ -44,37 +44,38 @@ const LIVE_BOSS_STATES: ReadonlySet<JobWithMetadata['state']> = new Set([
 ] as const);
 
 /**
- * W4 #TtWiD — is `runId` a real, still-RUNNABLE judge_run that simply has no job_events yet?
+ * Can this run still make progress on the queue?
  *
- * `enqueueDurableJudge` pins the pg-boss job id to the run handle (`{ id: runId }`), so this
- * is a direct primary-key lookup, not a scan. Only consulted when the event trail is empty.
+ * Deliberately TRI-state. A boolean would have to fold "pg-boss says this job is dead" together
+ * with "pg-boss did not answer", and those demand opposite responses: the first lets us stop a
+ * client polling a corpse, while the second must change nothing — declaring a genuinely
+ * in-flight run failed because a lookup blipped would be a far worse lie than the stale
+ * `started` it replaces.
  *
- * Fails CLOSED to `false`: if pg-boss is unreachable we cannot assert the run is live, and a
- * 404 (the pre-existing behaviour) is a safer answer than a fabricated `queued`.
+ * `enqueueDurableJudge` pins the pg-boss job id to the run handle (`{ id: runId }`), so this is
+ * a direct primary-key lookup, not a scan.
+ *
+ * `dead` also covers a null row: pg-boss prunes completed jobs on its own retention, so an
+ * absent job is either long-finished or long-gone — either way the queue will not advance it.
  */
-async function durableJobIsLive(runId: string): Promise<boolean> {
+type QueueLiveness = 'live' | 'dead' | 'unknown';
+
+async function resolveQueueLiveness(runId: string): Promise<QueueLiveness> {
   try {
     const boss = await getStartedBoss();
     const job = await boss.getJobById(JUDGE_RUN_QUEUE, runId);
-    if (job === null) return false;
+    if (job === null) return 'dead';
     // #TuwGt — no assertion needed: `getJobById` returns `JobWithMetadata | null`, whose
     // `state` is a typed union, so the compiler checks this membership test for us.
     const { state } = job;
-    if (LIVE_BOSS_STATES.has(state)) return true;
-    // A terminal job with no job_events at all: the run really did exist, but nothing will
-    // ever finish it (a long worker outage surfaces as `failed` — v12 has no `expired`).
-    // Log it and fall through to 404 — pretending it is queued would hang the client forever.
+    if (LIVE_BOSS_STATES.has(state)) return 'live';
     console.warn(
-      `[judge_run] ${runId} has no job_events and its pg-boss job is not live (state=${state}) — reporting not-found`,
+      `[judge_run] ${runId} pg-boss job is not live (state=${state}) — it will not progress further`,
     );
-    return false;
+    return 'dead';
   } catch (err) {
-    console.error(
-      '[judge_run] pg-boss lookup failed while resolving a marker-less run',
-      runId,
-      err,
-    );
-    return false;
+    console.error('[judge_run] pg-boss lookup failed while resolving run liveness', runId, err);
+    return 'unknown';
   }
 }
 
@@ -89,65 +90,83 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       businessId: runId,
       lastEventId: 0,
     });
-    // #7 — an unknown run_id has zero job_events. Reporting 200 `queued` for it is
-    // dishonest (it implies a real run is pending). 404 instead: no such judge_run.
-    //
-    // W4 #TtWiD — but "zero job_events" is NOT the same as "no such run". The queued marker
-    // is written AFTER `boss.send` and is best-effort, so a transient DB blip on that write
-    // leaves a genuinely-enqueued run with no events at all. If the worker is ALSO down (no
-    // STARTED to heal it) the poll URL we just advertised in the 202 would 404 — reporting
-    // "does not exist" for a real run, in exactly the worker-outage scenario the durable lane
-    // exists to cover. The run_id IS the pg-boss job id (`SendOptions.id` at enqueue), so ask
-    // pg-boss directly before declaring the run unknown — and require the job to still be
-    // RUNNABLE, since a terminal job will never emit an event either (#TumMo).
-    // W5 #Tunn3 — resolution order per the design's `/status` contract (§3.6d):
-    //   (1) terminal job_event  →  (2) DOMAIN event by run_id  →  (3) live queue  →  (4) 404.
-    // `job_events` is the progress stream, NOT the source of truth: `prune_job_events` deletes
-    // it on a retention window and its terminal write can fail outright. The permanent record
-    // is the review + judge event pair the backfill tx commits. Without step (2) a client that
-    // came back after retention — or after a terminal write that never landed — got a 404 for
-    // a run whose verdict is sitting durably in the domain log. This also means a run whose
-    // terminal job_event was lost for good is still recoverable (#Tunn2), since the verdict
-    // never depended on job_events to survive.
-    if (events.length === 0) {
-      const reconstructed = await reconstructDoneFromDomainEvents(db, runId);
-      if (reconstructed !== null) {
-        const parsedDomain = JudgeRunTerminalResultSchema.safeParse(reconstructed);
-        if (!parsedDomain.success) {
-          console.warn('[judge_run] domain-event reconstruction failed the result contract', {
-            run_id: runId,
-            error: parsedDomain.error.message,
-          });
-        }
-        return Response.json({
-          run_id: runId,
-          status: 'done' as const,
-          result: parsedDomain.success ? parsedDomain.data : null,
-        });
-      }
-      if (await durableJobIsLive(runId)) {
-        return Response.json({ run_id: runId, status: 'queued' as const, result: null });
-      }
-      throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
-    }
     const status = deriveJudgeRunStatus(events);
+
+    // ── (1) A terminal job_event settles it ───────────────────────────────────────────
     // #12 — validate the terminal verdict through the response schema before serializing
     // (contract-shaped output, not a raw z.unknown()). safeParse: a malformed/legacy DONE
     // payload degrades to null rather than 500-ing the poll.
-    const rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
-    const parsed = rawResult === null ? null : JudgeRunTerminalResultSchema.safeParse(rawResult);
-    // #7 — the degrade is now OBSERVABLE. A DONE whose payload fails the contract used to
-    // return `{status:'done', result:null}` silently, so a malformed/legacy terminal payload
-    // in production was undiagnosable from the response alone. Log it server-side (the raw
-    // payload never leaves the server) so the degradation shows up in the logs.
-    if (parsed !== null && !parsed.success) {
-      console.warn('[judge_run] terminal DONE payload failed the result contract', {
+    if (status === 'done' || status === 'failed') {
+      const rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
+      const parsed = rawResult === null ? null : JudgeRunTerminalResultSchema.safeParse(rawResult);
+      // #7 — the degrade is now OBSERVABLE. A DONE whose payload fails the contract used to
+      // return `{status:'done', result:null}` silently, so a malformed/legacy terminal payload
+      // in production was undiagnosable from the response alone. Log it server-side (the raw
+      // payload never leaves the server) so the degradation shows up in the logs.
+      if (parsed !== null && !parsed.success) {
+        console.warn('[judge_run] terminal DONE payload failed the result contract', {
+          run_id: runId,
+          error: parsed.error.message,
+        });
+      }
+      return Response.json({ run_id: runId, status, result: parsed?.success ? parsed.data : null });
+    }
+
+    // ── The run is NOT terminal in job_events. Is it still going to become one? ────────
+    // W5 #TusVC — this liveness question applies to EVERY non-terminal run, not just the
+    // marker-less ones. A run whose worker was hard-killed after writing STARTED, and whose
+    // job then exhausted its retries into the DLQ, has a live-looking event trail and a dead
+    // job; returning `started` forever told the client to poll a corpse. Asking the queue
+    // first is also the cheap path: an in-flight run answers here with one PK lookup and
+    // never touches the domain log.
+    const liveness = await resolveQueueLiveness(runId);
+    if (liveness === 'live') {
+      return Response.json({ run_id: runId, status, result: null });
+    }
+    if (liveness === 'unknown') {
+      // pg-boss did not answer. Report what the events say and change nothing — a lookup
+      // blip must never be upgraded into a verdict about the run.
+      if (events.length === 0) {
+        throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
+      }
+      return Response.json({ run_id: runId, status, result: null });
+    }
+
+    // ── (2) The queue is done with this run. The DOMAIN log is the source of truth ─────
+    // W5 #Tunn3 — per the design's `/status` contract (§3.6d): terminal job_event → DOMAIN
+    // event by run_id → live queue → unknown. `job_events` is the progress stream, NOT the
+    // source of truth: `prune_job_events` deletes it on a retention window and its terminal
+    // write can fail outright. The permanent record is the review + judge event pair the
+    // backfill tx commits, so a client returning after retention — or after a terminal write
+    // that never landed — still learns its verdict (#Tunn2: the verdict never depended on
+    // job_events to survive).
+    const reconstructed = await reconstructDoneFromDomainEvents(db, runId);
+    if (reconstructed !== null) {
+      const parsedDomain = JudgeRunTerminalResultSchema.safeParse(reconstructed);
+      if (!parsedDomain.success) {
+        console.warn('[judge_run] domain-event reconstruction failed the result contract', {
+          run_id: runId,
+          error: parsedDomain.error.message,
+        });
+      }
+      return Response.json({
         run_id: runId,
-        error: parsed.error.message,
+        status: 'done' as const,
+        result: parsedDomain.success ? parsedDomain.data : null,
       });
     }
-    const result = parsed?.success ? parsed.data : null;
-    return Response.json({ run_id: runId, status, result });
+
+    // ── (3) Dead queue, nothing persisted ─────────────────────────────────────────────
+    // #7 — with no events at all this is simply an unknown run_id; 200 `queued` would be a
+    // fabrication. With events, the run demonstrably existed, was never judged, and can no
+    // longer progress — `failed` is the honest terminal answer, and it stops the poll loop.
+    if (events.length === 0) {
+      throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
+    }
+    console.warn(
+      `[judge_run] ${runId} is non-terminal in job_events but its queue job is dead and nothing persisted — reporting failed`,
+    );
+    return Response.json({ run_id: runId, status: 'failed' as const, result: null });
   } catch (err) {
     return errorResponse(err);
   }

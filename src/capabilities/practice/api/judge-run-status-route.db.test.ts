@@ -156,6 +156,91 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     vi.restoreAllMocks();
   });
 
+  // W5 #TusVC — liveness applies to EVERY non-terminal run, not just marker-less ones. A run
+  // whose worker was hard-killed after writing STARTED, whose job then exhausted into the DLQ,
+  // has a live-looking event trail and a dead job — `started` forever told the client to poll
+  // a corpse.
+  it('a STARTED run whose queue job is dead and which never persisted reports failed', async () => {
+    const runId = newId();
+    await writeJobEvent(testDb(), {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.STARTED,
+      payload: { caller: 'submit' },
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue({ id: runId, state: 'failed' }),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe('failed');
+    vi.restoreAllMocks();
+  });
+
+  it('a STARTED run whose queue job is dead BUT which did persist reports the real verdict', async () => {
+    const db = testDb();
+    const runId = newId();
+    await writeJobEvent(db, {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.STARTED,
+      payload: { caller: 'submit' },
+    });
+    // The backfill committed; only the terminal job_event never landed (#Tunn2).
+    await db.insert(event).values({
+      id: runId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: `q_${newId()}`,
+      outcome: 'success',
+      payload: { fsrs_rating: 'good' },
+    });
+    await db.insert(event).values({
+      id: newId(),
+      actor_kind: 'agent',
+      actor_ref: 'judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: runId,
+      outcome: 'success',
+      payload: { coarse_outcome: 'correct', score: 1, judge_route: 'semantic' },
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue({ id: runId, state: 'failed' }),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      result: { coarse_outcome?: string } | null;
+    };
+    expect(body.status).toBe('done');
+    expect(body.result?.coarse_outcome).toBe('correct');
+    vi.restoreAllMocks();
+  });
+
+  it('an UNREACHABLE pg-boss never upgrades a lookup blip into a verdict', async () => {
+    const runId = newId();
+    await writeJobEvent(testDb(), {
+      business_table: JUDGE_RUN_TABLE,
+      business_id: runId,
+      event_type: JUDGE_RUN_EVENTS.STARTED,
+      payload: { caller: 'submit' },
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockRejectedValue(new Error('pg-boss down'));
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    // Reports what the events say — NOT `failed`, which would be a far worse lie than a
+    // stale `started` when the truth is simply unknown.
+    expect(((await res.json()) as { status: string }).status).toBe('started');
+    vi.restoreAllMocks();
+  });
+
   it('queued run → 200 queued, result null', async () => {
     const runId = newId();
     await writeJobEvent(testDb(), {
