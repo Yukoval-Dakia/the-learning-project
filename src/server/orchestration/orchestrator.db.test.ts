@@ -140,6 +140,41 @@ const member = (
   dependsOn: JobDagMemberInput['dependsOn'] = [],
 ): JobDagMemberInput => ({ name, owner: 'test', dependsOn });
 
+/**
+ * A `db` double whose FIRST read of `dag_orchestration_node` throws, and which is the real `db`
+ * for everything else. Used to fail exactly the stale-run `loadNodes` inside the abandon path
+ * without disturbing the rest of the start (PR #1075 OCR major).
+ */
+function dbWithOneFailingNodeLoad(real: typeof db): typeof db {
+  let armed = true;
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle's fluent builder has no public seam to wrap.
+  const anyReal = real as any;
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop !== 'select') return Reflect.get(target, prop, receiver);
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return (...args: any[]) => {
+        const builder = anyReal.select(...args);
+        return new Proxy(builder, {
+          get(b, p) {
+            if (p === 'from') {
+              return (table: unknown) => {
+                if (armed && table === dag_orchestration_node) {
+                  armed = false;
+                  throw new Error('simulated DB outage while loading nodes');
+                }
+                return b.from(table);
+              };
+            }
+            const value = b[p];
+            return typeof value === 'function' ? value.bind(b) : value;
+          },
+        });
+      };
+    },
+  }) as typeof db;
+}
+
 /** narrow a nullable run to non-null (a start that returns null is a test failure). */
 function must<T>(value: T | null | undefined, label: string): T {
   if (value === null || value === undefined) throw new Error(`expected non-null ${label}`);
@@ -1202,6 +1237,34 @@ describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
     expect((await nodeRow(run.id, 'a'))?.status).toBe('failed');
     expect(boss.cancels).toContainEqual({ name: 'a', id: jobId });
     expect(boss.isExecutable('a', jobId)).toBe(false);
+  });
+
+  // PR #1075 OCR major — the per-node try/catch only isolates a NODE. A failure OUTSIDE the
+  // loop (loading the old run's nodes) used to escape `runOrchestratorStart` entirely, which
+  // skipped the abandon AND stopped tonight's run from being created — one transient DB blip
+  // turning a loss-limiter into the very "whole night doesn't run" failure this ticket fixes.
+  it('B9 a failure to load the old run’s nodes still abandons it and still starts tonight', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+
+    const fresh = must(
+      await runOrchestratorStart(
+        { db: dbWithOneFailingNodeLoad(db), boss, dag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'tonight run',
+    );
+
+    // The loss-limiter genuinely failed (nothing cancelled — loud-logged), but it did NOT take
+    // the night down with it.
+    expect(boss.cancels).toHaveLength(0);
+    const oldRun = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+    )[0];
+    expect(oldRun.status).toBe('abandoned');
+    expect(fresh.run_date).toBe(RUN_DATE);
+    expect((await nodeRow(fresh.id, 'a'))?.status).toBe('enqueued');
   });
 
   it('B8 a timed-out node whose job row is gone issues no pointless cancel', async () => {

@@ -396,14 +396,29 @@ async function cancelBossJob(
  *    失败计数虚高，把「今夜被整体放弃」误读成「这么多成员跑挂了」。
  * 真因一律进 detail，两类都可从痕迹还原。
  *
- * 逐节点隔离：任一节点的 cancel/落库失败都不得阻断其余节点与后续 abandon。
+ * **契约：本函数不抛**（PR #1075 OCR major）。逐节点 try/catch 只挡住"某个节点"的失败；
+ * `loadNodes` 这类**逐节点之外**的失败会一路穿出 `runOrchestratorStart`，于是
+ *  · 这条残留 run 的 `finishRun(..., 'abandoned')` 被跳过（它排在本函数之后）；
+ *  · **今夜的 run 根本建不起来** —— 一次瞬时 DB 抖动把「止损」升级成「整夜不跑」，
+ *    正好与本票要修的东西同形。
+ * 止损绝不能比它要防的损失更贵，故整个函数体兜住、loud log 后返回，让 abandon 照常进行。
+ * 与 `cancelBossJob` 的 never-throw 策略同一条线。
  */
 async function cancelRunInflightJobs(
   deps: { db: Db; boss: OrchestratorBoss },
   run: RunRow,
   now: Date,
 ): Promise<void> {
-  const nodes = await loadNodes(deps.db, run.id);
+  let nodes: Map<string, NodeRow>;
+  try {
+    nodes = await loadNodes(deps.db, run.id);
+  } catch (err) {
+    console.error(
+      `[orchestrator] failed to load nodes of run ${run.id} (${run.run_date}) while abandoning — its in-flight jobs are NOT cancelled and may still execute; abandoning anyway so tonight can start`,
+      err,
+    );
+    return;
+  }
   for (const node of nodes.values()) {
     if (isTerminalNodeStatus(node.status)) continue;
     try {
