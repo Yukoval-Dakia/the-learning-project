@@ -75,6 +75,23 @@ describe('jyeooFetchEnabled (kill switch)', () => {
     expect(jyeooFetchEnabled()).toBe(true);
   });
 
+  // YUK-793: the reader goes through the shared parseFlag grammar, so it matches the other
+  // 16 env flags — case-insensitive and whitespace-trimmed (it used to be a case-SENSITIVE
+  // `raw === 'true' || raw === '1'`, the lone `match=cs` group in audit:flags LITERAL-VARIANCE).
+  it('is case-insensitive and whitespace-tolerant (shared parseFlag grammar)', () => {
+    process.env.JYEOO_FETCH_ENABLED = 'TRUE';
+    expect(jyeooFetchEnabled()).toBe(true);
+    process.env.JYEOO_FETCH_ENABLED = ' True ';
+    expect(jyeooFetchEnabled()).toBe(true);
+  });
+
+  it('explicit off literals stay OFF', () => {
+    process.env.JYEOO_FETCH_ENABLED = 'false';
+    expect(jyeooFetchEnabled()).toBe(false);
+    process.env.JYEOO_FETCH_ENABLED = '0';
+    expect(jyeooFetchEnabled()).toBe(false);
+  });
+
   it('any other value is OFF', () => {
     process.env.JYEOO_FETCH_ENABLED = 'yes';
     expect(jyeooFetchEnabled()).toBe(false);
