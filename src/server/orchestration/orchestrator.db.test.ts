@@ -29,7 +29,12 @@ const NOW = new Date('2026-07-25T02:30:00+08:00');
  *  · job INSERT 是 `ON CONFLICT DO NOTHING`——同 id 重发**不建第二条**且返回 null。
  */
 class FakeBoss implements OrchestratorBoss {
-  memberSends: { name: string; data: { stale?: boolean }; id?: string }[] = [];
+  memberSends: {
+    name: string;
+    data: { stale?: boolean };
+    id?: string;
+    startAfter?: number;
+  }[] = [];
   tickSends = 0;
   /** member job names for which send() returns null (models pg-boss "no job created"). */
   nullSendJobs = new Set<string>();
@@ -50,7 +55,12 @@ class FakeBoss implements OrchestratorBoss {
     if (this.throwOnSendJobs.has(name)) {
       throw new Error(`simulated send failure for '${name}'`);
     }
-    this.memberSends.push({ name, data: data as { stale?: boolean }, id: options?.id });
+    this.memberSends.push({
+      name,
+      data: data as { stale?: boolean },
+      id: options?.id,
+      startAfter: options?.startAfter,
+    });
     if (this.nullSendJobs.has(name)) return null;
     this.counter += 1;
     const id = options?.id ?? `boss_${this.counter}`;
@@ -338,16 +348,14 @@ describe('orchestrator trigger semantics', () => {
     const dag = dagOf(member('a'), member('b', ['a']));
     boss.throwOnSendJobs.add('a');
 
-    // The anchor start crashes inside boss.send, after claimNodePending committed.
-    await expect(
-      runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
-    ).rejects.toThrow(/simulated send failure/);
-
-    const runs = await db
-      .select()
-      .from(dag_orchestration_run)
-      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
-    const runId = runs[0].id;
+    // The anchor start crashes inside boss.send, after claimNodePending committed. The
+    // throw is absorbed so the tick chain still gets scheduled (see ⑭); what matters
+    // here is the state it left behind.
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const runId = run.id;
     const crashed = await nodeRow(runId, 'a');
     // Intent was persisted before the send: the node is enqueued AND knows its job id.
     expect(crashed?.status).toBe('enqueued');
@@ -355,7 +363,7 @@ describe('orchestrator trigger semantics', () => {
     expect(boss.hasJob('a', reservedId)).toBe(false); // the send truly never landed
 
     // Recovery: the next tick notices there is no job for the reserved id and re-sends
-    // under that same id rather than polling a ghost until the 3h timeout.
+    // under that same id rather than polling a ghost until NODE_TIMEOUT_SECONDS.
     boss.throwOnSendJobs.clear();
     await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
 
@@ -379,14 +387,11 @@ describe('orchestrator trigger semantics', () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', ['a']));
     boss.throwOnSendJobs.add('a');
-    await expect(
-      runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
-    ).rejects.toThrow(/simulated send failure/);
-    const runs = await db
-      .select()
-      .from(dag_orchestration_run)
-      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
-    const runId = runs[0].id;
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const runId = run.id;
 
     // Far past both the recovery grace window and the (test-shrunk) node timeout, with
     // the send still failing: the node must converge to failed rather than hang forever.
@@ -495,6 +500,99 @@ describe('orchestrator trigger semantics', () => {
     expect((await nodeRow(run.id, 'a'))?.status).toBe('failed');
     expect((await nodeRow(run.id, 'a'))?.detail).toMatch(/timeout/);
     expect((await nodeRow(run.id, 'b'))?.status).toBe('skipped');
+  });
+
+  // ⑭ review 面板必修 1 — tick 自调度是当夜唯一续跑通道。advanceRun 步骤②（claim / send /
+  // updateNodeStatus）整段裸奔，一次瞬时异常原本会跳过续链，让 run 永久停在 running 且当夜
+  // 剩余节点全部静默不跑。续链现在无条件发生。
+  it('⑭ an advance that throws still schedules exactly one next tick, and the run recovers', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+
+    // The next tick will throw inside step ② while enqueueing b.
+    boss.throwOnSendJobs.add('b');
+    const ticksBefore = boss.tickSends;
+    await expect(
+      runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
+    ).resolves.toBeUndefined(); // swallowed, not propagated
+
+    // EXACTLY one next tick — not zero (chain dead) and not several (forked chains
+    // would re-enqueue paid member jobs).
+    expect(boss.tickSends).toBe(ticksBefore + 1);
+    const stillRunning = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(stillRunning.status).toBe('running');
+
+    // The chain survives: once the transient condition clears, the run converges.
+    boss.throwOnSendJobs.clear();
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
+    await completeMember(boss, run.id, 'b');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const finished = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(finished.status).toBe('completed');
+  });
+
+  it('⑭b a throwing advance on the anchor start still leaves a live tick chain', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    boss.throwOnSendJobs.add('a');
+
+    // The anchor's own advance throws while enqueueing the root. The run must still
+    // exist AND still have a tick scheduled to carry it forward.
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    expect(boss.tickSends).toBe(1);
+
+    boss.throwOnSendJobs.clear();
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued');
+  });
+
+  // ⑮ review 面板疑点 ② — `JobDecl.queue` 是档位标签而非 pg-boss 队列名（每只 job 自己一个
+  // 队列 + 自己的 worker），故 batchSize:1 拦不住跨 job 并发：8 个根会同秒砸向 LLM provider。
+  // 同轮入队者按序错峰，恢复迁移前 cron 错峰顺带提供的限流分摊。
+  it('⑮ jobs enqueued in the same pass are staggered; a lone ready node is not delayed', async () => {
+    const boss = new FakeBoss();
+    // four roots — the burst shape the anchor produces.
+    const dag = dagOf(member('r1'), member('r2'), member('r3'), member('r4'));
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    const roots = boss.memberSends.filter((s) => s.name.startsWith('r'));
+    expect(roots).toHaveLength(4);
+    // strictly increasing offsets; the first goes out immediately.
+    const offsets = roots.map((s) => s.startAfter ?? 0);
+    expect(offsets[0]).toBe(0);
+    for (let i = 1; i < offsets.length; i += 1) {
+      expect(offsets[i], `root ${i}`).toBeGreaterThan(offsets[i - 1]);
+    }
+  });
+
+  it('⑮b a serial chain adds no stagger delay (one ready node per tick)', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    // Both a and b were the only ready node in their pass → neither is delayed.
+    for (const send of boss.memberSends) {
+      expect(send.startAfter ?? 0, send.name).toBe(0);
+    }
   });
 
   it('tick with no active run is a no-op', async () => {

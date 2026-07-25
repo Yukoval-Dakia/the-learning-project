@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
 import {
+  LAYER_STAGGER_MAX_SECONDS,
+  LAYER_STAGGER_SECONDS,
   NODE_TIMEOUT_SECONDS,
   ORCHESTRATOR_QUEUE,
   SEND_RECOVERY_GRACE_SECONDS,
@@ -82,7 +84,7 @@ export interface AdvanceSummary {
  *
  * 仍显式映射 `expired → failed`（YUK-758 review ToTaZ）：这是对**版本漂移**的零成本保险
  * ——若 pg-boss 降级/回滚到仍写 'expired' 的版本、或未来重新引入该状态，缺这一支会让节点
- * 被当作「未知」而一路挂到 3h NODE_TIMEOUT 才判失败，白等一整晚并推迟硬下游的跳过决策。
+ * 被当作「未知」而一路挂到 NODE_TIMEOUT_SECONDS 才判失败，白等一整晚并推迟硬下游的跳过决策。
  */
 export function mapBossState(
   state: string | null,
@@ -135,6 +137,9 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
 
   // ── ② 用最新态评估 pending 节点是否就绪。
   const nodes = await loadNodes(deps.db, deps.run.id);
+  // 同轮齐发错峰计数（review 面板疑点 ②）：每只 job 都是独立 pg-boss 队列 + 独立 worker，
+  // batchSize:1 拦不住**跨 job** 并发，故 8 个根会同秒砸向 provider。见 LAYER_STAGGER_SECONDS。
+  let enqueuedThisPass = 0;
   for (const [jobName, node] of nodes) {
     if (node.status !== 'pending') continue;
     const dagNode = deps.dag.nodes.get(jobName);
@@ -172,7 +177,17 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
     const claimed = await claimNodePending(deps.db, node.id, { bossJobId, stale, now });
     if (!claimed) continue;
 
-    const sentId = await deps.boss.send(jobName, stale ? { stale: true } : {}, { id: bossJobId });
+    // 同轮第 n 个入队者延后 n×间隔（封顶）。第 0 个立刻发 → 串行链上零延迟。
+    const startAfter = Math.min(
+      enqueuedThisPass * LAYER_STAGGER_SECONDS,
+      LAYER_STAGGER_MAX_SECONDS,
+    );
+    enqueuedThisPass += 1;
+    const sentId = await deps.boss.send(
+      jobName,
+      stale ? { stale: true } : {},
+      startAfter > 0 ? { id: bossJobId, startAfter } : { id: bossJobId },
+    );
     if (!sentId) {
       // send 返回 null = INSERT 撞 ON CONFLICT DO NOTHING，即**该 id 的 job 已存在**（并非
       // 未建）。用 getJobById 判定实情后再决断，绝不把「已存在」误判成失败（YUK-758 review
@@ -377,24 +392,55 @@ export async function runOrchestratorTick(deps: DriveDeps): Promise<void> {
   await advanceAndContinue({ ...deps, now, run });
 }
 
-/** 推进一步 → 完成收尾 / 未完成调度下一 tick。 */
-async function advanceAndContinue(deps: DriveDeps & { run: RunRow }): Promise<AdvanceSummary> {
+/**
+ * 推进一步 → 完成收尾 / 未完成调度下一 tick。
+ *
+ * **续链无条件保证**（YUK-758 review 面板必修 1）。tick 自调度是当夜**唯一**续跑通道，而本
+ * 函数原本是「先 advance 后续链」的顺序结构：`advanceRun` 步骤② 整段（updateNodeStatus /
+ * claimNodePending / boss.send / getJobById）以及 finishRun 都可能抛，一抛就**跳过续链**——
+ * run 永久停在 running，当夜剩余节点（compose / question_supply / kc_dedup / dreaming /
+ * knowledge_maintenance …）整片静默不跑，要等次夜锚点才 abandon。上一轮 ToTa4 的 per-node
+ * try/catch 只覆盖了步骤①，治不了这条。
+ *
+ * 修法刻意**不是**给步骤②再套 per-node try/catch（那样仍治不了 loadNodes / finishRun 这类
+ * 整段裸奔的调用）：改为在此处兜住**整个** advance+finish，异常时 log 后**照样**排下一 tick。
+ * 单点推进失败于是退化成「本轮丢一拍」，下一 tick 从最新 DB 态重来（advanceRun 幂等）。
+ *
+ * ⚠️ 与 register.ts 的配套约束：本函数保证续链后，**tick 路径不得再 rethrow**——否则
+ * pg-boss 的 2 次重投递会各自再排一条 tick，一夜留下 3 条并行链重复付费 enqueue。见 register.ts。
+ */
+async function advanceAndContinue(
+  deps: DriveDeps & { run: RunRow },
+): Promise<AdvanceSummary | null> {
   // 单一 now 贯穿 advance + finish（YUK-758 review ToTai）：避免 run.finished_at 因两次独立
   // new Date() 比末节点 finished_at 略晚的时序错位。
   const now = deps.now ?? new Date();
-  const summary = await advanceRun({
-    db: deps.db,
-    boss: deps.boss,
-    dag: deps.dag,
-    run: deps.run,
-    now,
-    timeoutSeconds: deps.timeoutSeconds,
-  });
-  if (summary.complete) {
-    await finishRun(deps.db, deps.run.id, 'completed', now);
-  } else {
-    // tick 自调度是唯一续跑通道；send 返回 null（未建 job）会静默断链、run 卡 running（YUK-758
-    // review ToTaa）。显式检查并 loud log——次夜锚点是最终兜底，但断链须留观测痕迹不静默。
+  let summary: AdvanceSummary | null = null;
+  let settled = false;
+  try {
+    summary = await advanceRun({
+      db: deps.db,
+      boss: deps.boss,
+      dag: deps.dag,
+      run: deps.run,
+      now,
+      timeoutSeconds: deps.timeoutSeconds,
+    });
+    if (summary.complete) {
+      await finishRun(deps.db, deps.run.id, 'completed', now);
+      settled = true;
+    }
+  } catch (err) {
+    // 吞掉是**故意**的：续链优先于本轮成功。留 loud log（FAST 队列无 DLQ，无日志即全无声）。
+    console.error(
+      `[orchestrator] advance failed for run ${deps.run.id} (${deps.run.run_date}) — scheduling the next tick anyway so the chain survives; state is re-read from DB next tick`,
+      err,
+    );
+  }
+
+  if (!settled) {
+    // send 返回 null（未建 job）会静默断链、run 卡 running（YUK-758 review ToTaa）。显式检查并
+    // loud log——次夜锚点是最终兜底，但断链须留观测痕迹不静默。
     const tickId = await deps.boss.send(
       ORCHESTRATOR_QUEUE,
       { tick: true },

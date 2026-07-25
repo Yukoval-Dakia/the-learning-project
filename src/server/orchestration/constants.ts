@@ -40,6 +40,28 @@ export const TICK_INTERVAL_SECONDS = 60;
 export const NODE_TIMEOUT_SECONDS = 7 * 60 * 60;
 
 /**
+ * 同一轮 advance 内**齐发**成员 job 的错峰间隔 / 上限（秒，YUK-758 review 面板疑点 ②）。
+ *
+ * 为什么需要：`JobDecl.queue`（'llm' | 'agent' | 'fast'）**只是档位标签，不是 pg-boss 队列名**
+ * ——`register-capability-jobs.ts` 用 `boss.work(decl.name, ...)`，每只 job 是**自己的**队列、
+ * 自己的 worker。所以 `batchSize: 1` 只保证「同一只 job 不并跑」，完全不约束**不同** job 之间。
+ * 本图有 8 个根节点且全部 `queue: 'llm'`，锚点一开闸会把 8 只 LLM job 同秒推给 provider；
+ * 而 AI 调用路径无任何并发闸（无 p-limit/semaphore），429 的 in-process 退避对 durable handler
+ * 是**特意关掉**的（queue-config.ts：「queue redelivery is their ONLY transient layer」），
+ * 队列重试又是固定 30s 无 jitter → 整群同时失败、同时重试、再次对撞。
+ *
+ * 迁移前这 8 只散在 02:30–05:15 的独立 cron 时刻，错峰**顺带**承担了限流分摊；直切成 DAG 把
+ * 这层保护一并去掉了。DAG 的 happens-before 边比钟表偏移强，值得保留——只是不该让**同层**齐发。
+ * 故只补最小一道闸：同一轮 advance 里第 n 个入队的 job 加 n×间隔 的 `startAfter`（pg-boss 原生
+ * 支持，不自造调度器）。串行链上每轮通常只有 1 个就绪节点 → offset=0，不加任何延迟。
+ *
+ * 上限存在是为了让延迟**不随图变大而无界**：总错峰封顶后，余下的仍会齐发，但那已远好于 8 齐发。
+ * 封顶值须与 NODE_TIMEOUT_SECONDS 相容——最坏 15min 错峰 + 6h 重试预算 < 7h 超时。
+ */
+export const LAYER_STAGGER_SECONDS = 120;
+export const LAYER_STAGGER_MAX_SECONDS = 15 * 60;
+
+/**
  * 「已领取但 pg-boss 查无此 job」的补发宽限窗（秒，YUK-758 review ToTaI）。
  *
  * 节点的 boss_job_id 在 boss.send **之前**就随 CAS 落库（claimNodePending），所以

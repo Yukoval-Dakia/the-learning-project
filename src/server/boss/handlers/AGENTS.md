@@ -1,34 +1,43 @@
 # boss/handlers — pg-boss job & cron catalog
 
-> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓 cron 权威目录（32 条；YUK-700 新增 verify recovery；上一版只列 11 条已过时）。
+> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓**调度**权威目录——自 YUK-758 起分两类：**裸 cron**（下表）与 **DAG 成员**（无自身 cron，由夜间 orchestrator 单锚点按依赖触发）。
 
-## CRON — 每日夜链（按时序串，Asia/Shanghai）
+## DAG 编排（YUK-758）—— 这些 job **没有自己的 cron**
+> 单锚点 `nightly_orchestrator` cron `30 2` Asia/Shanghai（`src/server/orchestration/constants.ts`）开闸建当夜 run + enqueue 根节点，此后每 60s 一 tick 轮询 pg-boss job 态、上游成功才 enqueue 下游。依赖在各 `manifest.ts` 的 `JobDecl.dependsOn` 上声明，`validateComposition` 启动期强制「成员不得同时带 cron」。**改这些 job 的时序 = 改 `dependsOn` 边，不是改 cron 时刻**；orchestrator 启动时还会对每个成员跑一次 `boss.unschedule`（清升级前残留的旧 schedule 行）。
+>
+> 逐边失败语义：硬边（默认）上游 failed/skipped → 下游 skipped 留痕；`soft` 边上游未成功时下游照跑并带 `{ stale: true }`。
+
+| Queue | 上游边 | 注册点 | 说明 |
+|-------|--------|--------|------|
+| `item_prior_backfill` | 根 | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）；`item_calibration.b` 锚**种子**写者 |
+| `recalibration_nightly` | ← `item_prior_backfill` **硬** | practice/manifest | 攒够 label → `b_calib` firm-up。真读后写（同表 b 锚：种子先、firm 后）|
+| `practice_stream_compose_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 预产今日练习流；选题实读 `item_calibration.b_calib`（单飞锁幂等；lazy 首读即恢复路径）|
+| `question_supply_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 缺口扫描 → sourcing/quiz_gen；R3 近-θ̂ 判定实读 `b_calib`→`effectiveB`（7d 指纹 cooldown 是唯一成本闸）|
+| `embed_backfill` | 根 | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
+| `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`——**旧 02:00 恒滞后一天**的时钟 bug 现由边根治（YUK-377 复审 §3.3）|
+| `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）。曾被当作 supply 上游，YUK-758 考据证伪 |
+| `knowledge_edge_propose_nightly` | 根 | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
+| `knowledge_maintenance_nightly` | ← `knowledge_edge_propose_nightly` **软** | knowledge/manifest | KnowledgeReviewTask 维护流。软边：读 proposal inbox 当去重基线，上游挂了照样正确产出 |
+| `dreaming_nightly` | ← `edge_propose` **软** + `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|
+| `coach_daily` | 根 | agency/manifest | TodayPlan/brief（旧 review_plan 链投已 retire）。读在线 mastery/session 态，旧 03:45 错峰=时钟巧合 |
+| `goal_scope_propose_nightly` | 根 | agency/manifest | mastery tree-snapshot 提议 goal_scope（cap=1）|
+| `research_meeting_nightly` | 根 | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
+| `frontier_fill_nightly` | 根 | knowledge/manifest | frontier 空时 propose prereq 边（skipped_dense 零 LLM gate）。PROPOSE-ONLY，产物需人 accept |
+
+## CRON — 每日夜链（裸 cron，按时序串，Asia/Shanghai）
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
-| `knowledge_edge_propose_nightly` | `30 2` | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
-| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**真 barrier：必须在 02:30 之后**——edge_propose 夜批 SUPERSEDE 自主写 live 边，02:45 是唯一消费路径（YUK-377 复审 §3.2/YUK-384）|
-| `knowledge_maintenance_nightly` | `0 3` | knowledge/manifest | KnowledgeReviewTask 维护流 |
+| `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick |
+| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**真 barrier：必须在 edge_propose 之后**——edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径（YUK-377 复审 §3.2/YUK-384）。⚠️ 上游 `knowledge_edge_propose_nightly` 已迁入 DAG（锚点 02:30 触发），本 job 仍是裸 cron 02:45，barrier 靠时钟而非边 —— 若 edge_propose 跑超 15min 会读不到同夜提议 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
-| `dreaming_nightly` | `15 3` | agency/manifest | Dreaming producer（DomainTool MCP bridge）|
-| `coach_daily` | `45 3` | agency/manifest | TodayPlan/brief（旧 review_plan 链投已 retire）|
-| `goal_scope_propose_nightly` | `50 3` | agency/manifest | mastery tree-snapshot 提议 goal_scope（cap=1）|
 | `prune_job_events` | `0 4` | ../handlers.ts | 30d bulk DELETE（其它 prune 错开避锁）|
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | ../handlers.ts | 弃置 >6h stuck review session（sendBeacon-miss 安全网）|
-| `item_prior_backfill` | `20 4` | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）|
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
-| `research_meeting_nightly` | `5 4` | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
-| `embed_backfill` | `40 4` | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
-| `recalibration_nightly` | `50 4` | practice/manifest | 攒够 label → b_calib firm-up（compose 前就位）|
-| `answer_class_backfill` | `0 5` | practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）|
-| `kc_dedup_nightly` | `5 5` | knowledge/manifest | pgvector 近重 KC → merge 提议。**在 embed 04:40 之后**（scan 硬 gate `embedding IS NOT NULL`；原 02:00 恒滞后一天，YUK-377 复审 §3.3 改期）|
 | `kt_estimate_nightly` | `10 5` | practice/manifest | BKT kt_json（零下游消费者；owner 拍 2026-07-06 保持每日）|
-| `frontier_fill_nightly` | `15 5` | knowledge/manifest | frontier 空时 propose prereq 边（skipped_dense 零 LLM gate）|
-| `reference_answer_backfill` | `20 5` | practice/manifest | `reference_md IS NULL` → 参考答案（compose 前就位）|
-| `practice_stream_compose_nightly` | `30 5` | practice/manifest | 预产今日练习流（单飞锁幂等；lazy 首读即恢复路径）|
+| `reference_answer_backfill` | `20 5` | practice/manifest | `reference_md IS NULL` → 参考答案。**不入 compose 选题路径**（走判分/UI），故 YUK-758 未编边、留裸 cron |
 | `axis_state_nightly` | `40 5` | practice/manifest | EZ-diffusion 描述符（display-only，placement-profile 读）|
-| `question_supply_nightly` | `0 6` | practice/manifest | 缺口扫描 → sourcing/quiz_gen（7d 指纹 cooldown 是唯一成本闸）|
 | `confusable_contrast_nightly` | `20 6` | practice/manifest | DARK（flag off = discovery 返 [] NO-OP；owner 拍 2026-07-06 保留空转）|
 
 ## CRON — 周批

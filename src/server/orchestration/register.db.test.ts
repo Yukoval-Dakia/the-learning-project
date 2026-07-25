@@ -100,8 +100,22 @@ describe('parseOrchestratorPayload', () => {
   it('rejects malformed payloads instead of defaulting them into a full chain rerun', () => {
     expect(() => parseOrchestratorPayload({ trigger: 'cron' })).toThrow(/'trigger' must be/);
     expect(() => parseOrchestratorPayload({ trigger: 'wat' })).toThrow(/'trigger' must be/);
-    expect(() => parseOrchestratorPayload({ tick: 'yes' })).toThrow(/'tick' must be boolean/);
+    expect(() => parseOrchestratorPayload({ tick: 'yes' })).toThrow(/'tick' must be exactly true/);
     expect(() => parseOrchestratorPayload('start')).toThrow(/not an object/);
     expect(() => parseOrchestratorPayload([1, 2])).toThrow(/not an object/);
+  });
+
+  // YUK-758 review ToTe7 — each of these is type-plausible but would silently land in
+  // the cron start branch (or silently drop manual semantics), i.e. one slipped field
+  // burns a whole night of paid LLM root jobs.
+  it('rejects the three near-miss shapes that would silently start a full chain', () => {
+    // `tick: false` is a valid boolean but falls through to the start branch.
+    expect(() => parseOrchestratorPayload({ tick: false })).toThrow(/'tick' must be exactly true/);
+    // an unknown key is ignored under a permissive parser → treated as cron.
+    expect(() => parseOrchestratorPayload({ manual: true })).toThrow(/unexpected job payload key/);
+    // both set: tick wins and the manual intent is silently swallowed.
+    expect(() => parseOrchestratorPayload({ tick: true, trigger: 'manual' })).toThrow(
+      /mutually exclusive/,
+    );
   });
 });
