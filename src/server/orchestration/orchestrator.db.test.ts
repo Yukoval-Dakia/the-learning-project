@@ -59,22 +59,29 @@ class FakeBoss implements OrchestratorBoss {
   cancels: { name: string; id: string }[] = [];
   /** member job names whose cancel() throws (models a DB hiccup / missing queue). */
   throwOnCancelJobs = new Set<string>();
-  private states: Map<string, string>;
-  /** YUK-779 — per-job pg-boss `output` (the handler's resolved value). */
-  private outputs = new Map<string, unknown>();
+  /**
+   * job 表：key = `${name}:${id}`，value = **一条 job 记录**。
+   *
+   * state 与 output 合成一条记录而非两张平行表（YUK-779 PR #1076 review）：生产里它们
+   * 就是 pgboss.job **同一行**的两个字段，拆成两张表就可能只共享其中一张——那种
+   * 「共享了一半」的替身比完全不共享更危险，因为它看起来忠实。合成一条后，
+   * 只要共享这张表，state 和 output 必然一起共享，这类漏洞在结构上不可能再出现。
+   */
+  private jobs: Map<string, { state: string; output?: unknown }>;
   private counter = 0;
 
   /**
-   * @param sharedJobs 传入即与另一个 FakeBoss **共享同一份 job 表**。
+   * @param sharedJobs 传入即与另一个 FakeBoss **共享同一份 job 表**（state + output）。
    *
    * 建模保真（YUK-779 PR #1076 修 A7 flake）：生产里多个 worker 副本连的是**同一个**
-   * pg-boss 库，`getJobById` 是一次 DB 查询——副本 B 一定看得见副本 A 刚插的 job。
-   * 用两个各自独立的内存 job 表建模「两个副本」是**不忠实**的：B 查不到 A 发的 job，
-   * 于是 pollInflightNode 的自愈补发把它判成「send never landed」并重发一次。
-   * 那是建模产物，不是生产会发生的事。默认仍是独立表（单副本用例不受影响）。
+   * pg-boss 库，`getJobById` 是一次 DB 查询——副本 B 一定看得见副本 A 刚插的 job，
+   * 也一定读得到 A 写下的 output。用各自独立的内存 job 表建模「两个副本」是**不忠实**的：
+   * B 查不到 A 发的 job，pollInflightNode 的自愈补发就把它判成「send never landed」并
+   * 重发一次；只共享 state 不共享 output 则会让跨副本的 node detail 回写契约漏测。
+   * 默认仍是独立表（单副本用例不受影响）。
    */
-  constructor(sharedJobs?: Map<string, string>) {
-    this.states = sharedJobs ?? new Map<string, string>();
+  constructor(sharedJobs?: Map<string, { state: string; output?: unknown }>) {
+    this.jobs = sharedJobs ?? new Map<string, { state: string; output?: unknown }>();
   }
 
   async send(
@@ -102,20 +109,19 @@ class FakeBoss implements OrchestratorBoss {
     const id = options?.id ?? `boss_${this.counter}`;
     // ON CONFLICT DO NOTHING: an id that already exists is not re-inserted, and
     // pg-boss returns null (no RETURNING row) rather than an id.
-    if (this.states.has(`${name}:${id}`)) return null;
-    this.states.set(`${name}:${id}`, 'created');
+    if (this.jobs.has(`${name}:${id}`)) return null;
+    this.jobs.set(`${name}:${id}`, { state: 'created' });
     return id;
   }
 
   async getJobById(name: string, id: string): Promise<{ state: string; output?: unknown } | null> {
-    const state = this.states.get(`${name}:${id}`);
-    if (!state) return null;
-    const key = `${name}:${id}`;
+    const row = this.jobs.get(`${name}:${id}`);
+    if (!row) return null;
     // Model pg-boss's jsonb round-trip so the reader is exercised on plain JSON,
     // not on the in-memory object identity.
-    return this.outputs.has(key)
-      ? { state, output: JSON.parse(JSON.stringify(this.outputs.get(key))) }
-      : { state };
+    return row.output === undefined
+      ? { state: row.state }
+      : { state: row.state, output: JSON.parse(JSON.stringify(row.output)) };
   }
 
   /**
@@ -130,35 +136,44 @@ class FakeBoss implements OrchestratorBoss {
       throw new Error(`simulated cancel failure for '${name}'`);
     }
     this.cancels.push({ name, id });
-    const key = `${name}:${id}`;
-    const state = this.states.get(key);
-    if (state === 'created' || state === 'retry' || state === 'active') {
-      this.states.set(key, 'cancelled');
+    const row = this.jobs.get(`${name}:${id}`);
+    if (row && (row.state === 'created' || row.state === 'retry' || row.state === 'active')) {
+      row.state = 'cancelled';
     }
   }
 
   /** Would pg-boss still hand this job to a worker? (created/retry are pollable, active is running.) */
   isExecutable(name: string, id: string): boolean {
-    const state = this.states.get(`${name}:${id}`);
+    const state = this.jobs.get(`${name}:${id}`)?.state;
     return state === 'created' || state === 'retry';
   }
 
   jobState(name: string, id: string): string | undefined {
-    return this.states.get(`${name}:${id}`);
+    return this.jobs.get(`${name}:${id}`)?.state;
   }
 
   setJobState(name: string, id: string, state: string): void {
-    this.states.set(`${name}:${id}`, state);
+    const row = this.jobs.get(`${name}:${id}`);
+    if (row) row.state = state;
+    else this.jobs.set(`${name}:${id}`, { state });
   }
 
-  /** YUK-779 — stash what the handler resolved with (pg-boss stores it as job.output). */
+  /**
+   * YUK-779 — stash what the handler resolved with (pg-boss stores it as job.output).
+   * Upserts onto the SAME record as the state (production: one pgboss.job row), so a
+   * shared job table necessarily shares the output too.
+   */
   setJobOutput(name: string, id: string, output: unknown): void {
-    this.outputs.set(`${name}:${id}`, output);
+    const row = this.jobs.get(`${name}:${id}`);
+    if (row) row.output = output;
+    // 无 job 行时不可能有 output（生产同理：output 是 job 行的一个列）。调用方
+    // （completeMemberWithYield）总是先 setJobState，故此分支实际不可达。
+    else this.jobs.set(`${name}:${id}`, { state: 'created', output });
   }
 
   /** 该 (name,id) 是否真的存在一条 job 行。 */
   hasJob(name: string, id: string): boolean {
-    return this.states.has(`${name}:${id}`);
+    return this.jobs.has(`${name}:${id}`);
   }
 }
 
@@ -1152,7 +1167,7 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     // 构造器）。此前各给一份独立表，B 查不到 A 刚发的 job，自愈补发便把它判成
     // 「send never landed」重发一次，于是 allSends 里出现两条 'r1' —— 一个纯粹的
     // 建模产物，且只在特定交错下出现（CI 上偶发红、本地几乎必绿）。
-    const sharedJobs = new Map<string, string>();
+    const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
     const bossB = new FakeBoss(sharedJobs);
     const dag = dagOf(member('r1'), member('r2'), member('down', ['r1']));
@@ -1204,7 +1219,7 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
   // pollInflightNode 不走 `send never landed` 自愈补发那一支。把 bossB 换成独立 job 表
   // （即修复前的建模）这条立刻转红，正是 CI 上那条 `[ 'r1', 'r1' ]` 的机理。
   it('A7b 另一个副本推进同一条 run 时不重发已入队的根（确定性交错）', async () => {
-    const sharedJobs = new Map<string, string>();
+    const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
     const bossB = new FakeBoss(sharedJobs);
     const dag = dagOf(member('r1'), member('r2'), member('down', ['r1']));
@@ -1229,6 +1244,45 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     const jobKeys = [...sharedJobs.keys()];
     expect(jobKeys.filter((k) => k.startsWith('r1:'))).toHaveLength(1);
     expect(jobKeys.filter((k) => k.startsWith('r2:'))).toHaveLength(1);
+  });
+
+  // YUK-779 PR #1076 review — **跨副本**的 output → node.detail 回写契约。
+  //
+  // 上一轮只把 FakeBoss 的 state 做成可共享、output 仍是每实例私有，于是这条链路
+  // 在多副本下从未被测：副本 A 执行完 job 写下 yield report，副本 B 轮询时看到的却是
+  // 「一条没有 output 的旧任务」，detail 永远盖不上。生产里 state 与 output 是
+  // pgboss.job **同一行**的两个字段，A 写的 output B 必然读得到。
+  //
+  // 现在两者合成一条记录（见 FakeBoss.jobs），本用例钉死：A 写、B 读、B 盖 detail。
+  it('A7c 副本 A 写下的 yield report，副本 B 轮询时读得到并盖进 node detail', async () => {
+    const sharedJobs = new Map<string, { state: string; output?: unknown }>();
+    const bossA = new FakeBoss(sharedJobs);
+    const bossB = new FakeBoss(sharedJobs);
+    const dag = dagOf(member('r1'), member('down', ['r1']));
+
+    const outA = await catchUp(bossA, dag, HALF_HOUR_PAST);
+    expect(outA.action).toBe('started');
+    const runId = outA.action === 'started' ? outA.run.id : '';
+
+    // 副本 A 那侧执行完 r1：静默空跑（试过 3 格、全败），report 随 job.output 落库。
+    await completeMemberWithYield(bossA, runId, 'r1', { attempted: 3, succeeded: 0, failed: 3 });
+
+    // 由**副本 B**推进——它必须看得见 A 写下的 output。
+    await runOrchestratorTick({
+      db,
+      boss: bossB,
+      dag,
+      now: HALF_HOUR_PAST,
+      localDate: () => RUN_DATE,
+    });
+
+    const r1 = await nodeRow(runId, 'r1');
+    expect(r1?.status).toBe('succeeded');
+    // ★ 跨副本回写：detail 由 B 盖上，内容来自 A 写的 output。
+    expect(r1?.detail).toContain('zero yield');
+    expect(r1?.detail).toContain('0/3 resolved unit(s) succeeded');
+    // 失败语义未变：硬下游照跑。
+    expect((await nodeRow(runId, 'down'))?.status).toBe('enqueued');
   });
 
   // PR #1075 OCR minor — the window is an ELAPSED-time interval [0, window), not a

@@ -223,6 +223,28 @@ describe('readJobYieldReport — 防御性回读（orchestrator 侧）', () => {
     ).toMatchObject({ level: 'idle', attempted: 0 });
   });
 
+  it('小数计数必须被拒——它能绕过不变量守卫（PR #1076 review）', () => {
+    // {1.5, 0.5, 1} 恰好**满足** attempted === succeeded + failed（1.5 === 0.5 + 1），
+    // 所以不变量守卫拦不住它；只有整数校验能。放行会印出「1/1.5 resolved unit(s)
+    // failed」——半个单元不存在，这是一句没有意义的话。
+    expect(
+      readJobYieldReport({
+        job_yield: { job: 'x', level: 'degraded', attempted: 1.5, succeeded: 0.5, failed: 1 },
+      }),
+    ).toBeUndefined();
+    // 确认它确实过得了不变量那一关（即证明整数校验不是冗余的）。
+    expect(1.5).toBe(0.5 + 1);
+
+    // 非有限值同样被 Number.isInteger 拦下。
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        readJobYieldReport({
+          job_yield: { job: 'x', level: 'ok', attempted: bad, succeeded: 0, failed: 0 },
+        }),
+      ).toBeUndefined();
+    }
+  });
+
   it('违反 attempted === succeeded + failed 的三元组必须被拒（PR #1076 review）', () => {
     // 这条不是洁癖：{attempted:0, succeeded:3, failed:5} 三个字段都过 isCount，却会在
     // classifyJobYield 里因 attempted<=0 短路成 idle —— 把 5 次真实吞错说成

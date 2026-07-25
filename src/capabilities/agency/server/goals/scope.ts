@@ -178,7 +178,11 @@ export async function runGoalScopeAndWrite(
       goal_id: goalId,
       scope_count: scope.length,
       ok: true,
-      llm_attempted: true,
+      // 从局部量派生而非硬编码 true（PR #1076 review），与 runEdgeProposeAndWrite 的
+      // 同名字段一致：其余出口（EMPTY_RESULT 默认、`!prepared` 早返、catch-all）都从
+      // llmAttempted 取值，唯独这里硬编码就成了同一含义的第二个真源。它今天等价，
+      // 靠的是「赋值点恰好在上面几行」——那是**位置**，不是不变量。
+      llm_attempted: llmAttempted,
     };
   } catch (err) {
     console.error('runGoalScopeAndWrite: failed (no proposal written)', err);

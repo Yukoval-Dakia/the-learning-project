@@ -169,17 +169,20 @@ export function reportJobYield(job: string, y: JobYield): JobYieldOutput {
 }
 
 /**
- * 计数字段的合法性：有限**非负**数。
+ * 计数字段的合法性：**非负整数**。
  *
- * 非负校验不是装饰（PR #1076 review）：本函数的契约是「任何不认识的形状一律返回
- * undefined」，而负数计数正属于「不认识的形状」—— 三个字段都是**计数**，负值无从产生，
- * 出现即意味着 output 被篡改/损坏。放行的话会一路流进 classifyJobYield 与
- * describeJobYield：`{attempted:1, succeeded:-1, failed:2}` 会让 resolved 算成 1、
- * failed/resolved 得出 200% 这种荒谬比例，最终把一行胡话盖进节点 detail。
+ * 三条都不是装饰（PR #1076 review）：本函数的契约是「任何不认识的形状一律返回
+ * undefined」，而三个字段都是**计数** —— 负数、小数、非有限值都无从产生，出现即意味着
+ * output 被篡改/损坏。放行会一路流进 classifyJobYield 与 describeJobYield：
+ *  · `{attempted:1, succeeded:-1, failed:2}` 让 resolved 算成 1、failed/resolved 得出
+ *    200% 这种荒谬比例；
+ *  · `{attempted:1.5, succeeded:0.5, failed:1}` 甚至**满足** attempted === succeeded +
+ *    failed 的不变量（1.5 === 0.5 + 1），能一路通过后面的守卫，最后印出「1/1.5 resolved
+ *    unit(s) failed」这种没有意义的话 —— 半个单元不存在。
  * 宁可整条读不出来（等同于「这个 job 没报产出」）也不要报一个错的。
  */
 function isCount(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
 }
 
 /**
