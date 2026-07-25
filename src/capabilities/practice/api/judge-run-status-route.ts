@@ -22,18 +22,40 @@ import {
 } from '../server/judge-run-status';
 
 /**
- * W4 #TtWiD — is `runId` a real, still-enqueued judge_run that simply has no job_events yet?
+ * pg-boss states from which a job can still run, and therefore still produce job_events.
+ *
+ * W5 #TumMo — existence is NOT the question; LIVENESS is. `getJobById` returns a row for
+ * terminal states too (`completed` / `failed` / `cancelled`, and notably `expired` when a
+ * prolonged worker outage meant the job was never picked up). Reporting `queued` for any of
+ * those tells the client to keep polling a job that will never emit another event — exactly
+ * the infinite-pending trap the 404 branch exists to prevent. Mirrors `orchestrator.ts`,
+ * which also inspects `state` rather than mere existence.
+ */
+const LIVE_BOSS_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
+
+/**
+ * W4 #TtWiD — is `runId` a real, still-RUNNABLE judge_run that simply has no job_events yet?
  *
  * `enqueueDurableJudge` pins the pg-boss job id to the run handle (`{ id: runId }`), so this
  * is a direct primary-key lookup, not a scan. Only consulted when the event trail is empty.
  *
- * Fails CLOSED to `false`: if pg-boss is unreachable we cannot assert the run exists, and a
+ * Fails CLOSED to `false`: if pg-boss is unreachable we cannot assert the run is live, and a
  * 404 (the pre-existing behaviour) is a safer answer than a fabricated `queued`.
  */
-async function durableJobExists(runId: string): Promise<boolean> {
+async function durableJobIsLive(runId: string): Promise<boolean> {
   try {
     const boss = await getStartedBoss();
-    return (await boss.getJobById(JUDGE_RUN_QUEUE, runId)) !== null;
+    const job = await boss.getJobById(JUDGE_RUN_QUEUE, runId);
+    if (job === null) return false;
+    const state = (job as { state?: string }).state;
+    if (typeof state === 'string' && LIVE_BOSS_STATES.has(state)) return true;
+    // A terminal job with no job_events at all: the run really did exist, but nothing will
+    // ever finish it (typically `expired` after a long worker outage). Log it and fall
+    // through to 404 — pretending it is queued would hang the client forever.
+    console.warn(
+      `[judge_run] ${runId} has no job_events and its pg-boss job is not live (state=${String(state)}) — reporting not-found`,
+    );
+    return false;
   } catch (err) {
     console.error(
       '[judge_run] pg-boss lookup failed while resolving a marker-less run',
@@ -64,9 +86,10 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // STARTED to heal it) the poll URL we just advertised in the 202 would 404 — reporting
     // "does not exist" for a real run, in exactly the worker-outage scenario the durable lane
     // exists to cover. The run_id IS the pg-boss job id (`SendOptions.id` at enqueue), so ask
-    // pg-boss directly before declaring the run unknown.
+    // pg-boss directly before declaring the run unknown — and require the job to still be
+    // RUNNABLE, since a terminal/expired job will never emit an event either (#TumMo).
     if (events.length === 0) {
-      if (await durableJobExists(runId)) {
+      if (await durableJobIsLive(runId)) {
         return Response.json({ run_id: runId, status: 'queued' as const, result: null });
       }
       throw new ApiError('not_found', `judge_run ${runId} not found`, 404);

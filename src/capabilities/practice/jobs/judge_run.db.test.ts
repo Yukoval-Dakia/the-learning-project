@@ -616,6 +616,19 @@ describe('runJudgeRun — late-arriving backfill (#TtWiA)', () => {
     expect(
       await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1')),
     ).toHaveLength(0);
+
+    // W5 #TumMl — k1 is a COLD card (no row ever existed) and the upsert was skipped, so the
+    // event payload must NOT advertise an advanced schedule nobody can observe. It reports the
+    // never-reviewed baseline instead.
+    const [attempt] = await db.select().from(event).where(eq(event.id, olderRunId));
+    const payload = attempt.payload as {
+      fsrs_state_after?: { state?: string; reps?: number };
+      fsrs_state_after_by_subject?: Array<{ subject_id: string; state?: { state?: string } }>;
+    };
+    expect(payload.fsrs_state_after?.state).toBe('new');
+    expect(payload.fsrs_state_after?.reps).toBe(0);
+    const k1Reported = payload.fsrs_state_after_by_subject?.find((s) => s.subject_id === 'k1');
+    expect(k1Reported?.state?.state).toBe('new');
   });
 
   it('an IN-ORDER backfill still advances FSRS normally (the guard is not a blanket skip)', async () => {

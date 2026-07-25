@@ -85,7 +85,7 @@ import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
 import { enqueueWrongStreakNudge } from '../server/enqueue-wrong-streak-nudge';
-import { scheduleReview } from '../server/fsrs';
+import { initialFsrsState, scheduleReview } from '../server/fsrs';
 import { JUDGE_RUN_QUEUE, judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { freezeQuestionForJudge } from '../server/judge-run-payload';
@@ -775,12 +775,25 @@ export async function persistSubmit(
     // and a raw ISO string would throw there.
     if (lateArrival) {
       for (const update of fsrsUpdates) {
-        if (!update.before) continue;
-        update.result = {
-          nextState: update.before,
-          dueAt: coerceJsonbDate(update.before.due) ?? now,
-        };
-        update.stateAfter = update.before;
+        if (update.before) {
+          // Warm card: report the prior schedule verbatim — it is what a reader will find.
+          update.result = {
+            nextState: update.before,
+            dueAt: coerceJsonbDate(update.before.due) ?? now,
+          };
+          update.stateAfter = update.before;
+        } else {
+          // W5 #TumMl — COLD card (no row existed). The earlier version `continue`d here,
+          // which left the freshly COMPUTED schedule in place: the upsert is skipped for
+          // every subject, so the event payload advertised a brand-new schedule that was
+          // never persisted — a due date no reader could ever observe. A never-reviewed
+          // card whose attempt wrote nothing is still New, so report the never-reviewed
+          // baseline. (`fsrs_state_after` is required + non-nullable by ReviewOnQuestion,
+          // so "report nothing" is not available; this is the honest value.)
+          const initial = initialFsrsState(now);
+          update.result = { nextState: initial.state, dueAt: initial.dueAt };
+          update.stateAfter = { ...initial.state, last_review: initial.state.last_review ?? null };
+        }
       }
       primaryResult = fsrsUpdates[0].result;
       primaryFsrsStateAfter = fsrsUpdates[0].stateAfter;

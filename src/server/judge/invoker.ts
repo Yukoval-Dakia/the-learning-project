@@ -194,6 +194,14 @@ export class JudgeInvoker {
       // but judgeDefaultRunTaskFn forwards the ctx verbatim to runTask, so setting it
       // here reaches the runner — the exact mechanism the vision judges use to opt
       // IN (steps-judge.ts:297). We force it OFF here for the durable lane.
+      //
+      // W5 #TumMr — this DOES depend on the forwarding chain preserving the untyped key,
+      // and `makeRunTaskFn`/`makeRunTaskTextFn` deliberately STRIP it (runner-fn.ts:18-19),
+      // so a future refactor of judgeDefaultRunTaskFn onto those factories would silently
+      // drop the forced-off. It would NOT be silent, though: `invoker-durable.test.ts`
+      // mocks '@/server/ai/runner' and asserts `ctx.enableTransientRetry === false` at the
+      // runTask boundary, so that refactor fails CI on the D7 single-transient-layer
+      // invariant rather than degrading in production. Keep that test if this moves.
       const durable = narrowed.durable;
       let effectiveCtx = callCtx;
       if (durable) {

@@ -56,6 +56,39 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     vi.restoreAllMocks();
   });
 
+  // W5 #TumMo — existence is not liveness. `getJobById` returns a row for terminal states
+  // too; `expired` in particular is what a marker-less run looks like after a long worker
+  // outage. Reporting `queued` for those would make the client poll a job that can never
+  // emit another event.
+  it.each(['completed', 'failed', 'cancelled', 'expired'])(
+    'does NOT report queued for a terminal pg-boss job (state=%s)',
+    async (state) => {
+      const runId = newId();
+      vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+        getJobById: vi.fn().mockResolvedValue({ id: runId, state }),
+      } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+      const res = await GET(new Request('http://localhost'), { id: runId });
+      expect(res.status).toBe(404);
+      vi.restoreAllMocks();
+    },
+  );
+
+  it.each(['created', 'retry', 'active'])(
+    'reports queued for a LIVE pg-boss job (state=%s)',
+    async (state) => {
+      const runId = newId();
+      vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+        getJobById: vi.fn().mockResolvedValue({ id: runId, state }),
+      } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+      const res = await GET(new Request('http://localhost'), { id: runId });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { status: string }).status).toBe('queued');
+      vi.restoreAllMocks();
+    },
+  );
+
   it('queued run → 200 queued, result null', async () => {
     const runId = newId();
     await writeJobEvent(testDb(), {
