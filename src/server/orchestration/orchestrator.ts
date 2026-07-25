@@ -179,7 +179,7 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
       // ToTaT 的原判据在带显式 id 后不再成立）。
       const existing = await deps.boss.getJobById(jobName, bossJobId);
       if (!existing) {
-        // 确实没建成 → 立即标 failed，免得挂到 3h 超时才被发现、拖垮下游。
+        // 确实没建成 → 立即标 failed，免得挂到 NODE_TIMEOUT_SECONDS 才被发现、拖垮下游。
         await updateNodeStatus(deps.db, node.id, {
           status: 'failed',
           detail: 'boss.send returned null and no job exists for the reserved id',
