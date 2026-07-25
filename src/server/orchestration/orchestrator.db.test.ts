@@ -200,7 +200,9 @@ describe('orchestrator trigger semantics', () => {
     expect(a?.status).toBe('succeeded');
     // ② 但「昨晚一切正常」的假象被打破了——节点上留下了真相。
     expect(a?.detail).toContain('zero yield');
-    expect(a?.detail).toContain('all 3 attempted unit(s) failed');
+    // 分母与判据同源（PR #1076 review）：resolved = succeeded + failed。
+    expect(a?.detail).toContain('0/3 resolved unit(s) succeeded');
+    expect(a?.detail).toContain('3 swallowed failure(s)');
     // ③ 硬下游依然照跑（是否该改成 skip 是留给 owner 的语义决策）。
     expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
   });

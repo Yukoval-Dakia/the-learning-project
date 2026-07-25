@@ -116,15 +116,29 @@ export function classifyJobYield(y: JobYield): JobYieldLevel {
   return 'ok';
 }
 
-/** 人读一行；ok / idle 无话可说 → null。 */
+/**
+ * 人读一行；ok / idle 无话可说 → null。
+ *
+ * **分母必须与判据同源**（PR #1076 review）：{@link classifyJobYield} 用
+ * `resolved = succeeded + failed` 作分母，所以消息也只用 `resolved`。早先版本展示
+ * `failed/attempted` —— 当 `attempted > resolved`（某 handler 把含前置闸单元的
+ * `considered` 当 attempted 传进来）时，运维读到的比例**小于**真正触发告警的比例，
+ * 于是「5/100 失败为什么在报警」变成一次错误的判读，甚至可能被当成误报忽略掉。
+ *
+ * `attempted !== resolved` 时把 attempted 一并标出（`[attempted=N]`），信息不丢，
+ * 但绝不让它出现在分母位置。degraded 还直接打出触发百分比与阈值，读者不必心算。
+ */
 export function describeJobYield(job: string, y: JobYield, level: JobYieldLevel): string | null {
+  if (level !== 'stalled' && level !== 'degraded') return null;
+  const resolved = y.succeeded + y.failed;
+  // 不变量成立时这段为空；不成立时如实暴露差异，而不是悄悄换个分母。
+  const attemptedNote = y.attempted === resolved ? '' : ` [attempted=${y.attempted}]`;
   if (level === 'stalled') {
-    return `${job}: zero yield — all ${y.attempted} attempted unit(s) failed (swallowed); downstream reads stale/empty data`;
+    return `${job}: zero yield — 0/${resolved} resolved unit(s) succeeded, ${y.failed} swallowed failure(s); downstream reads stale/empty data${attemptedNote}`;
   }
-  if (level === 'degraded') {
-    return `${job}: degraded yield — ${y.failed}/${y.attempted} attempted unit(s) failed (swallowed)`;
-  }
-  return null;
+  const pct = Math.round((y.failed / resolved) * 100);
+  const threshold = Math.round(YIELD_DEGRADED_FAILURE_RATE * 100);
+  return `${job}: degraded yield — ${y.failed}/${resolved} resolved unit(s) failed (${pct}% > ${threshold}% threshold)${attemptedNote}`;
 }
 
 /**

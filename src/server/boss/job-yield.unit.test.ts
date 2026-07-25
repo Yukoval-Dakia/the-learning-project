@@ -8,6 +8,7 @@ import {
   YIELD_DEGRADED_FAILURE_RATE,
   YIELD_DEGRADED_MIN_SAMPLE,
   classifyJobYield,
+  describeJobYield,
   readJobYieldReport,
   reportJobYield,
 } from './job-yield';
@@ -106,6 +107,50 @@ describe('reportJobYield', () => {
     expect(err).not.toHaveBeenCalled();
     warn.mockRestore();
     err.mockRestore();
+  });
+});
+
+describe('describeJobYield — 展示分母必须与判据分母同源（PR #1076 review）', () => {
+  it('degraded 展示的比例就是触发告警的那个比例，且标出阈值', () => {
+    // 判据用 resolved = succeeded + failed = 8，failed/resolved = 5/8 = 62.5% > 50%。
+    const msg = describeJobYield('x', { attempted: 8, succeeded: 3, failed: 5 }, 'degraded');
+    expect(msg).toContain('5/8 resolved unit(s) failed');
+    expect(msg).toContain('63% > 50% threshold');
+    // 绝不能拿 attempted 当分母印出另一个数。
+    expect(msg).not.toContain('/8 attempted');
+  });
+
+  it('attempted ≠ resolved 时，分母仍是 resolved，attempted 另行标出而非藏起来', () => {
+    // 病态输入：handler 传了含前置闸单元的 considered。判据看的是 5/8（62.5%），
+    // 旧版本会印成 5/100（5%）——读者据此会判成「几乎没失败，为什么报警」。
+    const msg = describeJobYield('x', { attempted: 100, succeeded: 3, failed: 5 }, 'degraded');
+    expect(msg).toContain('5/8 resolved unit(s) failed');
+    expect(msg).toContain('63% > 50% threshold');
+    expect(msg).toContain('[attempted=100]');
+    expect(msg).not.toContain('5/100');
+  });
+
+  it('不变量成立时不加 [attempted=…] 噪声', () => {
+    const msg = describeJobYield('x', { attempted: 8, succeeded: 3, failed: 5 }, 'degraded');
+    expect(msg).not.toContain('[attempted=');
+  });
+
+  it('stalled 也用 resolved 作分母，不再声称「all N attempted 都失败了」', () => {
+    const msg = describeJobYield('x', { attempted: 3, succeeded: 0, failed: 3 }, 'stalled');
+    expect(msg).toContain('0/3 resolved unit(s) succeeded');
+    expect(msg).toContain('3 swallowed failure(s)');
+    // 病态输入下不得谎称 100 个单元全失败了（实际只解出 3 个）。
+    const skewed = describeJobYield('x', { attempted: 100, succeeded: 0, failed: 3 }, 'stalled');
+    expect(skewed).toContain('0/3 resolved unit(s) succeeded');
+    expect(skewed).toContain('[attempted=100]');
+    expect(skewed).not.toContain('all 100');
+  });
+
+  it('展示的百分比与 classifyJobYield 的判定在阈值边界上不会互相矛盾', () => {
+    // 恰好 50%：判据严格大于 → ok（无消息）。展示层不得暗示它越了阈值。
+    const y = { attempted: 10, succeeded: 5, failed: 5 };
+    expect(classifyJobYield(y)).toBe('ok');
+    expect(describeJobYield('x', y, classifyJobYield(y))).toBeNull();
   });
 });
 
