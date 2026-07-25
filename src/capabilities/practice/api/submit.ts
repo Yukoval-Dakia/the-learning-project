@@ -41,8 +41,8 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
-import { db } from '@/db/client';
-import { learning_session, question } from '@/db/schema';
+import { type Tx, db } from '@/db/client';
+import { learning_session, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
   ApiError,
@@ -79,7 +79,7 @@ import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
@@ -483,6 +483,14 @@ interface PersistedSubmit {
   finalFsrsStateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
     last_review: Date | null;
   };
+  /**
+   * W5 — true when the out-of-order guard fired: the attempt's evidence (review + judge
+   * event) was recorded, but EVERY derived write was skipped because newer evidence for this
+   * material already exists. Surfaced so the durable handler can stamp it on the terminal
+   * job_event (observability: a verdict landed, but the schedule intentionally did not move).
+   * Always false unless `enforceAttemptOrdering` was requested.
+   */
+  lateArrival: boolean;
 }
 
 // YUK-594 (W2) — the durable judge_run worker reuses persistSubmit as the shared
@@ -492,6 +500,75 @@ interface PersistedSubmit {
 // keys on that event's existence). Omitted on the sync path → `newId()` → byte-identical.
 export interface PersistSubmitOptions {
   attemptEventId?: string;
+  /**
+   * W5 — enable the out-of-order (late-arrival) guard. Set ONLY by the durable worker.
+   *
+   * The hazard exists exactly where a verdict is DEFERRED: the durable lane can commit an
+   * older attempt after a newer one already advanced the same material. Two concurrent
+   * SYNCHRONOUS submits cannot produce it — each carries `now = request time` and they
+   * serialize on the learning-state lock, so the later writer always has the later stamp.
+   * Gating the check here keeps the sync path byte-identical AND free of the two extra
+   * reads the detection costs.
+   */
+  enforceAttemptOrdering?: boolean;
+}
+
+/**
+ * W5 #Tuey8 — has any material this attempt would WRITE already absorbed a newer attempt?
+ *
+ * The detection domain must be the **union of every write set**, not a convenient subset.
+ * The first cut only walked the FSRS updates, but `updateThetaForAttempt` writes θ̂ for the
+ * FULL `q.knowledge_ids`, while FSRS writes only `requested ∩ labels`. On a multi-tag question
+ * where two async submits referenced different `referenced_knowledge_ids` — or where the newer
+ * attempt only advanced KCs outside this attempt's FSRS subset — those KCs carried a newer θ̂
+ * that the narrow check never looked at, so a stale answer still updated a fresher posterior.
+ *
+ * Two per-KC "newest observation" sources, matching the two write targets:
+ *   - `material_fsrs_state.state.last_review` — the FSRS axis (jsonb ⇒ needs date coercion).
+ *   - `mastery_state.last_outcome_at`         — the θ̂ axis.
+ */
+async function detectLateArrival(
+  tx: Tx,
+  input: {
+    now: Date;
+    fsrsSubjectKind: FsrsSubjectKind;
+    fsrsSubjectIds: string[];
+    knowledgeIds: string[];
+  },
+): Promise<boolean> {
+  const { now, fsrsSubjectKind, fsrsSubjectIds, knowledgeIds } = input;
+  const nowMs = now.getTime();
+
+  if (fsrsSubjectIds.length > 0) {
+    const rows = await tx
+      .select({ state: material_fsrs_state.state })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, fsrsSubjectKind),
+          inArray(material_fsrs_state.subject_id, fsrsSubjectIds),
+        ),
+      );
+    for (const row of rows) {
+      const lastReview = coerceJsonbDate(row.state?.last_review ?? null);
+      if (lastReview !== null && lastReview.getTime() > nowMs) return true;
+    }
+  }
+
+  // θ̂ is written for the question's FULL label set, independent of the FSRS subset.
+  const thetaSubjectIds = Array.from(new Set(knowledgeIds)).filter((id) => id.length > 0);
+  if (thetaSubjectIds.length > 0) {
+    const rows = await tx
+      .select({ lastOutcomeAt: mastery_state.last_outcome_at })
+      .from(mastery_state)
+      .where(inArray(mastery_state.subject_id, thetaSubjectIds));
+    for (const row of rows) {
+      const lastOutcomeAt = coerceJsonbDate(row.lastOutcomeAt);
+      if (lastOutcomeAt !== null && lastOutcomeAt.getTime() > nowMs) return true;
+    }
+  }
+
+  return false;
 }
 
 export async function persistSubmit(
@@ -558,6 +635,8 @@ export async function persistSubmit(
   let judgeEventId: string | null = null;
   let primaryResult: ReturnType<typeof scheduleReview>;
   let primaryFsrsStateAfter: PersistedSubmit['finalFsrsStateAfter'];
+  // W5 — hoisted out of the tx so the POST-COMMIT signals can honour it too (#TuezA).
+  let lateArrival = false;
 
   await db.transaction(async (tx) => {
     // YUK-497 — global learning-state write lock FIRST (before the question row lock and the
@@ -577,12 +656,44 @@ export async function persistSubmit(
       // `before` per entry here keeps the FULL multi-subject snapshot (without this only
       // the primary's before would survive the loop → partial revert).
       before: FsrsStateSchemaT | null;
-      /**
-       * W4 #TtWiA — this subject's `last_review` as it stood BEFORE this attempt, used to
-       * detect an out-of-order (late) backfill. `null` = cold card / never reviewed.
-       */
-      prevLastReview: Date | null;
     }> = [];
+
+    // ── W4 #TtWiA / W5 #Tuey8 — out-of-order (late) backfill guard ────────────────────
+    // The durable lane decouples "when the learner answered" from "when the verdict lands".
+    // An earlier run whose judge failed goes into 30s/60s redelivery while a LATER attempt on
+    // the same material succeeds first; the older run then commits with an EARLIER `now` and
+    // writes on top of the newer state. The tx lock serializes writes but cannot restore time
+    // order, so last_review / due / θ̂ / snapshots all get walked backwards.
+    //
+    // **ONE SWITCH, not per-item triage** (coordinator ruling, W5). The first cut tried to
+    // decide per derived write which ones were safe to keep; that produced two rounds of
+    // same-family holes (a detection domain narrower than the write domain, then a
+    // post-commit signal that read the newer attempt's Δθ̂). The surface is now binary:
+    //
+    //   late ⇒ write ONLY the immutable evidence (review event + judge event).
+    //          EVERY derived write is skipped — FSRS, θ̂, snapshot brackets, family
+    //          observation, calibration label, and all post-commit signals.
+    //
+    // Rationale: derived state is a pure function of the evidence log, so anything skipped
+    // here is recoverable by replaying/recomputing from the events that DID land, whereas a
+    // backwards write corrupts state that later attempts build on. Recording the attempt is
+    // non-negotiable (immutable evidence); everything else can wait for a correct recompute.
+    //
+    // Detection covers the UNION of every write domain — see detectLateArrival.
+    lateArrival = opts.enforceAttemptOrdering
+      ? await detectLateArrival(tx, {
+          now,
+          fsrsSubjectKind,
+          fsrsSubjectIds,
+          knowledgeIds: q.knowledge_ids,
+        })
+      : false;
+    if (lateArrival) {
+      console.warn(
+        '[submit] late-arriving attempt — recording the evidence ONLY; every derived write is skipped (newer evidence already exists for this material)',
+        { eventId, questionId, submittedAt: now.toISOString() },
+      );
+    }
 
     for (const subjectId of [...fsrsSubjectIds].sort()) {
       await tx.execute(
@@ -650,45 +761,19 @@ export async function persistSubmit(
         // via `z.coerce.date()`, but this row comes straight out of jsonb, so at RUNTIME the
         // value is still the ISO string it was stored as — the static type lies here.
         // Normalize before anyone calls a Date method on it.
-        prevLastReview: coerceJsonbDate(prevStateRow?.state?.last_review ?? null),
       });
     }
     const primaryUpdate = fsrsUpdates[0];
     primaryResult = primaryUpdate.result;
     primaryFsrsStateAfter = primaryUpdate.stateAfter;
 
-    // ── W4 #TtWiA — out-of-order (late) backfill guard ────────────────────────────────
-    // The durable lane decouples "when the learner answered" from "when the verdict lands".
-    // An earlier run whose judge failed goes into 30s/60s redelivery while a LATER attempt on
-    // the same KC succeeds first; the older run then arrives with an EARLIER `now` and
-    // reschedules on top of the newer state. The tx lock serializes writes but cannot restore
-    // time order, so `last_review`, `due`, θ̂ and the snapshots all get walked backwards onto
-    // a state that already reflects a newer attempt.
-    //
-    // Detection is per-attempt, not per-subject: an attempt is ONE event, and half-applying it
-    // (advance KC A, skip KC B) would leave a snapshot/revert bracket that describes a state
-    // transition that never happened. If ANY subject already carries a `last_review` strictly
-    // newer than this attempt's timestamp, the whole attempt is late.
-    //
-    // Late-arrival semantics (the coordinator's ruling): RECORD the attempt — it is immutable
-    // evidence and must not be dropped — but do NOT regress the schedule. The FSRS upsert and
-    // the θ̂ update are both skipped, and neither axis contributes a revert bracket (see the
-    // writeAttemptSnapshotBrackets call below).
-    //
-    // The synchronous path cannot trigger this (its `now` is request time, always ≥ any
-    // committed `last_review`), so flag-off behaviour is unchanged.
-    const lateArrival = fsrsUpdates.some(
-      (update) => update.prevLastReview !== null && update.prevLastReview.getTime() > now.getTime(),
-    );
+    // ── Late-arrival: report the UNCHANGED schedule ───────────────────────────────────
+    // `lateArrival` was decided BEFORE this loop (see the guard above the FSRS section).
+    // Nothing derived gets written, so neither the event payload nor the HTTP response may
+    // claim an advance. `due` needs the same jsonb coercion as `last_review` — `dueAt` is
+    // consumed as a real Date by the sync response shaping (`finalResult.dueAt.getTime()`),
+    // and a raw ISO string would throw there.
     if (lateArrival) {
-      console.warn(
-        '[submit] late-arriving attempt — recording it WITHOUT regressing FSRS/θ̂ (a newer attempt on this material already advanced the schedule)',
-        { eventId, questionId, submittedAt: now.toISOString() },
-      );
-      // Report the UNCHANGED schedule, so neither the event payload nor the HTTP response
-      // claims an advance that was deliberately not written. `due` needs the same jsonb
-      // coercion as `last_review` — `dueAt` is consumed as a real Date by the sync response
-      // shaping (`finalResult.dueAt.getTime()`), and a raw ISO string would throw there.
       for (const update of fsrsUpdates) {
         if (!update.before) continue;
         update.result = {
@@ -927,27 +1012,24 @@ export async function persistSubmit(
     // effort family/calibration SAVEPOINTs below so a SAVEPOINT rollback never touches
     // it. `ingest_at:now` + deterministic ids (inside the helper) give the outbox
     // opt-out + retried-tx idempotency (§6.7).
-    await writeAttemptSnapshotBrackets(tx, {
-      attemptEventId: eventId,
-      sessionId: body.session_id ?? null,
-      now,
-      thetaSnapshots: thetaResult.theta_snapshots,
-      // W4 #TtWiA — a late arrival wrote NO FSRS transition, so it contributes NO snapshot.
-      // The helper's "write each segment iff it moved" rule keys on the ARRAY being
-      // non-empty, not on `before !== after`, so passing the (unchanged) updates through
-      // would mint a checkpoint + snapshot bracket describing a transition that never
-      // happened — reversible state for a no-op. Empty array = the axis genuinely did not
-      // move, which is exactly what the rule means. (θ̂ gets this for free: the skipped
-      // updateThetaForAttempt yields no theta_snapshots.)
-      fsrsSnapshots: lateArrival
-        ? []
-        : fsrsUpdates.map((update) => ({
-            subject_kind: update.subject_kind,
-            subject_id: update.subject_id,
-            before: update.before,
-            after: update.stateAfter,
-          })),
-    });
+    // W4 #TtWiA — a late arrival moved NOTHING, so it gets NO revert bracket. The helper's
+    // "write each segment iff it moved" rule keys on the ARRAY being non-empty, not on
+    // `before !== after`, so passing the unchanged updates through would mint a checkpoint +
+    // snapshot describing a transition that never happened — reversible state for a no-op.
+    if (!lateArrival) {
+      await writeAttemptSnapshotBrackets(tx, {
+        attemptEventId: eventId,
+        sessionId: body.session_id ?? null,
+        now,
+        thetaSnapshots: thetaResult.theta_snapshots,
+        fsrsSnapshots: fsrsUpdates.map((update) => ({
+          subject_kind: update.subject_kind,
+          subject_id: update.subject_id,
+          before: update.before,
+          after: update.stateAfter,
+        })),
+      });
+    }
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
     // 同 tx（计数与作答一致），但 best-effort：绝不让它 fail 上面的 θ̂/FSRS/event 主路径。
@@ -972,7 +1054,10 @@ export async function persistSubmit(
     // 捕到了也救不回（捕 JS 错 ≠ 解毒 PG tx）。tx.transaction(...) 经 drizzle 转成
     // SAVEPOINT，family 写失败只回滚 savepoint，主 attempt 写完整保留可 COMMIT。
     // 同 Phase 3 telemetry-in-tx bug 同类修复。
-    if (body.auto_rate) {
+    // W5 — family observation + calibration label are DERIVED estimates (b_personalized /
+    // difficulty labels) anchored on `thetaBefore`, which for a late arrival is a posterior
+    // that already absorbed a newer attempt. Same switch as everything else derived.
+    if (body.auto_rate && !lateArrival) {
       try {
         await tx.transaction(async (sp) => {
           await recordFamilyObservationForAttempt(sp, {
@@ -1026,6 +1111,31 @@ export async function persistSubmit(
   // 衍生题触发——流内普通题（manual/ingestion）作答是死线。新触发器按
   // question.knowledge_ids 派生 labeled notes（D6 后 error_rate 的替代信号源），
   // source_ref 直指来源笔记的旧线保留；triggers 层 1h debounce 防风暴。
+  // ── W5 #TuezA — post-commit signals are derived writes too ────────────────────────────
+  // `emitMasteryProgressSignal` reads `mastery_state` AFTER commit and reports its
+  // `last_theta_delta` as "this attempt's Δθ̂", with caused_by pointing at THIS attempt. On a
+  // late arrival we deliberately skipped `updateThetaForAttempt`, so that delta belongs to the
+  // NEWER attempt — emitting it would manufacture mis-attributed experiment data (the exact
+  // signal ADR-0040 exists to keep honest). The note-refine trigger hangs off the same
+  // "mastery progressed" premise, and the wrong-streak nudge / prereq-risk producer are the
+  // same class. One switch: a late attempt emits no derived signals at all.
+  if (lateArrival) {
+    console.warn(
+      '[submit] late-arriving attempt — skipping post-commit derived signals (mastery-progress, note-refine, wrong-streak, prereq-risk)',
+      { eventId, questionId },
+    );
+    return {
+      eventId,
+      judgeEventId,
+      outcome,
+      fsrsSubjectKind,
+      fsrsSubjectIds,
+      finalResult,
+      finalFsrsStateAfter,
+      lateArrival,
+    };
+  }
+
   if (outcome === 'success') {
     // ADR-0040 决定2 — p(L) delta 埋点（READ-only 旁路）。触发条件 outcome===success
     // **未变**（PHASE-DEFERRED：跨阈 gating 待 N 周埋点选出阈值后才上）。这里只 READ
@@ -1085,6 +1195,7 @@ export async function persistSubmit(
     fsrsSubjectIds,
     finalResult,
     finalFsrsStateAfter,
+    lateArrival,
   };
 }
 

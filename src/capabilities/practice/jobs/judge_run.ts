@@ -201,7 +201,13 @@ export async function runJudgeRun(
     // 回填事务（复用同步面 persistSubmit：review event(id=run_id) + judge event +
     // FSRS/θ̂/snapshot/family/calibration 原子 tx + post-commit 信号）。attemptEventId=
     // run_id 让 attempt event id 与 run handle 对齐（幂等守卫据它跳重投）。
-    const persisted = await persistSubmit(validated, judged, { attemptEventId: runId });
+    // W5 — `enforceAttemptOrdering` is the durable lane's opt-in to the late-arrival guard.
+    // Only a deferred verdict can commit an older attempt after a newer one, so the check
+    // (and its two extra reads) belongs here, not on the synchronous face.
+    const persisted = await persistSubmit(validated, judged, {
+      attemptEventId: runId,
+      enforceAttemptOrdering: true,
+    });
     persistedOk = true;
 
     // 终态 DONE，携判词（JudgeResultV2 + telemetry + lane provenance）供 SSE/poll 回填。
@@ -230,6 +236,10 @@ export async function runJudgeRun(
         // YUK-573 lane provenance — 记本次真正产判词的 provider lane（跨 provider 兜底
         // 后 lane 非固定；calibration same_lane 推断读它）。
         provider_override: providerOverride ?? null,
+        // W5 — the verdict landed, but newer evidence for this material already existed, so
+        // every derived write (FSRS / θ̂ / signals) was intentionally skipped. Surfaced here
+        // so "why didn't my schedule move?" is answerable from the run's own trace.
+        ...(persisted.lateArrival ? { late_arrival: true } : {}),
       },
     });
 
@@ -423,12 +433,64 @@ async function writeTerminalJobEvent(
   db: Db,
   args: { businessId: string; eventType: string; payload: Record<string, unknown> },
 ): Promise<void> {
-  await writeJobEvent(db, {
-    business_table: JUDGE_RUN_TABLE,
-    business_id: args.businessId,
-    event_type: args.eventType,
-    payload: args.payload,
-  });
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < TERMINAL_WRITE_ATTEMPTS; attempt++) {
+    try {
+      await writeJobEvent(db, {
+        business_table: JUDGE_RUN_TABLE,
+        business_id: args.businessId,
+        event_type: args.eventType,
+        payload: args.payload,
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < TERMINAL_WRITE_ATTEMPTS - 1) {
+        console.warn(
+          `[judge_run] terminal ${args.eventType} write failed (attempt ${attempt + 1}/${TERMINAL_WRITE_ATTEMPTS}) — retrying`,
+          args.businessId,
+          err,
+        );
+        await sleep(TERMINAL_WRITE_BACKOFF_MS[attempt] ?? 0);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * W5 #Tuey9 — in-process retry budget for a TERMINAL job_event write.
+ *
+ * Why this exists: redelivery is not a universal safety net for the terminal write. On the
+ * FINAL delivery (`retryCount === retryLimit`) the pg-boss budget is already spent, so a
+ * throw sends the job to the DLQ and the idempotency guard never runs again — an attempt that
+ * COMMITTED would sit behind its STARTED event with no terminal event, leaving poll/SSE
+ * pending forever. The finding describes a *transient* insert failure, and a bounded
+ * in-process retry is the remedy that matches that shape: it does not depend on any further
+ * delivery.
+ *
+ * **Why this cannot double-write.** `writeJobEvent` INSERTs a new `job_events` row; it never
+ * updates in place. Three cases:
+ *   - the insert genuinely failed → the retry produces exactly one row;
+ *   - the insert committed but the ack was lost → the retry adds a SECOND terminal row with
+ *     an identical payload. Both consumers are idempotent under that: `deriveJudgeRunStatus`
+ *     is last-writer-wins over a terminal kind (two DONEs ⇒ done; two FAILEDs ⇒ failed), and
+ *     `terminalJudgeRunResult` returns the LAST DONE payload — which is byte-identical to the
+ *     first. So a duplicate is invisible downstream;
+ *   - all attempts fail → we rethrow, which is strictly better than swallowing.
+ * Note this is retrying the *notification*, not the backfill: the attempt tx is already
+ * committed and is never re-executed here, so there is no risk of a second judge or a second
+ * FSRS write.
+ *
+ * Residual (documented, W3/YUK-777): if the DB is unreachable for the whole window we cannot
+ * durably record ANY terminal marker anywhere, so the run stays pending until the
+ * domain-state-scan sweeper picks it up. No in-process scheme can close that.
+ */
+const TERMINAL_WRITE_ATTEMPTS = 3;
+const TERMINAL_WRITE_BACKOFF_MS = [100, 400];
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
 async function loadQuestionRow(db: Db, questionId: string) {

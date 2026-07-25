@@ -541,6 +541,81 @@ describe('runJudgeRun — late-arriving backfill (#TtWiA)', () => {
     const brackets = await db.select().from(event).where(eq(event.subject_id, olderRunId));
     expect(brackets.map((e) => e.action)).not.toContain('experimental:state_snapshot');
     expect(brackets.map((e) => e.action)).not.toContain('experimental:grading_checkpoint');
+
+    // W5 #TuezA — the POST-COMMIT mastery-progress signal must be skipped too. It reads
+    // `mastery_state.last_theta_delta` after commit and reports it as THIS attempt's Δθ̂ with
+    // caused_by pointing here; since θ̂ was deliberately not updated, that delta belongs to
+    // the NEWER attempt, so emitting it manufactures mis-attributed experiment data.
+    const signals = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:mastery_progress'));
+    expect(signals.some((e) => e.caused_by_event_id === olderRunId)).toBe(false);
+
+    // The terminal DONE records that the schedule intentionally did not move.
+    const events = await computeReplay(db, {
+      businessTable: 'judge_run',
+      businessId: olderRunId,
+      lastEventId: 0,
+    });
+    expect((terminalJudgeRunResult(events) as { late_arrival?: boolean })?.late_arrival).toBe(true);
+  });
+
+  // W5 #Tuey8 — the detection domain must cover EVERY write domain, not just the FSRS subset.
+  // θ̂ is written for the question's FULL knowledge_ids, while FSRS writes only
+  // `requested ∩ labels`. A newer attempt that advanced a KC OUTSIDE this attempt's FSRS
+  // subset used to slip past a detector that only walked the FSRS updates.
+  it('detects lateness from a KC that only the θ̂ write set covers', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    const now = new Date();
+    // Two labels: the submit below narrows FSRS to k1 via referenced_knowledge_ids, but θ̂
+    // still writes BOTH k1 and k2.
+    await db.insert(question).values({
+      id: questionId,
+      prompt_md: `Prompt for ${questionId}`,
+      kind: 'short_answer',
+      reference_md: null,
+      knowledge_ids: ['k1', 'k2'],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+
+    // A newer attempt already moved θ̂ for k2 ONLY (nothing touched k1's FSRS card).
+    await db.insert(mastery_state).values({
+      id: newId(),
+      subject_kind: 'knowledge',
+      subject_id: 'k2',
+      theta_hat: 0.5,
+      evidence_count: 1,
+      last_outcome_at: new Date('2026-07-20T10:00:00Z'),
+      updated_at: new Date('2026-07-20T10:00:00Z'),
+    });
+
+    // The late run narrows FSRS to k1, so an FSRS-only detector sees nothing stale.
+    const olderRunId = newId();
+    const olderData = jobData(olderRunId, questionId);
+    olderData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
+    (olderData.submit.body as { referenced_knowledge_ids?: string[] }).referenced_knowledge_ids = [
+      'k1',
+    ];
+
+    const result = await runJudgeRun(db, olderData, META0, { judgeSubmitFn: mockJudgeSubmit() });
+    expect(result.status).toBe('done');
+    // Evidence recorded…
+    expect(await db.select().from(event).where(eq(event.id, olderRunId))).toHaveLength(1);
+    // …but k2's θ̂ was NOT moved backwards by the stale attempt.
+    const k2 = (await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k2')))[0];
+    expect(k2.theta_hat).toBe(0.5);
+    expect(k2.evidence_count).toBe(1);
+    // …and no FSRS card was created for k1 either (whole-attempt skip, not a partial one).
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1')),
+    ).toHaveLength(0);
   });
 
   it('an IN-ORDER backfill still advances FSRS normally (the guard is not a blanket skip)', async () => {
