@@ -14,6 +14,13 @@ export type UsabilityScenario =
 interface FixtureController {
   unexpectedRequests: string[];
   mutationAttempts: () => number;
+  /**
+   * YUK-789 — every mutating / telemetry call the teaching-brief band makes, in order
+   * (`METHOD /path`). The click-through spec asserts on this instead of on focus order:
+   * a band that renders but never reaches its mutation is exactly the "looks wired,
+   * isn't" failure this fixture set exists to catch.
+   */
+  briefCalls: () => string[];
 }
 
 const evidenceKeys = {
@@ -99,6 +106,60 @@ function teachingBrief() {
   };
 }
 
+// YUK-789 — the SAME brief after「就按这个方向验证」: the server re-projects the accepted
+// finding to `probe_ready` (contract §5: prepared_action becomes answer_probe, outcome
+// becomes awaiting_answer). Same brief_id, so the band takes its forward-announce path
+// instead of treating it as a new candidate.
+function teachingBriefProbeReady() {
+  const finding = teachingBrief();
+  return {
+    brief_id: finding.brief_id,
+    state: 'probe_ready',
+    updated_at: '2026-07-18T15:12:00.000Z',
+    expires_at: null,
+    finding: finding.finding,
+    basis: finding.basis,
+    prepared_action: {
+      kind: 'answer_probe',
+      probe_question_id: 'q_probe_wy1',
+      prompt_md: finding.prepared_action.probe_preview_md,
+    },
+    current_outcome: {
+      status: 'awaiting_answer',
+      summary_md: '这道判别题已经备好，等你作答。',
+    },
+  };
+}
+
+// YUK-789 — the A 档 auto-applied digest (/inbox) and the 成效趋势面 (/coach efficacy).
+// Both are shipped learner surfaces reachable from the same SPA build; without fixtures
+// a spec that walks into either route silently falls into the catch-all 501.
+function autoAppliedDigest() {
+  return {
+    rows: [],
+    breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 7 },
+  };
+}
+
+function effectivenessTrend() {
+  return {
+    series: [],
+    subject_roots: [],
+    aggregate: { total_kcs_with_activity: 0, total_events: 0, by_subject: [] },
+    metadata: {
+      as_of: '2026-07-18T15:10:00.000Z',
+      window_start: '2026-06-18T15:10:00.000Z',
+      window_end: '2026-07-18T15:10:00.000Z',
+      timezone: 'Asia/Shanghai',
+      granularity: 'calendar_day',
+      notable_limit: 6,
+      eligible: 0,
+      returned: 0,
+      truncated: false,
+    },
+  };
+}
+
 function stream(status: 'pending' | 'skipped') {
   return {
     date: '2026-07-13',
@@ -161,8 +222,11 @@ export async function installApiFixtures(
   scenario: UsabilityScenario,
 ): Promise<FixtureController> {
   const unexpectedRequests: string[] = [];
+  const briefCalls: string[] = [];
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
+  // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
+  let briefState: 'finding' | 'probe_ready' = 'finding';
 
   await page.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
     key: TOKEN_STORAGE_KEY,
@@ -214,8 +278,66 @@ export async function installApiFixtures(
     if (key === 'GET /api/prep-desk/probes') return fulfill(route, { probes: [] });
     // YUK-707/721 — the teaching brief band queries this on /today. The 'teaching-brief'
     // scenario returns a full FINDING brief; every other scenario stays a quiet {brief:null}.
+    // YUK-789 — the finding advances to probe_ready once the accept mutation lands, so the
+    // click-through spec can assert the real post-accept state instead of stopping at focus.
     if (key === 'GET /api/prep-desk/brief') {
-      return fulfill(route, { brief: scenario === 'teaching-brief' ? teachingBrief() : null });
+      if (scenario !== 'teaching-brief') return fulfill(route, { brief: null });
+      return fulfill(route, {
+        brief: briefState === 'probe_ready' ? teachingBriefProbeReady() : teachingBrief(),
+      });
+    }
+    // YUK-789 — TeachingBrief.tsx POSTs this on mount (brief_seen) and again on the accept
+    // click (primary_action_started). It was missing from the table, so every teaching-brief
+    // render fell into the catch-all 501 and polluted unexpectedRequests.
+    if (key === 'POST /api/prep-desk/brief/interaction') {
+      briefCalls.push(key);
+      return fulfill(route, {
+        interaction_event_id: 'evt_brief_interaction_1',
+        local_day: '2026-07-18',
+        idempotent: false,
+      });
+    }
+    // YUK-789 — the append-only「知道了」outcome acknowledgement (contract §4.2).
+    if (key === 'POST /api/prep-desk/brief/ack') {
+      briefCalls.push(key);
+      return fulfill(route, {
+        brief_acknowledgement_event_id: 'evt_brief_ack_1',
+        probe_result_event_id: 'evt_probe_result_wy1',
+        brief_id: 'evt_conjecture_wy1',
+        idempotent: false,
+      });
+    }
+    // YUK-789 — the accept/dismiss mutation the band's two CTAs drive (decideProposal).
+    // The accept flips the server-side brief projection to probe_ready.
+    if (method === 'POST' && /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)) {
+      briefCalls.push(`POST ${url.pathname}`);
+      const body = request.postDataJSON() as { decision?: string } | null;
+      if (body?.decision === 'accept') briefState = 'probe_ready';
+      return fulfill(
+        route,
+        {
+          proposal_id: 'evt_conjecture_wy1',
+          proposal_kind: 'conjecture',
+          decision: body?.decision ?? 'accept',
+          decision_event_id: 'evt_rate_wy1',
+          proposal_status: body?.decision === 'accept' ? 'accepted' : 'dismissed',
+          created: true,
+          idempotent: false,
+          result: {
+            kind: 'conjecture',
+            rate_event_id: 'evt_rate_wy1',
+            conjecture_id: 'evt_conjecture_wy1',
+            corrected_by_owner: false,
+            weakness_confirmed: false,
+          },
+        },
+        201,
+      );
+    }
+    // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
+    if (key === 'GET /api/proposals/auto-applied') return fulfill(route, autoAppliedDigest());
+    if (key === 'GET /api/observability/effectiveness-trend') {
+      return fulfill(route, effectivenessTrend());
     }
     if (key === 'GET /api/agents/notes') return fulfill(route, { rows: [] });
     if (key === 'GET /api/artifacts/ai-changes/recent') {
@@ -267,5 +389,9 @@ export async function installApiFixtures(
     );
   });
 
-  return { unexpectedRequests, mutationAttempts: () => mutationAttempts };
+  return {
+    unexpectedRequests,
+    mutationAttempts: () => mutationAttempts,
+    briefCalls: () => [...briefCalls],
+  };
 }

@@ -103,3 +103,103 @@ jobs:
         run: pnpm build
         env:
           DATABASE_URL: postgres://placeholder
+
+  # YUK-789 — 浏览器级可用性回归进 CI。此前 `test:usability:container` 只是 package.json 里
+  # 的手动脚本（`.github/` 零命中），所以唯一的浏览器级教研团覆盖长期红着也没人看见。
+  # 形态与 docs/agents/usability-container-smoke.md 一致：跑 **构建产物**（dist/server.cjs +
+  # web/dist 的 hashed Vite bundle），不是 Vite dev server；浏览器里的 /api/* 全部由确定性
+  # fixture 拦截，所以不打付费 LLM、不碰任何数据库（server 只服务静态面 + /api/health）。
+  usability:
+    name: usability container (shipped SPA + API fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需历史做 merge-base diff 判 docs-only
+
+      - name: Detect docs-only change
+        id: filter
+        run: |
+          set -uo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Base 未知 — 保守跑全量 gate。"
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          MB="$(git merge-base "$BASE" HEAD || echo "$BASE")"
+          CHANGED="$(git diff --name-only "$MB" HEAD)"
+          if [ -z "$CHANGED" ]; then
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if echo "$CHANGED" | grep -qvE '^(docs/|\.remember/|.*\.md$)'; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Docs-only — usability gate skipped
+        if: steps.filter.outputs.code_changed != 'true'
+        run: echo "✅ Docs-only PR — usability container gate skipped. Gate green."
+
+      - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.code_changed == 'true'
+        with:
+          version: 11.13.1
+
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+
+      - name: Install deps
+        if: steps.filter.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        if: steps.filter.outputs.code_changed == 'true'
+        run: pnpm test:usability:install
+
+      - name: Build (server bundle + shipped SPA)
+        if: steps.filter.outputs.code_changed == 'true'
+        run: pnpm build
+        env:
+          DATABASE_URL: postgres://placeholder
+
+      # 只服务 web/dist + /api/health：/api/* 业务面在浏览器侧被 fixture 全量拦截，
+      # 所以这里不需要 Postgres（subject hydrate 内部 never-throws，失败即走代码种子地板）。
+      - name: Boot the built server on :18787
+        if: steps.filter.outputs.code_changed == 'true'
+        run: |
+          set -uo pipefail
+          RW_STATIC_DIR=web/dist \
+          API_PORT=18787 \
+          INTERNAL_TOKEN=usability-ci-token \
+          DATABASE_URL=postgres://placeholder:placeholder@127.0.0.1:1/placeholder \
+          node dist/server.cjs > usability-server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:18787/api/health > /dev/null; then
+              echo "server healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::server never became healthy on :18787"; cat usability-server.log; exit 1
+
+      - name: Usability container regression
+        if: steps.filter.outputs.code_changed == 'true'
+        run: pnpm test:usability:container
+        env:
+          USABILITY_BASE_URL: http://127.0.0.1:18787
+
+      - name: Server log (on failure)
+        if: failure() && steps.filter.outputs.code_changed == 'true'
+        run: cat usability-server.log || true
+
+      - name: Upload Playwright traces (on failure)
+        if: failure() && steps.filter.outputs.code_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: usability-traces
+          path: test-results/usability
+          if-no-files-found: ignore
