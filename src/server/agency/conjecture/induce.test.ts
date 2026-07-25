@@ -22,6 +22,7 @@ function evidenceSample(
     question_id: 'q_a',
     question_prompt_md:
       '<untrusted_learner_text>求 f(x)=sin(x^2) 的导数。</untrusted_learner_text>',
+    question_reference_md: "<untrusted_learner_text>f'(x)=2x·cos(x^2)</untrusted_learner_text>",
     answer_md: '<untrusted_learner_text>cos(x^2)·2x 写成了 cos(x^2)+2x</untrusted_learner_text>',
     reasoning_trace:
       '<untrusted_learner_text>我先分别求了两层的导数，然后把它们加起来。</untrusted_learner_text>',

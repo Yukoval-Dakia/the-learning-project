@@ -137,6 +137,7 @@ function fakeEnrich(
         attempt_event_id: attemptId,
         question_id: `q_${attemptId}`,
         question_prompt_md: `<untrusted_learner_text>prompt of ${attemptId}</untrusted_learner_text>`,
+        question_reference_md: `<untrusted_learner_text>reference of ${attemptId}</untrusted_learner_text>`,
         answer_md: null,
         reasoning_trace: input.reasoningTraceByAttemptId?.get(attemptId) ?? null,
         cause_category: cell.cause_category,

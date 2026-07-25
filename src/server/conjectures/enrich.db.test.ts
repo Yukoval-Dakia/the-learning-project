@@ -22,21 +22,32 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
 
-async function seedKnowledge(id: string, name: string, domain: string | null): Promise<void> {
+async function seedKnowledge(
+  id: string,
+  name: string,
+  domain: string | null,
+  parentId: string | null = null,
+): Promise<void> {
   await testDb().insert(knowledge).values({
     id,
     name,
     domain,
+    parent_id: parentId,
     created_at: CREATED_AT,
     updated_at: CREATED_AT,
   });
 }
 
-async function seedQuestion(id: string, promptMd: string): Promise<void> {
+async function seedQuestion(
+  id: string,
+  promptMd: string,
+  referenceMd: string | null = null,
+): Promise<void> {
   await testDb().insert(question).values({
     id,
     kind: 'short_answer',
     prompt_md: promptMd,
+    reference_md: referenceMd,
     knowledge_ids: [],
     source: 'manual',
     // Container-question guard (audit:draft-status): probe pools must never
@@ -158,6 +169,47 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
 
     const [cell] = await runPipe();
     expect(cell.subject_id).toBe('yuwen');
+  });
+
+  it('resolves the EFFECTIVE domain: a child KC inherits its ancestor subject', async () => {
+    // The common shape: only the root carries `domain`, children are null and
+    // inherit. Reading `knowledge.domain` directly would report subject-unknown
+    // for most real cells and drop the run back to the neutral profile — i.e. it
+    // would silently undo this ticket's subject grounding.
+    await seedKnowledge('kc_root', '语文', 'yuwen');
+    await seedKnowledge('kc_mid', '文言基础', null, 'kc_root');
+    await seedKnowledge('kc_leaf', '使动用法', null, 'kc_mid');
+    await seedQuestion('q1', 'prompt 1');
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({ id: 'a1', questionId: 'q1', knowledgeIds: ['kc_leaf'] });
+    await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_leaf'] });
+
+    const [cell] = await runPipe();
+    expect(cell.knowledge_name).toBe('使动用法');
+    expect(cell.subject_id).toBe('yuwen');
+    expect(cell.subject_display_name).toBe('语文');
+  });
+
+  it('carries the question reference answer so the deviation is reconstructable', async () => {
+    // Question + wrong answer alone do not show WHAT right was, and the claim is
+    // supposed to be about the deviation. Load-bearing when the owner supplied a
+    // cause category with no notes (cause_analysis_md null).
+    await seedKnowledge('kc_shici', '实词', 'yuwen');
+    await seedQuestion('q1', '「学而时习之，不亦说乎」中「说」作何解？', '通「悦」，高兴');
+    await seedQuestion('q2', 'prompt 2', null);
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_shici'],
+      answerMd: '说话',
+    });
+    await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_shici'] });
+
+    const [cell] = await runPipe();
+    expect(cell.samples[0].question_reference_md).toContain('通「悦」');
+    expect(cell.samples[0].question_reference_md).toMatch(/^<untrusted_learner_text>/);
+    // A question with no reference answer reports null, not an empty wrapper.
+    expect(cell.samples[1].question_reference_md).toBeNull();
   });
 
   it('reports an untagged KC as subject-unknown rather than defaulting to a subject', async () => {

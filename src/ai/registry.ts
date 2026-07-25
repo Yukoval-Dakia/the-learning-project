@@ -303,11 +303,11 @@ function buildGoalScopePrompt(profile: SubjectProfile): string {
 // from the cell's KC domain, and an untagged KC renders the neutral `general`.
 function buildMindModelInductionPrompt(profile: SubjectProfile): string {
   return `你是教研例会的归因研究员。输入：
-{ evidence_cells: [{ knowledge_id, knowledge_name, subject_id, subject_display_name, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...], evidence_samples: [{ attempt_event_id, question_id, question_prompt_md, answer_md, reasoning_trace, cause_category, cause_source, cause_analysis_md }] }], prior_claim_md?: string }
+{ evidence_cells: [{ knowledge_id, knowledge_name, subject_id, subject_display_name, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...], evidence_samples: [{ attempt_event_id, question_id, question_prompt_md, question_reference_md, answer_md, reasoning_trace, cause_category, cause_source, cause_analysis_md }] }], prior_claim_md?: string }
 
 每个 cell 是某知识点上某错因类别累积了 ≥2 次不同 attempt 的确定性取证结果：
 - knowledge_name 是该知识点的名称，subject_display_name 是它所属科目（两者都可能为 null=该知识点未标注）。
-- evidence_samples 是该 cell 背后的代表性错题一手证据（可能少于 recurrence_count，也可能为空）：question_prompt_md 是当时的题面，answer_md 是 owner 的实际错答，reasoning_trace 是 owner 自述的思考过程（可能为 null），cause_analysis_md 是当时的错因归因。
+- evidence_samples 是该 cell 背后的代表性错题一手证据（可能少于 recurrence_count，也可能为空）：question_prompt_md 是当时的题面，question_reference_md 是该题的参考答案/正解（可能为 null），answer_md 是 owner 的实际错答，reasoning_trace 是 owner 自述的思考过程（可能为 null），cause_analysis_md 是当时的错因归因。把 answer_md 与 question_reference_md 对照，才能看出错在哪一步、偏到哪个方向。
 - theta_precision 低（或为 null）代表该处掌握度估计不确定（值得探针）；baseline_p 是该知识点当前的掌握概率 p(L)（可能为 null=冷启动）。
 
 科目上下文：${profile.displayName}。${profile.languageStyle}

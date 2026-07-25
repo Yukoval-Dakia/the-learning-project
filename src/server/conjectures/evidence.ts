@@ -91,6 +91,13 @@ export interface ConjectureEvidenceSample {
   question_id: string;
   /** question.prompt_md — what was actually asked (wrapped + truncated). */
   question_prompt_md: string | null;
+  /**
+   * question.reference_md — the GOLD answer to that question (wrapped +
+   * truncated), or null when the question has none. Without it the packet shows
+   * what was asked and what the owner wrote but not what "right" was, so the
+   * deviation the claim is supposed to be ABOUT is not reconstructable.
+   */
+  question_reference_md: string | null;
   /** the learner's own wrong answer (wrapped + truncated). */
   answer_md: string | null;
   /** YUK-562 process data: the learner's account of HOW they thought. */

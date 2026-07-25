@@ -23,6 +23,7 @@
 // SAME helpers the evidence MCP read tools use (scout spec §2 — one
 // implementation, not two).
 
+import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/server/domain';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
@@ -98,23 +99,34 @@ export async function enrichEvidenceCells(
     ...new Set([...quotedByCellKey.values()].flat().map((failure) => failure.question_id)),
   ];
 
-  const [knowledgeRows, questionRows] = await Promise.all([
+  const [knowledgeRows, questionRows, effectiveDomains] = await Promise.all([
     knowledgeIds.length > 0
       ? db
-          .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+          .select({ id: knowledge.id, name: knowledge.name })
           .from(knowledge)
           .where(inArray(knowledge.id, knowledgeIds))
       : Promise.resolve([]),
     questionIds.length > 0
       ? db
-          .select({ id: question.id, prompt_md: question.prompt_md })
+          .select({
+            id: question.id,
+            prompt_md: question.prompt_md,
+            reference_md: question.reference_md,
+          })
           .from(question)
           .where(inArray(question.id, questionIds))
       : Promise.resolve([]),
+    // The subject axis is the node's EFFECTIVE domain, not its raw column: a
+    // child KC normally carries domain=null and inherits the subject from an
+    // ancestor. Reading `knowledge.domain` directly would report "subject
+    // unknown" for exactly the common case and silently drop the whole run back
+    // to the neutral profile — i.e. it would undo this ticket's subject
+    // grounding on most cells. One query for all ids (YUK-716 batch twin).
+    batchResolveEffectiveDomains(db, knowledgeIds),
   ]);
 
   const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
-  const promptByQuestionId = new Map(questionRows.map((row) => [row.id, row.prompt_md]));
+  const questionById = new Map(questionRows.map((row) => [row.id, row]));
 
   return cells.map((cell) => {
     const kc = knowledgeById.get(cell.knowledge_id);
@@ -122,7 +134,7 @@ export async function enrichEvidenceCells(
     // untagged / unknown domain must read as "subject unknown", never silently
     // inherit the default profile — a fabricated subject label is exactly the
     // failure this ticket exists to stop.
-    const subjectId = resolveKnownSubjectId(kc?.domain ?? null);
+    const subjectId = resolveKnownSubjectId(effectiveDomains.get(cell.knowledge_id) ?? null);
     return {
       ...cell,
       knowledge_name: kc?.name ?? null,
@@ -130,7 +142,7 @@ export async function enrichEvidenceCells(
       subject_display_name:
         subjectId === null ? null : resolveSubjectProfile(subjectId).displayName,
       samples: (quotedByCellKey.get(cell.key) ?? []).map((failure) =>
-        toEvidenceSample(failure, promptByQuestionId, traceByAttemptId),
+        toEvidenceSample(failure, questionById, traceByAttemptId),
       ),
     };
   });
@@ -138,9 +150,10 @@ export async function enrichEvidenceCells(
 
 function toEvidenceSample(
   failure: FailureAttempt,
-  promptByQuestionId: ReadonlyMap<string, string>,
+  questionById: ReadonlyMap<string, { prompt_md: string; reference_md: string | null }>,
   traceByAttemptId: ReadonlyMap<string, string | null>,
 ): ConjectureEvidenceSample {
+  const q = questionById.get(failure.question_id);
   const cause = effectiveCauseForFailureAttempt(failure);
   // Owner notes and judge analysis occupy the same slot — the effective cause
   // policy already decides which one has the last word on attribution — but only
@@ -157,8 +170,16 @@ function toEvidenceSample(
   return {
     attempt_event_id: failure.attempt_event_id,
     question_id: failure.question_id,
-    question_prompt_md: wrapTruncatedLearnerText(
-      promptByQuestionId.get(failure.question_id) ?? null,
+    question_prompt_md: wrapTruncatedLearnerText(q?.prompt_md ?? null, UNTRUSTED_TEXT_CHAR_CAP),
+    // The GOLD answer for the question that was failed. Without it the packet
+    // shows what was asked and what the owner wrote but not what "right" was,
+    // so neither the model nor a blind reviewer can say HOW the answer deviated
+    // — and the induction is asked for a claim about that deviation. Especially
+    // load-bearing when the owner supplied only a cause category (no notes), in
+    // which case `cause_analysis_md` is null and this is the only correctness
+    // signal in the sample.
+    question_reference_md: wrapTruncatedLearnerText(
+      q?.reference_md ?? null,
       UNTRUSTED_TEXT_CHAR_CAP,
     ),
     answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
