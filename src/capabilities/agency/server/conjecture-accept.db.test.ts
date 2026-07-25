@@ -301,10 +301,13 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(await misconceptionEdgeRows()).toHaveLength(1);
     });
 
-    // YUK-785 — this flag is a dark landmine: OFF today, so the title/evidence mismatch
-    // it used to mint would have shipped silently the day it is flipped. The title must
-    // be SAME-SOURCE as `evidence`, and only the induced claim has evidence.
-    it('flag ON — edit accept titles the misconception with the claim its evidence supports', async () => {
+    // YUK-785 — this flag is a dark landmine: OFF today, so whatever an edited accept
+    // mints would ship silently the day it is flipped. An edit must mint NOTHING: the
+    // rewrite has no evidence of its own (titling with it would hang evt_a/evt_b's
+    // provenance off an unevidenced belief), and the original claim is exactly what the
+    // owner declined to accept as worded (persisting it as an active misconception would
+    // park a corrected belief in the knowledge surface). Neither harm is committed.
+    it('flag ON — edit accept mints NO misconception (neither the rewrite nor the original)', async () => {
       process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
       const db = testDb();
       const proposalId = await writeAiProposal(db, {
@@ -316,21 +319,39 @@ describe('acceptConjectureProposal lifecycle', () => {
         corrected_payload: { claim_md: 'you apply the chain rule but drop the inner factor' },
       });
 
-      const miscs = await misconceptionRows();
-      expect(miscs).toHaveLength(1);
-      // Same-source: the title is the induced claim that evt_a/evt_b actually evidence,
-      // NOT the owner's rewrite (which no event in this row supports).
-      expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
-      expect(miscs[0].evidence).toEqual(['evt_a', 'evt_b']);
-      // The rewrite is not lost — it stays durable on the accept rate event.
+      // No node, no edge — flag ON but the edit path never enters the promote hop.
+      expect(await misconceptionRows()).toHaveLength(0);
+      expect(await misconceptionEdgeRows()).toHaveLength(0);
+      // The accept itself still happened, and the rewrite stays durable on the rate
+      // event, so an edited accept remains findable for a later re-evidencing pass.
       const rates = await rateEvents(proposalId);
+      expect(rates).toHaveLength(1);
       expect(rates[0].payload).toMatchObject({
         corrected_by_owner: true,
+        calibration_anchor: 'edit',
         corrected_claim_md: 'you apply the chain rule but drop the inner factor',
       });
-      // Edit still does NOT confirm a weakness — soft track, no FSRS.
-      expect(miscs[0].source).toBe('soft');
+      // ND-5 unchanged: an edit never confirms a weakness.
       expect(await fsrsRowCount()).toBe(0);
+    });
+
+    // The skip is scoped to EDIT accepts only — a plain accept still promotes, so the
+    // guard above cannot quietly disable the whole dark track.
+    it('flag ON — a PLAIN accept still promotes on the proposal claim (skip is edit-only)', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId);
+
+      const miscs = await misconceptionRows();
+      expect(miscs).toHaveLength(1);
+      expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
+      expect(miscs[0].evidence).toEqual(['evt_a', 'evt_b']);
+      expect(miscs[0].source).toBe('soft');
     });
 
     it('flag ON — two DISTINCT proposals sharing cause×KC collapse to ONE misconception (cross-proposal UPSERT refreshes seen/evidence)', async () => {

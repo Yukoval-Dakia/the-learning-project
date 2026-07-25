@@ -164,15 +164,22 @@ export async function acceptConjectureProposal(
     // induction floor (every conjecture already recurred ≥2) — the real gate is the
     // flag + the human accept (see misconception-promote.ts).
     //
-    // YUK-785 — the title is the PROPOSAL's claim on every path, including an EDIT
-    // accept. `evidenceEventIds` below are the induction events that produced THAT
-    // claim, and nothing re-derives evidence for a rewrite, so titling the node with
-    // the owner's rewrite would label the original claim's provenance with a belief
-    // no evidence in this row supports. The rewrite is not lost: it is durable on the
-    // rate event as `corrected_claim_md` (and projected to mem0 by the outbox worker).
-    // This flag is OFF by default — the alignment is fixed BEFORE it is flipped, since
-    // the mismatch would otherwise ship silently the day someone turns it on.
-    if (misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
+    // YUK-785 — an EDIT accept promotes NOTHING. Both title candidates cause a distinct
+    // harm and there is no third claim to mint:
+    //   - the owner's rewrite has NO evidence of its own (nothing re-derives induction
+    //     evidence for it), so titling the node with it would hang the ORIGINAL claim's
+    //     `evidenceEventIds` provenance off an unevidenced belief;
+    //   - the original claim is precisely what the owner just declined to accept as
+    //     worded, so persisting it as an `status='active'` misconception would park a
+    //     belief the owner corrected in the knowledge surface indefinitely.
+    // Skipping is the only option that commits neither, and it is what this whole ticket
+    // argues structurally: a rewrite is UNTESTED, so it must not create any fait accompli.
+    // Nothing is lost — `corrected_by_owner` + `corrected_claim_md` stay durable on the
+    // rate event above (and project to mem0), so an edited accept remains findable if a
+    // later pass wants to re-derive evidence for the rewritten claim. A PLAIN accept
+    // (`isEdit === false`) is unaffected and still promotes on `change.claim_md`.
+    // The flag is OFF by default, so this dark landmine is defused BEFORE it is flipped.
+    if (!isEdit && misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
       const evidenceEventIds = proposal.payload.evidence_refs
         .filter((ref) => ref.kind === 'event')
         .map((ref) => ref.id);

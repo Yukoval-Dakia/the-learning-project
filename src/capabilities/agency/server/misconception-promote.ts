@@ -112,9 +112,10 @@ export interface PromoteConjectureInput {
   /**
    * The conjecture claim — becomes the misconception title (the belief text).
    *
-   * YUK-785: must be same-source as `evidenceEventIds`. The live accept path therefore
-   * passes the PROPOSAL's claim even when the owner rewrote it on accept — the evidence
-   * pointers below belong to the induced claim, and a rewrite has no evidence of its own.
+   * YUK-785: must be same-source as `evidenceEventIds`. The live accept path satisfies
+   * this by only ever reaching here on a PLAIN accept (an edited accept skips promotion
+   * entirely — see conjecture-accept.ts), so the title is always the induced claim that
+   * those evidence pointers actually support.
    */
   claimMd: string;
   causeCategory: string;

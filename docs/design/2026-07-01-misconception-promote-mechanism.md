@@ -21,7 +21,9 @@
 2. **probe 轨（独立，当前 inert）**：`reconcile.ts` 用 `scorePrediction`（`scoring.ts:34`，Brier(predicted_p vs baseline_p) + log-loss + 单点 skill）打分 → 追加 LOG-only `experimental:prediction_score` 事件 → `upsertKcTypedState`。`confused-with-X` commit 门（`typed-state.ts:48` `nextTypedState`）要 `discriminating && recurrence≥2 && 具名 confused_with_kc_id`——但 `reconcile.ts:268` **硬编码 `confused_with_kc_id: null`**，故 `confused-with-X` 永不点亮。**"beats baseline" 窗口均值 + 标签 FLIP 是 Rust-owned + DEFERRED（ADR-0046）**；`scoring.ts` 是单点 JS stub，只 LOG 不翻。
 3. **晋升**（`misconception-promote.ts`，flag `MISCONCEPTION_PROMOTE_ENABLED` 默认 OFF）：owner **accept** 一个 conjecture → 铸 misconception `source='soft'`, `status='active'`, `seen=recurrence_count`, `weight=归一 LLM confidence`，确定性 id `sha256(cause::kc)`（:85）+ `caused_by` 边。`K_PROMOTE=2`（:39）**冗余死闸**（所有 conjecture 已 ≥2，注释自陈）。真正的闸 = flag + human-accept。注释明写 **"only the probe one-shot (a LATER TASK) mints a HARD-confirmed weakness"** = **hard 轨（source='hard'）没建**。晋升**完全不看** probe/scoring/区分机器。
 
-**净**：当前"机制" = `recurrence≥2 归纳 conjecture → owner 点 accept → 铸 soft misconception`。证伪原语全建好了，但喂一条独立 inert 的 `kc_typed_state` 轨，**没接进晋升**。无校准后验、无独立性加权、无"持有 M vs 缺技能 S"区分、无证伪/稳定性测试，hard 轨不可达。
+3b. **（YUK-785 补充，2026-07-25）晋升只认 PLAIN accept**：owner 若走 **edit**（`corrected_payload`，`corrected_by_owner=true`）则**完全跳过晋升**，不铸节点也不铸边。两个候选标题各自造成一种伤害，且没有第三条 claim 可铸：用**改写后的 claim** 当标题会把原 claim 的 `evidenceEventIds` provenance 挂到一条**没有任何证据**的信念上（改写不会重新取证）；用**原 claim** 当标题则把 owner 刚刚明确纠正掉的说法沉淀成 `status='active'` 误区长期展示在知识侧。跳过是唯一两者都不犯的选项，也与「改写是未经检验的、不应产生任何既成事实」一致。改写不丢：`corrected_by_owner` + `corrected_claim_md` durable 在 accept rate event 上（并投影 mem0），日后若要为改写后的 claim 重新取证仍可检索。接线在 `conjecture-accept.ts` 的 `!isEdit &&` 前置；plain accept 行为不变。
+
+**净**：当前"机制" = `recurrence≥2 归纳 conjecture → owner 点 accept（plain，非 edit）→ 铸 soft misconception`。证伪原语全建好了，但喂一条独立 inert 的 `kc_typed_state` 轨，**没接进晋升**。无校准后验、无独立性加权、无"持有 M vs 缺技能 S"区分、无证伪/稳定性测试，hard 轨不可达。
 
 ---
 
