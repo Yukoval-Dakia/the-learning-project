@@ -21,6 +21,7 @@
 
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
@@ -306,7 +307,16 @@ export async function runJudgeRun(
     // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
-    const nonRetryable = err instanceof NonRetryableJudgeRunError || err instanceof ZodError;
+    // W5 #Tu1cZ — a persistence VALIDATION failure is permanent, not transient. `persistSubmit`
+    // throws `ApiError('corrupt_state', …, 422)` when an existing FSRS card cannot be parsed;
+    // that is deterministic, so every redelivery re-runs a PAID judge before failing the same
+    // way, burning the whole retry budget and ending as `retries_exhausted` — which also buries
+    // the actionable "reset this card" signal the 422 was carrying. Classified permanent so it
+    // terminalizes on the first delivery with its own reason code.
+    const nonRetryable =
+      err instanceof NonRetryableJudgeRunError ||
+      err instanceof ZodError ||
+      isPermanentPersistError(err);
     // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
     // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"
@@ -388,7 +398,21 @@ export async function runJudgeRun(
 function classifyJudgeRunFailure(err: unknown): string {
   if (err instanceof ZodError) return 'invalid_payload';
   if (err instanceof NonRetryableJudgeRunError) return 'unprocessable_run';
+  if (isPermanentPersistError(err)) return 'corrupt_state';
   return 'judge_failed';
+}
+
+/**
+ * W5 #Tu1cZ — is this a DETERMINISTIC persistence failure that redelivery cannot fix?
+ *
+ * Keyed on the ApiError `code`, not the HTTP status: 422 is also used for transient-ish
+ * semantic rejections elsewhere, whereas `corrupt_state` specifically means stored state
+ * failed to parse — identical on every attempt. Matching the code keeps the classification
+ * narrow enough that a genuinely retryable failure is never mislabelled permanent (which
+ * would be the more dangerous direction: it would drop a run that a retry would have saved).
+ */
+function isPermanentPersistError(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'corrupt_state';
 }
 
 /** 该 run 的 attempt/outcome event（id=run_id）是否已落库 ⇒ 回填已由某次投递提交。 */

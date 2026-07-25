@@ -98,7 +98,9 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const db = testDb();
     const runId = newId();
     const questionId = `q_${newId()}`;
-    // The attempt (review) event — id = run_id, exactly what the backfill writes.
+    // The attempt (review) event — id = run_id, shaped exactly as persistSubmit writes it:
+    // the verdict is EMBEDDED under `payload.judge`, which is the only place `evidence_json`
+    // is ever persisted (#TuxJL).
     await db.insert(event).values({
       id: runId,
       actor_kind: 'user',
@@ -107,9 +109,20 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
       subject_kind: 'question',
       subject_id: questionId,
       outcome: 'success',
-      payload: { fsrs_rating: 'good' },
+      payload: {
+        fsrs_rating: 'good',
+        judge: {
+          route: 'semantic',
+          score: 1,
+          coarse_outcome: 'correct',
+          confidence: 0.9,
+          feedback_md: 'ok',
+          evidence_json: { spans: ['x'] },
+          capability_ref: { id: 'semantic', version: '1.0.0' },
+        },
+      },
     });
-    // The judge event chained to it.
+    // The judge event chained to it — note it carries NO evidence_json and NO score_meaning.
     const judgeEventId = newId();
     await db.insert(event).values({
       id: judgeEventId,
@@ -122,7 +135,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
       payload: {
         coarse_outcome: 'correct',
         score: 1,
-        score_meaning: 'correctness',
         feedback_md: 'ok',
         judge_route: 'semantic',
       },
@@ -137,13 +149,25 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       status: string;
-      result: { coarse_outcome?: string; score_meaning?: string; judge_event_id?: string } | null;
+      result: {
+        coarse_outcome?: string;
+        evidence_json?: unknown;
+        score_meaning?: string;
+        judge_event_id?: string;
+      } | null;
     };
     // Pre-fix this 404'd — telling a returning client its persisted verdict did not exist.
     expect(body.status).toBe('done');
     expect(body.result?.coarse_outcome).toBe('correct');
-    expect(body.result?.score_meaning).toBe('correctness');
     expect(body.result?.judge_event_id).toBe(judgeEventId);
+    // #TuxJL — evidence comes from the review event's embedded `payload.judge`, which is the
+    // only place it is persisted. Reading it off the judge event (as an earlier revision did)
+    // silently returned nothing, and the all-optional schema let that loss pass validation.
+    expect(body.result?.evidence_json).toEqual({ spans: ['x'] });
+    // …and `score_meaning` is HONESTLY absent: JudgeResultV2 carries it, but persistSubmit
+    // writes it to neither event, so there is nothing to reconstruct. Persisting it is a W3
+    // item (YUK-777) — inventing a default here would be worse than the gap.
+    expect(body.result?.score_meaning).toBeUndefined();
     vi.restoreAllMocks();
   });
 

@@ -144,8 +144,40 @@ export async function reconstructDoneFromDomainEvents(
     .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(1);
-  const p = (judgeEvent?.payload ?? {}) as Record<string, unknown>;
+  const judgePayload = (judgeEvent?.payload ?? {}) as Record<string, unknown>;
   const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
+  // W5 #TuxJL — read from where `persistSubmit` ACTUALLY writes each field, not from a
+  // shape that looked plausible. The judge event's payload carries `coarse_outcome` /
+  // `score` / `feedback_md` / `capability_ref` / `judge_route`, but NOT `evidence_json`
+  // — that lives on the REVIEW event's embedded `payload.judge` block. Reading it off the
+  // judge event silently produced nothing, and because every field in the terminal schema
+  // is optional the loss passed validation unnoticed. `payload.judge` is the richer of the
+  // two, so it is preferred and the judge event backfills what it lacks.
+  const embedded = (attemptPayload.judge ?? {}) as Record<string, unknown>;
+  const pick = <T>(guard: (v: unknown) => boolean, ...candidates: unknown[]): T | undefined => {
+    for (const c of candidates) if (guard(c)) return c as T;
+    return undefined;
+  };
+  const isStr = (v: unknown) => typeof v === 'string';
+  const isNum = (v: unknown) => typeof v === 'number';
+  const present = (v: unknown) => v !== undefined && v !== null;
+
+  const coarseOutcome = pick<string>(isStr, embedded.coarse_outcome, judgePayload.coarse_outcome);
+  const score = pick<number>(present, embedded.score, judgePayload.score);
+  const confidence = pick<number>(isNum, embedded.confidence, judgePayload.confidence);
+  const feedbackMd = pick<string>(isStr, embedded.feedback_md, judgePayload.feedback_md);
+  const evidenceJson = pick<unknown>(present, embedded.evidence_json);
+  const capabilityRef = pick<unknown>(
+    present,
+    embedded.capability_ref,
+    judgePayload.capability_ref,
+  );
+  const route = pick<string>(isStr, embedded.route, judgePayload.judge_route);
+
+  // NOTE: `score_meaning` is deliberately absent. It is part of JudgeResultV2 but is NOT
+  // persisted to either event today, so there is nothing honest to reconstruct — inventing a
+  // default would be worse than omitting it. The live DONE payload does carry it; only this
+  // recovery path (used when that write was lost) cannot. Persisting it is a W3 item (YUK-777).
   return {
     attempt_event_id: runId,
     judge_event_id: judgeEvent?.id ?? null,
@@ -154,14 +186,13 @@ export async function reconstructDoneFromDomainEvents(
     ...(typeof attemptPayload.fsrs_rating === 'string'
       ? { final_rating: attemptPayload.fsrs_rating }
       : {}),
-    ...(typeof p.coarse_outcome === 'string' ? { coarse_outcome: p.coarse_outcome } : {}),
-    ...(p.score != null ? { score: p.score } : {}),
-    ...(typeof p.score_meaning === 'string' ? { score_meaning: p.score_meaning } : {}),
-    ...(typeof p.confidence === 'number' ? { confidence: p.confidence } : {}),
-    ...(typeof p.feedback_md === 'string' ? { feedback_md: p.feedback_md } : {}),
-    ...(p.evidence_json != null ? { evidence_json: p.evidence_json } : {}),
-    ...(p.capability_ref ? { capability_ref: p.capability_ref } : {}),
-    ...(typeof p.judge_route === 'string' ? { route: p.judge_route } : {}),
+    ...(coarseOutcome !== undefined ? { coarse_outcome: coarseOutcome } : {}),
+    ...(score !== undefined ? { score } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+    ...(feedbackMd !== undefined ? { feedback_md: feedbackMd } : {}),
+    ...(evidenceJson !== undefined ? { evidence_json: evidenceJson } : {}),
+    ...(capabilityRef !== undefined ? { capability_ref: capabilityRef } : {}),
+    ...(route !== undefined ? { route } : {}),
   };
 }
 
