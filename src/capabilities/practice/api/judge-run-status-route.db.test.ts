@@ -8,7 +8,7 @@ import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { judgeRunJobId } from '../server/judge-run-dispatch';
+import { judgeRunJobId, recordJudgePendingAttempt } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
 
@@ -57,6 +57,64 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
 
     const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(404);
+    vi.restoreAllMocks();
+  });
+
+  // YUK-777 A2 — a RECORDED answer whose dispatch failed is a real run with no job and no
+  // job_events. Both pre-existing last-resort answers were wrong for it: 404 says "no such
+  // run", `failed` says "this will never be judged". `judge_pending_reconcile` will pick it up,
+  // so the honest answer is `queued`.
+  it('reports queued for a run with no job and no events but a RECORDED pending attempt', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: { kind: 'short_answer', prompt_md: 'p' },
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+    vi.restoreAllMocks();
+  });
+
+  it('still 404s for an unknown run once a DIFFERENT run has a pending attempt recorded', async () => {
+    // Guards the containment lookup: matching on `payload @> {run_id}` must not degrade into
+    // "any pending attempt exists", which would turn every unknown id into a 200.
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId: newId(),
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: { kind: 'short_answer', prompt_md: 'p' },
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: newId() });
     expect(res.status).toBe(404);
     vi.restoreAllMocks();
   });
