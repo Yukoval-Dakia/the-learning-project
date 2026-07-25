@@ -19,10 +19,25 @@ export const TICK_INTERVAL_SECONDS = 60;
 
 /**
  * 单节点超时（秒）。enqueue/running 超过此时长仍未终态 → 判 failed（detail: timeout），
- * 让硬下游据此跳过（票面「上游超时 → 下游不跑并留痕」）。3h > EXPIRE_AGENT(2h)：pg-boss
- * 队列级 expire 是主 backstop，本超时只兜「job 行消失 / 卡死」的极端。
+ * 让硬下游据此跳过（票面「上游超时 → 下游不跑并留痕」）。
+ *
+ * **必须覆盖 pg-boss 的完整重试预算**（YUK-758 review ToTeE）。旧值 3h 是拿单次
+ * EXPIRE_AGENT(2h) 比出来的，漏算了重试：agent 档成员 job 的最坏合法生命周期是
+ *
+ *   (1 + JOB_RETRY_LIMIT) × EXPIRE_AGENT + 重试退避 = 3 × 2h + (~30s + ~60s) ≈ 6h
+ *
+ * （queue-config.ts：EXPIRE_AGENT=7200、JOB_RETRY_LIMIT=2、JOB_RETRY_DELAY_SECONDS=30 +
+ * retryBackoff）。`enqueued_at` 在 claim 时只写一次、重试不重置，故 3h 会在第二次尝试还
+ * 在跑时就把节点判死：硬下游被**永久** skipped，哪怕第三次尝试随后成功——夜链白跑还留下
+ * 错误的失败痕迹。取 7h 覆盖 6h 预算 + 余量。
+ *
+ * 定位不变：pg-boss 队列级 expire + retry 才是主 backstop（真 job 总会收敛到 completed/
+ * failed），本超时只兜「job 行消失 / 无 worker 消费该队列」这类 pg-boss 自己不会收敛的极端。
+ * 上限安全性由锚点兜底：跨日残留 running run 会被次夜锚点 abandon，故拉长不会让 run 永挂。
+ *
+ * ⚠️ 改 EXPIRE_AGENT / JOB_RETRY_LIMIT / JOB_RETRY_DELAY_SECONDS 时必须回来重算本值。
  */
-export const NODE_TIMEOUT_SECONDS = 3 * 60 * 60;
+export const NODE_TIMEOUT_SECONDS = 7 * 60 * 60;
 
 /**
  * 「已领取但 pg-boss 查无此 job」的补发宽限窗（秒，YUK-758 review ToTaI）。

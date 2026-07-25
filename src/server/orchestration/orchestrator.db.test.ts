@@ -449,6 +449,54 @@ describe('orchestrator trigger semantics', () => {
     expect((await nodeRow(run.id, 'a'))?.status).toBe('succeeded');
   });
 
+  // ⑬ YUK-758 review ToTeE — a member job still working through its pg-boss retry budget
+  // must not be declared timed out. agent-queue members can legally live for
+  // (1 + JOB_RETRY_LIMIT) × EXPIRE_AGENT ≈ 6h, and enqueued_at is not reset per retry.
+  it('⑬ a node still inside the pg-boss retry budget is not timed out', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const a = await nodeRow(run.id, 'a');
+    // pg-boss re-queued the job for a further attempt after an expiry.
+    boss.setJobState('a', must(a?.boss_job_id, 'boss job id'), 'retry');
+
+    // 4h in: past the old 3h ceiling, still inside the real retry budget.
+    const fourHoursIn = new Date(NOW.getTime() + 4 * 60 * 60 * 1000);
+    await runOrchestratorTick({ db, boss, dag, now: fourHoursIn, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued'); // still waiting, not failed
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('pending'); // downstream not skipped
+
+    // The retry then succeeds — the graph must proceed normally rather than having been
+    // written off an hour earlier.
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: fourHoursIn, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('succeeded');
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
+  });
+
+  it('⑬b a node past the whole retry budget still times out to failed', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const a = await nodeRow(run.id, 'a');
+    boss.setJobState('a', must(a?.boss_job_id, 'boss job id'), 'retry');
+
+    // 8h in: beyond NODE_TIMEOUT_SECONDS (7h) — the backstop must still fire.
+    const eightHoursIn = new Date(NOW.getTime() + 8 * 60 * 60 * 1000);
+    await runOrchestratorTick({ db, boss, dag, now: eightHoursIn, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('failed');
+    expect((await nodeRow(run.id, 'a'))?.detail).toMatch(/timeout/);
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('skipped');
+  });
+
   it('tick with no active run is a no-op', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));

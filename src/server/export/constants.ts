@@ -292,24 +292,40 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'event_subscription_effect',
   // YUK-758 夜间任务编排 DAG 的调度运行态（run 头 + 逐节点态）。纯瞬态运维态：一夜一条
   // run，丢了下一夜锚点 cron 自然重建，restoring stale scheduling rows 是错的（会复活过
-  // 期的「今晚图」）。无 enforced FK（run_id/job_name/boss_job_id 皆 loose text-ref），不
-  // 阻 FK_ORDER wipe，故无需 RESTORE_WIPE_ONLY 条目。Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  // 期的「今晚图」）。也登记进 RESTORE_WIPE_ONLY_TABLES——不是因为 FK（本对表无 enforced
+  // FK），而是因为**残留调度态在 restore 后有害**（YUK-758 review ToTeC，详见那边注释）。
+  // Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
   'dag_orchestration_run',
   'dag_orchestration_node',
 ]);
 
-// Operational tables that are EXCLUDED from the archive (above) but whose ON DELETE no action FKs
-// into FK_ORDER parents (event / artifact) would otherwise BLOCK the FK_ORDER wipe during restore —
-// residual delivery/effect rows keep `delete from "event"` / `delete from "artifact"` from
-// succeeding. restoreFromArchive wipes these FIRST (child→parent order among themselves) so the
-// parent wipe is unblocked; it does NOT restore them (the dispatcher re-bootstraps from the
-// event-log + manifest reconciliation post-restore). Excluded tables whose FKs are ON DELETE cascade
-// (artifact_edit_session, hub_sync_reconciliation) are cleared by the parent wipe and need no entry
-// here (YUK-751 review, codex P1). Order matters: effect → delivery → checkpoint.
+// Operational tables that are EXCLUDED from the archive (above) but must still be DELETED during
+// restore. Two independent reasons put a table here:
+//
+//  (1) FK blocking — its ON DELETE no action FKs into FK_ORDER parents (event / artifact) would
+//      otherwise BLOCK the FK_ORDER wipe: residual delivery/effect rows keep `delete from "event"` /
+//      `delete from "artifact"` from succeeding (YUK-751 review, codex P1).
+//  (2) Harmful residue — the rows describe live operational state of the PRE-restore database, so
+//      surviving a restore actively corrupts post-restore behavior even without any FK (YUK-758
+//      review ToTeC). The DAG orchestration tables are this case: a surviving `running` run makes
+//      the next anchor ADOPT a graph whose node states describe the discarded data (already
+//      'succeeded' nodes never re-run against the restored rows), and a surviving `completed` run
+//      makes the cron redeliver-guard (`getLatestRunForDate`) skip that calendar day's chain
+//      entirely. Both are silent; the run_date partial-unique index does not help because the stale
+//      row IS the conflict.
+//
+// restoreFromArchive wipes these FIRST (child→parent order among themselves) so the parent wipe is
+// unblocked; it does NOT restore them (the dispatcher re-bootstraps from the event-log + manifest
+// reconciliation post-restore; the DAG rebuilds from the next nightly anchor). Excluded tables whose
+// FKs are ON DELETE cascade (artifact_edit_session, hub_sync_reconciliation) are cleared by the
+// parent wipe and need no entry here.
+// Order matters (child → parent): effect → delivery → checkpoint, and node → run.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   'event_subscription_effect',
   'event_subscription_delivery',
   'event_subscription_checkpoint',
+  'dag_orchestration_node',
+  'dag_orchestration_run',
 ];
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────
