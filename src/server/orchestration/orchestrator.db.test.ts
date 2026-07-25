@@ -1739,7 +1739,7 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
   // YUK-778 ③ 的另一半：删掉无人读的 `{ stale: true }` payload 后，`node.stale` 这一列
   // 必须有一个**当下就成立**的读者，否则只是把同一个「建成不通电」从 payload 挪到列上。
   // 收尾总账就是那个读者。
-  it('L4 the completion census reports how many nodes ran on a non-succeeded soft upstream', async () => {
+  it('L4 the completion census reports how many nodes were enqueued despite a non-succeeded soft upstream', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
     const run = must(
@@ -1753,7 +1753,35 @@ describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', 
 
     const completed = linesMatching(/completed:/, 'log');
     expect(completed).toHaveLength(1);
-    expect(completed[0]).toMatch(/1 ran with a non-succeeded soft upstream/);
+    expect(completed[0]).toMatch(/1 enqueued despite a non-succeeded soft upstream/);
+    // The counter records the soft-edge RELEASE, not execution — a claimed-then-failed node
+    // still counts. The wording must not claim the node ran (PR #1083 codex P2).
+    expect(completed[0]).not.toMatch(/ran with/);
+  });
+
+  // The divergence that forced the wording (PR #1083 codex P2): `node.stale` is written at CLAIM
+  // time, so a node counts as stale even when it never executes. Here b is released by the soft
+  // edge, claimed, and then killed by a send that created no job — it ran on nothing at all.
+  // A census saying "ran with a stale upstream" would send an operator hunting for b's output.
+  it('L4b a stale node that never executed is still counted — so the wording must not claim it ran', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
+    boss.nullSendJobs.add('b'); // send returns null AND no job exists for the reserved id
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const b = await nodeRow(run.id, 'b');
+    expect(b?.stale).toBe(true); // released by the soft edge…
+    expect(b?.status).toBe('failed'); // …but it never ran
+
+    const completed = linesMatching(/completed:/, 'log');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatch(/1 enqueued despite a non-succeeded soft upstream/);
+    expect(completed[0]).not.toMatch(/ran with/);
   });
 
   it('L5 abandoning a leftover run reports it plus the census of where it was stuck', async () => {

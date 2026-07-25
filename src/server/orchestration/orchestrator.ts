@@ -109,7 +109,10 @@ export interface AdvanceSummary {
   running: number;
   pending: number;
   /**
-   * 本 run 里带 stale 标记（软上游未成功仍被放行）的节点数（YUK-778）。
+   * 本 run 里带 stale 标记的节点数（YUK-778）。
+   *
+   * 语义严格是「软上游未成功、但仍被**放行入队**」——不是「在陈旧输入上跑过」。二者会分叉，
+   * 见 {@link describeNodeCensus} 的措辞说明。
    *
    * 这是 `dag_orchestration_node.stale` 的**活消费者**。删掉那条无人读的
    * `{ stale: true }` job payload 之后，若这一列也没人读，它就只是把同一个「建成不通电」
@@ -190,11 +193,21 @@ async function settleNode(
   return true;
 }
 
-/** run 级日志的节点总账一行（YUK-778）。 */
+/**
+ * run 级日志的节点总账一行（YUK-778）。
+ *
+ * stale 那一项措辞是 **enqueued despite**，不是「ran with」（PR #1083 codex P2）：`node.stale`
+ * 由 `claimNodePending` 在 **入队那一刻**写下，它记的是「软边放行了这个节点」，**不是**
+ * 「这个节点在陈旧输入上跑过」。二者在两条真实路径上会分叉——
+ *  · 领取成功但 `boss.send` 返回 null 且预留 id 查无 job → 节点直接判 failed，**从未执行**；
+ *  · 带 `startAfter` 错峰的节点在 job 起跑前整条 run 被 abandon → 同样从未执行。
+ * 两种情形节点都仍带 stale=true。写「ran with」会让这唯一的诊断出口给出一个事实错误的结论
+ * （「它在陈旧数据上跑了」），而运维恰恰会据此去查它的产出。措辞必须只声称已证实的那一半。
+ */
 function describeNodeCensus(s: AdvanceSummary): string {
   return `${s.succeeded}/${s.total} succeeded, ${s.failed} failed, ${s.skipped} skipped, ${
     s.enqueued + s.running
-  } still in flight, ${s.pending} never started, ${s.stale} ran with a non-succeeded soft upstream`;
+  } still in flight, ${s.pending} never started, ${s.stale} enqueued despite a non-succeeded soft upstream`;
 }
 
 /**
