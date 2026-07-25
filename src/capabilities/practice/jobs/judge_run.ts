@@ -30,7 +30,11 @@ import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
-import { FrozenQuestionSnapshotSchema, applyFrozenQuestion } from '../server/judge-run-payload';
+import {
+  FrozenQuestionSnapshotSchema,
+  applyFrozenQuestion,
+  reconstructDoneFromDomainEvents,
+} from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
 /**
@@ -223,19 +227,38 @@ export async function runJudgeRun(
         outcome: persisted.outcome,
         final_rating: judged.finalRating,
         route: judged.judgeRoute,
+        // W5 #Tunnw — the FULL JudgeResultV2, not a convenient subset. `score` is
+        // uninterpretable without `score_meaning` (steps / unit_dimension carry different
+        // score semantics), and dropping `evidence_json` left SSE/poll clients unable to show
+        // the judge's evidence at all — including on the crash-recovery path, which can only
+        // return what the terminal contract carries.
         ...(judged.judgeResult
           ? {
               coarse_outcome: judged.judgeResult.coarse_outcome,
               score: judged.judgeResult.score,
+              score_meaning: judged.judgeResult.score_meaning,
               confidence: judged.judgeResult.confidence,
               feedback_md: judged.judgeResult.feedback_md,
+              evidence_json: judged.judgeResult.evidence_json,
               capability_ref: judged.judgeResult.capability_ref,
             }
           : {}),
         ...(judged.judgeTelemetry ? { telemetry: judged.judgeTelemetry } : {}),
-        // YUK-573 lane provenance — 记本次真正产判词的 provider lane（跨 provider 兜底
-        // 后 lane 非固定；calibration same_lane 推断读它）。
+        // W5 #Tunn0 — lane provenance is the RESOLVED lane, read off the execution provenance
+        // the invoker stamped (`kind:'invoked'` carries the actual provider/model/task_run_id
+        // that ran). `provider_override` alone is a lie about execution: with a global
+        // AI_PROVIDER_OVERRIDE set, a normal delivery runs on a non-default lane while this
+        // handler requested no override at all, so a same-lane calibration reader keyed on it
+        // would mis-attribute every run. Kept alongside — but as what it is: the override THIS
+        // handler REQUESTED, not the lane that executed.
         provider_override: providerOverride ?? null,
+        ...(judged.executionProvenance?.kind === 'invoked'
+          ? {
+              provider: judged.executionProvenance.provider,
+              model: judged.executionProvenance.model,
+              task_run_id: judged.executionProvenance.task_run_id,
+            }
+          : {}),
         // W5 — the verdict landed, but newer evidence for this material already existed, so
         // every derived write (FSRS / θ̂ / signals) was intentionally skipped. Surfaced here
         // so "why didn't my schedule move?" is answerable from the run's own trace.
@@ -396,7 +419,10 @@ async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunO
     await writeTerminalJobEvent(db, {
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: await reconstructDonePayloadFromJudgeEvent(db, runId),
+      payload: (await reconstructDoneFromDomainEvents(db, runId)) ?? {
+        attempt_event_id: runId,
+        already_persisted: true,
+      },
     });
   }
   return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
@@ -496,42 +522,6 @@ function sleep(ms: number): Promise<void> {
 async function loadQuestionRow(db: Db, questionId: string) {
   const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   return rows[0] ?? null;
-}
-
-/**
- * Reconstruct the terminal DONE payload from the persisted judge event when the
- * backfill committed but the DONE job_event never landed (crash between commit and
- * the terminal write). Reads the real verdict (coarse_outcome/score/feedback_md/
- * capability_ref/route) off the judge event chained to the attempt (subject_id=run_id)
- * so poll/SSE recovery gets the actual verdict, not a slim placeholder.
- */
-async function reconstructDonePayloadFromJudgeEvent(
-  db: Db,
-  runId: string,
-): Promise<Record<string, unknown>> {
-  // W4 #TtZ8j — ORDER BY is load-bearing, not cosmetic. Several judge events can share one
-  // `subject_id`: an appeal-driven rejudge writes a NEW judge event against the same review
-  // event and wins by newest (D6 newest-wins, documented in submit.ts). Without an explicit
-  // order the DB returns an arbitrary row, so this reconstruction could resurrect a
-  // superseded verdict. `created_at DESC, id DESC` matches the D6 read order (the id
-  // tie-break keeps it deterministic when two events share a timestamp).
-  const [je] = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(1);
-  const p = (je?.payload ?? {}) as Record<string, unknown>;
-  return {
-    attempt_event_id: runId,
-    judge_event_id: je?.id ?? null,
-    already_persisted: true,
-    ...(typeof p.coarse_outcome === 'string' ? { coarse_outcome: p.coarse_outcome } : {}),
-    ...(p.score != null ? { score: p.score } : {}),
-    ...(typeof p.feedback_md === 'string' ? { feedback_md: p.feedback_md } : {}),
-    ...(p.capability_ref ? { capability_ref: p.capability_ref } : {}),
-    ...(typeof p.judge_route === 'string' ? { route: p.judge_route } : {}),
-  };
 }
 
 /** 判定为不可重投的失败（未知面 / 题缺失 / body 复校失败）——写 FAILED 后不 rethrow。 */

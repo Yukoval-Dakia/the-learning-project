@@ -136,11 +136,28 @@ export const JudgeRunTerminalResultSchema = z
     route: z.string().nullable().optional(),
     coarse_outcome: z.string().optional(),
     score: z.number().nullable().optional(),
+    // W5 #Tunnw — `score` is uninterpretable without its meaning (steps / unit_dimension carry
+    // different score semantics), and `evidence_json` is what a client renders to SHOW the
+    // judge's reasoning. Both were dropped from the terminal contract, so SSE/poll consumers —
+    // and the crash-recovery path, which can only return what this contract carries — saw a
+    // bare number with no way to explain it.
+    score_meaning: z.string().optional(),
+    evidence_json: z.unknown().optional(),
     confidence: z.number().optional(),
     feedback_md: z.string().optional(),
     capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
     telemetry: z.unknown().optional(),
+    /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
     provider_override: z.string().nullable().optional(),
+    // W5 #Tunn0 — the RESOLVED execution lane, read off the invoker's `kind:'invoked'`
+    // provenance. With a global AI_PROVIDER_OVERRIDE set, a run executes on a non-default lane
+    // while `provider_override` is null, so same-lane calibration keyed on the latter
+    // mis-attributes every run. These three are the execution truth.
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    task_run_id: z.string().optional(),
+    /** W5 — verdict landed, but derived writes were skipped (newer evidence already existed). */
+    late_arrival: z.boolean().optional(),
     already_persisted: z.boolean().optional(),
   })
   .passthrough();

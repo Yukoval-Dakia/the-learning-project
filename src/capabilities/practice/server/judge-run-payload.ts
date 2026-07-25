@@ -6,9 +6,12 @@
 // 一份必然漂移。放 server/ 层与既有的 judge-durable-config / judge-run-status 同向
 // （api → server、jobs → server），不让 api 反向依赖 jobs。
 //
-// 依赖轻：只吃 db schema 的行类型 + zod，无 db client。
+// 依赖轻：db schema 行类型 + zod + drizzle 算子；`Db` 只作参数类型传入，不 import db client
+// 单例（保持本模块可被 api/ 与 jobs/ 双向复用而不牵入运行时连接）。
 
-import type { question } from '@/db/schema';
+import type { Db } from '@/db/client';
+import { event, type question } from '@/db/schema';
+import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 type QuestionRow = typeof question.$inferSelect;
@@ -108,6 +111,58 @@ export function applyFrozenQuestion(
 ): QuestionRow {
   const { version: _v, updated_at: _u, ...frozenColumns } = frozen;
   return { ...live, ...frozenColumns } as QuestionRow;
+}
+
+/**
+ * W5 #Tunn3 / #Tunn2 — rebuild a terminal DONE payload from the **permanent domain log**.
+ *
+ * `job_events` is the progress stream, not the source of truth: it is pruned on a retention
+ * window, and its terminal write can fail outright on the final delivery. The durable record
+ * of a judged submit is the pair the backfill tx commits — the `review` event (id = run_id)
+ * and the `judge` event chained to it — which live in the permanent event log. So both
+ * recovery paths resolve the verdict from there:
+ *
+ *   - the worker's idempotency guard, when the backfill committed but DONE never landed;
+ *   - the `/status` route, when the run has no job_events at all (pruned, or never written).
+ *
+ * Returns null when no attempt event exists for `runId` — i.e. this run genuinely never
+ * persisted anything, which is a real "unknown run", not a recoverable one.
+ *
+ * `judge` events are ordered newest-first: an appeal-driven rejudge writes a NEW judge event
+ * against the same review event and wins by newest (D6), so an unordered read could resurrect
+ * a superseded verdict.
+ */
+export async function reconstructDoneFromDomainEvents(
+  db: Db,
+  runId: string,
+): Promise<Record<string, unknown> | null> {
+  const [attempt] = await db.select().from(event).where(eq(event.id, runId)).limit(1);
+  if (!attempt) return null;
+  const [judgeEvent] = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  const p = (judgeEvent?.payload ?? {}) as Record<string, unknown>;
+  const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
+  return {
+    attempt_event_id: runId,
+    judge_event_id: judgeEvent?.id ?? null,
+    already_persisted: true,
+    ...(attempt.outcome ? { outcome: attempt.outcome } : {}),
+    ...(typeof attemptPayload.fsrs_rating === 'string'
+      ? { final_rating: attemptPayload.fsrs_rating }
+      : {}),
+    ...(typeof p.coarse_outcome === 'string' ? { coarse_outcome: p.coarse_outcome } : {}),
+    ...(p.score != null ? { score: p.score } : {}),
+    ...(typeof p.score_meaning === 'string' ? { score_meaning: p.score_meaning } : {}),
+    ...(typeof p.confidence === 'number' ? { confidence: p.confidence } : {}),
+    ...(typeof p.feedback_md === 'string' ? { feedback_md: p.feedback_md } : {}),
+    ...(p.evidence_json != null ? { evidence_json: p.evidence_json } : {}),
+    ...(p.capability_ref ? { capability_ref: p.capability_ref } : {}),
+    ...(typeof p.judge_route === 'string' ? { route: p.judge_route } : {}),
+  };
 }
 
 // W4 #TtWiC — `submitAnswerFingerprint` lived here as the key for a short-window

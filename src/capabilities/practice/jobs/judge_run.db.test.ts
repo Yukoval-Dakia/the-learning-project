@@ -133,9 +133,17 @@ describe('runJudgeRun — backfill', () => {
     });
     expect(deriveJudgeRunStatus(events)).toBe('done');
     const done = events.find((e) => e.event_type === 'judge_run.done');
-    expect((done?.payload as { coarse_outcome?: string } | undefined)?.coarse_outcome).toBe(
-      'correct',
-    );
+    const donePayload = done?.payload as {
+      coarse_outcome?: string;
+      score_meaning?: string;
+      evidence_json?: unknown;
+    };
+    expect(donePayload?.coarse_outcome).toBe('correct');
+    // W5 #Tunnw — the FULL verdict rides the terminal contract. `score` alone is
+    // uninterpretable without `score_meaning`, and `evidence_json` is what a client renders
+    // to show the judge's reasoning; both used to be dropped.
+    expect(donePayload?.score_meaning).toBe('correctness');
+    expect(donePayload?.evidence_json).toBeDefined();
   });
 
   it('idempotent re-delivery after commit does not double-write (skips, keeps one attempt + one judge)', async () => {

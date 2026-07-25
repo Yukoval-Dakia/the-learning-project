@@ -3,6 +3,7 @@
 // queued; a done run → 200 done with the structured verdict payload (#11).
 
 import { newId } from '@/core/ids';
+import { event } from '@/db/schema';
 import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -88,6 +89,72 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
       vi.restoreAllMocks();
     },
   );
+
+  // W5 #Tunn3 / #Tunn2 — `job_events` is the progress stream, NOT the source of truth: it is
+  // pruned on a retention window and its terminal write can fail outright. The permanent
+  // record is the review + judge event pair the backfill tx commits, so a run whose verdict
+  // is durably persisted must resolve to `done` even with ZERO job_events.
+  it('reconstructs done from the DOMAIN events when job_events are gone', async () => {
+    const db = testDb();
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    // The attempt (review) event — id = run_id, exactly what the backfill writes.
+    await db.insert(event).values({
+      id: runId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: { fsrs_rating: 'good' },
+    });
+    // The judge event chained to it.
+    const judgeEventId = newId();
+    await db.insert(event).values({
+      id: judgeEventId,
+      actor_kind: 'agent',
+      actor_ref: 'judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: runId,
+      outcome: 'success',
+      payload: {
+        coarse_outcome: 'correct',
+        score: 1,
+        score_meaning: 'correctness',
+        feedback_md: 'ok',
+        judge_route: 'semantic',
+      },
+    });
+
+    // No job_events at all, and pg-boss has nothing either (retention pruned both).
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      result: { coarse_outcome?: string; score_meaning?: string; judge_event_id?: string } | null;
+    };
+    // Pre-fix this 404'd — telling a returning client its persisted verdict did not exist.
+    expect(body.status).toBe('done');
+    expect(body.result?.coarse_outcome).toBe('correct');
+    expect(body.result?.score_meaning).toBe('correctness');
+    expect(body.result?.judge_event_id).toBe(judgeEventId);
+    vi.restoreAllMocks();
+  });
+
+  it('still 404s when neither job_events NOR a domain attempt event exist', async () => {
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+    const res = await GET(new Request('http://localhost'), { id: newId() });
+    expect(res.status).toBe(404);
+    vi.restoreAllMocks();
+  });
 
   it('queued run → 200 queued, result null', async () => {
     const runId = newId();

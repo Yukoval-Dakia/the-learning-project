@@ -1413,7 +1413,14 @@ export async function enqueueDurableJudge(
   subjectProfile: SubjectProfile,
   deps: EnqueueDurableJudgeDeps = {},
 ): Promise<Response> {
-  const now = deps.now ?? new Date();
+  // W5 #Tunns — the answer time is the one captured at request parse (`validateSubmit`),
+  // NOT a fresh clock read here. Between those two points this path awaits profile
+  // resolution, the session-type lookup and possibly a cold pg-boss start, so two concurrent
+  // submits can reach this line in the opposite order they arrived — handing the EARLIER
+  // answer the LATER `submitted_at`. That stamp is what the worker's late-arrival detection
+  // and FSRS/θ̂ scheduling order by, so an inverted pair would skip the genuinely newer
+  // attempt or apply the older one on top of it. `deps.now` still overrides for tests.
+  const now = deps.now ?? validated.now;
   const runId = newId();
   // Rate-limit the durable enqueue on the SAME in-process paid-AI budget the sync judge path
   // uses (judgeSubmit's checkRateLimit before the invoke). A durable judge_run IS a paid

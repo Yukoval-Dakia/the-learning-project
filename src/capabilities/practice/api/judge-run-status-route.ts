@@ -14,6 +14,7 @@ import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { computeReplay } from '@/server/events/sse_replay';
 import { JUDGE_RUN_QUEUE } from '../server/judge-durable-config';
+import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import {
   JUDGE_RUN_TABLE,
   JudgeRunTerminalResultSchema,
@@ -88,7 +89,31 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // exists to cover. The run_id IS the pg-boss job id (`SendOptions.id` at enqueue), so ask
     // pg-boss directly before declaring the run unknown — and require the job to still be
     // RUNNABLE, since a terminal/expired job will never emit an event either (#TumMo).
+    // W5 #Tunn3 — resolution order per the design's `/status` contract (§3.6d):
+    //   (1) terminal job_event  →  (2) DOMAIN event by run_id  →  (3) live queue  →  (4) 404.
+    // `job_events` is the progress stream, NOT the source of truth: `prune_job_events` deletes
+    // it on a retention window and its terminal write can fail outright. The permanent record
+    // is the review + judge event pair the backfill tx commits. Without step (2) a client that
+    // came back after retention — or after a terminal write that never landed — got a 404 for
+    // a run whose verdict is sitting durably in the domain log. This also means a run whose
+    // terminal job_event was lost for good is still recoverable (#Tunn2), since the verdict
+    // never depended on job_events to survive.
     if (events.length === 0) {
+      const reconstructed = await reconstructDoneFromDomainEvents(db, runId);
+      if (reconstructed !== null) {
+        const parsedDomain = JudgeRunTerminalResultSchema.safeParse(reconstructed);
+        if (!parsedDomain.success) {
+          console.warn('[judge_run] domain-event reconstruction failed the result contract', {
+            run_id: runId,
+            error: parsedDomain.error.message,
+          });
+        }
+        return Response.json({
+          run_id: runId,
+          status: 'done' as const,
+          result: parsedDomain.success ? parsedDomain.data : null,
+        });
+      }
       if (await durableJobIsLive(runId)) {
         return Response.json({ run_id: runId, status: 'queued' as const, result: null });
       }
