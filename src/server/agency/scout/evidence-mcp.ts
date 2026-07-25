@@ -288,7 +288,12 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       ),
       tool(
         getTypedStateName,
-        'Read this knowledge point typed classification state (no-evidence / confused-with-X / mastered) and its lifecycle. Read-only projection.',
+        // Honest tool description (ADR-0050 §(a), YUK-790): do NOT promise the director a
+        // classification the system cannot produce. In Phase 0 the only writer hardcodes
+        // confused_with_kc_id=null and the §修正-4 gate needs a NAMED confused-with KC, so this
+        // tool returns `no-evidence` (or nothing) for every KC. Saying otherwise makes the agent
+        // treat an empty read as a signal ("not confused") rather than as absence of the rail.
+        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: in the current phase the only reachable value is `no-evidence` — the `confused-with-X` and `mastered` classifications are not produced by any writer yet, so an absent/`no-evidence` result means THE RAIL IS NOT ENERGIZED, not that the learner is un-confused. Do not infer anything from it.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;

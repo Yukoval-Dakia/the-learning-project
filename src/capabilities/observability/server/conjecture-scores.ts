@@ -1,17 +1,26 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4 fix) — admin reader for the
 // conjecture calibration loop. READ-ONLY.
 //
-// A4 fix (「reader before producer」红线真守): the reconcile loop AUTO-MINTS
-// `kc_typed_state` rows (typed_state='confused-with-X') on every confirmed probe.
-// Producer wire (S2/S3) → probe_result events accumulate → reconcile mints typed_state
-// silently. This reader observes BOTH halves of the consumer output so the owner has a
-// window onto auto-minted soft-track state changes, not just the LOG-only score events.
+// A4 (「reader before producer」红线真守): this reader is DELIBERATELY built ahead of its
+// producer. Read (a) is live; read (b) is NOT — see the ADR-0050 correction below.
 //
 // TWO READS (A4):
 //   (a) prediction_score events — LOG-only calibration anchors (brier / log_loss /
-//       skill_score_point single-point, NOT a window mean; never «accuracy»).
-//   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track
-//       state the reconcile loop auto-mints (provenance via evidence_event_ids).
+//       skill_score_point single-point, NOT a window mean; never «accuracy»). LIVE: the
+//       reconcile loop appends one per scored probe.
+//   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track cell.
+//       **PHASE 0: THIS RAIL IS NOT ENERGIZED — read (b) returns the empty set, always.**
+//
+// ADR-0050 §(a) correction (YUK-790). An earlier version of this header claimed the reconcile
+// loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is FALSE and was
+// reverse-drift against the code: reconcile (`reconcile.ts:263`, the ONLY production caller of
+// the single-writer `upsertKcTypedState`) hardcodes `confused_with_kc_id: null`, and the
+// §修正-4 gate (`typed-state.ts:49-63`) requires a NAMED confused-with KC before it will emit
+// `confused-with-X`. The induction schema (`ConjectureProposalChange`) carries no such field at
+// all. So the row is STRUCTURALLY unproducible in Phase 0 and this half of the panel stays
+// empty by construction, not by lack of data. Ruling: DEFERRED (Phase 0 does not produce it);
+// energizing it is an owner-gated product change, not a wiring fix. Keep the query — the reader
+// is the reader-before-producer red line, and it must be honest about being dark.
 //
 // Honesty: score values render as their canonical names (brier_model / brier_baseline /
 // log_loss_model / skill_score_point). skill_score_point is a SINGLE-POINT proper score
@@ -40,7 +49,10 @@ export interface ConjecturePredictionScoreRow {
   created_at: string;
 }
 
-/** One auto-minted soft-track typed-state row (the reconcile loop's structural output). */
+/**
+ * One soft-track typed-state row. NOT produced in Phase 0 — no writer can emit
+ * `confused-with-X` (ADR-0050 §(a)); this shape exists for the dark reader half only.
+ */
 export interface ConjectureTypedStateRow {
   id: string;
   knowledge_id: string;
@@ -195,9 +207,10 @@ function collectBoundedRows<Raw, Mapped>(
 }
 
 /**
- * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors) +
- * kc_typed_state confused-with-X rows (auto-minted structural soft-track state).
- * Never writes. Never flips flags. Never touches FSRS/θ̂ (ND-5).
+ * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors, LIVE) +
+ * kc_typed_state confused-with-X rows (soft-track cell — NOT energized in Phase 0, so this
+ * query is expected to return zero rows; ADR-0050 §(a)). Never writes. Never flips flags.
+ * Never touches FSRS/θ̂ (ND-5).
  */
 export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {
   const scoreRows = await db

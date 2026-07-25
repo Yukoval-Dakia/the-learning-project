@@ -25,12 +25,12 @@
 | | A5 graph-Laplacian / A6 prereq 传播 | YUK-441 / YUK-442 | **Backlog（已解锁）** | ⚠️ 依赖 YUK-344 已 Done → 静默解锁 |
 | | A7/A8/A10–A15 + A1 精修簇 | YUK-437/443/444/445/446/447/439 等 | **DESIGN** | — |
 | **关系脑·定性半（A13 conjecture engine）** | Phase 0 conjecture + 例会 job + 备课台 | **YUK-406** | **CODE-LIVE / ACCEPTANCE IN-FLIGHT** | felt UI、probe、reconcile 均在；保留两周产品验收 |
-| | A13 prediction-grounding + typed KC ledger | **YUK-440** | **CODE-LIVE** | prediction-score + typed-ledger 已在 |
+| | A13 prediction-grounding + typed KC ledger | **YUK-440** | **CODE-LIVE（typed 半边 dark）** | prediction_score 已在且有 admin 观测消费者；`confused-with-X` 软轨**结构性不可产生**（Phase 0 无具名 confused-with KC），裁定 DEFERRED — ADR-0050 §(a) |
 | | 错因 catalog + retrieve-rerank L1 | YUK-454 / YUK-462 | **LIVE（rerank dark，soft-track）** | — |
 | **规划脑·B3** | daily-stream merge engine（retire `review_plan`） | **YUK-349** | **CODE-LIVE / CLOSEOUT IN-FLIGHT** | default softmax、frontier、nightly compose、retire 均在 |
-| **规划脑·panel** | 单 Opus 审议 panel（SELECT-not-fuse） | **YUK-505** | **BACKLOG / DESIGN AMENDMENT NEEDED** | ⚠️ 与 YUK-572 anti-swarm runtime 冲突 |
+| **规划脑·panel** | 单 Opus 审议 panel（SELECT-not-fuse） | **YUK-505** | **审计线 CLOSED（不新建）** | single-director anti-swarm 为既决运行时拓扑，fan-out 形态被取代；零代码，无需删除 — ADR-0050 §(d) |
 | | cross-provider de-bias panel | YUK-416 | **DEFERRED**（等第 2 frontier lane） | — |
-| **教学法脑** | 8-method palette + `policy()` + B5 verify | **YUK-506** | **IN PROGRESS（安全脊柱）** | panel-SELECT / B5 接线仍 deferred |
+| **教学法脑** | 8-method palette + `policy()` + B5 verify | **YUK-506** | **IN PROGRESS（安全脊柱）** | palette 零消费者，裁定 knowingly-deferred（刻意不注册 flag）— ADR-0050 §(c)；panel-SELECT / B5 接线仍 deferred |
 | | B5 unified verify contract（Verifier Router） | YUK-350 | **IN-FLIGHT（W0 done）** | — |
 | **支持·备课台** | felt-core anti-guilt surface | YUK-406 | **LIVE shell**（需 conjecture ≤3 reframe） | — |
 | **支持·proposal/drafts** | proposal-as-event + /drafts 池 | YUK-403 | **LIVE**（PR #455） | — |

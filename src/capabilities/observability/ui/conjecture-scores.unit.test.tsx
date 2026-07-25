@@ -84,7 +84,20 @@ describe('AdminConjectureScoresSurface', () => {
   it('shows empty-state prose for each section when no rows', () => {
     const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
     expect(html).toContain('尚未产出 prediction_score');
-    expect(html).toContain('尚未铸出');
+    expect(html).toContain('本轨未通电');
+  });
+
+  // ADR-0050 §(a) / YUK-790 anti-regression lock. The typed-state rail is STRUCTURALLY dead in
+  // Phase 0 (reconcile hardcodes confused_with_kc_id=null; the §修正-4 gate demands a named KC),
+  // so the panel must say "not energized" — never the old "reconcile 自动铸 / 尚未铸出" framing,
+  // which read as "no data yet" and was reverse-drift against the code.
+  it('labels the typed-state rail as not-energized rather than merely empty', () => {
+    const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
+    const text = html.replaceAll('<!-- -->', '');
+    expect(text).toContain('本轨未通电');
+    expect(text).toContain('结构性恒空');
+    expect(text).not.toContain('尚未铸出');
+    expect(text).not.toContain('自动铸');
   });
 
   it('surfaces the KPI aggregates (prediction count + open typed-state count)', () => {

@@ -1,3 +1,15 @@
+// YUK-506 — 教学法 8 法 palette（方法定义 + state guard）。纯数据 + 纯函数，零 IO。
+//
+// WIRING STATUS: **knowingly-deferred**，台账 = **ADR-0050 §(c)**（YUK-790）。本模块连同
+// `policy.ts` 目前**零外部消费者**——全仓对 `@/core/pedagogy` 的引用只有自身目录与两个 unit test；
+// 真正的消费点（B5 verify contract / panel-SELECT）仍未接线。这是刻意的 deferred 终态，不是遗漏。
+//
+// 为什么**不**登记 `*_ENABLED` flag：`audit:flags` 是双向对账——ledger 每条都要求其声明的 `file` 里
+// 存在该 flag 名的**活 token**（`scripts/audit-flags.ts` reconcileFlags → STALE `name-missing`）。
+// palette 是纯数据，没有任何 runtime 判定点能承载这个 token，硬塞一个只为登记而生的 flag 会立刻
+// 制造一条 STALE 发现（为了让审计变绿而弄脏审计）。等接线时再按 A5 dark-ship 纪律在**真正的消费点**
+// 登记闸门 flag。审计遇到本模块请引 ADR-0050 §(c)，不要重开死码发现。
+
 import { z } from 'zod';
 
 export const PedagogyMethodId = z.enum([

@@ -129,6 +129,11 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(scores[0].ingest_at).not.toBeNull();
 
     // (2) typed-ledger cell: soft (confused_with null → §修正-4 gate), never `mastered`.
+    // This is ALSO the end-to-end lock for ADR-0050 §(a) (YUK-790): a CONFIRMED probe driven
+    // through the real reconcile still lands on 'no-evidence', i.e. `confused-with-X` is
+    // structurally unproducible in Phase 0. If this assertion ever needs to change, the
+    // induction side has started naming a confused-with KC — an owner-gated product change
+    // that must update ADR-0050 §(a) and the "本轨未通电" panel/tool copy in the same PR.
     const ts = await typedRow('k_a');
     expect(ts?.typed_state).toBe('no-evidence');
     expect(ts?.lifecycle).toBe('open');

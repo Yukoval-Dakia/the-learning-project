@@ -26,7 +26,9 @@ owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是�
    WHERE action = 'experimental:probe_result'
    ORDER BY created_at DESC LIMIT 20;
 
-   -- reconcile auto-mint 的结构性软态（owner-invisible，需双读）
+   -- 结构性软态。⚠️ 本轨 Phase 0 未通电（ADR-0050 §(a)）：reconcile 硬编码
+   -- confused_with_kc_id=null，§修正-4 gate 要求具名 KC 才发 confused-with-X，
+   -- 故此查询**恒返 0 行**。返回空是预期，不是故障，不要据此排查 reconcile。
    SELECT knowledge_id, typed_state, evidence, created_at
    FROM kc_typed_state
    WHERE typed_state LIKE 'confused-with-%'

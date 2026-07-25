@@ -6,7 +6,11 @@
 //
 // 诚实栏（spec §6 S4）：prediction_scores 是 **single-point proper score**（brier/log_loss/skill_score_point
 // 逐条判分，NOT accuracy / NOT window mean）——header 显式声明 score_basis，避免误读成准确率或窗口均值。
-// typed_states 是 reconcile loop 自动铸的 confused-with-X 软轨结构态（provenance = evidence_event_ids）。
+// typed_states 是 confused-with-X 软轨结构态（provenance = evidence_event_ids）。
+// **本轨 Phase 0 未通电**（ADR-0050 §(a)，YUK-790）：reconcile 是 kc_typed_state 单写者的唯一生产
+// 调用者，它硬编码 confused_with_kc_id=null，而 §修正-4 gate 要求具名 confused-with KC 才发该态；
+// 诱导侧 schema 也根本没有这个字段。故该栏**结构性恒空**，不是「暂时没数据」。栏内文案必须直说这点，
+// 早先「reconcile 自动铸」的措辞是对代码的反向漂移，已更正——通电与否是 owner 待拍的产品决定。
 
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
@@ -131,7 +135,7 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
       <PageHeader
         title="Conjecture Scores"
         eyebrow="ADMIN · conjecture wire"
-        sub="备课台预测 vs 真实作答的逐条 proper-score 校准锚 + reconcile 自动铸的 confused-with-X 软轨态。夜间 research_meeting reconcile 累积。"
+        sub="备课台预测 vs 真实作答的逐条 proper-score 校准锚（夜间 research_meeting reconcile 累积）。confused-with-X 软轨态本轨未通电，该栏恒空。"
       >
         <div style={linkRowStyle}>{NAV.map((n) => link(n.to, n.label))}</div>
       </PageHeader>
@@ -277,12 +281,21 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
             <Card pad="lg">
               <div style={sectionHeadStyle}>
                 <h2 style={sectionTitleStyle}>typed states · confused-with-X</h2>
-                <Badge tone="neutral">
-                  {openStates} open / {typed.length}
-                </Badge>
+                <div style={sectionBadgeRowStyle}>
+                  <Badge tone="coral" dot dotStatic>
+                    本轨未通电
+                  </Badge>
+                  <Badge tone="neutral">
+                    {openStates} open / {typed.length}
+                  </Badge>
+                </div>
               </div>
               {typed.length === 0 ? (
-                <p style={mutedTextStyle}>暂无 confused-with-X 软轨态（reconcile 尚未铸出）。</p>
+                <p style={mutedTextStyle}>
+                  本轨未通电：Phase 0 没有任何写者能产出 confused-with-X（reconcile 硬编码
+                  confused_with_kc_id=null，§修正-4 gate 要求具名 KC），该栏结构性恒空，不是暂时没
+                  数据。详见 ADR-0050 §(a)。
+                </p>
               ) : (
                 <div style={tableWrapStyle}>
                   <table style={tableStyle}>
@@ -370,6 +383,12 @@ const sectionTitleStyle: CSSProperties = {
   fontSize: 20,
   fontWeight: 500,
   letterSpacing: 'var(--ls-tight)',
+};
+const sectionBadgeRowStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 'var(--s-2)',
+  flexWrap: 'wrap',
 };
 const tableWrapStyle: CSSProperties = { overflowX: 'auto' };
 const tableStyle: CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };

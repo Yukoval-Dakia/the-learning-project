@@ -21,6 +21,15 @@
 //   - Phase 0 supplies NO `confused_with` KC (the conjecture names none) → the §修正-4
 //     gate keeps every cell SOFT (`no-evidence`/`open`). `mastered` is structurally
 //     unreachable here (upsertKcTypedState never produces it).
+//     ADR-0050 §(a) (YUK-790) makes the consequence explicit, because it was being read as
+//     "no data yet": since this loop is the ONLY production caller of the single-writer
+//     `upsertKcTypedState`, and the `confused_with_kc_id: null` below is hardcoded, the row
+//     `typed_state='confused-with-X'` is STRUCTURALLY UNPRODUCIBLE — the admin panel column
+//     and `get_typed_state` are permanently empty by construction. Ruling: DEFERRED (Phase 0
+//     does not produce it). Energizing it needs the induction side to NAME a confused-with KC
+//     (`ConjectureProposalChange` has no such field) — an owner-gated product change, not a
+//     wiring fix. Do NOT "fix" this by relaxing the gate: an unnamed confusion is exactly what
+//     §修正-4 refuses to commit.
 //   - retrievability R(t) is recorded in the prediction_score EVENT (fold-replay needs
 //     it logged), NEVER in the written kc_typed_state (it has no R column).
 //   - this loop NEVER writes FSRS (ND-5): no attempt event, no material_fsrs_state.
