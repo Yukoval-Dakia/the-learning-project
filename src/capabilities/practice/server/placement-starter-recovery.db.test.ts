@@ -824,6 +824,74 @@ describe('sweepStalePlacementStarterClaims — retry_scheduled reap', () => {
   });
 });
 
+describe('sweepStalePlacementStarterClaims — goal lock contention', () => {
+  // Review PRRT…HNf: the in-tx goal lock inverts the order materializePlacementStartersForGoal
+  // uses (goal → claim), so a plain FOR UPDATE is a real AB-BA cycle that Postgres resolves by
+  // aborting one side — possibly the LEARNER's /placement/start, i.e. a 5xx for a real person.
+  // NOWAIT removes the cycle rather than documenting it: a deadlock needs both sides to WAIT and
+  // this side never does. Here a concurrent transaction holds the goal row while the sweep runs.
+  it('stands down instead of blocking when the goal row is locked by a concurrent writer', async () => {
+    const claimId = await seedClaim();
+    let released: (() => void) | undefined;
+    const holdReleased = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    let locked: (() => void) | undefined;
+    const lockAcquired = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+
+    // A separate transaction holding `goal-1` FOR UPDATE for the duration of the sweep.
+    const holder = db.transaction(async (tx) => {
+      await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, 'goal-1')).for('update');
+      locked?.();
+      await holdReleased;
+    });
+    await lockAcquired;
+
+    let result: Awaited<ReturnType<typeof sweepStalePlacementStarterClaims>>;
+    try {
+      result = await sweepStalePlacementStarterClaims(db, {
+        now: NOW,
+        dispatch: recordingDispatch().dispatch,
+        isJobLive: noJobLive,
+        placementProbeEnabled: true,
+      });
+    } finally {
+      released?.();
+      await holder;
+    }
+
+    // Deferred, not blocked, not deadlocked, and above all NOT dispatched.
+    expect(result).toMatchObject({
+      scannedPending: 1,
+      goalLockBusy: 1,
+      redispatched: 0,
+      claimErrors: 0,
+    });
+    const claim = await readClaim(claimId);
+    expect(claim.status).toBe('pending_dispatch');
+    expect(claim.next_reconcile_at.getTime()).toBe(
+      NOW.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
+    );
+  });
+
+  it('takes the goal lock and dispatches normally when it is free', async () => {
+    await seedClaim();
+    const { calls, dispatch } = recordingDispatch();
+
+    const result = await sweepStalePlacementStarterClaims(db, {
+      now: NOW,
+      dispatch,
+      isJobLive: noJobLive,
+      placementProbeEnabled: true,
+    });
+
+    expect(result).toMatchObject({ redispatched: 1, goalLockBusy: 0 });
+    expect(calls).toEqual([{ claimId: 'claim-main', admitted: true }]);
+  });
+});
+
 describe('sweepStalePlacementStarterClaims — concurrent dispatch attribution', () => {
   // Review PRRT…0VF: dispatchPlacementStarterClaimTx re-reads the claim FOR UPDATE and, when the
   // status is no longer 'pending_dispatch', early-returns the EXISTING pg_boss_job_id without ever

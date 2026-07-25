@@ -149,6 +149,8 @@ export interface PlacementStarterRecoveryResult {
   goalNotActive: number;
   /** Claims a concurrent /placement/start (or another sweeper) dispatched first; this sweeper stood down. */
   dispatchedElsewhere: number;
+  /** Claims deferred because the goal row was locked by a concurrent writer (NOWAIT, never blocks). */
+  goalLockBusy: number;
   /** Claims whose handling threw outside the inner guards; cursor best-effort advanced, sweep continued. */
   claimErrors: number;
   /** Legs whose own scan query threw; the other leg still ran. */
@@ -187,6 +189,7 @@ export function emptyPlacementStarterRecoveryResult(
     staleRevision: 0,
     goalNotActive: 0,
     dispatchedElsewhere: 0,
+    goalLockBusy: 0,
     claimErrors: 0,
     legErrors: 0,
     redispatchSuppressed: false,
@@ -196,6 +199,20 @@ export function emptyPlacementStarterRecoveryResult(
 }
 
 type ClaimRow = typeof placement_starter_claim.$inferSelect;
+
+/**
+ * Postgres `lock_not_available` (55P03) — what `FOR UPDATE ... NOWAIT` raises when the row is
+ * already locked. drizzle wraps driver errors, so walk the `.cause` chain (same shape as
+ * `isNonterminalSingleFlightViolation` in @/server/question-supply/placement-starter).
+ */
+function isGoalLockUnavailable(err: unknown): boolean {
+  for (let cur: unknown = err, depth = 0; cur != null && depth < 5; depth++) {
+    const e = cur as { code?: string; cause?: unknown };
+    if (e.code === '55P03') return true;
+    cur = e.cause;
+  }
+  return false;
+}
 
 /**
  * Advance a claim's recovery cursor. The conditional UPDATE is the acquire CAS: it both reserves
@@ -484,6 +501,7 @@ async function sweepPendingDispatch(
   try {
     let supersededRevisionId: string | null = null;
     let notActiveStatus: string | null = null;
+    let goalLockBusy = false;
     // Whether OUR admission callback ran at all. `dispatchPlacementStarterClaimTx` re-reads the
     // claim FOR UPDATE and early-returns `claim.pg_boss_job_id` when the status is no longer
     // 'pending_dispatch' — WITHOUT calling admit. So a non-null return does not by itself mean we
@@ -500,24 +518,46 @@ async function sweepPendingDispatch(
       // checks above are lockless reads, so a goal re-scoped OR retracted between them and the
       // dispatch transaction taking the claim row lock would still get a paid batch dispatched —
       // and for the revision case that is the destructive outcome in full, not a near-miss. Redo
-      // both HERE, inside the dispatch tx, holding the goal row FOR UPDATE so a concurrent scope
-      // or status update must serialize against us.
+      // both HERE, inside the dispatch tx, holding the goal row locked so a concurrent scope or
+      // status update must serialize against us.
       //
-      // Lock-order note (deliberate, documented): this takes claim → goal, whereas
-      // materializePlacementStartersForGoal takes goal → claim (it locks the goal FOR UPDATE, then
-      // its claim INSERT ... ON CONFLICT DO NOTHING can wait on a claim row this sweeper holds).
-      // The inversion needs a /placement/start on the SAME goal concurrent with the nightly sweep
-      // to bite; Postgres detects the cycle and aborts ONE side, and the consequence differs by
-      // side: aborting the SWEEPER lands in the per-claim guard as a contained failure with the
-      // cursor advanced (never a corrupt dispatch), while aborting /placement/start surfaces to
-      // the learner as a 5xx they must retry — the more visible outcome of the two, and the reason
-      // this note exists rather than being waved off as internal-only. Accepted over restructuring
-      // the dispatch entrypoint to hand this module a transaction of its own.
-      const [fresh] = await tx
-        .select({ status: goal.status })
-        .from(goal)
-        .where(eq(goal.id, claim.goal_id))
-        .for('update');
+      // ── Why NOWAIT (review PRRT…HNf) ────────────────────────────────────────────────────
+      // This path locks claim → goal, while materializePlacementStartersForGoal locks goal →
+      // claim (goal FOR UPDATE, then INSERT ... ON CONFLICT DO NOTHING on the claim, which waits
+      // on a claim row this sweeper holds). A plain FOR UPDATE here is therefore a genuine AB-BA
+      // cycle whenever a /placement/start hits the SAME goal during the sweep window, and the
+      // earlier revision of this comment merely documented that — including that Postgres might
+      // abort the LEARNER's transaction, i.e. a 5xx for a real person, which is not a cost a
+      // background hygiene job gets to impose.
+      //
+      // NOWAIT removes the cycle instead of describing it: a deadlock requires both sides to
+      // WAIT, and this side now never waits. If the goal row is already locked — which in practice
+      // means a /placement/start is mid-materialize for this very goal — we fail instantly with
+      // 55P03, roll back to the savepoint, and defer the claim to the next window. That is the
+      // right answer on the merits too: the learner's own dispatch is happening right now, so the
+      // sweeper has nothing to add. The learner never waits on us beyond our own short dispatch
+      // tx, and never deadlocks with us. The serialization guarantee is unchanged in the common
+      // case, where the lock is free and we take it.
+      //
+      // The attempt is wrapped in a SAVEPOINT because a failed statement poisons the enclosing
+      // transaction; rolling back to the savepoint leaves the dispatch tx usable so we can return
+      // a clean "declined" rather than aborting it.
+      let goalRowStatus: string | null = null;
+      try {
+        await tx.transaction(async (sp) => {
+          const [row] = await sp
+            .select({ status: goal.status })
+            .from(goal)
+            .where(eq(goal.id, claim.goal_id))
+            .for('update', { noWait: true });
+          goalRowStatus = row?.status ?? 'missing';
+        });
+      } catch (err) {
+        if (!isGoalLockUnavailable(err)) throw err;
+        goalLockBusy = true;
+        return false; // decline; cursor already advanced, retried next window
+      }
+      const fresh = goalRowStatus === null ? undefined : { status: goalRowStatus };
       if (!fresh || fresh.status !== 'active') {
         notActiveStatus = fresh?.status ?? 'missing';
         return false; // suppress dispatch; deferred (NOT cancelled — see the pre-check rationale)
@@ -540,6 +580,14 @@ async function sweepPendingDispatch(
         jobId
           ? `[placement-starter-recovery] claim ${claim.id} was already dispatched concurrently as job ${jobId}; sweeper stood down`
           : `[placement-starter-recovery] claim ${claim.id} left pending_dispatch concurrently before the sweeper could drive it; stood down`,
+      );
+    } else if (goalLockBusy) {
+      // The goal row was locked by a concurrent writer — in practice a /placement/start
+      // mid-materialize for this very goal, which is dispatching the claim itself. Standing down
+      // is both deadlock-free and correct on the merits; the cursor is already advanced.
+      result.goalLockBusy += 1;
+      console.log(
+        `[placement-starter-recovery] goal ${claim.goal_id} is locked by a concurrent writer; claim ${claim.id} deferred to the next window`,
       );
     } else if (notActiveStatus !== null) {
       // Goal left the active flow between the pre-check and admission. Nothing was enqueued; the
