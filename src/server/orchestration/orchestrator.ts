@@ -25,6 +25,7 @@ import {
   claimNodePending,
   createRunWithNodes,
   finishRun,
+  getActiveRunById,
   getActiveRunForDate,
   getLatestRunForDate,
   insertNodes,
@@ -439,10 +440,15 @@ export async function runOrchestratorStart(
  * tick：推进今晚 active run 一步，未完成则自调度下一 tick，完成则收尾。无 active run →
  * no-op（run 已终结或尚未起步）。
  */
-export async function runOrchestratorTick(deps: DriveDeps): Promise<void> {
+export async function runOrchestratorTick(deps: DriveDeps, runId?: string): Promise<void> {
   const now = deps.now ?? new Date();
-  const runDate = (deps.localDate ?? orchestratorLocalDate)(now);
-  const run = await getActiveRunForDate(deps.db, runDate);
+  // 优先按 tick 自带的 run_id 定位（YUK-758 review ToTvLt）：按「当前本地日」反查会让**跨本地
+  // 午夜**的 run 在换日后失联——手工整链重跑可以在 23:5x 起步，00:00 后的第一拍按新日期查不到
+  // 它、直接 return，剩余节点全部停摆到 02:30 锚点把它 abandon。带 id 的 tick 永远找得到自己。
+  // 无 id 的 tick（旧版本残留在队列里的）回退按日期查，保持升级期兼容。
+  const run = runId
+    ? await getActiveRunById(deps.db, runId)
+    : await getActiveRunForDate(deps.db, (deps.localDate ?? orchestratorLocalDate)(now));
   if (!run) return;
 
   // 热升级新增成员的补齐（YUK-758 review ToTk1N / ToTvT）：start 路径已有这句自愈，tick 路径
@@ -502,9 +508,10 @@ async function advanceAndContinue(
 
   if (!settled) {
     // 续链 send **不**包在上面的 try 里：它失败必须能抛到调用方，让 pg-boss 重投递本 tick。
+    // 带上 run_id（ToTvLt）：下一拍据此直接定位本 run，跨本地午夜也不会失联。
     const tickId = await deps.boss.send(
       ORCHESTRATOR_QUEUE,
-      { tick: true },
+      { tick: true, runId: deps.run.id },
       { startAfter: TICK_INTERVAL_SECONDS },
     );
     if (!tickId) {

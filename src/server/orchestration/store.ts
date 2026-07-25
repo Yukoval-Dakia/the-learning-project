@@ -71,6 +71,20 @@ export async function createRun(
   return rows[0] ? toRunRow(rows[0]) : null;
 }
 
+/**
+ * 按 id 取仍在 running 的 run（YUK-758 review ToTvLt）。tick 自带 run_id，用它定位自己所属的
+ * run，而不是按「当前本地日」反查——否则跨本地午夜的 run（如临近 00:00 手工起的整链重跑）
+ * 在换日后就查不到自己，tick 直接返回、剩余节点全部停摆到次夜锚点 abandon。
+ */
+export async function getActiveRunById(db: Db, runId: string): Promise<RunRow | null> {
+  const rows = await db
+    .select()
+    .from(dag_orchestration_run)
+    .where(and(eq(dag_orchestration_run.id, runId), eq(dag_orchestration_run.status, 'running')))
+    .limit(1);
+  return rows[0] ? toRunRow(rows[0]) : null;
+}
+
 /** 今日的 active（running）run，若无返回 null。 */
 export async function getActiveRunForDate(db: Db, runDate: string): Promise<RunRow | null> {
   const rows = await db

@@ -36,6 +36,8 @@ class FakeBoss implements OrchestratorBoss {
     startAfter?: number;
   }[] = [];
   tickSends = 0;
+  /** payloads of the self-scheduled tick sends (carry the run id — see ToTvLt). */
+  tickPayloads: object[] = [];
   /** member job names for which send() returns null (models pg-boss "no job created"). */
   nullSendJobs = new Set<string>();
   /** member job names whose send() throws — models a crash/transient failure after the claim commit. */
@@ -55,6 +57,7 @@ class FakeBoss implements OrchestratorBoss {
     if (name === ORCHESTRATOR_QUEUE) {
       if (this.failTickSend) throw new Error('simulated tick send failure');
       this.tickSends += 1;
+      this.tickPayloads.push(data);
       return this.nullTickSend ? null : `tick_${this.tickSends}`;
     }
     if (this.throwOnSendJobs.has(name)) {
@@ -769,6 +772,50 @@ describe('orchestrator trigger semantics', () => {
 
     expect(boss.hasJob('a', reservedId)).toBe(true);
     expect((await nodeRow(run.id, 'a'))?.status).toBe('enqueued'); // recovered, not failed
+  });
+
+  // ㉑ YUK-758 review ToTvLt — a run that spans local midnight (e.g. a manual full-chain
+  // rerun started at 23:5x) used to become unreachable: the first tick after the date
+  // rolls over looked up "today's" run, found none, and returned — leaving the run
+  // `running` with its remaining members stalled until the 02:30 anchor abandoned it.
+  it('㉑ a tick finds its own run by id across a local-midnight rollover', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'manual'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+
+    // The clock has rolled into the NEXT local day; a date-keyed lookup would miss.
+    const nextDay = () => '2026-07-26';
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: nextDay }, run.id);
+
+    // The run kept advancing rather than being stranded.
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('succeeded');
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
+  });
+
+  it('㉑b without a runId the tick still falls back to the date lookup', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('enqueued');
+  });
+
+  it('㉑c the scheduled next tick carries its run id', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    expect(boss.tickPayloads).toContainEqual({ tick: true, runId: run.id });
   });
 
   it('tick with no active run is a no-op', async () => {

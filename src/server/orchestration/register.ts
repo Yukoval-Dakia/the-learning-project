@@ -5,7 +5,7 @@
 // 与 note_verify 一类链式回调同性质，但自持队列/cron，故自带挂载器（mountSubscriptionDispatch
 // 同款先例）。
 
-import type { PgBoss } from 'pg-boss';
+import type { Job, PgBoss } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
@@ -15,9 +15,13 @@ import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './consta
 import { buildOrchestrationDag } from './members';
 import { type OrchestratorBoss, runOrchestratorStart, runOrchestratorTick } from './orchestrator';
 
-/** orchestrator 队列认得的 payload 形状（cron `{}` / tick `{tick:true}` / 手动 `{trigger:'manual'}`）。 */
+/**
+ * orchestrator 队列认得的 payload 形状：cron `{}` / tick `{tick:true, runId?}` /
+ * 手动 `{trigger:'manual'}`。`runId` 只在 tick 上有意义（见 ToTvLt：跨本地午夜定位本 run）。
+ */
 export interface OrchestratorJobPayload {
   tick?: true;
+  runId?: string;
   trigger?: 'manual';
 }
 
@@ -40,12 +44,12 @@ export function parseOrchestratorPayload(raw: unknown): OrchestratorJobPayload {
       `[orchestrator] unexpected job payload (not an object): ${JSON.stringify(raw)}`,
     );
   }
-  const entries = Object.entries(raw as Record<string, unknown>);
-  const unknown = entries.filter(([k]) => k !== 'tick' && k !== 'trigger').map(([k]) => k);
+  const allowed = new Set(['tick', 'runId', 'trigger']);
+  const unknown = Object.keys(raw as Record<string, unknown>).filter((k) => !allowed.has(k));
   if (unknown.length > 0) {
     throw new Error(`[orchestrator] unexpected job payload key(s): ${unknown.join(', ')}`);
   }
-  const { tick, trigger } = raw as Record<string, unknown>;
+  const { tick, runId, trigger } = raw as Record<string, unknown>;
   if (tick !== undefined && tick !== true) {
     throw new Error(
       `[orchestrator] unexpected job payload: 'tick' must be exactly true, got ${JSON.stringify(tick)}`,
@@ -61,7 +65,16 @@ export function parseOrchestratorPayload(raw: unknown): OrchestratorJobPayload {
       "[orchestrator] unexpected job payload: 'tick' and 'trigger' are mutually exclusive",
     );
   }
-  if (tick === true) return { tick: true };
+  if (runId !== undefined && (typeof runId !== 'string' || runId.length === 0)) {
+    throw new Error(
+      `[orchestrator] unexpected job payload: 'runId' must be a non-empty string, got ${JSON.stringify(runId)}`,
+    );
+  }
+  // runId 只随 tick 走；挂在 cron/manual 上说明调用方搞错了形状，不猜。
+  if (runId !== undefined && tick !== true) {
+    throw new Error("[orchestrator] unexpected job payload: 'runId' is only valid with tick:true");
+  }
+  if (tick === true) return runId === undefined ? { tick: true } : { tick: true, runId };
   if (trigger === 'manual') return { trigger: 'manual' };
   return {};
 }
@@ -110,10 +123,50 @@ export async function registerOrchestrator(
   }
 }
 
-/** 真正的挂载步骤（建队 + work + 清旧 schedule + 落锚点 cron）。失败由调用方回滚挂载闸。 */
+/**
+ * 真正的挂载步骤。失败由调用方回滚挂载闸。
+ *
+ * **步骤顺序是刻意的**（YUK-758 review ToTsdt）：建队 → 清旧 schedule → 落锚点 cron →
+ * **最后**才 `boss.work`。`boss.work` 注册的消费者**没有回滚路径**（挂载闸回滚只清标志位，
+ * 已注册的 worker 仍在），所以它必须排在所有可能失败的步骤之后——否则「work 成功、后续步骤抛」
+ * 会留下一个孤儿消费者，调用方一旦 catch 后重试就会在同队列上挂**第二个**消费者，pg-boss 把
+ * 每条 orchestrator job 投给两者 → 整条夜链（含付费 LLM 根节点）双跑。
+ * 反过来把 work 放最后是安全的：cron 已排但消费者还没起，只是这一拍晚几秒被 poll 到。
+ */
 async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<void> {
   // FAST 档（无 DLQ）：orchestrator 自身廉价；掉一拍 tick 由自调度链 / 次夜锚点自愈。
   await createOrUpdateQueue(boss, ORCHESTRATOR_QUEUE, FAST_QUEUE_OPTS);
+
+  // 升级路径清账（YUK-758 review ToIqS）：本迁移把 14+ 只旧 cron job 改成 DAG 成员，但
+  // pg-boss 的 `schedule` 行持久在 DB——已跑过旧版的实例升级后，旧 02:30/03:00/05:30… schedule
+  // 仍会直接 enqueue 这些成员，与 orchestrator 双发、绕过依赖门。启动时对每个成员显式 unschedule
+  // （幂等：无 schedule 行则 no-op），把「成员不得带 cron」的组合期不变量落到运行期。
+  //
+  // `allSettled` 而非 `all`（review ToTbt）：短路会让**未尝试**的成员静默留着旧 schedule；
+  // 逐条跑完才能把清账做到最大程度、并把每个失败项都报出来。
+  // 但**任一失败即中止挂载**（review ToTvLr）：先前只 warn 后照常落锚点 cron，等于放任
+  // 「残留旧 cron 直发该成员 + DAG 也触发它」并存——重复付费任务且绕过依赖门，而且进程不重启
+  // 就一直如此。宁可让挂载**响亮失败**（start-worker 不 catch → 启动中止，运维立刻可见），
+  // 也不要带着已知的双发状态跑一整夜。闸已回滚，重启/重试即可再来。
+  const members = [...dag.nodes.keys()];
+  const unscheduled = await Promise.allSettled(members.map((member) => boss.unschedule(member)));
+  const failedUnschedules = members.filter((_, i) => unscheduled[i].status === 'rejected');
+  for (const [i, result] of unscheduled.entries()) {
+    if (result.status === 'rejected') {
+      console.error(
+        `[orchestrator] failed to unschedule legacy cron for DAG member '${members[i]}'`,
+        result.reason,
+      );
+    }
+  }
+  if (failedUnschedules.length > 0) {
+    throw new Error(
+      `[orchestrator] aborting mount: could not clear legacy cron for ${failedUnschedules.length} DAG member(s) (${failedUnschedules.join(', ')}); mounting the anchor now would let them both self-fire and be orchestrated (duplicate paid jobs, dependency gate bypassed)`,
+    );
+  }
+
+  // 单锚点 cron（图成员自身已无 cron，validateComposition 强制）。
+  await boss.schedule(ORCHESTRATOR_QUEUE, ORCHESTRATOR_CRON, {}, { tz: ORCHESTRATOR_TZ });
 
   const orchestratorBoss: OrchestratorBoss = {
     send: (name, data, options) => boss.send(name, data, options ?? {}),
@@ -123,10 +176,14 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
     },
   };
 
+  // 最后一步（见上文顺序说明）：注册消费者。
   await boss.work(
     ORCHESTRATOR_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    async (jobs: { data?: unknown }[]) => {
+    // pg-boss 原生 `Job` 类型（review ToTsdy）：与 verify-dispatch-outbox.ts 等既有 handler
+    // 一致，也让 pg-boss 未来的形状变更被类型系统而不是运行期发现。payload 仍走
+    // parseOrchestratorPayload 收窄——`Job` 的 data 是 unknown-ish，类型只保证信封不保证内容。
+    async (jobs: Job[]) => {
       for (const job of jobs) {
         // 包裹 try/catch（dispatch-mount.ts 惯例，YUK-758 review ToTaR）：带上下文 log 让失败
         // 可见。orchestrator 队列走 FAST（无 DLQ），一次夜跑失败若无日志会完全无声。
@@ -150,7 +207,7 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
           // payload 静默走进 start 分支（trigger 默认 'cron'）触发整链重跑。收窄见 parse 实现。
           const data = parseOrchestratorPayload(job.data);
           if (data.tick) {
-            await runOrchestratorTick({ db, boss: orchestratorBoss, dag });
+            await runOrchestratorTick({ db, boss: orchestratorBoss, dag }, data.runId);
           } else {
             // cron（空 payload）或 manual 整链重跑。
             await runOrchestratorStart(
@@ -166,29 +223,6 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
     },
   );
 
-  // 升级路径清账（YUK-758 review ToIqS）：本迁移把 14+ 只旧 cron job 改成 DAG 成员，但
-  // pg-boss 的 `schedule` 行持久在 DB——已跑过旧版的实例升级后，旧 02:30/03:00/05:30… schedule
-  // 仍会直接 enqueue 这些成员，与 orchestrator 双发、绕过依赖门。启动时对每个成员显式 unschedule
-  // （幂等：无 schedule 行则 no-op），把「成员不得带 cron」的组合期不变量落到运行期。
-  // 各 unschedule targets 互不相干（每条打不同 name），并发发出即可——串行 await 会把 14+ 次
-  // DB 往返摞成启动期的一条长链（YUK-758 review ToTaw）。
-  // 用 **allSettled** 而非 all（review ToTbt）：`Promise.all` 首个 reject 即短路，剩余成员的
-  // 旧 schedule 行**留在库里**，而挂载流程继续往下落锚点 cron —— 结果是部分成员既被 orchestrator
-  // 触发、又被自己的旧 cron 直接 enqueue（双发 + 绕过依赖门），恰是本清账要消灭的状态。
-  // 逐条跑完并逐条 log，清账做到能做的最大程度；失败项下次启动再试（unschedule 幂等）。
-  const members = [...dag.nodes.keys()];
-  const unscheduled = await Promise.allSettled(members.map((member) => boss.unschedule(member)));
-  for (const [i, result] of unscheduled.entries()) {
-    if (result.status === 'rejected') {
-      console.warn(
-        `[orchestrator] failed to unschedule legacy cron for DAG member '${members[i]}' — it may still self-fire and bypass its dependency gate until the next successful startup`,
-        result.reason,
-      );
-    }
-  }
-
-  // 单锚点 cron（图成员自身已无 cron，validateComposition 强制）。
-  await boss.schedule(ORCHESTRATOR_QUEUE, ORCHESTRATOR_CRON, {}, { tz: ORCHESTRATOR_TZ });
   console.log(
     `[orchestrator] mounted: ${dag.nodes.size} members / ${dag.roots.length} roots; anchor cron ${ORCHESTRATOR_CRON} ${ORCHESTRATOR_TZ}`,
   );

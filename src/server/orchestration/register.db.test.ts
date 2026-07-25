@@ -20,6 +20,8 @@ class FakeBoss {
   workedQueues: string[] = [];
   unscheduled: string[] = [];
   scheduled: string[] = [];
+  /** member names whose unschedule rejects (models a transient DB failure). */
+  failUnschedule = new Set<string>();
 
   async createQueue(name: string): Promise<void> {
     this.createdQueues.push(name);
@@ -32,6 +34,7 @@ class FakeBoss {
     return `worker_${name}`;
   }
   async unschedule(name: string): Promise<void> {
+    if (this.failUnschedule.has(name)) throw new Error(`simulated unschedule failure: ${name}`);
     this.unscheduled.push(name);
   }
   async schedule(name: string): Promise<void> {
@@ -75,6 +78,48 @@ describe('registerOrchestrator mount guard', () => {
     expect(boss.scheduled).toEqual([ORCHESTRATOR_QUEUE]);
   });
 
+  // YUK-758 review ToTvLr — a legacy cron left registered while the anchor also drives
+  // that member means duplicate PAID jobs and a bypassed dependency gate, and it persists
+  // until the process restarts. Fail the mount loudly instead.
+  it('aborts the mount when a legacy cron cannot be cleared, and registers no worker or anchor', async () => {
+    const boss = new FakeBoss();
+    boss.failUnschedule.add('b');
+    const caps = [
+      capability('practice', [
+        { name: 'a', dependsOn: [] },
+        { name: 'b', dependsOn: [] },
+      ]),
+    ];
+
+    await expect(
+      registerOrchestrator(boss as unknown as PgBoss, {} as never, caps),
+    ).rejects.toThrow(/could not clear legacy cron/);
+
+    // Nothing half-mounted: no anchor cron, and no consumer left behind.
+    expect(boss.scheduled).toEqual([]);
+    expect(boss.workedQueues).toEqual([]);
+  });
+
+  // ToTsdt — boss.work has no rollback, so it must come after every fallible step;
+  // otherwise a caught-and-retried registration stacks a second consumer on the queue
+  // and every orchestrator job (including paid root jobs) runs twice.
+  it('registers the worker only after unschedule and schedule succeed', async () => {
+    const boss = new FakeBoss();
+    boss.failUnschedule.add('a');
+    const caps = [capability('practice', [{ name: 'a', dependsOn: [] }])];
+
+    await expect(
+      registerOrchestrator(boss as unknown as PgBoss, {} as never, caps),
+    ).rejects.toThrow();
+    expect(boss.workedQueues).toEqual([]); // no orphaned consumer
+
+    // The latch was rolled back, so a retry can mount cleanly — and still only one worker.
+    boss.failUnschedule.clear();
+    await registerOrchestrator(boss as unknown as PgBoss, {} as never, caps);
+    expect(boss.workedQueues).toEqual([ORCHESTRATOR_QUEUE]);
+    expect(boss.scheduled).toEqual([ORCHESTRATOR_QUEUE]);
+  });
+
   it('does not mount at all when no DAG members are declared', async () => {
     const boss = new FakeBoss();
     const caps = [capability('practice', [{ name: 'bare_cron' }])];
@@ -87,12 +132,27 @@ describe('registerOrchestrator mount guard', () => {
 });
 
 describe('parseOrchestratorPayload', () => {
-  it('accepts the three shapes the orchestrator queue actually sends', () => {
+  it('accepts the shapes the orchestrator queue actually sends', () => {
     expect(parseOrchestratorPayload({})).toEqual({});
     expect(parseOrchestratorPayload(null)).toEqual({});
     expect(parseOrchestratorPayload(undefined)).toEqual({});
     expect(parseOrchestratorPayload({ tick: true })).toEqual({ tick: true });
     expect(parseOrchestratorPayload({ trigger: 'manual' })).toEqual({ trigger: 'manual' });
+    // ToTvLt — the self-scheduled tick carries its run id.
+    expect(parseOrchestratorPayload({ tick: true, runId: 'run_1' })).toEqual({
+      tick: true,
+      runId: 'run_1',
+    });
+  });
+
+  it('rejects a runId that is malformed or attached to the wrong shape', () => {
+    expect(() => parseOrchestratorPayload({ tick: true, runId: '' })).toThrow(/non-empty string/);
+    expect(() => parseOrchestratorPayload({ tick: true, runId: 7 })).toThrow(/non-empty string/);
+    // runId only travels with a tick; on a cron/manual payload it means a shape mix-up.
+    expect(() => parseOrchestratorPayload({ runId: 'run_1' })).toThrow(/only valid with tick/);
+    expect(() => parseOrchestratorPayload({ trigger: 'manual', runId: 'run_1' })).toThrow(
+      /only valid with tick/,
+    );
   });
 
   // A malformed payload previously slid through a bare `as` into the start branch and
