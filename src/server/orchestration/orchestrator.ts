@@ -387,7 +387,14 @@ async function cancelBossJob(
  *  · 旧 job 不受**新图**上游约束（它是上一夜的图排出来的），等于绕过 DAG 依赖门跑。
  *
  * 顺带把节点行收敛到终态：run 已 abandoned 就不会再有 tick 碰它，留一堆永久 `enqueued` 节点
- * 只会让观测面读出幽灵「在跑」。detail 如实记「取消成功 / 取消失败」两种。
+ * 只会让观测面读出幽灵「在跑」。
+ *
+ * **终态选取**：节点状态枚举里没有 `cancelled`（加一个要动 schema + CHECK，越界），故在
+ * `failed` / `skipped` 之间按事实二选一 ——
+ *  · 已派发过 job（有 `boss_job_id`）→ `failed`：它确实被派出去且没有成功；
+ *  · 从未入队（仍 pending）→ `skipped`：它压根没跑过，记成 failed 会让读面（YUK-774）的
+ *    失败计数虚高，把「今夜被整体放弃」误读成「这么多成员跑挂了」。
+ * 真因一律进 detail，两类都可从痕迹还原。
  *
  * 逐节点隔离：任一节点的 cancel/落库失败都不得阻断其余节点与后续 abandon。
  */
@@ -400,21 +407,25 @@ async function cancelRunInflightJobs(
   for (const node of nodes.values()) {
     if (isTerminalNodeStatus(node.status)) continue;
     try {
-      const cancelled = node.boss_job_id
-        ? await cancelBossJob(
-            deps.boss,
-            node.job_name,
-            node.boss_job_id,
-            `run ${run.id} (${run.run_date}) abandoned`,
-          )
-        : false;
+      if (!node.boss_job_id) {
+        await updateNodeStatus(deps.db, node.id, {
+          status: 'skipped',
+          detail: 'run abandoned before this node was enqueued',
+          now,
+        });
+        continue;
+      }
+      const cancelled = await cancelBossJob(
+        deps.boss,
+        node.job_name,
+        node.boss_job_id,
+        `run ${run.id} (${run.run_date}) abandoned`,
+      );
       await updateNodeStatus(deps.db, node.id, {
         status: 'failed',
-        detail: node.boss_job_id
-          ? cancelled
-            ? 'run abandoned; pg-boss job cancelled'
-            : 'run abandoned; pg-boss job cancel failed (job may still execute)'
-          : 'run abandoned before this node was enqueued',
+        detail: cancelled
+          ? 'run abandoned; pg-boss job cancelled'
+          : 'run abandoned; pg-boss job cancel failed (job may still execute)',
         now,
       });
     } catch (err) {

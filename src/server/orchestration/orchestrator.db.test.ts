@@ -1091,8 +1091,10 @@ describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
     const oldA = await nodeRow(old.id, 'a');
     expect(oldA?.status).toBe('failed');
     expect(oldA?.detail).toMatch(/pg-boss job cancelled/);
+    // A never-enqueued node settles as `skipped`, not `failed` — it did not run at all, and
+    // counting it as a failure would inflate the failure tally on the read surface (YUK-774).
     const oldB = await nodeRow(old.id, 'b');
-    expect(oldB?.status).toBe('failed');
+    expect(oldB?.status).toBe('skipped');
     expect(oldB?.detail).toMatch(/before this node was enqueued/);
   });
 
