@@ -1461,9 +1461,10 @@ export interface EnqueueDurableJudgeDeps extends JudgeRunEnqueueDeps {
  * and return the 202-pending contract.
  *
  * run_id ≡ the (worker-written) attempt/outcome event id — a submit-face contract
- * (NOT universal; W3 faces define their own anchor). It is ALSO the pg-boss job id
- * (`SendOptions.id`, the YUK-758 orchestrator idiom), which lets the poll route ask pg-boss
- * whether a marker-less run really exists.
+ * (NOT universal; W3 faces define their own anchor). The pg-boss job id is DERIVED from it via
+ * `judgeRunJobId` rather than equal to it (pg-boss job ids are uuid columns; run handles are
+ * cuid2s — see that function), which still lets the poll route resolve a marker-less run by
+ * primary key.
  *
  * **Ordering (YUK-777 A2): checkRateLimit → pending-attempt EVENT → boss.send → queued marker
  * → 202.** W1/W2 sent first and wrote no domain evidence at all, which made the pg-boss
