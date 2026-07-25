@@ -9,7 +9,13 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
-import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
+// 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件
+// （src/capabilities/AGENTS.md）。此前这里直 import @/core/schema/event/known 取长度常量，
+// 既违反依赖方向，又把整套 event Zod schema 拖进 SPA 模块图（实测 8 模块 / 46.7 KB）。
+// 改走 @/kernel/limits 窄 facade（2 模块 / 107 B，零 event schema）——真源仍是 core/limits.ts。
+// 注意别改成 @/kernel/capability-contract-schemas：那个 barrel 反而拖 34 模块 / 252.9 KB，
+// 见 src/kernel/limits.ts 头注释的实测表。
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';

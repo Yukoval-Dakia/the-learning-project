@@ -1,9 +1,14 @@
 import { z } from 'zod';
+import { REASONING_TRACE_MAX_LEN } from '../../limits';
 import { ActivityRef } from '../activity';
 import { AttemptPayload } from '../attempt-payload';
 import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
+
+// REASONING_TRACE_MAX_LEN 的真源在 core/limits.ts（纯模块）：这里只 import 来给下面两处
+// payload 的 .max() 用，**不再 re-export**。消费方一律走 @/kernel/limits —— 经本文件取会把
+// 整套 event schema 拖进调用方的 bundle 图（PR #1069 实测，见 src/kernel/limits.ts 头注释）。
 
 // ---------- 通用 envelope 字段 ----------
 //
@@ -24,14 +29,6 @@ const baseOptionalFields = {
  */
 export const MAX_HINT_INDEX = 20;
 export const MAX_HINT_COUNT = MAX_HINT_INDEX + 1;
-
-/**
- * YUK-562 — upper bound (chars) for the process-data `reasoning_trace` field.
- * Single source of truth: the two payload schemas below AND the /api/attempts
- * request contract (practice/api/contracts.ts) + the solve-session write-side
- * truncation reference it, so the bound can never drift across the write path.
- */
-export const REASONING_TRACE_MAX_LEN = 4000;
 
 // YUK-407 (Phase 0 red line) — ReconstructionSignal: was this answer DERIVED from the
 // knowledge node's parent derivation path, or RETRIEVED from memory? Logged as an

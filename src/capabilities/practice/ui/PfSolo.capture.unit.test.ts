@@ -7,7 +7,11 @@
 //
 // No-DB unit partition（不 import db/postgres/drizzle）。
 
-import { REASONING_TRACE_MAX_LEN, ReviewOnQuestion } from '@/core/schema/event/known';
+// 常量走 @/kernel/limits（与生产 PfSolo 同一条路径，PR #1069 边界修复）。ReviewOnQuestion 仍直取
+// core event schema：本测试的意图正是拿**事件 payload schema 本体**校验 UI 装配出的 wire body，
+// 跨层断言是它的目的；生产 UI 代码不得如此。
+import { ReviewOnQuestion } from '@/core/schema/event/known';
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { describe, expect, it } from 'vitest';
 import {
   buildCaptureFields,
