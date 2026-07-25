@@ -159,6 +159,15 @@ export async function runQuestionSupplyNightly(
     supply = await runSupplyDiscoveryAndDispatch(db, deps);
   } catch (err) {
     supplyError = err;
+    // Log HERE, not only at the eventual re-throw. Deferring the throw so the sweep can run also
+    // defers the handler's catch — and the sweep in between is long (DB scans, pg-boss liveness
+    // probes, paid dispatches). If the worker is killed or the job times out during it, the supply
+    // failure would vanish without a trace. Emit immediately; the handler's own catch still logs
+    // the re-thrown error, and the two lines read as one story rather than two failures.
+    console.error(
+      '[question_supply_nightly] supply leg failed; running the placement starter recovery sweep before re-throwing',
+      err,
+    );
   }
 
   // YUK-761 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（YUK-452

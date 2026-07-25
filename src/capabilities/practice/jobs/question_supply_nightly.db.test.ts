@@ -188,6 +188,16 @@ describe('runQuestionSupplyNightly', () => {
           line.includes('supply leg also failed'),
       ),
     ).toBe(true);
+    // Review PRRT…AJJ — the supply failure is logged BEFORE the sweep runs, not only at the
+    // eventual re-throw, so it survives a kill/timeout during the (long) sweep.
+    const supplyLine = errors.findIndex((line) =>
+      line.includes('supply leg failed; running the placement starter recovery sweep'),
+    );
+    const recoveryLine = errors.findIndex((line) =>
+      line.includes('placement starter recovery sweep did not complete'),
+    );
+    expect(supplyLine).toBeGreaterThanOrEqual(0);
+    expect(supplyLine).toBeLessThan(recoveryLine);
   });
 
   // YUK-761 (review PRRT…jcg) — isolation without consumption is not a signal. The pg-boss caller
