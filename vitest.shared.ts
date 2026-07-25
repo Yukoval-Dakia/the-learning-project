@@ -151,6 +151,12 @@ export const fastTestInclude = [
   // and the boss handed in is a plain capture fake. src/server/boss/** has no
   // unit glob (client.globalthis.test.ts precedent), so this MUST be listed.
   'src/server/boss/queue-config.test.ts',
+  // YUK-779 — 夜链「静默空跑」判据（classifyJobYield / reportJobYield /
+  // readJobYieldReport）。Pure no-DB: job-yield.ts 是零 import 的纯函数模块（连
+  // type-only 依赖都没有），测试只 spy console。src/server/boss/** 无 unit glob
+  // （queue-config.test.ts / client.globalthis.test.ts 先例），故必须显式列出，
+  // 否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
+  'src/server/boss/job-yield.unit.test.ts',
   // YUK-384 — worker boss-start marks the running boss (getRunningBoss) so the FULL
   // mutation-wake + continuation dispatch work in the worker. Pure no-DB: pg-boss AND
   // every startBossWorker dependency (@/capabilities, handlers, register-capability-jobs,

@@ -27,6 +27,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -165,6 +166,19 @@ export interface NightlyResult {
   // YUK-689 — RECONCILE SUPERSEDE recommendations emitted as pending proposals.
   // Historical result key retained for compatibility; no edge is mutated nightly.
   reconcile_superseded: number;
+  /**
+   * YUK-779 — 1 when runEdgeProposeAndWrite SWALLOWED a fault (`ok === false`), else 0.
+   *
+   * `ok` was already computed here (it gates the watermark advance) but was DISCARDED
+   * before the result was returned, so a 吞错夜 reported `proposed: 0` and finished
+   * `succeeded` — indistinguishable from a batch the model legitimately declined.
+   */
+  llm_failed: number;
+  /**
+   * YUK-779 — 1 once the batch LLM call was actually issued (a non-empty attempt
+   * batch), else 0. The vacuum-tail branch (0 attempts) never calls the model.
+   */
+  llm_attempted: number;
 }
 
 /**
@@ -223,11 +237,19 @@ export async function runKnowledgeEdgeProposeNightly(
       folded_topology_rejected: 0,
       warned_transitive_redundancy: 0,
       reconcile_superseded: 0,
+      llm_failed: 0,
+      llm_attempted: 0,
     };
   }
 
   const runTaskFn: RunTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  const { ok, ...stats } = await runEdgeProposeAndWrite({
+  // `llm_attempted` 单独取出：它在下游结果体里是 number（0/1），此处是 boolean，
+  // 留在 ...stats 里会把布尔值铺进 number 字段。
+  const {
+    ok,
+    llm_attempted: llmAttempted,
+    ...stats
+  } = await runEdgeProposeAndWrite({
     db,
     recentFailures: attempts,
     runTaskFn,
@@ -253,16 +275,46 @@ export async function runKnowledgeEdgeProposeNightly(
     });
   }
 
-  return { ...stats, attempts_considered: attempts.length };
+  // YUK-779: carry `ok` out instead of dropping it — it is the ONLY discriminant
+  // between a swallowed fault and a batch the model legitimately declined.
+  //
+  // `llm_attempted` comes from runEdgeProposeAndWrite, NOT hardcoded to 1 (PR #1076
+  // review): a non-empty attempt batch does NOT imply the model ran. That function
+  // returns early — before ever calling it — when the knowledge tree is empty
+  // (propose_edge.ts, the `tree.length === 0` no-op). Hardcoding 1 there claimed a
+  // fallible unit was attempted on a night when nothing ran.
+  return {
+    ...stats,
+    attempts_considered: attempts.length,
+    llm_attempted: llmAttempted ? 1 : 0,
+    llm_failed: ok ? 0 : 1,
+  };
 }
 
 export function buildKnowledgeEdgeProposeNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runKnowledgeEdgeProposeNightly(db);
       console.log('[knowledge_edge_propose_nightly] result', result);
+      // YUK-779 — the fallible unit is the single batch LLM call.
+      //
+      // attempted = llm_attempted OR llm_failed (PR #1076 review). Both disjuncts
+      // are load-bearing:
+      //  · `llm_attempted` alone would report `idle` for a fault swallowed BEFORE
+      //    the model was reached (e.g. the tree read throwing) — hiding a real
+      //    swallowed error behind "nothing to do tonight", the exact failure this
+      //    ticket exists to kill;
+      //  · `llm_failed` alone would miss the ordinary success path.
+      // A genuinely empty night (vacuum tail, or an empty knowledge tree) sets
+      // neither → attempted 0 → level `idle`, no alarm.
+      const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
+      return reportJobYield('knowledge_edge_propose_nightly', {
+        attempted,
+        succeeded: attempted - result.llm_failed,
+        failed: result.llm_failed,
+      });
     } catch (err) {
       console.error('[knowledge_edge_propose_nightly] failed', err);
       throw err;

@@ -39,6 +39,7 @@
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { difficulty_calibration_label, item_calibration, question } from '@/db/schema';
+import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import {
   RECALIBRATION_MIN_LABELS,
   attemptLocalDate,
@@ -203,11 +204,26 @@ export async function runRecalibrationNightly(
 
 export function buildRecalibrationNightlyHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
       const result = await runRecalibrationNightly(db);
       console.log('[recalibration_nightly] result', result);
+      // YUK-779 — this job has TWO hard downstreams (practice_stream_compose_nightly,
+      // question_supply_nightly), so a silent zero-yield here poisons a whole subtree.
+      //
+      // NOTE the deliberate split: `skipped_below` / `skipped_no_anchor` count as
+      // SUCCEEDED, not failed. recalibrateQuestion returned normally and reported a
+      // legitimate data conclusion — a night where all 200 candidates are below the
+      // label threshold is the textbook **正常的零产出** and must never alarm. Only
+      // `skipped_failed` (the per-question catch below) is a swallowed throw.
+      // Invariant: considered === recalibrated + skipped_below + skipped_no_anchor +
+      // skipped_failed.
+      return reportJobYield('recalibration_nightly', {
+        attempted: result.considered,
+        succeeded: result.recalibrated + result.skipped_below + result.skipped_no_anchor,
+        failed: result.skipped_failed,
+      });
     } catch (err) {
       console.error('[recalibration_nightly] failed', err);
       throw err;

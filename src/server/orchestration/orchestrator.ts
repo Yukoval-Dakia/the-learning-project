@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
+import { readJobYieldReport } from '@/server/boss/job-yield';
 import {
   LAYER_STAGGER_MAX_SECONDS,
   LAYER_STAGGER_SECONDS,
@@ -51,7 +52,13 @@ export interface OrchestratorBoss {
     data: object,
     options?: { startAfter?: number; id?: string },
   ): Promise<string | null>;
-  getJobById(name: string, id: string): Promise<{ state: string } | null>;
+  /**
+   * `output` 是 pg-boss 存下的 handler resolved value（batchSize:1 时即 handler 返回值，
+   * manager.js `complete(name, jobIds, jobIds.length === 1 ? result : undefined)`）。
+   * YUK-779 起夜链 handler 用它回传 {@link readJobYieldReport} 可解的产出报告；可选，
+   * 旧 handler / 非夜链 job 不带它照常工作。
+   */
+  getJobById(name: string, id: string): Promise<{ state: string; output?: unknown } | null>;
   /**
    * 取消一条已发出的成员 job（YUK-781 B）。语义以**实装** pg-boss v12.26.1 为准
    * （node_modules/pg-boss/dist/plans.js `cancelJobs`）：
@@ -300,11 +307,21 @@ async function pollInflightNode(
   timeoutMs: number,
 ): Promise<void> {
   if (node.status !== 'enqueued' && node.status !== 'running') return;
-  const jobState = node.boss_job_id
-    ? mapBossState((await deps.boss.getJobById(node.job_name, node.boss_job_id))?.state ?? null)
-    : null;
+  const job = node.boss_job_id ? await deps.boss.getJobById(node.job_name, node.boss_job_id) : null;
+  const jobState = mapBossState(job?.state ?? null);
   if (jobState === 'succeeded') {
-    await updateNodeStatus(deps.db, node.id, { status: 'succeeded', now });
+    // YUK-779 — 一个 handler 可以「成功」而**产出为零**：它对 AI 失败的 per-cell /
+    // per-row 吞错在限流风暴下把整批都吞了，job 照常 resolve，节点照常转绿，硬下游
+    // 在空数据上继续跑，而运维看到的是「昨晚一切正常」。handler 把产出报告作为返回值
+    // 交给 pg-boss（存进 job.output），这里读回来盖进节点 detail —— 正面修复那个假象。
+    //
+    // 只**盖 detail**，不改 status：节点仍是 succeeded、硬下游仍照跑。「异常空跑要不要
+    // 直接判 failed（进而让硬下游 skip）」是产品语义决策，见 job-yield.ts 文件末。
+    await updateNodeStatus(deps.db, node.id, {
+      status: 'succeeded',
+      detail: readJobYieldReport(job?.output)?.detail ?? undefined,
+      now,
+    });
   } else if (jobState === 'failed') {
     await updateNodeStatus(deps.db, node.id, {
       status: 'failed',
