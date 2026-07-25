@@ -382,6 +382,17 @@
     box-shadow: var(--shadow-2);
   }
 }
+/* Reduced-motion degrade registry. Entrance animations (pf-rise / pf-glow /
+   pf-toast-in / ladder-in) are disabled outright — no signal is lost, they
+   only ever played once. .pf-row.is-current .pf-node and .pf-gen .bar > span
+   are disabled too: both already carry a static equivalent once their
+   animation stops (the node's box-shadow keyframe rests at the exact value
+   its non-animated base rule sets; the generation bar's gradient just stops
+   sweeping and shows as a static two-tone fill), so no "in progress" signal
+   is lost either. .ladder-spin is different — it is the only live "system is
+   busy" indicator in this file, so instead of stopping it we slow it down
+   drastically (well under vestibular-trigger speed) to keep that affordance
+   without the fast spin. */
 @media (prefers-reduced-motion: reduce) {
   .pf-row.is-new .pf-item,
   .pf-notice,
@@ -390,8 +401,13 @@
   .pfs-appeal-reply,
   .pfs-hint,
   .pf-toast,
-  .ladder-card {
+  .ladder-card,
+  .pf-row.is-current .pf-node,
+  .pf-gen .bar > span {
     animation: none !important;
+  }
+  .ladder-spin {
+    animation-duration: 3s !important;
   }
 }
 
