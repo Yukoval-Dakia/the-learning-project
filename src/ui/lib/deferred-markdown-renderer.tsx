@@ -37,7 +37,8 @@ export function preloadMarkdownRenderer(): void {
 export function DeferredMarkdownRenderer({
   children,
   className,
-}: Pick<MarkdownRendererProps, 'children' | 'className'>): ReactElement {
+  components,
+}: Pick<MarkdownRendererProps, 'children' | 'className' | 'components'>): ReactElement {
   const [Renderer, setRenderer] = useState<MarkdownRendererComponent | null>(() => loadedRenderer);
 
   useEffect(() => {
@@ -63,5 +64,9 @@ export function DeferredMarkdownRenderer({
     );
   }
 
-  return <Renderer className={className}>{children}</Renderer>;
+  return (
+    <Renderer className={className} components={components}>
+      {children}
+    </Renderer>
+  );
 }

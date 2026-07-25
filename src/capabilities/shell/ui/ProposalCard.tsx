@@ -6,11 +6,16 @@
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
+import { isPublicHttpUrl } from '@/core/net/private-host';
+import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useState } from 'react';
+// Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
+// the deferred loader still owns the runtime import).
+import type { Components } from 'react-markdown';
 
 import {
   type ProposalDecision,
@@ -73,6 +78,124 @@ export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPrev
     summary: typeof hub.summary_md === 'string' ? hub.summary_md : null,
     steps,
   };
+}
+
+// YUK-229 — image_candidate 专属卡的显示投影。source_url 是候选来源页/图片直链，
+// source_title 是来源标题，summary_md 是 AI 对该图题的摘要（题文预览）。图字节永不
+//在 payload；accept 才是唯一 VLM 抽图触发（proposal.ts §image_candidate）。
+export interface ImageCandidateView {
+  sourceUrl: string;
+  sourceTitle: string;
+  summaryMd: string;
+  /**
+   * 通过共享 SSRF 字面量守卫（@/core/net/private-host.isPublicHttpUrl）的安全 http(s) src，
+   * 或 null。null = 非 http(s) / 含凭据 / 字面私网·本机·链路本地 host——一律走纯文本降级，
+   * 绝不把浏览器 <img> 指向它。
+   */
+  imgSrc: string | null;
+}
+
+/** Display-only, defensive projection of the free-form image_candidate proposed_change. */
+export function imageCandidateViewOf(change: unknown): ImageCandidateView | null {
+  const row = recordOf(change);
+  if (!row) return null;
+  const sourceUrl = typeof row.source_url === 'string' ? row.source_url : '';
+  const sourceTitle = typeof row.source_title === 'string' ? row.source_title : '';
+  const summaryMd = typeof row.summary_md === 'string' ? row.summary_md : '';
+  if (sourceUrl === '' && sourceTitle === '' && summaryMd === '') return null;
+  return {
+    sourceUrl,
+    sourceTitle,
+    summaryMd,
+    imgSrc: sourceUrl !== '' && isPublicHttpUrl(sourceUrl) ? sourceUrl : null,
+  };
+}
+
+// 安全（YUK-229 review codex #2）：summary_md 里的 Markdown 图片语法 ![](url) 默认会被
+// react-markdown 渲成真实 <img> → 又一条被动内网探测后门（同 source_url 直渲问题）。覆写
+// img 组件为不加载的占位文本（绝不产出任何 src / 发 GET），把被动探测从 markdown 后门也堵死。
+// 其余 markdown（含链接 <a>，不自动取回）沿用默认渲染。
+const IC_MARKDOWN_COMPONENTS: Components = {
+  img: ({ alt, src }) => (
+    <span className="ic-md-img" data-testid="ic-md-img-block">
+      [图片：{alt || (typeof src === 'string' ? src : '') || '未命名'}]
+    </span>
+  ),
+};
+
+// 原图对照列。三态经早返回分派（仓库规约禁嵌套三元）：已揭示→图；可加载未揭示→点击
+// 揭示 affordance；不可加载→来源纯文本降级卡。onError 翻 imgFailed → 回落。
+function ImageFigureColumn({ view }: { view: ImageCandidateView }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const loadable = view.imgSrc !== null && !imgFailed;
+
+  if (loadable && revealed) {
+    return (
+      <figure className="ic-figure">
+        <img
+          className="ic-img"
+          src={view.imgSrc ?? undefined}
+          alt={view.sourceTitle || '候选来源原图'}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onError={() => setImgFailed(true)}
+        />
+        {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
+      </figure>
+    );
+  }
+
+  if (loadable) {
+    return (
+      <div className="ic-reveal">
+        {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+        <button type="button" className="ic-reveal-btn" onClick={() => setRevealed(true)}>
+          <LoomIcon name="image" size={13} />
+          显示原图预览
+        </button>
+        <span className="ic-reveal-note">原图由外部来源提供，点击后才从来源加载</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ic-fallback">
+      <span className="ic-fallback-note">
+        {view.imgSrc === null && view.sourceUrl
+          ? '来源地址非公开图片直链，不内联加载，仅显示来源信息：'
+          : '无法内联加载原图，仅显示来源信息：'}
+      </span>
+      {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
+      {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
+    </div>
+  );
+}
+
+// 专属卡：题文（summary_md 预览）与原图并排对照。
+// 安全（YUK-229 review）：外部 source_url 是 AI/外部来源写的，直渲 <img> 会在用户打开
+// inbox 时就发起被动 GET，可被用来从用户浏览器探测内网（DNS rebinding 浏览器端防不了）。
+// 双层防护：① imgSrc 已过共享字面量守卫（isPublicHttpUrl 拒私网/本机 host）；② 默认不
+// 自动加载——用户显式点「显示原图预览」才设 src，把被动探测降为主动行为。onError 仍降级。
+function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
+  return (
+    <div className="proposal-image-candidate">
+      <div className="ic-col ic-col-summary">
+        <span className="ic-col-label">题文摘要</span>
+        {view.summaryMd ? (
+          <DeferredMarkdownRenderer className="ic-summary-md" components={IC_MARKDOWN_COMPONENTS}>
+            {view.summaryMd}
+          </DeferredMarkdownRenderer>
+        ) : (
+          <span className="ic-empty">（无题文摘要）</span>
+        )}
+      </div>
+      <div className="ic-col ic-col-figure">
+        <span className="ic-col-label">原图对照</span>
+        <ImageFigureColumn view={view} />
+      </div>
+    </div>
+  );
 }
 
 function EvidenceChip({
@@ -201,6 +324,8 @@ export function ProposalCard({
           : null;
   const learningPlan =
     p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
+  const imageCandidate =
+    p.kind === 'image_candidate' ? imageCandidateViewOf(p.payload.proposed_change) : null;
   const mergePreview = p.kind === 'block_merge' ? p.presentation?.block_merge : null;
   const mergeBlockLabelById = new Map(
     mergePreview
@@ -295,6 +420,8 @@ export function ProposalCard({
         </div>
       )}
 
+      {imageCandidate && <ImageCandidateCard view={imageCandidate} />}
+
       {mergePreview?.primary && mergePreview.merged.length > 0 && (
         <div className="merge-preview">
           <div className="merge-block">
@@ -352,6 +479,14 @@ export function ProposalCard({
             >
               {acceptButtonLabel}
             </Btn>
+          )}
+          {/* YUK-229 — accept 是唯一 VLM 抽图触发（proposal.ts §image_candidate）。定性
+              前置提示（不显预估金额），作为 accept 旁的明确 affordance，非点击后弹窗。 */}
+          {p.kind === 'image_candidate' && (
+            <span className="image-candidate-cost-note">
+              <LoomIcon name="sparkle" size={12} />
+              接受将执行一次付费 VLM 抽图
+            </span>
           )}
           {isEdge && !isArchiveEdge && (
             <>
