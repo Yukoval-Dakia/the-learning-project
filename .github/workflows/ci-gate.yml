@@ -121,17 +121,31 @@ jobs:
         with:
           fetch-depth: 0 # 需历史做 merge-base diff 判 docs-only
 
+      # 与上面 gate job 的同名探测同语义，但按 GitHub 安全硬化惯例做两点加固：
+      #   1. context 值经 `env:` 传入，绝不直接展开进 run 块（当前是 SHA、注入风险低，
+      #      加固的理由是「将来有人把这个位置换成自由文本 context 时会立刻可利用」）；
+      #   2. `set -e` fail-fast —— 逐条核过：`git merge-base` 的非零由 `|| echo` 吸收，
+      #      `grep -q` 的非零在 `if` 条件位（errexit 不触发）。唯一会真失败的是 `git diff`
+      #      （base 不可达 / 历史被改写），旧行为是 CHANGED 静默为空 → 误判 docs-only →
+      #      整条门禁假绿跳过；现在显式接住并按本文件既定策略「无法判 base 时保守跑全量」
+      #      落 code_changed=true —— 既不静默跳过，也不因边界情况凭空红。
+      # gate job 的那份副本本 PR 不动（属全仓统一动作，见 YUK-801）。
       - name: Detect docs-only change
         id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          set -uo pipefail
-          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          set -euo pipefail
+          BASE="$BASE_SHA"
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
             echo "Base 未知 — 保守跑全量 gate。"
             echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           MB="$(git merge-base "$BASE" HEAD || echo "$BASE")"
-          CHANGED="$(git diff --name-only "$MB" HEAD)"
+          if ! CHANGED="$(git diff --name-only "$MB" HEAD)"; then
+            echo "git diff 对 base '$MB' 失败（不可达/历史被改写）— 保守跑全量 gate。"
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if [ -z "$CHANGED" ]; then
             echo "code_changed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -182,15 +196,23 @@ jobs:
       - name: Boot the built server on :18787
         if: steps.filter.outputs.code_changed == 'true'
         run: |
-          set -uo pipefail
+          set -euo pipefail
           RW_STATIC_DIR=web/dist \
           API_PORT=18787 \
           INTERNAL_TOKEN=usability-ci-token \
           DATABASE_URL=postgres://placeholder:placeholder@127.0.0.1:1/placeholder \
           node dist/server.cjs > usability-server.log 2>&1 &
+          SERVER_PID=$!
           for i in $(seq 1 60); do
+            # 进程已死就立刻报错，别空转满 60 秒健康检查才说「never became healthy」——
+            # 那会把「启动即崩」误报成「启动慢」，日志也晚 60s 才打出来。
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::server process ${SERVER_PID} exited before becoming healthy"
+              cat usability-server.log
+              exit 1
+            fi
             if curl -sf http://127.0.0.1:18787/api/health > /dev/null; then
-              echo "server healthy after ${i}s"; exit 0
+              echo "server healthy after ${i}s (pid ${SERVER_PID})"; exit 0
             fi
             sleep 1
           done
