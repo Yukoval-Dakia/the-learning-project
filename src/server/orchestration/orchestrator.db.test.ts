@@ -16,6 +16,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
 import {
   type OrchestratorBoss,
+  minutesSinceAnchor,
   runOrchestratorCatchUp,
   runOrchestratorStart,
   runOrchestratorTick,
@@ -1052,6 +1053,28 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
     expect((await nodeRow(runs[0].id, 'r2'))?.status).toBe('enqueued');
   });
 
+  // PR #1075 OCR minor — the window is an ELAPSED-time interval [0, window), not a
+  // same-calendar-day subtraction. A plain `minuteOfDay - anchorMinute` silently and
+  // permanently disables the catch-up for any anchor whose window crosses local midnight.
+  describe('minutesSinceAnchor wraps around local midnight', () => {
+    const ELEVEN_PM = 23 * 60; // an anchor moved to 23:00
+
+    it('measures elapsed time, not a same-day offset, for a late-evening anchor', () => {
+      // 00:30 local is 90 minutes AFTER a 23:00 anchor — the naive subtraction gives −1350.
+      expect(minutesSinceAnchor(new Date('2026-07-26T00:30:00+08:00'), ELEVEN_PM)).toBe(90);
+      expect(minutesSinceAnchor(new Date('2026-07-25T23:00:00+08:00'), ELEVEN_PM)).toBe(0);
+      expect(minutesSinceAnchor(new Date('2026-07-26T03:00:00+08:00'), ELEVEN_PM)).toBe(240);
+    });
+
+    it('still reports a pre-anchor moment as nearly a full day since the LAST anchor', () => {
+      // 02:00 with the live 02:30 anchor: 30min BEFORE tonight's anchor = 1410min since
+      // yesterday's. Far outside any sane window, so the catch-up correctly waits (test A5).
+      expect(minutesSinceAnchor(new Date('2026-07-25T02:00:00+08:00'))).toBe(1410);
+      expect(minutesSinceAnchor(new Date('2026-07-25T02:30:00+08:00'))).toBe(0);
+      expect(minutesSinceAnchor(new Date('2026-07-25T07:29:00+08:00'))).toBe(299);
+    });
+  });
+
   // Contract: the catch-up NEVER throws. A worker that cannot boot drains no queue at all,
   // which is strictly worse than a missed night (start-worker.ts reconcileStuckAiTaskRuns
   // precedent).
@@ -1265,6 +1288,31 @@ describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
     expect(oldRun.status).toBe('abandoned');
     expect(fresh.run_date).toBe(RUN_DATE);
     expect((await nodeRow(fresh.id, 'a'))?.status).toBe('enqueued');
+  });
+
+  // PR #1075 OCR minor (TOCTOU) — while the sweep runs, the old run must already be closed.
+  // If it were still `running`, its tick chain (still sitting in pg-boss from last night) could
+  // be consumed mid-sweep and `advanceRun` would claim + send a NEW member job born after our
+  // `loadNodes` snapshot — uncancelled, and running against last night's graph.
+  it('B10 the old run is already abandoned before the cancel sweep runs', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const old = await startLastNightRun(boss, dag);
+
+    // Observe the old run's status at the moment the first cancel is issued.
+    let statusDuringSweep: string | undefined;
+    const realCancel = boss.cancel.bind(boss);
+    boss.cancel = async (name: string, id: string) => {
+      statusDuringSweep ??= (
+        await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, old.id))
+      )[0]?.status;
+      await realCancel(name, id);
+    };
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    expect(boss.cancels.length).toBeGreaterThan(0); // the sweep really ran
+    expect(statusDuringSweep).toBe('abandoned'); // …and the run was already closed to new ticks
   });
 
   it('B8 a timed-out node whose job row is gone issues no pointless cancel', async () => {

@@ -378,7 +378,8 @@ async function cancelBossJob(
 }
 
 /**
- * 收尾一条 run 之前，取消它所有**非终态**节点的在飞 pg-boss job（YUK-781 B）。
+ * 收尾一条 run 时，取消它所有**非终态**节点的在飞 pg-boss job（YUK-781 B）。
+ * 调用点在 `finishRun(..., 'abandoned')` **之后**——顺序理由见那里的 TOCTOU 注释。
  *
  * 不做会怎样：`runOrchestratorStart` 收尾跨日残留 run 时只 `finishRun` 标 abandoned，节点对应的
  * created/retry/active job **原封不动**。于是
@@ -532,12 +533,22 @@ export async function runOrchestratorStart(
   const runDate = (deps.localDate ?? orchestratorLocalDate)(now);
 
   // 收尾**跨日**残留 running run（上一夜 worker 挂掉遗留）——今日的不动。
-  // 标 abandoned **之前**先取消其在飞 job（YUK-781 B）：只改调度记录不动 job，旧 job 仍会执行、
+  // 除了标 abandoned，还要取消其在飞 job（YUK-781 B）：只改调度记录不动 job，旧 job 仍会执行、
   // 写数据、与今日新 run 的同名成员重复付费，且绕过新图的依赖门。见 cancelRunInflightJobs。
+  //
+  // **顺序：先 finishRun 再取消**（PR #1075 OCR minor 的 TOCTOU）。反过来会开一个与取消扫描
+  // **等长**的窗口：扫描期间 run 仍是 running，旧 run 那条仍留在 pg-boss 里的 tick 链若此刻被
+  // 消费，`advanceRun` 可以 claim 并 send 出**新的**成员 job；它诞生在我们的 `loadNodes` 快照
+  // 之后，于是不会被取消，照跑照写——正是本条要堵的东西。`finishRun` 是 CAS(status='running')，
+  // 先落它之后任何 tick 的 `getActiveRunById`/`getActiveRunForDate` 都查不到该 run，新的推进
+  // 无法**开始**；窗口从「整轮扫描」缩到「一次已在飞的 advance」。
+  // 残留（不可消除、已知并接受）：恰好卡在 claim→send 之间的那一次 advance 仍可能漏出一只 job。
+  // 另一侧的取舍：先 finishRun 意味着扫描中途崩溃会留下「已 abandoned 但未取消」的 job——但那
+  // 恰好等于本 PR 之前的行为，是严格改善而非回退；而 TOCTOU 是持续存在的洞。
   for (const stale of await listActiveRuns(deps.db)) {
     if (stale.run_date !== runDate) {
-      await cancelRunInflightJobs(deps, stale, now);
       await finishRun(deps.db, stale.id, 'abandoned', now);
+      await cancelRunInflightJobs(deps, stale, now);
     }
   }
 
@@ -610,6 +621,29 @@ export function orchestratorLocalMinuteOfDay(now: Date, timeZone = ORCHESTRATOR_
   return value('hour') * 60 + value('minute');
 }
 
+/**
+ * 距**最近一次**锚点过去了多少分钟（0–1439）。
+ *
+ * `mod 1440` 不是装饰（PR #1075 OCR minor）：裸减法只在「锚点靠前、窗口不跨午夜」时成立。
+ * 若锚点被挪到傍晚/深夜（如 23:00），00:30 会算出 `30 - 1380 = -1350` 而被判超窗——补跑对
+ * 任何跨午夜锚点**永久失效**，且是静默的。取模后它等于 90，与「窗口是**已过时长**区间
+ * `[0, window)`」的文档语义一致。锚点在前的情形也仍正确：02:00（锚点 02:30 之前 30min）
+ * 取模后是 1410，远超 5h 窗 → 照旧不补，等今夜的锚点。
+ *
+ * 前提：`windowMinutes < 1440`（窗口不得覆盖整天，否则「之前」与「之后」不可区分）。
+ */
+export function minutesSinceAnchor(
+  now: Date,
+  anchorMinuteOfDay = ORCHESTRATOR_ANCHOR_HOUR * 60 + ORCHESTRATOR_ANCHOR_MINUTE,
+  timeZone = ORCHESTRATOR_TZ,
+): number {
+  const MINUTES_PER_DAY = 24 * 60;
+  return (
+    (orchestratorLocalMinuteOfDay(now, timeZone) - anchorMinuteOfDay + MINUTES_PER_DAY) %
+    MINUTES_PER_DAY
+  );
+}
+
 /** 补跑决策结果——测试据此断言"补了/没补及为什么"，不必去刮日志。 */
 export type CatchUpOutcome =
   | { action: 'started'; run: RunRow }
@@ -638,13 +672,11 @@ export type CatchUpOutcome =
 export async function runOrchestratorCatchUp(deps: DriveDeps): Promise<CatchUpOutcome> {
   try {
     const now = deps.now ?? new Date();
-    const minutesSinceAnchor =
-      orchestratorLocalMinuteOfDay(now) -
-      (ORCHESTRATOR_ANCHOR_HOUR * 60 + ORCHESTRATOR_ANCHOR_MINUTE);
+    const elapsed = minutesSinceAnchor(now);
     const windowMinutes = ORCHESTRATOR_CATCHUP_WINDOW_SECONDS / 60;
-    if (!(minutesSinceAnchor >= 0 && minutesSinceAnchor < windowMinutes)) {
+    if (elapsed >= windowMinutes) {
       console.log(
-        `[orchestrator] boot catch-up skipped: local time is ${minutesSinceAnchor}min from the ${ORCHESTRATOR_ANCHOR_HOUR}:${String(ORCHESTRATOR_ANCHOR_MINUTE).padStart(2, '0')} ${ORCHESTRATOR_TZ} anchor, outside the ${windowMinutes}min window`,
+        `[orchestrator] boot catch-up skipped: ${elapsed}min since the last ${ORCHESTRATOR_ANCHOR_HOUR}:${String(ORCHESTRATOR_ANCHOR_MINUTE).padStart(2, '0')} ${ORCHESTRATOR_TZ} anchor, outside the ${windowMinutes}min window`,
       );
       return { action: 'skipped', reason: 'outside-window' };
     }
@@ -657,7 +689,7 @@ export async function runOrchestratorCatchUp(deps: DriveDeps): Promise<CatchUpOu
       return { action: 'skipped', reason: 'run-exists' };
     }
     console.warn(
-      `[orchestrator] boot catch-up: no run for ${runDate} and we are ${minutesSinceAnchor}min past the anchor — the anchor cron was missed (pg-boss does not replay missed crons); starting tonight's run now`,
+      `[orchestrator] boot catch-up: no run for ${runDate} and we are ${elapsed}min past the anchor — the anchor cron was missed (pg-boss does not replay missed crons); starting tonight's run now`,
     );
     const run = await runOrchestratorStart(deps, 'cron');
     // null = 并发副本抢先建了（start 内的 cron 防重闸）——同样是"没补"，不是失败。
