@@ -177,30 +177,35 @@ export async function loadNodes(db: Db, runId: string): Promise<Map<string, Node
 
 /**
  * 原子领取一个 pending 节点用于入队（CAS pending→enqueued，YUK-758 review ToTaj）。
- * 返回 true 表示本调用抢到该节点（后续负责 boss.send + attachBossJob）；false 表示已被
- * 并发的 advanceRun（cron vs manual 同分钟）抢走——调用方跳过，绝不重复付费入队。
- * 先领取再 send：只有赢家发付费 job，杜绝重复 LLM 支出。
+ * 返回 true 表示本调用抢到该节点（后续负责 boss.send）；false 表示已被并发的 advanceRun
+ * （cron vs manual 同分钟）抢走——调用方跳过，绝不重复付费入队。先领取再 send：只有赢家
+ * 发付费 job，杜绝重复 LLM 支出。
+ *
+ * **意图先落库**（YUK-758 review ToTaI）：`boss_job_id` 由调用方**预生成**（pg-boss job.id
+ * 是 uuid 主键，`send` 支持 `options.id` 指定），与 CAS 同一条 UPDATE 落库——即 send 之前
+ * 该节点的 pg-boss 身份已持久化。这样「send 已成功、回填前崩溃」的窗口**根本不存在**：
+ * 重投递的 orchestrator 总能用 boss_job_id 查到真实 job 态，不会把在跑的成员误判超时 failed。
+ * （旧实现分两步 CAS→send→attachBossJob，中间崩溃留下 enqueued 但 boss_job_id 为空的节点，
+ * 只轮询不重发，3h 后误标 failed 并连累硬下游。）
  */
-export async function claimNodePending(db: Db, nodeId: string, now = new Date()): Promise<boolean> {
-  const rows = await db
-    .update(dag_orchestration_node)
-    .set({ status: 'enqueued', enqueued_at: now, updated_at: now })
-    .where(and(eq(dag_orchestration_node.id, nodeId), eq(dag_orchestration_node.status, 'pending')))
-    .returning({ id: dag_orchestration_node.id });
-  return rows.length > 0;
-}
-
-/** 领取成功并 boss.send 后回填 boss_job_id + stale（节点已是 'enqueued'）。 */
-export async function attachBossJob(
+export async function claimNodePending(
   db: Db,
   nodeId: string,
   input: { bossJobId: string; stale: boolean; now?: Date },
-): Promise<void> {
+): Promise<boolean> {
   const now = input.now ?? new Date();
-  await db
+  const rows = await db
     .update(dag_orchestration_node)
-    .set({ boss_job_id: input.bossJobId, stale: input.stale, updated_at: now })
-    .where(eq(dag_orchestration_node.id, nodeId));
+    .set({
+      status: 'enqueued',
+      boss_job_id: input.bossJobId,
+      stale: input.stale,
+      enqueued_at: now,
+      updated_at: now,
+    })
+    .where(and(eq(dag_orchestration_node.id, nodeId), eq(dag_orchestration_node.status, 'pending')))
+    .returning({ id: dag_orchestration_node.id });
+  return rows.length > 0;
 }
 
 /** 更新节点状态（running 中间态 / 终态 succeeded|failed|skipped + detail）。 */
@@ -211,15 +216,17 @@ export async function updateNodeStatus(
 ): Promise<void> {
   const now = input.now ?? new Date();
   const terminal = isTerminalNodeStatus(input.status);
-  // 终态不可回退守卫（YUK-758 review ToTam）：转终态时 WHERE 排除已终态节点，堵住
-  // loadNodes→update 的 TOCTOU（并发 advanceRun 已把节点标 succeeded，陈旧调用不能拽回
-  // running/failed）。非终态转移（→running）不加守卫（幂等刷新）。
-  const guard = terminal
-    ? and(
-        eq(dag_orchestration_node.id, nodeId),
-        notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
-      )
-    : eq(dag_orchestration_node.id, nodeId);
+  // 终态不可回退守卫（YUK-758 review ToTam + ToTaz）：**任何**转移（转终态 or 转 running）
+  // 的 WHERE 都排除已终态节点，堵住 loadNodes→update 的 TOCTOU。
+  //  · 终态→终态：陈旧调用不能把已 succeeded 的节点改判 failed。
+  //  · 终态→非终态（本轮补齐）：陈旧的 pollInflightNode 若在并发 tick 已把节点标 succeeded
+  //    之后才观测到 boss 'active' 并写 running，会**复活**终态节点、抹掉 finished_at，使
+  //    summarize 的 terminal 计数永远凑不齐 → run 卡 running 无限自转 tick。原注释称
+  //    「→running 是幂等刷新」只在节点仍非终态时成立，故守卫对两类转移一视同仁。
+  const guard = and(
+    eq(dag_orchestration_node.id, nodeId),
+    notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
+  );
   await db
     .update(dag_orchestration_node)
     .set({

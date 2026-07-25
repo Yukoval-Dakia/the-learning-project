@@ -16,7 +16,7 @@ describe('practice manifest jobs', () => {
     expect(typeof job?.load).toBe('function');
   });
 
-  it('registers answer_class_backfill as a DAG root (no cron; question_supply depends on it)', () => {
+  it('registers answer_class_backfill as a DAG root with no downstream edge', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     const job = handlers.find((j) => j.name === 'answer_class_backfill');
     expect(job).toBeTruthy();
@@ -24,16 +24,29 @@ describe('practice manifest jobs', () => {
     expect(job?.dependsOn).toEqual([]);
     expect(job?.queue).toBe('llm');
     expect(typeof job?.load).toBe('function');
+    // YUK-758 review (To-Iq / ToTas): question_supply does NOT read answer_class —
+    // its private loadQuestionPool (target-discovery.ts) never selects that column —
+    // so no member may declare an edge on this root. Pin the refutation so the
+    // disproven edge cannot silently come back.
+    for (const other of handlers) {
+      expect(
+        (other.dependsOn ?? []).map((d) => (typeof d === 'string' ? d : d.job)),
+        other.name,
+      ).not.toContain('answer_class_backfill');
+    }
   });
 
   // YUK-758 — the migrated backfill chain edges (real read-after-write dependencies).
-  it('wires the compose backfill chain: item_prior → recalibration → compose', () => {
+  it('wires the calibration chain: item_prior → recalibration → {compose, supply}', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     const find = (name: string) => handlers.find((j) => j.name === name);
     expect(find('item_prior_backfill')?.dependsOn).toEqual([]);
     expect(find('recalibration_nightly')?.dependsOn).toEqual(['item_prior_backfill']);
     expect(find('practice_stream_compose_nightly')?.dependsOn).toEqual(['recalibration_nightly']);
-    expect(find('question_supply_nightly')?.dependsOn).toEqual(['answer_class_backfill']);
+    // Supply reads item_calibration.b_calib via effectiveB (target-discovery.ts:684-699)
+    // to gate the paid R3 diagnostic dispatch — the same column/resolver compose depends
+    // on, so it takes the same hard edge (YUK-758 review To-Iq).
+    expect(find('question_supply_nightly')?.dependsOn).toEqual(['recalibration_nightly']);
     // none of the members keep a cron (orchestrator-triggered).
     for (const name of [
       'item_prior_backfill',

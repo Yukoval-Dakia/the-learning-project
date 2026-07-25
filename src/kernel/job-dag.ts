@@ -147,12 +147,13 @@ export function findCycle(members: readonly JobDagMemberInput[]): string[] | nul
 
 /**
  * 校验图成员集：
- *  1. 每条边的上游必须是**存在的 job**（allJobNames）——否则缺引用。
- *  2. 上游必须**同为图成员**（memberNames）——依赖一个裸 cron job 无意义（orchestrator
+ *  1. 成员名唯一（无重复成员）。
+ *  2. 每条边的上游必须是**存在的 job**（allJobNames）——否则缺引用。
+ *  3. 上游必须**同为图成员**（memberNames）——依赖一个裸 cron job 无意义（orchestrator
  *     不追踪它），拦下。
- *  3. 无自环。
- *  4. 单节点内无重复上游。
- *  5. 全图无环。
+ *  4. 无自环。
+ *  5. 单节点内无重复上游。
+ *  6. 全图无环。
  *
  * @param members 图成员（dependsOn 已声明的 job）。
  * @param allJobNames 组合根里**全部** job 名（含裸 cron），用于区分「缺引用」与「引用了非成员」。
@@ -161,7 +162,17 @@ export function validateJobDag(
   members: readonly JobDagMemberInput[],
   allJobNames: ReadonlySet<string>,
 ): void {
-  const memberNames = new Set(members.map((m) => m.name));
+  // 重复成员名显式拦（YUK-758 review ToTap）：`new Set(members.map(...))` 会**静默**去重，
+  // 让两条同名成员通过校验，与本函数「校验图成员集」的契约不符。生产路径上
+  // validateComposition 的 jobOwner 唯一性先拦一道，但本函数是导出的公共校验入口
+  // （测试 / 未来独立校验路径直调），契约须自洽——否则返回假阴性「合法」。
+  const memberNames = new Set<string>();
+  for (const m of members) {
+    if (memberNames.has(m.name)) {
+      throw new JobDagError(`duplicate DAG member name '${m.name}' (${m.owner})`);
+    }
+    memberNames.add(m.name);
+  }
   for (const m of members) {
     const seen = new Set<string>();
     for (const decl of m.dependsOn) {

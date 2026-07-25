@@ -348,6 +348,28 @@ export function assertApiRouteSuccessStatus(route: ApiRouteDecl, response: Respo
   }
 }
 
+/**
+ * YUK-758 — 编排 DAG 成员投影的**唯一真相源**（review ToTau）。
+ *
+ * 成员 = JobDecl 上**存在** `dependsOn` 字段的 job（含 `[]` 根）；字段缺席 = 裸 cron，
+ * orchestrator 不碰。组合期校验（validateComposition → validateJobDag）与运行期建图
+ * （server/orchestration/members.ts → buildOrchestrationDag）必须投影出**同一个**成员集，
+ * 否则「校验过的图」与「实际跑的图」会静默分叉（被校验拒绝的 job 仍进运行图，或反之）。
+ * 两侧共用本函数即杜绝该分叉。纯函数：只读 manifest 元数据，无 IO。
+ */
+export function projectDagMembers(
+  capabilities: readonly CapabilityManifest[],
+): JobDagMemberInput[] {
+  const members: JobDagMemberInput[] = [];
+  for (const cap of capabilities) {
+    for (const job of cap.jobs?.handlers ?? []) {
+      if (job.dependsOn === undefined) continue;
+      members.push({ name: job.name, owner: cap.name, dependsOn: job.dependsOn });
+    }
+  }
+  return members;
+}
+
 /** 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错。 */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
@@ -443,9 +465,6 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
     }
   }
   const jobOwner = new Map<string, string>();
-  // YUK-758: collect DAG members (jobs with a `dependsOn` field) alongside the
-  // uniqueness sweep so the topology can be validated in one pass.
-  const dagMembers: JobDagMemberInput[] = [];
   for (const cap of capabilities) {
     for (const job of cap.jobs?.handlers ?? []) {
       const owner = jobOwner.get(job.name);
@@ -453,21 +472,20 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         throw new Error(`job '${job.name}' declared by both '${owner}' and '${cap.name}'`);
       }
       jobOwner.set(job.name, cap.name);
-      if (job.dependsOn !== undefined) {
+      if (job.dependsOn !== undefined && job.schedule !== undefined) {
         // A DAG member is triggered by the orchestrator, not cron — a lingering
         // `schedule` would double-run it. Enforce mutual exclusion at composition.
-        if (job.schedule !== undefined) {
-          throw new Error(
-            `job '${job.name}' (${cap.name}) is a DAG member (declares dependsOn) but also declares a cron schedule; orchestrated jobs must not keep their own cron`,
-          );
-        }
-        dagMembers.push({ name: job.name, owner: cap.name, dependsOn: job.dependsOn });
+        throw new Error(
+          `job '${job.name}' (${cap.name}) is a DAG member (declares dependsOn) but also declares a cron schedule; orchestrated jobs must not keep their own cron`,
+        );
       }
     }
   }
-  // YUK-758: validate the job dependency DAG (unknown refs / non-member refs /
-  // self-loops / duplicate edges / cycles). Throws JobDagError on any violation.
-  validateJobDag(dagMembers, new Set(jobOwner.keys()));
+  // YUK-758: validate the job dependency DAG (duplicate members / unknown refs /
+  // non-member refs / self-loops / duplicate edges / cycles). Throws JobDagError
+  // on any violation. Membership is projected by the SHARED projectDagMembers so
+  // the validated set and the orchestrator's runtime DAG cannot diverge.
+  validateJobDag(projectDagMembers(capabilities), new Set(jobOwner.keys()));
   const kindOwner = new Map<string, string>();
   for (const cap of capabilities) {
     for (const decl of cap.proposals?.kinds ?? []) {

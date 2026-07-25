@@ -15,29 +15,48 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
 import { type OrchestratorBoss, runOrchestratorStart, runOrchestratorTick } from './orchestrator';
+import { updateNodeStatus } from './store';
 
 const db = testDb();
 const RUN_DATE = '2026-07-25';
 const NOW = new Date('2026-07-25T02:30:00+08:00');
 
-/** fake pg-boss：记录 send，按 (name,id) 回放可编程 state。 */
+/**
+ * fake pg-boss：记录 send，按 (name,id) 回放可编程 state。
+ *
+ * 建模真 pg-boss 的两个关键契约（YUK-758 review ToTaI）：
+ *  · `send` 接受调用方指定的 `options.id`（SendOptions.id），job 以该 id 落库；
+ *  · job INSERT 是 `ON CONFLICT DO NOTHING`——同 id 重发**不建第二条**且返回 null。
+ */
 class FakeBoss implements OrchestratorBoss {
-  memberSends: { name: string; data: { stale?: boolean } }[] = [];
+  memberSends: { name: string; data: { stale?: boolean }; id?: string }[] = [];
   tickSends = 0;
   /** member job names for which send() returns null (models pg-boss "no job created"). */
   nullSendJobs = new Set<string>();
+  /** member job names whose send() throws — models a crash/transient failure after the claim commit. */
+  throwOnSendJobs = new Set<string>();
   private states = new Map<string, string>();
   private counter = 0;
 
-  async send(name: string, data: object): Promise<string | null> {
+  async send(
+    name: string,
+    data: object,
+    options?: { startAfter?: number; id?: string },
+  ): Promise<string | null> {
     if (name === ORCHESTRATOR_QUEUE) {
       this.tickSends += 1;
       return `tick_${this.tickSends}`;
     }
-    this.memberSends.push({ name, data: data as { stale?: boolean } });
+    if (this.throwOnSendJobs.has(name)) {
+      throw new Error(`simulated send failure for '${name}'`);
+    }
+    this.memberSends.push({ name, data: data as { stale?: boolean }, id: options?.id });
     if (this.nullSendJobs.has(name)) return null;
     this.counter += 1;
-    const id = `boss_${this.counter}`;
+    const id = options?.id ?? `boss_${this.counter}`;
+    // ON CONFLICT DO NOTHING: an id that already exists is not re-inserted, and
+    // pg-boss returns null (no RETURNING row) rather than an id.
+    if (this.states.has(`${name}:${id}`)) return null;
     this.states.set(`${name}:${id}`, 'created');
     return id;
   }
@@ -49,6 +68,11 @@ class FakeBoss implements OrchestratorBoss {
 
   setJobState(name: string, id: string, state: string): void {
     this.states.set(`${name}:${id}`, state);
+  }
+
+  /** 该 (name,id) 是否真的存在一条 job 行。 */
+  hasJob(name: string, id: string): boolean {
+    return this.states.has(`${name}:${id}`);
   }
 }
 
@@ -250,8 +274,10 @@ describe('orchestrator trigger semantics', () => {
     );
     const a = await nodeRow(run.id, 'a');
     expect(a?.status).toBe('failed');
-    expect(a?.detail).toMatch(/boss\.send returned null/);
-    expect(a?.boss_job_id).toBeNull();
+    expect(a?.detail).toMatch(/no job exists for the reserved id/);
+    // The id is now reserved BEFORE the send (intent-first), so it is persisted even
+    // on the failure path — what marks the node failed is that no job exists for it.
+    expect(a?.boss_job_id).not.toBeNull();
 
     await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
     expect((await nodeRow(run.id, 'b'))?.status).toBe('skipped');
@@ -282,6 +308,145 @@ describe('orchestrator trigger semantics', () => {
     expect((await nodeRow('orphan-run', 'a'))?.status).toBe('enqueued');
     expect((await nodeRow('orphan-run', 'b'))?.status).toBe('pending');
     expect(boss.memberSends.map((s) => s.name)).toEqual(['a']);
+  });
+
+  // ⑩ YUK-758 review ToTaZ — an 'expired' pg-boss state must resolve to failed, not to
+  // "unknown" (which would leave the node in-flight until the 3h NODE_TIMEOUT and delay
+  // every hard-downstream skip decision by a whole night).
+  it('⑩ a pg-boss job in state expired is treated as failed (no 3h wait) + hard downstream skips', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const a = await nodeRow(run.id, 'a');
+    boss.setJobState('a', must(a?.boss_job_id, 'boss job id'), 'expired');
+
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('failed');
+    expect((await nodeRow(run.id, 'b'))?.status).toBe('skipped');
+  });
+
+  // ⑪ YUK-758 review ToTaI — the crash window between "job sent" and "job id recorded".
+  // The id is now reserved with the CAS *before* the send, so a crashed send leaves a
+  // node that still knows its pg-boss identity and can be recovered by an idempotent
+  // re-send under the same id.
+  it('⑪ a send that never lands leaves the reserved id persisted and is re-sent idempotently', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    boss.throwOnSendJobs.add('a');
+
+    // The anchor start crashes inside boss.send, after claimNodePending committed.
+    await expect(
+      runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+    ).rejects.toThrow(/simulated send failure/);
+
+    const runs = await db
+      .select()
+      .from(dag_orchestration_run)
+      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
+    const runId = runs[0].id;
+    const crashed = await nodeRow(runId, 'a');
+    // Intent was persisted before the send: the node is enqueued AND knows its job id.
+    expect(crashed?.status).toBe('enqueued');
+    const reservedId = must(crashed?.boss_job_id, 'reserved boss job id');
+    expect(boss.hasJob('a', reservedId)).toBe(false); // the send truly never landed
+
+    // Recovery: the next tick notices there is no job for the reserved id and re-sends
+    // under that same id rather than polling a ghost until the 3h timeout.
+    boss.throwOnSendJobs.clear();
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    expect(boss.hasJob('a', reservedId)).toBe(true);
+    const recovered = await nodeRow(runId, 'a');
+    expect(recovered?.status).toBe('enqueued'); // NOT failed
+    expect(recovered?.boss_job_id).toBe(reservedId); // same identity, no second job
+
+    // A further tick must not create a second job (same id → ON CONFLICT DO NOTHING).
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect(boss.memberSends.filter((s) => s.name === 'a' && s.id !== reservedId)).toHaveLength(0);
+
+    // And the recovered job drives the graph forward normally.
+    await completeMember(boss, runId, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    expect((await nodeRow(runId, 'a'))?.status).toBe('succeeded');
+    expect((await nodeRow(runId, 'b'))?.status).toBe('enqueued');
+  });
+
+  it('⑪b past the recovery grace window a still-missing job times out to failed', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    boss.throwOnSendJobs.add('a');
+    await expect(
+      runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+    ).rejects.toThrow(/simulated send failure/);
+    const runs = await db
+      .select()
+      .from(dag_orchestration_run)
+      .where(eq(dag_orchestration_run.run_date, RUN_DATE));
+    const runId = runs[0].id;
+
+    // Far past both the recovery grace window and the (test-shrunk) node timeout, with
+    // the send still failing: the node must converge to failed rather than hang forever.
+    const later = new Date(NOW.getTime() + 4 * 60 * 60 * 1000);
+    await runOrchestratorTick({
+      db,
+      boss,
+      dag,
+      now: later,
+      localDate: () => RUN_DATE,
+      timeoutSeconds: 60,
+    });
+
+    expect((await nodeRow(runId, 'a'))?.status).toBe('failed');
+    expect((await nodeRow(runId, 'a'))?.detail).toMatch(/not found/);
+  });
+
+  // ⑫ YUK-758 review ToTaz — a stale poll must never revive a terminal node. Reviving
+  // it would clear finished_at and keep summarize() from ever reaching complete, so the
+  // run would spin on self-scheduled ticks forever.
+  it('⑫ a terminal node cannot be dragged back to a non-terminal status', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const succeeded = await nodeRow(run.id, 'a');
+    expect(succeeded?.status).toBe('succeeded');
+    const finishedAt = succeeded?.finished_at;
+
+    // A stale in-flight poll landing late tries to write 'running' over the terminal row.
+    await updateNodeStatus(db, must(succeeded?.id, 'node id'), { status: 'running', now: NOW });
+
+    const after = await nodeRow(run.id, 'a');
+    expect(after?.status).toBe('succeeded'); // unchanged
+    expect(after?.finished_at).toEqual(finishedAt); // finished_at preserved
+  });
+
+  it('⑫b a terminal node cannot be flipped to a different terminal status', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    const node = await nodeRow(run.id, 'a');
+
+    await updateNodeStatus(db, must(node?.id, 'node id'), {
+      status: 'failed',
+      detail: 'stale writer',
+      now: NOW,
+    });
+
+    expect((await nodeRow(run.id, 'a'))?.status).toBe('succeeded');
   });
 
   it('tick with no active run is a no-op', async () => {

@@ -41,6 +41,21 @@ describe('validateJobDag', () => {
     expect(() => validateJobDag([member('a', ['a'])], names('a'))).toThrow(/self-dependency/);
   });
 
+  // YUK-758 review ToTap: `new Set(members.map(m => m.name))` silently deduplicated,
+  // so two members sharing a name passed validation — a false "valid" verdict that
+  // contradicts this function's stated contract (it validates the member SET).
+  it('rejects duplicate member names instead of silently deduplicating them', () => {
+    expect(() => validateJobDag([member('a'), member('a', [], 'other-cap')], names('a'))).toThrow(
+      /duplicate DAG member name 'a' \(other-cap\)/,
+    );
+  });
+
+  it('still rejects duplicate member names when the duplicate carries edges', () => {
+    expect(() =>
+      validateJobDag([member('a'), member('b', ['a']), member('b', ['a'])], names('a', 'b')),
+    ).toThrow(/duplicate DAG member name 'b'/);
+  });
+
   it('rejects a duplicate edge on one node', () => {
     expect(() => validateJobDag([member('a'), member('b', ['a', 'a'])], names('a', 'b'))).toThrow(
       /duplicate dependency on 'a'/,

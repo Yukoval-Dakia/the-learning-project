@@ -7,14 +7,20 @@
 // 逐边失败语义：硬边（默认）——上游 failed/skipped → 下游 skipped（留 detail 痕迹）；
 // 软边——上游未 succeeded 但硬上游齐 → 下游照跑，job payload 带 { stale: true }。
 
+import { randomUUID } from 'node:crypto';
+
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
-import { NODE_TIMEOUT_SECONDS, ORCHESTRATOR_QUEUE, TICK_INTERVAL_SECONDS } from './constants';
+import {
+  NODE_TIMEOUT_SECONDS,
+  ORCHESTRATOR_QUEUE,
+  SEND_RECOVERY_GRACE_SECONDS,
+  TICK_INTERVAL_SECONDS,
+} from './constants';
 import {
   type NodeRow,
   type RunRow,
   type RunTrigger,
-  attachBossJob,
   claimNodePending,
   createRunWithNodes,
   finishRun,
@@ -29,7 +35,16 @@ import {
 
 /** orchestrator 只需 pg-boss 的这两个能力——窄接口让 DB 测试注入 fake boss。 */
 export interface OrchestratorBoss {
-  send(name: string, data: object, options?: { startAfter?: number }): Promise<string | null>;
+  /**
+   * `options.id` 指定 job 主键（pg-boss `SendOptions.id`）——orchestrator 靠它做「意图先落库」：
+   * 先把预生成 id 随 CAS 写进节点行再 send。pg-boss 的 job INSERT 是 `ON CONFLICT DO NOTHING`，
+   * 故同 id 重发幂等（返回 null = 该 id 的 job 已存在，不是失败）。
+   */
+  send(
+    name: string,
+    data: object,
+    options?: { startAfter?: number; id?: string },
+  ): Promise<string | null>;
   getJobById(name: string, id: string): Promise<{ state: string } | null>;
 }
 
@@ -56,7 +71,19 @@ export interface AdvanceSummary {
   complete: boolean;
 }
 
-/** pg-boss job state → 节点态映射。null = 查不到 job 行（消失/未知）。 */
+/**
+ * pg-boss job state → 节点态映射。null = 查不到 job 行 / 无法识别的 state。
+ *
+ * 已装 pg-boss v12.26.1 的 `job_state` 枚举**只有** created / retry / active / completed /
+ * cancelled / failed 六个（node_modules/pg-boss/dist/plans.d.ts `JOB_STATES` + plans.js
+ * `createEnumJobState`），下面六个 case 已覆盖全集。`expired` 是 v9/v10 的历史状态，v12 里
+ * 超时/过期的 job 由维护扫描**删除后按 retry 或 failed 重新插入**（manager.js
+ * `failJobsByTimeout*`），因此现役版本不会有节点停在 'expired' 上。
+ *
+ * 仍显式映射 `expired → failed`（YUK-758 review ToTaZ）：这是对**版本漂移**的零成本保险
+ * ——若 pg-boss 降级/回滚到仍写 'expired' 的版本、或未来重新引入该状态，缺这一支会让节点
+ * 被当作「未知」而一路挂到 3h NODE_TIMEOUT 才判失败，白等一整晚并推迟硬下游的跳过决策。
+ */
 export function mapBossState(
   state: string | null,
 ): 'succeeded' | 'failed' | 'running' | 'enqueued' | null {
@@ -65,6 +92,7 @@ export function mapBossState(
       return 'succeeded';
     case 'failed':
     case 'cancelled':
+    case 'expired':
       return 'failed';
     case 'active':
       return 'running';
@@ -87,9 +115,22 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
   // ── ① 轮询在飞（enqueued/running）节点的 pg-boss 终态。节点间互不依赖（步骤②另行
   //    reload 最新态，步骤①的内存改动不跨用），并行轮询省去大图每 tick 的串行往返
   //    （YUK-758 review ToTae）。
+  //    **逐节点错误隔离**（review ToTa4）：裸 Promise.all 会让任一节点的瞬时故障
+  //    （getJobById 抖动 / 单条 UPDATE 失败）炸掉整个 tick——handler 抛出 → pg-boss 重投递
+  //    整轮，其余健康节点的推进被一并牺牲。逐个 try/catch 后本轮只丢那一个节点的观测，
+  //    其余照常推进，掉队者下一 tick 自然重试（轮询本就幂等）。
   const inflight = await loadNodes(deps.db, deps.run.id);
   await Promise.all(
-    [...inflight.values()].map((node) => pollInflightNode(deps, node, now, timeoutMs)),
+    [...inflight.values()].map(async (node) => {
+      try {
+        await pollInflightNode(deps, node, now, timeoutMs);
+      } catch (err) {
+        console.error(
+          `[orchestrator] poll failed for node '${node.job_name}' (${node.id}) in run ${deps.run.id} — skipped this tick, will retry next tick`,
+          err,
+        );
+      }
+    }),
   );
 
   // ── ② 用最新态评估 pending 节点是否就绪。
@@ -124,22 +165,30 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
 
     // 先原子领取（CAS pending→enqueued），只有赢家 send——杜绝并发 advanceRun 重复付费入队
     //（YUK-758 review ToTaj）。领取失败 = 已被并发调用推进，跳过。
-    const claimed = await claimNodePending(deps.db, node.id, now);
+    // **意图先落库**（review ToTaI）：预生成 pg-boss job id 并随 CAS 一起写入节点行，之后
+    // 才 send（带该 id）。这样不存在「job 已建但节点不知其 id」的窗口——崩溃重投递后
+    // 总能靠 boss_job_id 查到真实 job 态，不会把在跑的成员误判超时 failed。
+    const bossJobId = randomUUID();
+    const claimed = await claimNodePending(deps.db, node.id, { bossJobId, stale, now });
     if (!claimed) continue;
 
-    const jobId = await deps.boss.send(jobName, stale ? { stale: true } : {});
-    if (!jobId) {
-      // boss.send 返回 null（未建 job）——立即标 failed，避免节点挂到 3h 超时才被发现、
-      // 拖垮下游（YUK-758 review ToTaT）。硬下游据此跳过、软下游 stale。
-      await updateNodeStatus(deps.db, node.id, {
-        status: 'failed',
-        detail: 'boss.send returned null (job not created)',
-        now,
-      });
-      node.status = 'failed';
-      continue;
+    const sentId = await deps.boss.send(jobName, stale ? { stale: true } : {}, { id: bossJobId });
+    if (!sentId) {
+      // send 返回 null = INSERT 撞 ON CONFLICT DO NOTHING，即**该 id 的 job 已存在**（并非
+      // 未建）。用 getJobById 判定实情后再决断，绝不把「已存在」误判成失败（YUK-758 review
+      // ToTaT 的原判据在带显式 id 后不再成立）。
+      const existing = await deps.boss.getJobById(jobName, bossJobId);
+      if (!existing) {
+        // 确实没建成 → 立即标 failed，免得挂到 3h 超时才被发现、拖垮下游。
+        await updateNodeStatus(deps.db, node.id, {
+          status: 'failed',
+          detail: 'boss.send returned null and no job exists for the reserved id',
+          now,
+        });
+        node.status = 'failed';
+        continue;
+      }
     }
-    await attachBossJob(deps.db, node.id, { bossJobId: jobId, stale, now });
     node.status = 'enqueued';
   }
 
@@ -169,7 +218,20 @@ async function pollInflightNode(
   } else if (jobState === 'running' && node.status !== 'running') {
     await updateNodeStatus(deps.db, node.id, { status: 'running', now });
   } else if (jobState === null || jobState === 'enqueued') {
-    // 仍在飞（created/retry/active-not-yet）或 job 行查不到 → 超时兜底。
+    // job 行查不到（jobState===null 且节点带 id）→ 那次 send 没落地（claim 已提交、send 前
+    // 崩溃/瞬时失败）。窗内按**同一个预留 id** 补发自愈（YUK-758 review ToTaI）：pg-boss 的
+    // job INSERT 是 ON CONFLICT DO NOTHING，同 id 补发幂等，最多只会存在一条真 job，绝无
+    // 重复付费；窗口理由见 SEND_RECOVERY_GRACE_SECONDS。
+    if (jobState === null && node.boss_job_id && withinSendRecoveryGrace(node, now)) {
+      console.warn(
+        `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
+      );
+      await deps.boss.send(node.job_name, node.stale ? { stale: true } : {}, {
+        id: node.boss_job_id,
+      });
+      return;
+    }
+    // 仍在飞（created/retry/active-not-yet）或超出补发窗仍查无 → 超时兜底。
     if (isNodeTimedOut(node, now, timeoutMs)) {
       await updateNodeStatus(deps.db, node.id, {
         status: 'failed',
@@ -178,6 +240,12 @@ async function pollInflightNode(
       });
     }
   }
+}
+
+/** 节点是否仍在「send 未落地」补发宽限窗内（自 enqueued_at 起算）。 */
+function withinSendRecoveryGrace(node: NodeRow, now: Date): boolean {
+  if (!node.enqueued_at) return false;
+  return now.getTime() - node.enqueued_at.getTime() <= SEND_RECOVERY_GRACE_SECONDS * 1000;
 }
 
 function isNodeTimedOut(node: NodeRow, now: Date, timeoutMs: number): boolean {
