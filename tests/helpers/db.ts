@@ -103,6 +103,11 @@ const ALL_TABLES = [
   'subject_trait_binding',
   'subject_control_journal',
   'subject_name_claim',
+  // YUK-758 — 夜间任务编排 DAG 调度运行态（run 头 + 逐节点态）。loose text-ref 无 FK，
+  // 必须显式列入 TRUNCATE，否则 resetDb 漏清 → 跨测 state 泄漏（同 mastery_state 一族的
+  // footgun：orchestrator DB 测试跨用例复用 RUN_DATE，漏清会让上一用例的 run 被下一用例采纳）。
+  'dag_orchestration_run',
+  'dag_orchestration_node',
 ] as const;
 
 export async function resetDb() {

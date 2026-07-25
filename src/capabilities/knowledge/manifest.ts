@@ -201,9 +201,12 @@ export const knowledgeCapability = defineCapability({
       // (cold-start-bridge / image-candidate-accept matcher / agent proposal tools)
       // plus the maintenance producer KnowledgeReviewTask (knowledge_maintenance_nightly).
       {
-        // Phase 2 Dreaming：knowledge_edge mesh propose（BJT 02:30，node propose 后）。
+        // Phase 2 Dreaming：knowledge_edge mesh propose。
+        // YUK-758 DAG 成员（根）：propose-only 图拓扑生产者，读 recent_failures 等产 edge 提议入
+        // 人审 inbox，不消费其它夜链 job 的 live 产物（旧 02:30 是链头错峰，无真上游）。cron 移除，
+        // orchestrator 起步即触发。dreaming / knowledge_maintenance 对它是软边（读 inbox 去重基线）。
         name: 'knowledge_edge_propose_nightly',
-        schedule: { cron: '30 2 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/knowledge_edge_propose_nightly').then(
@@ -215,16 +218,22 @@ export const knowledgeCapability = defineCapability({
         // 跑 05:30 之前，错峰）。learnableFrontier 空时 propose-only 低置信 prereq 边，
         // 破解冷启「没 prereq 边 → 前沿空 → 不知道先教什么」死锁。graph-topology 生产者，
         // 与 knowledge_edge_propose_nightly 同包同域。
+        // YUK-758 DAG 成员（根）：PROPOSE-ONLY——只写 knowledge_edge 提议，learnableFrontier 只读
+        // live 边，故其产物当夜对 compose 零影响（需人先 accept）。旧 05:15「compose 05:30 前」
+        // 是时钟巧合，非真上游边。cron 移除，orchestrator 触发。
         name: 'frontier_fill_nightly',
-        schedule: { cron: '15 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [],
         queue: 'llm',
         load: () =>
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // YUK-48：KnowledgeReviewTask maintenance producer（BJT 03:00，多步 agent 档）。
+        // YUK-48：KnowledgeReviewTask maintenance producer（多步 agent 档）。
+        // YUK-758 DAG 成员：读 proposal inbox（before/after delta）在 cheap producer 之后跑。
+        // 对 knowledge_edge_propose 是**软边**（旧 03:00 在 edge_propose 02:30 之后；上游失败它照跑、
+        // 带 stale——只是少看几条 pending，仍正确产出）。cron 移除，orchestrator 触发。
         name: 'knowledge_maintenance_nightly',
-        schedule: { cron: '0 3 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: [{ job: 'knowledge_edge_propose_nightly', soft: true }],
         queue: 'agent',
         load: () =>
           import('./jobs/knowledge_maintenance_nightly').then(
@@ -257,8 +266,11 @@ export const knowledgeCapability = defineCapability({
         // family's shared DLQ/retry bucket; 'fast' would skip the DLQ (a dropped run
         // would just wait for the next cron, but the merge-propose write deserves DLQ
         // retry coverage like its siblings). Auto-mounted by register-capability-jobs.
+        // YUK-758 DAG 成员：kc_dedup 硬门 embedding IS NOT NULL（pgvector cosine 配对扫描），故对
+        // embed_backfill 是**真硬边**（旧注已述「AFTER embed_backfill 04:40」）。跨包上游（embed 在
+        // practice 包）。cron 移除，orchestrator 在 embed_backfill 成功后触发。
         name: 'kc_dedup_nightly',
-        schedule: { cron: '5 5 * * *', tz: 'Asia/Shanghai' },
+        dependsOn: ['embed_backfill'],
         queue: 'llm',
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
       },

@@ -13,11 +13,12 @@
 // 候选 = 「该题历史标签 **总数** ≥ RECALIBRATION_MIN_LABELS」AND「question 非 draft」AND
 //   「(A) 有标签在【昨日本地日起】窗内新建 OR (B) **stale 未校准**（calibration_n 落后于当前
 //   标签总数，含从未校准 b_calib IS NULL / calibration_n=0）」。
-//   - (A) 滚动窗用**昨日本地日起**（不是「今天」）：cron 跑在 04:50 Asia/Shanghai，「今天」本
-//     地日才刚开始几乎无标签 → 用「今天」窗会几乎永远空（04:50-empty-today bug）。取昨日起
-//     = 「自上次夜跑以来新攒的标签」，让昨天攒满的题今晨被重标定。
+//   - (A) 滚动窗用**昨日本地日起**（不是「今天」）：本 job 在凌晨跑（YUK-758 起由夜间
+//     orchestrator 在 item_prior 之后触发，早于旧的 04:50 cron），「今天」本地日才刚开始
+//     几乎无标签 → 用「今天」窗会几乎永远空（empty-today bug）。取昨日起 = 「自上次夜跑
+//     以来新攒的标签」，让昨天攒满的题今晨被重标定。
 //   - (B) **stale 未校准并入扫描集**（Codex review F1 修复）：只看窗 (A) 会漏两类已够标签的题——
-//     ① 首部署存量标签（攒够标签但 max(created_at) 早于昨天，b_calib 仍 NULL）；② cron 停机
+//     ① 首部署存量标签（攒够标签但 max(created_at) 早于昨天，b_calib 仍 NULL）；② 夜跑停摆
 //     >1 天后那些昨天前攒满、窗已滑过的题。两类都「永不进窗 → 永不校准」。stale 准入用
 //     **calibration_n < 当前标签总数**（含从未校准的 calibration_n=0 / b_calib NULL）兜住它们：
 //     标签数已 ≥ 阈值但折进 b_calib 的标签数落后 ⇒ 有未消费的标签 ⇒ 该重标定。
@@ -80,7 +81,7 @@ const DEFAULT_MAX_PER_RUN = 200;
 /**
  * 计算候选窗起点：**昨日本地日（Asia/Shanghai）零点对应的 UTC 时刻**。
  *
- * 取「昨天起」滚动窗——cron 04:50 Asia/Shanghai 跑时「今天」才刚开始几乎无标签，用昨日起
+ * 取「昨天起」滚动窗——本 job 在凌晨跑，「今天」才刚开始几乎无标签，用昨日起
  * 才能捞到昨天攒满的题（avoid 04:50-empty-today bug）。实现：把 now 的本地日往前推一天，
  * 取那个本地日的 00:00 Asia/Shanghai。复用 attemptLocalDate（与标签 created_at 同度量时区）。
  */

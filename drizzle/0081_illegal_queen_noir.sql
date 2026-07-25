@@ -1,0 +1,1 @@
+ALTER TABLE "dag_orchestration_node" ADD CONSTRAINT "dag_orchestration_node_run_id_dag_orchestration_run_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."dag_orchestration_run"("id") ON DELETE cascade ON UPDATE no action;

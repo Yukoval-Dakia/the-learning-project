@@ -47,6 +47,88 @@ describe('validateComposition', () => {
     );
   });
 
+  // YUK-758 — job dependency DAG validation wired into validateComposition.
+  it('accepts cross-capability DAG edges between orchestrated members', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          jobs: { handlers: [{ name: 'root_job', queue: 'llm', dependsOn: [] }] },
+        }),
+        base({
+          name: 'b',
+          jobs: {
+            handlers: [{ name: 'down_job', queue: 'llm', dependsOn: ['root_job'] }],
+          },
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
+  it('rejects a DAG member that also keeps a cron schedule (double-run hazard)', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          jobs: {
+            handlers: [
+              {
+                name: 'root_job',
+                queue: 'llm',
+                dependsOn: [],
+                schedule: { cron: '0 3 * * *', tz: 'Asia/Shanghai' },
+              },
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(/must not keep their own cron/);
+  });
+
+  it('rejects a dependency on an unknown job', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          jobs: { handlers: [{ name: 'down_job', queue: 'llm', dependsOn: ['ghost'] }] },
+        }),
+      ]),
+    ).toThrow(/depends on unknown job 'ghost'/);
+  });
+
+  it('rejects a dependency on a bare-cron job that is not a DAG member', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          jobs: {
+            handlers: [
+              // `bare` is a real job but has no dependsOn → not orchestrated.
+              { name: 'bare', queue: 'fast', schedule: { cron: '0 3 * * *', tz: 'Asia/Shanghai' } },
+              { name: 'down_job', queue: 'llm', dependsOn: ['bare'] },
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(/not an orchestrated DAG member/);
+  });
+
+  it('rejects a job dependency cycle', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          jobs: {
+            handlers: [
+              { name: 'j1', queue: 'llm', dependsOn: ['j2'] },
+              { name: 'j2', queue: 'llm', dependsOn: ['j1'] },
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(/cycle detected/);
+  });
+
   it('rejects one event action declared by two capabilities', () => {
     expect(() =>
       validateComposition([
