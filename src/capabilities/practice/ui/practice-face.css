@@ -385,7 +385,12 @@
 @media (prefers-reduced-motion: reduce) {
   .pf-row.is-new .pf-item,
   .pf-notice,
-  .pf-row.is-new {
+  .pf-row.is-new,
+  .pfs-fb,
+  .pfs-appeal-reply,
+  .pfs-hint,
+  .pf-toast,
+  .ladder-card {
     animation: none !important;
   }
 }
