@@ -191,6 +191,101 @@ async function withStatementTimeout<T>(
   }) as Promise<T>;
 }
 
+// ── YUK-782: deterministic concurrency primitives for the lock-order tests ────
+//
+// The cursor-lock tests below must NOT race a wall clock. Two primitives replace
+// "sleep and hope": a transaction that parks on named hub_sync_reconciliation
+// rows, and a barrier that waits until a specific backend is observably blocked
+// on a heavyweight lock (pg_stat_activity.wait_event_type = 'Lock').
+
+// Both budgets sit inside the 30s testTimeout even if they compound, and the
+// statement budget sits far above Postgres' 1s deadlock_timeout so a lock-order
+// regression always surfaces as a detected deadlock, never as a timeout.
+const LOCK_BARRIER_TIMEOUT_MS = 10_000;
+const LOCK_STATEMENT_TIMEOUT_MS = 15_000;
+
+// Holds `FOR UPDATE` on the given cursor rows in sorted order until released, so
+// any trigger that reaches mark_hub_sync_dirty for one of them must park.
+async function holdCursorLocks(
+  artifactIds: string[],
+): Promise<{ release: () => void; done: Promise<unknown> }> {
+  const held = createDeferred();
+  const release = createDeferred();
+  const done = rawClient().begin(async (c) => {
+    await c`select artifact_id from hub_sync_reconciliation
+            where artifact_id in ${c(artifactIds)} order by artifact_id for update`;
+    held.resolve();
+    await release.promise;
+  });
+  await held.promise;
+  return { release: () => release.resolve(), done };
+}
+
+// Starts one hub→atomic transition in its own transaction and exposes its
+// backend pid, which the barrier below polls.
+function startTypeTransition(artifactId: string): { pid: Promise<number>; done: Promise<unknown> } {
+  const pid = createDeferred<number>();
+  const done = rawClient().begin(async (c) => {
+    const [row] = await c<{ pid: number }[]>`select pg_backend_pid() as pid`;
+    pid.resolve(Number(row.pid));
+    await c.unsafe(`SET LOCAL statement_timeout = ${LOCK_STATEMENT_TIMEOUT_MS}`);
+    return c`update artifact set type = 'note_atomic' where id = ${artifactId}`;
+  });
+  return { pid: pid.promise, done };
+}
+
+// Barrier: resolves once EVERY listed backend is parked in a heavyweight lock
+// wait. Because plpgsql evaluates the trigger's fan-out target query before its
+// first mark_hub_sync_dirty call, "parked" proves each transition has already
+// computed its target set — and, since none of them can have committed while
+// parked, every target set was computed against a graph where the other hub is
+// still a live note_hub. That is what makes the +2 generation deltas an
+// invariant rather than a scheduling coincidence.
+async function waitUntilParkedOnLock(pids: number[]): Promise<void> {
+  // Numeric-coerced before interpolation: these are backend pids read back from
+  // Postgres, never test-authored text.
+  const pidList = pids.map((pid) => Number(pid)).join(',');
+  const deadline = Date.now() + LOCK_BARRIER_TIMEOUT_MS;
+  for (;;) {
+    const rows = await testDb().execute<{ parked: string }>(sql`
+      select count(*)::text as parked from pg_stat_activity
+      where pid = any(${sql.raw(`array[${pidList}]::int[]`)})
+        and state = 'active' and wait_event_type = 'Lock'
+    `);
+    if (Number(rows[0]?.parked ?? '0') === pids.length) return;
+    if (Date.now() > deadline) {
+      throw new Error(`barrier timeout: backends ${pids.join(',')} never parked on a lock`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+const LOCK_NOT_AVAILABLE = '55P03';
+
+// Folds a settled transition into an assertable label. Carrying the SQLSTATE
+// into the assertion makes a lock-order regression self-diagnosing: the diff
+// prints `rejected:40P01` (deadlock_detected) instead of a bare `rejected`.
+function settledLabel(result: PromiseSettledResult<unknown>): string {
+  if (result.status === 'fulfilled') return 'fulfilled';
+  const reason = result.reason as { code?: string; message?: string } | undefined;
+  return `rejected:${reason?.code ?? reason?.message ?? 'unknown'}`;
+}
+
+// Tries to take the cursor row without waiting. `false` means some other
+// transaction already holds it.
+async function cursorLockIsFree(artifactId: string): Promise<boolean> {
+  try {
+    await rawClient().begin(async (c) => {
+      await c`select artifact_id from hub_sync_reconciliation
+              where artifact_id = ${artifactId} for update nowait`;
+    });
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === LOCK_NOT_AVAILABLE) return false;
+    throw err;
+  }
+}
+
 describe('YUK-384 durable hub-sync topology triggers', () => {
   beforeEach(async () => {
     await resetDb();
@@ -296,33 +391,43 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
     expect(await state('hub-a')).toMatchObject({ status: 'cancelled' });
   });
 
-  it('YUK-746: concurrent hub-to-atomic transitions share one global cursor lock order', async () => {
+  // YUK-782 — this test used to build its concurrency window out of wall clock:
+  // a blocker on the ARTIFACT rows plus `pg_sleep(0.1)` plus a 2s
+  // statement_timeout. On a loaded runner the two transitions could simply
+  // serialize, and a serialized pair legitimately yields [+1, +2] (the second
+  // transition's snapshot already sees the first hub as note_atomic, so it has
+  // no live hub left to fan out to) — the exact `[2n, 3n] != [3n, 3n]` failure
+  // that reddened CI twice on diffs with zero hub-sync overlap.
+  //
+  // The blocker now parks on the hub_sync_reconciliation CURSOR rows instead,
+  // and the window is closed by observation (waitUntilParkedOnLock) rather than
+  // by a sleep. Both transitions are proven to have computed their fan-out
+  // target sets before either can commit, which makes +2/+2 an invariant. It
+  // also makes a lock-order regression deadlock deterministically: with both
+  // cursors held, a trigger that locked the transitioned hub first would leave
+  // hub-a's transition holding hub-a and wanting hub-b while hub-b's transition
+  // holds hub-b and wants hub-a.
+  it('YUK-746/YUK-782: concurrent hub-to-atomic transitions share one global cursor lock order', async () => {
     await seedHub('hub-b', ['k2']);
     const before = await generations(['hub-a', 'hub-b']);
-    const blockerReady = createDeferred();
-    const releaseBlocker = createDeferred();
-    const blocker = rawClient().begin(async (c) => {
-      await c`select id from artifact where id in ('hub-a', 'hub-b') order by id for update`;
-      blockerReady.resolve(undefined);
-      await releaseBlocker.promise;
-    });
-    await blockerReady.promise;
+    const blocker = await holdCursorLocks(['hub-a', 'hub-b']);
 
-    const leftPromise = withStatementTimeout(
-      2_000,
-      (c) => c`update artifact set type = 'note_atomic' where id = 'hub-a'`,
-    );
-    const rightPromise = withStatementTimeout(
-      2_000,
-      (c) => c`update artifact set type = 'note_atomic' where id = 'hub-b'`,
-    );
-    await rawClient()`select pg_sleep(0.1)`;
-    releaseBlocker.resolve(undefined);
-    await blocker;
+    const left = startTypeTransition('hub-a');
+    const right = startTypeTransition('hub-b');
+    let settled: PromiseSettledResult<unknown>[];
+    try {
+      await waitUntilParkedOnLock([await left.pid, await right.pid]);
+    } finally {
+      blocker.release();
+      await blocker.done;
+      settled = await Promise.allSettled([left.done, right.done]);
+    }
 
-    const [left, right] = await Promise.allSettled([leftPromise, rightPromise]);
-
-    expect([left.status, right.status]).toEqual(['fulfilled', 'fulfilled']);
+    // No 40P01: sorted cursor acquisition means the two transitions queue on the
+    // same first cursor instead of forming a cycle.
+    expect(settled.map(settledLabel)).toEqual(['fulfilled', 'fulfilled']);
+    // Each hub takes its own type-loss cancel (+1) AND the other's atomic
+    // fan-out (+1).
     expect(await generations(['hub-a', 'hub-b'])).toEqual(before.map((value) => value + 2n));
     const transitioned = await testDb()
       .select({ id: artifact.id, type: artifact.type })
@@ -334,6 +439,60 @@ describe('YUK-384 durable hub-sync topology triggers', () => {
         { id: 'hub-b', type: 'note_atomic' },
       ]),
     );
+    // Deliberately NOT asserted here: the final cursor `status`. Each hub is
+    // cancelled by its own type-loss but re-marked pending by the other's
+    // fan-out, so which of the two lands last is a scheduling detail, not an
+    // invariant. RED 19 owns cursor-vs-hub consistency.
+  });
+
+  // YUK-782 — a direct, single-writer assertion on the acquisition ORDER itself,
+  // so the lock-order invariant no longer depends on winning a scheduling race
+  // to provoke a deadlock. One cursor is held hostage; the transition is run and
+  // observed while parked; a NOWAIT probe then reads which cursors it had
+  // already taken at that moment.
+  //
+  // Two mirrored halves pin sorted-by-artifact-id acquisition from both sides:
+  // locking the transitioned hub first fails the first half, and locking the
+  // fan-out set first fails the second.
+  it('YUK-782: a hub-to-atomic transition takes cursors in sorted artifact-id order, transitioned hub included', async () => {
+    await seedHub('hub-b', ['k2']);
+
+    // Half 1 — hostage is the FIRST id (hub-a); transition the LAST (hub-b).
+    // Sorted order forces hub-a first, so hub-b's own cursor must still be free.
+    const firstHostage = await holdCursorLocks(['hub-a']);
+    let ownCursorStillFree: boolean;
+    let lastSettled: PromiseSettledResult<unknown>;
+    const transitionLast = startTypeTransition('hub-b');
+    try {
+      await waitUntilParkedOnLock([await transitionLast.pid]);
+      ownCursorStillFree = await cursorLockIsFree('hub-b');
+    } finally {
+      // allSettled so a failing transition can never mask the real assertion
+      // error; its status is asserted explicitly below instead.
+      firstHostage.release();
+      await firstHostage.done;
+      [lastSettled] = await Promise.allSettled([transitionLast.done]);
+    }
+    expect(settledLabel(lastSettled)).toBe('fulfilled');
+    expect(ownCursorStillFree).toBe(true);
+
+    // Half 2 — hostage is the LAST id (hub-b); transition the FIRST (hub-a).
+    // Sorted order means hub-a is already taken before the wait on hub-b.
+    await testDb().execute(sql`update artifact set type = 'note_hub' where id = 'hub-b'`);
+    const lastHostage = await holdCursorLocks(['hub-b']);
+    let earlierCursorAlreadyTaken: boolean;
+    let firstSettled: PromiseSettledResult<unknown>;
+    const transitionFirst = startTypeTransition('hub-a');
+    try {
+      await waitUntilParkedOnLock([await transitionFirst.pid]);
+      earlierCursorAlreadyTaken = !(await cursorLockIsFree('hub-a'));
+    } finally {
+      lastHostage.release();
+      await lastHostage.done;
+      [firstSettled] = await Promise.allSettled([transitionFirst.done]);
+    }
+    expect(settledLabel(firstSettled)).toBe('fulfilled');
+    expect(earlierCursorAlreadyTaken).toBe(true);
   });
 
   it('YUK-384 RED 05: hub-local changes dirty or cancel one hub and internal apply does not self-dirty', async () => {
