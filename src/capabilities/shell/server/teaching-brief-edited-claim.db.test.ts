@@ -168,6 +168,38 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     expect(brief?.current_outcome.summary_md).not.toContain(UNQUALIFIED_RETIRE_COPY);
   });
 
+  // OCR (#1080) — the two sides of the "did the owner really rewrite it?" comparison have
+  // ASYMMETRIC trimming: `corrected_payload.claim_md` is `z.string().trim()` (proposal.ts:106)
+  // while the proposal's own `claim_md` is not (proposal.ts:497). An AI claim carrying stray
+  // whitespace would otherwise make a semantically identical "rewrite" register as real and
+  // show the owner a pre-edit disclosure for a claim nobody actually changed.
+  it('treats a whitespace-only difference as NO rewrite', async () => {
+    const db = testDb();
+    const padded = `  ${ORIGINAL_CLAIM}  `;
+    const payload = conjecturePayload();
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'research_meeting',
+      payload: { ...payload, proposed_change: { ...payload.proposed_change, claim_md: padded } },
+    });
+    // The owner "rewrites" to exactly the trimmed original — i.e. changes nothing.
+    await acceptAiProposal(db, proposalId, {
+      corrected_payload: { claim_md: ORIGINAL_CLAIM },
+    });
+
+    const response = await loadTeachingBrief(db, new Date(Date.now() + 1000));
+    expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();
+    expect(response.brief).toMatchObject({
+      state: 'probe_ready',
+      finding: { claim_md: ORIGINAL_CLAIM },
+      current_outcome: {
+        status: 'awaiting_answer',
+        // The plain copy — nothing was really rewritten, so nothing is disclosed.
+        summary_md: '判别题已备好；完成后再更新这条判断。',
+      },
+    });
+    expect(response.brief?.finding).not.toHaveProperty('tested_claim_md');
+  });
+
   it('a PLAIN accept is byte-identical to today — no rewrite, no disclosure key', async () => {
     const db = testDb();
     const proposalId = await writeAiProposal(db, {
