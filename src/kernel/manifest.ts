@@ -108,7 +108,8 @@ export interface JobDecl {
    * YUK-758 夜间任务编排 DAG 成员声明。**存在**此字段（哪怕 `[]`）即声明该 job 为编排图
    * 成员：由 orchestrator（一个链头 cron + 完成回调链）驱动上游成功才触发下游，不再靠钟表
    * 错峰。`[]` = 图根（run 起步即入队）。每条边引用一个上游 job 名（字符串简写 = 硬边）或
-   * `{ job, soft }`（软边：上游失败下游照跑，带 stale 标记）。上游必须同为图成员。
+   * `{ job, soft }`（软边：上游失败下游照跑，调度行记 stale；handler 收不到该信号）。
+   * 上游必须同为图成员。
    *
    * 字段**缺席** = 裸 cron job，orchestrator 不碰、行为不变。图成员**不得**再声明 `schedule`
    * （由 orchestrator 触发，保留 cron 会双跑）——validateComposition 强制互斥。

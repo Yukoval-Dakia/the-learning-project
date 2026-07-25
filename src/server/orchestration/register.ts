@@ -10,7 +10,7 @@ import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
+import { EXPIRE_FAST, createJobQueue } from '@/server/boss/queue-config';
 import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './constants';
 import { buildOrchestrationDag } from './members';
 import {
@@ -121,6 +121,41 @@ export function parseOrchestratorPayload(raw: unknown): OrchestratorJobPayload {
 }
 
 /**
+ * 建 orchestrator 队列 + 它的死信队列（YUK-778）。
+ *
+ * **为什么不能继续用 `FAST_QUEUE_OPTS`**：那份 opts 只设 expire/retention，其余全部落到
+ * pg-boss 的 `QUEUE_DEFAULTS`（实测 v12.26.1，plans.js:44-53 定义 + 456-458 的
+ * `COALESCE(options->>'retryLimit', 2)` 等）：`retry_limit 2 / retry_delay 0 /
+ * retry_backoff false / dead_letter NULL`。FAST 档这么定是对的——housekeeping 掉一拍下个
+ * cron 重跑。但 orchestrator tick 不是 housekeeping，它是**整夜唯一的驱动单点**：
+ *  · `retry_delay 0` ⇒ 三次尝试在数秒内背靠背烧完。tick 失败的现实成因是 DB 抖动 / pg-boss
+ *    不可用这类**有恢复时间常数**的故障，零延迟重投递恰好在故障还没过去时把预算全花光。
+ *  · 无 DLQ ⇒ 预算耗尽后那条 job 直接消失，运维手上只剩 register.ts 里的一行 console.error。
+ *    出事的又正是「昨晚没跑」这种事后才发现的场景——没有可查残骸就无从复盘。
+ *
+ * `createJobQueue` 恰好就是这套配方（先建 `<name>_dlq` 再建主队列，带 retryLimit 2 /
+ * retryDelay 30 / retryBackoff true / deadLetter）。**顺序不可换**：pg-boss 的
+ * `createQueue` 在 opts 带 deadLetter 时会 `await getQueueCache(deadLetter)`（manager.js:1382），
+ * 且 `queue.dead_letter` 是指向 `queue(name)` 的外键（plans.js:131）——DLQ 不先存在就直接报错。
+ * retryLimit 保持 2（与继承来的默认同值，零行为变更），真正的 delta 只有 retryDelay+backoff+DLQ。
+ *
+ * 升级路径：`createJobQueue` 内部走 `createOrUpdateQueue`，`updateQueue` 会 SET
+ * retry_limit/retry_delay/retry_backoff/dead_letter（plans.js:708-731），所以这套配置也会
+ * 落到**已存在**的生产队列上，不只是新库。
+ *
+ * DLQ 本身用 FAST 档（7d retention、不挂 worker），与仓内其它 DLQ 同形：它只是可查的残骸箱。
+ * 注意 pg-boss 转投 DLQ 时用的是 **DLQ 自己**的 retention（plans.js:1755-1776 的
+ * `now() + q.retention_seconds`），故 7d 是这些残骸的实际保留期。
+ *
+ * 具名导出而非内联（YUK-779 PR #1076 的教训）：内联在 mountOrchestrator 里的建队调用只能
+ * 用 fake boss 断言"我们调了什么"，而「配置是否真的落进 pgboss.queue 行」——本项唯一要证明
+ * 的东西——只有把真 pg-boss 喂给它才能验。见 register.db.test.ts 的真 pg-boss 用例。
+ */
+export async function ensureOrchestratorQueues(boss: PgBoss): Promise<void> {
+  await createJobQueue(boss, ORCHESTRATOR_QUEUE, EXPIRE_FAST);
+}
+
+/**
  * 进程内挂载幂等闸（YUK-758 review ToTaz）：registerOrchestrator 若被同一进程调二次
  * （dev 热重载 / 调用方重复挂载），下面的 boss.work 会挂两个 worker、boss.schedule 会
  * 重复写锚点 cron —— 等于整夜双跑。`boss.schedule` 本身是 upsert（同 name 覆盖）不会真的
@@ -175,8 +210,7 @@ export async function registerOrchestrator(
  * 反过来把 work 放最后是安全的：cron 已排但消费者还没起，只是这一拍晚几秒被 poll 到。
  */
 async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<void> {
-  // FAST 档（无 DLQ）：orchestrator 自身廉价；掉一拍 tick 由自调度链 / 次夜锚点自愈。
-  await createOrUpdateQueue(boss, ORCHESTRATOR_QUEUE, FAST_QUEUE_OPTS);
+  await ensureOrchestratorQueues(boss);
 
   // 升级路径清账（YUK-758 review ToIqS）：本迁移把 14+ 只旧 cron job 改成 DAG 成员，但
   // pg-boss 的 `schedule` 行持久在 DB——已跑过旧版的实例升级后，旧 02:30/03:00/05:30… schedule
@@ -221,7 +255,8 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
     async (jobs: Job[]) => {
       for (const job of jobs) {
         // 包裹 try/catch（dispatch-mount.ts 惯例，YUK-758 review ToTaR）：带上下文 log 让失败
-        // 可见。orchestrator 队列走 FAST（无 DLQ），一次夜跑失败若无日志会完全无声。
+        // 可见。日志仍是第一现场——DLQ（YUK-778）只在**重试预算耗尽后**才留下残骸，中间那
+        // 两次失败的上下文只有这一行。
         // **parse 也在 try 内**（review ToTbq）：畸形 payload 的抛出同样要留下这行日志，否则
         // 恰恰是「手工 enqueue 出错」这种最需要线索的场景反而无声——与上面那句注释的立意相悖。
         //

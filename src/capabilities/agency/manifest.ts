@@ -88,7 +88,8 @@ export const agencyCapability = defineCapability({
     handlers: [
       {
         // YUK-758 DAG 成员：dreaming 读 proposal inbox 作去重基线。对上游 propose 生产者
-        // 是**软边**（上游失败 dreaming 照跑、带 stale——它只是少看几条 pending，仍正确产出）。
+        // 是**软边**（上游失败 dreaming 照跑——它只是少看几条 pending，仍正确产出；handler
+        // 本身不知道也不需要知道上游失败了，YUK-778 已删掉那条无人读的 stale payload）。
         // 编码上游 = 现钟表序下 dreaming(旧 03:15) 实际能看到的两只 producer（edge_propose 02:30
         // / maintenance 03:00）；其余 producer 旧序在 dreaming 之后，非其上游。cron 移除，改由
         // orchestrator 触发。

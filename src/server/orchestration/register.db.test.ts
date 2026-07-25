@@ -8,7 +8,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { EXPIRE_AGENT, JOB_RETRY_DELAY_SECONDS, JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
-import { LAYER_STAGGER_MAX_SECONDS, NODE_TIMEOUT_SECONDS, ORCHESTRATOR_QUEUE } from './constants';
+import {
+  LAYER_STAGGER_MAX_SECONDS,
+  NODE_TIMEOUT_SECONDS,
+  ORCHESTRATOR_DLQ,
+  ORCHESTRATOR_QUEUE,
+} from './constants';
 import {
   parseOrchestratorPayload,
   registerOrchestrator,
@@ -21,11 +26,14 @@ class FakeBoss {
   workedQueues: string[] = [];
   unscheduled: string[] = [];
   scheduled: string[] = [];
+  /** YUK-778 — createQueue 的 (name, opts)，按调用顺序。纯观察，不新增任何行为。 */
+  createQueueCalls: { name: string; opts?: Record<string, unknown> }[] = [];
   /** member names whose unschedule rejects (models a transient DB failure). */
   failUnschedule = new Set<string>();
 
-  async createQueue(name: string): Promise<void> {
+  async createQueue(name: string, opts?: Record<string, unknown>): Promise<void> {
     this.createdQueues.push(name);
+    this.createQueueCalls.push({ name, opts });
   }
   async updateQueue(name: string): Promise<void> {
     this.createdQueues.push(`update:${name}`);
@@ -152,6 +160,30 @@ describe('registerOrchestrator mount guard', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // YUK-778 ① — the mount must actually route through the DLQ-backed recipe. The real pg-boss
+  // proof that the resulting config lands in `pgboss.queue` lives in
+  // orchestrator-queue-policy.db.test.ts; this case pins the other half of the chain — that the
+  // mount calls it AT ALL, and in the only order pg-boss accepts (the DLQ is a FK target and is
+  // resolved through getQueueCache, so creating the main queue first throws).
+  it('creates the dead-letter queue before the orchestrator queue that references it', async () => {
+    const boss = new FakeBoss();
+    const caps = [capability('practice', [{ name: 'a', dependsOn: [] }])];
+
+    await registerOrchestrator(boss as unknown as PgBoss, {} as never, caps);
+
+    const dlqAt = boss.createQueueCalls.findIndex((c) => c.name === ORCHESTRATOR_DLQ);
+    const mainAt = boss.createQueueCalls.findIndex((c) => c.name === ORCHESTRATOR_QUEUE);
+    expect(dlqAt).toBeGreaterThanOrEqual(0);
+    expect(mainAt).toBeGreaterThanOrEqual(0);
+    expect(dlqAt).toBeLessThan(mainAt);
+    expect(boss.createQueueCalls[mainAt].opts).toMatchObject({
+      deadLetter: ORCHESTRATOR_DLQ,
+      retryDelay: JOB_RETRY_DELAY_SECONDS,
+      retryLimit: JOB_RETRY_LIMIT,
+      retryBackoff: true,
+    });
   });
 
   it('does not mount at all when no DAG members are declared', async () => {

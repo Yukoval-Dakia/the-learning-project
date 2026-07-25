@@ -120,20 +120,30 @@ export async function getLatestRunForDate(db: Db, runDate: string): Promise<RunR
   return rows[0] ? toRunRow(rows[0]) : null;
 }
 
+/**
+ * 收尾一条 run。**返回本次调用是否真的完成了那次转移**（YUK-778）。
+ *
+ * 返回值不是装饰：调用方据它决定要不要打「今夜收尾」那行日志。守卫是 CAS，输的一方
+ * 影响 0 行却同样 resolve——若无返回值，两个并发 finalizer（两条 advanceAndContinue
+ * 同时判 complete，或 start 正 abandon 而 tick 恰好判完）会各打一行「run completed」，
+ * 而事实上只发生了一次收尾。日志是本票唯一的诊断出口，宁可少打也不能打出不存在的事件。
+ */
 export async function finishRun(
   db: Db,
   runId: string,
   status: 'completed' | 'abandoned',
   now = new Date(),
-): Promise<void> {
+): Promise<boolean> {
   // Guard status='running' (YUK-758 review ToTao): concurrent finalizers (two
   // advanceAndContinue evaluating complete, or a start abandoning while a tick
   // completes) become an atomic CAS — only the first transition wins, no
   // finished_at overwrite, no running↔terminal thrash.
-  await db
+  const rows = await db
     .update(dag_orchestration_run)
     .set({ status, finished_at: now, updated_at: now })
-    .where(and(eq(dag_orchestration_run.id, runId), eq(dag_orchestration_run.status, 'running')));
+    .where(and(eq(dag_orchestration_run.id, runId), eq(dag_orchestration_run.status, 'running')))
+    .returning({ id: dag_orchestration_run.id });
+  return rows.length > 0;
 }
 
 /** 批量落节点行（全 pending）。job 名唯一性由 unique(run_id, job_name) 兜——onConflictDoNothing
@@ -222,12 +232,20 @@ export async function claimNodePending(
   return rows.length > 0;
 }
 
-/** 更新节点状态（running 中间态 / 终态 succeeded|failed|skipped + detail）。 */
+/**
+ * 更新节点状态（running 中间态 / 终态 succeeded|failed|skipped + detail）。
+ *
+ * **返回本次调用是否真的写动了那一行**（YUK-778）。下面的终态守卫是一个 CAS：陈旧/
+ * 并发调用会影响 0 行却照样 resolve。调用方（`settleNode`）据此只为**真实发生过**的转移
+ * 打日志——否则两条并发 tick 会各打一行「node X failed」，或者一条被守卫挡掉的陈旧写
+ * 也会打出「node X failed」而节点其实是 succeeded。日志是本票唯一的诊断出口，报出
+ * 从未发生的状态转移比不报更坏。
+ */
 export async function updateNodeStatus(
   db: Db,
   nodeId: string,
   input: { status: NodeStatus; detail?: string | null; now?: Date },
-): Promise<void> {
+): Promise<boolean> {
   const now = input.now ?? new Date();
   const terminal = isTerminalNodeStatus(input.status);
   // 终态不可回退守卫（YUK-758 review ToTam + ToTaz）：**任何**转移（转终态 or 转 running）
@@ -241,7 +259,7 @@ export async function updateNodeStatus(
     eq(dag_orchestration_node.id, nodeId),
     notInArray(dag_orchestration_node.status, [...TERMINAL_NODE_STATUSES]),
   );
-  await db
+  const rows = await db
     .update(dag_orchestration_node)
     .set({
       status: input.status,
@@ -250,7 +268,9 @@ export async function updateNodeStatus(
       ...(terminal ? { finished_at: now } : {}),
       updated_at: now,
     })
-    .where(guard);
+    .where(guard)
+    .returning({ id: dag_orchestration_node.id });
+  return rows.length > 0;
 }
 
 function toRunRow(r: typeof dag_orchestration_run.$inferSelect): RunRow {

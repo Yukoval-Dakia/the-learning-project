@@ -4,6 +4,14 @@
 export const ORCHESTRATOR_QUEUE = 'nightly_orchestrator';
 
 /**
+ * orchestrator 队列的死信队列名（YUK-778）。
+ *
+ * 命名必须与 `createJobQueue` 的 `${name}_dlq` 约定一致——那个函数是实际建队者，此常量只是
+ * 给调用方/测试一个不必手拼字符串的名字。两者分叉会让断言绿着而队列名对不上。
+ */
+export const ORCHESTRATOR_DLQ = `${ORCHESTRATOR_QUEUE}_dlq`;
+
+/**
  * 单锚点时刻：~02:30 Asia/Shanghai 开闸建「今晚运行记录」+ enqueue 根节点。
  * 图成员 job 自身**不再**带 cron（validateComposition 强制互斥）——全由本锚点驱动。
  *

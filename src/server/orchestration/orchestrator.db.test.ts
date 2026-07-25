@@ -12,7 +12,7 @@ import { dag_orchestration_node, dag_orchestration_run } from '@/db/schema';
 import { type JobDagMemberInput, buildJobDag } from '@/kernel/job-dag';
 import { reportJobYield } from '@/server/boss/job-yield';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
 import {
@@ -24,7 +24,7 @@ import {
   runOrchestratorStart,
   runOrchestratorTick,
 } from './orchestrator';
-import { updateNodeStatus } from './store';
+import { finishRun, updateNodeStatus } from './store';
 
 const db = testDb();
 const RUN_DATE = '2026-07-25';
@@ -395,7 +395,12 @@ describe('orchestrator trigger semantics', () => {
     expect(boss.memberSends.map((s) => s.name)).toEqual(['a']);
   });
 
-  it('④ soft upstream failure → downstream runs anyway with stale:true', async () => {
+  // YUK-778 ③ — the soft-edge semantics (downstream runs anyway) are unchanged; what changed is
+  // that the fact is recorded ONLY on the scheduling row. The `{ stale: true }` job payload had
+  // no reader anywhere in the repo — neither soft-edge downstream (knowledge_maintenance_nightly,
+  // dreaming_nightly) touches job.data — so it was a promise ("the handler adapts") that nothing
+  // kept. Sending an empty payload states the truth: the member is simply triggered.
+  it('④ soft upstream failure → downstream runs anyway, stale recorded on the node, NOT in the payload', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
     const run = must(
@@ -409,7 +414,37 @@ describe('orchestrator trigger semantics', () => {
     expect(b?.status).toBe('enqueued');
     expect(b?.stale).toBe(true);
     const bSend = boss.memberSends.find((s) => s.name === 'b');
-    expect(bSend?.data).toEqual({ stale: true });
+    expect(bSend?.data).toEqual({});
+    expect(bSend?.data).not.toHaveProperty('stale');
+  });
+
+  // The self-healing re-send (⑪) is the OTHER site that used to reconstruct the payload, from
+  // the persisted `node.stale` column. It must stay shaped like the original send — "same id,
+  // same job" has to hold in more than just the id.
+  it('④b the idempotent re-send of a stale node carries the same empty payload', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
+    boss.throwOnSendJobs.add('b'); // b's first send crashes after the claim committed
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }); // claims b as stale, send throws
+
+    const claimed = await nodeRow(run.id, 'b');
+    expect(claimed?.status).toBe('enqueued');
+    expect(claimed?.stale).toBe(true);
+    const reservedId = must(claimed?.boss_job_id, 'reserved boss job id');
+    expect(boss.hasJob('b', reservedId)).toBe(false);
+
+    boss.throwOnSendJobs.clear();
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const bSends = boss.memberSends.filter((s) => s.name === 'b');
+    expect(bSends).toHaveLength(1); // only the recovery send was recorded (the first one threw)
+    expect(bSends[0].id).toBe(reservedId);
+    expect(bSends[0].data).toEqual({});
   });
 
   it('⑤ run finishes as completed once all nodes are terminal; no further tick scheduled', async () => {
@@ -1608,5 +1643,199 @@ describe('YUK-781 B — cancelling in-flight jobs of an abandoned run', () => {
 
     expect((await nodeRow(run.id, 'a'))?.detail).toMatch(/not found/);
     expect(boss.cancels).toHaveLength(0);
+  });
+});
+
+// ── YUK-778 ② 调度控制面的日志可观测出口 ────────────────────────────────────────
+//
+// `dag_orchestration_run` / `_node` 两张表都在 BACKUP_EXCLUDED 里，读面（YUK-774）还没建，
+// 所以「昨晚为什么没跑」在生产上只能从**进程日志**回答。在本票之前那条路是断的：skip /
+// fail / abandon 一行不打，连一次成功的夜跑都完全无声——「跑了且全绿」与「worker 根本没起来」
+// 在日志里长得一模一样。
+//
+// 这些用例断言的是 orchestrator 对着**空日志**说话这件事被修好了；YUK-779 修的是另一件
+// （succeeded 却零产出），两者互不覆盖。
+describe('YUK-778 ② the scheduling control plane leaves a diagnosable trail', () => {
+  let logs: { level: 'log' | 'warn' | 'error'; line: string }[];
+
+  beforeEach(async () => {
+    await resetDb();
+    logs = [];
+    const capture =
+      (level: 'log' | 'warn' | 'error') =>
+      (...args: unknown[]) => {
+        logs.push({ level, line: args.map((a) => (typeof a === 'string' ? a : '')).join(' ') });
+      };
+    vi.spyOn(console, 'log').mockImplementation(capture('log'));
+    vi.spyOn(console, 'warn').mockImplementation(capture('warn'));
+    vi.spyOn(console, 'error').mockImplementation(capture('error'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const linesMatching = (re: RegExp, level?: 'log' | 'warn' | 'error') =>
+    logs.filter((l) => (level ? l.level === level : true) && re.test(l.line)).map((l) => l.line);
+
+  it('L1 a hard-upstream skip names the node, the run and the reason', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    // warn, not error: a hard-upstream skip is the DESIGNED degradation path, and shouting
+    // at the same level as a real failure is how a log stops being read.
+    const skips = linesMatching(/node 'b' skipped/, 'warn');
+    expect(skips).toHaveLength(1);
+    expect(skips[0]).toContain(run.id);
+    expect(skips[0]).toMatch(/upstream 'a' failed/);
+  });
+
+  it('L2 a failed node is logged at error level with its reason', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const fails = linesMatching(/node 'a' failed/, 'error');
+    expect(fails).toHaveLength(1);
+    expect(fails[0]).toContain(run.id);
+    expect(fails[0]).toMatch(/pg-boss job failed/);
+  });
+
+  it('L3 a fully successful night is still visible: a start line and a completion census', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    // Before this PR the whole of the following produced ZERO log output.
+    const started = linesMatching(new RegExp(`run ${run.id} started for ${RUN_DATE}`), 'log');
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatch(/trigger=cron/);
+    expect(started[0]).toMatch(/2 member\(s\)/);
+
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+    await completeMember(boss, run.id, 'b');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const completed = linesMatching(/completed:/, 'log');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toContain(run.id);
+    expect(completed[0]).toMatch(/2\/2 succeeded, 0 failed, 0 skipped/);
+  });
+
+  // YUK-778 ③ 的另一半：删掉无人读的 `{ stale: true }` payload 后，`node.stale` 这一列
+  // 必须有一个**当下就成立**的读者，否则只是把同一个「建成不通电」从 payload 挪到列上。
+  // 收尾总账就是那个读者。
+  it('L4 the completion census reports how many nodes ran on a non-succeeded soft upstream', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', [{ job: 'a', soft: true }]));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }); // b enqueues, stale
+    await completeMember(boss, run.id, 'b');
+    await runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE });
+
+    const completed = linesMatching(/completed:/, 'log');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatch(/1 ran with a non-succeeded soft upstream/);
+  });
+
+  it('L5 abandoning a leftover run reports it plus the census of where it was stuck', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const yesterday = '2026-07-24';
+    const old = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => yesterday }, 'cron'),
+      'yesterday run',
+    );
+    logs.length = 0; // only care about what tonight's anchor says
+
+    await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron');
+
+    const abandoned = linesMatching(new RegExp(`ABANDONING run ${old.id}`), 'error');
+    expect(abandoned).toHaveLength(1);
+    expect(abandoned[0]).toContain(yesterday);
+
+    // The census is the only snapshot of WHERE it was stuck: the sweep right after this line
+    // rewrites every non-terminal node, so the scheduling table can no longer answer it.
+    const census = linesMatching(new RegExp(`abandoned run ${old.id}`), 'error');
+    expect(census).toHaveLength(1);
+    expect(census[0]).toMatch(/0\/2 succeeded/);
+    expect(census[0]).toMatch(/1 still in flight/); // a was enqueued
+    expect(census[0]).toMatch(/1 never started/); // b never got its turn
+  });
+
+  // The log is this feature's ONLY output, so it must never report a transition that did not
+  // happen. Both `updateNodeStatus` and `finishRun` are CAS writes whose losers still resolve;
+  // gating every line on "did the row actually change" is what keeps the trail truthful.
+  it('L6 a losing CAS logs nothing — concurrent ticks settle a node once and report it once', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'), member('b', ['a']));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    await failMember(boss, run.id, 'a');
+
+    await Promise.all([
+      runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
+      runOrchestratorTick({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }),
+    ]);
+
+    expect(linesMatching(/node 'a' failed/, 'error')).toHaveLength(1);
+  });
+
+  it('L7 finishRun reports whether IT performed the transition, so completion is logged once', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    expect(await finishRun(db, run.id, 'completed', NOW)).toBe(true);
+    // Second call loses the CAS (status is no longer 'running') — an unconditional log here
+    // would announce a second, imaginary completion.
+    expect(await finishRun(db, run.id, 'abandoned', NOW)).toBe(false);
+
+    const settled = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(settled.status).toBe('completed'); // the loser changed nothing
+  });
+
+  it('L8 updateNodeStatus reports whether the terminal guard let the write through', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+    const node = must(await nodeRow(run.id, 'a'), 'node');
+
+    expect(
+      await updateNodeStatus(db, node.id, { status: 'failed', detail: 'first', now: NOW }),
+    ).toBe(true);
+    expect(
+      await updateNodeStatus(db, node.id, { status: 'succeeded', detail: 'second', now: NOW }),
+    ).toBe(false);
+    expect((await nodeRow(run.id, 'a'))?.detail).toBe('first');
   });
 });
