@@ -8,6 +8,7 @@
 import type { PgBoss } from 'pg-boss';
 
 import type { Db } from '@/db/client';
+import type { JobDag } from '@/kernel/job-dag';
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './constants';
@@ -95,8 +96,22 @@ export async function registerOrchestrator(
     console.log('[orchestrator] no DAG members declared — not mounted');
     return;
   }
+  // 闸**在挂载真正成功之后**才落（YUK-758 review ToTbo）：若先置 true 而中途某步抛，闸会把
+  // 一个**从未挂成**的 orchestrator 永久锁死——此后同进程再调只会 warn 后返回，除非整进程重启
+  // 否则永无 orchestrator。start-worker.ts 目前不 catch（抛出即中止 worker 启动，尚算显性失败），
+  // 但 dev 热重载或任何 catch 住的调用方会留下「进程活着、夜链全死」的静默态。故用 try/catch
+  // 在失败时回滚闸，让下一次注册尝试仍可重试。
   mounted = true;
+  try {
+    await mountOrchestrator(boss, db, dag);
+  } catch (err) {
+    mounted = false;
+    throw err;
+  }
+}
 
+/** 真正的挂载步骤（建队 + work + 清旧 schedule + 落锚点 cron）。失败由调用方回滚挂载闸。 */
+async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<void> {
   // FAST 档（无 DLQ）：orchestrator 自身廉价；掉一拍 tick 由自调度链 / 次夜锚点自愈。
   await createOrUpdateQueue(boss, ORCHESTRATOR_QUEUE, FAST_QUEUE_OPTS);
 
@@ -113,13 +128,10 @@ export async function registerOrchestrator(
     { pollingIntervalSeconds: 2, batchSize: 1 },
     async (jobs: { data?: unknown }[]) => {
       for (const job of jobs) {
-        // payload runtime 校验（YUK-758 review ToTa0）：队列虽是内部自用（cron 发 {}、tick
-        // 链发 { tick: true }、手动重跑发 { trigger: 'manual' }），但裸 `as` 会让任何畸形/
-        // 手工 enqueue 的 payload 静默走进 start 分支（trigger 默认 'cron'）触发整链重跑。
-        // 显式收窄：不认识的形状直接抛（pg-boss 标 failed 并留痕），不猜。
-        const data = parseOrchestratorPayload(job.data);
         // 包裹 try/catch（dispatch-mount.ts 惯例，YUK-758 review ToTaR）：带上下文 log 让失败
         // 可见。orchestrator 队列走 FAST（无 DLQ），一次夜跑失败若无日志会完全无声。
+        // **parse 也在 try 内**（review ToTbq）：畸形 payload 的抛出同样要留下这行日志，否则
+        // 恰恰是「手工 enqueue 出错」这种最需要线索的场景反而无声——与上面那句注释的立意相悖。
         //
         // **rethrow 只给 start 路径**（YUK-758 review 面板必修 1 的配套约束）：
         //  · tick：advanceAndContinue 已**无条件**保证续排下一 tick（见 orchestrator.ts），
@@ -127,10 +139,15 @@ export async function registerOrchestrator(
         //    retry_limit=2 / retry_delay=0 / retry_backoff=false，3 次尝试数秒内背靠背烧完，
         //    每次都会再排一条 tick → 一夜留下 3 条并行 tick 链，重复 enqueue 付费成员 job。
         //    故 tick 失败只 log 不 rethrow，续链交给已排好的下一拍。
-        //  · start：若 run 创建本身就失败（listActiveRuns / createRunWithNodes 抛），当夜**没有
-        //    任何** tick 被排出，重投递是唯一恢复通道，故保留 rethrow。重投递不会建重复 run
-        //    ——getLatestRunForDate 防重闸（ToPUE）已挡住。
+        //  · start / parse 失败：若 run 创建本身就失败（listActiveRuns / createRunWithNodes 抛）
+        //    或 payload 根本没认出来，当夜**没有任何** tick 被排出，重投递是唯一恢复通道，
+        //    故 rethrow。重投递不会建重复 run——getLatestRunForDate 防重闸（ToPUE）已挡住。
+        let isTick = false;
         try {
+          // payload runtime 校验（review ToTa0 + ToTe7）：裸 `as` 会让畸形/手工 enqueue 的
+          // payload 静默走进 start 分支（trigger 默认 'cron'）触发整链重跑。收窄见 parse 实现。
+          const data = parseOrchestratorPayload(job.data);
+          isTick = data.tick === true;
           if (data.tick) {
             await runOrchestratorTick({ db, boss: orchestratorBoss, dag });
           } else {
@@ -141,11 +158,9 @@ export async function registerOrchestrator(
             );
           }
         } catch (err) {
-          console.error(
-            `[orchestrator] job failed (tick=${data.tick === true}, trigger=${data.trigger ?? 'cron'})`,
-            err,
-          );
-          if (!data.tick) throw err;
+          console.error(`[orchestrator] job failed (tick=${isTick})`, err);
+          // parse 失败时 isTick 仍是 false → 走 rethrow，符合「没排出 tick 就要重投递」。
+          if (!isTick) throw err;
         }
       }
     },
@@ -157,7 +172,20 @@ export async function registerOrchestrator(
   // （幂等：无 schedule 行则 no-op），把「成员不得带 cron」的组合期不变量落到运行期。
   // 各 unschedule targets 互不相干（每条打不同 name），并发发出即可——串行 await 会把 14+ 次
   // DB 往返摞成启动期的一条长链（YUK-758 review ToTaw）。
-  await Promise.all([...dag.nodes.keys()].map((member) => boss.unschedule(member)));
+  // 用 **allSettled** 而非 all（review ToTbt）：`Promise.all` 首个 reject 即短路，剩余成员的
+  // 旧 schedule 行**留在库里**，而挂载流程继续往下落锚点 cron —— 结果是部分成员既被 orchestrator
+  // 触发、又被自己的旧 cron 直接 enqueue（双发 + 绕过依赖门），恰是本清账要消灭的状态。
+  // 逐条跑完并逐条 log，清账做到能做的最大程度；失败项下次启动再试（unschedule 幂等）。
+  const members = [...dag.nodes.keys()];
+  const unscheduled = await Promise.allSettled(members.map((member) => boss.unschedule(member)));
+  for (const [i, result] of unscheduled.entries()) {
+    if (result.status === 'rejected') {
+      console.warn(
+        `[orchestrator] failed to unschedule legacy cron for DAG member '${members[i]}' — it may still self-fire and bypass its dependency gate until the next successful startup`,
+        result.reason,
+      );
+    }
+  }
 
   // 单锚点 cron（图成员自身已无 cron，validateComposition 强制）。
   await boss.schedule(ORCHESTRATOR_QUEUE, ORCHESTRATOR_CRON, {}, { tz: ORCHESTRATOR_TZ });

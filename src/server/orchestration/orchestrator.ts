@@ -142,8 +142,53 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
   let enqueuedThisPass = 0;
   for (const [jobName, node] of nodes) {
     if (node.status !== 'pending') continue;
+    // 逐节点错误隔离，与步骤①同一韧性模型（YUK-758 review ToTbw）：单节点的 claim / send /
+    // updateNodeStatus 抖动不该让**本轮**其余就绪节点全部停摆。注意这与 advanceAndContinue 的
+    // 续链保证是**两层**：那层保证「下一拍一定会来」，这层保证「本拍其余节点照推」。
+    try {
+      if (await advancePendingNode(deps, jobName, node, nodes, now, enqueuedThisPass)) {
+        enqueuedThisPass += 1;
+      }
+    } catch (err) {
+      console.error(
+        `[orchestrator] enqueue failed for node '${node.job_name}' (${node.id}) in run ${deps.run.id} — skipped this tick, will retry next tick`,
+        err,
+      );
+    }
+  }
+
+  // ── ③ 汇总（用②后 in-memory map；enqueue/skip 已就地更新 status）。
+  return summarize(nodes);
+}
+
+/**
+ * 推进单个 pending 节点（步骤② per-node）。返回 true 表示本次真的入队了一个 job
+ * （供调用方推进同轮错峰序号）；skip / 等待上游 / 领取失败均返回 false。
+ */
+async function advancePendingNode(
+  deps: AdvanceDeps,
+  jobName: string,
+  node: NodeRow,
+  nodes: Map<string, NodeRow>,
+  now: Date,
+  staggerIndex: number,
+): Promise<boolean> {
+  {
     const dagNode = deps.dag.nodes.get(jobName);
-    if (!dagNode) continue; // 成员集与图不一致（不应发生）——跳过防御。
+    if (!dagNode) {
+      // 该节点在**当前** manifest 里已不是图成员（夜跑进行中升级/回滚，成员被删或改名）。
+      // 原实现 `continue` 跳过它——但 summarize() 仍把它计入 total，于是 terminal 永远凑不齐、
+      // run 永不 completed、依赖它的分支永不推进，tick 每分钟空转到次夜被 abandon
+      //（YUK-758 review ToTjN）。收敛为终态 skipped 并留因：让本夜图按「少了这个成员」正常收尾，
+      // 其硬下游据 skipped 语义跳过（与上游失败同一处理），运维也能从 detail 看出真因。
+      await updateNodeStatus(deps.db, node.id, {
+        status: 'skipped',
+        detail: 'job is no longer a DAG member in the running build (manifest changed mid-run)',
+        now,
+      });
+      node.status = 'skipped';
+      return false;
+    }
 
     const upstreams = dagNode.deps.map((d) => ({ soft: d.soft, up: nodes.get(d.job) }));
 
@@ -158,12 +203,12 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
         now,
       });
       node.status = 'skipped';
-      continue;
+      return false;
     }
 
     // 全部上游终态才可推进（否则等待）。根（无上游）此处 vacuous-true 即刻入队。
     const allTerminal = upstreams.every((u) => u.up && isTerminalNodeStatus(u.up.status));
-    if (!allTerminal) continue;
+    if (!allTerminal) return false;
 
     // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游若未 succeeded → stale。
     const stale = upstreams.some((u) => u.soft && u.up && u.up.status !== 'succeeded');
@@ -175,14 +220,10 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
     // 总能靠 boss_job_id 查到真实 job 态，不会把在跑的成员误判超时 failed。
     const bossJobId = randomUUID();
     const claimed = await claimNodePending(deps.db, node.id, { bossJobId, stale, now });
-    if (!claimed) continue;
+    if (!claimed) return false;
 
     // 同轮第 n 个入队者延后 n×间隔（封顶）。第 0 个立刻发 → 串行链上零延迟。
-    const startAfter = Math.min(
-      enqueuedThisPass * LAYER_STAGGER_SECONDS,
-      LAYER_STAGGER_MAX_SECONDS,
-    );
-    enqueuedThisPass += 1;
+    const startAfter = Math.min(staggerIndex * LAYER_STAGGER_SECONDS, LAYER_STAGGER_MAX_SECONDS);
     const sentId = await deps.boss.send(
       jobName,
       stale ? { stale: true } : {},
@@ -201,14 +242,12 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
           now,
         });
         node.status = 'failed';
-        continue;
+        return false;
       }
     }
     node.status = 'enqueued';
+    return true;
   }
-
-  // ── ③ 汇总（用②后 in-memory map；enqueue/skip 已就地更新 status）。
-  return summarize(nodes);
 }
 
 /** 轮询单个在飞节点的 pg-boss 终态并落库（步骤① per-node，供 Promise.all 并行）。 */

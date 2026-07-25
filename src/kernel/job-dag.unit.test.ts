@@ -101,6 +101,16 @@ describe('findCycle', () => {
     expect(findCycle([member('a'), member('b', ['a'])])).toBeNull();
   });
 
+  // YUK-758 review ToTbk: `adj.set(m.name, …)` let a later duplicate OVERWRITE an
+  // earlier one's edges, so a real cycle could be silently missed — the worst failure
+  // mode for a cycle detector.
+  it('throws on duplicate member names rather than losing edges and missing a cycle', () => {
+    // Without the guard `a` would end up with only ['c'], hiding the a→b→a cycle.
+    expect(() =>
+      findCycle([member('a', ['b']), member('b', ['a']), member('a', ['c']), member('c')]),
+    ).toThrow(/duplicate DAG member name 'a'/);
+  });
+
   it('returns the cycle path for a cyclic graph', () => {
     const cycle = findCycle([member('a', ['c']), member('b', ['a']), member('c', ['b'])]);
     expect(cycle).not.toBeNull();

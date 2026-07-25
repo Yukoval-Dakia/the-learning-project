@@ -99,10 +99,18 @@ export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
 /**
  * 找一条有向环并返回其节点路径（用于错误信息）；无环返回 null。
  * 三色 DFS：white=未访问 gray=在栈上 black=已完成。gray→gray 命中回边即环。
+ *
+ * 重复成员名直接抛（YUK-758 review ToTbk）：`adj.set(m.name, ...)` 会让后一条**覆盖**前一条
+ * 的边集，于是像 `[a→b, b→a, a→c, c]` 这种输入会退化成 `{a:['c'], b:['a'], c:[]}`，真环
+ * `a→b→a` 被静默漏判——对一个**找环**的函数来说，假阴性是最坏的失败模式。与 buildJobDag /
+ * validateJobDag 的同名守卫保持一致（本函数同为导出公共入口，测试与未来独立校验路径会直调）。
  */
 export function findCycle(members: readonly JobDagMemberInput[]): string[] | null {
   const adj = new Map<string, string[]>();
   for (const m of members) {
+    if (adj.has(m.name)) {
+      throw new JobDagError(`duplicate DAG member name '${m.name}' (${m.owner})`);
+    }
     adj.set(
       m.name,
       m.dependsOn.map((d) => normalizeJobDependency(d).job),

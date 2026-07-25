@@ -8,8 +8,6 @@
 import { type JobDag, buildJobDag } from '@/kernel/job-dag';
 import { type CapabilityManifest, projectDagMembers } from '@/kernel/manifest';
 
-export { projectDagMembers };
-
 /**
  * 建编排 DAG。假定组合根已通过 validateComposition（含 validateJobDag：无重复成员/缺引用/
  * 自环/成环）——orchestrator 运行在 worker 启动后，组合根校验早已跑过。

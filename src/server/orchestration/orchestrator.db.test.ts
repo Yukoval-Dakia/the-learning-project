@@ -595,6 +595,84 @@ describe('orchestrator trigger semantics', () => {
     }
   });
 
+  // ⑯ YUK-758 review ToTjN — a mid-run upgrade that drops/renames a member leaves a
+  // persisted pending node with no counterpart in the running build. Skipping it forever
+  // kept it in summarize()'s total, so the run could never complete and ticks spun until
+  // the next night abandoned it.
+  it('⑯ a persisted node that is no longer a DAG member converges instead of stalling the run', async () => {
+    const boss = new FakeBoss();
+    // The run is created from the OLD graph (a, b, retired).
+    const oldDag = dagOf(member('a'), member('b', ['a']), member('retired'));
+    const run = must(
+      await runOrchestratorStart(
+        { db, boss, dag: oldDag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'run',
+    );
+    expect((await nodeRow(run.id, 'retired'))?.status).toBe('enqueued');
+
+    // Worker restarts on a build where `retired` no longer declares dependsOn.
+    const newDag = dagOf(member('a'), member('b', ['a']));
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+    await completeMember(boss, run.id, 'b');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+
+    // `retired` was already enqueued before the upgrade, so it converges via its job.
+    await completeMember(boss, run.id, 'retired');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+    const finished = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(finished.status).toBe('completed');
+  });
+
+  it('⑯b a still-pending node dropped from the graph is skipped with a reason', async () => {
+    const boss = new FakeBoss();
+    // `retired` depends on `a`, so it is still pending when the upgrade lands.
+    const oldDag = dagOf(member('a'), member('retired', ['a']));
+    const run = must(
+      await runOrchestratorStart(
+        { db, boss, dag: oldDag, now: NOW, localDate: () => RUN_DATE },
+        'cron',
+      ),
+      'run',
+    );
+    expect((await nodeRow(run.id, 'retired'))?.status).toBe('pending');
+
+    const newDag = dagOf(member('a'));
+    await completeMember(boss, run.id, 'a');
+    await runOrchestratorTick({ db, boss, dag: newDag, now: NOW, localDate: () => RUN_DATE });
+
+    const retired = await nodeRow(run.id, 'retired');
+    expect(retired?.status).toBe('skipped');
+    expect(retired?.detail).toMatch(/no longer a DAG member/);
+    // and the run can now actually finish rather than spinning forever.
+    const finished = (
+      await db.select().from(dag_orchestration_run).where(eq(dag_orchestration_run.id, run.id))
+    )[0];
+    expect(finished.status).toBe('completed');
+  });
+
+  // ⑰ review ToTbw — step ② per-node isolation: one node's enqueue failure must not
+  // stop the other ready nodes in the SAME pass.
+  it('⑰ one node failing to enqueue does not block its siblings in the same pass', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('r1'), member('r2'), member('r3'));
+    boss.throwOnSendJobs.add('r2');
+
+    const run = must(
+      await runOrchestratorStart({ db, boss, dag, now: NOW, localDate: () => RUN_DATE }, 'cron'),
+      'run',
+    );
+
+    // r1 and r3 still went out even though r2 threw mid-pass.
+    expect((await nodeRow(run.id, 'r1'))?.status).toBe('enqueued');
+    expect((await nodeRow(run.id, 'r3'))?.status).toBe('enqueued');
+    expect(boss.memberSends.map((s) => s.name).sort()).toEqual(['r1', 'r3']);
+  });
+
   it('tick with no active run is a no-op', async () => {
     const boss = new FakeBoss();
     const dag = dagOf(member('a'));
