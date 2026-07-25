@@ -150,6 +150,137 @@
 .inbox-loom .proposal-plan-dot.long {
   background: var(--hard);
 }
+
+/* YUK-229 — image_candidate 专属卡：题文摘要与原图并排对照。coral 语系（内容生成/
+   修订类），窄屏堆叠。 */
+.inbox-loom .proposal-image-candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-3);
+}
+@media (max-width: 560px) {
+  .inbox-loom .proposal-image-candidate {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.inbox-loom .proposal-image-candidate .ic-col {
+  display: grid;
+  gap: var(--s-2);
+  align-content: start;
+  min-width: 0;
+}
+.inbox-loom .proposal-image-candidate .ic-col-label {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.inbox-loom .proposal-image-candidate .ic-summary-md {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+  overflow-wrap: anywhere;
+}
+.inbox-loom .proposal-image-candidate .ic-summary-md > :first-child {
+  margin-top: 0;
+}
+.inbox-loom .proposal-image-candidate .ic-summary-md > :last-child {
+  margin-bottom: 0;
+}
+.inbox-loom .proposal-image-candidate .ic-empty {
+  font-size: var(--fs-caption);
+  color: var(--ink-5);
+}
+.inbox-loom .proposal-image-candidate .ic-figure {
+  margin: 0;
+  display: grid;
+  gap: var(--s-1);
+}
+.inbox-loom .proposal-image-candidate .ic-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-2);
+  border: 1px solid var(--line-soft);
+  background: var(--paper-raised);
+}
+.inbox-loom .proposal-image-candidate .ic-caption {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  overflow-wrap: anywhere;
+}
+.inbox-loom .proposal-image-candidate .ic-reveal,
+.inbox-loom .proposal-image-candidate .ic-fallback {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-3);
+  background: var(--paper-raised);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-2);
+  justify-items: start;
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn:hover {
+  border-color: var(--coral);
+  background: var(--coral-line);
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-btn:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+.inbox-loom .proposal-image-candidate .ic-reveal-note {
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+}
+/* YUK-229 review — summary_md 里的 Markdown 图片被覆写成不加载的占位文本（防被动内网探测）。 */
+.inbox-loom .proposal-image-candidate .ic-md-img {
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+  overflow-wrap: anywhere;
+}
+.inbox-loom .proposal-image-candidate .ic-fallback-note {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.inbox-loom .proposal-image-candidate .ic-source-title {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.inbox-loom .proposal-image-candidate .ic-source-url {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+  overflow-wrap: anywhere;
+}
+
+/* YUK-229 — accept 旁的付费前置提示（定性文案，不显预估金额）。coral 弱化，避免与
+   accept 按钮争抢，但要读得见。 */
+.inbox-loom .image-candidate-cost-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  align-self: center;
+  overflow-wrap: anywhere;
+}
+
 .inbox-loom .proposal-foot {
   display: flex;
   align-items: center;

@@ -155,6 +155,19 @@ describe('appealEntryAvailable — 自动 commit 后保留「不服判」+ 捕�
       }),
     ).toBe(false);
   });
+
+  it('confidence 相位（YUK-444 信心自评插拍，判定未揭晓）→ 入口不显示', () => {
+    // 三相后 phase 可为 'confidence'：judge 结果暂存、判定卡尚未渲染 → 无已揭晓判定可申诉。
+    // 入参类型放宽到含 'confidence'，首行 phase !== 'feedback' guard 返回 false（即便有锚点）。
+    expect(
+      appealEntryAvailable({
+        phase: 'confidence',
+        appealOpen: false,
+        autoCommitted: false,
+        autoCommitJudgeEventId: 'judge-evt-1',
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('toSubmittedJudgeResult — digest-transparent submit reshape (YUK-589)', () => {

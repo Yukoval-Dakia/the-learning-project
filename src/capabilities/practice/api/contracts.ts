@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
 import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 
 /** Bound text copied into judge prompts and immutable attempt events. */
 export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
@@ -15,8 +15,13 @@ const CreateAttemptBodyBaseSchema = z.object({
   // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，落到 review event
   // payload.reasoning_trace（区别于 response_md 的最终作答）。API 侧先行支持；UI 采集框
   // 过 design pre-flight 后补。OPTIONAL：省略即字段 absent → 既有提交逐字不变。上界与
-  // known.ts 的 reasoning_trace 共享 REASONING_TRACE_MAX_LEN，不会漂移。
+  // known.ts 的 reasoning_trace 共享 REASONING_TRACE_MAX_LEN（真源 core/limits.ts，经
+  // kernel facade 取），不会漂移。
   reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
+  // YUK-444 (A10 答题置信度自评) — 学生对本次作答的主观把握（1-5 整数），落到 review
+  // event payload.self_confidence。**observe-only**：server 只透传落库，绝不进 θ̂ / FSRS /
+  // 判分。OPTIONAL：跳过 / 客观题 auto-commit 省略即字段 absent → 既有提交逐字不变。
+  self_confidence: z.number().int().min(1).max(5).nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
   session_id: z.string().min(1).nullable().optional(),
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),

@@ -10,11 +10,11 @@ import { z } from 'zod';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { REASONING_TRACE_MAX_LEN } from '@/core/schema/event/known';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/kernel/judge';
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {

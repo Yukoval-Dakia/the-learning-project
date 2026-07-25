@@ -9,6 +9,13 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
+// 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件
+// （src/capabilities/AGENTS.md）。此前这里直 import @/core/schema/event/known 取长度常量，
+// 既违反依赖方向，又把整套 event Zod schema 拖进 SPA 模块图（实测 8 模块 / 46.7 KB）。
+// 改走 @/kernel/limits 窄 facade（2 模块 / 107 B，零 event schema）——真源仍是 core/limits.ts。
+// 注意别改成 @/kernel/capability-contract-schemas：那个 barrel 反而拖 34 模块 / 252.9 KB，
+// 见 src/kernel/limits.ts 头注释的实测表。
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -104,7 +111,10 @@ export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
 // autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
 // 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
 export function appealEntryAvailable(opts: {
-  phase: 'answering' | 'feedback';
+  // YUK-444 — 三相后 phase 可为 'confidence'（judge 结果暂存、判定未揭晓）。入参放宽到含它，
+  // 语义上申诉入口只在 'feedback' 可用，'confidence'/'answering' 皆经下面首行 guard 返回 false
+  // （'confidence' 相位无已揭晓判定可申诉）。放宽入参即便调用点未被 phase==='feedback' 收窄也可赋值。
+  phase: 'answering' | 'confidence' | 'feedback';
   appealOpen: boolean;
   autoCommitted: boolean;
   autoCommitJudgeEventId: string | null;
@@ -114,6 +124,58 @@ export function appealEntryAvailable(opts: {
   if (opts.autoCommitted) return opts.autoCommitJudgeEventId !== null;
   // 手动流：入口恒可见，锚点在用户提交申诉那一刻随 commit 落库（既有行为，不变）。
   return true;
+}
+
+// YUK-562 (过程框可见性) — 「记下你的思路」采集框只对开放/文本作答题显示，客观（选择）题隐藏。
+// 判据是**作答面形态**（isChoice）而非 judge route：过程框在作答相位、提交前渲染，此刻 getAdvice
+// 尚未跑、route 未知，无法用 route gate；而「开放/文本作答题」在本组件里恰等价于「渲染 textarea 作答
+// 面」= !isChoice（选择题渲染 radio、无 composer，过程框无处可挂）。故 isChoice 是唯一可用且语义对齐
+// 的信号。零强制红线：即便显示也默认折叠、可完全忽略、空值不发字段。
+export function shouldOfferProcessBox(isChoice: boolean): boolean {
+  return !isChoice;
+}
+
+// YUK-444 (信心自评插拍 gate) — 提交后「先自评再看结果」的 1-5 interstitial 只在**非客观**判分流插入。
+// 客观题（route ∈ {exact, keyword}）preview 回来即 auto-commit（advance:false 直接渲判定卡），不插拍
+// （与「客观题跳过」约束一致）。gate 与 isObjectiveQuestion 同源取反：只看 route，不看 kind。
+export function shouldOfferConfidenceGate(route: string): boolean {
+  return !isObjectiveQuestion(route);
+}
+
+// YUK-444 (推迟揭晓时序不变式) — PfSolo 三相由两个 judge-preview slot 派生：
+//   - preview===null && pending===null → answering（作答，判定未跑）
+//   - preview===null && pending!==null → confidence（judge 结果已到但**暂存未揭晓**，插信心自评拍）
+//   - preview!==null                    → feedback（判定卡揭晓）
+// 关键不变式：只要 pending 有值而 preview 仍 null，就停在 confidence（判定卡不渲染）——揭晓**必须**
+// 经 revealVerdict 把 pending 提上 preview。preview 一旦有值即优先 feedback（揭晓后 pending 已清）。
+// 纯函数，供单测固定「先自评、后揭晓」的相位时序。
+export function derivePhase(
+  preview: JudgePreview | null,
+  pendingPreview: JudgePreview | null,
+): 'answering' | 'confidence' | 'feedback' {
+  if (preview !== null) return 'feedback';
+  if (pendingPreview !== null) return 'confidence';
+  return 'answering';
+}
+
+// YUK-562 / YUK-444 (采集字段装配 · 零强制「空值不发字段」) — 把 UI 侧的过程文本 / 信心自评装配成
+// submitReview 的可选 wire 字段。**空值绝不发**：reasoning_trace 仅在 trim 后非空才带（挡纯空白噪声）；
+// self_confidence 仅在用户实际选了 1-5（非 null / 跳过）才带。两者缺省 → wire body 无该键 → server
+// conditional-spread 保持 event payload byte-identical。纯函数，供单测固定「空值不发」不变式。
+export function buildCaptureFields(input: {
+  reasoningTrace: string;
+  selfConfidence: number | null;
+}): { reasoning_trace?: string; self_confidence?: number } {
+  const out: { reasoning_trace?: string; self_confidence?: number } = {};
+  if (input.reasoningTrace.trim()) {
+    // YUK-562 (PR #1065 thread 修复) — 发送前防御性截断到 REASONING_TRACE_MAX_LEN。textarea 的
+    // maxLength 是 UX 侧硬闸，但粘贴 / IME / 代理调用仍可能越界；若原样发超界文本，server 端
+    // zod .max() 会抛 400，且此刻 UI 已进 feedback/confidence 相位无法回改 → 软死锁。这里 slice
+    // 与 zod 同按 UTF-16 code unit 计长，截断后恒过 .max()（宁可少几字，不吞整次提交）。
+    out.reasoning_trace = input.reasoningTrace.slice(0, REASONING_TRACE_MAX_LEN);
+  }
+  if (input.selfConfidence !== null) out.self_confidence = input.selfConfidence;
+  return out;
 }
 
 export function PfSolo({
@@ -149,6 +211,16 @@ export function PfSolo({
   const [text, setText] = useState('');
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
+  // YUK-562 (过程框) — 「记下你的思路」采集：默认折叠（showTrace=false，一行触发展开），
+  // reasoningTrace 是可选过程文本。零强制：不挡提交、折叠即跳过、空值不发字段（buildCaptureFields）。
+  const [showTrace, setShowTrace] = useState(false);
+  const [reasoningTrace, setReasoningTrace] = useState('');
+  // YUK-444 (信心自评 · 推迟揭晓) — 开放题提交后判定揭晓前，先渲 1-5 自评 interstitial。judge 结果
+  // 暂存在 pendingPreview（不 setPreview → 判定卡不渲染），确认/跳过后才 setPreview 揭晓（元认知语义：
+  // 先自评再看结果）。selfConfidence=null 表示未选 / 跳过 → 不发 self_confidence。客观题 auto-commit
+  // 流不经此（不插拍）。
+  const [pendingPreview, setPendingPreview] = useState<JudgePreview | null>(null);
+  const [selfConfidence, setSelfConfidence] = useState<number | null>(null);
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
@@ -176,7 +248,9 @@ export function PfSolo({
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
   const answerMd = isChoice && sel !== null ? (q?.choices_md?.[sel] ?? '') : text;
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
-  const phase: 'answering' | 'feedback' = preview === null ? 'answering' : 'feedback';
+  // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
+  // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
+  const phase = derivePhase(preview, pendingPreview);
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
   const handleBack = () =>
@@ -218,6 +292,11 @@ export function PfSolo({
         // YUK-372 L2 — 被答 practice_stream_item.id（流作答的 π_i 直 join 判别子，server hook
         // 用它精确取放置该 slot 的随机抽样事件的 π_i）。
         stream_item_id: item.id,
+        // YUK-562 / YUK-444 — 过程文本 + 信心自评的可选采集字段（空值不发，见 buildCaptureFields）。
+        // 单一 commit 路径 → 手动流与客观题 auto_rate 自动 commit 都覆盖：客观题 selfConfidence 恒 null
+        // （不插拍）故只可能带 reasoning_trace（若 fill_blank 文本面填了）；开放题两者都可能带。
+        // server 侧 observe-only 落 review event payload，绝不进 rating / FSRS / θ̂。
+        ...buildCaptureFields({ reasoningTrace, selfConfidence }),
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
         auto_rate: opts.autoRate,
@@ -278,13 +357,22 @@ export function PfSolo({
     setJudging(true);
     try {
       const r = await getAdvice(q.id, answerMd);
-      setPreview(r.judge);
-      setRating(r.judge.suggested_rating);
-      // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
-      // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
-      // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。开放题（含
-      // semantic-override 的客观题型）：不自动 commit，落到现有手动评级流。
-      if (isObjectiveQuestion(r.judge.route)) {
+      // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
+      // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
+      // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
+      // 否则谓词被单独测绿、生产路径却走另一份拷贝 = 假绿（本 PR review finding）。
+      if (shouldOfferConfidenceGate(r.judge.route)) {
+        // YUK-444 — 开放题（含 semantic-override 的客观题型）：推迟揭晓。judge 结果暂存 pendingPreview
+        // → 进 confidence 相位渲 1-5 自评 interstitial，**不 setPreview**（判定卡不渲染）。用户选 1-5 或
+        // 「跳过」后经 revealVerdict 才 setPreview 揭晓（先自评再看结果的元认知语义）。评级仍走既有手动流。
+        setPendingPreview(r.judge);
+      } else {
+        // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
+        // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
+        // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。信心自评插拍**跳过**
+        // （auto-commit 流不插；此分支 ⟺ shouldOfferConfidenceGate=false ⟺ isObjectiveQuestion=true）。
+        setPreview(r.judge);
+        setRating(r.judge.suggested_rating);
         await commit({
           withAppeal: false,
           rating: r.judge.suggested_rating,
@@ -298,6 +386,17 @@ export function PfSolo({
     } finally {
       setJudging(false);
     }
+  };
+
+  // YUK-444 — 信心自评确认（选了 1-5）或「跳过」（confidence=null）→ 揭晓判定：把暂存的 judge 结果
+  // 提上 preview（触发判定卡渲染）+ 落 suggested_rating 到手动评级默认值。selfConfidence 存进 state，
+  // 待用户「确认评级 · 下一项」时随 commit 的 buildCaptureFields 一并发出（跳过 → null → 不发字段）。
+  const revealVerdict = (confidence: number | null) => {
+    if (!pendingPreview) return;
+    setSelfConfidence(confidence);
+    setRating(pendingPreview.suggested_rating);
+    setPreview(pendingPreview);
+    setPendingPreview(null);
   };
 
   // 键盘：1-4 选项 · ⌘/Ctrl+Enter 提交
@@ -376,7 +475,9 @@ export function PfSolo({
                   type="button"
                   key={c}
                   className={cls}
-                  disabled={graded}
+                  // YUK-444 — 作答面在 confidence（自评插拍）与 feedback 相位都冻结（非 answering
+                  // 即禁选），避免揭晓前改答；着色仍只在 feedback（graded）依 preview 生效。
+                  disabled={phase !== 'answering'}
                   // biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式选项
                   // （pfs-opt 布局）；native <input type="radio"> 无法承载该布局，
                   // 真 <button> + radiogroup ARIA 模式语义完整（同 PracticeChoiceOptions）。
@@ -396,12 +497,38 @@ export function PfSolo({
               <textarea
                 rows={3}
                 value={text}
-                disabled={phase === 'feedback'}
+                disabled={phase !== 'answering'}
                 placeholder="写下你的解答…"
                 onChange={(e) => setText(e.target.value)}
                 aria-label="作答"
               />
             </div>
+          </div>
+        )}
+
+        {/* YUK-562 — 过程框「记下你的思路」：作答面与提交 CTA 之间，仅开放/文本作答题（!isChoice）显示，
+            客观（选择）题隐藏。默认折叠（一行触发展开 textarea）。零强制：不挡提交、折叠即跳过、
+            空值不发字段（buildCaptureFields 在 commit 时 trim 判空）。vision §8 红线 3：可完全忽略、不打断流。 */}
+        {phase === 'answering' && shouldOfferProcessBox(isChoice) && (
+          <div className="pfs-trace">
+            {showTrace ? (
+              <div className="composer pfs-trace-composer">
+                <textarea
+                  rows={2}
+                  value={reasoningTrace}
+                  // YUK-562 — 硬闸在 REASONING_TRACE_MAX_LEN（与 server zod .max() 同源），挡住
+                  // 越界输入撞 400 软死锁；buildCaptureFields 发送前再防御性截断兜底粘贴/IME 绕过。
+                  maxLength={REASONING_TRACE_MAX_LEN}
+                  placeholder="随手记下你是怎么想的——不评分，也可以留空。"
+                  onChange={(e) => setReasoningTrace(e.target.value)}
+                  aria-label="解题思路（可选）"
+                />
+              </div>
+            ) : (
+              <button type="button" className="pfs-trace-toggle" onClick={() => setShowTrace(true)}>
+                ＋ 记下你的思路（可选）
+              </button>
+            )}
           </div>
         )}
 
@@ -418,6 +545,37 @@ export function PfSolo({
             <span className="key-hints mono" style={{ marginLeft: 'auto' }}>
               {isChoice ? '1-4 选 · ⌘Enter 提交' : '⌘Enter 提交'}
             </span>
+          </div>
+        )}
+
+        {/* YUK-444 — 信心自评 in-page interstitial：提交后、判定揭晓前插一拍。1-5 自评 + 「跳过」，
+            推迟揭晓——选一档或跳过（revealVerdict）后才 setPreview 渲判定卡（先自评再看结果的元认知语义）。
+            observe-only：值只随 commit 落 review event payload.self_confidence，绝不进判分 / FSRS / θ̂。
+            零强制：「跳过」= confidence:null → 不发字段。客观题 auto-commit 流不经此（不插拍）。
+            aria-live=polite 沿用判定卡的读屏习惯，让插拍出现时被朗读。 */}
+        {phase === 'confidence' && (
+          <div className="pfs-conf" aria-live="polite">
+            <span className="pfs-conf-q">看答案之前——你有几分把握？</span>
+            {/* biome-ignore lint/a11y/useSemanticElements: 原生 <fieldset> 自带
+                border/margin/legend 布局，与这排 pill 按钮的 flex 形制不兼容；role=group
+                + aria-label 是无表单语义的按钮分组的完整 ARIA 模式（同 .pfs-opts radiogroup）。 */}
+            <div className="pfs-conf-scale" role="group" aria-label="信心自评，1 到 5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  type="button"
+                  key={n}
+                  className={`pfs-conf-btn${selfConfidence === n ? ' on' : ''}`}
+                  aria-label={`把握 ${n} 分（共 5 分）`}
+                  onClick={() => revealVerdict(n)}
+                >
+                  {n}
+                </button>
+              ))}
+              <button type="button" className="pfs-conf-skip" onClick={() => revealVerdict(null)}>
+                跳过
+              </button>
+            </div>
+            <span className="pfs-conf-hint">1 = 全靠猜 · 5 = 十拿九稳 · 不评分</span>
           </div>
         )}
 
