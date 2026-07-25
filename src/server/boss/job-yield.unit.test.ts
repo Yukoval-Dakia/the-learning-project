@@ -183,6 +183,25 @@ describe('readJobYieldReport — 防御性回读（orchestrator 侧）', () => {
     }
   });
 
+  it('负数计数属于「不认识的形状」，必须被拒（PR #1076 review）', () => {
+    // 三个字段都是**计数**，负值无从产生，出现即意味着 output 被篡改/损坏。
+    // 放行会算出荒谬比例（下面第二例：resolved=1，failed/resolved=200%）并把一行
+    // 胡话盖进节点 detail。宁可整条读不出来（等同「这个 job 没报产出」）也不要报错的。
+    for (const bad of [
+      { job_yield: { job: 'x', level: 'ok', attempted: -1, succeeded: 0, failed: 0 } },
+      { job_yield: { job: 'x', level: 'stalled', attempted: 1, succeeded: -1, failed: 2 } },
+      { job_yield: { job: 'x', level: 'ok', attempted: 1, succeeded: 1, failed: -3 } },
+    ]) {
+      expect(readJobYieldReport(bad)).toBeUndefined();
+    }
+    // 0 是合法计数，不得被非负校验误伤（空夜的正常形状）。
+    expect(
+      readJobYieldReport({
+        job_yield: { job: 'x', level: 'idle', attempted: 0, succeeded: 0, failed: 0 },
+      }),
+    ).toMatchObject({ level: 'idle', attempted: 0 });
+  });
+
   it('detail 缺失/非字符串时归一为 null，其余字段照常解出', () => {
     const parsed = readJobYieldReport({
       job_yield: { job: 'x', level: 'ok', attempted: 2, succeeded: 2, failed: 0 },

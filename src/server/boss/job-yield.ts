@@ -159,8 +159,18 @@ export function reportJobYield(job: string, y: JobYield): JobYieldOutput {
   return { [JOB_YIELD_OUTPUT_KEY]: { job, level, detail, ...y } };
 }
 
-function isFiniteNumber(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
+/**
+ * 计数字段的合法性：有限**非负**数。
+ *
+ * 非负校验不是装饰（PR #1076 review）：本函数的契约是「任何不认识的形状一律返回
+ * undefined」，而负数计数正属于「不认识的形状」—— 三个字段都是**计数**，负值无从产生，
+ * 出现即意味着 output 被篡改/损坏。放行的话会一路流进 classifyJobYield 与
+ * describeJobYield：`{attempted:1, succeeded:-1, failed:2}` 会让 resolved 算成 1、
+ * failed/resolved 得出 200% 这种荒谬比例，最终把一行胡话盖进节点 detail。
+ * 宁可整条读不出来（等同于「这个 job 没报产出」）也不要报一个错的。
+ */
+function isCount(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
 /**
@@ -179,7 +189,7 @@ export function readJobYieldReport(output: unknown): JobYieldReport | undefined 
   if (r.level !== 'idle' && r.level !== 'ok' && r.level !== 'degraded' && r.level !== 'stalled') {
     return undefined;
   }
-  if (!isFiniteNumber(r.attempted) || !isFiniteNumber(r.succeeded) || !isFiniteNumber(r.failed)) {
+  if (!isCount(r.attempted) || !isCount(r.succeeded) || !isCount(r.failed)) {
     return undefined;
   }
   return {
