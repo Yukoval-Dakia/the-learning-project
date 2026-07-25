@@ -7,7 +7,7 @@
 // 防 spam 闸，必须有 job 层证据。
 
 import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
@@ -16,7 +16,10 @@ import type { EnqueueFn } from '@/server/question-supply/dispatcher';
 import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
 import { emptyPlacementStarterRecoveryResult } from '../server/placement-starter-recovery';
-import { runQuestionSupplyNightly } from './question_supply_nightly';
+import {
+  buildQuestionSupplyNightlyHandler,
+  runQuestionSupplyNightly,
+} from './question_supply_nightly';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -145,6 +148,38 @@ describe('runQuestionSupplyNightly', () => {
     await expect(runQuestionSupplyNightly(db, deps)).rejects.toThrow('supply discovery exploded');
     // …but only AFTER the sweep had its turn.
     expect(swept).toBe(1);
+  });
+
+  // YUK-761 (review PRRT…jcg) — isolation without consumption is not a signal. The pg-boss caller
+  // must make a failed sweep visible at the job boundary, while still NOT failing the host (that
+  // is the whole point of the isolation, and since YUK-758 a failed node skips its DAG subtree).
+  it('surfaces a failed recovery sweep from the job handler without failing the job', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      const explodingRecoveryDeps = {};
+      Object.defineProperty(explodingRecoveryDeps, 'now', {
+        get() {
+          throw new Error('recovery sweep blew up before it could start');
+        },
+        enumerable: true,
+      });
+      const handler = buildQuestionSupplyNightlyHandler(db, {
+        dispatchDeps: { enqueue: async () => 'job', tavilyAvailable: () => true },
+        placementRecovery: explodingRecoveryDeps,
+      });
+
+      // Does not throw: the host job stays green.
+      await expect(handler([])).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(
+      errors.some((line) => line.includes('placement starter recovery sweep did not complete')),
+    ).toBe(true);
   });
 
   // ② frontier KC + zero questions → at least one sourcing_web dispatch + experimental:question_supply

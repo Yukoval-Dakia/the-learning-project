@@ -58,10 +58,12 @@
 // paths that then decline to act (missing goal, still-live retry job) AND the paths that fail.
 // A claim that is visited but never advanced would re-occupy the per-run budget on every
 // subsequent run, which is the same starvation failure by another route. So the invariant is
-// "visited ⇒ advanced", made total two ways: the re-drive leg acquires BEFORE its goal read and
-// scope resolution (both of which do DB reads that can throw), and `guardClaim` advances the
-// cursor best-effort on any escaping error. A second sweeper pass in the same window matches
-// zero rows and does nothing.
+// "visited ⇒ advanced", and it admits NO exceptions: BOTH legs acquire before doing anything that
+// can fail or that reaches outside this process — the re-drive leg before its goal read, authority
+// pre-check and scope resolution (all DB reads that can throw), the reap leg before the pg-boss
+// liveness probe (which also means never querying pg-boss on behalf of a claim another sweeper
+// already owns). `guardClaim` then advances the cursor best-effort on anything that still escapes.
+// A second sweeper pass in the same window matches zero rows and does nothing.
 //
 // ── Failure containment (three nested rings) ──────────────────────────────────────────────
 //   inner  — the individually risky calls (`dispatch`, the pg-boss liveness probe) are guarded
@@ -518,9 +520,26 @@ async function sweepRetryScheduled(
     return;
   }
 
-  // Past grace — but time is not proof of death. Ask pg-boss whether the owning job can still
-  // redeliver. FAIL SAFE: any probe failure is treated as "still live", because a false reap
-  // destroys in-flight paid work while a false skip merely defers the reap by one window.
+  // Past grace. ACQUIRE FIRST, before the pg-boss probe — the "visited ⇒ advanced" invariant in
+  // the module header admits no exceptions, and an external query issued before winning the CAS
+  // would also mean probing pg-boss on behalf of a claim another sweeper already owns. The parked
+  // cursor is the standard backoff, which is exactly right for the "still live → defer" outcome
+  // below and irrelevant when we go on to terminalize (the row leaves the scan entirely).
+  if (
+    !(await acquireClaim(
+      db,
+      claim,
+      now,
+      new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS),
+    ))
+  ) {
+    result.lost += 1;
+    return;
+  }
+
+  // Time is not proof of death. Ask pg-boss whether the owning job can still redeliver. FAIL SAFE:
+  // any probe failure is treated as "still live", because a false reap destroys in-flight paid work
+  // while a false skip merely defers the reap by one window.
   let jobLive: boolean;
   try {
     jobLive = await isJobLive(claim.pg_boss_job_id);
@@ -532,9 +551,7 @@ async function sweepRetryScheduled(
     );
   }
   if (jobLive) {
-    const parked = new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS);
-    if (await acquireClaim(db, claim, now, parked)) result.retryJobLive += 1;
-    else result.lost += 1;
+    result.retryJobLive += 1;
     console.warn(
       `[placement-starter-recovery] claim ${claim.id} is past the retry grace window but its quiz_gen job ${claim.pg_boss_job_id} is still live; reap deferred`,
     );

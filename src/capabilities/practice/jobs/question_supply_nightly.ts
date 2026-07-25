@@ -195,11 +195,32 @@ export async function runQuestionSupplyNightly(
 
 export function buildQuestionSupplyNightlyHandler(
   db: Db,
+  deps: DepsOverride = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
     try {
-      const result = await runQuestionSupplyNightly(db);
+      const result = await runQuestionSupplyNightly(db, deps);
       console.log('[question_supply_nightly] result', result);
+      // YUK-761 — the pg-boss caller must actually CONSUME the recovery sweep's failure signal.
+      // Isolating the sweep (above) stops it taking the host — and its DAG subtree — down, but a
+      // flag nobody reads is the same as no signal at all: the job would report success with the
+      // recovery step silently dead, which is precisely the 建成不通电 shape this ticket exists to
+      // close. So: an explicit, greppable error line at the job boundary, distinct from the
+      // routine result log. Deliberately NOT a re-throw — the host staying green on a sweep
+      // failure is the whole point of the isolation, so this is "contained BUT visible".
+      if (result.placementStarterRecovery.errored) {
+        console.error(
+          '[question_supply_nightly] placement starter recovery sweep did not complete this run; supply leg unaffected, claims stay overdue for the next run',
+        );
+      }
+      // Per-claim / per-leg failures are contained inside the sweeper and never surface as
+      // `errored`; surface them here too so a partially-degraded sweep is not silent either.
+      const { claimErrors, legErrors } = result.placementStarterRecovery;
+      if (claimErrors > 0 || legErrors > 0) {
+        console.error(
+          `[question_supply_nightly] placement starter recovery sweep degraded: ${claimErrors} claim failure(s), ${legErrors} leg failure(s)`,
+        );
+      }
     } catch (err) {
       // PRE-discovery / dispatch 阶段的意外 throw（如 DB read 故障）冒泡 → pg-boss DLQ 重试。
       // 单个 target 的 dispatch 错已被 dispatchSupplyTargets 内部 per-target try/catch 兜住
