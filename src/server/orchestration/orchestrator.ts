@@ -630,18 +630,47 @@ export function orchestratorLocalMinuteOfDay(now: Date, timeZone = ORCHESTRATOR_
  * `[0, window)`」的文档语义一致。锚点在前的情形也仍正确：02:00（锚点 02:30 之前 30min）
  * 取模后是 1410，远超 5h 窗 → 照旧不补，等今夜的锚点。
  *
- * 前提：`windowMinutes < 1440`（窗口不得覆盖整天，否则「之前」与「之后」不可区分）。
+ * 前提由 `isWithinCatchUpWindow` 强制，见那里。
  */
+export const MINUTES_PER_DAY = 24 * 60;
+
 export function minutesSinceAnchor(
   now: Date,
   anchorMinuteOfDay = ORCHESTRATOR_ANCHOR_HOUR * 60 + ORCHESTRATOR_ANCHOR_MINUTE,
   timeZone = ORCHESTRATOR_TZ,
 ): number {
-  const MINUTES_PER_DAY = 24 * 60;
   return (
     (orchestratorLocalMinuteOfDay(now, timeZone) - anchorMinuteOfDay + MINUTES_PER_DAY) %
     MINUTES_PER_DAY
   );
+}
+
+/**
+ * 补跑窗口判据。**只会 fail-closed**（PR #1075 OCR major + minor）。
+ *
+ * 这道闸唯一的职责是「拦住不该补的时刻」，所以它算不出答案时必须**拒补**，绝不能放行——
+ * 而朴素写法恰恰相反地 fail-**open**：
+ *  · `orchestratorLocalMinuteOfDay` 在 Intl 拿不到 hour/minute 时返回 `NaN`（非法 tz 字串、
+ *    非法 Date 输入）。`NaN >= windowMinutes` 是 `false`，于是「超窗」判定不成立 → **照补**，
+ *    整条付费夜链可以在任意时刻开跑。这正是本窗口存在的意义的反面。
+ *  · `windowMinutes >= 1440` 时，mod-1440 的 `elapsed` 恒 `< windowMinutes`，「锚点之前」与
+ *    「锚点之后」不再可分 → 窗口形同虚设，任何时刻都补。文档写了前提但没人强制。
+ *
+ * 两者都改成**抛**：`runOrchestratorCatchUp` 的既有 try/catch 把它转成
+ * `{ skipped, reason:'error' }` + loud log，即"算不出就不补"，与 fail-closed 一致。
+ */
+export function isWithinCatchUpWindow(elapsedMinutes: number, windowMinutes: number): boolean {
+  if (!Number.isFinite(elapsedMinutes)) {
+    throw new Error(
+      `[orchestrator] cannot evaluate the catch-up window: minutes-since-anchor is ${elapsedMinutes} (unreadable local clock)`,
+    );
+  }
+  if (!(windowMinutes > 0 && windowMinutes < MINUTES_PER_DAY)) {
+    throw new Error(
+      `[orchestrator] cannot evaluate the catch-up window: ORCHESTRATOR_CATCHUP_WINDOW_SECONDS yields ${windowMinutes}min, which must be >0 and <${MINUTES_PER_DAY} (a whole-day window makes "before" and "after" the anchor indistinguishable)`,
+    );
+  }
+  return elapsedMinutes < windowMinutes;
 }
 
 /** 补跑决策结果——测试据此断言"补了/没补及为什么"，不必去刮日志。 */
@@ -674,7 +703,8 @@ export async function runOrchestratorCatchUp(deps: DriveDeps): Promise<CatchUpOu
     const now = deps.now ?? new Date();
     const elapsed = minutesSinceAnchor(now);
     const windowMinutes = ORCHESTRATOR_CATCHUP_WINDOW_SECONDS / 60;
-    if (elapsed >= windowMinutes) {
+    // fail-closed：算不出窗口就当作"不补"（抛 → 下面的 catch → skipped/error + loud log）。
+    if (!isWithinCatchUpWindow(elapsed, windowMinutes)) {
       console.log(
         `[orchestrator] boot catch-up skipped: ${elapsed}min since the last ${ORCHESTRATOR_ANCHOR_HOUR}:${String(ORCHESTRATOR_ANCHOR_MINUTE).padStart(2, '0')} ${ORCHESTRATOR_TZ} anchor, outside the ${windowMinutes}min window`,
       );

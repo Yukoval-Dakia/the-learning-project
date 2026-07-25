@@ -15,7 +15,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { ORCHESTRATOR_QUEUE } from './constants';
 import {
+  MINUTES_PER_DAY,
   type OrchestratorBoss,
+  isWithinCatchUpWindow,
   minutesSinceAnchor,
   runOrchestratorCatchUp,
   runOrchestratorStart,
@@ -1073,6 +1075,53 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
       expect(minutesSinceAnchor(new Date('2026-07-25T02:30:00+08:00'))).toBe(0);
       expect(minutesSinceAnchor(new Date('2026-07-25T07:29:00+08:00'))).toBe(299);
     });
+  });
+
+  // PR #1075 OCR major/minor — this gate exists to REFUSE, so when it cannot compute an
+  // answer it must refuse. The naive forms fail the other way: `NaN >= window` is false
+  // (→ "not outside the window" → catch up at any hour), and a >=24h window makes the
+  // mod-1440 elapsed always smaller than it (→ same). Both would fire the whole paid chain.
+  describe('isWithinCatchUpWindow fails closed', () => {
+    it('accepts only a real elapsed reading inside the window', () => {
+      expect(isWithinCatchUpWindow(0, 300)).toBe(true);
+      expect(isWithinCatchUpWindow(299, 300)).toBe(true);
+      expect(isWithinCatchUpWindow(300, 300)).toBe(false);
+      expect(isWithinCatchUpWindow(1410, 300)).toBe(false);
+    });
+
+    it('refuses (throws) rather than admitting an unreadable clock', () => {
+      expect(() => isWithinCatchUpWindow(Number.NaN, 300)).toThrow(/unreadable local clock/);
+      expect(() => isWithinCatchUpWindow(Number.POSITIVE_INFINITY, 300)).toThrow(
+        /unreadable local clock/,
+      );
+    });
+
+    it('refuses (throws) rather than honouring a window that cannot discriminate', () => {
+      expect(() => isWithinCatchUpWindow(100, MINUTES_PER_DAY)).toThrow(/must be >0 and </);
+      expect(() => isWithinCatchUpWindow(100, MINUTES_PER_DAY + 1)).toThrow(/must be >0 and </);
+      expect(() => isWithinCatchUpWindow(100, 0)).toThrow(/must be >0 and </);
+    });
+  });
+
+  // End-to-end companion to the unit tests above. Note the division of labour: an *invalid
+  // Date* makes `Intl.formatToParts` THROW (not return NaN), so this case is carried by the
+  // catch-up's swallow rather than by the finite-check — the NaN branch itself is pinned by
+  // the unit test above. What this one pins is that neither route ends in "start the chain".
+  it('A9 an unreadable clock skips instead of firing the chain at an arbitrary hour', async () => {
+    const boss = new FakeBoss();
+    const dag = dagOf(member('a'));
+
+    const outcome = await runOrchestratorCatchUp({
+      db,
+      boss,
+      dag,
+      now: new Date(Number.NaN),
+      localDate: () => RUN_DATE,
+    });
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'error' });
+    expect(await runsForDate()).toHaveLength(0);
+    expect(boss.memberSends).toHaveLength(0);
   });
 
   // Contract: the catch-up NEVER throws. A worker that cannot boot drains no queue at all,
