@@ -84,20 +84,24 @@ describe('AdminConjectureScoresSurface', () => {
   it('shows empty-state prose for each section when no rows', () => {
     const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
     expect(html).toContain('尚未产出 prediction_score');
-    expect(html).toContain('本轨未通电');
+    expect(html).toContain('本轨待通电');
   });
 
-  // ADR-0050 §(a) / YUK-790 anti-regression lock. The typed-state rail is STRUCTURALLY dead in
-  // Phase 0 (reconcile hardcodes confused_with_kc_id=null; the §修正-4 gate demands a named KC),
-  // so the panel must say "not energized" — never the old "reconcile 自动铸 / 尚未铸出" framing,
-  // which read as "no data yet" and was reverse-drift against the code.
-  it('labels the typed-state rail as not-energized rather than merely empty', () => {
+  // ADR-0050 §(a) / YUK-790 anti-regression lock, guarding BOTH wrong directions:
+  //   - "reconcile 自动铸" wrote a future state as if it were current (the original drift);
+  //   - "结构性恒空 / 不会铸出" is the opposite error — owner ruled 2026-07-25 that the rail WILL
+  //     be energized (YUK-794), so "never" is equally false.
+  // The honest framing while YUK-794 is pending is "待通电", plus the warning that an empty
+  // column does NOT mean the learner is un-confused.
+  it('labels the typed-state rail as pending energization, not permanently dead', () => {
     const html = render({ score_basis: 'single_point', prediction_scores: [], typed_states: [] });
     const text = html.replaceAll('<!-- -->', '');
-    expect(text).toContain('本轨未通电');
-    expect(text).toContain('结构性恒空');
-    expect(text).not.toContain('尚未铸出');
+    expect(text).toContain('本轨待通电');
+    expect(text).toContain('YUK-794');
+    expect(text).toContain('空 ≠ 「没有混淆」');
     expect(text).not.toContain('自动铸');
+    expect(text).not.toContain('结构性恒空');
+    expect(text).not.toContain('不会铸出');
   });
 
   it('surfaces the KPI aggregates (prediction count + open typed-state count)', () => {

@@ -9,18 +9,22 @@
 //       skill_score_point single-point, NOT a window mean; never «accuracy»). LIVE: the
 //       reconcile loop appends one per scored probe.
 //   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track cell.
-//       **PHASE 0: THIS RAIL IS NOT ENERGIZED — read (b) returns the empty set, always.**
+//       **RAIL PENDING ENERGIZATION (YUK-794) — read (b) returns the empty set until it lands.**
 //
 // ADR-0050 §(a) correction (YUK-790). An earlier version of this header claimed the reconcile
-// loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is FALSE and was
-// reverse-drift against the code: reconcile (`reconcile.ts:263`, the ONLY production caller of
-// the single-writer `upsertKcTypedState`) hardcodes `confused_with_kc_id: null`, and the
-// §修正-4 gate (`typed-state.ts:49-63`) requires a NAMED confused-with KC before it will emit
-// `confused-with-X`. The induction schema (`ConjectureProposalChange`) carries no such field at
-// all. So the row is STRUCTURALLY unproducible in Phase 0 and this half of the panel stays
-// empty by construction, not by lack of data. Ruling: DEFERRED (Phase 0 does not produce it);
-// energizing it is an owner-gated product change, not a wiring fix. Keep the query — the reader
-// is the reader-before-producer red line, and it must be honest about being dark.
+// loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is reverse-drift: it
+// describes a future state as if it were current. Today reconcile (`reconcile.ts:263`, the ONLY
+// production caller of the single-writer `upsertKcTypedState`) hardcodes
+// `confused_with_kc_id: null`, the §修正-4 gate (`typed-state.ts:49-63`) requires a NAMED
+// confused-with KC before it will emit `confused-with-X`, and the induction schema
+// (`ConjectureProposalChange`) carries no such field at all — so no writer can produce the row
+// and this half of the panel is empty.
+//
+// Owner ruled 2026-07-25: ENERGIZE it (execution = YUK-794 — extend the proposal schema, have
+// induction name the second KC, validate it, only then relax the null). Do NOT relax the gate
+// instead: requiring a named KC is the point. Until YUK-794 lands, keep the query and keep the
+// copy at "pending", never "auto-minted" (a future tense written as present) and never
+// "structurally impossible" (now the wrong direction).
 //
 // Honesty: score values render as their canonical names (brier_model / brier_baseline /
 // log_loss_model / skill_score_point). skill_score_point is a SINGLE-POINT proper score
@@ -50,8 +54,8 @@ export interface ConjecturePredictionScoreRow {
 }
 
 /**
- * One soft-track typed-state row. NOT produced in Phase 0 — no writer can emit
- * `confused-with-X` (ADR-0050 §(a)); this shape exists for the dark reader half only.
+ * One soft-track typed-state row. Not yet produced — no writer emits `confused-with-X` until
+ * YUK-794 energizes the rail (ADR-0050 §(a)); this shape is the contract that producer must meet.
  */
 export interface ConjectureTypedStateRow {
   id: string;
@@ -208,8 +212,8 @@ function collectBoundedRows<Raw, Mapped>(
 
 /**
  * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors, LIVE) +
- * kc_typed_state confused-with-X rows (soft-track cell — NOT energized in Phase 0, so this
- * query is expected to return zero rows; ADR-0050 §(a)). Never writes. Never flips flags.
+ * kc_typed_state confused-with-X rows (soft-track cell — rail pending energization, so this
+ * query returns zero rows until YUK-794 lands; ADR-0050 §(a)). Never writes. Never flips flags.
  * Never touches FSRS/θ̂ (ND-5).
  */
 export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {

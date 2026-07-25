@@ -10,13 +10,15 @@
 // deliberately conservative in Phase 0). `mastered` is NOT produced here — it is the
 // post-Rust-scorer claim-survival FLIP (ADR-0046), deferred.
 //
-// PHASE 0 REACHABILITY (ADR-0050 §(a), YUK-790): the gate's `confused-with-X` branch is
-// currently DEAD, and that is a RULED, ledgered state — not an oversight. The sole production
-// caller (`reconcile.ts:263`) hardcodes `confused_with_kc_id: null`, and the induction schema
-// `ConjectureProposalChange` has no such field to supply, so `nextTypedState` returns the soft
-// cell every time. Keep the branch (it is the contract the future producer must satisfy) and
-// keep the gate strict — energizing this rail is an owner-gated product decision on the
-// induction side, NOT a relaxation here.
+// REACHABILITY TODAY (ADR-0050 §(a), YUK-790): the gate's `confused-with-X` branch is currently
+// unreachable — the sole production caller (`reconcile.ts:263`) hardcodes
+// `confused_with_kc_id: null`, and the induction schema `ConjectureProposalChange` has no such
+// field to supply, so `nextTypedState` returns the soft cell every time. This is a KNOWN,
+// ledgered state, not an oversight.
+// OWNER RULED 2026-07-25: energize it — execution is **YUK-794**. The fix belongs on the
+// INDUCTION side (name the confused-with KC and validate it), NOT here: keep this branch as the
+// contract the producer must satisfy, and keep the four-way conjunction strict. Relaxing the
+// gate would commit unnamed confusions, which is the exact failure §修正-4 exists to prevent.
 
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';

@@ -23,13 +23,15 @@
 //     unreachable here (upsertKcTypedState never produces it).
 //     ADR-0050 §(a) (YUK-790) makes the consequence explicit, because it was being read as
 //     "no data yet": since this loop is the ONLY production caller of the single-writer
-//     `upsertKcTypedState`, and the `confused_with_kc_id: null` below is hardcoded, the row
-//     `typed_state='confused-with-X'` is STRUCTURALLY UNPRODUCIBLE — the admin panel column
-//     and `get_typed_state` are permanently empty by construction. Ruling: DEFERRED (Phase 0
-//     does not produce it). Energizing it needs the induction side to NAME a confused-with KC
-//     (`ConjectureProposalChange` has no such field) — an owner-gated product change, not a
-//     wiring fix. Do NOT "fix" this by relaxing the gate: an unnamed confusion is exactly what
-//     §修正-4 refuses to commit.
+//     `upsertKcTypedState`, and the `confused_with_kc_id: null` below is hardcoded, no writer
+//     can currently emit `typed_state='confused-with-X'` — the admin panel column and
+//     `get_typed_state` are empty for that reason, not for lack of learner data.
+//     OWNER RULED 2026-07-25: ENERGIZE this rail — execution is **YUK-794**, which must land
+//     the induction side FIRST (extend `ConjectureProposalChange` with `confused_with_kc_id`,
+//     have the induction prompt NAME the second KC, validate that KC exists — the column has
+//     no FK, see typed-state.ts:73) and only THEN relax the null below. Do NOT shortcut it by
+//     relaxing the §修正-4 gate: an unnamed confusion is exactly what that gate refuses to
+//     commit, and deleting the requirement would write guesses into a structural state.
 //   - retrievability R(t) is recorded in the prediction_score EVENT (fold-replay needs
 //     it logged), NEVER in the written kc_typed_state (it has no R column).
 //   - this loop NEVER writes FSRS (ND-5): no attempt event, no material_fsrs_state.

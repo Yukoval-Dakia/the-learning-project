@@ -289,11 +289,14 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       tool(
         getTypedStateName,
         // Honest tool description (ADR-0050 §(a), YUK-790): do NOT promise the director a
-        // classification the system cannot produce. In Phase 0 the only writer hardcodes
+        // classification the system does not yet produce. Today the only writer hardcodes
         // confused_with_kc_id=null and the §修正-4 gate needs a NAMED confused-with KC, so this
-        // tool returns `no-evidence` (or nothing) for every KC. Saying otherwise makes the agent
-        // treat an empty read as a signal ("not confused") rather than as absence of the rail.
-        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: in the current phase the only reachable value is `no-evidence` — the `confused-with-X` and `mastered` classifications are not produced by any writer yet, so an absent/`no-evidence` result means THE RAIL IS NOT ENERGIZED, not that the learner is un-confused. Do not infer anything from it.',
+        // tool returns `no-evidence` (or nothing) for every KC. The hard warning below is the
+        // load-bearing part and survives energization: an empty read is the ABSENCE of a signal,
+        // never the signal "not confused" — without it the agent mistakes an unwired rail for
+        // evidence. Owner ruled 2026-07-25 to energize the rail (YUK-794); until it lands the
+        // description says "not yet produced", not "cannot be produced".
+        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only value reachable today is `no-evidence` — the `confused-with-X` and `mastered` classifications are not produced by any writer YET (that rail is pending, YUK-794). So an absent/`no-evidence` result means THE RAIL IS NOT WIRED UP YET, not that the learner is un-confused. Draw no conclusion from it either way.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;

@@ -11,7 +11,7 @@
 | `api/admin-failures.ts` | failure 聚类 |
 | `api/admin-subjects.ts` | subject registry 只读视图 |
 | `api/coverage-lattice.ts` / `server/coverage-lattice.ts` | 供题治理覆盖细目表（YUK-579，`/api/admin/coverage-lattice`）：scanCoverageGaps 四规则的 KC 池级覆盖 + emitted 缺口 targets + 单条 `experimental:question_supply` 活动聚合。READ-ONLY，复用发现引擎 `assembleScanInput`（零新查询子系统）|
-| `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`）：`prediction_score` LOG 事件**已通电**；`kc_typed_state` confused-with-X 半边**未通电**——Phase 0 无写者能产出该态（reconcile 硬编码 `confused_with_kc_id=null`），该栏结构性恒空，裁定见 ADR-0050 §(a) |
+| `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`）：`prediction_score` LOG 事件**已通电**；`kc_typed_state` confused-with-X 半边**待通电**——当前无写者产出该态（reconcile 硬编码 `confused_with_kc_id=null`），owner 已裁定通电、执行见 YUK-794，落地前该栏暂空，详见 ADR-0050 §(a) |
 | `api/calibration-maturity.ts` / `effectiveness-trend.ts` | 成效趋势只读面 |
 | `api/backup-export.ts` / `backup-import.ts` | 备份/恢复（破坏性，需 confirm） |
 | `api/event-correct.ts` | 统一事件流撤回 |
