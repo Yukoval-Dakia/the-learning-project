@@ -1950,8 +1950,8 @@ export const placement_starter_claim = pgTable(
     //
     // 'pending_dispatch' is DELIBERATELY EXCLUDED from the predicate (YUK-452 round-2): a claim
     // that never dispatched has spent NOTHING and must not block a new revision's claim. Otherwise
-    // a claim stranded 'pending_dispatch' by a failed dispatch tx (no sweeper re-drives it) would
-    // permanently block every later revision for that goal+subject — placement soft-stuck forever.
+    // a claim stranded 'pending_dispatch' by a failed dispatch tx would permanently block every
+    // later revision for that goal+subject — placement soft-stuck forever.
     // The paid single-flight invariant is preserved: paid work only begins once a claim reaches
     // 'queued' (acquirePlacementAttempt requires queued+), so gating on {queued, running, verifying,
     // retry_scheduled} still admits exactly one paid flight. The pending→queued transition in
@@ -1960,6 +1960,14 @@ export const placement_starter_claim = pgTable(
     uniqueIndex('placement_starter_claim_nonterminal_uq')
       .on(t.goal_id, t.subject_id)
       .where(sql`${t.status} IN ('queued','running','verifying','retry_scheduled')`),
+    // YUK-761 — LIVE CONSUMER: sweepStalePlacementStarterClaims
+    // (src/capabilities/practice/server/placement-starter-recovery.ts), run from the tail of the
+    // question_supply_nightly job. It scans `status IN ('pending_dispatch','retry_scheduled') AND
+    // next_reconcile_at <= now() ORDER BY next_reconcile_at, created_at` — a status subset of this
+    // partial predicate in this exact column order — to re-drive stranded pending_dispatch claims
+    // and reap zombie retry_scheduled ones. `next_reconcile_at` doubles as that sweeper's acquire
+    // cursor (conditional-UPDATE CAS), which is why the sweeper moves it WITHOUT touching
+    // updated_at/version.
     index('placement_starter_claim_recovery_idx')
       .on(t.next_reconcile_at, t.created_at)
       .where(

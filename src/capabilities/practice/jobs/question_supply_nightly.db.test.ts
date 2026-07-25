@@ -7,14 +7,19 @@
 // 防 spam 闸，必须有 job 层证据。
 
 import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
+import { PLACEMENT_PROBE_ENABLED } from '@/kernel/placement';
 import type { EnqueueFn } from '@/server/question-supply/dispatcher';
 import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
-import { runQuestionSupplyNightly } from './question_supply_nightly';
+import { emptyPlacementStarterRecoveryResult } from '../server/placement-starter-recovery';
+import {
+  buildQuestionSupplyNightlyHandler,
+  runQuestionSupplyNightly,
+} from './question_supply_nightly';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -72,8 +77,159 @@ describe('runQuestionSupplyNightly', () => {
       manual: 0,
       skipped: 0,
       failed: 0,
+      // YUK-761 tail step: no claims in the DB → the recovery sweep is a pure no-op, but it
+      // still RUNS (the supply leg's zero-target early return must not skip it).
+      placementStarterRecovery: emptyPlacementStarterRecoveryResult({
+        redispatchSuppressed: !PLACEMENT_PROBE_ENABLED,
+      }),
     });
     expect(enqueued).toHaveLength(0);
+  });
+
+  // YUK-761 — the recovery sweep is best-effort background hygiene and must NEVER take the host
+  // job down with it. Since YUK-758 this job is an orchestration DAG member, so a failed node
+  // skips its whole hard-downstream subtree — the sweep has no business claiming that blast
+  // radius. The sweeper isolates PER-CLAIM failures itself; this pins the remaining case, a
+  // TOP-LEVEL throw (e.g. the scan query failing), forced here with a throwing `now` getter so
+  // the assertion is about the call-site try/catch and not about any particular DB error.
+  it('isolates a top-level recovery sweep failure from the host job', async () => {
+    const enqueued: Array<{ queue: string }> = [];
+    const enqueue: EnqueueFn = async (queue) => {
+      enqueued.push({ queue });
+      return 'job';
+    };
+    const explodingRecoveryDeps = {};
+    Object.defineProperty(explodingRecoveryDeps, 'now', {
+      get() {
+        throw new Error('recovery sweep blew up before it could start');
+      },
+      enumerable: true,
+    });
+
+    const result = await runQuestionSupplyNightly(db, {
+      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      placementRecovery: explodingRecoveryDeps,
+    });
+
+    // Supply leg still reported normally; the sweep failure is contained and surfaced as a flag.
+    expect(result.discovered).toBe(0);
+    expect(result.placementStarterRecovery).toEqual(
+      emptyPlacementStarterRecoveryResult({ errored: true }),
+    );
+  });
+
+  // YUK-761 (review PRRT…MmM / …OZH) — the converse direction. A stranded claim's existence has
+  // nothing to do with whether tonight's supply discovery succeeded, so hanging the sweep off the
+  // supply leg's SUCCESS path would let an unrelated persistent failure mean the sweeper never
+  // runs at all — while the whole point of the sweeper is the case where nobody comes back to
+  // re-drive the claim by hand. The supply error must still propagate afterwards (unchanged DLQ
+  // semantics), but only after the sweep has had its turn.
+  it('still runs the recovery sweep when the supply leg throws, then rethrows', async () => {
+    let swept = 0;
+    // A per-target dispatch error would NOT do: dispatchSupplyTargets catches those internally and
+    // tallies them as `failed`. This forces a failure that genuinely escapes the supply leg — the
+    // pre-discovery class the host's own docblock says bubbles to the DLQ.
+    const deps = {
+      placementRecovery: {
+        get now() {
+          swept += 1;
+          return new Date();
+        },
+      },
+    };
+    Object.defineProperty(deps, 'maxPerRun', {
+      get() {
+        throw new Error('supply discovery exploded');
+      },
+      enumerable: true,
+    });
+
+    // The supply error still propagates — DLQ/retry semantics are byte-identical to pre-YUK-761…
+    await expect(runQuestionSupplyNightly(db, deps)).rejects.toThrow('supply discovery exploded');
+    // …but only AFTER the sweep had its turn.
+    expect(swept).toBe(1);
+  });
+
+  // YUK-761 (review PRRT…uqpi) — when the supply leg throws, the function re-throws instead of
+  // returning, so the handler's consumption checks never run. The recovery signal must still be
+  // emitted before that re-throw, or it goes dark exactly when the run is worst.
+  it('surfaces a degraded recovery sweep even when the supply leg throws', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      // Both legs fail: the supply leg throws (so the function re-throws and never returns), and
+      // the sweep itself throws (so `errored` is set). The recovery line must still be emitted.
+      const explodingRecoveryDeps = {};
+      Object.defineProperty(explodingRecoveryDeps, 'now', {
+        get() {
+          throw new Error('recovery sweep blew up');
+        },
+        enumerable: true,
+      });
+      const deps = { placementRecovery: explodingRecoveryDeps };
+      Object.defineProperty(deps, 'maxPerRun', {
+        get() {
+          throw new Error('supply discovery exploded');
+        },
+        enumerable: true,
+      });
+
+      await expect(runQuestionSupplyNightly(db, deps)).rejects.toThrow('supply discovery exploded');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(
+      errors.some(
+        (line) =>
+          line.includes('placement starter recovery sweep did not complete') &&
+          line.includes('supply leg also failed'),
+      ),
+    ).toBe(true);
+    // Review PRRT…AJJ — the supply failure is logged BEFORE the sweep runs, not only at the
+    // eventual re-throw, so it survives a kill/timeout during the (long) sweep.
+    const supplyLine = errors.findIndex((line) =>
+      line.includes('supply leg failed; running the placement starter recovery sweep'),
+    );
+    const recoveryLine = errors.findIndex((line) =>
+      line.includes('placement starter recovery sweep did not complete'),
+    );
+    expect(supplyLine).toBeGreaterThanOrEqual(0);
+    expect(supplyLine).toBeLessThan(recoveryLine);
+  });
+
+  // YUK-761 (review PRRT…jcg) — isolation without consumption is not a signal. The pg-boss caller
+  // must make a failed sweep visible at the job boundary, while still NOT failing the host (that
+  // is the whole point of the isolation, and since YUK-758 a failed node skips its DAG subtree).
+  it('surfaces a failed recovery sweep from the job handler without failing the job', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      const explodingRecoveryDeps = {};
+      Object.defineProperty(explodingRecoveryDeps, 'now', {
+        get() {
+          throw new Error('recovery sweep blew up before it could start');
+        },
+        enumerable: true,
+      });
+      const handler = buildQuestionSupplyNightlyHandler(db, {
+        dispatchDeps: { enqueue: async () => 'job', tavilyAvailable: () => true },
+        placementRecovery: explodingRecoveryDeps,
+      });
+
+      // Does not throw: the host job stays green.
+      await expect(handler([])).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(
+      errors.some((line) => line.includes('placement starter recovery sweep did not complete')),
+    ).toBe(true);
   });
 
   // ② frontier KC + zero questions → at least one sourcing_web dispatch + experimental:question_supply
