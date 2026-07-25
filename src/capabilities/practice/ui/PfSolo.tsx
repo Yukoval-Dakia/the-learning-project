@@ -351,11 +351,20 @@ export function PfSolo({
     setJudging(true);
     try {
       const r = await getAdvice(q.id, answerMd);
-      // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
-      // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
-      // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。信心自评插拍**跳过**
-      // （auto-commit 流不插；shouldOfferConfidenceGate=false）。
-      if (isObjectiveQuestion(r.judge.route)) {
+      // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
+      // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
+      // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
+      // 否则谓词被单独测绿、生产路径却走另一份拷贝 = 假绿（本 PR review finding）。
+      if (shouldOfferConfidenceGate(r.judge.route)) {
+        // YUK-444 — 开放题（含 semantic-override 的客观题型）：推迟揭晓。judge 结果暂存 pendingPreview
+        // → 进 confidence 相位渲 1-5 自评 interstitial，**不 setPreview**（判定卡不渲染）。用户选 1-5 或
+        // 「跳过」后经 revealVerdict 才 setPreview 揭晓（先自评再看结果的元认知语义）。评级仍走既有手动流。
+        setPendingPreview(r.judge);
+      } else {
+        // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
+        // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
+        // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。信心自评插拍**跳过**
+        // （auto-commit 流不插；此分支 ⟺ shouldOfferConfidenceGate=false ⟺ isObjectiveQuestion=true）。
         setPreview(r.judge);
         setRating(r.judge.suggested_rating);
         await commit({
@@ -365,11 +374,6 @@ export function PfSolo({
           advance: false,
           previewOverride: r.judge, // 闭包里的 preview state 此刻仍 null，传 fresh judge。
         });
-      } else {
-        // YUK-444 — 开放题（含 semantic-override 的客观题型）：推迟揭晓。judge 结果暂存 pendingPreview
-        // → 进 confidence 相位渲 1-5 自评 interstitial，**不 setPreview**（判定卡不渲染）。用户选 1-5 或
-        // 「跳过」后经 revealVerdict 才 setPreview 揭晓（先自评再看结果的元认知语义）。评级仍走既有手动流。
-        setPendingPreview(r.judge);
       }
     } catch (e) {
       addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');

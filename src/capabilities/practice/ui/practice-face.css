@@ -382,10 +382,14 @@
     box-shadow: var(--shadow-2);
   }
 }
+/* 动效降级总登记处：[data-anim="on"] 门控移除后（见文件头注释），任何带 animation 的类
+   都必须在此登记，否则 prefers-reduced-motion 用户拿不到降级。
+   .pfs-conf = YUK-444 信心自评插拍卡（见下方 §confidence），同样带 pf-rise 入场动效。 */
 @media (prefers-reduced-motion: reduce) {
   .pf-row.is-new .pf-item,
   .pf-notice,
-  .pf-row.is-new {
+  .pf-row.is-new,
+  .pfs-conf {
     animation: none !important;
   }
 }
