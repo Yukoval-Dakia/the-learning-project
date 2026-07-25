@@ -20,6 +20,7 @@ import {
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import {
   MAX_RECOVERY_ATTEMPTS,
+  RECONCILE_SCAN_LIMIT,
   RECONCILE_STALL_MS,
   RECOVERY_MAX_AGE_MS,
   reconcileStalledJudgeAttempts,
@@ -157,6 +158,51 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
 
     expect(report).toMatchObject({ scanned: 0, reenqueued: 0 });
     expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it('is not starved by a backlog of ALREADY-JUDGED attempts sitting in front of a stalled one', async () => {
+    // Pending rows are immutable and never deleted, so judged ones pile up in front of the
+    // unjudged. If the scan paged the oldest N and filtered afterwards, one ordinary week of
+    // practice would push every genuinely stranded answer past the page and the sweeper would
+    // report a clean sweep forever. The "was it judged?" test must be in the WHERE clause.
+    for (let i = 0; i < RECONCILE_SCAN_LIMIT + 5; i++) {
+      const seeded = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + 10 * HOUR + i });
+      await writeEvent(testDb(), {
+        id: seeded.runId,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: seeded.questionId,
+        outcome: 'success',
+        payload: {
+          fsrs_rating: 'good',
+          fsrs_state_after: {
+            due: new Date().toISOString(),
+            stability: 1,
+            difficulty: 1,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            learning_steps: 0,
+            reps: 1,
+            lapses: 0,
+            state: 'review',
+            last_review: new Date().toISOString(),
+          },
+          user_response_md: 'ans',
+          referenced_knowledge_ids: ['k1'],
+        },
+      });
+    }
+    // The one that actually needs rescuing is the NEWEST, i.e. last in scan order.
+    const { runId: stranded } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+    const boss = deadBoss();
+
+    const report = await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } });
+
+    expect(report).toMatchObject({ scanned: 1, reenqueued: 1 });
+    expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
   });
 
   it('does not touch a run whose job can still progress (nor one pg-boss failed to report on)', async () => {

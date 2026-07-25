@@ -35,7 +35,8 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import type { JudgeRunJobData } from './judge-run-payload';
@@ -311,8 +312,12 @@ export interface StalledPendingAttempt {
  * committed. That question is answerable without pg-boss AND without `job_events`, which is
  * the entire point — it holds whether the crash lost the job, lost the marker, or lost both.
  *
- * Two indexed reads rather than a join through a jsonb key: page the candidates on
- * `(action, created_at)`, then resolve their run ids against the event PK in one `inArray`.
+ * **The "was it judged?" test is in the WHERE clause, not applied after the LIMIT.** Pending
+ * rows are immutable and never deleted, so the judged ones accumulate forever in front of the
+ * unjudged ones. Paging the oldest N first and filtering afterwards would therefore return an
+ * empty page — and hide every genuinely stranded answer behind them — as soon as N judged
+ * attempts existed inside the recovery window. `limit` has to bound the ANSWER set, not the
+ * candidate set.
  *
  * `limit` bounds one sweep. A backlog drains over successive ticks instead of putting an
  * unbounded number of paid judge jobs on the queue in a single burst.
@@ -321,7 +326,8 @@ export async function findStalledJudgePendingAttempts(
   db: Db,
   args: { stalledBefore: Date; recordedAfter: Date; limit: number },
 ): Promise<StalledPendingAttempt[]> {
-  const candidates = await db
+  const backfilled = alias(event, 'backfilled_attempt');
+  const rows = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
     .from(event)
     .where(
@@ -331,13 +337,18 @@ export async function findStalledJudgePendingAttempts(
         // Older than the recovery window: the row stays as permanent evidence, but automatic
         // recovery stops (the caller's bound explains why).
         gt(event.created_at, args.recordedAfter),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(backfilled)
+            .where(eq(backfilled.id, sql`${event.payload}->>'run_id'`)),
+        ),
       ),
     )
     .orderBy(asc(event.created_at))
     .limit(args.limit);
-  if (candidates.length === 0) return [];
 
-  const parsed = candidates.flatMap((row) => {
+  return rows.flatMap((row) => {
     const result = JudgePendingAttemptPayload.safeParse(row.payload);
     if (!result.success) {
       // Unreachable through `writeEvent` (the parse barrier rejects a malformed payload), so
@@ -352,19 +363,6 @@ export async function findStalledJudgePendingAttempts(
     }
     return [{ pendingEventId: row.id, payload: result.data, submittedAt: row.created_at }];
   });
-  if (parsed.length === 0) return [];
-
-  const persistedIds = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      inArray(
-        event.id,
-        parsed.map((p) => p.payload.run_id),
-      ),
-    );
-  const persisted = new Set(persistedIds.map((r) => r.id));
-  return parsed.filter((p) => !persisted.has(p.payload.run_id));
 }
 
 // ============================================================================
