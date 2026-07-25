@@ -278,6 +278,7 @@
   font-size: var(--fs-meta);
   color: var(--coral-ink);
   align-self: center;
+  overflow-wrap: anywhere;
 }
 
 .inbox-loom .proposal-foot {
