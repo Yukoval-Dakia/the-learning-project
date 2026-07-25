@@ -74,6 +74,26 @@
           }
         }
       }
+    },
+    {
+      "include": ["src/capabilities/**/ui/**"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/server/http/errors": "ApiError/errorResponse 已迁入 kernel（YUK-770）——从 '@/kernel/http' 导入，勿直穿遗留过渡壳。",
+                  "@/kernel/events/events": "事件底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+                  "@/kernel/events/corrections": "corrections 底层模块不得直穿——从 '@/kernel/events' 公共出口导入（YUK-770）。",
+                  "@/kernel/capability-contract-schemas": "capability-contract-schemas 是 ~11 个 Zod schema 模块的 barrel，顶层 z.object(...) 无法被 tree-shake，会把整个 core schema 面（含全套 event schema）拖进 SPA（YUK-783 实测：34 模块 / 252,892 B，比直连 core 还差 5.4 倍）。capability UI 层禁止 import 此 barrel——改用窄 facade（如 '@/kernel/limits'），或按同形制新增一个窄出口。"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "javascript": {
