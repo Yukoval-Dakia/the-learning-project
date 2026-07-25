@@ -32,7 +32,10 @@ import type {
   PlacementStarterRecoveryDeps,
   PlacementStarterRecoveryResult,
 } from '../server/placement-starter-recovery';
-import { sweepStalePlacementStarterClaims } from '../server/placement-starter-recovery';
+import {
+  emptyPlacementStarterRecoveryResult,
+  sweepStalePlacementStarterClaims,
+} from '../server/placement-starter-recovery';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 
@@ -149,12 +152,25 @@ export async function runQuestionSupplyNightly(
   const supply = await runSupplyDiscoveryAndDispatch(db, deps);
   // YUK-761 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（YUK-452
   // Phase B 建好但一直无消费者的基建）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与
-  // 供给腿同属「缺题自愈」职责，且共享同一 06:00 时槽 + DLQ 重试语义。清扫器自身对每个 claim
-  // 做条件 UPDATE 领取（幂等、不双发），并对 dispatch 失败逐条 try/catch 隔离。
-  const placementStarterRecovery = await sweepStalePlacementStarterClaims(
-    db,
-    deps.placementRecovery,
-  );
+  // 供给腿同属「缺题自愈」职责，且共享同一 DLQ 重试语义。清扫器自身对每个 claim 做条件 UPDATE
+  // 领取（幂等、不双发），并对逐个 claim 的失败做 try/catch 隔离。
+  //
+  // **宿主隔离（必须）**：整轮清扫的 top-level 抛错在此就地吞掉 + loud log，绝不冒泡。理由有
+  // 二：① 供给腿此刻**已经派出付费 job**，让 job 失败 → pg-boss 重投 → 整轮供给发现 + 派发
+  // 重跑（只有 dispatcher 的 7d fingerprint cooldown 挡着，不是白挡但也不该主动去撞）；
+  // ② YUK-758 起 question_supply_nightly 是编排 DAG 成员，节点 failed 会让其**硬下游按
+  // skipped 语义整片跳过**——爆炸半径从「一只 job」变成「一条子树」。恢复清扫是尽力而为的
+  // 后台卫生工作，没有任何资格拿走那条子树。失败留在 errored 标里由日志/结果面暴露。
+  let placementStarterRecovery: PlacementStarterRecoveryResult;
+  try {
+    placementStarterRecovery = await sweepStalePlacementStarterClaims(db, deps.placementRecovery);
+  } catch (err) {
+    console.error(
+      '[question_supply_nightly] placement starter recovery sweep failed; host job unaffected',
+      err,
+    );
+    placementStarterRecovery = emptyPlacementStarterRecoveryResult({ errored: true });
+  }
   return { ...supply, placementStarterRecovery };
 }
 

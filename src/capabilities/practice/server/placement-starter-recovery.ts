@@ -3,7 +3,7 @@
 // YUK-452 Phase B shipped the recovery INFRASTRUCTURE — `placement_starter_claim.next_reconcile_at`
 // (migration 0074) plus the partial `placement_starter_claim_recovery_idx` on
 // (next_reconcile_at, created_at) WHERE status IN (5 nonterminal states) — and then explicitly
-// left it without a consumer (placement-start.ts:155-157: "there is NO background sweeper for
+// left it without a consumer (placement-start.ts: "there is NO background sweeper for
 // pending_dispatch claims (the placement_starter_claim_recovery_idx supports one but none is
 // wired yet)"). This module is that consumer. It is invoked from the tail of the existing
 // `question_supply_nightly` job — no new cron surface.
@@ -31,45 +31,68 @@
 //   non-terminal FOREVER — and because 'retry_scheduled' IS inside the
 //   `placement_starter_claim_nonterminal_uq` predicate, that zombie permanently blocks every
 //   later goal revision for the same (goal_id, subject_id): placement soft-stuck with no exit.
-//   So the sweeper terminalizes a long-stale retry_scheduled claim as 'exhausted' (the same
-//   terminal state `finishPlacementAttempt` writes when the final delivery fails).
+//   So the sweeper terminalizes such a claim as 'exhausted' (the same terminal state
+//   `finishPlacementAttempt` writes when the final delivery fails) — but ONLY after
+//   `isPlacementStarterJobLive` confirms the owning quiz_gen job can no longer redeliver.
+//   Elapsed time alone is NOT proof of death: a paused / saturated quiz_gen queue (or a downed
+//   worker fleet) can hold a legitimate retry unfetched well past the grace window, and
+//   terminalizing then would make the eventual delivery fail admission in
+//   `acquirePlacementAttempt` and throw away paid generation work that was still coming.
 //
 // The other three nonterminal states inside the index predicate (queued / running / verifying)
 // are NOT swept here: they are owned by a live pg-boss delivery and by the attempt lease/fence
 // machinery. Widening the sweep to them needs its own lease-expiry analysis.
 //
+// ── Two INDEPENDENT legs, two independent budgets (anti-starvation) ───────────────────────
+// The reap leg and the re-drive leg run their own capped queries. They must NOT share one scan:
+// the re-drive leg is gated on PLACEMENT_PROBE_ENABLED and can accumulate a backlog of claims it
+// declines to touch, and a single shared `ORDER BY next_reconcile_at LIMIT n` would let ≥n such
+// rows monopolise every run forever — so a `retry_scheduled` zombie sorted behind them would
+// NEVER be reaped, resurrecting the blocked-revision bug this sweeper exists to fix, via its own
+// scan order. Separate queries make the reap leg structurally immune to whatever the paid leg
+// does or skips.
+//
 // ── Idempotency / anti-double-drive ───────────────────────────────────────────────────────
-// Every claim is ACQUIRED by a conditional UPDATE (`WHERE id = ? AND status = ? AND
-// next_reconcile_at <= now` RETURNING) that pushes `next_reconcile_at` forward BEFORE any paid
-// work. A second sweeper pass in the same window matches zero rows and does nothing. That is
-// also why the cursor bump deliberately does NOT touch `updated_at` or `version`: those mean
-// "last STATE transition", and the retry_scheduled zombie reap reads `updated_at` as its
-// staleness signal — bumping it on a scheduler visit would push the reap deadline out forever.
+// EVERY visited claim is ACQUIRED by a conditional UPDATE (`WHERE id = ? AND status = ? AND
+// next_reconcile_at <= now` RETURNING) that pushes `next_reconcile_at` forward — including the
+// paths that then decline to act (missing goal, still-live retry job). A claim that is visited
+// but never advanced would re-occupy the per-run budget on every subsequent run, which is the
+// same starvation failure by another route. A second sweeper pass in the same window matches
+// zero rows and does nothing.
+//
+// The cursor bump deliberately does NOT touch `updated_at` or `version`: those mean "last STATE
+// transition", and the retry_scheduled zombie reap reads `updated_at` as its staleness signal —
+// bumping it on a scheduler visit would push the reap deadline out forever.
 
 import type { Db } from '@/db/client';
 import { goal, placement_starter_claim } from '@/db/schema';
-import { dispatchPlacementStarterClaim } from '@/server/question-supply/placement-starter';
-import { markPlacementStarterClaimTerminal } from '@/server/question-supply/placement-starter-store';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
-import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
-import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import {
+  PLACEMENT_PROBE_ENABLED,
+  dispatchPlacementStarterClaim,
+  isPlacementStarterJobLive,
+  lockPlacementSupplyScopes,
+  markPlacementStarterClaimTerminal,
+} from '@/kernel/placement';
+import { and, asc, eq, lte } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from './placement-scope';
 import { selectNextPlacementItem } from './placement-select';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the
- * per-claim re-drive cooldown and it is INDEPENDENT of the host cron cadence — a manual job run,
- * a second worker, or a cron misfire cannot re-drive the same claim inside this window.
+ * per-claim revisit cooldown and it is INDEPENDENT of the host job's cadence — a manual job run,
+ * a second worker, or a duplicated orchestration run cannot re-drive the same claim inside this
+ * window.
  */
 export const PLACEMENT_STARTER_RECOVERY_BACKOFF_MS = 6 * 60 * 60_000;
 
 /**
- * How long a claim must sit in `retry_scheduled` before it is declared a zombie and reaped.
- * Upper bound on a LEGITIMATE retry_scheduled window: the pg-boss retry delay (30s→60s backoff)
- * plus the time for the next delivery to acquire the attempt and flip the claim to 'running' —
- * seconds, not hours. Even a delivery that runs the full AGENT `expireInSeconds` ceiling (2h)
- * spends that time as 'running', not 'retry_scheduled'. 6h is therefore a ~2 order-of-magnitude
- * cushion over the real window: nothing healthy is ever reaped.
+ * How long a claim must sit in `retry_scheduled` before it is CONSIDERED for reaping (the pg-boss
+ * job-liveness probe still has the final say). Upper bound on a LEGITIMATE retry_scheduled window:
+ * the pg-boss retry delay (30s→60s backoff) plus the time for the next delivery to acquire the
+ * attempt and flip the claim to 'running' — seconds, not hours. Even a delivery that runs the full
+ * AGENT `expireInSeconds` ceiling (2h) spends that time as 'running', not 'retry_scheduled'. 6h is
+ * therefore a ~2 order-of-magnitude cushion; the liveness probe covers the remaining case where
+ * the queue itself is stalled and elapsed time carries no information at all.
  */
 export const PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS = 6 * 60 * 60_000;
 
@@ -77,15 +100,18 @@ export const PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS = 6 * 60 * 60_000;
 const MIN_CURSOR_ADVANCE_MS = 60_000;
 
 /**
- * Per-run cap. Mirrors `question_supply_nightly`'s own DEFAULT_MAX_PER_RUN=25 — each re-drive is
- * a paid quiz_gen batch, so a first run against a large backlog must not flood the paid queue.
- * Untouched claims keep their (already overdue) cursor and are picked up by the next run.
+ * Per-leg, per-run cap. Mirrors `question_supply_nightly`'s own DEFAULT_MAX_PER_RUN=25 — each
+ * re-drive is a paid quiz_gen batch, so a first run against a large backlog must not flood the
+ * paid queue. Applied to EACH leg separately (see the anti-starvation note above). Deferred
+ * claims keep their overdue cursor and are picked up by the next run.
  */
 const DEFAULT_MAX_PER_RUN = 25;
 
 export interface PlacementStarterRecoveryResult {
-  /** Overdue nonterminal claims returned by the recovery-index scan (after the per-run cap). */
-  scanned: number;
+  /** Overdue pending_dispatch claims returned by the re-drive leg's own scan (after its cap). */
+  scannedPending: number;
+  /** Overdue retry_scheduled claims returned by the reap leg's own scan (after its cap). */
+  scannedRetry: number;
   /** pending_dispatch claims re-driven into a real quiz_gen job. */
   redispatched: number;
   /** pending_dispatch claims whose paid admission was refused (pool already has an item, or the claim was superseded). */
@@ -96,12 +122,16 @@ export interface PlacementStarterRecoveryResult {
   reaped: number;
   /** retry_scheduled claims still inside the grace window; left for the owning pg-boss retry. */
   retryPending: number;
+  /** retry_scheduled claims past grace whose quiz_gen job is STILL live — deliberately not reaped. */
+  retryJobLive: number;
   /** Claims whose acquire CAS lost to a concurrent transition (already re-driven / terminalized elsewhere). */
   lost: number;
   /** Claims skipped because their goal row no longer exists (scope is unresolvable). */
   goalMissing: number;
-  /** True when PLACEMENT_PROBE_ENABLED is off: paid re-dispatch is suppressed, zombie reaping still runs. */
+  /** True when PLACEMENT_PROBE_ENABLED is off: the paid re-drive leg did not run; the reap leg did. */
   redispatchSuppressed: boolean;
+  /** True when the host caught a top-level sweep failure (see runQuestionSupplyNightly). */
+  errored: boolean;
 }
 
 export interface PlacementStarterRecoveryDeps {
@@ -109,50 +139,76 @@ export interface PlacementStarterRecoveryDeps {
   maxPerRun?: number;
   /** Seam for DB tests: defaults to the real boss-backed dispatch. */
   dispatch?: typeof dispatchPlacementStarterClaim;
+  /** Seam for DB tests: defaults to the real boss-backed pg-boss job-state probe. */
+  isJobLive?: typeof isPlacementStarterJobLive;
   /** Seam for DB tests: defaults to the module-level dark-ship flag. */
   placementProbeEnabled?: boolean;
 }
 
-function emptyResult(redispatchSuppressed: boolean): PlacementStarterRecoveryResult {
+export function emptyPlacementStarterRecoveryResult(
+  overrides: Partial<PlacementStarterRecoveryResult> = {},
+): PlacementStarterRecoveryResult {
   return {
-    scanned: 0,
+    scannedPending: 0,
+    scannedRetry: 0,
     redispatched: 0,
     admissionSkipped: 0,
     redispatchFailed: 0,
     reaped: 0,
     retryPending: 0,
+    retryJobLive: 0,
     lost: 0,
     goalMissing: 0,
-    redispatchSuppressed,
+    redispatchSuppressed: false,
+    errored: false,
+    ...overrides,
   };
 }
 
-/**
- * Sweep overdue placement starter claims: re-drive stranded `pending_dispatch` claims, reap
- * zombie `retry_scheduled` claims. Safe to call concurrently and safe to re-run — see the
- * idempotency note in the module header.
- */
-export async function sweepStalePlacementStarterClaims(
-  db: Db,
-  deps: PlacementStarterRecoveryDeps = {},
-): Promise<PlacementStarterRecoveryResult> {
-  const now = deps.now ?? new Date();
-  const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
-  const dispatch = deps.dispatch ?? dispatchPlacementStarterClaim;
-  // G-COST: the re-drive leg makes PAID generation happen automatically. While the placement
-  // entrypoint is dark there is no consumer for a freshly filled placement pool, so paying for
-  // one would be pure waste. Reaping is free and unblocks later revisions, so it always runs.
-  const canRedispatch = deps.placementProbeEnabled ?? PLACEMENT_PROBE_ENABLED;
-  const result = emptyResult(!canRedispatch);
+type ClaimRow = typeof placement_starter_claim.$inferSelect;
 
-  // Matches placement_starter_claim_recovery_idx exactly: the status filter is a subset of the
-  // index's partial predicate, and the ORDER BY is its column order — oldest-overdue first.
-  const due = await db
+/**
+ * Advance a claim's recovery cursor. The conditional UPDATE is the acquire CAS: it both reserves
+ * the claim against a concurrent sweeper AND guarantees the claim cannot re-occupy the next run's
+ * budget. Never touches updated_at / version (see the module header).
+ */
+async function acquireClaim(
+  db: Db,
+  claim: ClaimRow,
+  now: Date,
+  nextReconcileAt: Date,
+): Promise<boolean> {
+  const rows = await db
+    .update(placement_starter_claim)
+    .set({ next_reconcile_at: nextReconcileAt })
+    .where(
+      and(
+        eq(placement_starter_claim.id, claim.id),
+        eq(placement_starter_claim.status, claim.status),
+        lte(placement_starter_claim.next_reconcile_at, now),
+      ),
+    )
+    .returning({ id: placement_starter_claim.id });
+  return rows.length === 1;
+}
+
+/**
+ * Overdue claims of exactly ONE status, oldest cursor first. The single-status equality plus the
+ * range on next_reconcile_at keeps `placement_starter_claim_recovery_idx` usable (the status is
+ * inside its partial predicate) and the ORDER BY is the index's own column order.
+ */
+function selectDueClaims(
+  db: Db,
+  status: 'pending_dispatch' | 'retry_scheduled',
+  now: Date,
+  limit: number,
+) {
+  return db
     .select()
     .from(placement_starter_claim)
     .where(
       and(
-        inArray(placement_starter_claim.status, ['pending_dispatch', 'retry_scheduled']),
+        eq(placement_starter_claim.status, status),
         lte(placement_starter_claim.next_reconcile_at, now),
       ),
     )
@@ -160,24 +216,53 @@ export async function sweepStalePlacementStarterClaims(
       asc(placement_starter_claim.next_reconcile_at),
       asc(placement_starter_claim.created_at),
     )
-    .limit(maxPerRun);
-  result.scanned = due.length;
-  if (due.length === 0) return result;
-
-  const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
-
-  for (const claim of due) {
-    if (claim.status === 'retry_scheduled') {
-      await sweepRetryScheduled(db, claim, now, zombieCutoff, result);
-      continue;
-    }
-    if (!canRedispatch) continue;
-    await sweepPendingDispatch(db, claim, now, dispatch, result);
-  }
-  return result;
+    .limit(limit);
 }
 
-type ClaimRow = typeof placement_starter_claim.$inferSelect;
+/**
+ * Sweep overdue placement starter claims: reap zombie `retry_scheduled` claims, re-drive stranded
+ * `pending_dispatch` claims. Safe to call concurrently and safe to re-run — see the idempotency
+ * note in the module header.
+ */
+export async function sweepStalePlacementStarterClaims(
+  db: Db,
+  deps: PlacementStarterRecoveryDeps = {},
+): Promise<PlacementStarterRecoveryResult> {
+  const now = deps.now ?? new Date();
+  // Clamp: drizzle silently DROPS a non-positive `.limit()` rather than erroring, so a 0 /
+  // negative override would turn the per-run cap into an unbounded scan — the exact opposite of
+  // the cost guard it is there to be. Never trust the caller with the paid leg's ceiling.
+  const maxPerRun = Math.max(1, Math.trunc(deps.maxPerRun ?? DEFAULT_MAX_PER_RUN));
+  const dispatch = deps.dispatch ?? dispatchPlacementStarterClaim;
+  const isJobLive = deps.isJobLive ?? isPlacementStarterJobLive;
+  // G-COST: the re-drive leg makes PAID generation happen automatically. While the placement
+  // entrypoint is dark there is no consumer for a freshly filled placement pool, so paying for
+  // one would be pure waste. Reaping is free and unblocks later revisions, so it always runs —
+  // and on its OWN query, so this gate can never starve it.
+  const canRedispatch = deps.placementProbeEnabled ?? PLACEMENT_PROBE_ENABLED;
+  const result = emptyPlacementStarterRecoveryResult({ redispatchSuppressed: !canRedispatch });
+
+  const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
+  const dueRetry = await selectDueClaims(db, 'retry_scheduled', now, maxPerRun);
+  result.scannedRetry = dueRetry.length;
+  for (const claim of dueRetry) {
+    await sweepRetryScheduled(db, claim, now, zombieCutoff, isJobLive, result);
+  }
+
+  if (canRedispatch) {
+    const duePending = await selectDueClaims(db, 'pending_dispatch', now, maxPerRun);
+    result.scannedPending = duePending.length;
+    for (const claim of duePending) {
+      await sweepPendingDispatch(db, claim, now, dispatch, result);
+    }
+  }
+
+  // A background sweeper with no trace is undiagnosable. One summary line per run, ALWAYS — even
+  // an all-zero run is the evidence that the tail step actually ran. The per-claim lines below
+  // are reserved for consequential / anomalous outcomes and are bounded by maxPerRun per leg.
+  console.log('[placement-starter-recovery] sweep', result);
+  return result;
+}
 
 async function sweepPendingDispatch(
   db: Db,
@@ -186,6 +271,7 @@ async function sweepPendingDispatch(
   dispatch: typeof dispatchPlacementStarterClaim,
   result: PlacementStarterRecoveryResult,
 ): Promise<void> {
+  const backoffAt = new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS);
   const [goalRow] = await db
     .select({
       scope: goal.scope_knowledge_ids,
@@ -198,27 +284,20 @@ async function sweepPendingDispatch(
   if (!goalRow) {
     // No goal row → resolveGoalPlacementScope would silently fall through to the tier-3
     // full-active-tree fallback and admit paid work against a scope the claim was never about.
-    // Skip rather than invent a scope; the claim keeps its overdue cursor and is re-reported.
-    result.goalMissing += 1;
+    // Decline — but STILL advance the cursor, or this claim re-consumes a per-run slot on every
+    // future run and starves whatever sorts behind it.
+    if (await acquireClaim(db, claim, now, backoffAt)) result.goalMissing += 1;
+    else result.lost += 1;
+    console.warn(
+      `[placement-starter-recovery] claim ${claim.id} references missing goal ${claim.goal_id}; skipped, cursor advanced`,
+    );
     return;
   }
   const knowledgeIds = await resolveGoalPlacementScope(db, goalRow);
 
-  // ACQUIRE (conditional UPDATE = CAS): push the cursor forward before any paid work, so a
-  // concurrent sweeper / a re-run inside the window matches zero rows. Deliberately does NOT
-  // bump updated_at or version — see the module header.
-  const acquired = await db
-    .update(placement_starter_claim)
-    .set({ next_reconcile_at: new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS) })
-    .where(
-      and(
-        eq(placement_starter_claim.id, claim.id),
-        eq(placement_starter_claim.status, 'pending_dispatch'),
-        lte(placement_starter_claim.next_reconcile_at, now),
-      ),
-    )
-    .returning({ id: placement_starter_claim.id });
-  if (acquired.length !== 1) {
+  // ACQUIRE before any paid work, so a concurrent sweeper / a re-run inside the window sees
+  // nothing to do.
+  if (!(await acquireClaim(db, claim, now, backoffAt))) {
     result.lost += 1;
     return;
   }
@@ -230,8 +309,14 @@ async function sweepPendingDispatch(
       await lockPlacementSupplyScopes(tx, knowledgeIds);
       return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
     });
-    if (jobId) result.redispatched += 1;
-    else result.admissionSkipped += 1;
+    if (jobId) {
+      result.redispatched += 1;
+      console.log(
+        `[placement-starter-recovery] re-dispatched stranded claim ${claim.id} (goal ${claim.goal_id}, subject ${claim.subject_id}) as job ${jobId}`,
+      );
+    } else {
+      result.admissionSkipped += 1;
+    }
   } catch (err) {
     // The claim keeps its bumped cursor and stays pending_dispatch — the next window retries it.
     // Per-claim isolation: one broken claim must not abort the sweep or the host nightly job.
@@ -245,6 +330,7 @@ async function sweepRetryScheduled(
   claim: ClaimRow,
   now: Date,
   zombieCutoff: Date,
+  isJobLive: typeof isPlacementStarterJobLive,
   result: PlacementStarterRecoveryResult,
 ): Promise<void> {
   if (claim.updated_at > zombieCutoff) {
@@ -254,25 +340,37 @@ async function sweepRetryScheduled(
       claim.updated_at.getTime() + PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS,
     );
     const parked = new Date(Math.max(reapableAt.getTime(), now.getTime() + MIN_CURSOR_ADVANCE_MS));
-    const bumped = await db
-      .update(placement_starter_claim)
-      .set({ next_reconcile_at: parked })
-      .where(
-        and(
-          eq(placement_starter_claim.id, claim.id),
-          eq(placement_starter_claim.status, 'retry_scheduled'),
-          lte(placement_starter_claim.next_reconcile_at, now),
-        ),
-      )
-      .returning({ id: placement_starter_claim.id });
-    if (bumped.length === 1) result.retryPending += 1;
+    if (await acquireClaim(db, claim, now, parked)) result.retryPending += 1;
     else result.lost += 1;
     return;
   }
 
-  // Zombie: no pg-boss redelivery is coming. Terminalize under a row lock and re-check, so a
-  // delivery that acquires the attempt between the scan and this write wins instead of being
-  // clobbered into a terminal state mid-flight.
+  // Past grace — but time is not proof of death. Ask pg-boss whether the owning job can still
+  // redeliver. FAIL SAFE: any probe failure is treated as "still live", because a false reap
+  // destroys in-flight paid work while a false skip merely defers the reap by one window.
+  let jobLive: boolean;
+  try {
+    jobLive = await isJobLive(claim.pg_boss_job_id);
+  } catch (err) {
+    jobLive = true;
+    console.error(
+      `[placement-starter-recovery] pg-boss job probe failed for claim ${claim.id} (job ${claim.pg_boss_job_id}); treating as live, reap deferred`,
+      err,
+    );
+  }
+  if (jobLive) {
+    const parked = new Date(now.getTime() + PLACEMENT_STARTER_RECOVERY_BACKOFF_MS);
+    if (await acquireClaim(db, claim, now, parked)) result.retryJobLive += 1;
+    else result.lost += 1;
+    console.warn(
+      `[placement-starter-recovery] claim ${claim.id} is past the retry grace window but its quiz_gen job ${claim.pg_boss_job_id} is still live; reap deferred`,
+    );
+    return;
+  }
+
+  // Zombie confirmed: past grace AND no redelivery source. Terminalize under a row lock and
+  // re-check, so a delivery that acquires the attempt between the scan and this write wins
+  // instead of being clobbered into a terminal state mid-flight.
   const reaped = await db.transaction(async (tx) => {
     const [locked] = await tx
       .select()
@@ -286,10 +384,16 @@ async function sweepRetryScheduled(
       class: 'stalled',
       code: 'retry_never_redelivered',
       message:
-        'placement starter claim sat in retry_scheduled past the redelivery grace window; no quiz_gen redelivery arrived',
+        'placement starter claim sat in retry_scheduled past the redelivery grace window and its quiz_gen job can no longer redeliver',
     });
     return true;
   });
-  if (reaped) result.reaped += 1;
-  else result.lost += 1;
+  if (reaped) {
+    result.reaped += 1;
+    console.warn(
+      `[placement-starter-recovery] reaped zombie claim ${claim.id} (goal ${claim.goal_id}, subject ${claim.subject_id}, job ${claim.pg_boss_job_id}) as exhausted; it was blocking later revisions`,
+    );
+  } else {
+    result.lost += 1;
+  }
 }

@@ -11,10 +11,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
+import { PLACEMENT_PROBE_ENABLED } from '@/kernel/placement';
 import type { EnqueueFn } from '@/server/question-supply/dispatcher';
-import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
 import { resetDb } from '../../../../tests/helpers/db';
+import { emptyPlacementStarterRecoveryResult } from '../server/placement-starter-recovery';
 import { runQuestionSupplyNightly } from './question_supply_nightly';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
@@ -75,19 +76,43 @@ describe('runQuestionSupplyNightly', () => {
       failed: 0,
       // YUK-761 tail step: no claims in the DB → the recovery sweep is a pure no-op, but it
       // still RUNS (the supply leg's zero-target early return must not skip it).
-      placementStarterRecovery: {
-        scanned: 0,
-        redispatched: 0,
-        admissionSkipped: 0,
-        redispatchFailed: 0,
-        reaped: 0,
-        retryPending: 0,
-        lost: 0,
-        goalMissing: 0,
+      placementStarterRecovery: emptyPlacementStarterRecoveryResult({
         redispatchSuppressed: !PLACEMENT_PROBE_ENABLED,
-      },
+      }),
     });
     expect(enqueued).toHaveLength(0);
+  });
+
+  // YUK-761 — the recovery sweep is best-effort background hygiene and must NEVER take the host
+  // job down with it. Since YUK-758 this job is an orchestration DAG member, so a failed node
+  // skips its whole hard-downstream subtree — the sweep has no business claiming that blast
+  // radius. The sweeper isolates PER-CLAIM failures itself; this pins the remaining case, a
+  // TOP-LEVEL throw (e.g. the scan query failing), forced here with a throwing `now` getter so
+  // the assertion is about the call-site try/catch and not about any particular DB error.
+  it('isolates a top-level recovery sweep failure from the host job', async () => {
+    const enqueued: Array<{ queue: string }> = [];
+    const enqueue: EnqueueFn = async (queue) => {
+      enqueued.push({ queue });
+      return 'job';
+    };
+    const explodingRecoveryDeps = {};
+    Object.defineProperty(explodingRecoveryDeps, 'now', {
+      get() {
+        throw new Error('recovery sweep blew up before it could start');
+      },
+      enumerable: true,
+    });
+
+    const result = await runQuestionSupplyNightly(db, {
+      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      placementRecovery: explodingRecoveryDeps,
+    });
+
+    // Supply leg still reported normally; the sweep failure is contained and surfaced as a flag.
+    expect(result.discovered).toBe(0);
+    expect(result.placementStarterRecovery).toEqual(
+      emptyPlacementStarterRecoveryResult({ errored: true }),
+    );
   });
 
   // ② frontier KC + zero questions → at least one sourcing_web dispatch + experimental:question_supply

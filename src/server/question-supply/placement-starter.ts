@@ -180,3 +180,29 @@ export async function dispatchPlacementStarterClaim(
     ),
   );
 }
+
+// pg-boss job states from which a further delivery may STILL arrive (pg-boss v12
+// JobWithMetadata.state ∈ created|retry|active|completed|cancelled|failed). 'created' and 'retry'
+// are waiting to be fetched; 'active' is being worked right now. The other three are terminal.
+const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
+
+/**
+ * True when the quiz_gen job backing a placement starter claim may still redeliver (YUK-761).
+ *
+ * The recovery sweeper MUST consult this before terminalizing a long-stale 'retry_scheduled'
+ * claim: elapsed time alone is not proof that the retry is dead. If the quiz_gen queue is paused,
+ * saturated, or the worker fleet is down, a perfectly legitimate retry can sit unfetched for far
+ * longer than the sweeper's grace window — and terminalizing the claim then would make the
+ * eventual delivery fail admission in `acquirePlacementAttempt` ("placement starter claim is
+ * exhausted"), throwing away paid generation work that was still coming.
+ *
+ * A null jobId or a job pg-boss can no longer find (deleted past `retentionSeconds`) means no
+ * redelivery source exists — not live.
+ */
+export async function isPlacementStarterJobLive(jobId: string | null): Promise<boolean> {
+  if (!jobId) return false;
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  const job = await boss.getJobById('quiz_gen', jobId);
+  return job != null && LIVE_PLACEMENT_JOB_STATES.has(job.state);
+}
