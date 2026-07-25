@@ -2,8 +2,10 @@ import { type Page, expect, test } from '@playwright/test';
 import { installApiFixtures } from './api-fixtures';
 
 // YUK-721 — dual-viewport visual-QA capture of the teaching brief on /today.
-const SHOT_DIR =
-  '/private/tmp/claude-501/-Users-yuqi-yukoval-projects-the-learning-project/16d0cad2-a5cd-4b02-ae1a-f1813e834906/scratchpad';
+// YUK-789 — the path was a hard-coded macOS scratchpad (`/private/tmp/claude-501/...`), which a
+// non-root CI runner cannot create: wiring this spec into CI required a writable default. Set
+// USABILITY_SHOT_DIR to send the captures somewhere else locally.
+const SHOT_DIR = process.env.USABILITY_SHOT_DIR ?? 'test-results/usability';
 const TB_DESKTOP_SHOT = `${SHOT_DIR}/tb-desktop.png`;
 const TB_MOBILE_SHOT = `${SHOT_DIR}/tb-mobile.png`;
 
@@ -167,6 +169,14 @@ test.describe('shipped-container usability regression', () => {
       await page.keyboard.press('Tab');
       await expect(dismiss).toBeFocused();
 
+      // YUK-789 — mount-time telemetry actually left the browser, with the BODY the
+      // server's strict discriminated union accepts. A count-only assertion would stay
+      // green on a payload the real endpoint 400s (dead funnel, invisible).
+      expect(
+        fixture.briefInteractions(),
+        'route=/today brief band must POST a well-formed brief_seen on mount',
+      ).toEqual([{ type: 'brief_seen', brief_id: 'evt_conjecture_wy1', brief_state: 'finding' }]);
+
       // Anti-guilt wire lock (contract §8.1): no calibration / recurrence-count / backlog
       // framing inside the brief band…
       const bandCopy = await page.locator('.tb-band-wrap').innerText();
@@ -182,6 +192,49 @@ test.describe('shipped-container usability regression', () => {
 
       await expectNoInternalCopy(page, '/today');
       await page.screenshot({ path: TB_DESKTOP_SHOT, fullPage: true });
+    });
+
+    // YUK-789 — the closed-loop click-through. The previous version only focused the CTA
+    // and pressed Tab, so an accept button wired to nothing would still have passed. Click
+    // it and assert BOTH halves: the mutation was actually hit, and the band advanced to
+    // the probe_ready state the server re-projects (contract §5/§6 forward-only advance).
+    await test.step('route=/today control="就按这个方向验证" hits the decision mutation and advances to probe_ready', async () => {
+      await page.getByRole('button', { name: '就按这个方向验证' }).click();
+
+      // The probe_ready prepared_action replaces the review_finding CTAs in place.
+      const answerCta = page.getByRole('button', { name: '现在就试做这道题' });
+      await expect(answerCta).toBeVisible();
+      await expect(page.getByRole('button', { name: '就按这个方向验证' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '不太像' })).toHaveCount(0);
+      await expect(
+        page.getByLabel('当前结果').getByText('这道判别题已经备好，等你作答。'),
+      ).toBeVisible();
+      // §6 forward-announce: the SAME brief_id advancing finding → probe_ready announces once.
+      await expect(page.locator('.tb-live')).toHaveText('这道判别题已经备好，等你作答。');
+      // Contract §7 failure affordance stays absent on the success path.
+      await expect(page.getByText('操作失败，请重试')).toHaveCount(0);
+
+      expect(
+        fixture.briefCalls(),
+        'route=/today accept must reach the decisions mutation',
+      ).toContain('POST /api/proposals/evt_conjecture_wy1/decisions');
+      // The accept also records primary_action_started (the funnel's action half). Assert the
+      // exact bodies, not the request count: the same-day brief_seen must stay suppressed
+      // (one seen, not two) and the action must carry action_kind='accept_probe' with NO
+      // result_event_id — the server union rejects that field outside scoped_practice.
+      expect(
+        fixture.briefInteractions(),
+        'route=/today accept must record exactly one brief_seen + one accept_probe action',
+      ).toEqual([
+        { type: 'brief_seen', brief_id: 'evt_conjecture_wy1', brief_state: 'finding' },
+        {
+          type: 'primary_action_started',
+          brief_id: 'evt_conjecture_wy1',
+          action_kind: 'accept_probe',
+        },
+      ]);
+
+      await expectNoInternalCopy(page, '/today');
     });
 
     await test.step('route=/today viewport=390 has no horizontal overflow on the brief band', async () => {

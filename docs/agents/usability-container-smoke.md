@@ -44,11 +44,27 @@ ship 前合并运行：
 USABILITY_BASE_URL=http://127.0.0.1:18787 pnpm test:usability
 ```
 
+## CI 接线（YUK-789）
+
+`.github/workflows/ci-gate.yml` 的 `usability` job 在每个 PR / push 上跑这条门禁：
+`pnpm build` 产出 `dist/server.cjs` + `web/dist` → 以 `RW_STATIC_DIR=web/dist API_PORT=18787`
+起同一个构建产物 → 轮询 `/api/health` → `USABILITY_BASE_URL=http://127.0.0.1:18787 pnpm
+test:usability:container`。docs-only PR 与主 gate 用同一套 merge-base 判定跳过。
+
+CI 里**不起 Postgres**：浏览器侧 `/api/*` 全量被 fixture 拦截，server 只服务静态面 +
+`/api/health`（subject hydrate 内部 never-throws，DB 不可达时走代码种子地板）。失败时
+`test-results/usability` 作为 artifact 上传。
+
 ## 覆盖场景
 
 - `/today`：无 active goal 但已有题目/待复习；真正空库；401 立即回 TokenGate。
 - `/practice`：mutation 失败不乐观提交，原位提示并可重试。
 - `/today` 390px：移动 drawer 的 dialog/modal、焦点 trap、Escape 和焦点恢复。
 - `/questions`：20/25 到 25/25 的服务端分页累加载。
+- `/today` 教研简报：四块 landmark + 反内疚文案锁；**点击**「就按这个方向验证」→ 断言
+  `POST /api/proposals/:id/decisions` 真被打中、band 就地推进到 `probe_ready`（出现「现在就
+  试做这道题」、finding 两个 CTA 消失、aria-live 播报一次）、且 `brief_seen` +
+  `primary_action_started` 两条 telemetry 真的发出去了（YUK-789 前只 focus/Tab，接空的按钮也能过）。
 
 失败 trace 和截图只在失败时写到 `test-results/usability/`；截图用于定位，不作为像素差断言。
+截图默认落 `test-results/usability/`，本地可用 `USABILITY_SHOT_DIR` 改写。
