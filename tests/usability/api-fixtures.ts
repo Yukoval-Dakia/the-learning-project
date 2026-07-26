@@ -515,27 +515,33 @@ export async function installApiFixtures(
       }
       return fulfill(route, { rows: [], breaker: breaker(0) });
     }
-    if (key === 'GET /api/proposals') {
-      if (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') {
-        const lane = url.searchParams.get('lane');
-        if (lane === 'decision') {
-          return fulfill(route, {
-            rows: [
-              inboxProposal('proposal-learning-plan-1', 'learning_item', '建议先复习二次函数。'),
-            ],
-            next_cursor: null,
-          });
-        }
-        if (lane === 'observation') {
-          return fulfill(route, {
-            rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
-            next_cursor: null,
-          });
-        }
+    if (
+      key === 'GET /api/proposals' &&
+      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped')
+    ) {
+      const lane = url.searchParams.get('lane');
+      if (lane === 'decision') {
+        return fulfill(route, {
+          rows: [
+            inboxProposal('proposal-learning-plan-1', 'learning_item', '建议先复习二次函数。'),
+          ],
+          next_cursor: null,
+        });
+      }
+      if (lane === 'observation') {
+        return fulfill(route, {
+          rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
+          next_cursor: null,
+        });
       }
       return fulfill(route, { rows: [], next_cursor: null });
     }
-    if (key === 'GET /api/knowledge') return fulfill(route, { rows: [] });
+    if (
+      key === 'GET /api/knowledge' &&
+      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped')
+    ) {
+      return fulfill(route, { rows: [] });
+    }
     if (
       scenario === 'inbox-auto-applied' &&
       key === 'POST /api/proposals/proposal-completion-1/decisions'

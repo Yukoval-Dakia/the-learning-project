@@ -262,6 +262,15 @@ test.describe('shipped-container usability regression', () => {
     await expect(page.getByRole('img', { name: /数学整体/ })).toHaveCount(0);
     await expectNoInternalCopy(page, '/coach');
     expect(fixture.unexpectedRequests, 'route=/coach degraded unexpected API fixtures').toEqual([]);
+
+    const unexpectedStatuses = await page.evaluate(async () =>
+      Promise.all([
+        fetch('/api/proposals').then((response) => response.status),
+        fetch('/api/knowledge').then((response) => response.status),
+      ]),
+    );
+    expect(unexpectedStatuses).toEqual([501, 501]);
+    expect(fixture.unexpectedRequests).toEqual(['GET /api/proposals', 'GET /api/knowledge']);
   });
 
   test('route=/today surfaces the prepared teaching brief with a11y landmarks and no overflow', async ({
