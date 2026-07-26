@@ -5,7 +5,14 @@
 // （orchestrator 只 boss.send 触发 + 轮询 boss.getJobById），业务代码零改动。
 //
 // 逐边失败语义：硬边（默认）——上游 failed/skipped → 下游 skipped（留 detail 痕迹）；
-// 软边——上游未 succeeded 但硬上游齐 → 下游照跑，job payload 带 { stale: true }。
+// 软边——上游未 succeeded 但硬上游齐 → 下游照跑，并在**节点行**上记 stale=true。
+//
+// YUK-778：软边的 stale 曾**同时**作为 job payload `{ stale: true }` 发给成员 handler。
+// 那条 payload 没有任何 handler 读（两条软边的下游 knowledge_maintenance_nightly /
+// dreaming_nightly 都不碰 job.data），而它的存在暗示「下游会因上游陈旧而调整行为」——
+// 一个不成立的承诺。按「无消费者不留标记」删除 payload；软边语义（下游照跑）不变，
+// stale 事实继续记在节点行上，并由本文件的收尾/放弃日志读出（summarize → describeNodeCensus）
+// ——那一列因此有当下就成立的读者，而不是把同一个「建成不通电」从 payload 挪到列上。
 
 import { randomUUID } from 'node:crypto';
 
@@ -101,6 +108,18 @@ export interface AdvanceSummary {
   enqueued: number;
   running: number;
   pending: number;
+  /**
+   * 本 run 里带 stale 标记的节点数（YUK-778）。
+   *
+   * 语义严格是「软上游未成功、但仍被**放行入队**」——不是「在陈旧输入上跑过」。二者会分叉，
+   * 见 {@link describeNodeCensus} 的措辞说明。
+   *
+   * 这是 `dag_orchestration_node.stale` 的**活消费者**。删掉那条无人读的
+   * `{ stale: true }` job payload 之后，若这一列也没人读，它就只是把同一个「建成不通电」
+   * 从 payload 挪到列上。收尾日志打出这个计数，让「dreaming 昨晚产出为什么怪」能从一行
+   * 日志回答（两张调度态表是 BACKUP_EXCLUDED 的，日志是唯一出口）。
+   */
+  stale: number;
   /** 全部成员节点终态 → run 可收尾。 */
   complete: boolean;
 }
@@ -136,6 +155,59 @@ export function mapBossState(
     default:
       return null;
   }
+}
+
+/**
+ * 把一个节点落到终态**并留下一行日志**（YUK-778 —— 调度控制面唯一的诊断出口）。
+ *
+ * 为什么是一个 choke point 而不是在九个调用点各写一句 console：`dag_orchestration_run/_node`
+ * 两张表都在 `BACKUP_EXCLUDED` 里（export/constants.ts），出了事只有进程日志可查；而在此之前
+ * skip / fail 两类终态**一行日志都不打**——「昨晚 dreaming 为什么没跑」只能靠人肉连进生产库
+ * 翻调度表。散写九句的问题不是啰嗦，是下一个终态分支会**默默**不打日志，缺口静悄悄回来
+ * ——本文件当前已有九个落终态的分支，它们全部来自 YUK-758 之后的 review 修补，还会再加。
+ * 收在这一个函数里，新终态分支自动带日志。
+ *
+ * **只在 CAS 真的写动了那一行时才打**：`updateNodeStatus` 的守卫排除已终态节点，陈旧/并发
+ * 调用影响 0 行却照样 resolve。无条件打日志会报出从未发生的转移（例如把一个已 succeeded
+ * 的节点报成 failed），那比不打更坏——诊断出口一旦会说谎就不能用了。
+ *
+ * 分级：failed → error（有东西坏了）；skipped → warn（多数是硬上游失败的**连坐**，是设计
+ * 内的降级路径，不该和真故障同级喊）；succeeded → 不打（一夜 14 个成员全打就是噪声，且
+ * 「成功但空跑」YUK-779 已在 handler 侧 loud log 过一次，收尾行还会给总账）。
+ */
+async function settleNode(
+  db: Db,
+  run: RunRow,
+  node: NodeRow,
+  input: { status: 'succeeded' | 'failed' | 'skipped'; detail?: string | null; now: Date },
+): Promise<boolean> {
+  const applied = await updateNodeStatus(db, node.id, input);
+  if (!applied) return false;
+  node.status = input.status;
+  if (input.status === 'succeeded') return true;
+  const line = `[orchestrator] node '${node.job_name}' ${input.status} in run ${run.id} (${run.run_date})${
+    input.detail ? `: ${input.detail}` : ''
+  }`;
+  if (input.status === 'failed') console.error(line);
+  else console.warn(line);
+  return true;
+}
+
+/**
+ * run 级日志的节点总账一行（YUK-778）。
+ *
+ * stale 那一项措辞是 **enqueued despite**，不是「ran with」（PR #1083 codex P2）：`node.stale`
+ * 由 `claimNodePending` 在 **入队那一刻**写下，它记的是「软边放行了这个节点」，**不是**
+ * 「这个节点在陈旧输入上跑过」。二者在两条真实路径上会分叉——
+ *  · 领取成功但 `boss.send` 返回 null 且预留 id 查无 job → 节点直接判 failed，**从未执行**；
+ *  · 带 `startAfter` 错峰的节点在 job 起跑前整条 run 被 abandon → 同样从未执行。
+ * 两种情形节点都仍带 stale=true。写「ran with」会让这唯一的诊断出口给出一个事实错误的结论
+ * （「它在陈旧数据上跑了」），而运维恰恰会据此去查它的产出。措辞必须只声称已证实的那一半。
+ */
+function describeNodeCensus(s: AdvanceSummary): string {
+  return `${s.succeeded}/${s.total} succeeded, ${s.failed} failed, ${s.skipped} skipped, ${
+    s.enqueued + s.running
+  } still in flight, ${s.pending} never started, ${s.stale} enqueued despite a non-succeeded soft upstream`;
 }
 
 /**
@@ -213,12 +285,11 @@ async function advancePendingNode(
       // run 永不 completed、依赖它的分支永不推进，tick 每分钟空转到次夜被 abandon
       //（YUK-758 review ToTjN）。收敛为终态 skipped 并留因：让本夜图按「少了这个成员」正常收尾，
       // 其硬下游据 skipped 语义跳过（与上游失败同一处理），运维也能从 detail 看出真因。
-      await updateNodeStatus(deps.db, node.id, {
+      await settleNode(deps.db, deps.run, node, {
         status: 'skipped',
         detail: 'job is no longer a DAG member in the running build (manifest changed mid-run)',
         now,
       });
-      node.status = 'skipped';
       return false;
     }
 
@@ -230,12 +301,11 @@ async function advancePendingNode(
     // 收敛并留因，绝不留下无法收敛的 run。
     const missingHard = upstreams.find((u) => !u.soft && !u.up);
     if (missingHard) {
-      await updateNodeStatus(deps.db, node.id, {
+      await settleNode(deps.db, deps.run, node, {
         status: 'skipped',
         detail: `upstream '${missingHard.job}' has no node row in this run`,
         now,
       });
-      node.status = 'skipped';
       return false;
     }
 
@@ -244,12 +314,11 @@ async function advancePendingNode(
       (u) => !u.soft && u.up && (u.up.status === 'failed' || u.up.status === 'skipped'),
     );
     if (blocked?.up) {
-      await updateNodeStatus(deps.db, node.id, {
+      await settleNode(deps.db, deps.run, node, {
         status: 'skipped',
         detail: `upstream '${blocked.up.job_name}' ${blocked.up.status}`,
         now,
       });
-      node.status = 'skipped';
       return false;
     }
 
@@ -260,6 +329,7 @@ async function advancePendingNode(
     if (!allTerminal) return false;
 
     // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游未 succeeded（含缺行）→ stale。
+    // 这个事实只落**节点行**，不进 job payload（YUK-778，理由见文件头）。
     const stale = upstreams.some((u) => u.soft && (!u.up || u.up.status !== 'succeeded'));
 
     // 先原子领取（CAS pending→enqueued），只有赢家 send——杜绝并发 advanceRun 重复付费入队
@@ -270,12 +340,24 @@ async function advancePendingNode(
     const bossJobId = randomUUID();
     const claimed = await claimNodePending(deps.db, node.id, { bossJobId, stale, now });
     if (!claimed) return false;
+    // 内存行跟上刚落库的 stale（YUK-778）。本轮 summarize 读的是这张内存 map，不同步就会
+    // 少算本轮新入队的 stale 节点。
+    //
+    // **这不是防御性的**（独立评审 NIT）：初稿注释以为「刚入队的节点非终态 ⇒ 本轮 complete
+    // 必为 false ⇒ 收尾日志打不到这个漏算」，那条推理有洞——紧接着的 send-returns-null 分支
+    // （见下方 `if (!sentId)`）会把**刚领取的这个节点**在同一轮里落成 failed。若它恰是最后
+    // 一个非终态节点，本轮 complete 就是 true，收尾总账带着漏算的 stale 计数打出去。
+    // 故此处的同步是真在修一条可达路径，不是洁癖。
+    node.stale = stale;
 
     // 同轮第 n 个入队者延后 n×间隔（封顶）。第 0 个立刻发 → 串行链上零延迟。
     const startAfter = Math.min(staggerIndex * LAYER_STAGGER_SECONDS, LAYER_STAGGER_MAX_SECONDS);
+    // payload 恒空（YUK-778）：成员 handler 一律不读 job.data，从前那条 `{ stale: true }`
+    // 没有任何消费者。留着它会让 manifest 的软边注释「下游带 stale 照跑」读起来像是下游
+    // **知道**自己在陈旧输入上跑——它不知道。空 payload 如实表达「触发即执行」。
     const sentId = await deps.boss.send(
       jobName,
-      stale ? { stale: true } : {},
+      {},
       startAfter > 0 ? { id: bossJobId, startAfter } : { id: bossJobId },
     );
     if (!sentId) {
@@ -285,12 +367,11 @@ async function advancePendingNode(
       const existing = await deps.boss.getJobById(jobName, bossJobId);
       if (!existing) {
         // 确实没建成 → 立即标 failed，免得挂到 NODE_TIMEOUT_SECONDS 才被发现、拖垮下游。
-        await updateNodeStatus(deps.db, node.id, {
+        await settleNode(deps.db, deps.run, node, {
           status: 'failed',
           detail: 'boss.send returned null and no job exists for the reserved id',
           now,
         });
-        node.status = 'failed';
         return false;
       }
     }
@@ -317,13 +398,13 @@ async function pollInflightNode(
     //
     // 只**盖 detail**，不改 status：节点仍是 succeeded、硬下游仍照跑。「异常空跑要不要
     // 直接判 failed（进而让硬下游 skip）」是产品语义决策，见 job-yield.ts 文件末。
-    await updateNodeStatus(deps.db, node.id, {
+    await settleNode(deps.db, deps.run, node, {
       status: 'succeeded',
       detail: readJobYieldReport(job?.output)?.detail ?? undefined,
       now,
     });
   } else if (jobState === 'failed') {
-    await updateNodeStatus(deps.db, node.id, {
+    await settleNode(deps.db, deps.run, node, {
       status: 'failed',
       detail: 'pg-boss job failed',
       now,
@@ -345,9 +426,9 @@ async function pollInflightNode(
       console.warn(
         `[orchestrator] node '${node.job_name}' (${node.id}) has no pg-boss job for reserved id ${node.boss_job_id} — re-sending idempotently (send never landed)`,
       );
-      await deps.boss.send(node.job_name, node.stale ? { stale: true } : {}, {
-        id: node.boss_job_id,
-      });
+      // payload 恒空，与首次 send 一致（YUK-778）——补发必须与原发同形，否则「同 id 幂等
+      // 补发」这条不变量在语义上就不成立了。
+      await deps.boss.send(node.job_name, {}, { id: node.boss_job_id });
       return;
     }
     // 仍在飞（created/retry/active-not-yet）或超出补发窗仍查无 → 超时兜底。
@@ -363,7 +444,7 @@ async function pollInflightNode(
           `node timed out in run ${deps.run.id}`,
         );
       }
-      await updateNodeStatus(deps.db, node.id, {
+      await settleNode(deps.db, deps.run, node, {
         status: 'failed',
         detail: jobState === null ? 'pg-boss job not found (timeout)' : 'timeout',
         now,
@@ -426,6 +507,15 @@ async function cancelRunInflightJobs(
   deps: { db: Db; boss: OrchestratorBoss },
   run: RunRow,
   now: Date,
+  /**
+   * 本次调用是否**赢下了**那条 run 的 abandon CAS（YUK-778 独立评审 MINOR）。只影响是否打
+   * 总账日志，不影响清扫本身——清扫是尽力止损，输掉 CAS 也照做（幂等，且已终态节点被跳过）。
+   *
+   * 为什么必须分开：输掉 CAS 意味着**别人**收尾了这条 run，而对手可能是 `completed`。此时
+   * 无条件打「abandoned run X left …」就会在 error 级报告一次没发生的放弃——正是本 PR 的
+   * 日志设计要杜绝的那类谎话。上面那行 ABANDONING 已经这么闸了，总账不跟上就是半道闸。
+   */
+  announce: boolean,
 ): Promise<void> {
   let nodes: Map<string, NodeRow>;
   try {
@@ -437,11 +527,21 @@ async function cancelRunInflightJobs(
     );
     return;
   }
+  // 放弃前的节点总账（YUK-778）。这一行**就是**「昨晚为什么没跑完」的答案：它是被放弃的
+  // 那一夜留下的唯一快照——下面的清扫会把每个非终态节点改写成 failed/skipped，事后再查
+  // 调度表已看不出「当时卡在哪一层」。两张表又 BACKUP_EXCLUDED，日志是唯一出口。
+  if (announce) {
+    console.error(
+      `[orchestrator] abandoned run ${run.id} (${run.run_date}) left ${describeNodeCensus(
+        summarize(nodes),
+      )} — settling its non-terminal nodes and cancelling their pg-boss jobs`,
+    );
+  }
   for (const node of nodes.values()) {
     if (isTerminalNodeStatus(node.status)) continue;
     try {
       if (!node.boss_job_id) {
-        await updateNodeStatus(deps.db, node.id, {
+        await settleNode(deps.db, run, node, {
           status: 'skipped',
           detail: 'run abandoned before this node was enqueued',
           now,
@@ -454,7 +554,7 @@ async function cancelRunInflightJobs(
         node.boss_job_id,
         `run ${run.id} (${run.run_date}) abandoned`,
       );
-      await updateNodeStatus(deps.db, node.id, {
+      await settleNode(deps.db, run, node, {
         status: 'failed',
         detail: cancelled
           ? 'run abandoned; pg-boss job cancelled'
@@ -485,10 +585,12 @@ function summarize(nodes: Map<string, NodeRow>): AdvanceSummary {
     enqueued: 0,
     running: 0,
     pending: 0,
+    stale: 0,
     complete: false,
   };
   for (const node of nodes.values()) {
     s.total += 1;
+    if (node.stale) s.stale += 1;
     switch (node.status) {
       case 'succeeded':
         s.succeeded += 1;
@@ -562,10 +664,19 @@ export async function runOrchestratorStart(
   // 残留（不可消除、已知并接受）：恰好卡在 claim→send 之间的那一次 advance 仍可能漏出一只 job。
   // 另一侧的取舍：先 finishRun 意味着扫描中途崩溃会留下「已 abandoned 但未取消」的 job——但那
   // 恰好等于本 PR 之前的行为，是严格改善而非回退；而 TOCTOU 是持续存在的洞。
-  for (const stale of await listActiveRuns(deps.db)) {
-    if (stale.run_date !== runDate) {
-      await finishRun(deps.db, stale.id, 'abandoned', now);
-      await cancelRunInflightJobs(deps, stale, now);
+  for (const leftover of await listActiveRuns(deps.db)) {
+    if (leftover.run_date !== runDate) {
+      // 只在 CAS 真赢时才喊（YUK-778）：finishRun 的 where 带 status='running'，并发的
+      // 收尾者会影响 0 行却照样 resolve，无条件打日志等于报出一次没发生的放弃。
+      const abandoned = await finishRun(deps.db, leftover.id, 'abandoned', now);
+      if (abandoned) {
+        console.error(
+          `[orchestrator] ABANDONING run ${leftover.id} (${leftover.run_date}) — it was still 'running' when the ${runDate} anchor fired, i.e. that night never reached a terminal state`,
+        );
+      }
+      // 清扫无条件跑（止损），但总账日志跟着同一个 CAS 结果走——见 cancelRunInflightJobs 的
+      // `announce` 参数：输掉 CAS 时对手可能是 `completed`，那时喊「abandoned」就是假消息。
+      await cancelRunInflightJobs(deps, leftover, now, abandoned);
     }
   }
 
@@ -574,7 +685,17 @@ export async function runOrchestratorStart(
     // cron 重投递防重（YUK-758 review ToPUE）：cron start job 在崩溃/重投递下会二次执行；
     // 若今日已有**任意**状态的 run（含 tick 链已推到 completed 的），cron 绝不再建第二条
     // 重发全部 root（重复整晚付费任务）。manual 触发例外——显式重跑允许在完成后再建新 run。
-    if (trigger === 'cron' && (await getLatestRunForDate(deps.db, runDate))) {
+    const guarded = trigger === 'cron' ? await getLatestRunForDate(deps.db, runDate) : null;
+    if (guarded) {
+      // 这条 return 是**「今夜整链不跑」的第四种成因**，且在本票之前同样一行日志不打
+      //（YUK-778 独立评审 MAJOR）。防重本身是对的（cron 重投递不该重发整晚付费任务），但它
+      // 也会在一个不该沉默的场景上触发：`src/server/export/constants.ts:312-316` 自述，
+      // 备份还原后残留的 `completed` run 会让本闸「skip that calendar day's chain entirely…
+      // silent」。运维看到的又是「昨晚什么都没发生」——与本票要修的那个不可区分性同形。
+      // 隔壁 runOrchestratorCatchUp 的同类跳过早就打日志了，这里补齐。
+      console.warn(
+        `[orchestrator] cron anchor for ${runDate} did NOT start a chain: run ${guarded.id} already exists for this date (${guarded.status}). This is the redeliver guard; if you did not expect a run today, check for a leftover row (e.g. an archive restore) — the guard cannot tell one from a genuine earlier start`,
+      );
       return null;
     }
     // 原子建 run + 落节点（ToqXn）：杜绝 createRun 提交后崩溃留 0 节点 run。
@@ -584,7 +705,14 @@ export async function runOrchestratorStart(
       jobNames: [...deps.dag.nodes.keys()],
       now,
     });
-    if (!run) {
+    if (run) {
+      // 唯一一行「今晚确实开闸了」的证据（YUK-778）。在此之前一次**成功**的夜跑从头到尾
+      // 不打任何日志——于是「昨晚跑了吗」和「昨晚 worker 根本没起来」在日志里长得一模一样。
+      // 只在**真建成**时打（撞单飞的败者走下面的 adopt 分支，它没开闸，不该也喊一声）。
+      console.log(
+        `[orchestrator] run ${run.id} started for ${runDate} (trigger=${trigger}, ${deps.dag.nodes.size} member(s), ${deps.dag.roots.length} root(s))`,
+      );
+    } else {
       // 撞单飞（并发 start）——采纳赢家的 run。
       run = await getActiveRunForDate(deps.db, runDate);
     }
@@ -791,7 +919,13 @@ async function advanceAndContinue(
       timeoutSeconds: deps.timeoutSeconds,
     });
     if (summary.complete) {
-      await finishRun(deps.db, deps.run.id, 'completed', now);
+      // 收尾行只在 CAS 真赢时打（YUK-778）：两条并发 tick 可以同时判 complete，但只有一条
+      // 真的转移了 run 状态。另一条无条件打日志就会让「今夜收尾」在日志里出现两次。
+      if (await finishRun(deps.db, deps.run.id, 'completed', now)) {
+        console.log(
+          `[orchestrator] run ${deps.run.id} (${deps.run.run_date}) completed: ${describeNodeCensus(summary)}`,
+        );
+      }
       settled = true;
     }
   } catch (err) {
@@ -816,8 +950,9 @@ async function advanceAndContinue(
     }
   }
 
-  // 到此：run 已收尾，或下一拍已确认排队。此刻才吞掉推进失败并留 loud log
-  // （FAST 队列无 DLQ，无日志即全无声）。
+  // 到此：run 已收尾，或下一拍已确认排队。此刻才吞掉推进失败并留 loud log——本分支是
+  // **被吞掉**的失败，pg-boss 看到的是一次成功的 tick，故它不会进 DLQ（YUK-778 给
+  // ORCHESTRATOR_QUEUE 加的 DLQ 只兜「抛到 pg-boss 且耗尽重试」的那一类）。日志仍是唯一出口。
   if (advanceError) {
     console.error(
       `[orchestrator] advance failed for run ${deps.run.id} (${deps.run.run_date}) — the next tick IS queued, so the chain survives; state is re-read from DB next tick`,

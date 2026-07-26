@@ -231,7 +231,8 @@ export const knowledgeCapability = defineCapability({
         // YUK-48：KnowledgeReviewTask maintenance producer（多步 agent 档）。
         // YUK-758 DAG 成员：读 proposal inbox（before/after delta）在 cheap producer 之后跑。
         // 对 knowledge_edge_propose 是**软边**（旧 03:00 在 edge_propose 02:30 之后；上游失败它照跑、
-        // 带 stale——只是少看几条 pending，仍正确产出）。cron 移除，orchestrator 触发。
+        // 只是少看几条 pending，仍正确产出；handler 不感知上游状态，YUK-778 已删掉那条无人
+        // 读的 stale payload）。cron 移除，orchestrator 触发。
         name: 'knowledge_maintenance_nightly',
         dependsOn: [{ job: 'knowledge_edge_propose_nightly', soft: true }],
         queue: 'agent',

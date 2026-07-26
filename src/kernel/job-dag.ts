@@ -10,13 +10,15 @@
 // 步即入队）。每条边引用一个上游 job 名，上游**必须**同为图成员。
 //
 // 边的失败语义（逐边）：默认**硬**（上游失败/跳过 → 下游跳过，留 skip 痕迹）；
-// 标 `soft` 的边 → 上游失败下游照跑，但 orchestrator 传入 stale 标记。
+// 标 `soft` 的边 → 上游失败下游**照常执行**，orchestrator 在该节点的调度行上记 stale=true
+// 留痕。下游 handler **不会**收到任何 stale 信号，也不因此改变行为（YUK-778：那条
+// `{ stale: true }` job payload 从来没有消费者，已删）——软边的全部含义就是「不阻塞」。
 
 /** 一条依赖边的规范形。 */
 export interface JobDependency {
   /** 上游 job 名（必须是已声明的图成员）。 */
   job: string;
-  /** 软边：上游失败/跳过时下游仍跑（带 stale 标记）。缺省 false = 硬边。 */
+  /** 软边：上游失败/跳过时下游仍跑（调度行记 stale，handler 无感）。缺省 false = 硬边。 */
   soft?: boolean;
 }
 
