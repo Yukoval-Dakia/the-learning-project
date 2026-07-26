@@ -114,10 +114,16 @@ answer route 本身**不**记成本——LLM 调用成本经 judge runner 内部
 -- （registry.ts）。⚠️ 上界口径：含普通练习判分，非 probe 专属（见上）。
 -- cost 是原始计费值，币种在 currency 列——聚合必须按 currency 分组，
 -- 绝不裸 SUM 混币（schema.ts cost_ledger 注释）。
-SELECT task_kind, provider, model, cost, currency, tokens_in, tokens_out, occurred_at
+SELECT task_kind, provider, model, currency,
+       SUM(cost) AS total_cost,
+       SUM(tokens_in) AS total_tokens_in,
+       SUM(tokens_out) AS total_tokens_out,
+       MIN(occurred_at) AS first_occurred_at,
+       MAX(occurred_at) AS last_occurred_at
 FROM cost_ledger
 WHERE task_kind LIKE '%JudgeTask'
-ORDER BY occurred_at DESC LIMIT 20;
+GROUP BY task_kind, provider, model, currency
+ORDER BY last_occurred_at DESC;
 ```
 ⚠️ **旧版此处三重写错**（YUK-790 核对修正）：查的是 `event WHERE action='ai:tool_call'`——该 action **不存在**；工具调用落 `tool_call_log` **表**而非 event 流；且 `tool_call_log.cost` 按设计恒为 0（schema.ts 明注：成本权威在 `cost_ledger`，此列填值会双记）。payload 键 `model`/`input_tokens`/`output_tokens`/`cost_usd` 亦全部不存在。
 若 `multimodal_direct` OAuth lane 启用，成本经 owner Claude Max 订阅（不按 token 计），日志只记 invocation 不记 cost_usd。

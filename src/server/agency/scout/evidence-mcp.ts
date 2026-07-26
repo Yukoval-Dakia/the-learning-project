@@ -299,12 +299,13 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
         //     demands a named KC). Pending YUK-794 / ADR-0050 §(a).
         //   - `mastered`: FLIP-only. Per the kc_typed_state column comment in schema.ts it is
         //     "reserved for the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT
-        //     written in this MVP" — i.e. it waits on the SCORING side, ADR-0050 §(b1) /
-        //     YUK-795. Landing YUK-794 does NOT make `mastered` start appearing.
+        //     written in this MVP". YUK-795 owns prediction_score/hard-confirm consumers, not
+        //     this writer. Landing YUK-794 does NOT make `mastered` start appearing.
         //
-        // The hard warning survives both energizations: an empty read is the ABSENCE of a
-        // signal, never the signal "not confused" / "not mastered".
-        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only value reachable today is `no-evidence`. The other two are blocked on TWO SEPARATE AND UNRELATED rails: `confused-with-X` awaits the induction side naming a confused-with KC (pending, YUK-794), while `mastered` is FLIP-only — written solely by the post-Rust-scorer claim-survival FLIP (ADR-0046, pending YUK-795). Landing one does NOT unblock the other. So an absent/`no-evidence` result means THOSE RAILS ARE NOT WIRED UP YET — it is NOT evidence that the learner is un-confused, and NOT evidence that the learner has not mastered the KC. Draw no conclusion from it in either direction.',
+        // Distinguish a missing projection (no row) from the persisted `no-evidence` soft state:
+        // reconcile can write `no-evidence` together with provenance when evidence exists but
+        // does not satisfy a terminal-state gate.
+        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only classification value reachable today is `no-evidence`. The other two are blocked on TWO SEPARATE AND UNRELATED rails: `confused-with-X` awaits the induction side naming a confused-with KC (pending, YUK-794), while `mastered` is written solely by the post-Rust-scorer claim-survival FLIP (ADR-0046; no current writer). YUK-795 owns prediction_score and hard-confirm consumers, not the `mastered` writer. Landing one does NOT unblock the other. Interpret an empty result as a missing projection, never as evidence that the learner is un-confused or not mastered. A returned `no-evidence` row is different: inspect its evidence_event_ids, last_evidence_at, and lifecycle as provenance showing that evidence was processed but did not satisfy a terminal-state gate.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
