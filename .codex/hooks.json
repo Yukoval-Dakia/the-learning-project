@@ -8,6 +8,11 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-session-start.mjs\"",
             "statusMessage": "Recording dirty-file baseline"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-remember-session-start.sh\"",
+            "statusMessage": "Loading .remember/ memory"
           }
         ]
       }

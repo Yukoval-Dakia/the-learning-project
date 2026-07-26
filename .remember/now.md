@@ -1,21 +1,7 @@
-# Current handoff — 2026-07-22
 
-## Authoritative state
-
-- `origin/main` is exactly `d5e43a08c01ed77ecce804c314e64b3f2127cad6` at this closeout.
-- Main working tree is owner-dirty and was not touched. Cockpit closeout was prepared in an isolated worktree from that exact base and must not be pushed by this lane.
-- Refreshed claude-context index: 1,654 files / 29,494 chunks. Existing-Linear grounding produced 105 candidates / 76 unique issues and a strategic 30-ticket order with a READY-only leaf wave.
-
-## Delivered wave
-
-- PR #1023 / YUK-755 merged `91dd6490`; Done.
-- PR #1021 / YUK-742 merged `0d30fbcc`; Done.
-- PR #1020 / YUK-590 merged `07c4a982`; Done.
-- PR #1022 / YUK-745 merged `d5e43a08`; Done.
-- All four merged with exact-head CI and review threads clean. YUK-745 final focused DB suite was 34/34; typecheck, Biome, partition, LSP, and diff checks also passed.
-- This wave has 0 open PRs. Repository-wide open PRs are unrelated #1019 and Dependabot #1012-1016.
-
-## Next / gates
-
-- READY residue in the strategic order is YUK-749, but it conflicts with an owner-modified file; do not silently start it. Preserve all NEEDS_DESIGN / OWNER_GATED / BLOCKED classifications recorded in `PLAN.md`, especially YUK-669's owner gate.
-- YUK-590 and YUK-755 remain Done but carry accidental synthetic SLA metadata (`2099-12-31` / `all`). Current Linear MCP cannot clear it safely; no Linear API token exists in the environment; attempted comment capture failed because the wrapper requires incompatible optional fields. Operator must clear `slaBreachesAt` and `slaType` together through Linear UI or authenticated raw GraphQL without reopening either issue.
+## 20:38 | main
+Resumed thread-clearing flow for PRs #1086 (YUK-798), #1085 (YUK-777), and #1084 (YUK-786) with separate lanes (`repair-pr1086-fresh`, `repair-pr1085-round`, `repair-pr1084-boundary`), continuing `tests/usability/api-fixtures.ts` + `tests/usability/shipped-container.spec.ts` fixes on 6f938a19 for `PRRT_kwDOSXB98s6T2cNi`/`T2cNj`/`T2cNn`/`T2X29` (breaker actionability, full `LearningItemAcceptResult`, weekly tz, and proposal/acceptance consistency), while `repair-pr1085-round` keeps durable recovery correctness work in `src/capabilities/practice/server/{judge-run-dispatch.ts,judge-run-status.ts}`/`judge_pending_reconcile.ts`/`judge_run.ts` (singleton sweep, duplicate dispatch prevention, token refund, unique attempts, raw-row pagination, dead/manual status), and `repair-pr1084-boundary` continues agency ownership/contract cleanup in `src/capabilities/agency/server/conjecture/*` + `src/kernel/untrusted-text.ts` (including removing duplicate `FailureAttemptWithReasoningTrace`) with image-delivery threads `PRRT_kwDOSXB98s6T17nl`, `PRRT_kwDOSXB98s6T2D-F`, `PRRT_kwDOSXB98s6T2PCo` still intentionally open.
+## 20:50 | main
+07-24 全段收官：按收敛规则合并 PRs #1040–#1047/#1049–#1055（含 #1041、#1043/1048、#1044、#1047、#1051–#1052、#1054–#1055，共17个）并同步更新 `PLAN.md`、`docs/cockpit-0724-close`、`docs/audit/2026-07-24-coupling-multiuser-readiness.md`、`docs/design/2026-07-24-multiuser-sharing-three-layer-model.md`，将 `src/server/event-subscriptions` 与 `src/server/judge/*`（含 #1044/#1050/#1051/#1052）通道修透，拉齐 0074–0078 迁移链，且新立 YUK-763/764/765/766/767/768/769/770/771/772/773。
+## 20:52 | main
+At 20:52 completed/confirmed new exact-head replacement rounds for PR#1086 YUK-798 (`tests/usability/api-fixtures.ts`, `tests/usability/shipped-container.spec.ts`, SHA `78ba806b4300cdd758d5422b3d30fe0d22861b28`) and PR#1085 YUK-777 (`src/capabilities/practice/jobs/judge_pending_reconcile.ts`, `judge-run-dispatch.ts`, `judge-run-status.ts`, `src/kernel/manifest.ts`, SHA `7d87ef5f9cb35dca91911e9f0e0c29b0dfb81351`), launched `repair-pr1086-round2` and `repair-pr1084-round2` to fix fresh #1086/1084 threads, and kept PR#1084 YUK-786 progress on `src/kernel/untrusted-text.ts`/`src/capabilities/agency/server/conjecture/evidence-enrichment.ts` (SHA `379931e6c8f46178b05c19af38178b660bb5044c`) with `JUDGE_DURABLE_ENABLED` 仍关闭，同时保持未解决线程（含 YUK-804 镜像/快照范围）待定且 #1078/#1080/#1083 合并继续受环境限制。

@@ -4,6 +4,7 @@
 - Issue tracker 用 Linear：PR / commit 写 `YUK-XX`，分支优先用 Linear 的 `yuk-xx-...` 格式；新工作不要用裸 `#N`。详细规则见 `docs/agents/issue-tracker.md`。
 - Codex 项目级 hooks 在 `.codex/hooks.json`，镜像 Claude 侧 `.claude/settings*.json` 关键约束（直接复用 `.claude/hooks/*` 脚本，不重复实现）：
   - Codex 当前 `PreToolUse` / `PostToolUse` 只可靠匹配 Bash；编辑类检查保持轻量：SessionStart 记录 baseline，Stop hook (`.codex/hooks/codex-stop-edit-check.mjs`) 只检查本会话新增/变化的 dirty JSON 可解析性，不在 Stop 阶段自动跑 Biome
+  - `.remember/` 桥接（SessionStart `codex-remember-session-start.sh` + Stop `codex-remember-stop.sh`）：直接复用已安装的 `remember` 插件 pipeline（`pipeline.shell build-prompt/call-haiku/save-position`，不 fork）注入/回写同一份 `.remember/now.md`，与 Claude Code 共享 lock/cooldown/NDC 标记；Codex 侧独立 extractor 是 `.codex/hooks/codex_extract.py`（解析 `~/.codex/sessions/**/rollout-*.jsonl`，schema 未文档化，可能随 Codex 升级失效，fail-soft 从不 block Stop）；独立 position 文件 `.remember/tmp/last-save-codex.json`
   - Bash workflow guard (`.codex/hooks/codex-bash-workflow-guard.mjs`) 给全仓 gate 加摩擦：`pnpm lint` / `pnpm test` / `pnpm build` 默认阻止，明确收尾时用 `CODEX_FULL_GATE=1 pnpm <script>`；同时阻止 `git add .` / `git commit` 带入 zip/tar/dmg/大文件等 artifact
   - Bash 中禁止危险 git 操作 (`.claude/hooks/git-guard.mjs`)：force push、force delete branch、main/master 上 commit、force remove worktree
   - Linear-tracked branch (yuk-*/foundation-*/p\<N\>-*) 上 commit 必须含 `YUK-NN`，多个 issue 必须逐个重复 Linear keyword（例如 `Closes YUK-27` + `Closes YUK-28`，不要写 `Closes YUK-27 + YUK-28`）(`.claude/hooks/linear-guard.mjs`)
