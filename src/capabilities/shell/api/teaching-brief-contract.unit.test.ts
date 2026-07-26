@@ -146,8 +146,53 @@ describe('TeachingBriefResponseSchema', () => {
     expect(TeachingBriefResponseSchema.safeParse(drifted).success).toBe(false);
   });
 
+  // YUK-785 — `tested_claim_md` discloses that a probe belongs to the PRE-EDIT claim. It is
+  // meaningful only where a probe exists and only when it actually differs from the claim on
+  // display, so the schema pins both directions rather than trusting the projection.
+  it('accepts an outcome disclosing the pre-edit claim its probe tested', () => {
+    const rewritten = {
+      brief: {
+        ...outcomeResponse.brief,
+        finding: { ...outcomeResponse.brief.finding, tested_claim_md: '改写前的判断' },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(rewritten).success).toBe(true);
+  });
+
+  it('rejects the disclosure on a pending finding (no accept ⇒ no rewrite ⇒ no probe)', () => {
+    const impossible = {
+      brief: {
+        ...findingResponse.brief,
+        finding: { ...findingResponse.brief.finding, tested_claim_md: '改写前的判断' },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(impossible).success).toBe(false);
+  });
+
+  it('rejects a disclosure that merely echoes claim_md', () => {
+    // An echo discloses nothing while making the brief look like the displayed claim
+    // was the one under test — exactly the misreading this key exists to prevent.
+    const echo = {
+      brief: {
+        ...outcomeResponse.brief,
+        finding: {
+          ...outcomeResponse.brief.finding,
+          tested_claim_md: outcomeResponse.brief.finding.claim_md,
+        },
+      },
+    };
+    expect(TeachingBriefResponseSchema.safeParse(echo).success).toBe(false);
+  });
+
   it.each([
     ['top-level future section', { ...findingResponse.brief, plan_impact: null }],
+    [
+      'a null (rather than absent) pre-edit disclosure',
+      {
+        ...outcomeResponse.brief,
+        finding: { ...outcomeResponse.brief.finding, tested_claim_md: null },
+      },
+    ],
     ['future action', { ...findingResponse.brief, prepared_action: { kind: 'continue_plan' } }],
     [
       'role-kind mismatch',

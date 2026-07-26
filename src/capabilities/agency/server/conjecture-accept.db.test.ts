@@ -14,8 +14,10 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import {
   DEFAULT_MISCONCEPTION_WEIGHT,
+  misconceptionIdForConjecture,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
+import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconception-edges';
 import { loadPrepDeskConjectures } from '@/capabilities/shell/server/prep-desk';
 import {
   event,
@@ -301,7 +303,13 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(await misconceptionEdgeRows()).toHaveLength(1);
     });
 
-    it('flag ON — edit accept uses the owner-corrected claim as the misconception title', async () => {
+    // YUK-785 — this flag is a dark landmine: OFF today, so whatever an edited accept
+    // mints would ship silently the day it is flipped. An edit must mint NOTHING: the
+    // rewrite has no evidence of its own (titling with it would hang evt_a/evt_b's
+    // provenance off an unevidenced belief), and the original claim is exactly what the
+    // owner declined to accept as worded (persisting it as an active misconception would
+    // park a corrected belief in the knowledge surface). Neither harm is committed.
+    it('flag ON — edit accept mints NO misconception (neither the rewrite nor the original)', async () => {
       process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
       const db = testDb();
       const proposalId = await writeAiProposal(db, {
@@ -313,12 +321,245 @@ describe('acceptConjectureProposal lifecycle', () => {
         corrected_payload: { claim_md: 'you apply the chain rule but drop the inner factor' },
       });
 
+      // No node, no edge — flag ON but the edit path never enters the promote hop.
+      expect(await misconceptionRows()).toHaveLength(0);
+      expect(await misconceptionEdgeRows()).toHaveLength(0);
+      // The accept itself still happened, and the rewrite stays durable on the rate
+      // event, so an edited accept remains findable for a later re-evidencing pass.
+      const rates = await rateEvents(proposalId);
+      expect(rates).toHaveLength(1);
+      expect(rates[0].payload).toMatchObject({
+        corrected_by_owner: true,
+        calibration_anchor: 'edit',
+        corrected_claim_md: 'you apply the chain rule but drop the inner factor',
+      });
+      // ND-5 unchanged: an edit never confirms a weakness.
+      expect(await fsrsRowCount()).toBe(0);
+    });
+
+    it('flag ON — edit archives a pre-existing same-identity soft node and its live edge', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const firstProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, firstProposal);
+
+      const secondProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, secondProposal, {
+        corrected_payload: { claim_md: 'you drop the inner factor only under time pressure' },
+      });
+
+      const [node] = await misconceptionRows();
+      const [edge] = await misconceptionEdgeRows();
+      expect(node.source).toBe('soft');
+      expect(node.archived_at).not.toBeNull();
+      expect(edge.archived_at).not.toBeNull();
+      expect(node.title).toBe('you treat the chain rule as multiplying derivatives');
+    });
+
+    it('flag ON create → flag OFF edit still archives the stale soft node and live edge', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const firstProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, firstProposal);
+
+      // Simulate rollback after the soft row already exists. Cleanup must follow persisted
+      // state, not the current writer flag.
+      // biome-ignore lint/performance/noDelete: test the real flag-off transition.
+      delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
+      const secondProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, secondProposal, {
+        corrected_payload: { claim_md: 'you drop the inner factor only under time pressure' },
+      });
+
+      const [node] = await misconceptionRows();
+      const [edge] = await misconceptionEdgeRows();
+      expect(node.source).toBe('soft');
+      expect(node.archived_at).not.toBeNull();
+      expect(edge.archived_at).not.toBeNull();
+    });
+
+    it('flag OFF edit cleans live edges even when the soft node was already archived', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const firstProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, firstProposal);
+      const [node] = await misconceptionRows();
+      await db
+        .update(misconception)
+        .set({ archived_at: new Date('2026-07-26T01:00:00.000Z') })
+        .where(eq(misconception.id, node.id));
+
+      // A later plain promotion preserves the tombstone but reactivates caused_by.
+      const plainAgain = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, plainAgain);
+      expect((await misconceptionEdgeRows()).some((edge) => edge.archived_at === null)).toBe(true);
+
+      // biome-ignore lint/performance/noDelete: test rollback cleanup against persisted state.
+      delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
+      const editProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, editProposal, {
+        corrected_payload: { claim_md: 'owner disputes this cell description' },
+      });
+
+      expect((await misconceptionEdgeRows()).every((edge) => edge.archived_at !== null)).toBe(true);
+    });
+
+    it('edit archives both outgoing and incoming live edges of the stale soft node', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, proposalId);
+      const targetId = misconceptionIdForConjecture('concept_misunderstanding', 'kn_chain_rule');
+      await db.transaction(async (tx) => {
+        await promoteConjectureToMisconception(tx, {
+          conjectureId: 'cj_neighbor',
+          knowledgeId: 'kn_other',
+          claimMd: 'neighbor misconception',
+          causeCategory: 'misread_prompt',
+          confidence: 0.6,
+          recurrenceCount: 2,
+          evidenceEventIds: ['evt_neighbor'],
+          now: new Date('2026-07-26T02:00:00.000Z'),
+        });
+        await createMisconceptionEdge(tx, {
+          from_id: targetId,
+          to_kind: 'misconception',
+          to_id: misconceptionIdForConjecture('misread_prompt', 'kn_other'),
+          relation_type: 'confusable_with',
+          weight: 0.5,
+          created_by: { by: 'ai' },
+          proposed_by_ai: true,
+          now: new Date('2026-07-26T02:00:00.000Z'),
+        });
+      });
+
+      const editProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, editProposal, {
+        corrected_payload: { claim_md: 'owner disputes this cell description' },
+      });
+
+      const touchingTarget = (await misconceptionEdgeRows()).filter(
+        (edge) => edge.from_id === targetId || edge.to_id === targetId,
+      );
+      expect(touchingTarget.length).toBeGreaterThanOrEqual(2);
+      expect(touchingTarget.every((edge) => edge.archived_at !== null)).toBe(true);
+    });
+
+    it('flag ON — edit never archives a pre-existing hard-confirmed same-identity node', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      await db.transaction(async (tx) => {
+        await promoteConjectureToMisconception(tx, {
+          conjectureId: 'cj_hard',
+          knowledgeId: 'kn_chain_rule',
+          claimMd: 'hard-confirmed claim',
+          causeCategory: 'concept_misunderstanding',
+          confidence: 0.9,
+          recurrenceCount: 3,
+          evidenceEventIds: ['evt_hard'],
+          source: 'hard',
+          now: new Date('2026-07-26T00:00:00.000Z'),
+        });
+      });
+
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, proposalId, {
+        corrected_payload: { claim_md: 'owner wording differs' },
+      });
+
+      const [node] = await misconceptionRows();
+      const [edge] = await misconceptionEdgeRows();
+      expect(node.source).toBe('hard');
+      expect(node.archived_at).toBeNull();
+      expect(edge.archived_at).toBeNull();
+      expect(node.title).toBe('hard-confirmed claim');
+    });
+
+    // YUK-785 (codex #1080) — "edit" is decided by CONTENT, not payload presence. The
+    // public schema accepts a corrected_payload identical to the original (only the UI
+    // disables that button). Both boundaries trim now, and the normalized comparison remains
+    // defense in depth for direct callers and legacy rows. Keying off presence previously
+    // made the accept path and brief reader give one no-op accept two different verdicts.
+    it.each([
+      ['identical', 'you treat the chain rule as multiplying derivatives'],
+      ['whitespace-only', '  you treat the chain rule as multiplying derivatives  '],
+    ])(
+      'flag ON — a %s corrected_payload is NOT an edit: promotes, records no correction',
+      async (_label, submitted) => {
+        process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+        const db = testDb();
+        const proposalId = await writeAiProposal(db, {
+          actor_ref: 'research_meeting',
+          payload: baseConjecture(),
+        });
+
+        const result = await acceptAiProposal(db, proposalId, {
+          corrected_payload: { claim_md: submitted },
+        });
+
+        // Treated as a PLAIN accept end to end.
+        expect(result).toMatchObject({ corrected_by_owner: false });
+        const rates = await rateEvents(proposalId);
+        expect(rates[0].payload).toMatchObject({
+          corrected_by_owner: false,
+          calibration_anchor: 'accept',
+        });
+        // A no-op is not a correction, so nothing claims the owner rewrote anything.
+        expect(rates[0].payload).not.toHaveProperty('corrected_claim_md');
+        // …and promotion is NOT skipped (the edit-skip must not swallow a no-op).
+        const miscs = await misconceptionRows();
+        expect(miscs).toHaveLength(1);
+        expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
+      },
+    );
+
+    // The skip is scoped to EDIT accepts only — a plain accept still promotes, so the
+    // guard above cannot quietly disable the whole dark track.
+    it('flag ON — a PLAIN accept still promotes on the proposal claim (skip is edit-only)', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId);
+
       const miscs = await misconceptionRows();
       expect(miscs).toHaveLength(1);
-      expect(miscs[0].title).toBe('you apply the chain rule but drop the inner factor');
-      // Edit still does NOT confirm a weakness — soft track, no FSRS.
+      expect(miscs[0].title).toBe('you treat the chain rule as multiplying derivatives');
+      expect(miscs[0].evidence).toEqual(['evt_a', 'evt_b']);
       expect(miscs[0].source).toBe('soft');
-      expect(await fsrsRowCount()).toBe(0);
     });
 
     it('flag ON — two DISTINCT proposals sharing cause×KC collapse to ONE misconception (cross-proposal UPSERT refreshes seen/evidence)', async () => {

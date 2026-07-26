@@ -181,6 +181,12 @@ const TeachingBriefFindingSectionSchema = z
     claim_md: z.string().min(1),
     knowledge_id: z.string().min(1),
     cause_category: CauseCategory,
+    // YUK-785 — the claim the served probe actually tests, present ONLY after an owner
+    // rewrite (contract §2.1 keeps inapplicable keys ABSENT, never null/empty). The
+    // union-level superRefine below pins where it may appear and that it must differ
+    // from claim_md, so the "edited claim silently inherits the original's probe
+    // evidence" shape fails the wire loudly instead of reading as a normal brief.
+    tested_claim_md: z.string().min(1).optional(),
   })
   .strict();
 
@@ -332,6 +338,26 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
         message: 'prepared_action.knowledge_id must equal finding.knowledge_id',
         path: ['prepared_action', 'knowledge_id'],
       });
+    }
+    // YUK-785 — the pre-edit-claim disclosure is only meaningful where a probe exists and
+    // only when it actually differs from the displayed claim. A `finding` is still pending
+    // (no accept ⇒ no rewrite ⇒ no probe), and an echo of claim_md would disclose nothing
+    // while making the brief look like it had been checked.
+    if (brief.finding.tested_claim_md !== undefined) {
+      if (brief.state === 'finding') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'tested_claim_md is not allowed on a pending finding (no probe exists yet)',
+          path: ['finding', 'tested_claim_md'],
+        });
+      }
+      if (brief.finding.tested_claim_md === brief.finding.claim_md) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'tested_claim_md must differ from claim_md',
+          path: ['finding', 'tested_claim_md'],
+        });
+      }
     }
   });
 

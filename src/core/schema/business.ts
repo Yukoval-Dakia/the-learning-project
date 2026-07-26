@@ -386,7 +386,7 @@ export const ConjectureDraft = z.object({
   // the outputFormat handed to Opus, so the model is told the REAL 280 cap. A wider
   // draft would let a 281–500-char claim pass induction then throw at the proposal
   // parse-barrier → silently swallowed + mis-logged as a retryable AI failure.
-  claim_md: z.string().min(1).max(280),
+  claim_md: z.string().trim().min(1).max(280),
   probe_md: z.string().min(1).max(1000),
   // conjecture-wire #13 (YUK-538 ⑬) — single-writer judge gold reference, produced
   // once at induction by the same Opus sample that produces claim+probe (no runtime

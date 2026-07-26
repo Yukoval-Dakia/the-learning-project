@@ -291,9 +291,14 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
             {/* 发现 — a falsifiable hypothesis, never "你的弱点就是…" (contract §2.2). */}
             <section className="tb-block" aria-labelledby="tb-h-finding">
               <h3 id="tb-h-finding" className="tb-block-title">
-                教研团在检验什么
+                教研团正在跟进的判断
               </h3>
               <p className="tb-claim serif">{brief.finding.claim_md}</p>
+              {brief.finding.tested_claim_md && (
+                <p className="tb-basis">
+                  这道探针检验的是你改写前的判断：{brief.finding.tested_claim_md}
+                </p>
+              )}
               {brief.prepared_action.kind === 'review_finding' &&
                 (editingClaim ? (
                   <div className="tb-claim-edit">

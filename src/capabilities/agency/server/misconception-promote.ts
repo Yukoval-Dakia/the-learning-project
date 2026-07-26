@@ -20,13 +20,16 @@
 
 import { createHash } from 'node:crypto';
 
-import { sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
-import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconception-edges';
+import {
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+} from '@/capabilities/knowledge/server/misconception-edges';
 import { parseFlag } from '@/core/env-flags';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
-import { misconception } from '@/db/schema';
+import { misconception, misconception_edge } from '@/db/schema';
 
 /**
  * The recurrence threshold the accept must meet to promote.
@@ -104,12 +107,78 @@ export function misconceptionIdForConjecture(causeCategory: string, knowledgeId:
   return `misc_${hash}`;
 }
 
+export interface ArchiveSoftMisconceptionResult {
+  misconceptionId: string;
+  archived: boolean;
+}
+
+/**
+ * Archive an existing soft misconception for this cause×KC identity after the owner edits a
+ * later conjecture. The edit disputes the cell's current soft description, so leaving that
+ * prior on the live knowledge surface is unsafe. A hard-confirmed row is never touched: probe
+ * evidence outranks a wording edit. The node and all of its live edges are archived together
+ * under the same per-identity lock, preserving provenance and making the operation reversible.
+ */
+export async function archiveSoftMisconceptionForConjecture(
+  tx: Tx,
+  causeCategory: string,
+  knowledgeId: string,
+  now: Date,
+): Promise<ArchiveSoftMisconceptionResult> {
+  const misconceptionId = misconceptionIdForConjecture(causeCategory, knowledgeId);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`misc:${misconceptionId}`}))`);
+
+  const nodes = await tx
+    .select({ source: misconception.source, archivedAt: misconception.archived_at })
+    .from(misconception)
+    .where(eq(misconception.id, misconceptionId))
+    .limit(1);
+  const node = nodes[0];
+  if (!node || node.source !== 'soft') return { misconceptionId, archived: false };
+
+  if (node.archivedAt === null) {
+    await tx
+      .update(misconception)
+      .set({ archived_at: now, updated_at: now })
+      .where(eq(misconception.id, misconceptionId));
+  }
+
+  const liveEdges = await tx
+    .select({ id: misconception_edge.id })
+    .from(misconception_edge)
+    .where(
+      and(
+        or(
+          and(
+            eq(misconception_edge.from_kind, 'misconception'),
+            eq(misconception_edge.from_id, misconceptionId),
+          ),
+          and(
+            eq(misconception_edge.to_kind, 'misconception'),
+            eq(misconception_edge.to_id, misconceptionId),
+          ),
+        ),
+        isNull(misconception_edge.archived_at),
+      ),
+    );
+  for (const edge of liveEdges) await archiveMisconceptionEdge(tx, edge.id, now);
+
+  return { misconceptionId, archived: node.archivedAt === null };
+}
+
 export interface PromoteConjectureInput {
   /** The conjecture's stable id (= the proposal event id). */
   conjectureId: string;
   /** The KC the misconception corrupts (caused_by target). */
   knowledgeId: string;
-  /** The conjecture claim — becomes the misconception title (the belief text). */
+  /**
+   * The conjecture claim — becomes the misconception title (the belief text).
+   *
+   * YUK-785: must be same-source as `evidenceEventIds`. The live accept path satisfies
+   * this by only ever reaching here on a PLAIN accept (an edited accept skips promotion
+   * entirely — see conjecture-accept.ts), so the title is always the induced claim that
+   * those evidence pointers actually support.
+   */
   claimMd: string;
   causeCategory: string;
   /** Internal confidence (0-1) — becomes the salience weight, never rendered as a number. */

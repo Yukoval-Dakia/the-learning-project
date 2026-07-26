@@ -56,6 +56,11 @@ describe('ConjectureDraft', () => {
     expect(ConjectureDraft.safeParse({ ...valid, discriminating: 'yes' }).success).toBe(false);
   });
 
+  it('trims producer claims and rejects whitespace-only input', () => {
+    expect(ConjectureDraft.parse({ ...valid, claim_md: '  有效判断  ' }).claim_md).toBe('有效判断');
+    expect(ConjectureDraft.safeParse({ ...valid, claim_md: ' \n\t ' }).success).toBe(false);
+  });
+
   // Regression (PR-1 review): claim_md max MUST match ConjectureProposalChange's
   // (proposal.ts, max 280). The draft is the model-facing outputFormat AND feeds
   // straight into the proposal payload — a wider draft would let a 281+ char claim

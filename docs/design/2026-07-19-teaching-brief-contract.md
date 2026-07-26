@@ -215,6 +215,14 @@ export async function loadTeachingBrief(
   `corrected_claim_md`，否则读 proposal `proposed_change.claim_md`；`knowledge_id` 与
   `cause_category` 仍读 proposal。当前 public decision route 尚未透传 `corrected_payload`，所以
   P0F 不承诺改写 UI，只保证既有 edited event 能被忠实投影。
+- **（YUK-785 补充，2026-07-25）**：`corrected_payload` 只允许改 `claim_md`（`proposal.ts`
+  `.strict()`），而同事务铸出的 probe 仍取 proposal 的 `probe_md` / `probe_reference_md`——所以
+  **改写后被检验的仍是改写前那条判断**。因此 `probe_ready` 与两个 outcome 态在
+  `corrected_by_owner` 时必须同时给出 `finding.tested_claim_md`（= proposal 原 `claim_md`，即这道
+  probe 实际检验的判断），并在 `current_outcome.summary_md` 里把探针证据归给它，**不得**对改写后
+  的 claim 作支持/排除断言。该键只在改写发生时出现、且必须 `≠ claim_md`；`finding` 态（尚未
+  accept，故无 probe）禁止出现——两条都由 strict Zod 的 union superRefine 兜底。不做 runtime 重生
+  探针（违反 registry single-writer），也不放宽 `corrected_payload`。
 - P0F/2 尚无 outcome ack 或 remediation SoT，所以 outcome 的 `prepared_action` 必须是
   `{kind:'none'}`。P0F/4 落地 ack、YUK-709 接上现有 KC-scoped practice 时，必须同步升级
   TypeScript 判别联合与 strict Zod schema，才可新增对应 action。不得让当前 schema 提前接受

@@ -494,7 +494,7 @@ export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalCha
 // misconception state (the consistency-gate role YUK-344 plays in Phase 1+; Phase 0
 // substitutes this in-payload contract). See docs/design/2026-06-27-a13-ts-half-design.md.
 export const ConjectureProposalChange = z.object({
-  claim_md: z.string().min(1).max(280),
+  claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS),
   knowledge_id: z.string().min(1),
   cause_category: CauseCategory,
   confidence: z.number().min(0).max(1),

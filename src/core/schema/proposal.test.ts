@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ConjectureProposalChange,
   ProposalDecisionInput,
   aiProposalKinds,
   parseAiProposalPayload,
@@ -14,6 +15,30 @@ const base = {
   rollback_plan: { action: 'write correction event' },
   cooldown_key: 'proposal:test',
 } as const;
+
+describe('ConjectureProposalChange', () => {
+  const valid = {
+    claim_md: '你混淆了必要条件与充分条件',
+    knowledge_id: 'k1',
+    cause_category: 'concept_confusion' as const,
+    confidence: 0.5,
+    recurrence_count: 2,
+    probe_md: '判断条件关系。',
+    probe_reference_md: '必要不等于充分。',
+    discriminating: true,
+    predicted_p: 0.3,
+    baseline_p_at_induction: 0.5,
+  };
+
+  it('trims persisted claims and rejects whitespace-only producer input', () => {
+    expect(ConjectureProposalChange.parse({ ...valid, claim_md: '  有效判断  ' }).claim_md).toBe(
+      '有效判断',
+    );
+    expect(ConjectureProposalChange.safeParse({ ...valid, claim_md: ' \n\t ' }).success).toBe(
+      false,
+    );
+  });
+});
 
 describe('ProposalDecisionInput', () => {
   it('accepts the canonical vocabulary and rejects legacy aliases', () => {

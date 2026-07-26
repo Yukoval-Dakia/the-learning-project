@@ -26,6 +26,14 @@ export interface TeachingBriefFindingSection {
   knowledge_id: string;
   /** canonical CauseCategory on the server; the client never branches on it. */
   cause_category: string;
+  /**
+   * YUK-785 — present ONLY on probe_ready / outcome states after the owner rewrote the
+   * claim, and then always ≠ `claim_md`: the pre-edit claim that the served probe
+   * actually tests (the rewrite cannot change `probe_md`, so no probe tests it yet).
+   * `current_outcome.summary_md` already attributes the probe evidence to this claim;
+   * rendering the two claims side by side is the follow-up UI work.
+   */
+  tested_claim_md?: string;
 }
 
 export interface TeachingBriefBasisSection {

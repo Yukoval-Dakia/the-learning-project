@@ -30,6 +30,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import {
   K_PROMOTE,
+  archiveSoftMisconceptionForConjecture,
   misconceptionPromoteEnabled,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
@@ -109,11 +110,16 @@ export async function acceptConjectureProposal(
     };
   }
 
-  const isEdit = opts.corrected_payload !== undefined;
-  const correctedClaim =
-    isEdit && typeof opts.corrected_payload?.claim_md === 'string'
-      ? opts.corrected_payload.claim_md
+  // Both claim schemas now trim at their boundaries. Keep a normalized content comparison
+  // as defense in depth so direct/internal callers cannot turn a no-op payload into an edit.
+  const originalClaim = typeof change.claim_md === 'string' ? change.claim_md.trim() : '';
+  const submittedClaim =
+    typeof opts.corrected_payload?.claim_md === 'string'
+      ? opts.corrected_payload.claim_md.trim()
       : undefined;
+  const correctedClaim =
+    submittedClaim !== undefined && submittedClaim !== originalClaim ? submittedClaim : undefined;
+  const isEdit = correctedClaim !== undefined;
 
   const now = new Date();
   const rateEventId = newId();
@@ -162,17 +168,45 @@ export async function acceptConjectureProposal(
     // DARK promotion hop. Reads recurrence_count off the persisted proposal change
     // (NOT a fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the
     // induction floor (every conjecture already recurred ≥2) — the real gate is the
-    // flag + the human accept (see misconception-promote.ts). On an EDIT accept the
-    // owner's rewritten claim becomes the misconception title.
-    if (misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
+    // flag + the human accept (see misconception-promote.ts).
+    //
+    // YUK-785 — an EDIT accept promotes NOTHING. Both title candidates cause a distinct
+    // harm and there is no third claim to mint:
+    //   - the owner's rewrite has NO evidence of its own (nothing re-derives induction
+    //     evidence for it), so titling the node with it would hang the ORIGINAL claim's
+    //     `evidenceEventIds` provenance off an unevidenced belief;
+    //   - the original claim is precisely what the owner just declined to accept as
+    //     worded, so persisting it as an `status='active'` misconception would park a
+    //     belief the owner corrected in the knowledge surface indefinitely.
+    // Skipping is the only option that commits neither, and it is what this whole ticket
+    // argues structurally: a rewrite is UNTESTED, so it must not create any fait accompli.
+    // Nothing is lost — `corrected_by_owner` + `corrected_claim_md` stay durable on the
+    // rate event above (and project to mem0), so an edited accept remains findable if a
+    // later pass wants to re-derive evidence for the rewritten claim. A PLAIN accept
+    // (`isEdit === false`) is unaffected and still promotes on `change.claim_md`.
+    // The flag is OFF by default, so this dark landmine is defused BEFORE it is flipped.
+    const promotionEnabled = misconceptionPromoteEnabled();
+    const knowledgeId = requiredString(change.knowledge_id, 'knowledge_id', proposalId);
+    const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
+
+    // An edit also retracts any pre-existing SOFT node for this deterministic cause×KC
+    // identity. Cleanup is deliberately independent of the current promotion flag: a node may
+    // have been created while the flag was ON and still needs retiring after an OFF rollback.
+    // The row/edges are archived, never deleted; a HARD node is left untouched.
+    if (isEdit) {
+      await archiveSoftMisconceptionForConjecture(tx, causeCategory, knowledgeId, now);
+    }
+
+    if (!isEdit && promotionEnabled && Number(change.recurrence_count) >= K_PROMOTE) {
       const evidenceEventIds = proposal.payload.evidence_refs
         .filter((ref) => ref.kind === 'event')
         .map((ref) => ref.id);
       await promoteConjectureToMisconception(tx, {
         conjectureId,
-        knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
-        claimMd: correctedClaim ?? requiredString(change.claim_md, 'claim_md', proposalId),
-        causeCategory: requiredString(change.cause_category, 'cause_category', proposalId),
+        knowledgeId,
+        // Both producer schemas trim; this remains normalized defense in depth.
+        claimMd: requiredString(change.claim_md, 'claim_md', proposalId).trim(),
+        causeCategory,
         confidence: Number(change.confidence),
         recurrenceCount: Number(change.recurrence_count),
         evidenceEventIds,

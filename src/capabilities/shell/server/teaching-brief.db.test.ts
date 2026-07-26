@@ -291,7 +291,9 @@ describe('loadTeachingBrief', () => {
       state: 'probe_ready',
       updated_at: probeAt.toISOString(),
       expires_at: null,
-      finding: { claim_md: 'owner-corrected claim' },
+      // YUK-785 — the owner's words stay primary, and the brief additionally discloses
+      // that the prepared probe belongs to the pre-edit claim.
+      finding: { claim_md: 'owner-corrected claim', tested_claim_md: 'claim for p_probe' },
       basis: {
         evidence_trace: [
           { role: 'induction', kind: 'event', id: 'evt_evidence_p_probe' },
@@ -306,7 +308,7 @@ describe('loadTeachingBrief', () => {
       },
       current_outcome: {
         status: 'awaiting_answer',
-        summary_md: '判别题已备好；完成后再更新这条判断。',
+        summary_md: '判别题针对的是你改写前的那条判断；你的改写还没有配套的判别题。',
       },
     });
   });
