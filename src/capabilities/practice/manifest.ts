@@ -743,7 +743,12 @@ export const practiceCapability = defineCapability({
       // LLM 调用（付费发生在 judge_run），故 fast 层。
       {
         name: 'judge_pending_reconcile',
-        schedule: { cron: '50 * * * *', tz: 'Asia/Shanghai' },
+        schedule: {
+          cron: '50 * * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'judge_pending_reconcile-sweep',
+          singletonSeconds: 60 * 60,
+        },
         queue: 'fast',
         load: () =>
           import('./jobs/judge_pending_reconcile').then((m) => m.buildJudgePendingReconcileHandler),

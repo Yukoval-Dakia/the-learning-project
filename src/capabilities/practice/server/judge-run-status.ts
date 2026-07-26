@@ -57,7 +57,7 @@ export const JUDGE_RUN_EVENTS = {
    * 那条终态 FAILED 会一直压着，poll/SSE 客户端据此停止等待，而队列里正跑着可能写出
    * DONE 的那次重投——与 #TtWiB 修掉的是同一个谎。
    *
-   * payload 携 `{ job_id, attempt }`：`attempt` 是本 run 已发生的第几次恢复重投，sweeper
+   * payload 携 `{ delivery_id, attempt }`：`attempt` 是本 run 已发生的第几次恢复重投，sweeper
    * 用它封顶恢复次数（超过即停手，转人工，D6「manual-only, 先观察真实 DLQ 流量」）。
    */
   REQUEUED: 'judge_run.requeued',

@@ -97,7 +97,13 @@ export type JobHandlerFactory = (db: any) => (jobs: any) => Promise<unknown>;
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
-  schedule?: { cron: string; tz: string };
+  schedule?: {
+    cron: string;
+    tz: string;
+    /** Optional pg-boss throttle for sweeps that must never overlap. */
+    singletonKey?: string;
+    singletonSeconds?: number;
+  };
   /**
    * 队列档位 → 注册器映射建队配方（handlers.ts 三档先例）：
    * llm/agent 走 createJobQueue（先建 `<name>_dlq` 再建主队列，1h/2h expire）；

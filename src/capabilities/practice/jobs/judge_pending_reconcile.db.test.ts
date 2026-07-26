@@ -117,7 +117,7 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
       .from(job_events)
       .where(eq(job_events.business_id, runId));
     expect(markers.map((m) => m.event_type)).toEqual([JUDGE_RUN_EVENTS.REQUEUED]);
-    expect(markers[0].payload).toMatchObject({ attempt: 1 });
+    expect(markers[0].payload).toMatchObject({ attempt: 1, delivery_id: options.id });
   });
 
   it('tracks the latest recovery job and skips while it is still live', async () => {

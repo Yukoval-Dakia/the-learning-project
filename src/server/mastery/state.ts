@@ -343,25 +343,20 @@ export const ABILITY_GLOBAL_SUBJECT_KIND = ABILITY_GLOBAL_KIND;
  * older attempt passes, then walks the domain's θ̂ backwards and rewrites `last_outcome_at`
  * to an earlier instant.
  *
- * It resolves domains with the SAME per-KC `getEffectiveDomain` call and the SAME
- * orphan→degrade catch the write path uses, so the read domain and the write domain cannot
- * drift apart. Flag off ⇒ `[]` without touching the DB: no global row is written either, so
- * there is nothing to order.
+ * It resolves all KC domains through the shared archived-inclusive batch tree walk. Null results
+ * preserve the write path's orphan→degrade behavior while avoiding serial parent-chain queries.
  */
 export async function resolveAbilityGlobalSubjectIds(
   db: DbLike,
   knowledgeIds: string[],
 ): Promise<string[]> {
   if (!HIERARCHICAL_ELO_ENABLED) return [];
+  const kcIds = Array.from(new Set(knowledgeIds)).filter((k) => k.length > 0);
+  if (kcIds.length === 0) return [];
+  const domainByKc = await batchResolveEffectiveDomains(db, kcIds);
   const domains = new Set<string>();
-  for (const id of Array.from(new Set(knowledgeIds)).filter((k) => k.length > 0)) {
-    try {
-      const domain = await getEffectiveDomain(db, id);
-      if (domain !== null) domains.add(domain);
-    } catch {
-      // orphan / null-root-domain → no domain anchor for this KC, exactly as the write path
-      // degrades. A KC with no anchor contributes no global row, so it orders nothing.
-    }
+  for (const domain of domainByKc.values()) {
+    if (domain !== null) domains.add(domain);
   }
   return Array.from(domains);
 }

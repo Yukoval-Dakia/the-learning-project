@@ -35,11 +35,12 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, count, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, countDistinct, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import type { JudgeRunJobData } from './judge-run-payload';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
 
 /** The reserved action name. Single source for the writer, the scan, and the guard. */
 export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt' as const;
@@ -333,14 +334,17 @@ export async function latestJudgeRecoveryJobId(db: Db, runId: string): Promise<s
     .from(job_events)
     .where(
       and(
-        eq(job_events.business_table, JUDGE_RUN_QUEUE),
+        eq(job_events.business_table, JUDGE_RUN_TABLE),
         eq(job_events.business_id, runId),
-        eq(job_events.event_type, 'judge_run.requeued'),
+        eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
       ),
     )
     .orderBy(desc(job_events.id))
     .limit(1);
-  const jobId = rows[0]?.payload?.job_id;
+  const payload = rows[0]?.payload;
+  if (typeof payload !== 'object' || payload === null) return null;
+  const jobId =
+    (payload as Record<string, unknown>).delivery_id ?? (payload as Record<string, unknown>).job_id;
   return typeof jobId === 'string' ? jobId : null;
 }
 
@@ -390,13 +394,13 @@ export async function hasAutomaticRecoveryBudget(
   if (!createdAt || createdAt.getTime() <= now.getTime() - JUDGE_RECOVERY_MAX_AGE_MS) return false;
 
   const rows = await db
-    .select({ value: count() })
+    .select({ value: countDistinct(sql`${job_events.payload}->>'attempt'`) })
     .from(job_events)
     .where(
       and(
-        eq(job_events.business_table, JUDGE_RUN_QUEUE),
+        eq(job_events.business_table, JUDGE_RUN_TABLE),
         eq(job_events.business_id, runId),
-        eq(job_events.event_type, 'judge_run.requeued'),
+        eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
       ),
     );
   return (rows[0]?.value ?? 0) < JUDGE_MAX_RECOVERY_ATTEMPTS;
@@ -406,6 +410,12 @@ export interface StalledPendingAttempt {
   pendingEventId: string;
   payload: JudgePendingAttemptPayloadT;
   submittedAt: Date;
+}
+
+export interface StalledPendingAttemptPage {
+  attempts: StalledPendingAttempt[];
+  /** Raw rows consumed before malformed legacy payloads were discarded. */
+  rowsRead: number;
 }
 
 /**
@@ -429,7 +439,7 @@ export interface StalledPendingAttempt {
 export async function findStalledJudgePendingAttempts(
   db: Db,
   args: { stalledBefore: Date; recordedAfter: Date; limit: number; offset?: number },
-): Promise<StalledPendingAttempt[]> {
+): Promise<StalledPendingAttemptPage> {
   const backfilled = alias(event, 'backfilled_attempt');
   const rows = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
@@ -453,7 +463,7 @@ export async function findStalledJudgePendingAttempts(
     .limit(args.limit)
     .offset(args.offset ?? 0);
 
-  return rows.flatMap((row) => {
+  const attempts = rows.flatMap((row) => {
     const result = JudgePendingAttemptPayload.safeParse(row.payload);
     if (!result.success) {
       // Unreachable through `writeEvent` (the parse barrier rejects a malformed payload), so
@@ -468,6 +478,7 @@ export async function findStalledJudgePendingAttempts(
     }
     return [{ pendingEventId: row.id, payload: result.data, submittedAt: row.created_at }];
   });
+  return { attempts, rowsRead: rows.length };
 }
 
 // ============================================================================
