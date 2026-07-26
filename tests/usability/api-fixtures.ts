@@ -1,4 +1,9 @@
+import { strict as assert } from 'node:assert';
 import type { Page, Route } from '@playwright/test';
+import {
+  rollupSubjectDirection,
+  summarizeTrend,
+} from '../../src/capabilities/observability/server/effectiveness-trend-summary';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -178,20 +183,31 @@ function autoAppliedDigest(reverted = false, tripped = false) {
 
 function effectivenessTrend() {
   const points = [
-    { at: '2026-07-16T10:00:00.000Z', p_learned: 0.42, theta_hat: 0.1, theta_delta: null },
-    { at: '2026-07-18T10:00:00.000Z', p_learned: 0.61, theta_hat: 0.4, theta_delta: 0.3 },
+    { at: '2026-07-11T10:00:00.000Z', p_learned: 0.38, theta_hat: 0, theta_delta: null },
+    { at: '2026-07-12T10:00:00.000Z', p_learned: 0.4, theta_hat: 0.05, theta_delta: 0.05 },
+    { at: '2026-07-13T10:00:00.000Z', p_learned: 0.42, theta_hat: 0.1, theta_delta: 0.05 },
+    { at: '2026-07-14T10:00:00.000Z', p_learned: 0.44, theta_hat: 0.15, theta_delta: 0.05 },
+    { at: '2026-07-15T10:00:00.000Z', p_learned: 0.64, theta_hat: 0.8, theta_delta: 0.65 },
+    { at: '2026-07-16T10:00:00.000Z', p_learned: 0.66, theta_hat: 0.85, theta_delta: 0.05 },
+    { at: '2026-07-17T10:00:00.000Z', p_learned: 0.68, theta_hat: 0.9, theta_delta: 0.05 },
+    { at: '2026-07-18T10:00:00.000Z', p_learned: 0.7, theta_hat: 0.95, theta_delta: 0.05 },
   ];
   const trend = {
-    direction: 'rising',
-    confidence: 'high',
-    span_evidence: 2,
+    direction: 'rising' as const,
+    confidence: 'high' as const,
+    span_evidence: 8,
     has_mastery_signal: true,
   };
+  assert.deepEqual(summarizeTrend(points), trend);
+  assert.deepEqual(rollupSubjectDirection([trend, trend]), {
+    direction: 'rising',
+    confidence: 'medium',
+  });
   const whole = {
     knowledge_id: 'seed:math:root',
     name: '数学整体',
     effective_domain: 'math',
-    activity_count: 5,
+    activity_count: 8,
     points,
     trend,
   };
@@ -199,7 +215,7 @@ function effectivenessTrend() {
     knowledge_id: 'knowledge-math',
     name: '二次函数',
     effective_domain: 'math',
-    activity_count: 5,
+    activity_count: 8,
     points,
     trend,
   };
@@ -208,15 +224,15 @@ function effectivenessTrend() {
     subject_roots: [whole],
     aggregate: {
       total_kcs_with_activity: 2,
-      total_events: 10,
+      total_events: 16,
       by_subject: [
         {
           effective_domain: 'math',
           direction: 'rising',
-          confidence: 'high',
+          confidence: 'medium',
           kc_count: 2,
           kc_with_mastery_signal: 2,
-          activity_count: 10,
+          activity_count: 16,
         },
       ],
     },
@@ -236,18 +252,28 @@ function effectivenessTrend() {
 
 function degradedEffectivenessTrend() {
   const data = effectivenessTrend();
+  const points = [
+    '2026-07-14T10:00:00.000Z',
+    '2026-07-15T10:00:00.000Z',
+    '2026-07-16T10:00:00.000Z',
+    '2026-07-17T10:00:00.000Z',
+    '2026-07-18T10:00:00.000Z',
+  ].map((at) => ({ at, p_learned: null, theta_hat: null, theta_delta: null }));
+  const trend = {
+    direction: 'insufficient' as const,
+    confidence: 'low' as const,
+    span_evidence: 0,
+    has_mastery_signal: false,
+  };
+  assert.deepEqual(summarizeTrend(points), trend);
+  assert.equal(points.length, 5);
   const degradedSeries = {
     knowledge_id: 'seed:math:root',
     name: '数学整体',
     effective_domain: 'math',
-    activity_count: 5,
-    points: [],
-    trend: {
-      direction: 'insufficient',
-      confidence: 'low',
-      span_evidence: 0,
-      has_mastery_signal: false,
-    },
+    activity_count: points.length,
+    points,
+    trend,
   };
   return {
     ...data,
