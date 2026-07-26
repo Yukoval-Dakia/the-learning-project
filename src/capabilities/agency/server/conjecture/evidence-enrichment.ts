@@ -72,6 +72,7 @@ const QUESTION_CONTEXT_FIELDS = {
  */
 export const CONJECTURE_EVIDENCE_SAMPLES_PER_CELL = 3;
 /** Prompt-packet bounds; refs are identifiers, not image bytes. */
+export const CONJECTURE_EVIDENCE_CHOICES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP = 512;
@@ -181,7 +182,9 @@ export async function enrichEvidenceCells(
 
 function wrapTextList(values: string[] | null | undefined): string[] | null {
   if (values == null) return null;
-  return values.map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP));
+  return values
+    .slice(0, CONJECTURE_EVIDENCE_CHOICES_PER_FIELD)
+    .map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP));
 }
 
 function safeImageRefs(values: string[] | null | undefined): string[] {

@@ -11,9 +11,13 @@
 // → real gatherConjectureEvidence → real enrichEvidenceCells — so a regression in
 // any of the three seams shows up here, not only in the mocked job unit test.
 
-import { gatherConjectureEvidence } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  type ConjectureEvidenceFigure,
+  gatherConjectureEvidence,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import {
   CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP,
+  CONJECTURE_EVIDENCE_CHOICES_PER_FIELD,
   CONJECTURE_EVIDENCE_FIGURES_PER_FIELD,
   CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD,
   enrichEvidenceCells,
@@ -23,8 +27,11 @@ import { event, knowledge, question } from '@/db/schema';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+
+expectTypeOf<FigureRefT>().toMatchTypeOf<ConjectureEvidenceFigure>();
+expectTypeOf<ConjectureEvidenceFigure>().toMatchTypeOf<FigureRefT>();
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
 
@@ -338,6 +345,34 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[0].question_choices_md).toHaveLength(3);
     expect(cell.samples[0].question_choices_md?.[0]).toContain('A. 转折');
     expect(cell.samples[0].question_choices_md?.[0]).toMatch(/^<untrusted_learner_text>/);
+  });
+
+  it('bounds question and parent choice lists before wrapping packet text', async () => {
+    await seedKnowledge('kc_choice_bounds', '选项边界', 'yuwen');
+    const choices = Array.from(
+      { length: CONJECTURE_EVIDENCE_CHOICES_PER_FIELD + 5 },
+      (_, index) => `${index}. 选项`,
+    );
+    await seedQuestion('q_parent', '共享题干', null, choices);
+    await seedQuestion('q1', '子题', null, choices, 'q_parent');
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_choice_bounds'],
+    });
+    await seedFailureWithJudge({
+      id: 'a2',
+      questionId: 'q2',
+      knowledgeIds: ['kc_choice_bounds'],
+    });
+
+    const [cell] = await runPipe();
+    const sample = cell.samples[0];
+    expect(sample.question_choices_md).toHaveLength(CONJECTURE_EVIDENCE_CHOICES_PER_FIELD);
+    expect(sample.parent_question_choices_md).toHaveLength(CONJECTURE_EVIDENCE_CHOICES_PER_FIELD);
+    expect(sample.question_choices_md?.at(-1)).toContain('19. 选项');
+    expect(sample.parent_question_choices_md?.at(-1)).toContain('19. 选项');
   });
 
   it('carries parent context needed to interpret an independently scheduled question_part', async () => {

@@ -20,7 +20,7 @@
 // only carries the snapshot).
 
 import type { CauseCategoryT } from '@/core/schema/cause';
-import type { BBoxT } from '@/core/schema/structured_question';
+import type { BBoxT, FigureRefT } from '@/core/schema/structured_question';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
@@ -89,11 +89,11 @@ export interface EvidenceCell {
  */
 export interface ConjectureEvidenceFigure {
   asset_id: string;
-  role: 'diagram';
+  role: FigureRefT['role'];
   source_page_index: number;
   source_bbox: BBoxT;
   attached_to_index: string;
-  attach_confidence: 'high' | 'low' | 'manual';
+  attach_confidence: FigureRefT['attach_confidence'];
 }
 
 export interface ConjectureEvidenceSample {
