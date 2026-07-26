@@ -181,7 +181,7 @@ export async function enrichEvidenceCells(
 
 function wrapTextList(values: string[] | null | undefined): string[] | null {
   if (values == null) return null;
-  return values.map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP) as string);
+  return values.map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP));
 }
 
 function causeAnalysisText(

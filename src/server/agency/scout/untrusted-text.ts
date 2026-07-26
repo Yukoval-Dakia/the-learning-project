@@ -40,6 +40,9 @@ export function truncateNullable(text: string | null, max: number): string | nul
  * the closing tag can never be cut off by the cap. `null` passes through
  * (absent field ≠ empty learner string).
  */
+export function wrapTruncatedLearnerText(text: string, max?: number): string;
+export function wrapTruncatedLearnerText(text: null, max?: number): null;
+export function wrapTruncatedLearnerText(text: string | null, max?: number): string | null;
 export function wrapTruncatedLearnerText(
   text: string | null,
   max: number = UNTRUSTED_TEXT_CHAR_CAP,

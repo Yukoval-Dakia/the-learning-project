@@ -1,7 +1,12 @@
 // YUK-572 PR-1 — <untrusted_learner_text> delimiter helper unit test. Pure, no DB.
 
 import { describe, expect, it } from 'vitest';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN, wrapUntrustedLearnerText } from './untrusted-text';
+import {
+  UNTRUSTED_CLOSE,
+  UNTRUSTED_OPEN,
+  wrapTruncatedLearnerText,
+  wrapUntrustedLearnerText,
+} from './untrusted-text';
 
 describe('wrapUntrustedLearnerText', () => {
   it('wraps a learner string in the delimiter block', () => {
@@ -24,6 +29,19 @@ describe('wrapUntrustedLearnerText', () => {
     expect(wrapped).toContain(injection);
     expect(wrapped.startsWith(UNTRUSTED_OPEN)).toBe(true);
     expect(wrapped.endsWith(UNTRUSTED_CLOSE)).toBe(true);
+  });
+});
+
+describe('wrapTruncatedLearnerText', () => {
+  it('preserves non-null strings as wrapped strings, including blank input', () => {
+    const wrapped: string = wrapTruncatedLearnerText('', 10);
+    expect(wrapped).toBe(`${UNTRUSTED_OPEN}${UNTRUSTED_CLOSE}`);
+  });
+
+  it('truncates before wrapping and preserves null', () => {
+    expect(wrapTruncatedLearnerText('abcdef', 3)).toBe(`${UNTRUSTED_OPEN}abc${UNTRUSTED_CLOSE}`);
+    const absent: null = wrapTruncatedLearnerText(null, 3);
+    expect(absent).toBeNull();
   });
 });
 
