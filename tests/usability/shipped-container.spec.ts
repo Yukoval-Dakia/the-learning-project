@@ -232,6 +232,9 @@ test.describe('shipped-container usability regression', () => {
       const reviewCount = page.locator('.coach-kpi').filter({ hasText: '复习次数' });
       await expect(reviewCount.getByText('复习次数')).toBeVisible();
       await expect(reviewCount.getByText('5', { exact: true })).toBeVisible();
+      const dailyChart = page.locator('.stack-chart');
+      await expect(dailyChart.getByText('07-12', { exact: true })).toBeVisible();
+      await expect(dailyChart.getByText('07-18', { exact: true })).toBeVisible();
       await expectNoInternalCopy(page, '/coach');
     });
 
@@ -314,7 +317,15 @@ test.describe('shipped-container usability regression', () => {
     // it and assert BOTH halves: the mutation was actually hit, and the band advanced to
     // the probe_ready state the server re-projects (contract §5/§6 forward-only advance).
     await test.step('route=/today control="就按这个方向验证" hits the decision mutation and advances to probe_ready', async () => {
-      await page.getByRole('button', { name: '就按这个方向验证' }).click();
+      const [decisionResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            response.url().endsWith('/api/proposals/evt_conjecture_wy1/decisions'),
+        ),
+        page.getByRole('button', { name: '就按这个方向验证' }).click(),
+      ]);
+      expect(decisionResponse.headers().location).toBe('/api/events/evt_rate_wy1');
 
       // The probe_ready prepared_action replaces the review_finding CTAs in place.
       const answerCta = page.getByRole('button', { name: '现在就试做这道题' });

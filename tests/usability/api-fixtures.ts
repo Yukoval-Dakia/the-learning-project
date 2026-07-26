@@ -347,9 +347,15 @@ function question(index: number) {
   };
 }
 
-async function fulfill(route: Route, body: unknown, status = 200): Promise<void> {
+async function fulfill(
+  route: Route,
+  body: unknown,
+  status = 200,
+  headers?: Record<string, string>,
+): Promise<void> {
   await route.fulfill({
     status,
+    headers,
     contentType: 'application/json; charset=utf-8',
     body: JSON.stringify(body),
   });
@@ -487,6 +493,7 @@ export async function installApiFixtures(
           },
         },
         201,
+        { Location: '/api/events/evt_rate_wy1' },
       );
     }
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
@@ -604,10 +611,23 @@ export async function installApiFixtures(
       key === 'GET /api/review/weekly'
     ) {
       return fulfill(route, {
-        window: { days: 7, from: 0, to: 0, time_zone: 'Asia/Shanghai' },
+        window: {
+          days: 7,
+          from: 1_783_785_600,
+          to: 1_784_387_400,
+          time_zone: 'Asia/Shanghai',
+        },
         totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
         ratings: { again: 1, hard: 0, good: 3, easy: 1 },
-        daily: [{ date: '2026-07-18', count: 5, correct: 4 }],
+        daily: [
+          { date: '2026-07-12', count: 0, correct: 0 },
+          { date: '2026-07-13', count: 0, correct: 0 },
+          { date: '2026-07-14', count: 0, correct: 0 },
+          { date: '2026-07-15', count: 0, correct: 0 },
+          { date: '2026-07-16', count: 0, correct: 0 },
+          { date: '2026-07-17', count: 0, correct: 0 },
+          { date: '2026-07-18', count: 5, correct: 4 },
+        ],
         top_causes: [{ category: 'concept', count: 1 }],
         top_knowledge: [{ id: 'knowledge-math', name: '二次函数', failure_count: 1 }],
       });
