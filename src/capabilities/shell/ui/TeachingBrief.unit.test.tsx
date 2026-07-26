@@ -202,7 +202,7 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expect(html).toContain('团队正要问你的一道题');
     // Four real headings: h2 title + h3 per block.
     expect(html).toContain('为你而备');
-    expect(html).toContain('教研团在检验什么');
+    expect(html).toContain('教研团正在跟进的判断');
     expect(html).toContain('为什么这么判断');
     expect(html).toContain('已经为你备好');
     expect(html).toContain('当前结果');
@@ -211,6 +211,24 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expect(html).toContain('不太像');
     expect(html).not.toContain('确认弱点');
     expect(html).not.toContain('加进复习');
+    expectClean(html);
+  });
+
+  it('probe_ready: edited claim stays visible without claiming that exact wording was tested', () => {
+    const edited = '你改写后的判断仍在这里。';
+    const html = render(
+      probeReadyBrief({
+        finding: {
+          claim_md: edited,
+          tested_claim_md: FINDING_CLAIM,
+          knowledge_id: 'kn_chain_rule',
+          cause_category: 'concept_misunderstanding',
+        },
+      }),
+    );
+    expect(html).toContain(edited);
+    expect(html).toContain('教研团正在跟进的判断');
+    expect(html).not.toContain('教研团在检验什么');
     expectClean(html);
   });
 

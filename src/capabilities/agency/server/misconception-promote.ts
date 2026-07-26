@@ -20,13 +20,16 @@
 
 import { createHash } from 'node:crypto';
 
-import { sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
-import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconception-edges';
+import {
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+} from '@/capabilities/knowledge/server/misconception-edges';
 import { parseFlag } from '@/core/env-flags';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
-import { misconception } from '@/db/schema';
+import { misconception, misconception_edge } from '@/db/schema';
 
 /**
  * The recurrence threshold the accept must meet to promote.
@@ -102,6 +105,56 @@ export function misconceptionIdForConjecture(causeCategory: string, knowledgeId:
   const key = `${causeCategory}::${knowledgeId}`;
   const hash = createHash('sha256').update(key).digest('hex').slice(0, 24);
   return `misc_${hash}`;
+}
+
+export interface ArchiveSoftMisconceptionResult {
+  misconceptionId: string;
+  archived: boolean;
+}
+
+/**
+ * Archive an existing soft misconception for this cause×KC identity after the owner edits a
+ * later conjecture. The edit disputes the cell's current soft description, so leaving that
+ * prior on the live knowledge surface is unsafe. A hard-confirmed row is never touched: probe
+ * evidence outranks a wording edit. The node and all of its live edges are archived together
+ * under the same per-identity lock, preserving provenance and making the operation reversible.
+ */
+export async function archiveSoftMisconceptionForConjecture(
+  tx: Tx,
+  causeCategory: string,
+  knowledgeId: string,
+  now: Date,
+): Promise<ArchiveSoftMisconceptionResult> {
+  const misconceptionId = misconceptionIdForConjecture(causeCategory, knowledgeId);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`misc:${misconceptionId}`}))`);
+
+  const archivedNodes = await tx
+    .update(misconception)
+    .set({ archived_at: now, updated_at: now })
+    .where(
+      and(
+        eq(misconception.id, misconceptionId),
+        eq(misconception.source, 'soft'),
+        isNull(misconception.archived_at),
+      ),
+    )
+    .returning({ id: misconception.id });
+
+  if (archivedNodes.length === 0) return { misconceptionId, archived: false };
+
+  const liveEdges = await tx
+    .select({ id: misconception_edge.id })
+    .from(misconception_edge)
+    .where(
+      and(
+        eq(misconception_edge.from_kind, 'misconception'),
+        eq(misconception_edge.from_id, misconceptionId),
+        isNull(misconception_edge.archived_at),
+      ),
+    );
+  for (const edge of liveEdges) await archiveMisconceptionEdge(tx, edge.id, now);
+
+  return { misconceptionId, archived: true };
 }
 
 export interface PromoteConjectureInput {

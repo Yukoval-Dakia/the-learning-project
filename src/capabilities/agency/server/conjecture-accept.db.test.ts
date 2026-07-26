@@ -335,6 +335,64 @@ describe('acceptConjectureProposal lifecycle', () => {
       expect(await fsrsRowCount()).toBe(0);
     });
 
+    it('flag ON — edit archives a pre-existing same-identity soft node and its live edge', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const firstProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, firstProposal);
+
+      const secondProposal = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, secondProposal, {
+        corrected_payload: { claim_md: 'you drop the inner factor only under time pressure' },
+      });
+
+      const [node] = await misconceptionRows();
+      const [edge] = await misconceptionEdgeRows();
+      expect(node.source).toBe('soft');
+      expect(node.archived_at).not.toBeNull();
+      expect(edge.archived_at).not.toBeNull();
+      expect(node.title).toBe('you treat the chain rule as multiplying derivatives');
+    });
+
+    it('flag ON — edit never archives a pre-existing hard-confirmed same-identity node', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      await db.transaction(async (tx) => {
+        await promoteConjectureToMisconception(tx, {
+          conjectureId: 'cj_hard',
+          knowledgeId: 'kn_chain_rule',
+          claimMd: 'hard-confirmed claim',
+          causeCategory: 'concept_misunderstanding',
+          confidence: 0.9,
+          recurrenceCount: 3,
+          evidenceEventIds: ['evt_hard'],
+          source: 'hard',
+          now: new Date('2026-07-26T00:00:00.000Z'),
+        });
+      });
+
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, proposalId, {
+        corrected_payload: { claim_md: 'owner wording differs' },
+      });
+
+      const [node] = await misconceptionRows();
+      const [edge] = await misconceptionEdgeRows();
+      expect(node.source).toBe('hard');
+      expect(node.archived_at).toBeNull();
+      expect(edge.archived_at).toBeNull();
+      expect(node.title).toBe('hard-confirmed claim');
+    });
+
     // YUK-785 (codex #1080) — "edit" is decided by CONTENT, not payload presence. The
     // public schema accepts a corrected_payload identical to the original (only the UI
     // disables that button), and its claim is trimmed while the proposal's is not. Keying

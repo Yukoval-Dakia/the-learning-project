@@ -30,6 +30,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import {
   K_PROMOTE,
+  archiveSoftMisconceptionForConjecture,
   misconceptionPromoteEnabled,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
@@ -109,17 +110,8 @@ export async function acceptConjectureProposal(
     };
   }
 
-  // YUK-785 — an "edit" is decided by CONTENT, not by payload presence. The public
-  // schema accepts a `corrected_payload` whose claim equals the original (only the UI
-  // disables that button — `ProposalDecisionInput` has no cross-field check), and
-  // `corrected_payload.claim_md` is trimmed by its schema while the proposal's own
-  // `claim_md` is not. Keying off mere presence made a no-op submission an `edit`
-  // here (skipping promotion, stamping `calibration_anchor:'edit'`) while the brief's
-  // `loadAcceptedFinding` judged the SAME accept "not a rewrite" by trim-compare —
-  // two paths disagreeing about one accept. Normalize both sides and compare: no real
-  // change ⇒ this is a PLAIN accept, so it promotes normally and records no
-  // correction. A no-op is also not a calibration signal — `calibration_anchor:'edit'`
-  // is supposed to mean "the owner disagreed with the AI's wording".
+  // Both claim schemas now trim at their boundaries. Keep a normalized content comparison
+  // as defense in depth so direct/internal callers cannot turn a no-op payload into an edit.
   const originalClaim = typeof change.claim_md === 'string' ? change.claim_md.trim() : '';
   const submittedClaim =
     typeof opts.corrected_payload?.claim_md === 'string'
@@ -193,18 +185,26 @@ export async function acceptConjectureProposal(
     // later pass wants to re-derive evidence for the rewritten claim. A PLAIN accept
     // (`isEdit === false`) is unaffected and still promotes on `change.claim_md`.
     // The flag is OFF by default, so this dark landmine is defused BEFORE it is flipped.
-    if (!isEdit && misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
+    const promotionEnabled = misconceptionPromoteEnabled();
+    const knowledgeId = requiredString(change.knowledge_id, 'knowledge_id', proposalId);
+    const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
+
+    // An edit also retracts any pre-existing SOFT node for this deterministic cause×KC
+    // identity. The row/edges are archived, never deleted; a HARD node is left untouched.
+    if (isEdit && promotionEnabled) {
+      await archiveSoftMisconceptionForConjecture(tx, causeCategory, knowledgeId, now);
+    }
+
+    if (!isEdit && promotionEnabled && Number(change.recurrence_count) >= K_PROMOTE) {
       const evidenceEventIds = proposal.payload.evidence_refs
         .filter((ref) => ref.kind === 'event')
         .map((ref) => ref.id);
       await promoteConjectureToMisconception(tx, {
         conjectureId,
-        knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
-        // Trimmed for the same reason the brief trims it: the proposal's own `claim_md`
-        // has no `.trim()` (proposal.ts:497), and a padded AI claim must not become a
-        // padded misconception title. `requiredString` still owns the loud missing/型 error.
+        knowledgeId,
+        // Both producer schemas trim; this remains normalized defense in depth.
         claimMd: requiredString(change.claim_md, 'claim_md', proposalId).trim(),
-        causeCategory: requiredString(change.cause_category, 'cause_category', proposalId),
+        causeCategory,
         confidence: Number(change.confidence),
         recurrenceCount: Number(change.recurrence_count),
         evidenceEventIds,
