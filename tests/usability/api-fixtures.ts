@@ -11,7 +11,9 @@ export type UsabilityScenario =
   | 'questions-pagination'
   | 'teaching-brief'
   | 'inbox-auto-applied'
-  | 'coach-views';
+  | 'inbox-breaker-tripped'
+  | 'coach-views'
+  | 'coach-degraded';
 
 interface FixtureController {
   unexpectedRequests: string[];
@@ -31,6 +33,7 @@ interface FixtureController {
    * green. The spec asserts the exact shapes instead.
    */
   briefInteractions: () => Array<Record<string, unknown>>;
+  proposalDecisions: () => Array<{ id: string; decision: string }>;
 }
 
 const evidenceKeys = {
@@ -144,19 +147,32 @@ function teachingBriefProbeReady() {
 // YUK-789 — the A 档 auto-applied digest (/inbox) and the 成效趋势面 (/coach efficacy).
 // Both are shipped learner surfaces reachable from the same SPA build; without fixtures
 // a spec that walks into either route silently falls into the catch-all 501.
-function autoAppliedDigest(reverted = false) {
+const BREAKER_CAP = 30;
+const BREAKER_WINDOW_MS = 3_600_000;
+
+function breaker(applied: number, tripped = false) {
+  return {
+    tripped,
+    level: tripped ? 'tripped' : 'ok',
+    applied,
+    cap: BREAKER_CAP,
+    window: BREAKER_WINDOW_MS,
+  };
+}
+
+function autoAppliedDigest(reverted = false, tripped = false) {
   return {
     rows: [
       {
         proposal_id: 'proposal-completion-1',
         learning_item_id: 'learning-item-1',
         title: '《岳阳楼记》背诵检查',
-        applied_at: '2099-07-18T15:10:00.000Z',
+        applied_at: new Date(Date.now() - 60_000).toISOString(),
         level: 'ok',
         reverted,
       },
     ],
-    breaker: { tripped: false, level: 'ok', applied: 1, cap: 8, window: 604_800_000 },
+    breaker: breaker(tripped ? BREAKER_CAP : 1, tripped),
   };
 }
 
@@ -172,7 +188,7 @@ function effectivenessTrend() {
     has_mastery_signal: true,
   };
   const whole = {
-    knowledge_id: 'math',
+    knowledge_id: 'seed:math:root',
     name: '数学整体',
     effective_domain: 'math',
     activity_count: 5,
@@ -191,16 +207,16 @@ function effectivenessTrend() {
     series: [kc],
     subject_roots: [whole],
     aggregate: {
-      total_kcs_with_activity: 1,
-      total_events: 5,
+      total_kcs_with_activity: 2,
+      total_events: 10,
       by_subject: [
         {
           effective_domain: 'math',
           direction: 'rising',
           confidence: 'high',
-          kc_count: 1,
-          kc_with_mastery_signal: 1,
-          activity_count: 5,
+          kc_count: 2,
+          kc_with_mastery_signal: 2,
+          activity_count: 10,
         },
       ],
     },
@@ -211,10 +227,74 @@ function effectivenessTrend() {
       timezone: 'Asia/Shanghai',
       granularity: 'calendar_day',
       notable_limit: 6,
-      eligible: 0,
-      returned: 0,
+      eligible: 1,
+      returned: 1,
       truncated: false,
     },
+  };
+}
+
+function degradedEffectivenessTrend() {
+  const data = effectivenessTrend();
+  const degradedSeries = {
+    ...data.series[0],
+    points: [],
+    trend: {
+      direction: 'insufficient',
+      confidence: 'low',
+      span_evidence: 0,
+      has_mastery_signal: false,
+    },
+  };
+  return {
+    ...data,
+    series: [degradedSeries],
+    subject_roots: [],
+    aggregate: {
+      total_kcs_with_activity: 1,
+      total_events: 5,
+      by_subject: [
+        {
+          effective_domain: 'math',
+          direction: 'insufficient',
+          confidence: 'low',
+          kc_count: 1,
+          kc_with_mastery_signal: 0,
+          activity_count: 5,
+        },
+      ],
+    },
+    metadata: { ...data.metadata, eligible: 1, returned: 1 },
+  };
+}
+
+function inboxProposal(id: string, kind: 'learning_item' | 'defer', reason: string) {
+  return {
+    id,
+    kind,
+    target: { subject_kind: 'learning_item', subject_id: `${id}-item` },
+    payload: {
+      kind,
+      reason_md: reason,
+      evidence_refs: [],
+      proposed_change:
+        kind === 'learning_item'
+          ? {
+              hub: { title: '函数复习计划', summary_md: '从一道典型题开始。' },
+              atomics: [],
+              longs: [],
+            }
+          : {},
+    },
+    status: 'pending',
+    proposed_at: '2026-07-18T15:10:00.000Z',
+    decided_at: null,
+    actor_ref: 'dreaming',
+    task_run_id: null,
+    cost_micro_usd: null,
+    source_action: 'experimental:proposal',
+    source_subject_kind: 'learning_item',
+    signals: null,
   };
 }
 
@@ -285,6 +365,7 @@ export async function installApiFixtures(
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
   let autoAppliedReverted = false;
+  const proposalDecisions: Array<{ id: string; decision: string }> = [];
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
@@ -410,17 +491,34 @@ export async function installApiFixtures(
     }
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
     if (key === 'GET /api/proposals/auto-applied') {
-      return fulfill(
-        route,
-        scenario === 'inbox-auto-applied'
-          ? autoAppliedDigest(autoAppliedReverted)
-          : {
-              rows: [],
-              breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 604_800_000 },
-            },
-      );
+      if (scenario === 'inbox-auto-applied') {
+        return fulfill(route, autoAppliedDigest(autoAppliedReverted));
+      }
+      if (scenario === 'inbox-breaker-tripped') {
+        return fulfill(route, autoAppliedDigest(autoAppliedReverted, true));
+      }
+      return fulfill(route, { rows: [], breaker: breaker(0) });
     }
-    if (key === 'GET /api/proposals') return fulfill(route, { rows: [], next_cursor: null });
+    if (key === 'GET /api/proposals') {
+      if (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') {
+        const lane = url.searchParams.get('lane');
+        if (lane === 'decision') {
+          return fulfill(route, {
+            rows: [
+              inboxProposal('proposal-learning-plan-1', 'learning_item', '建议先复习二次函数。'),
+            ],
+            next_cursor: null,
+          });
+        }
+        if (lane === 'observation') {
+          return fulfill(route, {
+            rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
+            next_cursor: null,
+          });
+        }
+      }
+      return fulfill(route, { rows: [], next_cursor: null });
+    }
     if (key === 'GET /api/knowledge') return fulfill(route, { rows: [] });
     if (
       scenario === 'inbox-auto-applied' &&
@@ -446,10 +544,65 @@ export async function installApiFixtures(
         201,
       );
     }
+    if (
+      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') &&
+      key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
+    ) {
+      const body = request.postDataJSON() as { decision?: string } | null;
+      if (body?.decision !== 'accept' && body?.decision !== 'dismiss') {
+        return fulfill(route, { error: 'validation_error', message: 'decision is required' }, 400);
+      }
+      proposalDecisions.push({ id: 'proposal-learning-plan-1', decision: body.decision });
+      return fulfill(
+        route,
+        {
+          proposal_id: 'proposal-learning-plan-1',
+          proposal_kind: 'learning_item',
+          decision: body.decision,
+          decision_event_id: 'event-decision-1',
+          proposal_status: body.decision === 'accept' ? 'accepted' : 'dismissed',
+          created: true,
+          idempotent: false,
+          result: { kind: 'learning_item', learning_item_id: 'learning-plan-1' },
+        },
+        201,
+      );
+    }
     if (scenario === 'coach-views' && key === 'GET /api/observability/effectiveness-trend') {
       return fulfill(route, effectivenessTrend());
     }
-    if (scenario === 'coach-views' && key === 'GET /api/review/weekly') {
+    if (scenario === 'coach-degraded' && key === 'GET /api/observability/effectiveness-trend') {
+      return fulfill(route, degradedEffectivenessTrend());
+    }
+    if (
+      (scenario === 'coach-views' || scenario === 'coach-degraded') &&
+      key === 'GET /api/observability/calibration-maturity'
+    ) {
+      return fulfill(route, {
+        rows: [
+          {
+            knowledge_id: 'knowledge-math',
+            name: '二次函数',
+            evidence_count: 5,
+            theta_se: 0.3,
+            confidence: 0.9,
+            track: null,
+            cold_start: false,
+          },
+        ],
+        aggregate: {
+          total_kcs: 1,
+          cold_start_count: 0,
+          firm_count: 1,
+          pct_firm: 1,
+          median_theta_se: 0.3,
+        },
+      });
+    }
+    if (
+      (scenario === 'coach-views' || scenario === 'coach-degraded') &&
+      key === 'GET /api/review/weekly'
+    ) {
       return fulfill(route, {
         window: { days: 7, from: 0, to: 0, time_zone: 'Asia/Shanghai' },
         totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
@@ -514,5 +667,6 @@ export async function installApiFixtures(
     mutationAttempts: () => mutationAttempts,
     briefCalls: () => [...briefCalls],
     briefInteractions: () => [...briefInteractions],
+    proposalDecisions: () => [...proposalDecisions],
   };
 }

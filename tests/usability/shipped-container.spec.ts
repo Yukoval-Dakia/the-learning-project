@@ -140,25 +140,52 @@ test.describe('shipped-container usability regression', () => {
     expect(fixture.unexpectedRequests, 'route=/questions unexpected API fixtures').toEqual([]);
   });
 
-  test('route=/inbox real click retracts an auto-applied item and renders the projected state', async ({
+  test('route=/inbox renders A/B/C buckets and real clicks accept then retract projected items', async ({
     page,
   }) => {
     const fixture = await installApiFixtures(page, 'inbox-auto-applied');
 
-    await test.step('route=/inbox control="撤销" transitions the completion from live to reverted', async () => {
+    await test.step('route=/inbox state=breaker-ok renders all three strength buckets', async () => {
       await page.goto('/inbox');
       await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible();
+      await expect(page.getByText('自动通道正常。')).toBeVisible();
+      await expect(page.getByText('自动应用· 1 项')).toBeVisible();
+      await expect(page.getByText('待你裁决· 1 项')).toBeVisible();
+      await expect(page.getByText('仅作观察· 1 项')).toBeVisible();
+      await expect(page.getByText('1 项旁观记录，未执行变更')).toBeVisible();
+    });
+
+    await test.step('route=/inbox control="接受" records a real B-bucket decision', async () => {
+      await page.getByRole('button', { name: '接受', exact: true }).click();
+      await expect(page.getByText('已接受', { exact: true })).toBeVisible();
+      expect(fixture.proposalDecisions()).toEqual([
+        { id: 'proposal-learning-plan-1', decision: 'accept' },
+      ]);
+    });
+
+    await test.step('route=/inbox control="撤销" transitions the A-bucket completion to reverted', async () => {
       await expect(page.getByText('《岳阳楼记》背诵检查')).toBeVisible();
       await expect(page.getByText(/分钟内可撤销/)).toBeVisible();
-
       await page.getByRole('button', { name: '撤销', exact: true }).click();
-
       await expect(page.getByText('已撤销 · 恢复到应用前')).toBeVisible();
       await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0);
       await expectNoInternalCopy(page, '/inbox');
     });
 
     expect(fixture.unexpectedRequests, 'route=/inbox unexpected API fixtures').toEqual([]);
+  });
+
+  test('route=/inbox renders the tripped breaker as an explicit return to human review', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-breaker-tripped');
+
+    await page.goto('/inbox');
+    await expect(page.getByText('自动应用已暂停。')).toBeVisible();
+    await expect(page.getByText(/30\/30/)).toBeVisible();
+    await expect(page.getByText(/已退回全人审/)).toBeVisible();
+    await expectNoInternalCopy(page, '/inbox');
+    expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
   });
 
   test('route=/coach real clicks switch views and drill from subject rollup to knowledge trend', async ({
@@ -180,6 +207,22 @@ test.describe('shipped-container usability regression', () => {
       await expectNoInternalCopy(page, '/coach');
     });
 
+    await test.step('route=/coach control="校准诊断" exposes the calibration tabpanel semantics', async () => {
+      await page.getByRole('tab', { name: '校准诊断' }).click();
+      const calibration = page.getByRole('tab', { name: '校准诊断' });
+      await expect(calibration).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tabpanel')).toHaveAttribute(
+        'aria-labelledby',
+        (await calibration.getAttribute('id')) ?? '',
+      );
+      await expect(
+        page
+          .getByRole('region', { name: '有作答记录的知识点表格，可横向滚动' })
+          .getByText('二次函数', { exact: true }),
+      ).toBeVisible();
+      await expectNoInternalCopy(page, '/coach');
+    });
+
     await test.step('route=/coach control="活动量" changes the selected tab and report state', async () => {
       await page.getByRole('tab', { name: '活动量' }).click();
       await expect(page.getByRole('tab', { name: '活动量' })).toHaveAttribute(
@@ -193,6 +236,23 @@ test.describe('shipped-container usability regression', () => {
     });
 
     expect(fixture.unexpectedRequests, 'route=/coach unexpected API fixtures').toEqual([]);
+  });
+
+  test('route=/coach degraded mastery series honestly falls back to activity proxy', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'coach-degraded');
+
+    await page.goto('/coach');
+    await expect(page.getByRole('tab', { name: '成效趋势' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.getByRole('button', { name: /展开知识点/ }).click();
+    await expect(page.getByText('活动 5 次 · 无掌握度轨迹')).toBeVisible();
+    await expect(page.getByRole('img', { name: /二次函数/ })).toHaveCount(0);
+    await expectNoInternalCopy(page, '/coach');
+    expect(fixture.unexpectedRequests, 'route=/coach degraded unexpected API fixtures').toEqual([]);
   });
 
   test('route=/today surfaces the prepared teaching brief with a11y landmarks and no overflow', async ({
