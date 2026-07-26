@@ -1,17 +1,30 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4 fix) — admin reader for the
 // conjecture calibration loop. READ-ONLY.
 //
-// A4 fix (「reader before producer」红线真守): the reconcile loop AUTO-MINTS
-// `kc_typed_state` rows (typed_state='confused-with-X') on every confirmed probe.
-// Producer wire (S2/S3) → probe_result events accumulate → reconcile mints typed_state
-// silently. This reader observes BOTH halves of the consumer output so the owner has a
-// window onto auto-minted soft-track state changes, not just the LOG-only score events.
+// A4 (「reader before producer」红线真守): this reader is DELIBERATELY built ahead of its
+// producer. Read (a) is live; read (b) is NOT — see the ADR-0050 correction below.
 //
 // TWO READS (A4):
 //   (a) prediction_score events — LOG-only calibration anchors (brier / log_loss /
-//       skill_score_point single-point, NOT a window mean; never «accuracy»).
-//   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track
-//       state the reconcile loop auto-mints (provenance via evidence_event_ids).
+//       skill_score_point single-point, NOT a window mean; never «accuracy»). LIVE: the
+//       reconcile loop appends one per scored probe.
+//   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track cell.
+//       **RAIL PENDING ENERGIZATION (YUK-794) — read (b) returns the empty set until it lands.**
+//
+// ADR-0050 §(a) correction (YUK-790). An earlier version of this header claimed the reconcile
+// loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is reverse-drift: it
+// describes a future state as if it were current. Today `reconcileConjecturePredictions()`
+// (reconcile.ts — the ONLY production caller of the single-writer `upsertKcTypedState`)
+// hardcodes `confused_with_kc_id: null`, the §修正-4 gate (`nextTypedState()` in typed-state.ts)
+// requires a NAMED confused-with KC before it will emit `confused-with-X`, and the induction
+// schema (`ConjectureProposalChange`) carries no such field at all — so no writer can produce
+// the row and this half of the panel is empty.
+//
+// Owner ruled 2026-07-25: ENERGIZE it (execution = YUK-794 — extend the proposal schema, have
+// induction name the second KC, validate it, only then relax the null). Do NOT relax the gate
+// instead: requiring a named KC is the point. Until YUK-794 lands, keep the query and keep the
+// copy at "pending", never "auto-minted" (a future tense written as present) and never
+// "structurally impossible" (now the wrong direction).
 //
 // Honesty: score values render as their canonical names (brier_model / brier_baseline /
 // log_loss_model / skill_score_point). skill_score_point is a SINGLE-POINT proper score
@@ -40,7 +53,10 @@ export interface ConjecturePredictionScoreRow {
   created_at: string;
 }
 
-/** One auto-minted soft-track typed-state row (the reconcile loop's structural output). */
+/**
+ * One soft-track typed-state row. Not yet produced — no writer emits `confused-with-X` until
+ * YUK-794 energizes the rail (ADR-0050 §(a)); this shape is the contract that producer must meet.
+ */
 export interface ConjectureTypedStateRow {
   id: string;
   knowledge_id: string;
@@ -195,9 +211,10 @@ function collectBoundedRows<Raw, Mapped>(
 }
 
 /**
- * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors) +
- * kc_typed_state confused-with-X rows (auto-minted structural soft-track state).
- * Never writes. Never flips flags. Never touches FSRS/θ̂ (ND-5).
+ * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors, LIVE) +
+ * kc_typed_state confused-with-X rows (soft-track cell — rail pending energization, so this
+ * query returns zero rows until YUK-794 lands; ADR-0050 §(a)). Never writes. Never flips flags.
+ * Never touches FSRS/θ̂ (ND-5).
  */
 export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {
   const scoreRows = await db

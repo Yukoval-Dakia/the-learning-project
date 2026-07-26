@@ -288,7 +288,24 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       ),
       tool(
         getTypedStateName,
-        'Read this knowledge point typed classification state (no-evidence / confused-with-X / mastered) and its lifecycle. Read-only projection.',
+        // Honest tool description (ADR-0050 §(a)/(b1), YUK-790): do NOT promise the director a
+        // classification the system does not yet produce. This string is RUNTIME INPUT to the
+        // research director, so a wrong causal promise lands straight in the model's reasoning.
+        //
+        // TWO INDEPENDENT rails are unwired — do NOT collapse them into one (an earlier version
+        // of this description wrongly put both behind YUK-794):
+        //   - `confused-with-X`: blocked on the INDUCTION side naming a confused-with KC
+        //     (reconcile hardcodes confused_with_kc_id=null; the §修正-4 gate in nextTypedState
+        //     demands a named KC). Pending YUK-794 / ADR-0050 §(a).
+        //   - `mastered`: FLIP-only. Per the kc_typed_state column comment in schema.ts it is
+        //     "reserved for the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT
+        //     written in this MVP". YUK-795 owns prediction_score/hard-confirm consumers, not
+        //     this writer. Landing YUK-794 does NOT make `mastered` start appearing.
+        //
+        // Distinguish a missing projection (no row) from the persisted `no-evidence` soft state:
+        // reconcile can write `no-evidence` together with provenance when evidence exists but
+        // does not satisfy a terminal-state gate.
+        'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only classification value reachable today is `no-evidence`. `confused-with-X` and `mastered` are not currently produced; they depend on two separate pending rails, and landing one does NOT unblock the other. Interpret an empty result as a missing projection, never as evidence that the learner is un-confused or not mastered. A returned `no-evidence` row is different: inspect its evidence_event_ids, last_evidence_at, and lifecycle as provenance showing that evidence was processed but did not satisfy a terminal-state gate.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;

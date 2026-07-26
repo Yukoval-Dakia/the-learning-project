@@ -9,6 +9,16 @@
 // could be the misconception OR an unrelated cause (YUK-344 consistency-gate territory,
 // deliberately conservative in Phase 0). `mastered` is NOT produced here — it is the
 // post-Rust-scorer claim-survival FLIP (ADR-0046), deferred.
+//
+// REACHABILITY TODAY (ADR-0050 §(a), YUK-790): the gate's `confused-with-X` branch is currently
+// unreachable — the sole production caller (`reconcileConjecturePredictions()`) hardcodes
+// `confused_with_kc_id: null`, and the induction schema `ConjectureProposalChange` has no such
+// field to supply, so `nextTypedState` returns the soft cell every time. This is a KNOWN,
+// ledgered state, not an oversight.
+// OWNER RULED 2026-07-25: energize it — execution is **YUK-794**. The fix belongs on the
+// INDUCTION side (name the confused-with KC and validate it), NOT here: keep this branch as the
+// contract the producer must satisfy, and keep the four-way conjunction strict. Relaxing the
+// gate would commit unnamed confusions, which is the exact failure §修正-4 exists to prevent.
 
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';

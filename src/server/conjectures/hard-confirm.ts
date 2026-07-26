@@ -8,6 +8,17 @@
 // path — misconception-promote.ts / conjecture-accept.ts never call it. It only makes
 // the hard track REACHABLE.
 //
+// LEDGERED: **ADR-0050 §(b2)** (YUK-790). Every export here has zero production caller (tests
+// only), and so does its gate `misconceptionHardConfirmEnabled()` (`misconception-promote.ts:89`,
+// default OFF) — the DESIGNED Tier-1 shipping order (decision logic first, call site later;
+// design 2026-07-01 §2), not an unwired accident.
+// OWNER RULED 2026-07-25: wire it up — execution is **YUK-795** (the A13 accountability loop
+// goes from observation ledger to actually deciding a conjecture's fate). The Tier-1 red line
+// SURVIVES that wiring: a soft→hard flip still demands a FRESH owner confirmation at the call
+// site and is never automatic. Audits: this is not a dead-code finding — cite ADR-0050 §(b2)
+// and YUK-795. (Note the sibling `misconceptionPromoteEnabled()` at :76 IS live — only the
+// hard half is dark.)
+//
 // Tier-1 red lines (design 2026-07-01-misconception-promote-mechanism.md §6):
 //   - n=1 SAFE: everything here is a COUNT, a two/three-value READ, or an ENUM. There
 //     is ZERO fitted parameter — no se/sp/ρ, no Bayesian posterior, no Kish n_eff

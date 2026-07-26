@@ -2,7 +2,9 @@
 
 > 单元：producer `serveProbeOnce`/`answerProbe`（`src/capabilities/agency/server/conjecture/probe-lifecycle.ts`）+ answer route `POST /api/conjecture/probe/[id]/answer`（`src/capabilities/agency/api/probe-answer.ts`）+ reader `GET /api/admin/conjecture-scores`（`src/capabilities/observability/api/conjecture-scores.ts`）。
 > 决策 SoT：`docs/adr/0049-conjecture-wire-dark-loop-producer-consumer.md`。spec：`docs/design/2026-07-04-conjecture-wire-spec.md`。
-> 红线：ND-5——probe 生命周期**永不写** FSRS / attempt / θ̂。judge 经 registry 直调（`getDefaultRegistry().resolveJudge(kind).run()`），**不走** `createDefaultJudgeInvoker`（attempt 域耦合 wrapper）。
+> 红线：ND-5——probe 生命周期**永不写** FSRS / attempt / θ̂。judge 经 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts:218`），ND-5 边界是 `answerProbe` 而非 dispatch path——invoker 本身 judge-only，零 FSRS/attempt/event 写。
+>
+> ⚠️ **本行曾写反**（YUK-790 核对修正）：旧版称「经 registry 直调 `resolveJudge(kind).run()`，**不走** `createDefaultJudgeInvoker`」。那是 ADR-0049 §2 记录的 **CRITICAL 缺陷**（PR #705 已修）——base registry 的 semantic `run()` 是 profile-validation STUB，返回 `coarse_outcome:'unsupported'`，走它则每个 free_text probe 都 fail-closed 422、永不写 probe_result。**照旧文改代码会重新引入该 bug。**
 
 owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是最小手动面（expert owner + psql/脚本权限）。
 
@@ -11,7 +13,8 @@ owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是�
 1. **producer 端**——accept conjecture 后是否同步派发了判别探针：
    ```sql
    -- 最近 24h 派发的 probe（draft question，source='mind_probe'）
-   SELECT id, slug, knowledge_id, draft_status, source, created_at
+   -- 注：question 表无 slug 列；知识点是 jsonb 数组 knowledge_ids（非 knowledge_id）。
+   SELECT id, kind, knowledge_ids, draft_status, source, created_at
    FROM question
    WHERE source = 'mind_probe'
      AND created_at > now() - interval '24 hours'
@@ -26,15 +29,28 @@ owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是�
    WHERE action = 'experimental:probe_result'
    ORDER BY created_at DESC LIMIT 20;
 
-   -- reconcile auto-mint 的结构性软态（owner-invisible，需双读）
-   SELECT knowledge_id, typed_state, evidence, created_at
+   -- 结构性软态。⚠️ 本轨**待通电**（ADR-0050 §(a)，执行 YUK-794）：当前 reconcile 硬编码
+   -- confused_with_kc_id=null，§修正-4 gate 要求具名 KC 才发 confused-with-X，
+   -- 故 YUK-794 落地前此查询**返 0 行**。返回空是预期，不是故障，不要据此排查 reconcile。
+   -- 列名对齐 schema.ts kc_typed_state：知识点是 subject_id（无 knowledge_id 列），
+   -- provenance 是 evidence_event_ids（无 evidence 列），时间是 updated_at（无 created_at 列）。
+   SELECT subject_id AS knowledge_id, typed_state, confused_with_kc_id, lifecycle,
+          evidence_event_ids, last_evidence_at, updated_at
    FROM kc_typed_state
-   WHERE typed_state LIKE 'confused-with-%'
-   ORDER BY created_at DESC LIMIT 20;
+   WHERE subject_kind = 'knowledge'
+     AND typed_state LIKE 'confused-with-%'
+   ORDER BY updated_at DESC LIMIT 20;
 
-   -- 单点校准 proper score（brier / log_loss / skill_score_point）
-   SELECT subject_id, payload->>'brier' AS brier,
-          payload->>'score_basis' AS basis, created_at
+   -- 单点校准 proper score。payload 键名以 reconcile.ts 写入的为准：brier_model /
+   -- brier_baseline / log_loss_model / skill_score_point（**无** 'brier' 键）。
+   -- score_basis **不在** event payload 里——它是 admin reader 响应的字段，别在这查。
+   SELECT subject_id AS probe_result_event_id,
+          payload->>'knowledge_id'       AS knowledge_id,
+          payload->>'brier_model'        AS brier_model,
+          payload->>'brier_baseline'     AS brier_baseline,
+          payload->>'log_loss_model'     AS log_loss_model,
+          payload->>'skill_score_point'  AS skill_score_point,
+          created_at
    FROM event
    WHERE action = 'experimental:prediction_score'
    ORDER BY created_at DESC LIMIT 20;
@@ -56,14 +72,23 @@ owner 现实中靠 admin reader + 结构化日志感知 loop；本 runbook 是�
 
 每个 probe 的判分入站后核一次（owner 信任但核验）：
 ```sql
--- probe source 的 question 永不进 material_fsrs_state
+-- (a) probe source 的 question 永不进 material_fsrs_state。
+-- 注：material_fsrs_state 无 question_id 列——它按 (subject_kind, subject_id) 键；
+-- subject_kind 现在是 'knowledge'，'question' 是 legacy fallback，故按 subject_id 关联。
 SELECT COUNT(*) AS violations
 FROM material_fsrs_state m
-JOIN question q ON q.id = m.question_id
-WHERE q.source = 'mind_probe';
--- 期望 0。非零 → ND-5 被破，停一切 + 查 answer route 是否误用了 invoker 路径。
+JOIN question q ON q.id = m.subject_id
+WHERE m.subject_kind = 'question' AND q.source = 'mind_probe';
+
+-- (b) 更强的一条（FSRS 已按 knowledge 键，(a) 只覆盖 legacy 键）：probe 永不产 attempt 事件。
+SELECT COUNT(*) AS violations
+FROM event e
+JOIN question q ON q.id = e.subject_id
+WHERE e.action = 'attempt' AND e.subject_kind = 'question' AND q.source = 'mind_probe';
 ```
-answer route 的隔离保证靠 `probe-answer.ts` import `getDefaultRegistry` + `resolveJudge`（**不** import `createDefaultJudgeInvoker`）。回归测试 `probe-answer.db.test.ts` 在每条路径断言零 FSRS 行。
+两条都期望 0。非零 → ND-5 被破，停一切 + 查 answer route 的写路径。
+
+answer route 的隔离保证**不**靠「避开 invoker」——它就是走 `createDefaultJudgeInvoker().invoke()`（`probe-answer.ts:218`）。保证来自：invoker 本身 judge-only（零 FSRS/attempt/event 写），FSRS 写在 `submit.ts` 里 judge 调用**之后**的自有代码中，而本 route 不走 submit.ts；唯一写是 `answerProbe` 的单个 `experimental:probe_result` event。见 ADR-0049 §2 + 红线守恒矩阵。回归测试 `probe-answer.db.test.ts` 在每条路径断言零 FSRS 行。
 
 ## judge kind 与 OAuth lane（multimodal probe）
 
@@ -76,16 +101,31 @@ probe question 的 kind 由 conjecture 诱导期决定。当前 conjecture engin
 
 ## judge 成本观测
 
-answer route 本身**不**记成本——judge 的 `run()` 是纯函数，LLM 调用成本经 judge runner 内部的 AI 任务日志落地（`src/server/ai/log.ts`，evidence-first 既定基建）。查 probe 判分成本：
+answer route 本身**不**记成本——LLM 调用成本经 judge runner 内部的 AI 任务日志落地（`src/server/ai/log.ts`，evidence-first 既定基建），计费行落 **`cost_ledger` 表**。
+
+> ⚠️ **逐 probe 成本当前不可得，下面这条是「全部 judge 判分成本」的上界，含普通练习判分——不要当 probe 专属成本读。**
+>
+> 原因是结构性的，整条链没有连接键：`cost_ledger` 无任何 probe/练习判别列（只有 `task_run_id`(松耦合可空无 FK)/`task_kind`/`provider`/`model`/`cost`/`currency`/`tokens_in|out`/`outcome`/`pgboss_job_id`/`occurred_at`）；`ai_task_runs` 也无 question/subject 关联列（只有 `input_hash`/`prompt_fingerprint`/`result_digest` 这类摘要，不是按 probe 的查找键）；`experimental:probe_result` 事件**不写** `task_run_id`；`probe-answer.ts` 也**不把** invoker 的 run id 传给 `answerProbe`。而 probe 判分与普通提交判分**共用** `createDefaultJudgeInvoker`，产出的 `*JudgeTask` 完全同名 ⇒ 按 `task_kind` 聚合必然把普通练习一并计入。
+>
+> 要真正的 per-probe 成本，须先补这条关联链（属设计变更，本 runbook 不擅自设计）——见 **YUK-805**。
+
 ```sql
-SELECT subject_id, payload->>'model' AS model,
-          payload->>'input_tokens' AS in_tok,
-          payload->>'output_tokens' AS out_tok,
-          payload->>'cost_usd' AS cost, created_at
-FROM event
-WHERE action = 'ai:tool_call' AND payload->>'tool' LIKE '%judge%'
-ORDER BY created_at DESC LIMIT 20;
+-- judge task_kind 为 SemanticJudgeTask / StepsJudgeTask / MultimodalDirectJudgeTask
+-- （registry.ts）。⚠️ 上界口径：含普通练习判分，非 probe 专属（见上）。
+-- cost 是原始计费值，币种在 currency 列——聚合必须按 currency 分组，
+-- 绝不裸 SUM 混币（schema.ts cost_ledger 注释）。
+SELECT task_kind, provider, model, currency,
+       SUM(cost) AS total_cost,
+       SUM(tokens_in) AS total_tokens_in,
+       SUM(tokens_out) AS total_tokens_out,
+       MIN(occurred_at) AS first_occurred_at,
+       MAX(occurred_at) AS last_occurred_at
+FROM cost_ledger
+WHERE task_kind LIKE '%JudgeTask'
+GROUP BY task_kind, provider, model, currency
+ORDER BY last_occurred_at DESC;
 ```
+⚠️ **旧版此处三重写错**（YUK-790 核对修正）：查的是 `event WHERE action='ai:tool_call'`——该 action **不存在**；工具调用落 `tool_call_log` **表**而非 event 流；且 `tool_call_log.cost` 按设计恒为 0（schema.ts 明注：成本权威在 `cost_ledger`，此列填值会双记）。payload 键 `model`/`input_tokens`/`output_tokens`/`cost_usd` 亦全部不存在。
 若 `multimodal_direct` OAuth lane 启用，成本经 owner Claude Max 订阅（不按 token 计），日志只记 invocation 不记 cost_usd。
 
 ## 场景 A：accept 了 conjecture 但 reader 看不到 probe
@@ -133,7 +173,7 @@ WHERE action = 'experimental:probe_result' AND subject_id = '$PROBE_ID';
 SELECT payload->>'outcome' AS outcome FROM event
 WHERE action = 'experimental:probe_result' AND subject_id = '$PROBE_ID';
 ```
-outcome=1 → 预期不 mint。outcome=0 仍不 mint → reconcile job 内部 bug（见 `reconcile.ts`，非本 wire scope）。
+outcome=1 → 预期不 mint。outcome=0 → **YUK-794 通电前仍预期不 mint**：当前 reconcile 硬编码 `confused_with_kc_id=null`，具名 KC gate 因而不会通过（与上方检测面一致），不是 reconcile 内部故障。YUK-794 落地后若具名 KC 输入完整仍不 mint，再按 reconcile job bug 排查。
 
 ## flag 不翻
 

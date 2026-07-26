@@ -308,8 +308,9 @@ export const observabilityCapability = defineCapability({
       },
       {
         // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4) — calibration loop
-        // admin reader. READ-ONLY: prediction_score LOG events + auto-minted
-        // kc_typed_state confused-with-X rows. Honest score render (single-point
+        // admin reader. READ-ONLY: prediction_score LOG events (live) + kc_typed_state
+        // confused-with-X rows (rail pending energization — no writer produces that state
+        // until YUK-794, ADR-0050 §(a)). Honest score render (single-point
         // brier/log_loss/skill_score, NOT «accuracy» nor a window mean).
         method: 'GET',
         path: '/api/admin/conjecture-scores',
