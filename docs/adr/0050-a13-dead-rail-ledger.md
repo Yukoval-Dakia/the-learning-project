@@ -35,7 +35,7 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 | `upsertKcTypedState` 是 `kc_typed_state` 的**单写者**，CI 锁死 | `tests/integration/step9-invariant-audit.test.ts` → 测试 `db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)` |
 | 诱导侧 schema **根本没有**这个字段 | `src/core/schema/proposal.ts` → `ConjectureProposalChange` 的字段列表无 `confused_with_kc_id` |
 
-⇒ **在当前代码下 `typed_state='confused-with-X'` 的行不可能被产生。** 审计原措辞「reconcile 只记账」偏轻——不是「暂时没数据」，是**闭合的死格**。下游是**已通电但恒空**的消费面：`observability/server/conjecture-scores.ts` → `loadConjectureScores()` 的第二个 query（`eq(kc_typed_state.typed_state, 'confused-with-X')`，admin 面板半边恒空）、`agency/scout/evidence-mcp.ts` 的 `get_typed_state` 工具（对夜间 director 恒返 no-evidence）。
+⇒ **在当前代码下 `typed_state='confused-with-X'` 的行不可能被产生。** 审计原措辞「reconcile 只记账」偏轻——不是「暂时没数据」，是**闭合的死格**。下游是**已通电但该分类恒空**的消费面：`observability/server/conjecture-scores.ts` → `loadConjectureScores()` 的第二个 query（`eq(kc_typed_state.typed_state, 'confused-with-X')`，admin 面板半边恒空）；`agency/scout/evidence-mcp.ts` 的 `get_typed_state` 工具仍会返回该 KC 已持久化的其它 typed-state 行（包括 `no-evidence`），但在 YUK-794 前不会读到由此轨产生的 `confused-with-X` 行。缺行/空 projection 与一条持久化的 `typed_state='no-evidence'` 行不是同一语义。
 
 ### 裁定：**owner 2026-07-25 — 要通电。执行见 YUK-794。**
 

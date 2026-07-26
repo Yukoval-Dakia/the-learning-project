@@ -173,7 +173,7 @@ WHERE action = 'experimental:probe_result' AND subject_id = '$PROBE_ID';
 SELECT payload->>'outcome' AS outcome FROM event
 WHERE action = 'experimental:probe_result' AND subject_id = '$PROBE_ID';
 ```
-outcome=1 → 预期不 mint。outcome=0 仍不 mint → reconcile job 内部 bug（见 `reconcile.ts`，非本 wire scope）。
+outcome=1 → 预期不 mint。outcome=0 → **YUK-794 通电前仍预期不 mint**：当前 reconcile 硬编码 `confused_with_kc_id=null`，具名 KC gate 因而不会通过（与上方检测面一致），不是 reconcile 内部故障。YUK-794 落地后若具名 KC 输入完整仍不 mint，再按 reconcile job bug 排查。
 
 ## flag 不翻
 
