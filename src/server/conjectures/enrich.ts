@@ -44,6 +44,14 @@ import type {
 
 type DbLike = Db | Tx;
 
+type QuestionContextRow = {
+  id: string;
+  prompt_md: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  parent_question_id: string | null;
+};
+
 /**
  * Representative attempts carried per cell. The cell's `recurrence_count` is the
  * full tally (>= 2) and stays authoritative; this caps only how many attempts
@@ -112,6 +120,8 @@ export async function enrichEvidenceCells(
             id: question.id,
             prompt_md: question.prompt_md,
             reference_md: question.reference_md,
+            choices_md: question.choices_md,
+            parent_question_id: question.parent_question_id,
           })
           .from(question)
           .where(inArray(question.id, questionIds))
@@ -125,8 +135,29 @@ export async function enrichEvidenceCells(
     batchResolveEffectiveDomains(db, knowledgeIds),
   ]);
 
+  const parentQuestionIds = [
+    ...new Set(
+      questionRows.map((row) => row.parent_question_id).filter((id): id is string => id !== null),
+    ),
+  ];
+  const parentQuestionRows: QuestionContextRow[] =
+    parentQuestionIds.length > 0
+      ? await db
+          .select({
+            id: question.id,
+            prompt_md: question.prompt_md,
+            reference_md: question.reference_md,
+            choices_md: question.choices_md,
+            parent_question_id: question.parent_question_id,
+          })
+          .from(question)
+          .where(inArray(question.id, parentQuestionIds))
+      : [];
+
   const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
-  const questionById = new Map(questionRows.map((row) => [row.id, row]));
+  const questionById = new Map(
+    [...questionRows, ...parentQuestionRows].map((row) => [row.id, row]),
+  );
 
   return cells.map((cell) => {
     const kc = knowledgeById.get(cell.knowledge_id);
@@ -148,12 +179,28 @@ export async function enrichEvidenceCells(
   });
 }
 
+function wrapTextList(values: string[] | null | undefined): string[] | null {
+  if (values == null) return null;
+  return values.map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP) as string);
+}
+
+function causeAnalysisText(
+  cause: ReturnType<typeof effectiveCauseForFailureAttempt>,
+): string | null {
+  if (cause === null) return null;
+  if (cause.user_notes !== null) {
+    return wrapTruncatedLearnerText(cause.user_notes, UNTRUSTED_TEXT_CHAR_CAP);
+  }
+  return truncateNullable(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
+}
+
 function toEvidenceSample(
   failure: FailureAttempt,
-  questionById: ReadonlyMap<string, { prompt_md: string; reference_md: string | null }>,
+  questionById: ReadonlyMap<string, QuestionContextRow>,
   traceByAttemptId: ReadonlyMap<string, string | null>,
 ): ConjectureEvidenceSample {
   const q = questionById.get(failure.question_id);
+  const parent = q?.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
   const cause = effectiveCauseForFailureAttempt(failure);
   // Owner notes and judge analysis occupy the same slot — the effective cause
   // policy already decides which one has the last word on attribution — but only
@@ -161,12 +208,7 @@ function toEvidenceSample(
   // delimiter (mirrors get_attempt_details, which wraps user_notes and returns
   // judge.cause plain). The judge's analysis is still truncated: it is unbounded
   // LLM prose and would otherwise be the one uncapped field in the packet.
-  const causeText =
-    cause === null
-      ? null
-      : cause.user_notes !== null
-        ? wrapTruncatedLearnerText(cause.user_notes, UNTRUSTED_TEXT_CHAR_CAP)
-        : truncateNullable(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
+  const causeText = causeAnalysisText(cause);
   return {
     attempt_event_id: failure.attempt_event_id,
     question_id: failure.question_id,
@@ -182,6 +224,17 @@ function toEvidenceSample(
       q?.reference_md ?? null,
       UNTRUSTED_TEXT_CHAR_CAP,
     ),
+    question_choices_md: wrapTextList(q?.choices_md),
+    parent_question_id: q?.parent_question_id ?? null,
+    parent_question_prompt_md: wrapTruncatedLearnerText(
+      parent?.prompt_md ?? null,
+      UNTRUSTED_TEXT_CHAR_CAP,
+    ),
+    parent_question_reference_md: wrapTruncatedLearnerText(
+      parent?.reference_md ?? null,
+      UNTRUSTED_TEXT_CHAR_CAP,
+    ),
+    parent_question_choices_md: wrapTextList(parent?.choices_md),
     answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
     reasoning_trace: wrapTruncatedLearnerText(
       traceByAttemptId.get(failure.attempt_event_id) ?? null,

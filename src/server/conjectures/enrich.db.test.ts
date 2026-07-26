@@ -42,20 +42,26 @@ async function seedQuestion(
   id: string,
   promptMd: string,
   referenceMd: string | null = null,
+  choicesMd: string[] | null = null,
+  parentQuestionId: string | null = null,
 ): Promise<void> {
-  await testDb().insert(question).values({
-    id,
-    kind: 'short_answer',
-    prompt_md: promptMd,
-    reference_md: referenceMd,
-    knowledge_ids: [],
-    source: 'manual',
-    // Container-question guard (audit:draft-status): probe pools must never
-    // silently inherit a NULL status.
-    draft_status: 'active',
-    created_at: CREATED_AT,
-    updated_at: CREATED_AT,
-  });
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: parentQuestionId === null ? 'short_answer' : 'question_part',
+      prompt_md: promptMd,
+      reference_md: referenceMd,
+      choices_md: choicesMd,
+      parent_question_id: parentQuestionId,
+      knowledge_ids: [],
+      source: 'manual',
+      // Container-question guard (audit:draft-status): probe pools must never
+      // silently inherit a NULL status.
+      draft_status: 'active',
+      created_at: CREATED_AT,
+      updated_at: CREATED_AT,
+    });
 }
 
 interface SeedFailureOpts {
@@ -210,6 +216,43 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[0].question_reference_md).toMatch(/^<untrusted_learner_text>/);
     // A question with no reference answer reports null, not an empty wrapper.
     expect(cell.samples[1].question_reference_md).toBeNull();
+  });
+
+  it('carries choice labels so letter answers retain their meaning', async () => {
+    await seedKnowledge('kc_choice', '虚词辨析', 'yuwen');
+    await seedQuestion('q1', '「而」在句中表示什么关系？', 'A', ['A. 转折', 'B. 并列', 'C. 修饰']);
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_choice'],
+      answerMd: 'B',
+    });
+    await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_choice'] });
+
+    const [cell] = await runPipe();
+    expect(cell.samples[0].question_choices_md).toHaveLength(3);
+    expect(cell.samples[0].question_choices_md?.[0]).toContain('A. 转折');
+    expect(cell.samples[0].question_choices_md?.[0]).toMatch(/^<untrusted_learner_text>/);
+  });
+
+  it('carries parent context needed to interpret an independently scheduled question_part', async () => {
+    await seedKnowledge('kc_part', '篇章理解', 'yuwen');
+    await seedQuestion(
+      'q_parent',
+      '阅读《劝学》选段：君子曰，学不可以已。',
+      '文章强调学习不可停止',
+    );
+    await seedQuestion('q_part', '根据上文回答作者的核心主张。', '学习不可停止', null, 'q_parent');
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({ id: 'a1', questionId: 'q_part', knowledgeIds: ['kc_part'] });
+    await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_part'] });
+
+    const [cell] = await runPipe();
+    const sample = cell.samples[0];
+    expect(sample.parent_question_id).toBe('q_parent');
+    expect(sample.parent_question_prompt_md).toContain('君子曰，学不可以已');
+    expect(sample.parent_question_reference_md).toContain('学习不可停止');
   });
 
   it('reports an untagged KC as subject-unknown rather than defaulting to a subject', async () => {

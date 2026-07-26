@@ -98,14 +98,24 @@ export interface ConjectureEvidenceSample {
    * deviation the claim is supposed to be ABOUT is not reconstructable.
    */
   question_reference_md: string | null;
+  /** question.choices_md — the complete choice set (each item wrapped + truncated). */
+  question_choices_md: string[] | null;
+  /** question_part parent id, or null for a standalone question. */
+  parent_question_id: string | null;
+  /** parent prompt/shared passage needed to interpret a question_part. */
+  parent_question_prompt_md: string | null;
+  /** parent reference answer, when present. */
+  parent_question_reference_md: string | null;
+  /** parent choices, when present (each item wrapped + truncated). */
+  parent_question_choices_md: string[] | null;
   /** the learner's own wrong answer (wrapped + truncated). */
   answer_md: string | null;
   /** YUK-562 process data: the learner's account of HOW they thought. */
   reasoning_trace: string | null;
   /** effective cause category for this attempt (owner cause wins over judge). */
-  cause_category: string | null;
+  cause_category: CauseCategoryT | null;
   /** 'user' when the owner attributed it, 'agent' when the judge did. */
-  cause_source: string | null;
+  cause_source: 'user' | 'agent' | null;
   /**
    * The written attribution. Owner notes are learner-authored ⇒ truncated AND
    * delimited; a judge's `analysis_md` is agent-authored ⇒ truncated only
