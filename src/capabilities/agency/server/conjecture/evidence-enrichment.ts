@@ -38,10 +38,7 @@ import type {
   EnrichedEvidenceCell,
   EvidenceCell,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import {
-  UNTRUSTED_TEXT_CHAR_CAP,
-  wrapTruncatedLearnerText,
-} from '@/server/agency/scout/untrusted-text';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
 
 type DbLike = Db | Tx;
 

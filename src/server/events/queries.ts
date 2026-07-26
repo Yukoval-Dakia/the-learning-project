@@ -519,7 +519,7 @@ export async function getFailureAttemptById(
 export async function getFailureAttemptWithReasoningTraceById(
   db: DbLike,
   attemptEventId: string,
-): Promise<{ failure: FailureAttempt; reasoning_trace: string | null } | null> {
+): Promise<FailureAttemptWithReasoningTrace | null> {
   return loadFailureAttemptById(db, attemptEventId);
 }
 
@@ -533,7 +533,7 @@ export async function getFailureAttemptWithReasoningTraceById(
 async function loadFailureAttemptById(
   db: DbLike,
   attemptEventId: string,
-): Promise<{ failure: FailureAttempt; reasoning_trace: string | null } | null> {
+): Promise<FailureAttemptWithReasoningTrace | null> {
   const rows = await db.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
   const attempt = rows[0];
   if (!attempt) return null;

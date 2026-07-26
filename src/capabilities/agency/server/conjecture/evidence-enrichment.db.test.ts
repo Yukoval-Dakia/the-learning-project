@@ -20,7 +20,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
-import { UNTRUSTED_TEXT_CHAR_CAP } from '@/server/agency/scout/untrusted-text';
+import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { beforeEach, describe, expect, it } from 'vitest';
