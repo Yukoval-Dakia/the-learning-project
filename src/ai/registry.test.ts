@@ -463,6 +463,15 @@ describe('MindModelInductionTask registry entry', () => {
     expect(p).toContain('evidence_samples 为空');
   });
 
+  it('states current-row snapshot limits without weakening eventual image delivery', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('当前 question row 的题面上下文');
+    expect(p).toContain('YUK-804');
+    expect(p).not.toContain('question_prompt_md 是当时的题面');
+    expect(p).toContain('实际图像交给多模态模型');
+    expect(p).toContain('仅有引用时不得声称看见或解释图像内容');
+  });
+
   it('frames untrusted learner text as data, never instruction', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
     expect(p).toContain('untrusted_learner_text');

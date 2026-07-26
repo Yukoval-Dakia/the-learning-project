@@ -136,10 +136,9 @@ export interface ConjectureEvidenceSample {
   /** 'user' when the owner attributed it, 'agent' when the judge did. */
   cause_source: 'user' | 'agent' | null;
   /**
-   * The written attribution. Owner notes are learner-authored ⇒ truncated AND
-   * delimited; a judge's `analysis_md` is agent-authored ⇒ truncated only
-   * (mirrors get_attempt_details, which wraps user_notes and returns judge.cause
-   * plain).
+   * The written attribution. Both owner notes and upstream judge analysis are
+   * generated outside the induction prompt, so enrich truncates and delimits them
+   * as untrusted data.
    */
   cause_analysis_md: string | null;
 }

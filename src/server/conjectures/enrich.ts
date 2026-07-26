@@ -34,10 +34,10 @@ import { inArray } from 'drizzle-orm';
 
 import {
   UNTRUSTED_TEXT_CHAR_CAP,
-  truncateNullable,
   wrapTruncatedLearnerText,
 } from '@/server/agency/scout/untrusted-text';
 import type {
+  ConjectureEvidenceFigure,
   ConjectureEvidenceSample,
   EnrichedEvidenceCell,
   EvidenceCell,
@@ -64,6 +64,10 @@ type QuestionContextRow = Pick<
  * RESEARCH_MEETING_MAX_CONJECTURES(3) × 3 samples × 3 text fields × 2000 chars.
  */
 export const CONJECTURE_EVIDENCE_SAMPLES_PER_CELL = 3;
+/** Prompt-packet bounds; refs are identifiers, not image bytes. */
+export const CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD = 20;
+export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
+export const CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP = 512;
 
 export interface EnrichEvidenceCellsInput {
   /** the top-K salient cells (post recurrence floor + dedup + salience cap). */
@@ -193,20 +197,36 @@ function wrapTextList(values: string[] | null | undefined): string[] | null {
 }
 
 function safeImageRefs(values: string[] | null | undefined): string[] {
-  return values?.filter((value) => typeof value === 'string' && value.length > 0) ?? [];
+  if (values == null) return [];
+  return values
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0)
+    .slice(0, CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD)
+    .map((value) => value.slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP));
 }
 
-function safeFigures(values: unknown) {
-  const parsed = FigureRef.array().safeParse(values);
-  if (!parsed.success) return [];
-  return parsed.data.map((figure) => ({
-    asset_id: figure.asset_id,
-    role: figure.role,
-    source_page_index: figure.source_page_index,
-    source_bbox: { ...figure.source_bbox },
-    attached_to_index: figure.attached_to_index,
-    attach_confidence: figure.attach_confidence,
-  }));
+function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
+  if (!Array.isArray(values)) return [];
+  const figures: ConjectureEvidenceFigure[] = [];
+  for (const value of values) {
+    if (figures.length >= CONJECTURE_EVIDENCE_FIGURES_PER_FIELD) break;
+    const parsed = FigureRef.safeParse(value);
+    if (!parsed.success) continue;
+    const assetId = parsed.data.asset_id.trim().slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
+    const attachedToIndex = parsed.data.attached_to_index
+      .trim()
+      .slice(0, CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
+    if (assetId.length === 0 || attachedToIndex.length === 0) continue;
+    figures.push({
+      asset_id: assetId,
+      role: parsed.data.role,
+      source_page_index: parsed.data.source_page_index,
+      source_bbox: { ...parsed.data.source_bbox },
+      attached_to_index: attachedToIndex,
+      attach_confidence: parsed.data.attach_confidence,
+    });
+  }
+  return figures;
 }
 
 function causeAnalysisText(
@@ -216,7 +236,7 @@ function causeAnalysisText(
   if (cause.user_notes !== null) {
     return wrapTruncatedLearnerText(cause.user_notes, UNTRUSTED_TEXT_CHAR_CAP);
   }
-  return truncateNullable(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
+  return wrapTruncatedLearnerText(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
 }
 
 function toEvidenceSample(
@@ -227,12 +247,9 @@ function toEvidenceSample(
   const q = questionById.get(failure.question_id);
   const parent = q?.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
   const cause = effectiveCauseForFailureAttempt(failure);
-  // Owner notes and judge analysis occupy the same slot — the effective cause
-  // policy already decides which one has the last word on attribution — but only
-  // the owner's notes are LEARNER-authored, so only they get the untrusted
-  // delimiter (mirrors get_attempt_details, which wraps user_notes and returns
-  // judge.cause plain). The judge's analysis is still truncated: it is unbounded
-  // LLM prose and would otherwise be the one uncapped field in the packet.
+  // Owner notes and upstream judge analysis occupy the same slot — the effective
+  // cause policy decides which one has the last word on attribution. Both are
+  // generated outside this prompt, so both receive the same explicit data boundary.
   const causeText = causeAnalysisText(cause);
   return {
     attempt_event_id: failure.attempt_event_id,

@@ -14,7 +14,12 @@
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '@/server/agency/scout/untrusted-text';
-import { enrichEvidenceCells } from '@/server/conjectures/enrich';
+import {
+  CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP,
+  CONJECTURE_EVIDENCE_FIGURES_PER_FIELD,
+  CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD,
+  enrichEvidenceCells,
+} from '@/server/conjectures/enrich';
 import { gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
@@ -252,6 +257,71 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[0].answer_image_refs).toEqual(['asset_handwriting']);
   });
 
+  it('bounds, trims and defensively copies image refs and figure packets', async () => {
+    await seedKnowledge('kc_visual_bounds', '图形推理', 'math');
+    const oversizedRef = `  ${'x'.repeat(CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP + 50)}  `;
+    const imageRefs = [
+      '  asset_prompt  ',
+      '   ',
+      oversizedRef,
+      ...Array.from(
+        { length: CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD + 5 },
+        (_, index) => `asset_${index}`,
+      ),
+    ];
+    const figures = Array.from(
+      { length: CONJECTURE_EVIDENCE_FIGURES_PER_FIELD + 5 },
+      (_, index): FigureRefT => ({
+        asset_id: `  figure_${index}  `,
+        role: 'diagram',
+        source_page_index: index,
+        source_bbox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+        attached_to_index: `  stem_${index}  `,
+        attach_confidence: 'high',
+      }),
+    );
+    await seedQuestion('q1', '根据图形回答。', null, null, null, imageRefs, figures);
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_visual_bounds'],
+      answerImageRefs: imageRefs,
+    });
+    await seedFailureWithJudge({
+      id: 'a2',
+      questionId: 'q2',
+      knowledgeIds: ['kc_visual_bounds'],
+    });
+
+    const db = testDb();
+    const rows = await getFailureAttemptsWithReasoningTrace(db, {
+      since: new Date('2026-07-01T00:00:00Z'),
+    });
+    const failures = rows.map((row) => row.failure);
+    const sourceRefs = failures[0].answer_image_refs;
+    const sourceSnapshot = structuredClone(sourceRefs);
+    const cells = gatherConjectureEvidence({
+      failures,
+      masteryByKnowledgeId: new Map<string, MasteryProjection>(),
+      knownConjectureKeys: new Set<string>(),
+    });
+    const [cell] = await enrichEvidenceCells(db, { cells, failures });
+    const sample = cell.samples[0];
+
+    expect(sample.question_image_refs).toHaveLength(CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD);
+    expect(sample.question_image_refs[0]).toBe('asset_prompt');
+    expect(sample.question_image_refs).not.toContain('');
+    expect(sample.question_image_refs[1]).toHaveLength(CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
+    expect(sample.answer_image_refs).toEqual(sample.question_image_refs);
+    expect(sample.answer_image_refs).not.toBe(sourceRefs);
+    expect(sourceRefs).toEqual(sourceSnapshot);
+    expect(sample.question_figures).toHaveLength(CONJECTURE_EVIDENCE_FIGURES_PER_FIELD);
+    expect(sample.question_figures[0].asset_id).toBe('figure_0');
+    expect(sample.question_figures[0].attached_to_index).toBe('stem_0');
+    expect(sample.question_figures[0].source_bbox).not.toBe(figures[0].source_bbox);
+  });
+
   it('carries choice labels so letter answers retain their meaning', async () => {
     await seedKnowledge('kc_choice', '虚词辨析', 'yuwen');
     await seedQuestion('q1', '「而」在句中表示什么关系？', 'A', ['A. 转折', 'B. 并列', 'C. 修饰']);
@@ -345,6 +415,8 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(first.cause_category).toBe('concept');
     expect(first.cause_source).toBe('agent');
     expect(first.cause_analysis_md).toContain('使动用法');
+    expect(first.cause_analysis_md).toMatch(/^<untrusted_learner_text>/);
+    expect(first.cause_analysis_md).toMatch(/<\/untrusted_learner_text>$/);
   });
 
   it('delimits every learner-authored field as untrusted data', async () => {
