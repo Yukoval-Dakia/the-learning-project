@@ -33,7 +33,7 @@ import { misconception } from '@/db/schema';
  *
  * ⚠️ At k=2 this gate is REDUNDANT with the induction floor: conjectures are only
  * induced when a cause×KC recurs across ≥ CONJECTURE_RECURRENCE_FLOOR (=2) distinct
- * failures (src/server/conjectures/evidence.ts), so every existing conjecture already
+ * failures (src/capabilities/agency/server/conjecture/evidence.ts), so every existing conjecture already
  * has recurrence_count ≥ 2 and this re-check is always true — it gates nothing. The
  * REAL gate is the flag (MISCONCEPTION_PROMOTE_ENABLED) + the human accept. This const
  * is a PLACEHOLDER for future flag-flip tuning (it only bites at k > 2); do NOT read it

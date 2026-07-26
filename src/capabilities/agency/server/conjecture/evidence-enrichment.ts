@@ -23,7 +23,7 @@
 // SAME helpers the evidence MCP read tools use (scout spec §2 — one
 // implementation, not two).
 
-import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/server/domain';
+import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/public';
 import { FigureRef } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
@@ -32,16 +32,16 @@ import type { FailureAttempt } from '@/server/events/queries';
 import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
 import { inArray } from 'drizzle-orm';
 
-import {
-  UNTRUSTED_TEXT_CHAR_CAP,
-  wrapTruncatedLearnerText,
-} from '@/server/agency/scout/untrusted-text';
 import type {
   ConjectureEvidenceFigure,
   ConjectureEvidenceSample,
   EnrichedEvidenceCell,
   EvidenceCell,
-} from '@/server/conjectures/evidence';
+} from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  UNTRUSTED_TEXT_CHAR_CAP,
+  wrapTruncatedLearnerText,
+} from '@/server/agency/scout/untrusted-text';
 
 type DbLike = Db | Tx;
 

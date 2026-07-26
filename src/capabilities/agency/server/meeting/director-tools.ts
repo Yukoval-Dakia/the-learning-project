@@ -14,6 +14,7 @@
 // runs through buildMcpServer.beforeExecute, hosted here bespoke because the write face
 // does not go through the registry (§0.B).
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type {
   AgentNoteTarget,
   WriteAgentNoteInput,
@@ -35,7 +36,6 @@ import {
   GET_TRACES_TOOL_NAME,
   SPAWN_TOOL_NAME,
 } from '@/server/agency/scout/tool-names';
-import { conjectureKey } from '@/server/conjectures/evidence';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';

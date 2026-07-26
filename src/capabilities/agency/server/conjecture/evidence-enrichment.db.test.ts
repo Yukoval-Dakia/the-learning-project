@@ -11,20 +11,20 @@
 // → real gatherConjectureEvidence → real enrichEvidenceCells — so a regression in
 // any of the three seams shows up here, not only in the mocked job unit test.
 
-import type { FigureRefT } from '@/core/schema/structured_question';
-import { event, knowledge, question } from '@/db/schema';
-import { UNTRUSTED_TEXT_CHAR_CAP } from '@/server/agency/scout/untrusted-text';
+import { gatherConjectureEvidence } from '@/capabilities/agency/server/conjecture/evidence';
 import {
   CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP,
   CONJECTURE_EVIDENCE_FIGURES_PER_FIELD,
   CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD,
   enrichEvidenceCells,
-} from '@/server/conjectures/enrich';
-import { gatherConjectureEvidence } from '@/server/conjectures/evidence';
+} from '@/capabilities/agency/server/conjecture/evidence-enrichment';
+import type { FigureRefT } from '@/core/schema/structured_question';
+import { event, knowledge, question } from '@/db/schema';
+import { UNTRUSTED_TEXT_CHAR_CAP } from '@/server/agency/scout/untrusted-text';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
 

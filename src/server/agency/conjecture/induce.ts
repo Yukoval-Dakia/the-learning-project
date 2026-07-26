@@ -1,7 +1,7 @@
 // YUK-406 (Phase 0 关系脑) / YUK-440 (A13) — conjecture induction orchestrator
 // with D2 mitigation.
 //
-// PURE (no DB / no R2): the 取证 sibling (@/server/conjectures/evidence) assembles
+// PURE (no DB / no R2): the 取证 sibling (@/capabilities/agency/server/conjecture/evidence) assembles
 // the EvidenceCell list deterministically (cause_category × KC recurrence via
 // effectiveCauseForFailureAttempt + θ̂ / θ precision + baseline p(L) from
 // mastery_state — no LLM), and the nightly 例会 job persists the result. This module
@@ -25,10 +25,10 @@
 // fields are aggregated deterministically before flowing to the proposal; the loop later
 // scores predicted_p against the cell's baseline_p (scoring + flip DEFERRED per ADR-0046).
 
+import type { EnrichedEvidenceCell } from '@/capabilities/agency/server/conjecture/evidence';
 import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
-import type { EnrichedEvidenceCell } from '@/server/conjectures/evidence';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 

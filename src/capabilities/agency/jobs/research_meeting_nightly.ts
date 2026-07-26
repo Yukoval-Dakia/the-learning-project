@@ -36,15 +36,18 @@
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
+import {
+  conjectureKey,
+  gatherConjectureEvidence,
+} from '@/capabilities/agency/server/conjecture/evidence';
+import type { EnrichedEvidenceCell } from '@/capabilities/agency/server/conjecture/evidence';
+import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { enrichEvidenceCells } from '@/server/conjectures/enrich';
-import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
-import type { EnrichedEvidenceCell } from '@/server/conjectures/evidence';
 import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';

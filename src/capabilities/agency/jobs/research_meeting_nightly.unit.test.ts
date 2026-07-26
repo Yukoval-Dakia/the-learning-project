@@ -2,14 +2,17 @@
 // Fully injected deps (no DB / AI). The REAL gatherConjectureEvidence runs over the
 // injected failures, so this also locks the 取证 → top-K → propose integration.
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import type {
+  EnrichedEvidenceCell,
+  EvidenceCell,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteEventInput } from '@/kernel/events';
 import type {
   InduceConjectureInput,
   InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
-import { conjectureKey } from '@/server/conjectures/evidence';
-import type { EnrichedEvidenceCell, EvidenceCell } from '@/server/conjectures/evidence';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
