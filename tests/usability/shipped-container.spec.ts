@@ -177,6 +177,7 @@ test.describe('shipped-container usability regression', () => {
       await expect(page.getByText('数学 · 显著变化知识点')).toBeVisible();
       await expect(page.getByText('二次函数', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: '返回科目' })).toBeVisible();
+      await expectNoInternalCopy(page, '/coach');
     });
 
     await test.step('route=/coach control="活动量" changes the selected tab and report state', async () => {
@@ -185,8 +186,9 @@ test.describe('shipped-container usability regression', () => {
         'aria-selected',
         'true',
       );
-      await expect(page.getByText('复习次数')).toBeVisible();
-      await expect(page.getByText('5', { exact: true }).first()).toBeVisible();
+      const reviewCount = page.locator('.coach-kpi').filter({ hasText: '复习次数' });
+      await expect(reviewCount.getByText('复习次数')).toBeVisible();
+      await expect(reviewCount.getByText('5', { exact: true })).toBeVisible();
       await expectNoInternalCopy(page, '/coach');
     });
 

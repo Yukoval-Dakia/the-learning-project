@@ -165,18 +165,19 @@ function effectivenessTrend() {
     { at: '2026-07-16T10:00:00.000Z', p_learned: 0.42, theta_hat: 0.1, theta_delta: null },
     { at: '2026-07-18T10:00:00.000Z', p_learned: 0.61, theta_hat: 0.4, theta_delta: 0.3 },
   ];
+  const trend = {
+    direction: 'rising',
+    confidence: 'high',
+    span_evidence: 2,
+    has_mastery_signal: true,
+  };
   const whole = {
     knowledge_id: 'math',
     name: '数学整体',
     effective_domain: 'math',
     activity_count: 5,
     points,
-    trend: {
-      direction: 'rising',
-      confidence: 'high',
-      span_evidence: 2,
-      has_mastery_signal: true,
-    },
+    trend,
   };
   const kc = {
     knowledge_id: 'knowledge-math',
@@ -184,12 +185,7 @@ function effectivenessTrend() {
     effective_domain: 'math',
     activity_count: 5,
     points,
-    trend: {
-      direction: 'rising',
-      confidence: 'high',
-      span_evidence: 2,
-      has_mastery_signal: true,
-    },
+    trend,
   };
   return {
     series: [kc],
@@ -414,7 +410,12 @@ export async function installApiFixtures(
     }
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
     if (key === 'GET /api/proposals/auto-applied') {
-      return fulfill(route, autoAppliedDigest(autoAppliedReverted));
+      return fulfill(
+        route,
+        scenario === 'inbox-auto-applied'
+          ? autoAppliedDigest(autoAppliedReverted)
+          : { rows: [], breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 604_800_000 } },
+      );
     }
     if (key === 'GET /api/proposals') return fulfill(route, { rows: [], next_cursor: null });
     if (key === 'GET /api/knowledge') return fulfill(route, { rows: [] });
@@ -427,21 +428,28 @@ export async function installApiFixtures(
         return fulfill(route, { error: 'validation_error', message: 'retract is required' }, 400);
       }
       autoAppliedReverted = true;
-      return fulfill(route, {
-        proposal_id: 'proposal-completion-1',
-        proposal_kind: 'completion',
-        decision: 'retract',
-        decision_event_id: 'event-retract-1',
-        proposal_status: 'retracted',
-        created: true,
-        idempotent: false,
-        result: { kind: 'completion', learning_item_id: 'learning-item-1' },
-      });
+      return fulfill(
+        route,
+        {
+          proposal_id: 'proposal-completion-1',
+          proposal_kind: 'completion',
+          decision: 'retract',
+          decision_event_id: 'event-retract-1',
+          proposal_status: 'retracted',
+          created: true,
+          idempotent: false,
+          result: { kind: 'completion', learning_item_id: 'learning-item-1' },
+        },
+        201,
+      );
     }
-    if (key === 'GET /api/observability/effectiveness-trend') {
+    if (
+      scenario === 'coach-views' &&
+      key === 'GET /api/observability/effectiveness-trend'
+    ) {
       return fulfill(route, effectivenessTrend());
     }
-    if (key === 'GET /api/review/weekly') {
+    if (scenario === 'coach-views' && key === 'GET /api/review/weekly') {
       return fulfill(route, {
         window: { days: 7, from: 0, to: 0, time_zone: 'Asia/Shanghai' },
         totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
