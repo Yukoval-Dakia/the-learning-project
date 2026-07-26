@@ -142,7 +142,7 @@ test.describe('shipped-container usability regression', () => {
     page,
   }) => {
     const fixture = await installApiFixtures(page, 'teaching-brief');
-    const BRIEF_HEADINGS = ['教研团在检验什么', '为什么这么判断', '已经为你备好', '当前结果'];
+    const BRIEF_HEADINGS = ['教研团正在跟进的判断', '为什么这么判断', '已经为你备好', '当前结果'];
 
     await test.step('route=/today viewport=1280 renders one h2 + four h3 blocks, both CTAs keyboard-reachable, no guilt copy', async () => {
       await page.setViewportSize({ width: 1280, height: 800 });

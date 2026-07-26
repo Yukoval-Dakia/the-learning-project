@@ -549,7 +549,7 @@ describe('TeachingBriefBand — a11y landmarks (jsdom)', () => {
     renderWith(qc);
 
     await screen.findByRole('heading', { level: 2, name: '为你而备' });
-    for (const name of ['教研团在检验什么', '为什么这么判断', '已经为你备好', '当前结果']) {
+    for (const name of ['教研团正在跟进的判断', '为什么这么判断', '已经为你备好', '当前结果']) {
       expect(screen.getByRole('heading', { level: 3, name })).toBeTruthy();
       expect(screen.getByRole('region', { name })).toBeTruthy();
     }
