@@ -188,6 +188,12 @@ test.describe('shipped-container usability regression', () => {
     await expect(page.getByText('自动应用已暂停。')).toBeVisible();
     await expect(page.getByText(/30\/30/)).toBeVisible();
     await expect(page.getByText(/已退回全人审/)).toBeVisible();
+    await expect(page.getByText('自动通道暂停后退回人工裁决。')).toBeVisible();
+    await page.getByRole('button', { name: '接受', exact: true }).click();
+    await expect(page.getByText('已接受', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-breaker-completion-1', decision: 'accept' },
+    ]);
     await expectNoInternalCopy(page, '/inbox');
     expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
   });

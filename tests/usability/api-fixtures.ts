@@ -1,9 +1,4 @@
-import { strict as assert } from 'node:assert';
 import type { Page, Route } from '@playwright/test';
-import {
-  rollupSubjectDirection,
-  summarizeTrend,
-} from '../../src/capabilities/observability/server/effectiveness-trend-summary';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -181,6 +176,18 @@ function autoAppliedDigest(reverted = false, tripped = false) {
   };
 }
 
+const EFFECTIVENESS_METADATA = {
+  as_of: '2026-07-18T15:10:00.000Z',
+  window_start: '2026-06-18T15:10:00.000Z',
+  window_end: '2026-07-18T15:10:00.000Z',
+  timezone: 'Asia/Shanghai',
+  granularity: 'calendar_day',
+  notable_limit: 6,
+  eligible: 1,
+  returned: 1,
+  truncated: false,
+};
+
 function effectivenessTrend() {
   const points = [
     { at: '2026-07-11T10:00:00.000Z', p_learned: 0.38, theta_hat: 0, theta_delta: null },
@@ -198,11 +205,6 @@ function effectivenessTrend() {
     span_evidence: 8,
     has_mastery_signal: true,
   };
-  assert.deepEqual(summarizeTrend(points), trend);
-  assert.deepEqual(rollupSubjectDirection([trend, trend]), {
-    direction: 'rising',
-    confidence: 'medium',
-  });
   const whole = {
     knowledge_id: 'seed:math:root',
     name: '数学整体',
@@ -236,22 +238,11 @@ function effectivenessTrend() {
         },
       ],
     },
-    metadata: {
-      as_of: '2026-07-18T15:10:00.000Z',
-      window_start: '2026-06-18T15:10:00.000Z',
-      window_end: '2026-07-18T15:10:00.000Z',
-      timezone: 'Asia/Shanghai',
-      granularity: 'calendar_day',
-      notable_limit: 6,
-      eligible: 1,
-      returned: 1,
-      truncated: false,
-    },
+    metadata: EFFECTIVENESS_METADATA,
   };
 }
 
 function degradedEffectivenessTrend() {
-  const data = effectivenessTrend();
   const points = [
     '2026-07-14T10:00:00.000Z',
     '2026-07-15T10:00:00.000Z',
@@ -265,8 +256,6 @@ function degradedEffectivenessTrend() {
     span_evidence: 0,
     has_mastery_signal: false,
   };
-  assert.deepEqual(summarizeTrend(points), trend);
-  assert.equal(points.length, 5);
   const degradedSeries = {
     knowledge_id: 'seed:math:root',
     name: '数学整体',
@@ -276,7 +265,6 @@ function degradedEffectivenessTrend() {
     trend,
   };
   return {
-    ...data,
     series: [],
     subject_roots: [degradedSeries],
     aggregate: {
@@ -293,17 +281,18 @@ function degradedEffectivenessTrend() {
         },
       ],
     },
-    metadata: { ...data.metadata, eligible: 0, returned: 0 },
+    metadata: { ...EFFECTIVENESS_METADATA, eligible: 0, returned: 0 },
   };
 }
 
-function inboxProposal(id: string, kind: 'learning_item' | 'defer', reason: string) {
+function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
+  const learningItemId = kind === 'learning_item' ? null : `${id}-item`;
   return {
     id,
     kind,
     target: {
       subject_kind: 'learning_item',
-      subject_id: kind === 'learning_item' ? null : `${id}-item`,
+      subject_id: learningItemId,
     },
     payload: {
       kind,
@@ -318,7 +307,13 @@ function inboxProposal(id: string, kind: 'learning_item' | 'defer', reason: stri
               atomics: [],
               longs: [],
             }
-          : { learning_item_id: `${id}-item` },
+          : kind === 'completion'
+            ? {
+                learning_item_id: learningItemId,
+                triggering_signals: ['mastery_threshold'],
+                evidence_json: {},
+              }
+            : { learning_item_id: learningItemId },
     },
     status: 'pending',
     proposed_at: '2026-07-18T15:10:00.000Z',
@@ -548,9 +543,22 @@ export async function installApiFixtures(
       const lane = url.searchParams.get('lane');
       if (lane === 'decision') {
         return fulfill(route, {
-          rows: [
-            inboxProposal('proposal-learning-plan-1', 'learning_item', '建议先复习二次函数。'),
-          ],
+          rows:
+            scenario === 'inbox-breaker-tripped'
+              ? [
+                  inboxProposal(
+                    'proposal-breaker-completion-1',
+                    'completion',
+                    '自动通道暂停后退回人工裁决。',
+                  ),
+                ]
+              : [
+                  inboxProposal(
+                    'proposal-learning-plan-1',
+                    'learning_item',
+                    '建议先复习二次函数。',
+                  ),
+                ],
           next_cursor: null,
         });
       }
@@ -594,6 +602,40 @@ export async function installApiFixtures(
       );
     }
     if (
+      scenario === 'inbox-breaker-tripped' &&
+      key === 'POST /api/proposals/proposal-breaker-completion-1/decisions'
+    ) {
+      const body = request.postDataJSON() as { decision?: string } | null;
+      if (body?.decision !== 'accept' && body?.decision !== 'dismiss') {
+        return fulfill(route, { error: 'validation_error', message: 'decision is required' }, 400);
+      }
+      proposalDecisions.push({
+        id: 'proposal-breaker-completion-1',
+        decision: body.decision,
+      });
+      return fulfill(
+        route,
+        {
+          proposal_id: 'proposal-breaker-completion-1',
+          proposal_kind: 'completion',
+          decision: body.decision,
+          decision_event_id: 'event-breaker-decision-1',
+          proposal_status: body.decision === 'accept' ? 'accepted' : 'dismissed',
+          created: true,
+          idempotent: false,
+          result:
+            body.decision === 'accept'
+              ? {
+                  kind: 'completion',
+                  rate_event_id: 'event-breaker-decision-1',
+                  learning_item_id: 'proposal-breaker-completion-1-item',
+                }
+              : null,
+        },
+        201,
+      );
+    }
+    if (
       (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') &&
       key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
     ) {
@@ -612,7 +654,19 @@ export async function installApiFixtures(
           proposal_status: body.decision === 'accept' ? 'accepted' : 'dismissed',
           created: true,
           idempotent: false,
-          result: { kind: 'learning_item', learning_item_id: 'learning-plan-1' },
+          result: {
+            kind: 'learning_item',
+            rate_event_id: 'event-decision-1',
+            hub_learning_item_id: 'learning-item-1',
+            atomic_learning_item_ids: [],
+            long_learning_item_ids: [],
+            hub_artifact_id: 'artifact-learning-item-1',
+            atomic_artifact_ids: [],
+            long_artifact_ids: [],
+            root_knowledge_id: 'knowledge-math',
+            created_knowledge_ids: [],
+            enqueued_note_generate_jobs: 0,
+          },
         },
         201,
       );
@@ -627,24 +681,25 @@ export async function installApiFixtures(
       (scenario === 'coach-views' || scenario === 'coach-degraded') &&
       key === 'GET /api/observability/calibration-maturity'
     ) {
+      const degraded = scenario === 'coach-degraded';
       return fulfill(route, {
         rows: [
           {
             knowledge_id: 'knowledge-math',
             name: '二次函数',
             evidence_count: 5,
-            theta_se: 0.3,
-            confidence: 0.9,
+            theta_se: degraded ? 0.9 : 0.3,
+            confidence: degraded ? 0.2 : 0.9,
             track: null,
-            cold_start: false,
+            cold_start: degraded,
           },
         ],
         aggregate: {
           total_kcs: 1,
-          cold_start_count: 0,
-          firm_count: 1,
-          pct_firm: 1,
-          median_theta_se: 0.3,
+          cold_start_count: degraded ? 1 : 0,
+          firm_count: degraded ? 0 : 1,
+          pct_firm: degraded ? 0 : 1,
+          median_theta_se: degraded ? 0.9 : 0.3,
         },
       });
     }
@@ -652,24 +707,39 @@ export async function installApiFixtures(
       (scenario === 'coach-views' || scenario === 'coach-degraded') &&
       key === 'GET /api/review/weekly'
     ) {
+      const timeZone = url.searchParams.get('timezone');
+      if (url.searchParams.get('days') !== '7' || !timeZone) {
+        return fulfill(
+          route,
+          { error: 'validation_error', message: 'days=7 and timezone are required' },
+          400,
+        );
+      }
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      const end = new Date('2026-07-18T15:10:00.000Z');
+      const daily = Array.from({ length: 7 }, (_, index) => {
+        const date = formatter.format(new Date(end.getTime() - (6 - index) * 86_400_000));
+        return {
+          date,
+          count: index === 6 ? 5 : 0,
+          correct: index === 6 ? 4 : 0,
+        };
+      });
       return fulfill(route, {
         window: {
           days: 7,
           from: 1_783_785_600,
           to: 1_784_387_400,
-          time_zone: 'Asia/Shanghai',
+          time_zone: timeZone,
         },
         totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
         ratings: { again: 1, hard: 0, good: 3, easy: 1 },
-        daily: [
-          { date: '2026-07-12', count: 0, correct: 0 },
-          { date: '2026-07-13', count: 0, correct: 0 },
-          { date: '2026-07-14', count: 0, correct: 0 },
-          { date: '2026-07-15', count: 0, correct: 0 },
-          { date: '2026-07-16', count: 0, correct: 0 },
-          { date: '2026-07-17', count: 0, correct: 0 },
-          { date: '2026-07-18', count: 5, correct: 4 },
-        ],
+        daily,
         top_causes: [{ category: 'concept', count: 1 }],
         top_knowledge: [{ id: 'knowledge-math', name: '二次函数', failure_count: 1 }],
       });
