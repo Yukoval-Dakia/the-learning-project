@@ -31,6 +31,8 @@ import { writeJobEvent } from '@/server/events/writer';
 import { and, count, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
+  JUDGE_MAX_RECOVERY_ATTEMPTS,
+  JUDGE_RECOVERY_MAX_AGE_MS,
   enqueueJudgeRun,
   findStalledJudgePendingAttempts,
   judgeRecoveryJobId,
@@ -57,7 +59,7 @@ export const RECONCILE_STALL_MS = 15 * 60_000;
  * without the age cap a very old row would have its recovery budget silently reset and start
  * over. Aligning the two windows keeps the bound real instead of nominal.
  */
-export const RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const RECOVERY_MAX_AGE_MS = JUDGE_RECOVERY_MAX_AGE_MS;
 
 /** Runs re-enqueued per sweep. Bounds the burst a backlog can put on the paid queue. */
 export const RECONCILE_SCAN_LIMIT = 20;
@@ -67,7 +69,7 @@ export const RECONCILE_SCAN_LIMIT = 20;
  * permanent evidence and a human decides (YUK-800 A4). A run that has failed this many fresh
  * dispatches is failing for a reason no further retry will change.
  */
-export const MAX_RECOVERY_ATTEMPTS = 2;
+export const MAX_RECOVERY_ATTEMPTS = JUDGE_MAX_RECOVERY_ATTEMPTS;
 
 export interface JudgePendingReconcileReport {
   scanned: number;
@@ -102,13 +104,8 @@ export async function reconcileStalledJudgeAttempts(
 ): Promise<JudgePendingReconcileReport> {
   const now = args.now ?? new Date();
   const deps = args.deps ?? {};
-  const stalled = await findStalledJudgePendingAttempts(db, {
-    stalledBefore: new Date(now.getTime() - RECONCILE_STALL_MS),
-    recordedAfter: new Date(now.getTime() - RECOVERY_MAX_AGE_MS),
-    limit: RECONCILE_SCAN_LIMIT,
-  });
   const report: JudgePendingReconcileReport = {
-    scanned: stalled.length,
+    scanned: 0,
     reenqueued: 0,
     skippedLive: 0,
     skippedTerminal: 0,
@@ -116,110 +113,125 @@ export async function reconcileStalledJudgeAttempts(
     failed: 0,
   };
 
-  for (const pending of stalled) {
-    const runId = pending.payload.run_id;
-
-    // A terminal FAILED is an explicit decision that no delivery remains. Whether it came from
-    // exhausted retries (DLQ) or a deterministic error, D6 makes recovery manual-only; queue
-    // absence/completion must not reinterpret it as a dispatch gap and buy more paid calls.
-    const terminalFailureRows = await db
-      .select({ value: count() })
-      .from(job_events)
-      .where(
-        and(
-          eq(job_events.business_table, JUDGE_RUN_TABLE),
-          eq(job_events.business_id, runId),
-          eq(job_events.event_type, JUDGE_RUN_EVENTS.FAILED),
-        ),
-      );
-    if ((terminalFailureRows[0]?.value ?? 0) > 0) {
-      report.skippedTerminal += 1;
-      continue;
-    }
-
-    // Check the latest recovery delivery when one exists; otherwise check the original. This
-    // prevents a slow recovery job from being re-enqueued again on the next hourly tick.
-    const latestRecoveryJobId = await latestJudgeRecoveryJobId(db, runId);
-    const eligibility = await resolveAutomaticRecoveryEligibility(runId, {
-      ...(deps.boss ? { boss: deps.boss } : {}),
-      ...(latestRecoveryJobId ? { jobId: latestRecoveryJobId } : {}),
+  let dispatchAttempts = 0;
+  let offset = 0;
+  while (dispatchAttempts < RECONCILE_SCAN_LIMIT) {
+    const stalled = await findStalledJudgePendingAttempts(db, {
+      stalledBefore: new Date(now.getTime() - RECONCILE_STALL_MS),
+      recordedAfter: new Date(now.getTime() - RECOVERY_MAX_AGE_MS),
+      limit: RECONCILE_SCAN_LIMIT,
+      offset,
     });
-    if (eligibility === 'manual') {
-      report.skippedTerminal += 1;
-      continue;
-    }
-    if (eligibility !== 'eligible') {
-      report.skippedLive += 1;
-      continue;
-    }
+    if (stalled.length === 0) break;
+    offset += stalled.length;
+    for (const pending of stalled) {
+      if (dispatchAttempts >= RECONCILE_SCAN_LIMIT) break;
+      report.scanned += 1;
+      const runId = pending.payload.run_id;
 
-    // Recovery budget, counted from this run's own markers. Reading `job_events` here is
-    // bookkeeping about the sweeper's own retries — it is NOT what decides that the run needs
-    // recovering (that came from the domain scan), so the §3.6b "never key recovery on
-    // job_events" rule is intact.
-    const priorRequeueRows = await db
-      .select({ value: count() })
-      .from(job_events)
-      .where(
-        and(
-          eq(job_events.business_table, JUDGE_RUN_TABLE),
-          eq(job_events.business_id, runId),
-          eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
-        ),
-      );
-    const priorRequeues = priorRequeueRows[0]?.value ?? 0;
-    if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
-      report.skippedExhausted += 1;
-      console.warn(
-        `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
-        { pending_event_id: pending.pendingEventId },
-      );
-      continue;
-    }
-
-    try {
-      // Each recovery has a fresh deterministic UUID. It cannot collide with the original, and
-      // retrying this exact attempt after an uncertain marker write is idempotent in pg-boss.
-      const recoveryJobId = judgeRecoveryJobId(runId, priorRequeues + 1);
-      const jobId = await enqueueJudgeRun(
-        { run_id: runId, caller: pending.payload.caller, submit: pending.payload.submit },
-        deps,
-        { jobId: recoveryJobId, acceptExistingJobId: true },
-      );
-      // A successful dispatch is not complete until its liveness marker is durable. Retry the
-      // marker once immediately; if the DB remains unavailable, the deterministic job id keeps
-      // a later sweep from creating a second delivery for the same recovery attempt.
-      let markerError: unknown = null;
-      for (let markerAttempt = 0; markerAttempt < 2; markerAttempt++) {
-        try {
-          await writeJobEvent(db, {
-            business_table: JUDGE_RUN_TABLE,
-            business_id: runId,
-            event_type: JUDGE_RUN_EVENTS.REQUEUED,
-            payload: {
-              job_id: jobId,
-              attempt: priorRequeues + 1,
-              pending_event_id: pending.pendingEventId,
-              submitted_at: pending.submittedAt.toISOString(),
-            },
-          });
-          markerError = null;
-          break;
-        } catch (err) {
-          markerError = err;
-        }
+      // A terminal FAILED is an explicit decision that no delivery remains. Whether it came from
+      // exhausted retries (DLQ) or a deterministic error, D6 makes recovery manual-only; queue
+      // absence/completion must not reinterpret it as a dispatch gap and buy more paid calls.
+      const terminalFailureRows = await db
+        .select({ value: count() })
+        .from(job_events)
+        .where(
+          and(
+            eq(job_events.business_table, JUDGE_RUN_TABLE),
+            eq(job_events.business_id, runId),
+            eq(job_events.event_type, JUDGE_RUN_EVENTS.FAILED),
+          ),
+        );
+      if ((terminalFailureRows[0]?.value ?? 0) > 0) {
+        report.skippedTerminal += 1;
+        continue;
       }
-      if (markerError !== null) throw markerError;
-      report.reenqueued += 1;
-      console.info(
-        `[judge_pending_reconcile] re-enqueued ${runId} (recovery attempt ${priorRequeues + 1}/${MAX_RECOVERY_ATTEMPTS})`,
-      );
-    } catch (err) {
-      // A rate-limited or unavailable queue is a REASON TO WAIT, not a reason to drop the run:
-      // the pending row is untouched, so the next tick reconsiders it. Keep draining the rest
-      // of the batch — one throttled run must not strand the others.
-      report.failed += 1;
-      console.error(`[judge_pending_reconcile] re-enqueue failed for ${runId}`, err);
+
+      // Check the latest recovery delivery when one exists; otherwise check the original. This
+      // prevents a slow recovery job from being re-enqueued again on the next hourly tick.
+      const latestRecoveryJobId = await latestJudgeRecoveryJobId(db, runId);
+      const eligibility = await resolveAutomaticRecoveryEligibility(runId, {
+        ...(deps.boss ? { boss: deps.boss } : {}),
+        ...(latestRecoveryJobId ? { jobId: latestRecoveryJobId } : {}),
+      });
+      if (eligibility === 'manual') {
+        report.skippedTerminal += 1;
+        continue;
+      }
+      if (eligibility !== 'eligible') {
+        report.skippedLive += 1;
+        continue;
+      }
+
+      // Recovery budget, counted from this run's own markers. Reading `job_events` here is
+      // bookkeeping about the sweeper's own retries — it is NOT what decides that the run needs
+      // recovering (that came from the domain scan), so the §3.6b "never key recovery on
+      // job_events" rule is intact.
+      const priorRequeueRows = await db
+        .select({ value: count() })
+        .from(job_events)
+        .where(
+          and(
+            eq(job_events.business_table, JUDGE_RUN_TABLE),
+            eq(job_events.business_id, runId),
+            eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
+          ),
+        );
+      const priorRequeues = priorRequeueRows[0]?.value ?? 0;
+      if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
+        report.skippedExhausted += 1;
+        console.warn(
+          `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
+          { pending_event_id: pending.pendingEventId },
+        );
+        continue;
+      }
+
+      try {
+        dispatchAttempts += 1;
+        // Each recovery has a fresh deterministic UUID. It cannot collide with the original, and
+        // retrying this exact attempt after an uncertain marker write is idempotent in pg-boss.
+        const recoveryJobId = judgeRecoveryJobId(runId, priorRequeues + 1);
+        const jobId = await enqueueJudgeRun(
+          { run_id: runId, caller: pending.payload.caller, submit: pending.payload.submit },
+          deps,
+          { jobId: recoveryJobId, acceptExistingJobId: true },
+        );
+        // A successful dispatch is not complete until its liveness marker is durable. Retry the
+        // marker once immediately; if the DB remains unavailable, the deterministic job id keeps
+        // a later sweep from creating a second delivery for the same recovery attempt.
+        let markerError: unknown = null;
+        for (let markerAttempt = 0; markerAttempt < 2; markerAttempt++) {
+          try {
+            await writeJobEvent(db, {
+              business_table: JUDGE_RUN_TABLE,
+              business_id: runId,
+              event_type: JUDGE_RUN_EVENTS.REQUEUED,
+              payload: {
+                job_id: jobId,
+                attempt: priorRequeues + 1,
+                pending_event_id: pending.pendingEventId,
+                submitted_at: pending.submittedAt.toISOString(),
+              },
+            });
+            markerError = null;
+            break;
+          } catch (err) {
+            markerError = err;
+          }
+        }
+        if (markerError !== null) throw markerError;
+        report.reenqueued += 1;
+        console.info(
+          `[judge_pending_reconcile] re-enqueued ${runId} (recovery attempt ${priorRequeues + 1}/${MAX_RECOVERY_ATTEMPTS})`,
+        );
+      } catch (err) {
+        // A rate-limited or unavailable queue is a REASON TO WAIT, not a reason to drop the run:
+        // the pending row is untouched, so the next tick reconsiders it. Keep draining the rest
+        // of the batch — one throttled run must not strand the others.
+        report.failed += 1;
+        console.error(`[judge_pending_reconcile] re-enqueue failed for ${runId}`, err);
+      }
     }
   }
   return report;

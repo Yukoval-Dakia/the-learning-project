@@ -17,8 +17,10 @@ import { computeReplay } from '@/server/events/sse_replay';
 // progress?" would eventually disagree, and the two consumers would then disagree about
 // whether a run needs recovering.
 import {
+  hasAutomaticRecoveryBudget,
   hasPendingAttemptEvidence,
   latestJudgeRecoveryJobId,
+  resolveAutomaticRecoveryEligibility,
   resolveQueueLiveness,
 } from '../server/judge-run-dispatch';
 import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
@@ -121,7 +123,17 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // re-dispatched by `judge_pending_reconcile`. Both branches below would have lied about
     // it: 404 ("no such run") and `failed` ("this will never be judged").
     if (pendingEvidence) {
-      return Response.json({ run_id: runId, status: 'queued' as const, result: null });
+      const [eligibility, hasBudget] = await Promise.all([
+        resolveAutomaticRecoveryEligibility(runId, recoveryJobId ? { jobId: recoveryJobId } : {}),
+        hasAutomaticRecoveryBudget(db, runId),
+      ]);
+      if (eligibility === 'eligible' && hasBudget) {
+        return Response.json({ run_id: runId, status: 'queued' as const, result: null });
+      }
+      console.warn(
+        `[judge_run] ${runId} has pending evidence but no automatic recovery path — reporting failed for manual handling`,
+      );
+      return Response.json({ run_id: runId, status: 'failed' as const, result: null });
     }
     if (events.length === 0) {
       throw new ApiError('not_found', `judge_run ${runId} not found`, 404);

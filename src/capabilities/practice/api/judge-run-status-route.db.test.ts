@@ -3,7 +3,7 @@
 // queued; a done run → 200 done with the structured verdict payload (#11).
 
 import { newId } from '@/core/ids';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -89,6 +89,48 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(200);
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+    vi.restoreAllMocks();
+  });
+
+  it('reports failed once a pending run exhausts automatic recovery', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    await testDb()
+      .insert(job_events)
+      .values([
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { job_id: newId() },
+        },
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { job_id: newId() },
+        },
+      ]);
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'failed' });
     vi.restoreAllMocks();
   });
 

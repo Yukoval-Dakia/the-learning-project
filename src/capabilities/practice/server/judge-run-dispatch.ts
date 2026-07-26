@@ -35,7 +35,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
@@ -215,7 +215,9 @@ export async function enqueueJudgeRun(
     if (!jobId) {
       if (opts.acceptExistingJobId && opts.jobId) {
         // Deterministic recovery retry: ON CONFLICT means this exact delivery already exists.
-        // Treat that as durable success instead of allocating another paid delivery id.
+        // No new paid work was created, so return this call's admission token before treating the
+        // existing delivery as durable success.
+        (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
         rateLimitToken = null;
         return opts.jobId;
       }
@@ -365,6 +367,41 @@ export async function hasPendingAttemptEvidence(db: Db, runId: string): Promise<
   return rows.length > 0;
 }
 
+export const JUDGE_RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const JUDGE_MAX_RECOVERY_ATTEMPTS = 2;
+
+/** Whether a pending run remains inside the automatic sweeper's age and attempt bounds. */
+export async function hasAutomaticRecoveryBudget(
+  db: Db,
+  runId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const pendingRows = await db
+    .select({ createdAt: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+        sql`${event.payload} @> ${JSON.stringify({ run_id: runId })}::jsonb`,
+      ),
+    )
+    .limit(1);
+  const createdAt = pendingRows[0]?.createdAt;
+  if (!createdAt || createdAt.getTime() <= now.getTime() - JUDGE_RECOVERY_MAX_AGE_MS) return false;
+
+  const rows = await db
+    .select({ value: count() })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, JUDGE_RUN_QUEUE),
+        eq(job_events.business_id, runId),
+        eq(job_events.event_type, 'judge_run.requeued'),
+      ),
+    );
+  return (rows[0]?.value ?? 0) < JUDGE_MAX_RECOVERY_ATTEMPTS;
+}
+
 export interface StalledPendingAttempt {
   pendingEventId: string;
   payload: JudgePendingAttemptPayloadT;
@@ -391,7 +428,7 @@ export interface StalledPendingAttempt {
  */
 export async function findStalledJudgePendingAttempts(
   db: Db,
-  args: { stalledBefore: Date; recordedAfter: Date; limit: number },
+  args: { stalledBefore: Date; recordedAfter: Date; limit: number; offset?: number },
 ): Promise<StalledPendingAttempt[]> {
   const backfilled = alias(event, 'backfilled_attempt');
   const rows = await db
@@ -413,7 +450,8 @@ export async function findStalledJudgePendingAttempts(
       ),
     )
     .orderBy(asc(event.created_at))
-    .limit(args.limit);
+    .limit(args.limit)
+    .offset(args.offset ?? 0);
 
   return rows.flatMap((row) => {
     const result = JudgePendingAttemptPayload.safeParse(row.payload);
@@ -450,9 +488,8 @@ export async function findStalledJudgePendingAttempts(
  * conditional on a verdict landing, so B is visible here whether or not it wrote anything.
  *
  * Overlap is material overlap: the same question, or any shared knowledge id (the θ̂ domain,
- * which is a superset of the FSRS subset). Rows are filtered in memory after an indexed
- * `(action, created_at)` range read — the scan is bounded by `limit` and by the fact that only
- * attempts NEWER than this one can match, which for a healthy lane is a handful.
+ * which is a superset of the FSRS subset). The overlap predicate is applied in SQL before LIMIT;
+ * knowledge membership uses the repository's index-supported OR-of-`@>` containment pattern.
  */
 export async function hasNewerAttemptEvidence(
   tx: Tx,
@@ -467,10 +504,12 @@ export async function hasNewerAttemptEvidence(
   const knowledgeOverlap =
     args.knowledgeIds.length === 0
       ? sql`false`
-      : sql`${event.payload}->'knowledge_ids' ?| ARRAY[${sql.join(
-          args.knowledgeIds.map((id) => sql`${id}`),
-          sql`, `,
-        )}]::text[]`;
+      : sql`(${sql.join(
+          args.knowledgeIds.map(
+            (id) => sql`${event.payload}->'knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+          ),
+          sql` OR `,
+        )})`;
   const rows = await tx
     .select({ id: event.id })
     .from(event)
