@@ -53,6 +53,12 @@ describe('JudgePendingAttemptExperimental', () => {
     }
   });
 
+  it('accepts a legacy durable payload without question_snapshot', () => {
+    const legacy = validEvent();
+    (legacy.payload.submit as Record<string, unknown>).question_snapshot = undefined;
+    expect(() => parseEvent(legacy)).not.toThrow();
+  });
+
   it('rejects a frozen judge input that lost its shape', () => {
     const bad = validEvent();
     // A string where the frozen body belongs: the worker would re-parse it, fail deep inside

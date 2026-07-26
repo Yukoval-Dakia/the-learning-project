@@ -16,7 +16,11 @@ import { computeReplay } from '@/server/events/sse_replay';
 // queue the exact same question this route does. Two copies of "is this run still going to
 // progress?" would eventually disagree, and the two consumers would then disagree about
 // whether a run needs recovering.
-import { hasPendingAttemptEvidence, resolveQueueLiveness } from '../server/judge-run-dispatch';
+import {
+  hasPendingAttemptEvidence,
+  latestJudgeRecoveryJobId,
+  resolveQueueLiveness,
+} from '../server/judge-run-dispatch';
 import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import {
   JUDGE_RUN_TABLE,
@@ -65,14 +69,19 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // job; returning `started` forever told the client to poll a corpse. Asking the queue
     // first is also the cheap path: an in-flight run answers here with one PK lookup and
     // never touches the domain log.
-    const liveness = await resolveQueueLiveness(runId);
+    const pendingEvidence = await hasPendingAttemptEvidence(db, runId);
+    const recoveryJobId = await latestJudgeRecoveryJobId(db, runId);
+    const liveness = await resolveQueueLiveness(
+      runId,
+      recoveryJobId ? { jobId: recoveryJobId } : {},
+    );
     if (liveness === 'live') {
       return Response.json({ run_id: runId, status, result: null });
     }
     if (liveness === 'unknown') {
       // pg-boss did not answer. Report what the events say and change nothing — a lookup
       // blip must never be upgraded into a verdict about the run.
-      if (events.length === 0) {
+      if (events.length === 0 && !pendingEvidence) {
         throw new ApiError('not_found', `judge_run ${runId} not found`, 404);
       }
       return Response.json({ run_id: runId, status, result: null });
@@ -111,7 +120,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // enqueue failed outright has no job and no job_events yet is perfectly real and will be
     // re-dispatched by `judge_pending_reconcile`. Both branches below would have lied about
     // it: 404 ("no such run") and `failed` ("this will never be judged").
-    if (await hasPendingAttemptEvidence(db, runId)) {
+    if (pendingEvidence) {
       return Response.json({ run_id: runId, status: 'queued' as const, result: null });
     }
     if (events.length === 0) {

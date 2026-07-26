@@ -30,12 +30,12 @@ import {
   type JudgePendingAttemptPayloadT,
 } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
@@ -64,7 +64,16 @@ export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt'
  * anything else here would break first.
  */
 export function judgeRunJobId(runId: string): string {
-  const hex = createHash('sha256').update(`judge_run:${runId}`).digest('hex');
+  return durableJudgeJobId(`judge_run:${runId}`);
+}
+
+/** A fresh, deterministic pg-boss UUID for one recovery delivery. */
+export function judgeRecoveryJobId(runId: string, attempt: number): string {
+  return durableJudgeJobId(`judge_run:${runId}:recovery:${attempt}`);
+}
+
+function durableJudgeJobId(seed: string): string {
+  const hex = createHash('sha256').update(seed).digest('hex');
   const bytes = hex.slice(0, 32).split('');
   bytes[12] = '8'; // version 8 (custom)
   const variantNibble = (Number.parseInt(bytes[16], 16) & 0x3) | 0x8; // variant 10xx
@@ -108,18 +117,18 @@ export async function recordJudgePendingAttempt(
   input: RecordJudgePendingAttemptInput,
 ): Promise<string> {
   const pendingEventId = newId();
-  const payload: JudgePendingAttemptPayloadT = {
+  const payload = JudgePendingAttemptPayload.parse({
     run_id: input.runId,
     caller: 'submit',
     knowledge_ids: input.knowledgeIds,
     submit: {
-      body: input.submit.body as Record<string, unknown>,
+      body: input.submit.body,
       question_id: input.submit.question_id,
-      subject_profile: input.submit.subject_profile as Record<string, unknown>,
-      question_snapshot: input.submit.question_snapshot as Record<string, unknown>,
+      subject_profile: input.submit.subject_profile,
+      question_snapshot: input.submit.question_snapshot,
       submitted_at: input.submit.submitted_at,
     },
-  };
+  });
   await writeEvent(db, {
     id: pendingEventId,
     session_id: input.sessionId,
@@ -192,7 +201,7 @@ export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
 export async function enqueueJudgeRun(
   job: JudgeRunJobData,
   deps: JudgeRunEnqueueDeps = {},
-  opts: { jobId?: string; token?: number } = {},
+  opts: { jobId?: string; token?: number; acceptExistingJobId?: boolean } = {},
 ): Promise<string> {
   let rateLimitToken: number | null = null;
   try {
@@ -204,6 +213,12 @@ export async function enqueueJudgeRun(
       opts.jobId === undefined ? undefined : { id: opts.jobId },
     );
     if (!jobId) {
+      if (opts.acceptExistingJobId && opts.jobId) {
+        // Deterministic recovery retry: ON CONFLICT means this exact delivery already exists.
+        // Treat that as durable success instead of allocating another paid delivery id.
+        rateLimitToken = null;
+        return opts.jobId;
+      }
       throw new ApiError(
         'durable_enqueue_failed',
         `judge_run enqueue returned no jobId for run ${job.run_id}`,
@@ -257,11 +272,13 @@ export async function resolveQueueLiveness(
   runId: string,
   deps: {
     boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    /** Latest recovery delivery id; absent means the original deterministic delivery. */
+    jobId?: string;
   } = {},
 ): Promise<QueueLiveness> {
   try {
     const boss = deps.boss ?? (await getStartedBoss());
-    const job = await boss.getJobById(JUDGE_RUN_QUEUE, judgeRunJobId(runId));
+    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
     if (job === null) return 'dead';
     const { state } = job;
     if (LIVE_BOSS_STATES.has(state)) return 'live';
@@ -273,6 +290,24 @@ export async function resolveQueueLiveness(
     console.error('[judge_run] pg-boss lookup failed while resolving run liveness', runId, err);
     return 'unknown';
   }
+}
+
+/** Latest successfully recorded recovery delivery, used by poll and subsequent sweeps. */
+export async function latestJudgeRecoveryJobId(db: Db, runId: string): Promise<string | null> {
+  const rows = await db
+    .select({ payload: job_events.payload })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, JUDGE_RUN_QUEUE),
+        eq(job_events.business_id, runId),
+        eq(job_events.event_type, 'judge_run.requeued'),
+      ),
+    )
+    .orderBy(desc(job_events.id))
+    .limit(1);
+  const jobId = rows[0]?.payload?.job_id;
+  return typeof jobId === 'string' ? jobId : null;
 }
 
 /**
@@ -395,30 +430,28 @@ export async function hasNewerAttemptEvidence(
     knowledgeIds: string[];
     /** This run's own pending row must not count as evidence against itself. */
     excludeRunId: string;
-    limit?: number;
   },
 ): Promise<boolean> {
+  const knowledgeOverlap =
+    args.knowledgeIds.length === 0
+      ? sql`false`
+      : sql`${event.payload}->'knowledge_ids' ?| ARRAY[${sql.join(
+          args.knowledgeIds.map((id) => sql`${id}`),
+          sql`, `,
+        )}]::text[]`;
   const rows = await tx
-    .select({ payload: event.payload })
+    .select({ id: event.id })
     .from(event)
-    .where(and(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION), gt(event.created_at, args.now)))
-    .orderBy(asc(event.created_at))
-    .limit(args.limit ?? NEWER_EVIDENCE_SCAN_LIMIT);
-  const mine = new Set(args.knowledgeIds.filter((id) => id.length > 0));
-  for (const row of rows) {
-    const payload = row.payload as unknown as Partial<JudgePendingAttemptPayloadT>;
-    if (payload.run_id === args.excludeRunId) continue;
-    if (payload.submit?.question_id === args.questionId) return true;
-    for (const id of payload.knowledge_ids ?? []) {
-      if (mine.has(id)) return true;
-    }
-  }
-  return false;
+    .where(
+      and(
+        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+        gt(event.created_at, args.now),
+        sql`${event.payload}->>'run_id' <> ${args.excludeRunId}`,
+        sql`(${event.payload}->'submit'->>'question_id' = ${args.questionId} OR ${knowledgeOverlap})`,
+      ),
+    )
+    // The overlap predicate is applied before the cap. Non-overlapping traffic can never hide a
+    // relevant newer answer, regardless of how many other questions were submitted meanwhile.
+    .limit(1);
+  return rows.length > 0;
 }
-
-/**
- * Bound on one water-mark read. Only attempts submitted AFTER the one being persisted can
- * appear, so in a healthy lane this is 0–2 rows; the cap exists so a pathological backlog
- * degrades into "read the oldest N" rather than an unbounded scan inside the attempt tx.
- */
-const NEWER_EVIDENCE_SCAN_LIMIT = 200;

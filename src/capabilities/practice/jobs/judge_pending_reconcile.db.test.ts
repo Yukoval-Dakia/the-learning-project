@@ -72,7 +72,7 @@ async function seedPendingAttempt(opts: { agoMs: number; runId?: string }) {
 
 /** A boss whose jobs are all dead (the DLQ-exhausted / never-enqueued shape). */
 function deadBoss() {
-  const send = vi.fn().mockImplementation(async () => newId());
+  const send = vi.fn().mockImplementation(async (_name, _data, options) => options?.id ?? newId());
   return {
     send,
     getJobById: vi.fn().mockResolvedValue(null as JobWithMetadata | null),
@@ -96,10 +96,9 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     expect(boss.send).toHaveBeenCalledTimes(1);
     const [queue, data, options] = boss.send.mock.calls[0];
     expect(queue).toBe('judge_run');
-    // The recovery job must NOT reuse the run handle as its pg-boss job id: that id still
-    // belongs to the dead job, so pg-boss would answer the collision with null and silently
-    // refuse every recovery for the rest of this run's life.
-    expect(options).toBeUndefined();
+    // Recovery gets a fresh deterministic pg-boss UUID rather than reusing the original. That
+    // makes the delivery trackable and makes an uncertain retry of this recovery idempotent.
+    expect(options).toEqual({ id: expect.any(String) });
     // Same run handle, same frozen inputs — a recovered run judges what the learner answered
     // and what the profile said THEN, not whatever those rows say now (D5 survives recovery).
     expect(data).toMatchObject({
@@ -119,6 +118,25 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
       .where(eq(job_events.business_id, runId));
     expect(markers.map((m) => m.event_type)).toEqual([JUDGE_RUN_EVENTS.REQUEUED]);
     expect(markers[0].payload).toMatchObject({ attempt: 1 });
+  });
+
+  it('tracks the latest recovery job and skips while it is still live', async () => {
+    const { runId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+    const boss = deadBoss();
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      reenqueued: 1,
+    });
+    const recoveryId = boss.send.mock.calls[0][2]?.id;
+    boss.getJobById.mockImplementation(async (_queue, id) =>
+      id === recoveryId ? ({ state: 'active' } as JobWithMetadata) : null,
+    );
+
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      reenqueued: 0,
+      skippedLive: 1,
+    });
+    expect(boss.getJobById).toHaveBeenLastCalledWith('judge_run', recoveryId);
+    expect(boss.send).toHaveBeenCalledTimes(1);
   });
 
   it('leaves a JUDGED attempt alone — the review event keyed by run_id is the proof', async () => {

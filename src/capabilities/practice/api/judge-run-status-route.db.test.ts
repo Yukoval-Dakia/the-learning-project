@@ -92,6 +92,31 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps a recorded marker-less run queued when pg-boss liveness is unknown', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockRejectedValue(new Error('temporary lookup failure'));
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+    vi.restoreAllMocks();
+  });
+
   it('still 404s for an unknown run once a DIFFERENT run has a pending attempt recorded', async () => {
     // Guards the containment lookup: matching on `payload @> {run_id}` must not degrade into
     // "any pending attempt exists", which would turn every unknown id into a 200.

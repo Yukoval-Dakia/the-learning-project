@@ -48,7 +48,10 @@ export const JudgePendingSubmitInput = z.object({
   body: z.record(z.string(), z.unknown()),
   question_id: z.string().min(1),
   subject_profile: z.record(z.string(), z.unknown()),
-  question_snapshot: z.record(z.string(), z.unknown()),
+  // Mirrors JudgeRunJobData['submit']: pre-snapshot in-flight jobs may legitimately omit it.
+  // New durable submits always persist the frozen snapshot, while recovery preserves the legacy
+  // read-live fallback instead of stranding an otherwise valid recorded answer.
+  question_snapshot: z.record(z.string(), z.unknown()).optional(),
   /** ISO — the answer instant. The ordering water mark; also the FSRS scheduling anchor. */
   submitted_at: z.string().datetime(),
 });

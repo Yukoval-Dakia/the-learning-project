@@ -26,12 +26,15 @@
 // Nothing is ever lost by hitting a bound — the answer is immutable evidence either way.
 
 import type { Db } from '@/db/client';
-import { computeReplay } from '@/server/events/sse_replay';
+import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import { and, count, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
   enqueueJudgeRun,
   findStalledJudgePendingAttempts,
+  judgeRecoveryJobId,
+  latestJudgeRecoveryJobId,
   resolveQueueLiveness,
 } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
@@ -113,10 +116,13 @@ export async function reconcileStalledJudgeAttempts(
   for (const pending of stalled) {
     const runId = pending.payload.run_id;
 
-    // The queue is asked FIRST and is authoritative on "can this still progress". `unknown`
-    // (pg-boss did not answer) counts as live: waiting one more tick costs nothing, whereas
-    // re-enqueueing a genuinely in-flight run buys a duplicate paid judge.
-    const liveness = await resolveQueueLiveness(runId, deps.boss ? { boss: deps.boss } : {});
+    // Check the latest recovery delivery when one exists; otherwise check the original. This
+    // prevents a slow recovery job from being re-enqueued again on the next hourly tick.
+    const latestRecoveryJobId = await latestJudgeRecoveryJobId(db, runId);
+    const liveness = await resolveQueueLiveness(runId, {
+      ...(deps.boss ? { boss: deps.boss } : {}),
+      ...(latestRecoveryJobId ? { jobId: latestRecoveryJobId } : {}),
+    });
     if (liveness !== 'dead') {
       report.skippedLive += 1;
       continue;
@@ -126,14 +132,17 @@ export async function reconcileStalledJudgeAttempts(
     // bookkeeping about the sweeper's own retries — it is NOT what decides that the run needs
     // recovering (that came from the domain scan), so the §3.6b "never key recovery on
     // job_events" rule is intact.
-    const priorEvents = await computeReplay(db, {
-      businessTable: JUDGE_RUN_TABLE,
-      businessId: runId,
-      lastEventId: 0,
-    });
-    const priorRequeues = priorEvents.filter(
-      (e) => e.event_type === JUDGE_RUN_EVENTS.REQUEUED,
-    ).length;
+    const priorRequeueRows = await db
+      .select({ value: count() })
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_table, JUDGE_RUN_TABLE),
+          eq(job_events.business_id, runId),
+          eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
+        ),
+      );
+    const priorRequeues = priorRequeueRows[0]?.value ?? 0;
     if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
       report.skippedExhausted += 1;
       console.warn(
@@ -144,30 +153,40 @@ export async function reconcileStalledJudgeAttempts(
     }
 
     try {
-      // NO `jobId`: the run handle is still occupied by the dead job, and pg-boss would answer
-      // an id collision with null (ON CONFLICT DO NOTHING) — which would refuse every recovery
-      // for the rest of the run's life. `run_id` inside the payload is unchanged, so the
-      // handler's own idempotency guard still collapses a duplicate delivery.
+      // Each recovery has a fresh deterministic UUID. It cannot collide with the original, and
+      // retrying this exact attempt after an uncertain marker write is idempotent in pg-boss.
+      const recoveryJobId = judgeRecoveryJobId(runId, priorRequeues + 1);
       const jobId = await enqueueJudgeRun(
         { run_id: runId, caller: pending.payload.caller, submit: pending.payload.submit },
         deps,
+        { jobId: recoveryJobId, acceptExistingJobId: true },
       );
-      // Written AFTER a successful enqueue so the counter can never over-count and strand a
-      // run that was never actually re-dispatched. A failure to write it costs at most one
-      // extra recovery attempt, which the age cap still bounds.
-      await writeJobEvent(db, {
-        business_table: JUDGE_RUN_TABLE,
-        business_id: runId,
-        event_type: JUDGE_RUN_EVENTS.REQUEUED,
-        payload: {
-          job_id: jobId,
-          attempt: priorRequeues + 1,
-          pending_event_id: pending.pendingEventId,
-          submitted_at: pending.submittedAt.toISOString(),
-        },
-      });
+      // A successful dispatch is not complete until its liveness marker is durable. Retry the
+      // marker once immediately; if the DB remains unavailable, the deterministic job id keeps
+      // a later sweep from creating a second delivery for the same recovery attempt.
+      let markerError: unknown = null;
+      for (let markerAttempt = 0; markerAttempt < 2; markerAttempt++) {
+        try {
+          await writeJobEvent(db, {
+            business_table: JUDGE_RUN_TABLE,
+            business_id: runId,
+            event_type: JUDGE_RUN_EVENTS.REQUEUED,
+            payload: {
+              job_id: jobId,
+              attempt: priorRequeues + 1,
+              pending_event_id: pending.pendingEventId,
+              submitted_at: pending.submittedAt.toISOString(),
+            },
+          });
+          markerError = null;
+          break;
+        } catch (err) {
+          markerError = err;
+        }
+      }
+      if (markerError !== null) throw markerError;
       report.reenqueued += 1;
-      console.log(
+      console.info(
         `[judge_pending_reconcile] re-enqueued ${runId} (recovery attempt ${priorRequeues + 1}/${MAX_RECOVERY_ATTEMPTS})`,
       );
     } catch (err) {

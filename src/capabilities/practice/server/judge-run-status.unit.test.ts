@@ -70,6 +70,36 @@ describe('deriveJudgeRunStatus', () => {
   });
 });
 
+describe('deriveJudgeRunStatus — REQUEUED recovery (YUK-777)', () => {
+  it('escapes failed and done terminal states into queued', () => {
+    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.FAILED), ev(JUDGE_RUN_EVENTS.REQUEUED)])).toBe(
+      'queued',
+    );
+    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.DONE), ev(JUDGE_RUN_EVENTS.REQUEUED)])).toBe(
+      'queued',
+    );
+  });
+
+  it('a recovery STARTED heartbeat escapes failed even if its REQUEUED marker was lost', () => {
+    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.FAILED), ev(JUDGE_RUN_EVENTS.STARTED)])).toBe(
+      'started',
+    );
+  });
+
+  it('tracks the terminal result of the recovery delivery', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.REQUEUED),
+        ev(JUDGE_RUN_EVENTS.STARTED),
+        ev(JUDGE_RUN_EVENTS.DONE),
+      ]),
+    ).toBe('done');
+    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.REQUEUED), ev(JUDGE_RUN_EVENTS.FAILED)])).toBe(
+      'failed',
+    );
+  });
+});
+
 describe('terminalJudgeRunResult', () => {
   const rev = (event_type: string, payload: unknown): JudgeRunReplayEvent => ({
     event_type,

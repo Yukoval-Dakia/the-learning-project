@@ -132,6 +132,57 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
   });
 
+  it('finds relevant evidence beyond 200 unrelated newer attempts', async () => {
+    await seedKnowledge('k1', 'math');
+    const oldQ = `q_${newId()}`;
+    const relatedQ = `q_${newId()}`;
+    await seedQuestion(oldQ, ['k1']);
+    await seedQuestion(relatedQ, ['k1']);
+    const old = new Date(Date.now() - 10 * MINUTE);
+
+    for (let i = 0; i < 205; i++) {
+      const unrelatedQ = `q_${newId()}`;
+      await seedQuestion(unrelatedQ, [`unrelated-${i}`]);
+      const submittedAt = new Date(old.getTime() + (i + 1) * 1000);
+      await recordJudgePendingAttempt(testDb(), {
+        runId: newId(),
+        sessionId: null,
+        questionId: unrelatedQ,
+        knowledgeIds: [`unrelated-${i}`],
+        submit: {
+          body: { question_id: unrelatedQ, rating: 'good', response_md: 'x', auto_rate: true },
+          question_id: unrelatedQ,
+          subject_profile: { subject: 'wenyan' },
+          question_snapshot: {},
+          submitted_at: submittedAt.toISOString(),
+        },
+        submittedAt,
+      });
+    }
+    const relatedAt = new Date(old.getTime() + 300_000);
+    await recordJudgePendingAttempt(testDb(), {
+      runId: newId(),
+      sessionId: null,
+      questionId: relatedQ,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: relatedQ, rating: 'good', response_md: 'x', auto_rate: true },
+        question_id: relatedQ,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: relatedAt.toISOString(),
+      },
+      submittedAt: relatedAt,
+    });
+
+    const result = await persistSubmit(
+      await buildValidated(oldQ, old, { rating: 'good', referenced_knowledge_ids: ['k1'] }),
+      manualJudged(),
+      { attemptEventId: newId(), enforceAttemptOrdering: true },
+    );
+    expect(result.lateArrival).toBe(true);
+  });
+
   it('does NOT flag an attempt whose own pending row is the only newer-looking evidence', async () => {
     await seedKnowledge('k1', 'math');
     const questionId = `q_${newId()}`;

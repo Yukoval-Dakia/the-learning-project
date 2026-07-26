@@ -95,8 +95,10 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         status = 'failed';
         break;
       case JUDGE_RUN_EVENTS.STARTED:
-        // 取最高非终态阶段：只在仍是 queued 时推到 started；已 terminal 不回退。
-        if (status === 'queued') status = 'started';
+        // An actual delivery is now running. This can legitimately escape FAILED when a recovery
+        // enqueue succeeded but its REQUEUED marker write was temporarily unavailable. DONE stays
+        // terminal: a stale duplicate STARTED must not hide a committed verdict.
+        if (status === 'queued' || status === 'failed') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
         // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
