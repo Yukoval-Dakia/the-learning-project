@@ -20,7 +20,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
 import {
   archiveMisconceptionEdge,
@@ -128,33 +128,42 @@ export async function archiveSoftMisconceptionForConjecture(
   const misconceptionId = misconceptionIdForConjecture(causeCategory, knowledgeId);
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`misc:${misconceptionId}`}))`);
 
-  const archivedNodes = await tx
-    .update(misconception)
-    .set({ archived_at: now, updated_at: now })
-    .where(
-      and(
-        eq(misconception.id, misconceptionId),
-        eq(misconception.source, 'soft'),
-        isNull(misconception.archived_at),
-      ),
-    )
-    .returning({ id: misconception.id });
+  const nodes = await tx
+    .select({ source: misconception.source, archivedAt: misconception.archived_at })
+    .from(misconception)
+    .where(eq(misconception.id, misconceptionId))
+    .limit(1);
+  const node = nodes[0];
+  if (!node || node.source !== 'soft') return { misconceptionId, archived: false };
 
-  if (archivedNodes.length === 0) return { misconceptionId, archived: false };
+  if (node.archivedAt === null) {
+    await tx
+      .update(misconception)
+      .set({ archived_at: now, updated_at: now })
+      .where(eq(misconception.id, misconceptionId));
+  }
 
   const liveEdges = await tx
     .select({ id: misconception_edge.id })
     .from(misconception_edge)
     .where(
       and(
-        eq(misconception_edge.from_kind, 'misconception'),
-        eq(misconception_edge.from_id, misconceptionId),
+        or(
+          and(
+            eq(misconception_edge.from_kind, 'misconception'),
+            eq(misconception_edge.from_id, misconceptionId),
+          ),
+          and(
+            eq(misconception_edge.to_kind, 'misconception'),
+            eq(misconception_edge.to_id, misconceptionId),
+          ),
+        ),
         isNull(misconception_edge.archived_at),
       ),
     );
   for (const edge of liveEdges) await archiveMisconceptionEdge(tx, edge.id, now);
 
-  return { misconceptionId, archived: true };
+  return { misconceptionId, archived: node.archivedAt === null };
 }
 
 export interface PromoteConjectureInput {

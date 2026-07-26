@@ -294,6 +294,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 教研团正在跟进的判断
               </h3>
               <p className="tb-claim serif">{brief.finding.claim_md}</p>
+              {brief.finding.tested_claim_md && (
+                <p className="tb-basis">
+                  这道探针检验的是你改写前的判断：{brief.finding.tested_claim_md}
+                </p>
+              )}
               {brief.prepared_action.kind === 'review_finding' &&
                 (editingClaim ? (
                   <div className="tb-claim-edit">

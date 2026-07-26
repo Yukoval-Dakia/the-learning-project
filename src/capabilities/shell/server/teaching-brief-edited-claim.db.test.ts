@@ -168,11 +168,8 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     expect(brief?.current_outcome.summary_md).not.toContain(UNQUALIFIED_RETIRE_COPY);
   });
 
-  // OCR (#1080) — the two sides of the "did the owner really rewrite it?" comparison have
-  // ASYMMETRIC trimming: `corrected_payload.claim_md` is `z.string().trim()` (proposal.ts:106)
-  // while the proposal's own `claim_md` is not (proposal.ts:497). An AI claim carrying stray
-  // whitespace would otherwise make a semantically identical "rewrite" register as real and
-  // show the owner a pre-edit disclosure for a claim nobody actually changed.
+  // Both current claim schemas trim. Keep this regression because normalization at reader and
+  // accept boundaries also protects legacy persisted rows and direct/internal callers.
   it('treats a whitespace-only difference as NO rewrite', async () => {
     const db = testDb();
     const padded = `  ${ORIGINAL_CLAIM}  `;

@@ -190,8 +190,10 @@ export async function acceptConjectureProposal(
     const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
 
     // An edit also retracts any pre-existing SOFT node for this deterministic cause×KC
-    // identity. The row/edges are archived, never deleted; a HARD node is left untouched.
-    if (isEdit && promotionEnabled) {
+    // identity. Cleanup is deliberately independent of the current promotion flag: a node may
+    // have been created while the flag was ON and still needs retiring after an OFF rollback.
+    // The row/edges are archived, never deleted; a HARD node is left untouched.
+    if (isEdit) {
       await archiveSoftMisconceptionForConjecture(tx, causeCategory, knowledgeId, now);
     }
 

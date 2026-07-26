@@ -227,6 +227,8 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
       }),
     );
     expect(html).toContain(edited);
+    expect(html).toContain(FINDING_CLAIM);
+    expect(html).toContain('这道探针检验的是你改写前的判断');
     expect(html).toContain('教研团正在跟进的判断');
     expect(html).not.toContain('教研团在检验什么');
     expectClean(html);

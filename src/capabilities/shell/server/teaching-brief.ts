@@ -181,12 +181,10 @@ type DbLike = Db | Tx;
 interface ConjectureFacts {
   id: string;
   /**
-   * NORMALIZED (trimmed) proposal claim. `ConjectureProposalChange.claim_md` is
-   * `z.string().min(1).max(280)` with NO `.trim()` (proposal.ts:497) while the owner's
-   * `corrected_payload.claim_md` IS trimmed (proposal.ts:106), so the raw values are not
-   * comparable and a padded AI claim would render with stray whitespace. Trimming once
-   * here — where the facts are built — keeps every consumer (display, the rewrite
-   * comparison, the disclosure key) on the same normalized value.
+   * NORMALIZED (trimmed) proposal claim. Both proposal and correction schemas now trim,
+   * while the manual normalization here remains defense in depth for legacy persisted rows.
+   * Keeping it at the facts boundary gives display, rewrite comparison, and disclosure the
+   * same canonical value.
    */
   claimMd: string;
   knowledgeId: string;
@@ -477,17 +475,13 @@ async function loadAcceptedFinding(
     const payload = toRecord(rate.payload);
     if (payload.rating !== 'accept') continue;
     const corrected = payload.corrected_claim_md;
-    if (typeof corrected !== 'string' || corrected.trim().length === 0) continue;
-    // A "rewrite" that reproduces the original verbatim tests exactly what it claims to,
-    // so it earns no disclosure key (and the schema forbids tested_claim_md === claim_md).
-    // OCR (#1080) — both sides are normalized: `corrected` is trimmed by
-    // `corrected_payload`'s `z.string().trim()` (proposal.ts:106) and `proposal.claimMd`
-    // is trimmed where ConjectureFacts is built (the proposal's own schema does not).
-    // acceptConjectureProposal now applies the SAME normalized comparison before it
-    // records a correction at all, so a fresh no-op edit never reaches this branch; this
-    // stays as the reader-side guard for rate events written BEFORE that fix.
-    if (corrected === proposal.claimMd) return { ...base, claim_md: corrected };
-    return { ...base, claim_md: corrected, tested_claim_md: proposal.claimMd };
+    if (typeof corrected !== 'string') continue;
+    const trimmed = corrected.trim();
+    if (trimmed.length === 0) continue;
+    // A rewrite that normalizes to the proposal claim needs no disclosure key. Both current
+    // schemas trim, and this reader-side normalization preserves that verdict for legacy rows.
+    if (trimmed === proposal.claimMd) return { ...base, claim_md: trimmed };
+    return { ...base, claim_md: trimmed, tested_claim_md: proposal.claimMd };
   }
   return { ...base, claim_md: proposal.claimMd };
 }
