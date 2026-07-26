@@ -9,7 +9,9 @@ export type UsabilityScenario =
   | 'unauthorized'
   | 'practice-mutation-failure'
   | 'questions-pagination'
-  | 'teaching-brief';
+  | 'teaching-brief'
+  | 'inbox-auto-applied'
+  | 'coach-views';
 
 interface FixtureController {
   unexpectedRequests: string[];
@@ -142,18 +144,70 @@ function teachingBriefProbeReady() {
 // YUK-789 — the A 档 auto-applied digest (/inbox) and the 成效趋势面 (/coach efficacy).
 // Both are shipped learner surfaces reachable from the same SPA build; without fixtures
 // a spec that walks into either route silently falls into the catch-all 501.
-function autoAppliedDigest() {
+function autoAppliedDigest(reverted = false) {
   return {
-    rows: [],
-    breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 7 },
+    rows: [
+      {
+        proposal_id: 'proposal-completion-1',
+        learning_item_id: 'learning-item-1',
+        title: '《岳阳楼记》背诵检查',
+        applied_at: '2099-07-18T15:10:00.000Z',
+        level: 'ok',
+        reverted,
+      },
+    ],
+    breaker: { tripped: false, level: 'ok', applied: 1, cap: 8, window: 604_800_000 },
   };
 }
 
 function effectivenessTrend() {
+  const points = [
+    { at: '2026-07-16T10:00:00.000Z', p_learned: 0.42, theta_hat: 0.1, theta_delta: null },
+    { at: '2026-07-18T10:00:00.000Z', p_learned: 0.61, theta_hat: 0.4, theta_delta: 0.3 },
+  ];
+  const whole = {
+    knowledge_id: 'math',
+    name: '数学整体',
+    effective_domain: 'math',
+    activity_count: 5,
+    points,
+    trend: {
+      direction: 'rising',
+      confidence: 'high',
+      span_evidence: 2,
+      has_mastery_signal: true,
+    },
+  };
+  const kc = {
+    knowledge_id: 'knowledge-math',
+    name: '二次函数',
+    effective_domain: 'math',
+    activity_count: 5,
+    points,
+    trend: {
+      direction: 'rising',
+      confidence: 'high',
+      span_evidence: 2,
+      has_mastery_signal: true,
+    },
+  };
   return {
-    series: [],
-    subject_roots: [],
-    aggregate: { total_kcs_with_activity: 0, total_events: 0, by_subject: [] },
+    series: [kc],
+    subject_roots: [whole],
+    aggregate: {
+      total_kcs_with_activity: 1,
+      total_events: 5,
+      by_subject: [
+        {
+          effective_domain: 'math',
+          direction: 'rising',
+          confidence: 'high',
+          kc_count: 1,
+          kc_with_mastery_signal: 1,
+          activity_count: 5,
+        },
+      ],
+    },
     metadata: {
       as_of: '2026-07-18T15:10:00.000Z',
       window_start: '2026-06-18T15:10:00.000Z',
@@ -234,6 +288,7 @@ export async function installApiFixtures(
   const briefInteractions: Array<Record<string, unknown>> = [];
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
+  let autoAppliedReverted = false;
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
@@ -319,7 +374,11 @@ export async function installApiFixtures(
     }
     // YUK-789 — the accept/dismiss mutation the band's two CTAs drive (decideProposal).
     // The accept flips the server-side brief projection to probe_ready.
-    if (method === 'POST' && /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)) {
+    if (
+      scenario === 'teaching-brief' &&
+      method === 'POST' &&
+      /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)
+    ) {
       briefCalls.push(`POST ${url.pathname}`);
       const body = request.postDataJSON() as { decision?: string } | null;
       // Mirror the server's validation instead of guessing: a body without a recognised
@@ -354,9 +413,43 @@ export async function installApiFixtures(
       );
     }
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
-    if (key === 'GET /api/proposals/auto-applied') return fulfill(route, autoAppliedDigest());
+    if (key === 'GET /api/proposals/auto-applied') {
+      return fulfill(route, autoAppliedDigest(autoAppliedReverted));
+    }
+    if (key === 'GET /api/proposals') return fulfill(route, { rows: [], next_cursor: null });
+    if (key === 'GET /api/knowledge') return fulfill(route, { rows: [] });
+    if (
+      scenario === 'inbox-auto-applied' &&
+      key === 'POST /api/proposals/proposal-completion-1/decisions'
+    ) {
+      const body = request.postDataJSON() as { decision?: string } | null;
+      if (body?.decision !== 'retract') {
+        return fulfill(route, { error: 'validation_error', message: 'retract is required' }, 400);
+      }
+      autoAppliedReverted = true;
+      return fulfill(route, {
+        proposal_id: 'proposal-completion-1',
+        proposal_kind: 'completion',
+        decision: 'retract',
+        decision_event_id: 'event-retract-1',
+        proposal_status: 'retracted',
+        created: true,
+        idempotent: false,
+        result: { kind: 'completion', learning_item_id: 'learning-item-1' },
+      });
+    }
     if (key === 'GET /api/observability/effectiveness-trend') {
       return fulfill(route, effectivenessTrend());
+    }
+    if (key === 'GET /api/review/weekly') {
+      return fulfill(route, {
+        window: { days: 7, from: 0, to: 0, time_zone: 'Asia/Shanghai' },
+        totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
+        ratings: { again: 1, hard: 0, good: 3, easy: 1 },
+        daily: [{ date: '2026-07-18', count: 5, correct: 4 }],
+        top_causes: [{ category: 'concept', count: 1 }],
+        top_knowledge: [{ id: 'knowledge-math', name: '二次函数', failure_count: 1 }],
+      });
     }
     if (key === 'GET /api/agents/notes') return fulfill(route, { rows: [] });
     if (key === 'GET /api/artifacts/ai-changes/recent') {
