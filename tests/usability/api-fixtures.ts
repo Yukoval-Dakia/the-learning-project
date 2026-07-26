@@ -414,7 +414,10 @@ export async function installApiFixtures(
         route,
         scenario === 'inbox-auto-applied'
           ? autoAppliedDigest(autoAppliedReverted)
-          : { rows: [], breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 604_800_000 } },
+          : {
+              rows: [],
+              breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 604_800_000 },
+            },
       );
     }
     if (key === 'GET /api/proposals') return fulfill(route, { rows: [], next_cursor: null });
@@ -443,10 +446,7 @@ export async function installApiFixtures(
         201,
       );
     }
-    if (
-      scenario === 'coach-views' &&
-      key === 'GET /api/observability/effectiveness-trend'
-    ) {
+    if (scenario === 'coach-views' && key === 'GET /api/observability/effectiveness-trend') {
       return fulfill(route, effectivenessTrend());
     }
     if (scenario === 'coach-views' && key === 'GET /api/review/weekly') {
