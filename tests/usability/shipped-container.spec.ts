@@ -169,6 +169,10 @@ test.describe('shipped-container usability regression', () => {
       await page.getByRole('button', { name: '撤销', exact: true }).click();
       await expect(page.getByText('已撤销 · 恢复到应用前')).toBeVisible();
       await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0);
+      expect(fixture.proposalDecisions()).toEqual([
+        { id: 'proposal-learning-plan-1', decision: 'accept' },
+        { id: 'proposal-completion-1', decision: 'retract' },
+      ]);
       await expectNoInternalCopy(page, '/inbox');
     });
 
@@ -251,9 +255,11 @@ test.describe('shipped-container usability regression', () => {
       'aria-selected',
       'true',
     );
-    await page.getByRole('button', { name: /展开知识点/ }).click();
+    await expect(page.getByRole('button', { name: /展开知识点/ })).toHaveCount(0);
+    await expect(page.getByText('整科概览')).toBeVisible();
     await expect(page.getByText('活动 5 次 · 无掌握度轨迹')).toBeVisible();
-    await expect(page.getByRole('img', { name: /二次函数/ })).toHaveCount(0);
+    await expect(page.getByText('二次函数', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('img', { name: /数学整体/ })).toHaveCount(0);
     await expectNoInternalCopy(page, '/coach');
     expect(fixture.unexpectedRequests, 'route=/coach degraded unexpected API fixtures').toEqual([]);
   });

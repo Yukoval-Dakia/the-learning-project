@@ -237,7 +237,10 @@ function effectivenessTrend() {
 function degradedEffectivenessTrend() {
   const data = effectivenessTrend();
   const degradedSeries = {
-    ...data.series[0],
+    knowledge_id: 'seed:math:root',
+    name: '数学整体',
+    effective_domain: 'math',
+    activity_count: 5,
     points: [],
     trend: {
       direction: 'insufficient',
@@ -248,8 +251,8 @@ function degradedEffectivenessTrend() {
   };
   return {
     ...data,
-    series: [degradedSeries],
-    subject_roots: [],
+    series: [],
+    subject_roots: [degradedSeries],
     aggregate: {
       total_kcs_with_activity: 1,
       total_events: 5,
@@ -264,7 +267,7 @@ function degradedEffectivenessTrend() {
         },
       ],
     },
-    metadata: { ...data.metadata, eligible: 1, returned: 1 },
+    metadata: { ...data.metadata, eligible: 0, returned: 0 },
   };
 }
 
@@ -272,7 +275,10 @@ function inboxProposal(id: string, kind: 'learning_item' | 'defer', reason: stri
   return {
     id,
     kind,
-    target: { subject_kind: 'learning_item', subject_id: `${id}-item` },
+    target: {
+      subject_kind: 'learning_item',
+      subject_id: kind === 'learning_item' ? null : `${id}-item`,
+    },
     payload: {
       kind,
       reason_md: reason,
@@ -280,20 +286,23 @@ function inboxProposal(id: string, kind: 'learning_item' | 'defer', reason: stri
       proposed_change:
         kind === 'learning_item'
           ? {
+              topic: '函数复习计划',
+              knowledge_node: { id: 'knowledge-math', name: '二次函数', domain: 'math' },
               hub: { title: '函数复习计划', summary_md: '从一道典型题开始。' },
               atomics: [],
               longs: [],
             }
-          : {},
+          : { learning_item_id: `${id}-item` },
     },
     status: 'pending',
     proposed_at: '2026-07-18T15:10:00.000Z',
     decided_at: null,
-    actor_ref: 'dreaming',
+    actor_ref: kind === 'learning_item' ? 'learning_intent' : 'coach',
     task_run_id: null,
     cost_micro_usd: null,
-    source_action: 'experimental:proposal',
-    source_subject_kind: 'learning_item',
+    source_action:
+      kind === 'learning_item' ? 'experimental:propose_learning_intent' : 'experimental:proposal',
+    source_subject_kind: kind === 'learning_item' ? 'artifact' : 'learning_item',
     signals: null,
   };
 }
@@ -536,6 +545,7 @@ export async function installApiFixtures(
         return fulfill(route, { error: 'validation_error', message: 'retract is required' }, 400);
       }
       autoAppliedReverted = true;
+      proposalDecisions.push({ id: 'proposal-completion-1', decision: 'retract' });
       return fulfill(
         route,
         {
@@ -543,7 +553,7 @@ export async function installApiFixtures(
           proposal_kind: 'completion',
           decision: 'retract',
           decision_event_id: 'event-retract-1',
-          proposal_status: 'retracted',
+          proposal_status: 'stale',
           created: true,
           idempotent: false,
           result: { kind: 'completion', learning_item_id: 'learning-item-1' },
