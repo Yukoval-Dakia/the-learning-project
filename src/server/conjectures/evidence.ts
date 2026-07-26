@@ -20,6 +20,7 @@
 // only carries the snapshot).
 
 import type { CauseCategoryT } from '@/core/schema/cause';
+import type { BBoxT } from '@/core/schema/structured_question';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
@@ -90,7 +91,7 @@ export interface ConjectureEvidenceFigure {
   asset_id: string;
   role: 'diagram';
   source_page_index: number;
-  source_bbox: { x: number; y: number; width: number; height: number };
+  source_bbox: BBoxT;
   attached_to_index: string;
   attach_confidence: 'high' | 'low' | 'manual';
 }
@@ -145,7 +146,7 @@ export interface ConjectureEvidenceSample {
 
 /** The db-resolved context an {@link EvidenceCell} is missing. */
 export interface EvidenceCellEnrichment {
-  /** knowledge.name — the human-readable knowledge point, not the UUID. */
+  /** knowledge.name — human-readable, wrapped + truncated as untrusted text. */
   knowledge_name: string | null;
   /** canonical subject id resolved from knowledge.domain, or null when untagged. */
   subject_id: string | null;

@@ -56,6 +56,16 @@ type QuestionContextRow = Pick<
   | 'figures'
 >;
 
+const QUESTION_CONTEXT_FIELDS = {
+  id: question.id,
+  prompt_md: question.prompt_md,
+  reference_md: question.reference_md,
+  choices_md: question.choices_md,
+  parent_question_id: question.parent_question_id,
+  image_refs: question.image_refs,
+  figures: question.figures,
+};
+
 /**
  * Representative attempts carried per cell. The cell's `recurrence_count` is the
  * full tally (>= 2) and stays authoritative; this caps only how many attempts
@@ -123,18 +133,7 @@ export async function enrichEvidenceCells(
           .where(inArray(knowledge.id, knowledgeIds))
       : Promise.resolve([]),
     questionIds.length > 0
-      ? db
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            reference_md: question.reference_md,
-            choices_md: question.choices_md,
-            parent_question_id: question.parent_question_id,
-            image_refs: question.image_refs,
-            figures: question.figures,
-          })
-          .from(question)
-          .where(inArray(question.id, questionIds))
+      ? db.select(QUESTION_CONTEXT_FIELDS).from(question).where(inArray(question.id, questionIds))
       : Promise.resolve([]),
     // The subject axis is the node's EFFECTIVE domain, not its raw column: a
     // child KC normally carries domain=null and inherits the subject from an
@@ -153,15 +152,7 @@ export async function enrichEvidenceCells(
   const parentQuestionRows: QuestionContextRow[] =
     parentQuestionIds.length > 0
       ? await db
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            reference_md: question.reference_md,
-            choices_md: question.choices_md,
-            parent_question_id: question.parent_question_id,
-            image_refs: question.image_refs,
-            figures: question.figures,
-          })
+          .select(QUESTION_CONTEXT_FIELDS)
           .from(question)
           .where(inArray(question.id, parentQuestionIds))
       : [];
@@ -180,7 +171,7 @@ export async function enrichEvidenceCells(
     const subjectId = resolveKnownSubjectId(effectiveDomains.get(cell.knowledge_id) ?? null);
     return {
       ...cell,
-      knowledge_name: kc?.name ?? null,
+      knowledge_name: wrapTruncatedLearnerText(kc?.name ?? null, UNTRUSTED_TEXT_CHAR_CAP),
       subject_id: subjectId,
       subject_display_name:
         subjectId === null ? null : resolveSubjectProfile(subjectId).displayName,
