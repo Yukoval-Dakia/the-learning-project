@@ -35,7 +35,7 @@ import {
   findStalledJudgePendingAttempts,
   judgeRecoveryJobId,
   latestJudgeRecoveryJobId,
-  resolveQueueLiveness,
+  resolveAutomaticRecoveryEligibility,
 } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
@@ -74,6 +74,8 @@ export interface JudgePendingReconcileReport {
   reenqueued: number;
   /** Skipped because the queue says the run can still progress (or did not answer). */
   skippedLive: number;
+  /** Skipped because pg-boss recorded deliberate terminal/DLQ evidence (D6 manual-only). */
+  skippedTerminal: number;
   /** Skipped because this run has already used its automatic recovery budget. */
   skippedExhausted: number;
   /** Re-enqueue attempted and threw (rate limit, pg-boss down). Retried next tick. */
@@ -109,6 +111,7 @@ export async function reconcileStalledJudgeAttempts(
     scanned: stalled.length,
     reenqueued: 0,
     skippedLive: 0,
+    skippedTerminal: 0,
     skippedExhausted: 0,
     failed: 0,
   };
@@ -116,14 +119,36 @@ export async function reconcileStalledJudgeAttempts(
   for (const pending of stalled) {
     const runId = pending.payload.run_id;
 
+    // A terminal FAILED is an explicit decision that no delivery remains. Whether it came from
+    // exhausted retries (DLQ) or a deterministic error, D6 makes recovery manual-only; queue
+    // absence/completion must not reinterpret it as a dispatch gap and buy more paid calls.
+    const terminalFailureRows = await db
+      .select({ value: count() })
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_table, JUDGE_RUN_TABLE),
+          eq(job_events.business_id, runId),
+          eq(job_events.event_type, JUDGE_RUN_EVENTS.FAILED),
+        ),
+      );
+    if ((terminalFailureRows[0]?.value ?? 0) > 0) {
+      report.skippedTerminal += 1;
+      continue;
+    }
+
     // Check the latest recovery delivery when one exists; otherwise check the original. This
     // prevents a slow recovery job from being re-enqueued again on the next hourly tick.
     const latestRecoveryJobId = await latestJudgeRecoveryJobId(db, runId);
-    const liveness = await resolveQueueLiveness(runId, {
+    const eligibility = await resolveAutomaticRecoveryEligibility(runId, {
       ...(deps.boss ? { boss: deps.boss } : {}),
       ...(latestRecoveryJobId ? { jobId: latestRecoveryJobId } : {}),
     });
-    if (liveness !== 'dead') {
+    if (eligibility === 'manual') {
+      report.skippedTerminal += 1;
+      continue;
+    }
+    if (eligibility !== 'eligible') {
       report.skippedLive += 1;
       continue;
     }

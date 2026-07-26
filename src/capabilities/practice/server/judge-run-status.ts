@@ -95,10 +95,9 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         status = 'failed';
         break;
       case JUDGE_RUN_EVENTS.STARTED:
-        // An actual delivery is now running. This can legitimately escape FAILED when a recovery
-        // enqueue succeeded but its REQUEUED marker write was temporarily unavailable. DONE stays
-        // terminal: a stale duplicate STARTED must not hide a committed verdict.
-        if (status === 'queued' || status === 'failed') status = 'started';
+        // Progress never walks a terminal state backwards. Automatic recovery excludes deliberate
+        // terminal/DLQ runs (D6), so a STARTED after terminal can only be stale/duplicate evidence.
+        if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
         // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
@@ -110,10 +109,9 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         // 初态；不覆盖已推进的阶段。
         break;
       case JUDGE_RUN_EVENTS.REQUEUED:
-        // YUK-777 A3 — sweeper 重投：**回到 queued**，包括从终态 failed 回来。这是本
-        // reducer 里唯一允许离开终态的转移，且它是对的——队列里确实有一次全新投递在飞。
-        // 唯一的替代（保持 failed）会让客户端对着一次很可能成功的重投停止等待。
-        status = 'queued';
+        // Dispatch writes this marker after enqueue, so a fast recovery worker may already have
+        // emitted DONE/FAILED. Never let that causally earlier marker hide a terminal outcome.
+        if (status !== 'done' && status !== 'failed') status = 'queued';
         break;
       default:
         // 未知 event_type：忽略（forward-compat）。

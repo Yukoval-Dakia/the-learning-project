@@ -139,6 +139,43 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     expect(boss.send).toHaveBeenCalledTimes(1);
   });
 
+  it('never auto-requeues deliberate terminal FAILED/DLQ evidence', async () => {
+    const { runId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+    await testDb()
+      .insert(job_events)
+      .values({
+        business_table: JUDGE_RUN_TABLE,
+        business_id: runId,
+        event_type: JUDGE_RUN_EVENTS.FAILED,
+        payload: { reason: 'retries_exhausted' },
+      });
+    const boss = deadBoss();
+
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      scanned: 1,
+      reenqueued: 0,
+      skippedTerminal: 1,
+    });
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'cancelled'] as const)(
+    'treats pg-boss %s as manual-only rather than automatic recovery eligibility',
+    async (state) => {
+      await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+      const boss = {
+        send: vi.fn(),
+        getJobById: vi.fn().mockResolvedValue({ state } as JobWithMetadata),
+      };
+
+      expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+        reenqueued: 0,
+        skippedTerminal: 1,
+      });
+      expect(boss.send).not.toHaveBeenCalled();
+    },
+  );
+
   it('leaves a JUDGED attempt alone — the review event keyed by run_id is the proof', async () => {
     const { runId, questionId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
     // The backfill tx writes the review event with id = run_id. That is the whole

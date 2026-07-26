@@ -268,6 +268,38 @@ const LIVE_BOSS_STATES: ReadonlySet<JobWithMetadata['state']> = new Set([
  */
 export type QueueLiveness = 'live' | 'dead' | 'unknown';
 
+/**
+ * May the automatic sweeper create a fresh delivery for this queue state?
+ *
+ * Absence/completion can represent the dispatch gaps the sweeper owns. A failed or cancelled
+ * job is deliberate terminal/DLQ evidence and is manual-only under D6; queue deadness alone must
+ * never turn that operator boundary into more paid calls.
+ */
+export type AutomaticRecoveryEligibility = 'eligible' | 'live' | 'manual' | 'unknown';
+
+export async function resolveAutomaticRecoveryEligibility(
+  runId: string,
+  deps: {
+    boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    jobId?: string;
+  } = {},
+): Promise<AutomaticRecoveryEligibility> {
+  try {
+    const boss = deps.boss ?? (await getStartedBoss());
+    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
+    if (job === null || job.state === 'completed') return 'eligible';
+    if (LIVE_BOSS_STATES.has(job.state)) return 'live';
+    return 'manual';
+  } catch (err) {
+    console.error(
+      '[judge_run] pg-boss lookup failed while resolving recovery eligibility',
+      runId,
+      err,
+    );
+    return 'unknown';
+  }
+}
+
 export async function resolveQueueLiveness(
   runId: string,
   deps: {
