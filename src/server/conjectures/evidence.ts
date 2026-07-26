@@ -86,6 +86,15 @@ export interface EvidenceCell {
  * truncated + wrapped in `<untrusted_learner_text>` by the enrich step — the
  * strings here are DATA, never instruction.
  */
+export interface ConjectureEvidenceFigure {
+  asset_id: string;
+  role: 'diagram';
+  source_page_index: number;
+  source_bbox: { x: number; y: number; width: number; height: number };
+  attached_to_index: string;
+  attach_confidence: 'high' | 'low' | 'manual';
+}
+
 export interface ConjectureEvidenceSample {
   attempt_event_id: string;
   question_id: string;
@@ -100,6 +109,10 @@ export interface ConjectureEvidenceSample {
   question_reference_md: string | null;
   /** question.choices_md — the complete choice set (each item wrapped + truncated). */
   question_choices_md: string[] | null;
+  /** First-class simple image refs for the question, copied from the DB row. */
+  question_image_refs: string[];
+  /** Structured figure refs for the question, projected to an immutable prompt-safe shape. */
+  question_figures: ConjectureEvidenceFigure[];
   /** question_part parent id, or null for a standalone question. */
   parent_question_id: string | null;
   /** parent prompt/shared passage needed to interpret a question_part. */
@@ -108,8 +121,14 @@ export interface ConjectureEvidenceSample {
   parent_question_reference_md: string | null;
   /** parent choices, when present (each item wrapped + truncated). */
   parent_question_choices_md: string[] | null;
+  /** Parent question image refs, copied from the DB row. */
+  parent_question_image_refs: string[];
+  /** Parent structured figures, projected to an immutable prompt-safe shape. */
+  parent_question_figures: ConjectureEvidenceFigure[];
   /** the learner's own wrong answer (wrapped + truncated). */
   answer_md: string | null;
+  /** Image-only or image-bearing learner answer asset refs. */
+  answer_image_refs: string[];
   /** YUK-562 process data: the learner's account of HOW they thought. */
   reasoning_trace: string | null;
   /** effective cause category for this attempt (owner cause wins over judge). */

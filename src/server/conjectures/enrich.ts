@@ -24,6 +24,7 @@
 // implementation, not two).
 
 import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/server/domain';
+import { FigureRef } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
@@ -44,13 +45,16 @@ import type {
 
 type DbLike = Db | Tx;
 
-type QuestionContextRow = {
-  id: string;
-  prompt_md: string;
-  reference_md: string | null;
-  choices_md: string[] | null;
-  parent_question_id: string | null;
-};
+type QuestionContextRow = Pick<
+  typeof question.$inferSelect,
+  | 'id'
+  | 'prompt_md'
+  | 'reference_md'
+  | 'choices_md'
+  | 'parent_question_id'
+  | 'image_refs'
+  | 'figures'
+>;
 
 /**
  * Representative attempts carried per cell. The cell's `recurrence_count` is the
@@ -122,6 +126,8 @@ export async function enrichEvidenceCells(
             reference_md: question.reference_md,
             choices_md: question.choices_md,
             parent_question_id: question.parent_question_id,
+            image_refs: question.image_refs,
+            figures: question.figures,
           })
           .from(question)
           .where(inArray(question.id, questionIds))
@@ -149,6 +155,8 @@ export async function enrichEvidenceCells(
             reference_md: question.reference_md,
             choices_md: question.choices_md,
             parent_question_id: question.parent_question_id,
+            image_refs: question.image_refs,
+            figures: question.figures,
           })
           .from(question)
           .where(inArray(question.id, parentQuestionIds))
@@ -182,6 +190,23 @@ export async function enrichEvidenceCells(
 function wrapTextList(values: string[] | null | undefined): string[] | null {
   if (values == null) return null;
   return values.map((value) => wrapTruncatedLearnerText(value, UNTRUSTED_TEXT_CHAR_CAP));
+}
+
+function safeImageRefs(values: string[] | null | undefined): string[] {
+  return values?.filter((value) => typeof value === 'string' && value.length > 0) ?? [];
+}
+
+function safeFigures(values: unknown) {
+  const parsed = FigureRef.array().safeParse(values);
+  if (!parsed.success) return [];
+  return parsed.data.map((figure) => ({
+    asset_id: figure.asset_id,
+    role: figure.role,
+    source_page_index: figure.source_page_index,
+    source_bbox: { ...figure.source_bbox },
+    attached_to_index: figure.attached_to_index,
+    attach_confidence: figure.attach_confidence,
+  }));
 }
 
 function causeAnalysisText(
@@ -225,6 +250,8 @@ function toEvidenceSample(
       UNTRUSTED_TEXT_CHAR_CAP,
     ),
     question_choices_md: wrapTextList(q?.choices_md),
+    question_image_refs: safeImageRefs(q?.image_refs),
+    question_figures: safeFigures(q?.figures),
     parent_question_id: q?.parent_question_id ?? null,
     parent_question_prompt_md: wrapTruncatedLearnerText(
       parent?.prompt_md ?? null,
@@ -235,7 +262,10 @@ function toEvidenceSample(
       UNTRUSTED_TEXT_CHAR_CAP,
     ),
     parent_question_choices_md: wrapTextList(parent?.choices_md),
+    parent_question_image_refs: safeImageRefs(parent?.image_refs),
+    parent_question_figures: safeFigures(parent?.figures),
     answer_md: wrapTruncatedLearnerText(failure.answer_md, UNTRUSTED_TEXT_CHAR_CAP),
+    answer_image_refs: safeImageRefs(failure.answer_image_refs),
     reasoning_trace: wrapTruncatedLearnerText(
       traceByAttemptId.get(failure.attempt_event_id) ?? null,
       UNTRUSTED_TEXT_CHAR_CAP,

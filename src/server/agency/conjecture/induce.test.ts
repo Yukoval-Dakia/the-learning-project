@@ -24,11 +24,16 @@ function evidenceSample(
       '<untrusted_learner_text>求 f(x)=sin(x^2) 的导数。</untrusted_learner_text>',
     question_reference_md: "<untrusted_learner_text>f'(x)=2x·cos(x^2)</untrusted_learner_text>",
     question_choices_md: null,
+    question_image_refs: ['asset_question'],
+    question_figures: [],
     parent_question_id: null,
     parent_question_prompt_md: null,
     parent_question_reference_md: null,
     parent_question_choices_md: null,
+    parent_question_image_refs: [],
+    parent_question_figures: [],
     answer_md: '<untrusted_learner_text>cos(x^2)·2x 写成了 cos(x^2)+2x</untrusted_learner_text>',
+    answer_image_refs: ['asset_answer'],
     reasoning_trace:
       '<untrusted_learner_text>我先分别求了两层的导数，然后把它们加起来。</untrusted_learner_text>',
     cause_category: 'concept_confusion',
@@ -121,6 +126,8 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
     expect(samples[0].reasoning_trace).toContain('加起来');
     expect(samples[0].cause_category).toBe('concept_confusion');
     expect(samples[0].cause_analysis_md).toContain('复合函数');
+    expect(samples[0].question_image_refs).toEqual(['asset_question']);
+    expect(samples[0].answer_image_refs).toEqual(['asset_answer']);
   });
 
   it('keeps untrusted learner text delimited on the way into the prompt', async () => {

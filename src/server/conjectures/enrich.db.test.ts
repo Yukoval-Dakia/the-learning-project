@@ -11,6 +11,7 @@
 // → real gatherConjectureEvidence → real enrichEvidenceCells — so a regression in
 // any of the three seams shows up here, not only in the mocked job unit test.
 
+import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '@/server/agency/scout/untrusted-text';
 import { enrichEvidenceCells } from '@/server/conjectures/enrich';
@@ -44,6 +45,8 @@ async function seedQuestion(
   referenceMd: string | null = null,
   choicesMd: string[] | null = null,
   parentQuestionId: string | null = null,
+  imageRefs: string[] = [],
+  figures: FigureRefT[] = [],
 ): Promise<void> {
   await testDb()
     .insert(question)
@@ -54,6 +57,8 @@ async function seedQuestion(
       reference_md: referenceMd,
       choices_md: choicesMd,
       parent_question_id: parentQuestionId,
+      image_refs: imageRefs,
+      figures,
       knowledge_ids: [],
       source: 'manual',
       // Container-question guard (audit:draft-status): probe pools must never
@@ -69,6 +74,7 @@ interface SeedFailureOpts {
   questionId: string;
   knowledgeIds: string[];
   answerMd?: string | null;
+  answerImageRefs?: string[];
   reasoningTrace?: string | null;
   causeCategory?: string;
   analysisMd?: string;
@@ -94,8 +100,8 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
     subject_id: opts.questionId,
     outcome: 'failure',
     payload: {
-      answer_md: opts.answerMd ?? 'wrong answer',
-      answer_image_refs: [],
+      answer_md: opts.answerMd === undefined ? 'wrong answer' : opts.answerMd,
+      answer_image_refs: opts.answerImageRefs ?? [],
       referenced_knowledge_ids: opts.knowledgeIds,
       // YUK-562 process data — the field the list reader now surfaces.
       ...(opts.reasoningTrace === undefined ? {} : { reasoning_trace: opts.reasoningTrace }),
@@ -216,6 +222,34 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[0].question_reference_md).toMatch(/^<untrusted_learner_text>/);
     // A question with no reference answer reports null, not an empty wrapper.
     expect(cell.samples[1].question_reference_md).toBeNull();
+  });
+
+  it('carries question figures/image refs and image-only learner answers', async () => {
+    await seedKnowledge('kc_visual', '图形推理', 'math');
+    const figure: FigureRefT = {
+      asset_id: 'asset_figure',
+      role: 'diagram',
+      source_page_index: 0,
+      source_bbox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+      attached_to_index: 'stem_visual',
+      attach_confidence: 'high',
+    };
+    await seedQuestion('q1', '根据图形回答。', null, null, null, ['asset_prompt'], [figure]);
+    await seedQuestion('q2', 'prompt 2');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_visual'],
+      answerMd: null,
+      answerImageRefs: ['asset_handwriting'],
+    });
+    await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_visual'] });
+
+    const [cell] = await runPipe();
+    expect(cell.samples[0].question_image_refs).toEqual(['asset_prompt']);
+    expect(cell.samples[0].question_figures).toEqual([figure]);
+    expect(cell.samples[0].answer_md).toBeNull();
+    expect(cell.samples[0].answer_image_refs).toEqual(['asset_handwriting']);
   });
 
   it('carries choice labels so letter answers retain their meaning', async () => {
