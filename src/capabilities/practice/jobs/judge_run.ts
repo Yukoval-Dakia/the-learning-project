@@ -64,6 +64,8 @@ export interface JudgeRunDeps {
 export interface JudgeRunJobMeta {
   retryCount: number;
   retryLimit: number;
+  /** pg-boss job id; absent only for legacy/direct callers. */
+  deliveryId?: string;
 }
 
 export async function runJudgeRun(
@@ -89,7 +91,11 @@ export async function runJudgeRun(
   await bestEffortWriteJobEvent(db, {
     businessId: runId,
     eventType: JUDGE_RUN_EVENTS.STARTED,
-    payload: { caller: data.caller, retry_count: meta.retryCount },
+    payload: {
+      caller: data.caller,
+      retry_count: meta.retryCount,
+      ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
+    },
   });
 
   // #2 — tracks whether the backfill tx COMMITTED. If it did but the terminal DONE
@@ -199,6 +205,7 @@ export async function runJudgeRun(
       eventType: JUDGE_RUN_EVENTS.DONE,
       payload: {
         attempt_event_id: runId,
+        ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         judge_event_id: persisted.judgeEventId,
         outcome: persisted.outcome,
         final_rating: judged.finalRating,
@@ -346,6 +353,7 @@ export async function runJudgeRun(
           error_code: classifyJudgeRunFailure(err),
           retry_count: meta.retryCount,
           retry_limit: meta.retryLimit,
+          ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         },
       });
     } catch (writeErr) {
@@ -602,7 +610,7 @@ export function buildJudgeRunHandler(
         const result = await runJudgeRun(
           db,
           data,
-          { retryCount: job.retryCount, retryLimit: job.retryLimit },
+          { retryCount: job.retryCount, retryLimit: job.retryLimit, deliveryId: job.id },
           deps,
         );
         console.log(`[judge_run] ${data.run_id} -> ${result.status}`);

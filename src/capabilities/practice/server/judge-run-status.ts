@@ -75,6 +75,7 @@ export type JudgeRunStatus = 'queued' | 'started' | 'done' | 'failed';
 /** replay 事件的最小读取形（只看 event_type，与 copilot-run-status 同型）。 */
 export interface JudgeRunStatusEvent {
   event_type: string;
+  payload?: unknown;
 }
 
 /**
@@ -84,19 +85,19 @@ export interface JudgeRunStatusEvent {
  */
 export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunStatus {
   let status: JudgeRunStatus = 'queued';
+  let terminalDeliveryId: string | null = null;
   for (const e of events) {
+    const deliveryId = readDeliveryId(e.payload);
     switch (e.event_type) {
       case JUDGE_RUN_EVENTS.DONE:
-        // terminal，last-writer wins：一次 FAILED 后的 DONE（重投改判成功）翻回成功。
         status = 'done';
+        terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.FAILED:
-        // terminal，last-writer wins。
         status = 'failed';
+        terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.STARTED:
-        // Progress never walks a terminal state backwards. Automatic recovery excludes deliberate
-        // terminal/DLQ runs (D6), so a STARTED after terminal can only be stale/duplicate evidence.
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
@@ -109,9 +110,12 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         // 初态；不覆盖已推进的阶段。
         break;
       case JUDGE_RUN_EVENTS.REQUEUED:
-        // Dispatch writes this marker after enqueue, so a fast recovery worker may already have
-        // emitted DONE/FAILED. Never let that causally earlier marker hide a terminal outcome.
-        if (status !== 'done' && status !== 'failed') status = 'queued';
+        // Enqueue precedes this marker, so a fast worker can terminalize first. Matching delivery
+        // identity makes that marker causally old; a different id is a genuine later recovery.
+        if (deliveryId !== null && deliveryId !== terminalDeliveryId) {
+          status = 'queued';
+          terminalDeliveryId = null;
+        }
         break;
       default:
         // 未知 event_type：忽略（forward-compat）。
@@ -119,6 +123,12 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
     }
   }
   return status;
+}
+
+function readDeliveryId(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const value = (payload as Record<string, unknown>).delivery_id;
+  return typeof value === 'string' ? value : null;
 }
 
 /** replay 事件（读取形带 payload），用于从终态事件抽出判词回填结果。 */

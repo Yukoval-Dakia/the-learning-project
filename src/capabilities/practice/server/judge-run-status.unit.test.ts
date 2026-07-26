@@ -11,7 +11,10 @@ import {
   terminalJudgeRunResult,
 } from './judge-run-status';
 
-const ev = (event_type: string): JudgeRunStatusEvent => ({ event_type });
+const ev = (event_type: string, delivery_id?: string): JudgeRunStatusEvent => ({
+  event_type,
+  ...(delivery_id ? { payload: { delivery_id } } : {}),
+});
 
 describe('deriveJudgeRunStatus', () => {
   it('empty sequence → queued (conservative initial)', () => {
@@ -72,18 +75,34 @@ describe('deriveJudgeRunStatus', () => {
 
 describe('deriveJudgeRunStatus — REQUEUED recovery (YUK-777)', () => {
   it('does not let a late REQUEUED marker overwrite a terminal recovery outcome', () => {
-    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.FAILED), ev(JUDGE_RUN_EVENTS.REQUEUED)])).toBe(
-      'failed',
-    );
-    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.DONE), ev(JUDGE_RUN_EVENTS.REQUEUED)])).toBe(
-      'done',
-    );
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.FAILED, 'recovery-1'),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'recovery-1'),
+      ]),
+    ).toBe('failed');
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.DONE, 'recovery-1'),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'recovery-1'),
+      ]),
+    ).toBe('done');
   });
 
-  it('a stale STARTED heartbeat does not escape deliberate terminal failure', () => {
-    expect(deriveJudgeRunStatus([ev(JUDGE_RUN_EVENTS.FAILED), ev(JUDGE_RUN_EVENTS.STARTED)])).toBe(
-      'failed',
-    );
+  it('a distinct manual recovery delivery reopens prior terminal failure', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.FAILED, 'original'),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'manual-1'),
+      ]),
+    ).toBe('queued');
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.FAILED, 'original'),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'manual-1'),
+        ev(JUDGE_RUN_EVENTS.STARTED, 'manual-1'),
+      ]),
+    ).toBe('started');
   });
 
   it('tracks the terminal result of the recovery delivery', () => {
