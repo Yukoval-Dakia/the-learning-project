@@ -4,7 +4,7 @@ import { writeCostLedger } from '@/server/ai/log';
 export async function writeRetryableAiFailureLedger(
   db: Db | Tx,
   taskKind: string,
-  options: { swallow?: boolean } = {},
+  options: { throwOnError?: boolean } = {},
 ): Promise<void> {
   try {
     await writeCostLedger(db, {
@@ -20,7 +20,7 @@ export async function writeRetryableAiFailureLedger(
     // A failed statement poisons the surrounding PostgreSQL transaction. Let
     // transactional callers preserve the original error rather than catching it
     // here and surfacing a later, misleading 25P02 from a sibling durable write.
-    if (options.swallow === false) throw err;
+    if (options.throwOnError) throw err;
     console.error(`[${taskKind}] writeCostLedger failed for retryable AI failure`, err);
   }
 }

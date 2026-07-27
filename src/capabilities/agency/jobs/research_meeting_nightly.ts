@@ -165,7 +165,7 @@ type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
 type WriteRetryableAiFailureLedgerFn = (
   db: DbLike,
   taskKind: string,
-  options?: { swallow?: boolean },
+  options?: { throwOnError?: boolean },
 ) => Promise<void>;
 type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
 type LoadEvidenceImagesFn = (
@@ -933,7 +933,7 @@ export async function runResearchMeetingNightly(
         if (!result.failed_task_kind) {
           throw new Error('research_meeting_nightly: failed cell is missing task attribution');
         }
-        await writeRetryableAiFailureLedgerFn(tx, result.failed_task_kind, { swallow: false });
+        await writeRetryableAiFailureLedgerFn(tx, result.failed_task_kind, { throwOnError: true });
       }
       if (!result.induced) continue;
       const { cell, induced } = result;

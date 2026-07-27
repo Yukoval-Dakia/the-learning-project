@@ -515,7 +515,7 @@ describe('runResearchMeetingNightly', () => {
       cells_failed: 1,
     });
     expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'MindModelInductionTask', {
-      swallow: false,
+      throwOnError: true,
     });
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
@@ -600,7 +600,7 @@ describe('runResearchMeetingNightly', () => {
     expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(
       expect.anything(),
       'MindModelInductionTask',
-      { swallow: false },
+      { throwOnError: true },
     );
   });
 
@@ -736,7 +736,7 @@ describe('runResearchMeetingNightly', () => {
       cells_failed: 1,
     });
     expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'ClaimGroupingTask', {
-      swallow: false,
+      throwOnError: true,
     });
   });
 
