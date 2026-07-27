@@ -264,7 +264,7 @@ function chooseAbstainDraft(params: {
    */
   reasonVotes: ConjectureAbstainReasonT[];
 }): ConjectureAbstainDraftT {
-  const allowedEvidenceIds = new Set(params.cells.flatMap((cell) => cell.evidence_event_ids));
+  const allowedEvidenceIds = new Set(params.cells.flatMap(groundedEvidenceEventIds));
   const citedEvidenceIds = [
     ...new Set(
       params.abstains

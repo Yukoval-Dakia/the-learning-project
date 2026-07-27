@@ -355,6 +355,23 @@ describe('induceConjecture self-consistency', () => {
     expect(result.votes).toEqual({ proposal: 1, abstain: 2, invalid: 0, failed: 0 });
   });
 
+  it('drops abstain audit refs whose content was outside the quoted sample cap', async () => {
+    const outsidePrompt = abstainSample('insufficient_evidence');
+    const payload = JSON.parse(outsidePrompt.text) as Record<string, unknown>;
+    payload.evidence_event_ids = ['e_a', 'e_unquoted'];
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue({ text: JSON.stringify(payload) });
+
+    const result = await induceConjecture({
+      cells: [cell({ evidence_event_ids: ['e_a', 'e_b', 'e_c', 'e_unquoted'] })],
+      samples: 3,
+      runTaskFn,
+    });
+
+    expect(abstain(result).evidence_event_ids).toEqual(['e_a']);
+  });
+
   it('uses invalid_output when invalid samples outweigh one explicit abstention', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
