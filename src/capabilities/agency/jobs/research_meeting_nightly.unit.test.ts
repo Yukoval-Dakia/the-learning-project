@@ -823,6 +823,23 @@ describe('planConjectureEvidenceImageLoad', () => {
     });
   });
 
+  it('rejects image formats outside the runner/BMP decoder allowlist', () => {
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('svg')],
+        [
+          {
+            id: 'svg',
+            mime_type: 'image/svg+xml',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toThrow(/unsupported MIME/);
+  });
+
   it('counts recurring refs to one asset once for byte and pixel guards', () => {
     const recurring = [
       ref('same'),

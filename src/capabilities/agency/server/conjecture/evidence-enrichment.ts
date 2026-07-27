@@ -318,10 +318,8 @@ function causeAnalysisText(
   cause: ReturnType<typeof effectiveCauseForConjectureFailure>,
 ): string | null {
   if (cause === null) return null;
-  if (cause.user_notes !== null) {
-    return wrapTruncatedLearnerText(cause.user_notes, UNTRUSTED_TEXT_CHAR_CAP);
-  }
-  return wrapTruncatedLearnerText(cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
+  // Owner notes and judge analysis occupy the same slot; user_notes wins when present.
+  return wrapTruncatedLearnerText(cause.user_notes ?? cause.analysis_md, UNTRUSTED_TEXT_CHAR_CAP);
 }
 
 function toEvidenceSample(
@@ -332,7 +330,10 @@ function toEvidenceSample(
 ): ConjectureEvidenceSample | null {
   const q = questionById.get(failure.question_id);
   if (!q) return null;
-  const parent = q?.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
+  const parent = q.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
+  // A question_part without its shared stem is not interpretable evidence. Fail closed like a
+  // missing child row so a later reproducible attempt can refill the candidate.
+  if (q.parent_question_id !== null && parent === undefined) return null;
   const wasEditedAtOrAfterAttempt = (questionId: string | null | undefined): boolean =>
     questionId !== null &&
     questionId !== undefined &&
@@ -362,7 +363,7 @@ function toEvidenceSample(
   return {
     attempt_event_id: failure.attempt_event_id,
     question_id: failure.question_id,
-    question_prompt_md: wrapTruncatedLearnerText(q?.prompt_md ?? null, UNTRUSTED_TEXT_CHAR_CAP),
+    question_prompt_md: wrapTruncatedLearnerText(q.prompt_md, UNTRUSTED_TEXT_CHAR_CAP),
     // The GOLD answer for the question that was failed. Without it the packet
     // shows what was asked and what the owner wrote but not what "right" was,
     // so neither the model nor a blind reviewer can say HOW the answer deviated
@@ -370,14 +371,11 @@ function toEvidenceSample(
     // load-bearing when the owner supplied only a cause category (no notes), in
     // which case `cause_attribution_md` is null and this is the only correctness
     // signal in the sample.
-    question_reference_md: wrapTruncatedLearnerText(
-      q?.reference_md ?? null,
-      UNTRUSTED_TEXT_CHAR_CAP,
-    ),
-    question_choices_md: wrapTextList(q?.choices_md),
-    question_image_refs: safeImageRefs(q?.image_refs),
-    question_figures: safeFigures(q?.figures),
-    parent_question_id: q?.parent_question_id ?? null,
+    question_reference_md: wrapTruncatedLearnerText(q.reference_md, UNTRUSTED_TEXT_CHAR_CAP),
+    question_choices_md: wrapTextList(q.choices_md),
+    question_image_refs: safeImageRefs(q.image_refs),
+    question_figures: safeFigures(q.figures),
+    parent_question_id: q.parent_question_id,
     parent_question_prompt_md: wrapTruncatedLearnerText(
       parent?.prompt_md ?? null,
       UNTRUSTED_TEXT_CHAR_CAP,

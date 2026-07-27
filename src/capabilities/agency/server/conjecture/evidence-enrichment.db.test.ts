@@ -400,6 +400,27 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(sample.parent_question_reference_md).toContain('学习不可停止');
   });
 
+  it('fails closed when a question_part shared parent row is missing', async () => {
+    await seedKnowledge('kc_part_missing_parent', '篇章理解', 'yuwen');
+    await seedQuestion('q_part', '根据缺失的上文回答。', null, null, 'q_missing_parent');
+    await seedQuestion('q_stable', '独立稳定题面');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q_part',
+      knowledgeIds: ['kc_part_missing_parent'],
+    });
+    await seedFailureWithJudge({
+      id: 'a2',
+      questionId: 'q_stable',
+      knowledgeIds: ['kc_part_missing_parent'],
+    });
+
+    const [cell] = await runPipe();
+    expect(cell.recurrence_count).toBe(1);
+    expect(cell.evidence_event_ids).toEqual(['a2']);
+    expect(cell.samples.map((sample) => sample.question_id)).toEqual(['q_stable']);
+  });
+
   it('reports an untagged KC as subject-unknown rather than defaulting to a subject', async () => {
     // A fabricated subject label is the exact failure this ticket exists to
     // stop, so an untagged / unknown domain must read as null — never as the

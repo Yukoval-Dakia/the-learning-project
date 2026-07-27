@@ -186,6 +186,7 @@ function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
 }
 
 const RUNNER_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const TRANSCODABLE_IMAGE_MIME_TYPES = new Set(['image/bmp']);
 
 interface EvidenceImageMetadata {
   id: string;
@@ -265,9 +266,12 @@ export function planConjectureEvidenceImageLoad(
   let totalPixels = 0;
   for (const ref of refs) {
     const row = byId.get(ref.asset_id) as EvidenceImageMetadata;
-    if (!row.mime_type.startsWith('image/')) {
+    if (
+      !RUNNER_IMAGE_MIME_TYPES.has(row.mime_type) &&
+      !TRANSCODABLE_IMAGE_MIME_TYPES.has(row.mime_type)
+    ) {
       throw new Error(
-        `conjecture evidence asset ${ref.asset_id} is not an image: ${row.mime_type}`,
+        `conjecture evidence asset ${ref.asset_id} has unsupported MIME: ${row.mime_type}`,
       );
     }
     if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) transcodeAssetIds.add(ref.asset_id);
