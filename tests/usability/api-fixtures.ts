@@ -316,11 +316,18 @@ function proposedChange(
       evidence_json: {},
     };
   }
-  return {
-    learning_item_id: learningItemId,
-    defer_until: '2026-07-25T15:10:00.000Z',
-    reason: '等待更多作答证据后再判断。',
-  };
+  if (kind === 'defer') {
+    return {
+      learning_item_id: learningItemId,
+      defer_until: '2026-07-25T15:10:00.000Z',
+      reason: '等待更多作答证据后再判断。',
+    };
+  }
+  return assertNever(kind);
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled proposal fixture kind: ${String(value)}`);
 }
 
 function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
@@ -469,6 +476,7 @@ export async function installApiFixtures(
   const autoAppliedAt = new Date(Date.now() - 60_000).toISOString();
   const proposalDecisions: Array<{ id: string; decision: string }> = [];
   const proposalDecisionLocations: string[] = [];
+  const isInboxScenario = scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped';
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
@@ -603,10 +611,7 @@ export async function installApiFixtures(
       }
       return fulfill(route, { rows: [], breaker: breaker(0) });
     }
-    if (
-      key === 'GET /api/proposals' &&
-      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped')
-    ) {
+    if (key === 'GET /api/proposals' && isInboxScenario) {
       const lane = url.searchParams.get('lane');
       if (lane === 'decision') {
         return fulfill(route, {
@@ -637,10 +642,7 @@ export async function installApiFixtures(
       }
       return fulfill(route, { rows: [], next_cursor: null });
     }
-    if (
-      key === 'GET /api/knowledge' &&
-      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped')
-    ) {
+    if (key === 'GET /api/knowledge' && isInboxScenario) {
       return fulfill(route, { rows: [] });
     }
     if (
