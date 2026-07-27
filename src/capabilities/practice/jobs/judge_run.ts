@@ -83,7 +83,7 @@ export async function runJudgeRun(
   // DONE 终态（供 SSE/poll 消费）后早返，绝不重判重写。见 recoverAlreadyPersisted；
   // 同一条恢复路径也是 #1 重复投递竞态（catch 里）的落点。
   if (await attemptAlreadyPersisted(db, runId)) {
-    return await recoverAlreadyPersisted(db, runId);
+    return await recoverAlreadyPersisted(db, runId, meta.deliveryId);
   }
 
   // started 心跳——消费者据此把 status 从 queued 推到 started。非终态进度信号，
@@ -289,7 +289,7 @@ export async function runJudgeRun(
         runId,
         err,
       );
-      return await recoverAlreadyPersisted(db, runId);
+      return await recoverAlreadyPersisted(db, runId, meta.deliveryId);
     }
     // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
@@ -334,6 +334,7 @@ export async function runJudgeRun(
           error_code: classifyJudgeRunFailure(err),
           retry_count: meta.retryCount,
           retry_limit: meta.retryLimit,
+          ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         },
       });
       // rethrow → pg-boss 按策略重投（JOB_RETRY_LIMIT=2，30s→60s backoff）。
@@ -420,7 +421,11 @@ async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> 
  * 这条重建写**必须抛错**（非 best-effort）：吞掉它，run 就停在已持久化但无终态，
  * poll/SSE 永远 pending。抛出 → pg-boss 重投 → 本守卫重试直到写成功（或 DLQ 暴露）。
  */
-async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunOutcome> {
+async function recoverAlreadyPersisted(
+  db: Db,
+  runId: string,
+  deliveryId?: string,
+): Promise<JudgeRunOutcome> {
   const priorDone = await db
     .select({ id: job_events.id })
     .from(job_events)
@@ -437,9 +442,12 @@ async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunO
     await writeTerminalJobEvent(db, {
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: (await reconstructDoneFromDomainEvents(db, runId)) ?? {
-        attempt_event_id: runId,
-        already_persisted: true,
+      payload: {
+        ...((await reconstructDoneFromDomainEvents(db, runId)) ?? {
+          attempt_event_id: runId,
+          already_persisted: true,
+        }),
+        ...(deliveryId ? { delivery_id: deliveryId } : {}),
       },
     });
   }

@@ -119,7 +119,10 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
         // 必须继续等（下一次投递可能写 DONE）。与 STARTED 同级：把 queued 推到 started
         // （确实已经跑过一次了），绝不推向 failed——只有终态 FAILED 能判死。
-        startedDeliveryId = deliveryId;
+        // Legacy/direct callers may omit delivery identity. Preserve the STARTED delivery we
+        // already know instead of replacing it with null; a late same-delivery REQUEUED marker
+        // must not rewind started → queued.
+        if (deliveryId !== null) startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.QUEUED:
@@ -148,7 +151,8 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
 
 function readDeliveryId(payload: unknown): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const value = (payload as Record<string, unknown>).delivery_id;
+  const record = payload as Record<string, unknown>;
+  const value = record.delivery_id ?? record.job_id;
   return typeof value === 'string' ? value : null;
 }
 

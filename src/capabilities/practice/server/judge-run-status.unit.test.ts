@@ -83,6 +83,25 @@ describe('deriveJudgeRunStatus — REQUEUED recovery (YUK-777)', () => {
     ).toBe('started');
   });
 
+  it('does not forget the started delivery when ATTEMPT_FAILED omits its id', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.STARTED, 'recovery-1'),
+        ev(JUDGE_RUN_EVENTS.ATTEMPT_FAILED),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'recovery-1'),
+      ]),
+    ).toBe('started');
+  });
+
+  it('reads the legacy REQUEUED job_id as delivery identity', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.FAILED, 'original'),
+        { event_type: JUDGE_RUN_EVENTS.REQUEUED, payload: { job_id: 'legacy-recovery' } },
+      ]),
+    ).toBe('queued');
+  });
+
   it('does not let a late REQUEUED marker overwrite a terminal recovery outcome', () => {
     expect(
       deriveJudgeRunStatus([

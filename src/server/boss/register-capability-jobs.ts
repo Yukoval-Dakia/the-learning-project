@@ -71,7 +71,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
       {},
       {
         tz: decl.schedule.tz,
-        ...(decl.schedule.singletonKey
+        ...(decl.schedule.singletonKey !== undefined
           ? {
               singletonKey: decl.schedule.singletonKey,
               singletonSeconds: decl.schedule.singletonSeconds,
