@@ -535,6 +535,49 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     );
   });
 
+  it('first-write-wins when two deliveries pass the completion guard concurrently', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    const executionId = 'job_concurrent_redelivery';
+    let arrivals = 0;
+    let releaseBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const loadKnownConjectureKeysFn = async () => {
+      arrivals += 1;
+      if (arrivals === 2) releaseBarrier?.();
+      await barrier;
+      return new Set<string>();
+    };
+
+    const [first, second] = await Promise.all([
+      runResearchMeetingNightly(db, {
+        executionId,
+        // Model the exact race: both workers already passed the completion read
+        // before either one commits its durable result.
+        loadCompletedRunResultFn: async () => null,
+        loadKnownConjectureKeysFn,
+      }),
+      runResearchMeetingNightly(db, {
+        executionId,
+        loadCompletedRunResultFn: async () => null,
+        loadKnownConjectureKeysFn,
+      }),
+    ]);
+
+    expect(first.conjectures_created).toBe(1);
+    expect(second.conjectures_created).toBe(1);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      1,
+    );
+    const proposals = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toEqual([{ id: expect.stringMatching(/^conjecture_proposal_/) }]);
+  });
+
   it('persists an empty completion and ignores evidence that appears before same-job redelivery', async () => {
     const db = testDb();
     const executionId = 'job_empty_redelivery';
@@ -638,5 +681,38 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       requested_samples: RESEARCH_MEETING_SAMPLES,
       votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
     });
+  });
+
+  it('attributes malformed semantic grouping to ClaimGroupingTask in the health ledger', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    let inductionSample = 0;
+    sdk.respond = (prompt) => {
+      if (prompt.includes('"evidence_cells"')) {
+        inductionSample += 1;
+        return sdkSuccess({
+          ...DRAFT,
+          claim_md: `${CLAIM_MD}（表述 ${inductionSample}）`,
+        });
+      }
+      if (prompt.includes('"claims"')) return sdkSuccess({ malformed: true });
+      throw new Error(`unexpected task: ${prompt.slice(0, 120)}`);
+    };
+
+    const result = await runResearchMeetingNightly(db, {
+      executionId: 'job_grouping_attribution',
+    });
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    const failedRows = await db
+      .select({ task_kind: cost_ledger.task_kind, outcome: cost_ledger.outcome })
+      .from(cost_ledger)
+      .where(eq(cost_ledger.outcome, 'failed_retryable'));
+    expect(failedRows).toEqual([{ task_kind: 'ClaimGroupingTask', outcome: 'failed_retryable' }]);
   });
 });

@@ -11,9 +11,10 @@ import type {
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteEventInput } from '@/kernel/events';
-import type {
-  InduceConjectureInput,
-  InduceConjectureResult,
+import {
+  ConjectureInductionOperationalError,
+  type InduceConjectureInput,
+  type InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
@@ -638,6 +639,27 @@ describe('runResearchMeetingNightly', () => {
     }
   });
 
+  it('reuses proposal ids for a concurrent/retried execution but not the next scheduled run', async () => {
+    const writeAiProposalFn = vi.fn(
+      async (_db: unknown, input: WriteAiProposalInput) => input.id ?? 'missing-proposal-id',
+    );
+    const commonDeps = {
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
+      writeAiProposalFn,
+    };
+
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_2' }));
+
+    const proposalIds = writeAiProposalFn.mock.calls.map((call) => call[1].id);
+    expect(proposalIds).toHaveLength(3);
+    expect(proposalIds[0]).toMatch(/^conjecture_proposal_/);
+    expect(proposalIds[0]).toBe(proposalIds[1]);
+    expect(proposalIds[2]).not.toBe(proposalIds[0]);
+  });
+
   it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => {
@@ -688,6 +710,34 @@ describe('runResearchMeetingNightly', () => {
         failed: result.cells_failed,
       }),
     ).toBe('ok');
+  });
+
+  it('attributes a load-bearing semantic-grouping failure to ClaimGroupingTask', async () => {
+    const tx = { kind: 'grouping-failure-transaction' } as never;
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async () => {
+        throw new ConjectureInductionOperationalError(
+          'ClaimGroupingTask',
+          'semantic grouping output was malformed',
+        );
+      }),
+      writeRetryableAiFailureLedgerFn,
+      runInTransactionFn: vi.fn(async (_db, fn) => fn(tx)),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'ClaimGroupingTask', {
+      swallow: false,
+    });
   });
 
   // ── YUK-779: 静默空跑的红/绿实证 ───────────────────────────────────────────

@@ -70,6 +70,23 @@ export interface InduceConjectureInput {
   subjectProfile?: SubjectProfile;
 }
 
+export type ConjectureInductionTaskKind = 'MindModelInductionTask' | 'ClaimGroupingTask';
+
+/**
+ * Preserves the failing orchestration stage across the nightly cell-local
+ * failure boundary so operational health is attributed to the component that
+ * actually needs retry/repair.
+ */
+export class ConjectureInductionOperationalError extends Error {
+  readonly taskKind: ConjectureInductionTaskKind;
+
+  constructor(taskKind: ConjectureInductionTaskKind, message: string) {
+    super(message);
+    this.name = 'ConjectureInductionOperationalError';
+    this.taskKind = taskKind;
+  }
+}
+
 interface InduceConjectureResultBase {
   /** internal calibration in [0,1]; NEVER rendered as a number to the owner. */
   confidence: number;
@@ -512,7 +529,10 @@ export async function induceConjecture(
   if (failedSamples === samples) {
     const details =
       sampleErrors.length > 0 ? `; failures: ${sampleErrors.slice(0, 3).join(' | ')}` : '';
-    throw new Error(`induceConjecture: every induction sample failed${details}`);
+    throw new ConjectureInductionOperationalError(
+      'MindModelInductionTask',
+      `induceConjecture: every induction sample failed${details}`,
+    );
   }
 
   const votes = {
@@ -573,7 +593,10 @@ export async function induceConjecture(
       // did not reach quorum, semantic grouping is load-bearing; its outage is
       // operational, not evidence that the model claims genuinely disagree.
       if (dominant.length < requiredAgreement) {
-        throw new Error('induceConjecture: ClaimGroupingTask failed before semantic consensus');
+        throw new ConjectureInductionOperationalError(
+          'ClaimGroupingTask',
+          'induceConjecture: ClaimGroupingTask failed before semantic consensus',
+        );
       }
     } else {
       // Re-map groups to draft arrays; pick the largest group as dominant.

@@ -66,7 +66,12 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
+import {
+  ConjectureInductionOperationalError,
+  type ConjectureInductionTaskKind,
+  type InduceConjectureResult,
+  induceConjecture,
+} from '@/server/agency/conjecture/induce';
 import {
   type ReconcileResult,
   reconcileConjecturePredictions,
@@ -188,6 +193,18 @@ function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidence
     .digest('hex')
     .slice(0, 32);
   return `conjecture_abstained_${digest}`;
+}
+
+function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+  // A concurrent pg-boss redelivery can pass the completion read while the first
+  // worker is still running. The deterministic proposal id turns that race into
+  // first-write-wins rather than two pending conjectures for one logical cell.
+  const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
+  const digest = createHash('sha256')
+    .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `conjecture_proposal_${digest}`;
 }
 
 async function defaultLoadCompletedRunResult(
@@ -577,6 +594,7 @@ function buildConjectureProposalInput(
   cell: EnrichedEvidenceCell,
   induced: Extract<InduceConjectureResult, { outcome: 'proposal' }>,
   triggerEventId: string,
+  proposalEventId: string,
 ): WriteAiProposalInput {
   const draft = induced.draft;
   // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
@@ -584,6 +602,7 @@ function buildConjectureProposalInput(
   // learner that the memory layer should retain. writeAiProposal therefore receives no
   // ingest_at opt-out; owner accept/edit remains the later calibration boundary.
   return {
+    id: proposalEventId,
     actor_ref: RESEARCH_MEETING_ACTOR,
     outcome: 'partial',
     payload: {
@@ -810,6 +829,7 @@ export async function runResearchMeetingNightly(
         created: number;
         abstained: number;
         failed: number;
+        failed_task_kind: ConjectureInductionTaskKind | null;
         cost_usd: number;
       }> => {
         let induced: InduceConjectureResult;
@@ -831,7 +851,18 @@ export async function runResearchMeetingNightly(
           // so the handler can tell "no evidence tonight" from "every cell blew up".
           // Partial sample spend is retained in per-call cost_ledger rows, but the
           // thrown orchestrator exposes no reliable partial total for this aggregate.
-          return { cell, induced: null, created: 0, abstained: 0, failed: 1, cost_usd: 0 };
+          return {
+            cell,
+            induced: null,
+            created: 0,
+            abstained: 0,
+            failed: 1,
+            failed_task_kind:
+              err instanceof ConjectureInductionOperationalError
+                ? err.taskKind
+                : 'MindModelInductionTask',
+            cost_usd: 0,
+          };
         }
 
         const operationalFailure = isOperationalAbstain(induced);
@@ -844,6 +875,7 @@ export async function runResearchMeetingNightly(
           // reasons are operational failures and must make an all-bad night stall.
           abstained: induced.outcome === 'abstain' && !operationalFailure ? 1 : 0,
           failed: operationalFailure ? 1 : 0,
+          failed_task_kind: operationalFailure ? 'MindModelInductionTask' : null,
           cost_usd: induced.cost_usd,
         };
       },
@@ -898,7 +930,10 @@ export async function runResearchMeetingNightly(
       if (result.failed > 0) {
         // Operational health rows belong to the same commit boundary as the
         // run facts. A final-write rollback must not orphan/duplicate them.
-        await writeRetryableAiFailureLedgerFn(tx, 'MindModelInductionTask', { swallow: false });
+        if (!result.failed_task_kind) {
+          throw new Error('research_meeting_nightly: failed cell is missing task attribution');
+        }
+        await writeRetryableAiFailureLedgerFn(tx, result.failed_task_kind, { swallow: false });
       }
       if (!result.induced) continue;
       const { cell, induced } = result;
@@ -930,7 +965,15 @@ export async function runResearchMeetingNightly(
           created_at: now,
         });
       } else {
-        await writeAiProposalFn(tx, buildConjectureProposalInput(cell, induced, triggerEventId));
+        await writeAiProposalFn(
+          tx,
+          buildConjectureProposalInput(
+            cell,
+            induced,
+            triggerEventId,
+            conjectureProposalEventId(executionId, cell),
+          ),
+        );
       }
     }
 

@@ -10,7 +10,11 @@ import type { TaskTextResult } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 
-import { type InduceConjectureResult, induceConjecture } from './induce';
+import {
+  type ConjectureInductionOperationalError,
+  type InduceConjectureResult,
+  induceConjecture,
+} from './induce';
 
 function proposal(result: InduceConjectureResult): ConjectureProposalDraftT {
   expect(result.outcome).toBe('proposal');
@@ -871,9 +875,13 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValueOnce(sample('你认为链式法则等价于将每层求导结果连乘'))
       .mockRejectedValueOnce(new Error('AuthenticationError'));
 
-    await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
-      'ClaimGroupingTask failed before semantic consensus',
-    );
+    await expect(
+      induceConjecture({ cells: [cell()], samples: 3, runTaskFn }),
+    ).rejects.toMatchObject({
+      name: 'ConjectureInductionOperationalError',
+      taskKind: 'ClaimGroupingTask',
+      message: expect.stringContaining('ClaimGroupingTask failed before semantic consensus'),
+    } satisfies Partial<ConjectureInductionOperationalError>);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
