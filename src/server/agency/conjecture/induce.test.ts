@@ -155,22 +155,22 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
       evidenceImages: [
         {
           asset_id: 'asset_question',
-          attempt_event_id: 'e_a',
-          source: 'question',
+          occurrences: [
+            { attempt_event_id: 'e_a', source: 'question' },
+            { attempt_event_id: 'e_b', source: 'answer' },
+          ],
           data: 'QUESTION_BASE64',
           mediaType: 'image/png',
         },
         {
           asset_id: 'asset_parent',
-          attempt_event_id: 'e_a',
-          source: 'parent_question',
+          occurrences: [{ attempt_event_id: 'e_a', source: 'parent_question' }],
           data: 'PARENT_BASE64',
           mediaType: 'image/jpeg',
         },
         {
           asset_id: 'asset_answer',
-          attempt_event_id: 'e_a',
-          source: 'answer',
+          occurrences: [{ attempt_event_id: 'e_a', source: 'answer' }],
           data: 'ANSWER_BASE64',
           mediaType: 'image/webp',
         },
@@ -192,20 +192,20 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
       {
         image_index: 1,
         asset_id: 'asset_question',
-        attempt_event_id: 'e_a',
-        source: 'question',
+        occurrences: [
+          { attempt_event_id: 'e_a', source: 'question' },
+          { attempt_event_id: 'e_b', source: 'answer' },
+        ],
       },
       {
         image_index: 2,
         asset_id: 'asset_parent',
-        attempt_event_id: 'e_a',
-        source: 'parent_question',
+        occurrences: [{ attempt_event_id: 'e_a', source: 'parent_question' }],
       },
       {
         image_index: 3,
         asset_id: 'asset_answer',
-        attempt_event_id: 'e_a',
-        source: 'answer',
+        occurrences: [{ attempt_event_id: 'e_a', source: 'answer' }],
       },
     ]);
   });

@@ -8,6 +8,7 @@ import type {
   ConjectureFailureAttempt,
   EnrichedEvidenceCell,
   EvidenceCell,
+  LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteEventInput } from '@/kernel/events';
 import type {
@@ -167,6 +168,19 @@ function fakeEnrich(
       })),
     })),
   );
+}
+
+function fakeLoadedImages(
+  refs: readonly ConjectureEvidenceAssetRef[],
+): LoadedConjectureEvidenceImage[] {
+  return [...new Set(refs.map((ref) => ref.asset_id))].map((assetId) => ({
+    asset_id: assetId,
+    occurrences: refs
+      .filter((ref) => ref.asset_id === assetId)
+      .map(({ attempt_event_id, source }) => ({ attempt_event_id, source })),
+    data: `BASE64_${assetId}`,
+    mediaType: 'image/png',
+  }));
 }
 
 function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeetingDeps {
@@ -526,12 +540,7 @@ describe('runResearchMeetingNightly', () => {
   it('loads question, parent, and answer images and hands their real bytes to induction', async () => {
     const captured: InduceConjectureInput[] = [];
     const loadEvidenceImagesFn = vi.fn(
-      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) =>
-        refs.map((ref) => ({
-          ...ref,
-          data: `BASE64_${ref.asset_id}`,
-          mediaType: 'image/png',
-        })),
+      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) => fakeLoadedImages(refs),
     );
     const deps = baseDeps({
       getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
@@ -733,11 +742,7 @@ describe('runResearchMeetingNightly', () => {
         if (['asset_k_a', 'asset_k_b', 'asset_k_c'].includes(assetId)) {
           throw new Error(`missing R2 object: ${assetId}`);
         }
-        return refs.map((ref) => ({
-          ...ref,
-          data: `BASE64_${ref.asset_id}`,
-          mediaType: 'image/png',
-        }));
+        return fakeLoadedImages(refs);
       },
     );
     const deps = baseDeps({
@@ -840,8 +845,8 @@ describe('planConjectureEvidenceImageLoad', () => {
     ).toThrow(/unsupported MIME/);
   });
 
-  it('requires dimensions for compressed runner-native images but defers BMP sizing to decode', () => {
-    expect(() =>
+  it('defers absent metadata dimensions to actual-byte decode for standard uploads', () => {
+    expect(
       planConjectureEvidenceImageLoad(
         [ref('png')],
         [
@@ -854,7 +859,7 @@ describe('planConjectureEvidenceImageLoad', () => {
           },
         ],
       ),
-    ).toThrow(/missing dimensions/);
+    ).toEqual({ loadableRefs: [ref('png')], transcodeAssetIds: [] });
 
     expect(
       planConjectureEvidenceImageLoad(
@@ -883,8 +888,8 @@ describe('planConjectureEvidenceImageLoad', () => {
         {
           id: 'same',
           mime_type: 'image/png',
-          byte_size: Math.floor(RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL / 2),
-          width: 14_000_000,
+          byte_size: Math.floor(RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL / 8),
+          width: 10_000_000,
           height: 1,
         },
       ]),
@@ -954,8 +959,9 @@ describe('defaultLoadEvidenceImages', () => {
         id: 'asset_png',
         mime_type: 'image/png',
         byte_size: png.byteLength,
-        width: 2,
-        height: 2,
+        // Standard generic upload/PDF/DOCX writers do not currently persist dimensions.
+        width: null,
+        height: null,
       },
     ];
     const db = {
@@ -986,8 +992,12 @@ describe('defaultLoadEvidenceImages', () => {
 
     expect(imageFetchFn).toHaveBeenCalledTimes(1);
     expect(imageFetchFn.mock.calls[0][0]).toEqual(['asset_bmp', 'asset_png']);
-    expect(loaded.map((image) => image.asset_id)).toEqual(['asset_bmp', 'asset_bmp', 'asset_png']);
-    expect(loaded.map((image) => image.mediaType)).toEqual(['image/png', 'image/png', 'image/png']);
+    expect(loaded.map((image) => image.asset_id)).toEqual(['asset_bmp', 'asset_png']);
+    expect(loaded.map((image) => image.mediaType)).toEqual(['image/png', 'image/png']);
+    expect(loaded[0].occurrences).toEqual([
+      { attempt_event_id: 'attempt_1', source: 'question' },
+      { attempt_event_id: 'attempt_2', source: 'question' },
+    ]);
     expect((await sharp(Buffer.from(loaded[0].data, 'base64')).metadata()).format).toBe('png');
   });
 });

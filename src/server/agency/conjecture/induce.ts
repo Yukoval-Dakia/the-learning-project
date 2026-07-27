@@ -44,9 +44,9 @@ export interface InduceConjectureInput {
    */
   cells: EnrichedEvidenceCell[];
   /**
-   * Real image bytes resolved from every asset ref in `cells`, in stable
-   * question → parent question → answer order. The task input manifest binds
-   * each image block back to its attempt and source.
+   * Real image bytes resolved once per unique asset in first-occurrence order.
+   * The task input manifest binds each image block back to every attempt/source
+   * occurrence without duplicating the base64 payload.
    */
   evidenceImages?: LoadedConjectureEvidenceImage[];
   /** N self-consistency samples (>= 1). The nightly job passes 3. */
@@ -285,8 +285,7 @@ export async function induceConjecture(
     image_manifest: evidenceImages.map((image, index) => ({
       image_index: index + 1,
       asset_id: image.asset_id,
-      attempt_event_id: image.attempt_event_id,
-      source: image.source,
+      occurrences: image.occurrences,
     })),
     ...(priorClaimMd ? { prior_claim_md: priorClaimMd } : {}),
   };

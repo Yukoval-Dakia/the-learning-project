@@ -75,9 +75,9 @@ export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
 export const RESEARCH_MEETING_SAMPLES = 3;
 /** Fail closed instead of silently dropping pixels from unusually image-heavy evidence. */
 export const RESEARCH_MEETING_MAX_IMAGES_PER_CELL = 60;
-/** Raw bytes across all image occurrences in one cell, checked before any R2 read/base64. */
+/** Base64 transport bytes across all self-consistency requests for one cell. */
 export const RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL = 24 * 1024 * 1024;
-/** Decoded-pixel guard for metadata that carries dimensions. */
+/** Decoded pixels across all self-consistency requests for one cell. */
 export const RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL = 40_000_000;
 /** Recency window for the failure scan. */
 export const RESEARCH_MEETING_WINDOW_DAYS = 14;
@@ -188,6 +188,10 @@ function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
 const RUNNER_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const TRANSCODABLE_IMAGE_MIME_TYPES = new Set(['image/bmp']);
 
+function base64TransportBytes(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
 interface EvidenceImageMetadata {
   id: string;
   mime_type: string;
@@ -262,7 +266,7 @@ export function planConjectureEvidenceImageLoad(
   const loadableRefs: ConjectureEvidenceAssetRef[] = [];
   const transcodeAssetIds = new Set<string>();
   const countedAssetIds = new Set<string>();
-  let totalBytes = 0;
+  let totalTransportBytes = 0;
   let totalPixels = 0;
   for (const ref of refs) {
     const row = byId.get(ref.asset_id) as EvidenceImageMetadata;
@@ -280,17 +284,10 @@ export function planConjectureEvidenceImageLoad(
     // refs remain expanded for semantic ordering, but safety accounting follows unique assets.
     if (!countedAssetIds.has(ref.asset_id)) {
       countedAssetIds.add(ref.asset_id);
-      totalBytes += row.byte_size;
-      if (row.width === null || row.height === null) {
-        // Compressed runner-native formats can encode huge dimensions in few bytes. Their
-        // metadata dimensions are therefore required so the pre-fetch pixel cap is enforceable.
-        // BMP dimensions may be absent here because decodeUncompressedBmp validates the header.
-        if (RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) {
-          throw new Error(
-            `conjecture evidence asset ${ref.asset_id} has missing dimensions: ${row.mime_type}`,
-          );
-        }
-      } else {
+      // Each unique image block is sent once in every self-consistency request. Occurrence
+      // roles live in the manifest, so recurring refs do not multiply the transport again.
+      totalTransportBytes += base64TransportBytes(row.byte_size) * RESEARCH_MEETING_SAMPLES;
+      if (row.width !== null && row.height !== null) {
         if (
           !Number.isInteger(row.width) ||
           !Number.isInteger(row.height) ||
@@ -306,13 +303,13 @@ export function planConjectureEvidenceImageLoad(
             `conjecture evidence asset ${ref.asset_id} has more pixels than the safety limit`,
           );
         }
-        totalPixels += row.width * row.height;
+        totalPixels += row.width * row.height * RESEARCH_MEETING_SAMPLES;
       }
     }
   }
-  if (totalBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
+  if (totalTransportBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
     throw new Error(
-      `conjecture evidence images total ${totalBytes} bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
+      `conjecture evidence images total ${totalTransportBytes} base64 bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
     );
   }
   if (totalPixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
@@ -347,8 +344,8 @@ export async function defaultLoadEvidenceImages(
     .where(inArray(source_asset.id, assetIds));
   const { loadableRefs, transcodeAssetIds } = planConjectureEvidenceImageLoad(refs, metadata);
   if (loadableRefs.length === 0) return [];
-  // Download/base64 each R2 object once, then expand it back to occurrence order. The same
-  // diagram can recur in several attempts without paying N identical reads.
+  // Download/base64 each R2 object once. The same diagram can recur in several attempts
+  // without paying N identical reads or sending N duplicate multimodal blocks.
   const uniqueAssetIds = [...new Set(loadableRefs.map((ref) => ref.asset_id))];
   const fetched = await imageFetchFn(uniqueAssetIds, db);
   // `defaultImageFetch` preserves input order but skips missing DB/R2 rows.
@@ -363,50 +360,97 @@ export async function defaultLoadEvidenceImages(
   const transcodeIds = new Set(transcodeAssetIds);
   const fetchedByAssetId = new Map<string, { data: string; mediaType: string }>();
   let sharpModule: typeof import('sharp') | null = null;
+  let actualTransportBytes = 0;
+  let actualPixels = 0;
   for (const [index, assetId] of uniqueAssetIds.entries()) {
     const image = fetched[index];
-    const expectedMime = metadataById.get(assetId)?.mime_type;
-    if (image.mediaType !== expectedMime) {
+    const expected = metadataById.get(assetId);
+    if (!expected || image.mediaType !== expected.mime_type) {
       throw new Error(`conjecture evidence image MIME changed after preflight for ${assetId}`);
     }
+    const sourceBytes = Buffer.from(image.data, 'base64');
+    let prepared: { data: string; mediaType: string };
+    let decodedPixels: number;
     if (transcodeIds.has(assetId)) {
       sharpModule ??= await import('sharp');
-      const sourceBytes = Buffer.from(image.data, 'base64');
       const bmp = image.mediaType === 'image/bmp' ? decodeUncompressedBmp(sourceBytes) : undefined;
-      const expected = metadataById.get(assetId);
       if (
         bmp !== undefined &&
-        ((expected?.width !== null && expected?.width !== bmp.width) ||
-          (expected?.height !== null && expected?.height !== bmp.height))
+        ((expected.width !== null && expected.width !== bmp.width) ||
+          (expected.height !== null && expected.height !== bmp.height))
       ) {
         throw new Error(
           `conjecture evidence BMP dimensions changed after preflight for ${assetId}`,
         );
       }
-      const png =
-        bmp === undefined
-          ? await sharpModule.default(sourceBytes, { failOn: 'error' }).png().toBuffer()
-          : await sharpModule
-              .default(bmp.data, {
-                raw: { width: bmp.width, height: bmp.height, channels: 4 },
-              })
-              .png()
-              .toBuffer();
-      fetchedByAssetId.set(assetId, {
+      if (bmp === undefined) {
+        throw new Error(`conjecture evidence image decoder missing for ${assetId}`);
+      }
+      const png = await sharpModule
+        .default(bmp.data, {
+          raw: { width: bmp.width, height: bmp.height, channels: 4 },
+        })
+        .png()
+        .toBuffer();
+      decodedPixels = bmp.width * bmp.height;
+      prepared = {
         data: png.toString('base64'),
         mediaType: 'image/png',
-      });
-      continue;
+      };
+    } else {
+      if (!RUNNER_IMAGE_MIME_TYPES.has(image.mediaType)) {
+        throw new Error(`conjecture evidence image MIME unsupported for ${assetId}`);
+      }
+      sharpModule ??= await import('sharp');
+      const decoded = await sharpModule
+        .default(sourceBytes, {
+          animated: true,
+          failOn: 'error',
+          limitInputPixels: RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
+        })
+        .metadata();
+      const width = decoded.width;
+      const height = decoded.pageHeight ?? decoded.height;
+      const pages = decoded.pages ?? 1;
+      if (
+        width === undefined ||
+        height === undefined ||
+        !Number.isInteger(width) ||
+        !Number.isInteger(height) ||
+        !Number.isInteger(pages) ||
+        width <= 0 ||
+        height <= 0 ||
+        pages <= 0
+      ) {
+        throw new Error(`conjecture evidence image dimensions unreadable for ${assetId}`);
+      }
+      decodedPixels = width * height * pages;
+      prepared = image;
     }
-    if (!RUNNER_IMAGE_MIME_TYPES.has(image.mediaType)) {
-      throw new Error(`conjecture evidence image MIME unsupported for ${assetId}`);
+    actualTransportBytes += Buffer.byteLength(prepared.data, 'utf8') * RESEARCH_MEETING_SAMPLES;
+    actualPixels += decodedPixels * RESEARCH_MEETING_SAMPLES;
+    if (actualTransportBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
+      throw new Error(
+        `conjecture evidence images total ${actualTransportBytes} actual base64 bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
+      );
     }
-    fetchedByAssetId.set(assetId, image);
+    if (actualPixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
+      throw new Error(
+        `conjecture evidence images total ${actualPixels} actual pixels; max is ${RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL}`,
+      );
+    }
+    fetchedByAssetId.set(assetId, prepared);
   }
-  return loadableRefs.map((ref) => {
-    const image = fetchedByAssetId.get(ref.asset_id);
-    if (!image) throw new Error(`conjecture evidence image expansion missing ${ref.asset_id}`);
-    return { ...ref, ...image };
+  return uniqueAssetIds.map((assetId) => {
+    const image = fetchedByAssetId.get(assetId);
+    if (!image) throw new Error(`conjecture evidence prepared image missing ${assetId}`);
+    return {
+      asset_id: assetId,
+      occurrences: loadableRefs
+        .filter((ref) => ref.asset_id === assetId)
+        .map(({ attempt_event_id, source }) => ({ attempt_event_id, source })),
+      ...image,
+    };
   });
 }
 

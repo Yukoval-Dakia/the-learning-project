@@ -172,8 +172,15 @@ export interface ConjectureEvidenceAssetRef {
   source: ConjectureEvidenceImageSource;
 }
 
-/** Asset ref plus the real bytes handed to the multimodal runner. */
-export interface LoadedConjectureEvidenceImage extends ConjectureEvidenceAssetRef {
+/**
+ * One unique asset plus every evidence occurrence that points at it.
+ *
+ * The bytes are sent once per induction sample; `occurrences` preserves the semantic roles
+ * without duplicating the same base64 block for every attempt/source pair.
+ */
+export interface LoadedConjectureEvidenceImage {
+  asset_id: string;
+  occurrences: Array<Omit<ConjectureEvidenceAssetRef, 'asset_id'>>;
   /** base64 without a data: prefix (the runner also accepts URL/Uint8Array). */
   data: string;
   mediaType: string;
