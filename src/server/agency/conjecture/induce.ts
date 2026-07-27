@@ -29,7 +29,13 @@ import type {
   EnrichedEvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
+import {
+  type ConjectureAbstainDraftT,
+  type ConjectureAbstainReasonT,
+  ConjectureDraft,
+  type ConjectureDraftT,
+  type ConjectureProposalDraftT,
+} from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -63,16 +69,32 @@ export interface InduceConjectureInput {
   subjectProfile?: SubjectProfile;
 }
 
-export interface InduceConjectureResult {
-  draft: ConjectureDraftT;
+interface InduceConjectureResultBase {
   /** internal calibration in [0,1]; NEVER rendered as a number to the owner. */
   confidence: number;
   confidence_capped: boolean;
   samples: number;
-  /** task_run_ids of every sample (provenance / cost trail). */
+  /** task_run_ids of every completed sample plus semantic-grouping run, if used. */
   task_run_ids: string[];
   cost_usd: number;
+  /** Every requested sample remains visible in the decision denominator. */
+  votes: {
+    proposal: number;
+    abstain: number;
+    invalid: number;
+    failed: number;
+  };
 }
+
+export type InduceConjectureResult =
+  | (InduceConjectureResultBase & {
+      outcome: 'proposal';
+      draft: ConjectureProposalDraftT;
+    })
+  | (InduceConjectureResultBase & {
+      outcome: 'abstain';
+      draft: ConjectureAbstainDraftT;
+    });
 
 /** Confidence ceiling when ALL evidence is agent-judge (no owner corroboration). */
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
@@ -155,11 +177,14 @@ function median(values: number[]): number {
 }
 
 /** Aggregate a winning cluster without depending on sample completion/insertion order. */
-function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): ConjectureDraftT {
+function aggregateDominantDraft(
+  drafts: ConjectureProposalDraftT[],
+  agreement: number,
+): ConjectureProposalDraftT {
   // claim/probe/reference/cause form one semantic sample. Select one complete draft
   // by exact tuple vote, then lexical tie-break. Aggregating fields independently
   // can fabricate a mismatched probe; lexical-only selection can elevate a 1-vote outlier.
-  const coupled = new Map<string, { count: number; draft: ConjectureDraftT }>();
+  const coupled = new Map<string, { count: number; draft: ConjectureProposalDraftT }>();
   for (const draft of drafts) {
     const key = JSON.stringify([
       draft.claim_md,
@@ -181,6 +206,72 @@ function aggregateDominantDraft(drafts: ConjectureDraftT[], agreement: number): 
     // A tie is non-discriminating: the conservative, reproducible outcome.
     discriminating: discriminatingVotes > drafts.length / 2,
     agreement_count: agreement,
+  };
+}
+
+function normalizeGroundedProposal(
+  draft: ConjectureProposalDraftT,
+  cells: EnrichedEvidenceCell[],
+): ConjectureProposalDraftT | null {
+  const cell = cells.find(
+    (candidate) =>
+      candidate.knowledge_id === draft.knowledge_id &&
+      candidate.cause_category === draft.cause_category,
+  );
+  if (!cell) return null;
+
+  const allowedEvidenceIds = new Set(cell.evidence_event_ids);
+  const evidenceEventIds = [...new Set(draft.evidence_event_ids)];
+  if (
+    evidenceEventIds.length < 2 ||
+    evidenceEventIds.some((eventId) => !allowedEvidenceIds.has(eventId))
+  ) {
+    return null;
+  }
+
+  // These facts belong to deterministic 取证, not the model. Normalizing them here
+  // prevents a harmless echo mismatch while keeping fabricated KC/cause/evidence refs
+  // as an invalid (negative) vote.
+  return {
+    ...draft,
+    recurrence_count: cell.recurrence_count,
+    evidence_event_ids: evidenceEventIds,
+  };
+}
+
+function chooseAbstainDraft(params: {
+  abstains: ConjectureAbstainDraftT[];
+  cells: EnrichedEvidenceCell[];
+  reasonOverride?: ConjectureAbstainReasonT;
+}): ConjectureAbstainDraftT {
+  const allowedEvidenceIds = new Set(params.cells.flatMap((cell) => cell.evidence_event_ids));
+  const citedEvidenceIds = [
+    ...new Set(
+      params.abstains
+        .flatMap((draft) => draft.evidence_event_ids)
+        .filter((eventId) => allowedEvidenceIds.has(eventId)),
+    ),
+  ];
+  const reason =
+    params.reasonOverride ??
+    [...new Set(params.abstains.map((draft) => draft.reason_code))]
+      .map((reasonCode) => ({
+        reasonCode,
+        count: params.abstains.filter((draft) => draft.reason_code === reasonCode).length,
+      }))
+      .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode))[0]?.reasonCode ??
+    'no_semantic_consensus';
+  const explanation = params.abstains
+    .filter((draft) => draft.reason_code === reason)
+    .map((draft) => draft.explanation_md)
+    .filter((value): value is string => Boolean(value))
+    .sort(compareLex)[0];
+
+  return {
+    kind: 'abstain',
+    reason_code: reason,
+    ...(explanation ? { explanation_md: explanation } : {}),
+    evidence_event_ids: citedEvidenceIds,
   };
 }
 
@@ -296,9 +387,12 @@ export async function induceConjecture(
 
   // Run N samples on the Opus anthropic-sub lane (override; providers.ts exempts it
   // from the AI_PROVIDER_MODEL guard via ANTHROPIC_SUB_DEFAULT_MODEL).
-  const drafts: ConjectureDraftT[] = [];
+  const proposals: ConjectureProposalDraftT[] = [];
+  const abstains: ConjectureAbstainDraftT[] = [];
   const taskRunIds: string[] = [];
   const sampleErrors: string[] = [];
+  let invalidSamples = 0;
+  let failedSamples = 0;
   let costUsd = 0;
   const sampleResults = await Promise.allSettled(
     Array.from({ length: samples }, () =>
@@ -318,8 +412,17 @@ export async function induceConjecture(
       if (result.task_run_id) taskRunIds.push(result.task_run_id);
       costUsd += result.cost_usd ?? 0;
       const draft = parseSampleDraft(result);
-      if (draft) drafts.push(draft);
+      if (!draft) {
+        invalidSamples += 1;
+      } else if (draft.kind === 'abstain') {
+        abstains.push(draft);
+      } else {
+        const grounded = normalizeGroundedProposal(draft, cells);
+        if (grounded) proposals.push(grounded);
+        else invalidSamples += 1;
+      }
     } else {
+      failedSamples += 1;
       const err = settled.reason;
       const errorMessage = err instanceof Error ? err.message : String(err);
       sampleErrors.push(`sample ${i + 1}: ${errorMessage.slice(0, 300)}`);
@@ -333,15 +436,38 @@ export async function induceConjecture(
       });
     }
   }
-  if (drafts.length === 0) {
+  if (failedSamples === samples) {
     const details =
       sampleErrors.length > 0 ? `; failures: ${sampleErrors.slice(0, 3).join(' | ')}` : '';
-    throw new Error(`induceConjecture: no sample produced a valid ConjectureDraft${details}`);
+    throw new Error(`induceConjecture: every induction sample failed${details}`);
+  }
+
+  const votes = {
+    proposal: proposals.length,
+    abstain: abstains.length,
+    invalid: invalidSamples,
+    failed: failedSamples,
+  };
+  if (proposals.length === 0) {
+    return {
+      outcome: 'abstain',
+      draft: chooseAbstainDraft({
+        abstains,
+        cells,
+        reasonOverride: abstains.length > 0 ? undefined : 'invalid_output',
+      }),
+      confidence: 0,
+      confidence_capped: false,
+      samples,
+      task_run_ids: taskRunIds,
+      cost_usd: costUsd,
+      votes,
+    };
   }
 
   // Fast path: claimKey clustering (byte-identical after normalisation).
-  const clusters = new Map<string, ConjectureDraftT[]>();
-  for (const d of drafts) {
+  const clusters = new Map<string, ConjectureProposalDraftT[]>();
+  for (const d of proposals) {
     const key = claimKey(d.claim_md);
     const bucket = clusters.get(key) ?? [];
     bucket.push(d);
@@ -359,9 +485,9 @@ export async function induceConjecture(
   // The grouping call is non-deterministic: confidence reflects the expected value
   // of agreement, not a stable per-run signal. Downstream thresholds must treat
   // confidence as a distribution, not a point estimate.
-  if (dominant.length < drafts.length && drafts.length > 1) {
+  if (dominant.length < proposals.length && proposals.length > 1) {
     const dedup = await deduplicateClaims(
-      drafts.map((d) => d.claim_md),
+      proposals.map((d) => d.claim_md),
       runTaskFn,
     );
     // Accumulate cost + provenance from the dedup call.
@@ -372,7 +498,7 @@ export async function induceConjecture(
     // Tie-break on the group's normalized lexical claim key, never sample order.
     const groupDrafts = dedup.groups
       .map((g) => {
-        const groupedDrafts = g.map((i) => drafts[i]);
+        const groupedDrafts = g.map((i) => proposals[i]);
         return {
           drafts: groupedDrafts,
           key: [...groupedDrafts.map((draft) => claimKey(draft.claim_md))].sort(compareLex)[0],
@@ -383,6 +509,24 @@ export async function induceConjecture(
   }
 
   const agreement = dominant.length;
+  const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
+  if (agreement < requiredAgreement) {
+    return {
+      outcome: 'abstain',
+      draft: chooseAbstainDraft({
+        abstains,
+        cells,
+        reasonOverride: 'no_semantic_consensus',
+      }),
+      confidence: 0,
+      confidence_capped: false,
+      samples,
+      task_run_ids: taskRunIds,
+      cost_usd: costUsd,
+      votes,
+    };
+  }
+
   // confidence denominator is `samples` (requested), not `drafts.length` (parsed) —
   // a failed parse is a non-agreement, not ignored. Unchanged from original.
   let confidence = agreement / samples;
@@ -395,11 +539,13 @@ export async function induceConjecture(
   const draft = aggregateDominantDraft(dominant, agreement);
 
   return {
+    outcome: 'proposal',
     draft,
     confidence,
     confidence_capped,
     samples,
     task_run_ids: taskRunIds,
     cost_usd: costUsd,
+    votes,
   };
 }

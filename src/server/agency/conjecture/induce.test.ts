@@ -5,11 +5,28 @@ import type {
   ConjectureEvidenceSample,
   EnrichedEvidenceCell,
 } from '@/capabilities/agency/server/conjecture/evidence';
+import type { ConjectureAbstainDraftT, ConjectureProposalDraftT } from '@/core/schema/business';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 
-import { induceConjecture } from './induce';
+import { type InduceConjectureResult, induceConjecture } from './induce';
+
+function proposal(result: InduceConjectureResult): ConjectureProposalDraftT {
+  expect(result.outcome).toBe('proposal');
+  if (result.outcome !== 'proposal') {
+    throw new Error(`expected proposal, received ${result.draft.reason_code}`);
+  }
+  return result.draft;
+}
+
+function abstain(result: InduceConjectureResult): ConjectureAbstainDraftT {
+  expect(result.outcome).toBe('abstain');
+  if (result.outcome !== 'abstain') {
+    throw new Error(`expected abstain, received ${result.draft.claim_md}`);
+  }
+  return result.draft;
+}
 
 /** Helper: produces a TaskTextResult carrying a ClaimGroupingTask structured_output. */
 function groupResult(groups: number[][]): TaskTextResult {
@@ -78,7 +95,10 @@ function sample(
 ): TaskTextResult {
   return {
     text: `reasoning...\n${JSON.stringify({
+      kind: 'proposal',
       claim_md: claim,
+      knowledge_id: 'k_chain_rule',
+      evidence_event_ids: ['e_a', 'e_b'],
       probe_md: extra.probe_md ?? "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
       // conjecture-wire #13 — judge gold reference (single-writer, produced with probe).
       probe_reference_md:
@@ -90,6 +110,23 @@ function sample(
       discriminating: extra.discriminating ?? true,
       agreement_count: 1,
     })}`,
+  };
+}
+
+function abstainSample(
+  reasonCode:
+    | 'insufficient_evidence'
+    | 'conflicting_evidence'
+    | 'no_grounded_claim'
+    | 'no_discriminating_probe' = 'insufficient_evidence',
+): TaskTextResult {
+  return {
+    text: JSON.stringify({
+      kind: 'abstain',
+      reason_code: reasonCode,
+      explanation_md: `abstained: ${reasonCode}`,
+      evidence_event_ids: ['e_a'],
+    }),
   };
 }
 
@@ -258,6 +295,72 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
 });
 
 describe('induceConjecture self-consistency', () => {
+  it('requires 2-of-3 proposal convergence and counts abstain as a negative vote', async () => {
+    const claim = '你把链式法则的层间组合误作相加';
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample(claim))
+      .mockResolvedValueOnce(abstainSample())
+      .mockResolvedValueOnce(sample(claim));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(proposal(result).agreement_count).toBe(2);
+    expect(result.votes).toEqual({ proposal: 2, abstain: 1, invalid: 0, failed: 0 });
+    expect(result.confidence).toBeCloseTo(2 / 3, 5);
+  });
+
+  it('returns no_semantic_consensus when proposal, abstain, and a different proposal split', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('claim A'))
+      .mockResolvedValueOnce(abstainSample('conflicting_evidence'))
+      .mockResolvedValueOnce(sample('claim B'))
+      .mockResolvedValueOnce(groupResult([[0], [1]]));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(result.votes).toEqual({ proposal: 2, abstain: 1, invalid: 0, failed: 0 });
+    expect(result.confidence).toBe(0);
+  });
+
+  it('returns the majority standard abstain reason without creating a claim', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(abstainSample('insufficient_evidence'))
+      .mockResolvedValueOnce(abstainSample('conflicting_evidence'))
+      .mockResolvedValueOnce(abstainSample('insufficient_evidence'));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(abstain(result)).toMatchObject({
+      kind: 'abstain',
+      reason_code: 'insufficient_evidence',
+      evidence_event_ids: ['e_a'],
+    });
+    expect(result.votes).toEqual({ proposal: 0, abstain: 3, invalid: 0, failed: 0 });
+  });
+
+  it('rejects fabricated grounding refs as an invalid negative vote', async () => {
+    const fabricated = sample('same grounded claim');
+    const payload = JSON.parse(fabricated.text.slice(fabricated.text.indexOf('{'))) as Record<
+      string,
+      unknown
+    >;
+    payload.evidence_event_ids = ['invented_1', 'invented_2'];
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce({ text: JSON.stringify(payload) })
+      .mockResolvedValueOnce(sample('same grounded claim'))
+      .mockResolvedValueOnce(sample('same grounded claim'));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(result.outcome).toBe('proposal');
+    expect(result.votes).toEqual({ proposal: 2, abstain: 0, invalid: 1, failed: 0 });
+  });
+
   it('agreement across samples raises confidence; dominant claim returned with its tally + A13 fields', async () => {
     const claim = '你把链式法则当成导数相乘';
     const runTaskFn = vi
@@ -271,12 +374,12 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.claim_md).toBe(claim); // 2 of 3 agreed → dominant
-    expect(result.draft.agreement_count).toBe(2);
-    expect(result.draft.predicted_p).toBe(0.3); // median of the dominant cluster
-    expect(result.draft.discriminating).toBe(true);
+    expect(proposal(result).claim_md).toBe(claim); // 2 of 3 agreed → dominant
+    expect(proposal(result).agreement_count).toBe(2);
+    expect(proposal(result).predicted_p).toBe(0.3); // median of the dominant cluster
+    expect(proposal(result).discriminating).toBe(true);
     // conjecture-wire #13 — judge gold reference flows through safeParse → draft.
-    expect(result.draft.probe_reference_md).toContain('cos(x^2)');
+    expect(proposal(result).probe_reference_md).toContain('cos(x^2)');
     expect(result.samples).toBe(3);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(result.confidence_capped).toBe(false);
@@ -306,7 +409,7 @@ describe('induceConjecture self-consistency', () => {
       runTaskFn,
     });
 
-    expect(result.draft.claim_md).toBe(claim);
+    expect(proposal(result).claim_md).toBe(claim);
     expect(result.confidence_capped).toBe(true);
     expect(result.confidence).toBe(0.5); // capped from raw 1.0
   });
@@ -331,7 +434,10 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValue({
         text: 'prose with no json braces at all',
         structured_output: {
+          kind: 'proposal',
           claim_md: '你从单一例题过度泛化',
+          knowledge_id: 'k_chain_rule',
+          evidence_event_ids: ['e_a', 'e_b'],
           probe_md: '这是例题没覆盖的新情形，请预测。',
           probe_reference_md: '对新情形应用原例题的泛化规则，给出预测值与依据。',
           cause_category: 'concept_confusion',
@@ -343,9 +449,9 @@ describe('induceConjecture self-consistency', () => {
       });
 
     const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
-    expect(result.draft.claim_md).toBe('你从单一例题过度泛化');
-    expect(result.draft.discriminating).toBe(false);
-    expect(result.draft.agreement_count).toBe(1);
+    expect(proposal(result).claim_md).toBe('你从单一例题过度泛化');
+    expect(proposal(result).discriminating).toBe(false);
+    expect(proposal(result).agreement_count).toBe(1);
   });
 
   it('finds the valid JSON object after unrelated mathematical braces', async () => {
@@ -355,7 +461,7 @@ describe('induceConjecture self-consistency', () => {
     }));
 
     const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
-    expect(result.draft.claim_md).toBe('你混淆了集合与元素');
+    expect(proposal(result).claim_md).toBe('你混淆了集合与元素');
   });
 
   it('recovers when quoted prose contains an unbalanced opening brace before JSON', async () => {
@@ -365,7 +471,7 @@ describe('induceConjecture self-consistency', () => {
     }));
 
     const result = await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
-    expect(result.draft.claim_md).toBe('你把示例文本误当成结构');
+    expect(proposal(result).claim_md).toBe('你把示例文本误当成结构');
   });
 
   it('runs self-consistency samples concurrently', async () => {
@@ -383,14 +489,16 @@ describe('induceConjecture self-consistency', () => {
     expect(maxInFlight).toBe(3);
   });
 
-  it('throws when no sample produces a valid ConjectureDraft (anti-fabrication)', async () => {
+  it('returns observable invalid_output abstain when fulfilled samples contain no valid draft', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValue({ text: 'no json here, model refused' });
 
-    await expect(induceConjecture({ cells: [cell()], samples: 2, runTaskFn })).rejects.toThrow(
-      /no sample produced a valid ConjectureDraft/,
-    );
+    const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(result.votes).toEqual({ proposal: 0, abstain: 0, invalid: 2, failed: 0 });
+    expect(result.confidence).toBe(0);
   });
 
   it('skips one failed induction sample and keeps requested samples as the confidence denominator', async () => {
@@ -404,8 +512,8 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.claim_md).toBe(claim);
-    expect(result.draft.agreement_count).toBe(2);
+    expect(proposal(result).claim_md).toBe(claim);
+    expect(proposal(result).agreement_count).toBe(2);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(result.samples).toBe(3);
     expect(result.task_run_ids).toEqual(['run_2', 'run_3']);
@@ -429,7 +537,7 @@ describe('induceConjecture self-consistency', () => {
       .mockRejectedValue(new Error('provider unavailable'));
 
     await expect(induceConjecture({ cells: [cell()], samples: 2, runTaskFn })).rejects.toThrow(
-      /no sample produced a valid ConjectureDraft.*provider unavailable/,
+      /every induction sample failed.*provider unavailable/,
     );
 
     expect(runTaskFn).toHaveBeenCalledTimes(2);
@@ -461,7 +569,7 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.agreement_count).toBe(3);
+    expect(proposal(result).agreement_count).toBe(3);
     expect(result.confidence).toBeCloseTo(1.0, 5);
     expect(result.confidence_capped).toBe(false);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
@@ -489,7 +597,7 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.agreement_count).toBe(2);
+    expect(proposal(result).agreement_count).toBe(2);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
@@ -517,11 +625,11 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
 
-    expect(result.draft.claim_md).toBe('alpha claim');
-    expect(result.draft.probe_md).toBe('a probe');
-    expect(result.draft.probe_reference_md).toBe('a reference');
-    expect(result.draft.predicted_p).toBe(0.5);
-    expect(result.draft.discriminating).toBe(false);
+    expect(proposal(result).claim_md).toBe('alpha claim');
+    expect(proposal(result).probe_md).toBe('a probe');
+    expect(proposal(result).probe_reference_md).toBe('a reference');
+    expect(proposal(result).predicted_p).toBe(0.5);
+    expect(proposal(result).discriminating).toBe(false);
   });
 
   it('keeps coupled text fields from one deterministic representative sample', async () => {
@@ -562,9 +670,9 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 4, runTaskFn });
 
     const resultTuple = [
-      result.draft.claim_md,
-      result.draft.probe_md,
-      result.draft.probe_reference_md,
+      proposal(result).claim_md,
+      proposal(result).probe_md,
+      proposal(result).probe_reference_md,
     ];
     const sourceTuples = [
       ['same semantic claim one', ...pairs[0]],
@@ -595,13 +703,13 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.claim_md).toBe('z majority claim');
-    expect(result.draft.probe_md).toBe(majority.probe_md);
-    expect(result.draft.probe_reference_md).toBe(majority.probe_reference_md);
-    expect(result.draft.agreement_count).toBe(3);
+    expect(proposal(result).claim_md).toBe('z majority claim');
+    expect(proposal(result).probe_md).toBe(majority.probe_md);
+    expect(proposal(result).probe_reference_md).toBe(majority.probe_reference_md);
+    expect(proposal(result).agreement_count).toBe(3);
   });
 
-  it('chooses the lexical claim when equal-sized semantic groups tie', async () => {
+  it('fails closed when equal-sized semantic groups tie', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValueOnce(sample('zeta claim'))
@@ -609,7 +717,8 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValueOnce(groupResult([[0], [1]]));
 
     const result = await induceConjecture({ cells: [cell()], samples: 2, runTaskFn });
-    expect(result.draft.claim_md).toBe('alpha claim');
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(result.confidence).toBe(0);
   });
 
   it('dedup not called when all samples are byte-identical (claimKey unanimous)', async () => {
@@ -623,7 +732,7 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
     expect(runTaskFn).toHaveBeenCalledTimes(3); // No dedup call
-    expect(result.draft.agreement_count).toBe(3);
+    expect(proposal(result).agreement_count).toBe(3);
     expect(result.confidence).toBeCloseTo(1.0, 5);
   });
 
@@ -637,9 +746,9 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    // Falls back to claimKey singletons — confidence stays 1/3, no throw.
-    expect(result.confidence).toBeCloseTo(1 / 3, 5);
-    expect(result.draft.agreement_count).toBe(1);
+    // Falls back to claimKey singletons; no 2-of-3 convergence means no proposal.
+    expect(result.confidence).toBe(0);
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
@@ -653,7 +762,8 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.confidence).toBeCloseTo(1 / 3, 5);
+    expect(result.confidence).toBe(0);
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
@@ -686,7 +796,7 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
     // Dedup fired with 2 claims and returned them as equivalent.
-    expect(result.draft.agreement_count).toBe(2);
+    expect(proposal(result).agreement_count).toBe(2);
     // confidence denominator is samples=3 (parse failure is non-agreement).
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
@@ -709,8 +819,8 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    expect(result.draft.agreement_count).toBe(1);
-    expect(result.confidence).toBeCloseTo(1 / 3, 5);
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(result.confidence).toBe(0);
   });
 
   it('dedup falls back on in-range duplicate indices (flat count = N but not a partition)', async () => {
@@ -725,9 +835,9 @@ describe('induceConjecture self-consistency', () => {
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    // Partition check rejects → falls back to claimKey singletons.
-    expect(result.draft.agreement_count).toBe(1);
-    expect(result.confidence).toBeCloseTo(1 / 3, 5);
+    // Partition check rejects → singletons cannot clear the 2-of-3 convergence gate.
+    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(result.confidence).toBe(0);
     expect(runTaskFn).toHaveBeenCalledTimes(4); // 3 induction + 1 dedup
   });
 });

@@ -50,10 +50,11 @@ import type {
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
+import type { ConjectureProposalDraftT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
@@ -89,9 +90,12 @@ export interface ResearchMeetingResult {
   considered: number;
   /** conjectures actually proposed (a cell whose induction failed is dropped). */
   conjectures_created: number;
+  /** grounded induction completed but correctly refused to fabricate a proposal. */
+  conjectures_abstained: number;
   /**
    * YUK-779 — cells whose induction/write THREW and was swallowed by the per-cell
-   * catch below. Invariant: `cells_failed + conjectures_created === considered`.
+   * catch below. Invariant:
+   * `cells_failed + conjectures_created + conjectures_abstained === considered`.
    *
    * Before this counter existed the swallow was visible only as
    * `considered > conjectures_created`, which the job never asserted on — under a
@@ -458,6 +462,7 @@ export async function defaultLoadEvidenceImages(
 function buildConjectureProposalInput(
   cell: EnrichedEvidenceCell,
   induced: InduceConjectureResult,
+  draft: ConjectureProposalDraftT,
   triggerEventId: string,
 ): WriteAiProposalInput {
   // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
@@ -471,25 +476,25 @@ function buildConjectureProposalInput(
       kind: 'conjecture',
       target: { subject_kind: 'mind_model', subject_id: cell.knowledge_id },
       // The 2nd-person belief IS the card's reason — shown whole, never truncated.
-      reason_md: induced.draft.claim_md,
+      reason_md: draft.claim_md,
       // Provenance reuses the attempt event ids (no separate misconception store).
       evidence_refs: cell.evidence_event_ids.map((id) => ({ kind: 'event' as const, id })),
       proposed_change: {
-        claim_md: induced.draft.claim_md,
+        claim_md: draft.claim_md,
         // Deterministic cell facts win over the LLM echo (cause/recurrence are the
         // ground truth the evidence_refs back; the draft only restates them).
         knowledge_id: cell.knowledge_id,
         cause_category: cell.cause_category,
         confidence: induced.confidence, // internal sort only — NEVER rendered as a number
         recurrence_count: cell.recurrence_count,
-        probe_md: induced.draft.probe_md,
+        probe_md: draft.probe_md,
         // conjecture-wire #13 — single-writer judge gold reference flows draft →
         // proposal change → acceptConjectureProposal → serveProbeOnce.referenceMd.
-        probe_reference_md: induced.draft.probe_reference_md,
-        discriminating: induced.draft.discriminating,
+        probe_reference_md: draft.probe_reference_md,
+        discriminating: draft.discriminating,
         corrected_by_owner: false,
         // A13 (YUK-440): the falsifiable bet + the number it must later beat.
-        predicted_p: induced.draft.predicted_p,
+        predicted_p: draft.predicted_p,
         baseline_p_at_induction: cell.baseline_p ?? 0.5, // 0.5 = cold-start neutral
       },
       cooldown_key: `conjecture:${cell.key}`,
@@ -574,6 +579,7 @@ export async function runResearchMeetingNightly(
     return {
       considered: 0,
       conjectures_created: 0,
+      conjectures_abstained: 0,
       cells_failed: 0,
       pending_before: knownConjectureKeys.size,
       reconciled: reconcileResult.reconciled,
@@ -638,6 +644,7 @@ export async function runResearchMeetingNightly(
     return {
       considered: 0,
       conjectures_created: 0,
+      conjectures_abstained: 0,
       cells_failed: 0,
       pending_before: knownConjectureKeys.size,
       reconciled: reconcileResult.reconciled,
@@ -673,7 +680,7 @@ export async function runResearchMeetingNightly(
       async ({
         cell,
         evidenceImages,
-      }): Promise<{ created: number; failed: number; cost_usd: number }> => {
+      }): Promise<{ created: number; abstained: number; failed: number; cost_usd: number }> => {
         let incurredCostUsd = 0;
         try {
           const induced = await induceConjectureFn({
@@ -690,19 +697,48 @@ export async function runResearchMeetingNightly(
           // Count the Opus induction spend immediately — it was incurred regardless of
           // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
           incurredCostUsd = induced.cost_usd;
-          await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
-          return { created: 1, failed: 0, cost_usd: incurredCostUsd };
+          if (induced.outcome === 'abstain') {
+            await writeEventFn(db, {
+              id: `conjecture_abstained_${newId()}`,
+              actor_kind: 'agent',
+              actor_ref: RESEARCH_MEETING_ACTOR,
+              action: 'experimental:conjecture_abstained',
+              subject_kind: 'mind_model',
+              subject_id: cell.knowledge_id,
+              outcome: 'partial',
+              payload: {
+                reason_code: induced.draft.reason_code,
+                explanation_md: induced.draft.explanation_md ?? null,
+                evidence_event_ids: induced.draft.evidence_event_ids,
+                induction_task_run_ids: induced.task_run_ids,
+                votes: induced.votes,
+                requested_samples: induced.samples,
+              },
+              caused_by_event_id: triggerEventId,
+              cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
+              // Audit/observability only: an abstention is not a learner fact.
+              ingest_at: now,
+              created_at: now,
+            });
+            return { created: 0, abstained: 1, failed: 0, cost_usd: incurredCostUsd };
+          }
+          await writeAiProposalFn(
+            db,
+            buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
+          );
+          return { created: 1, abstained: 0, failed: 0, cost_usd: incurredCostUsd };
         } catch (err) {
           console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
           await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
-          return { created: 0, failed: 1, cost_usd: incurredCostUsd };
+          return { created: 0, abstained: 0, failed: 1, cost_usd: incurredCostUsd };
         }
       },
     ),
   );
   const created = cellResults.reduce((sum, result) => sum + result.created, 0);
+  const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
 
@@ -721,6 +757,7 @@ export async function runResearchMeetingNightly(
     payload: {
       considered: preparedTopCells.length,
       conjectures_created: created,
+      conjectures_abstained: abstained,
       cells_failed: cellsFailed,
       pending_before: knownConjectureKeys.size,
     },
@@ -734,6 +771,7 @@ export async function runResearchMeetingNightly(
   return {
     considered: preparedTopCells.length,
     conjectures_created: created,
+    conjectures_abstained: abstained,
     cells_failed: cellsFailed,
     pending_before: knownConjectureKeys.size,
     reconciled: reconcileResult.reconciled,
@@ -756,7 +794,8 @@ export function buildResearchMeetingNightlyHandler(
       // output into the DAG node detail.
       return reportJobYield('research_meeting_nightly', {
         attempted: result.considered,
-        succeeded: result.conjectures_created,
+        // abstain is a successful, fail-closed model decision, not an AI failure.
+        succeeded: result.conjectures_created + result.conjectures_abstained,
         failed: result.cells_failed,
       });
     } catch (err) {

@@ -100,7 +100,10 @@ const CLAIM_MD = '你把「使动用法」和「意动用法」混为一谈—�
 
 /** The ConjectureDraft every self-consistency sample returns (unanimous ⇒ no dedup call). */
 const DRAFT = {
+  kind: 'proposal',
   claim_md: CLAIM_MD,
+  knowledge_id: KC_ID,
+  evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
   probe_md: PROBE_MD,
   probe_reference_md: PROBE_REFERENCE_MD,
   cause_category: CAUSE,
@@ -439,5 +442,50 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
 
     const scores = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
     expect(scores).toHaveLength(1);
+  });
+
+  it('persists a real abstain event and creates no conjecture proposal', async () => {
+    const db = testDb();
+    const attemptIds = await seedRecurringFailures(3);
+    sdk.respond = (prompt) => {
+      if (!prompt.includes('"evidence_cells"')) {
+        throw new Error(`unexpected task after abstain: ${prompt.slice(0, 120)}`);
+      }
+      return sdkSuccess({
+        kind: 'abstain',
+        reason_code: 'insufficient_evidence',
+        explanation_md: '这些错答不足以区分稳定误解与偶发失误。',
+        evidence_event_ids: [attemptIds[0]],
+      });
+    };
+
+    const result = await runResearchMeetingNightly(db);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+    });
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+    const abstainEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:conjecture_abstained'));
+    expect(abstainEvents).toHaveLength(1);
+    expect(abstainEvents[0]).toMatchObject({
+      actor_ref: 'research_meeting',
+      subject_kind: 'mind_model',
+      subject_id: KC_ID,
+      outcome: 'partial',
+    });
+    expect(abstainEvents[0].payload).toMatchObject({
+      reason_code: 'insufficient_evidence',
+      evidence_event_ids: [attemptIds[0]],
+      requested_samples: RESEARCH_MEETING_SAMPLES,
+      votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
+    });
   });
 });

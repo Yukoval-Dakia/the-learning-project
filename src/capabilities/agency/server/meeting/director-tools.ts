@@ -413,7 +413,10 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           }
 
           const draftCheck = ConjectureDraft.safeParse({
+            kind: 'proposal',
             claim_md: a.claim_md,
+            knowledge_id: a.knowledge_id,
+            evidence_event_ids: primaryRefs,
             probe_md: a.probe_md,
             probe_reference_md: a.probe_reference_md,
             cause_category: causeCategory,

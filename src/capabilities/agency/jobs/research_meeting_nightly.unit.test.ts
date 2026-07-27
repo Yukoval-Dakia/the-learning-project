@@ -84,8 +84,12 @@ function projection(mastery: number): MasteryProjection {
 function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
   const cell = input.cells[0];
   return {
+    outcome: 'proposal',
     draft: {
+      kind: 'proposal',
       claim_md: `你混淆 ${cell.knowledge_id}`,
+      knowledge_id: cell.knowledge_id,
+      evidence_event_ids: cell.evidence_event_ids,
       probe_md: `probe for ${cell.knowledge_id}`,
       probe_reference_md: `reference answer for ${cell.knowledge_id}`,
       cause_category: cell.cause_category,
@@ -103,6 +107,25 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
       `tr_${cell.knowledge_id}_3`,
     ],
     cost_usd: 0.02,
+    votes: { proposal: 2, abstain: 0, invalid: 0, failed: 1 },
+  };
+}
+
+function fakeAbstained(input: InduceConjectureInput): InduceConjectureResult {
+  return {
+    outcome: 'abstain',
+    draft: {
+      kind: 'abstain',
+      reason_code: 'insufficient_evidence',
+      explanation_md: '两次错答没有形成稳定的共同模式。',
+      evidence_event_ids: [input.cells[0].evidence_event_ids[0]],
+    },
+    confidence: 0,
+    confidence_capped: false,
+    samples: input.samples,
+    task_run_ids: ['tr_abstain_1', 'tr_abstain_2', 'tr_abstain_3'],
+    cost_usd: 0.015,
+    votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
   };
 }
 
@@ -321,6 +344,50 @@ describe('runResearchMeetingNightly', () => {
     expect(result.pending_before).toBe(1);
     expect(result.considered).toBe(1); // k_a deduped, only k_b survives
     expect(writeAiProposalFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists abstain observability without proposal or retryable AI failure', async () => {
+    const writeAiProposalFn = vi.fn(async () => 'unexpected');
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeAiProposalFn,
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+      cost_usd: 0.015,
+    });
+    expect(writeAiProposalFn).not.toHaveBeenCalled();
+    expect(writeRetryableAiFailureLedgerFn).not.toHaveBeenCalled();
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'partial',
+        cost_micro_usd: 15_000,
+        payload: expect.objectContaining({
+          reason_code: 'insufficient_evidence',
+          votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
+        }),
+      }),
+    );
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created + result.conjectures_abstained,
+        failed: result.cells_failed,
+      }),
+    ).toBe('ok');
   });
 
   it('swallows a single cell induction failure and continues (partial progress + ledger)', async () => {
