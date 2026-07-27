@@ -4,6 +4,11 @@ import {
   buildCalendarReportWindow,
   resolveReportTimeZone,
 } from '../../src/capabilities/practice/api/weekly-window';
+import type { AiProposalPayloadT } from '../../src/core/schema/proposal';
+import {
+  proposalChangeSummary,
+  proposalDisplayTitle,
+} from '../../src/server/proposals/presentation';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -315,18 +320,31 @@ function proposedChange(
 
 function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
   const learningItemId = kind === 'learning_item' ? null : `${id}-item`;
+  const target = {
+    subject_kind: 'learning_item',
+    subject_id: learningItemId,
+  };
+  const payload = {
+    kind,
+    target,
+    reason_md: reason,
+    evidence_refs: [],
+    proposed_change: proposedChange(kind, learningItemId),
+  } as AiProposalPayloadT;
   return {
     id,
     kind,
-    target: {
-      subject_kind: 'learning_item',
-      subject_id: learningItemId,
-    },
-    payload: {
-      kind,
-      reason_md: reason,
-      evidence_refs: [],
-      proposed_change: proposedChange(kind, learningItemId),
+    target,
+    payload,
+    // Production `/api/proposals` always projects this learner-facing shape via
+    // loadProposalPresentations. Reuse the real pure title/summary projectors so
+    // shipped-container coverage cannot pass through ProposalCard's legacy fallback.
+    presentation: {
+      title: proposalDisplayTitle(payload),
+      change_summary: proposalChangeSummary(payload),
+      technical_details: JSON.stringify(payload.proposed_change, null, 2),
+      evidence_labels: {},
+      block_merge: null,
     },
     status: 'pending',
     proposed_at: '2026-07-18T15:10:00.000Z',
