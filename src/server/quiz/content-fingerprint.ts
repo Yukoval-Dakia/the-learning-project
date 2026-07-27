@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -238,7 +239,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
         session_id: null,
         actor_kind: 'agent',
         actor_ref: params.actorRef,
-        action: 'experimental:question_edit',
+        action: QUESTION_EDIT_ACTION,
         subject_kind: 'question',
         subject_id: row.id,
         outcome: 'success',
@@ -342,7 +343,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     session_id: null,
     actor_kind: 'agent',
     actor_ref: params.actorRef,
-    action: 'experimental:question_edit',
+    action: QUESTION_EDIT_ACTION,
     subject_kind: 'question',
     subject_id: row.id,
     outcome: 'success',

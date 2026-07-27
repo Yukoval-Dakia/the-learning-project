@@ -1,8 +1,12 @@
 // YUK-406 Phase 0 / YUK-440 A13 — induceConjecture orchestrator unit tests
 // (pure: injected runTaskFn, no DB / AI / R2).
 
+import type {
+  ConjectureEvidenceSample,
+  EnrichedEvidenceCell,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import type { TaskTextResult } from '@/server/ai/provenance';
-import type { EvidenceCell } from '@/server/conjectures/evidence';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 
 import { induceConjecture } from './induce';
@@ -12,7 +16,37 @@ function groupResult(groups: number[][]): TaskTextResult {
   return { text: '', structured_output: { groups } };
 }
 
-function cell(overrides: Partial<EvidenceCell> = {}): EvidenceCell {
+/** YUK-786 — one first-hand evidence sample, already wrapped by the enrich step. */
+function evidenceSample(
+  overrides: Partial<ConjectureEvidenceSample> = {},
+): ConjectureEvidenceSample {
+  return {
+    attempt_event_id: 'e_a',
+    question_id: 'q_a',
+    question_prompt_md:
+      '<untrusted_learner_text>求 f(x)=sin(x^2) 的导数。</untrusted_learner_text>',
+    question_reference_md: "<untrusted_learner_text>f'(x)=2x·cos(x^2)</untrusted_learner_text>",
+    question_choices_md: null,
+    question_image_refs: [],
+    question_figures: [],
+    parent_question_id: null,
+    parent_question_prompt_md: null,
+    parent_question_reference_md: null,
+    parent_question_choices_md: null,
+    parent_question_image_refs: [],
+    parent_question_figures: [],
+    answer_md: '<untrusted_learner_text>cos(x^2)·2x 写成了 cos(x^2)+2x</untrusted_learner_text>',
+    answer_image_refs: [],
+    reasoning_trace:
+      '<untrusted_learner_text>我先分别求了两层的导数，然后把它们加起来。</untrusted_learner_text>',
+    cause_category: 'concept_confusion',
+    cause_source: 'agent',
+    cause_attribution_md: '把复合函数的层间组合方式记错。',
+    ...overrides,
+  };
+}
+
+function cell(overrides: Partial<EnrichedEvidenceCell> = {}): EnrichedEvidenceCell {
   return {
     key: 'concept_confusion::k_chain_rule',
     cause_category: 'concept_confusion',
@@ -24,6 +58,11 @@ function cell(overrides: Partial<EvidenceCell> = {}): EvidenceCell {
     baseline_p: 0.35,
     probe_here: true,
     has_owner_cause: true,
+    // YUK-786 grounding packet — the induction contract now REQUIRES it.
+    knowledge_name: '链式法则',
+    subject_id: 'math',
+    subject_display_name: '数学',
+    samples: [evidenceSample()],
     ...overrides,
   };
 }
@@ -53,6 +92,170 @@ function sample(
     })}`,
   };
 }
+
+// YUK-786 — the induction taskInput must actually CARRY the grounding packet.
+// This is the "did the evidence reach the model at all" half of the acceptance
+// gate; it is explicitly NOT proof that the resulting claim is grounded (that
+// takes the blind review of real output — a model fed evidence will copy words
+// from it and look more credible whether or not it reasoned from it).
+describe('induceConjecture taskInput grounding (YUK-786)', () => {
+  async function captureTaskInput(
+    overrides: Partial<EnrichedEvidenceCell> = {},
+  ): Promise<Record<string, unknown>> {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue(sample('你把复合结构当成并列结构'));
+    await induceConjecture({ cells: [cell(overrides)], samples: 1, runTaskFn });
+    const multimodal = runTaskFn.mock.calls[0][1] as {
+      text: string;
+      images: Array<{ data: string; mediaType: string }>;
+    };
+    expect(multimodal.images).toEqual([]);
+    return JSON.parse(multimodal.text) as Record<string, unknown>;
+  }
+
+  it('carries the KC name and the subject identity, not just the opaque id', async () => {
+    const taskInput = await captureTaskInput();
+    const cells = taskInput.evidence_cells as Array<Record<string, unknown>>;
+    expect(cells).toHaveLength(1);
+    expect(cells[0].knowledge_id).toBe('k_chain_rule');
+    expect(cells[0].knowledge_name).toBe('链式法则');
+    expect(cells[0].subject_id).toBe('math');
+    expect(cells[0].subject_display_name).toBe('数学');
+  });
+
+  it('carries first-hand evidence: question prompt + learner answer + reasoning trace + cause', async () => {
+    const taskInput = await captureTaskInput();
+    const cells = taskInput.evidence_cells as Array<Record<string, unknown>>;
+    const samples = cells[0].evidence_samples as ConjectureEvidenceSample[];
+    expect(samples).toHaveLength(1);
+    expect(samples[0].question_prompt_md).toContain('sin(x^2)');
+    expect(samples[0].answer_md).toContain('cos(x^2)+2x');
+    expect(samples[0].reasoning_trace).toContain('加起来');
+    expect(samples[0].cause_category).toBe('concept_confusion');
+    expect(samples[0].cause_attribution_md).toContain('复合函数');
+  });
+
+  it('attaches real images in manifest order and binds each block to its evidence source', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue(sample('你忽略了图中的边界条件'));
+    await induceConjecture({
+      cells: [
+        cell({
+          samples: [
+            evidenceSample({
+              question_image_refs: ['asset_question'],
+              parent_question_image_refs: ['asset_parent'],
+              answer_image_refs: ['asset_answer'],
+            }),
+          ],
+        }),
+      ],
+      evidenceImages: [
+        {
+          asset_id: 'asset_question',
+          occurrences: [
+            { attempt_event_id: 'e_a', source: 'question' },
+            { attempt_event_id: 'e_b', source: 'answer' },
+          ],
+          data: 'QUESTION_BASE64',
+          mediaType: 'image/png',
+        },
+        {
+          asset_id: 'asset_parent',
+          occurrences: [{ attempt_event_id: 'e_a', source: 'parent_question' }],
+          data: 'PARENT_BASE64',
+          mediaType: 'image/jpeg',
+        },
+        {
+          asset_id: 'asset_answer',
+          occurrences: [{ attempt_event_id: 'e_a', source: 'answer' }],
+          data: 'ANSWER_BASE64',
+          mediaType: 'image/webp',
+        },
+      ],
+      samples: 1,
+      runTaskFn,
+    });
+
+    const multimodal = runTaskFn.mock.calls[0][1] as {
+      text: string;
+      images: Array<{ data: string; mediaType: string }>;
+    };
+    expect(multimodal.images).toEqual([
+      { data: 'QUESTION_BASE64', mediaType: 'image/png' },
+      { data: 'PARENT_BASE64', mediaType: 'image/jpeg' },
+      { data: 'ANSWER_BASE64', mediaType: 'image/webp' },
+    ]);
+    expect(JSON.parse(multimodal.text).image_manifest).toEqual([
+      {
+        image_index: 1,
+        asset_id: 'asset_question',
+        occurrences: [
+          { attempt_event_id: 'e_a', source: 'question' },
+          { attempt_event_id: 'e_b', source: 'answer' },
+        ],
+      },
+      {
+        image_index: 2,
+        asset_id: 'asset_parent',
+        occurrences: [{ attempt_event_id: 'e_a', source: 'parent_question' }],
+      },
+      {
+        image_index: 3,
+        asset_id: 'asset_answer',
+        occurrences: [{ attempt_event_id: 'e_a', source: 'answer' }],
+      },
+    ]);
+  });
+
+  it('keeps untrusted learner text delimited on the way into the prompt', async () => {
+    const taskInput = await captureTaskInput();
+    const cells = taskInput.evidence_cells as Array<Record<string, unknown>>;
+    const samples = cells[0].evidence_samples as ConjectureEvidenceSample[];
+    for (const field of [
+      samples[0].question_prompt_md,
+      samples[0].answer_md,
+      samples[0].reasoning_trace,
+    ]) {
+      expect(field).toMatch(/^<untrusted_learner_text>/);
+      expect(field).toMatch(/<\/untrusted_learner_text>$/);
+    }
+  });
+
+  it('passes an empty sample list through rather than dropping the key (evidence absence is signal)', async () => {
+    const taskInput = await captureTaskInput({
+      samples: [],
+      knowledge_name: null,
+      subject_id: null,
+      subject_display_name: null,
+    });
+    const cells = taskInput.evidence_cells as Array<Record<string, unknown>>;
+    expect(cells[0].evidence_samples).toEqual([]);
+    expect(cells[0].knowledge_name).toBeNull();
+    expect(cells[0].subject_display_name).toBeNull();
+  });
+
+  it('threads the caller subject profile into the run ctx (prompt renders in that voice)', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue(sample('你把复合结构当成并列结构'));
+    const subjectProfile = resolveSubjectProfile('yuwen');
+    await induceConjecture({ cells: [cell()], samples: 1, runTaskFn, subjectProfile });
+    const ctx = runTaskFn.mock.calls[0][2] as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('yuwen');
+  });
+
+  it('omits subjectProfile from the ctx when the caller has no subject (neutral render)', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue(sample('你把复合结构当成并列结构'));
+    await induceConjecture({ cells: [cell()], samples: 1, runTaskFn });
+    const ctx = runTaskFn.mock.calls[0][2] as { subjectProfile?: unknown };
+    expect(ctx.subjectProfile).toBeUndefined();
+  });
+});
 
 describe('induceConjecture self-consistency', () => {
   it('agreement across samples raises confidence; dominant claim returned with its tally + A13 fields', async () => {

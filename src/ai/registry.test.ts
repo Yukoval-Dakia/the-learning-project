@@ -377,16 +377,30 @@ describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数
 
 // YUK-406 Phase 0 / YUK-440 A13 — conjecture induction task registry entry.
 describe('MindModelInductionTask registry entry', () => {
-  it('is a text-only single-shot task (Opus lane chosen per-call via override, never default)', () => {
+  it('is a multimodal single-shot task (Opus lane chosen per-call via override, never default)', () => {
     const def: TaskDef = tasks.MindModelInductionTask;
     expect(def.kind).toBe('MindModelInductionTask');
     // anthropic-sub is opt-in via override only; it is NEVER a task default
     // (registry.ts:12-16 forbids it as defaultProvider so tests need no OAuth token).
     expect(def.defaultProvider).not.toBe('anthropic-sub');
     expect(def.needsToolCall).toBe(false);
-    expect(def.isMultimodal).toBe(false);
+    expect(def.isMultimodal).toBe(true);
     expect(def.allowedTools).toEqual([]);
     expect(def.budget.maxIterations).toBe(1);
+    // YUK-786: the grounded packet made this task heavier — a measured real-Opus
+    // run put successful samples at 42–61s, so a 60s budget aborted a large share
+    // of them mid-flight and the nightly silently dropped those cells. Do not
+    // lower this back without re-measuring; grounding that never returns is not
+    // grounding.
+    expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it('tells the model to emit reasoning + JSON in ONE reply (single-turn budget)', () => {
+    // maxIterations is 1: a model that writes only prose and plans to emit the
+    // JSON "next turn" produces error_max_turns and the cell is lost.
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('同一条回复');
+    expect(p).toContain('只有一轮机会');
   });
 
   it('prompts for the A13 accountability fields (predicted_p + discriminating) and the 2nd-person framing', () => {
@@ -394,6 +408,84 @@ describe('MindModelInductionTask registry entry', () => {
     expect(p).toContain('predicted_p');
     expect(p).toContain('discriminating');
     expect(p).toContain('第二人称');
+  });
+
+  // YUK-786 — the input contract the prompt DESCRIBES must match the one
+  // induceConjecture actually sends. A prompt that still advertises the old
+  // 7-scalar packet would tell the model the evidence isn't there.
+  it('documents the grounded input packet (KC name + subject + first-hand samples)', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    for (const field of [
+      'knowledge_name',
+      'subject_display_name',
+      'evidence_samples',
+      'question_prompt_md',
+      'question_reference_md',
+      'question_choices_md',
+      'question_image_refs',
+      'question_figures',
+      'parent_question_id',
+      'parent_question_prompt_md',
+      'parent_question_reference_md',
+      'parent_question_choices_md',
+      'parent_question_image_refs',
+      'parent_question_figures',
+      'answer_md',
+      'answer_image_refs',
+      'reasoning_trace',
+      'cause_attribution_md',
+      'image_manifest',
+    ]) {
+      expect(p, `input contract must mention ${field}`).toContain(field);
+    }
+  });
+
+  // YUK-786 — the old examples (链式法则 / 充分必要条件) were calculus + formal
+  // logic while the live dataset is 语文: the prompt itself was steering the
+  // model onto the wrong subject. Examples must now be structural, and the
+  // subject must be declared to come from the input.
+  it('carries no concrete-subject examples and pins the subject to the input', () => {
+    for (const profileId of ['general', 'math', 'yuwen']) {
+      const p = getTaskSystemPrompt('MindModelInductionTask', resolveSubjectProfile(profileId));
+      expect(p, `${profileId}: calculus example leaked back in`).not.toContain('链式法则');
+      expect(p, `${profileId}: logic example leaked back in`).not.toContain('充分必要条件');
+      expect(p).toContain('一律以输入为准');
+      expect(p).toContain('不得');
+    }
+  });
+
+  it('requires the claim to be reproducible from the attached evidence', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('能被随附证据复现');
+    // Kept as a second-line guard even though the caller now drops empty cells:
+    // a thin but non-empty sample still needs conservative specificity.
+    expect(p).toContain('降到证据支持的抽象层级');
+    expect(p).toContain('过滤为空');
+  });
+
+  it('states that mutable rows are filtered and real image blocks are attached in manifest order', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('作答后被编辑过');
+    expect(p).toContain('YUK-804');
+    expect(p).toContain('真实图片块');
+    expect(p).toContain('question（题图）');
+    expect(p).toContain('parent_question（父题图）');
+    expect(p).toContain('answer（作答图）');
+    expect(p).toContain('解析不完整时调用方会整格失败');
+  });
+
+  it('frames untrusted learner text as data, never instruction', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('untrusted_learner_text');
+    expect(p).toContain('防注入');
+  });
+
+  it('renders the subject voice from the profile (no longer a fixed inline string)', () => {
+    const yuwen = getTaskSystemPrompt('MindModelInductionTask', resolveSubjectProfile('yuwen'));
+    const math = getTaskSystemPrompt('MindModelInductionTask', resolveSubjectProfile('math'));
+    expect(yuwen).not.toBe(math);
+    expect(yuwen).toContain(resolveSubjectProfile('yuwen').displayName);
+    expect(math).toContain(resolveSubjectProfile('math').displayName);
   });
 });
 

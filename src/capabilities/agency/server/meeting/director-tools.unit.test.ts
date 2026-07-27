@@ -4,8 +4,8 @@
 // propose_conjecture cap / pending-dedup / Zod / baseline_p auto-snapshot, and
 // leave_agent_note cap / target whitelist / summary truncation / primary-ref filter.
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
-import { conjectureKey } from '@/server/conjectures/evidence';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

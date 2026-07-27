@@ -2,21 +2,34 @@
 // Fully injected deps (no DB / AI). The REAL gatherConjectureEvidence runs over the
 // injected failures, so this also locks the 取证 → top-K → propose integration.
 
+import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
+import type {
+  ConjectureEvidenceAssetRef,
+  ConjectureFailureAttempt,
+  EnrichedEvidenceCell,
+  EvidenceCell,
+  LoadedConjectureEvidenceImage,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteEventInput } from '@/kernel/events';
 import type {
   InduceConjectureInput,
   InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
-import { conjectureKey } from '@/server/conjectures/evidence';
-import type { FailureAttempt } from '@/server/events/queries';
+import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   RESEARCH_MEETING_MAX_CONJECTURES,
+  RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL,
+  RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
+  defaultLoadEvidenceImages,
+  planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
 } from './research_meeting_nightly';
 
@@ -101,10 +114,80 @@ function failuresForKcs(kcs: string[], category = 'concept_confusion'): FailureA
   ]);
 }
 
+/**
+ * YUK-786 — the job now reads through the trace-bearing LIST reader, so the
+ * fixtures ride in that wrapper shape. `reasoning_trace` is derived per attempt
+ * so the assertions below can prove the job routes it into the enrich step.
+ */
+function withTraces(failures: FailureAttempt[]): FailureAttemptWithReasoningTrace[] {
+  return failures.map((f) => ({
+    failure: f,
+    reasoning_trace: `trace of ${f.attempt_event_id}`,
+  }));
+}
+
+/**
+ * YUK-786 — stand-in for the PRE-LLM grounding read (the real one hits the DB).
+ * Echoes the cell fields the enrich step would resolve so the job's pass-through
+ * is observable without a container.
+ */
+function fakeEnrich(
+  _db: unknown,
+  input: {
+    cells: EvidenceCell[];
+    failures: ConjectureFailureAttempt[];
+    reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
+  },
+): Promise<EnrichedEvidenceCell[]> {
+  return Promise.resolve(
+    input.cells.map((cell) => ({
+      ...cell,
+      knowledge_name: `name of ${cell.knowledge_id}`,
+      subject_id: 'yuwen',
+      subject_display_name: '语文',
+      samples: cell.evidence_event_ids.map((attemptId) => ({
+        attempt_event_id: attemptId,
+        question_id: `q_${attemptId}`,
+        question_prompt_md: `<untrusted_learner_text>prompt of ${attemptId}</untrusted_learner_text>`,
+        question_reference_md: `<untrusted_learner_text>reference of ${attemptId}</untrusted_learner_text>`,
+        question_choices_md: null,
+        question_image_refs: [],
+        question_figures: [],
+        parent_question_id: null,
+        parent_question_prompt_md: null,
+        parent_question_reference_md: null,
+        parent_question_choices_md: null,
+        parent_question_image_refs: [],
+        parent_question_figures: [],
+        answer_md: null,
+        answer_image_refs: [],
+        reasoning_trace: input.reasoningTraceByAttemptId?.get(attemptId) ?? null,
+        cause_category: cell.cause_category,
+        cause_source: 'agent',
+        cause_attribution_md: 'agent analysis',
+      })),
+    })),
+  );
+}
+
+function fakeLoadedImages(
+  refs: readonly ConjectureEvidenceAssetRef[],
+): LoadedConjectureEvidenceImage[] {
+  return [...new Set(refs.map((ref) => ref.asset_id))].map((assetId) => ({
+    asset_id: assetId,
+    occurrences: refs
+      .filter((ref) => ref.asset_id === assetId)
+      .map(({ attempt_event_id, source }) => ({ attempt_event_id, source })),
+    data: `BASE64_${assetId}`,
+    mediaType: 'image/png',
+  }));
+}
+
 function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeetingDeps {
   return {
     now: () => NOW,
-    getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+    enrichEvidenceCellsFn: vi.fn(fakeEnrich),
+    getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
     getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
     loadKnownConjectureKeysFn: vi.fn(async () => new Set<string>()),
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
@@ -156,7 +239,9 @@ describe('runResearchMeetingNightly', () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
       // 5 distinct KCs → 5 cells, but only RESEARCH_MEETING_MAX_CONJECTURES proposed.
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
       writeAiProposalFn,
     });
 
@@ -172,7 +257,7 @@ describe('runResearchMeetingNightly', () => {
       return 'prop_x';
     });
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
       getMasteryProjectionFn: vi.fn(
         async () => new Map<string, MasteryProjection>([['k_a', projection(0.42)]]),
       ),
@@ -210,7 +295,7 @@ describe('runResearchMeetingNightly', () => {
   it('snapshots baseline_p_at_induction to the cold-start neutral 0.5 when no mastery row', async () => {
     const captured: WriteAiProposalInput[] = [];
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_cold'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_cold']))),
       getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
       writeAiProposalFn: vi.fn(async (_db: unknown, input: WriteAiProposalInput) => {
         captured.push(input);
@@ -226,7 +311,7 @@ describe('runResearchMeetingNightly', () => {
   it('dedups: a cause×KC with a pending conjecture is not re-proposed', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
       loadKnownConjectureKeysFn: vi.fn(
         async () => new Set([conjectureKey('concept_confusion', 'k_a')]),
       ),
@@ -243,7 +328,7 @@ describe('runResearchMeetingNightly', () => {
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     let call = 0;
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
         call += 1;
         if (call === 1) throw new Error('opus lane blew up');
@@ -276,7 +361,9 @@ describe('runResearchMeetingNightly', () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      ),
       // 429 风暴：同一批里每一格都失败。
       induceConjectureFn: vi.fn(async () => {
         throw new Error('429 rate_limit_error');
@@ -307,7 +394,7 @@ describe('runResearchMeetingNightly', () => {
   it('GREEN — 空夜（无 recurring evidence，压根没调 AI）→ 判为 idle，绝不报警', async () => {
     const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => []),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
       induceConjectureFn,
     });
 
@@ -332,7 +419,7 @@ describe('runResearchMeetingNightly', () => {
   it('GREEN — 全部候选已有 pending conjecture（dedup 挡住）→ 同样是 idle', async () => {
     // 另一条「正常的零产出」路径：有失败证据，但每个 cell 都被 dedup 去掉了。
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
       loadKnownConjectureKeysFn: vi.fn(
         async () =>
           new Set([
@@ -358,7 +445,9 @@ describe('runResearchMeetingNightly', () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c'])),
+      ),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -376,7 +465,7 @@ describe('runResearchMeetingNightly', () => {
   it('proposes nothing when there is no recurring evidence (no failures)', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => []),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
       writeAiProposalFn,
     });
     const result = await runResearchMeetingNightly({} as never, deps);
@@ -390,7 +479,7 @@ describe('runResearchMeetingNightly', () => {
     const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
     const reconcileFn = vi.fn(async () => ({ reconciled: 3, skipped: 0 }));
     const deps = baseDeps({
-      getFailureAttemptsFn: vi.fn(async () => []),
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
       writeEventFn,
       induceConjectureFn,
       reconcileFn,
@@ -408,13 +497,507 @@ describe('runResearchMeetingNightly', () => {
     expect(result.trigger_event_id).toBe(''); // '' sentinel: no anchor event exists
   });
 
+  // YUK-786 — the PRE-LLM grounding stage must actually be in the path: the
+  // trace-bearing reader feeds enrich, and the ENRICHED cell (not the bare one)
+  // is what reaches induction, in the KC's own subject voice.
+  it('enriches the top cells PRE-LLM and hands the grounded cell to induction', async () => {
+    const captured: InduceConjectureInput[] = [];
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const resolveSubjectProfileFn = vi.fn(() => resolveSubjectProfile('math'));
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      enrichEvidenceCellsFn,
+      resolveSubjectProfileFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        captured.push(input);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    // enrich saw the reasoning traces the list reader carried…
+    expect(enrichEvidenceCellsFn).toHaveBeenCalledTimes(1);
+    const enrichInput = enrichEvidenceCellsFn.mock.calls[0][1];
+    expect(enrichInput.cells).toHaveLength(1);
+    expect(enrichInput.reasoningTraceByAttemptId?.get('a_k_a_0')).toBe('trace of a_k_a_0');
+
+    // …and induction received the grounded cell, not the 7-scalar one.
+    expect(captured).toHaveLength(1);
+    const cell = captured[0].cells[0];
+    expect(cell.knowledge_name).toBe('name of k_a');
+    expect(cell.subject_display_name).toBe('语文');
+    expect(cell.samples.map((s) => s.reasoning_trace)).toEqual([
+      'trace of a_k_a_0',
+      'trace of b_k_a_0',
+    ]);
+    // Prompt profile resolution follows the same injected collaborator discipline
+    // as the rest of the job.
+    expect(resolveSubjectProfileFn).toHaveBeenCalledWith('yuwen');
+    expect(captured[0].subjectProfile?.id).toBe('math');
+  });
+
+  it('loads question, parent, and answer images and hands their real bytes to induction', async () => {
+    const captured: InduceConjectureInput[] = [];
+    const loadEvidenceImagesFn = vi.fn(
+      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) => fakeLoadedImages(refs),
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: cell.samples.map((sample, index) =>
+            index === 0
+              ? {
+                  ...sample,
+                  question_image_refs: ['asset_question'],
+                  parent_question_image_refs: ['asset_parent'],
+                  answer_image_refs: ['asset_answer'],
+                }
+              : sample,
+          ),
+        })),
+      ),
+      loadEvidenceImagesFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        captured.push(input);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(loadEvidenceImagesFn).toHaveBeenCalledTimes(1);
+    expect(loadEvidenceImagesFn.mock.calls[0][1]).toEqual([
+      {
+        asset_id: 'asset_question',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'question',
+      },
+      {
+        asset_id: 'asset_parent',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'parent_question',
+      },
+      {
+        asset_id: 'asset_answer',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'answer',
+      },
+    ]);
+    expect(captured[0].evidenceImages).toEqual([
+      expect.objectContaining({ asset_id: 'asset_question', data: 'BASE64_asset_question' }),
+      expect.objectContaining({ asset_id: 'asset_parent', data: 'BASE64_asset_parent' }),
+      expect.objectContaining({ asset_id: 'asset_answer', data: 'BASE64_asset_answer' }),
+    ]);
+  });
+
+  it('does not call induction when enrichment filters every sample as ungrounded', async () => {
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: [],
+          evidence_event_ids: [],
+          recurrence_count: 0,
+        })),
+      ),
+      induceConjectureFn,
+      writeEventFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(writeEventFn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+      cells_failed: 0,
+      trigger_event_id: '',
+    });
+  });
+
+  it('requires the recurrence floor after mutable evidence is filtered', async () => {
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const loadEvidenceImagesFn = vi.fn(async () => []);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_once']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          // One of two raw attempts was filtered because its historical context is not reproducible.
+          samples: cell.samples.slice(1),
+          evidence_event_ids: cell.evidence_event_ids.slice(1),
+          recurrence_count: 1,
+        })),
+      ),
+      induceConjectureFn,
+      loadEvidenceImagesFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result.considered).toBe(0);
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(loadEvidenceImagesFn).not.toHaveBeenCalled();
+  });
+
+  it('retains full reproducible recurrence and provenance beyond the prompt sample cap', async () => {
+    const rawFailures = [
+      failure('a_repro', ['k_repro'], 'concept_confusion'),
+      failure('b_repro', ['k_repro'], 'concept_confusion'),
+      failure('c_repro', ['k_repro'], 'concept_confusion'),
+      failure('d_repro', ['k_repro'], 'concept_confusion'),
+    ];
+    const capturedCells: EnrichedEvidenceCell[] = [];
+    const proposals: WriteAiProposalInput[] = [];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(rawFailures)),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          // Prompt text remains representative/capped, but enrichment's ids/count cover all
+          // reproducible attempts.
+          samples: cell.samples.slice(0, 2),
+        })),
+      ),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        capturedCells.push(input.cells[0]);
+        return fakeInduced(input);
+      }),
+      writeAiProposalFn: vi.fn(async (_db, input) => {
+        proposals.push(input);
+        return 'proposal_repro';
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    const evidenceEventIds = capturedCells[0].evidence_event_ids;
+    expect(capturedCells[0].samples).toHaveLength(2);
+    expect(capturedCells[0].recurrence_count).toBe(4);
+    expect(evidenceEventIds).toHaveLength(4);
+    expect(proposals[0].payload.evidence_refs).toEqual(
+      evidenceEventIds.map((id) => ({ kind: 'event', id })),
+    );
+    expect(proposals[0].payload.proposed_change).toMatchObject({ recurrence_count: 4 });
+  });
+
+  it('bounds each grounding batch by the remaining top-K capacity', async () => {
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn,
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+    expect(enrichEvidenceCellsFn.mock.calls[0][1].cells).toHaveLength(
+      RESEARCH_MEETING_MAX_CONJECTURES,
+    );
+  });
+
+  it('refills grounded top-K from lower salience cells when the leading cells are invalid', async () => {
+    const enrichEvidenceCellsFn = vi.fn(async (db, input) =>
+      (await fakeEnrich(db, input)).map((cell) =>
+        ['k_a', 'k_b', 'k_c'].includes(cell.knowledge_id)
+          ? { ...cell, samples: [], evidence_event_ids: [], recurrence_count: 0 }
+          : cell,
+      ),
+    );
+    const inducedKnowledgeIds: string[] = [];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(enrichEvidenceCellsFn).toHaveBeenCalledTimes(2);
+    const firstBatch = enrichEvidenceCellsFn.mock.calls[0][1].cells as EvidenceCell[];
+    const secondBatch = enrichEvidenceCellsFn.mock.calls[1][1].cells as EvidenceCell[];
+    expect(firstBatch.map((cell) => cell.knowledge_id)).toEqual(['k_a', 'k_b', 'k_c']);
+    expect(secondBatch.map((cell) => cell.knowledge_id)).toEqual(['k_d', 'k_e']);
+    expect(result.considered).toBe(2);
+    expect(inducedKnowledgeIds.sort()).toEqual(['k_d', 'k_e']);
+  });
+
+  it('refills top-K after unloadable evidence images instead of starving later cells', async () => {
+    const inducedKnowledgeIds: string[] = [];
+    const loadEvidenceImagesFn = vi.fn(
+      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) => {
+        const assetId = refs[0]?.asset_id ?? '';
+        if (['asset_k_a', 'asset_k_b', 'asset_k_c'].includes(assetId)) {
+          throw new Error(`missing R2 object: ${assetId}`);
+        }
+        return fakeLoadedImages(refs);
+      },
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: cell.samples.map((sample, index) =>
+            index === 0
+              ? { ...sample, question_image_refs: [`asset_${cell.knowledge_id}`] }
+              : sample,
+          ),
+        })),
+      ),
+      loadEvidenceImagesFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(loadEvidenceImagesFn).toHaveBeenCalledTimes(5);
+    expect(result).toMatchObject({ considered: 2, conjectures_created: 2, cells_failed: 0 });
+    expect(inducedKnowledgeIds.sort()).toEqual(['k_d', 'k_e']);
+  });
+
+  it('does not run the grounding read on an empty night', async () => {
+    const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
+      enrichEvidenceCellsFn,
+    });
+    await runResearchMeetingNightly({} as never, deps);
+    expect(enrichEvidenceCellsFn).not.toHaveBeenCalled();
+  });
+
   it('runs the A13 reconcile loop and surfaces the reconciled count (U8)', async () => {
     const reconcileFn = vi.fn(async () => ({ reconciled: 2, skipped: 1 }));
     // No failures → empty propose half, isolating the reconcile wiring assertion.
-    const deps = baseDeps({ reconcileFn, getFailureAttemptsFn: vi.fn(async () => []) });
+    const deps = baseDeps({ reconcileFn, getFailureAttemptsWithTraceFn: vi.fn(async () => []) });
     const result = await runResearchMeetingNightly({} as never, deps);
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);
     expect(result.reconcile_skipped).toBe(1);
+  });
+});
+
+describe('planConjectureEvidenceImageLoad', () => {
+  const ref = (asset_id: string): ConjectureEvidenceAssetRef => ({
+    asset_id,
+    attempt_event_id: 'attempt_1',
+    source: 'question',
+  });
+
+  it('marks unsupported image MIME types for lossless packet-preserving transcode', () => {
+    expect(
+      planConjectureEvidenceImageLoad(
+        [ref('bmp'), ref('png')],
+        [
+          {
+            id: 'bmp',
+            mime_type: 'image/bmp',
+            byte_size: 100,
+            width: 10,
+            height: 10,
+          },
+          {
+            id: 'png',
+            mime_type: 'image/png',
+            byte_size: 100,
+            width: 10,
+            height: 10,
+          },
+        ],
+      ),
+    ).toEqual({
+      loadableRefs: [ref('bmp'), ref('png')],
+      transcodeAssetIds: ['bmp'],
+    });
+  });
+
+  it('rejects image formats outside the runner/BMP decoder allowlist', () => {
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('svg')],
+        [
+          {
+            id: 'svg',
+            mime_type: 'image/svg+xml',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toThrow(/unsupported MIME/);
+  });
+
+  it('defers absent metadata dimensions to actual-byte decode for standard uploads', () => {
+    expect(
+      planConjectureEvidenceImageLoad(
+        [ref('png')],
+        [
+          {
+            id: 'png',
+            mime_type: 'image/png',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toEqual({ loadableRefs: [ref('png')], transcodeAssetIds: [] });
+
+    expect(
+      planConjectureEvidenceImageLoad(
+        [ref('bmp')],
+        [
+          {
+            id: 'bmp',
+            mime_type: 'image/bmp',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toEqual({ loadableRefs: [ref('bmp')], transcodeAssetIds: ['bmp'] });
+  });
+
+  it('counts recurring refs to one asset once for byte and pixel guards', () => {
+    const recurring = [
+      ref('same'),
+      { ...ref('same'), attempt_event_id: 'attempt_2' },
+      { ...ref('same'), attempt_event_id: 'attempt_3' },
+    ];
+    expect(
+      planConjectureEvidenceImageLoad(recurring, [
+        {
+          id: 'same',
+          mime_type: 'image/png',
+          byte_size: Math.floor(RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL / 8),
+          width: 10_000_000,
+          height: 1,
+        },
+      ]),
+    ).toEqual({ loadableRefs: recurring, transcodeAssetIds: [] });
+  });
+
+  it('rejects aggregate bytes and decoded pixels before any image fetch', () => {
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('large')],
+        [
+          {
+            id: 'large',
+            mime_type: 'image/png',
+            byte_size: RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL + 1,
+            width: 10,
+            height: 10,
+          },
+        ],
+      ),
+    ).toThrow(/bytes/);
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('wide')],
+        [
+          {
+            id: 'wide',
+            mime_type: 'image/webp',
+            byte_size: 100,
+            width: RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL + 1,
+            height: 1,
+          },
+        ],
+      ),
+    ).toThrow(/pixels/);
+  });
+});
+
+describe('defaultLoadEvidenceImages', () => {
+  it('fetches each asset once, transcodes unsupported images, then expands occurrences', async () => {
+    // Minimal 1×1, 24-bit BMP (54-byte header + one four-byte-padded BGR row).
+    const bmp = Buffer.alloc(58);
+    bmp.write('BM', 0, 'ascii');
+    bmp.writeUInt32LE(bmp.length, 2);
+    bmp.writeUInt32LE(54, 10);
+    bmp.writeUInt32LE(40, 14);
+    bmp.writeInt32LE(1, 18);
+    bmp.writeInt32LE(1, 22);
+    bmp.writeUInt16LE(1, 26);
+    bmp.writeUInt16LE(24, 28);
+    bmp.writeUInt32LE(4, 34);
+    bmp.set([255, 255, 255, 0], 54);
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#000000' },
+    })
+      .png()
+      .toBuffer();
+    const metadata = [
+      {
+        id: 'asset_bmp',
+        mime_type: 'image/bmp',
+        byte_size: bmp.byteLength,
+        width: 1,
+        height: 1,
+      },
+      {
+        id: 'asset_png',
+        mime_type: 'image/png',
+        byte_size: png.byteLength,
+        // Standard generic upload/PDF/DOCX writers do not currently persist dimensions.
+        width: null,
+        height: null,
+      },
+    ];
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => metadata),
+        })),
+      })),
+    };
+    const imageFetchFn = vi.fn(async (assetIds: string[]) =>
+      assetIds.map((assetId) =>
+        assetId === 'asset_bmp'
+          ? { data: bmp.toString('base64'), mediaType: 'image/bmp' }
+          : { data: png.toString('base64'), mediaType: 'image/png' },
+      ),
+    );
+    const refs: ConjectureEvidenceAssetRef[] = [
+      { asset_id: 'asset_bmp', attempt_event_id: 'attempt_1', source: 'question' },
+      { asset_id: 'asset_bmp', attempt_event_id: 'attempt_2', source: 'question' },
+      { asset_id: 'asset_png', attempt_event_id: 'attempt_2', source: 'answer' },
+    ];
+
+    const loaded = await defaultLoadEvidenceImages(
+      db as never,
+      refs,
+      imageFetchFn as typeof import('@/server/ai/judges/steps-judge').defaultImageFetch,
+    );
+
+    expect(imageFetchFn).toHaveBeenCalledTimes(1);
+    expect(imageFetchFn.mock.calls[0][0]).toEqual(['asset_bmp', 'asset_png']);
+    expect(loaded.map((image) => image.asset_id)).toEqual(['asset_bmp', 'asset_png']);
+    expect(loaded.map((image) => image.mediaType)).toEqual(['image/png', 'image/png']);
+    expect(loaded[0].occurrences).toEqual([
+      { attempt_event_id: 'attempt_1', source: 'question' },
+      { attempt_event_id: 'attempt_2', source: 'question' },
+    ]);
+    expect((await sharp(Buffer.from(loaded[0].data, 'base64')).metadata()).format).toBe('png');
   });
 });

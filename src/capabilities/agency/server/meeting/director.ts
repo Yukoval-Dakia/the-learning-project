@@ -28,6 +28,10 @@
 // throw a genuine, zero-spend retryable fault out of this function.
 
 import { tasks } from '@/ai/registry';
+import {
+  conjectureKey,
+  gatherConjectureEvidence,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -37,7 +41,6 @@ import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
 import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';

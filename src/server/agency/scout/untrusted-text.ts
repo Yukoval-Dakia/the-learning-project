@@ -1,4 +1,7 @@
-// YUK-572 / YUK-560 §2 — <untrusted_learner_text> delimiter helper (shared scout primitive).
+// YUK-572 / YUK-560 §2 — the learner-text handling kit: <untrusted_learner_text>
+// delimiting + the shared truncation cap (shared server primitive; YUK-786 moved
+// truncate/truncateNullable here from evidence-mcp so the induction evidence
+// packet and the evidence MCP read tools cannot drift into two implementations).
 //
 // The evidence MCP returns learner-AUTHORED free text (answer_md / prompt_md /
 // reference_md / note body) to a tool-loop agent (director + scout). That text is
@@ -15,6 +18,37 @@
 
 export const UNTRUSTED_OPEN = '<untrusted_learner_text>';
 export const UNTRUSTED_CLOSE = '</untrusted_learner_text>';
+
+/**
+ * Shared char cap for learner / question free text handed to an LLM. Both the
+ * evidence MCP read tools (EVIDENCE_LIMITS.attemptTextChars / questionTextChars)
+ * and the conjecture induction evidence packet (YUK-786) use this single number
+ * so the "wrap + truncate" discipline cannot drift between the two surfaces.
+ */
+export const UNTRUSTED_TEXT_CHAR_CAP = 2000;
+
+export function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+export function truncateNullable(text: string | null, max: number): string | null {
+  return text === null ? null : truncate(text, max);
+}
+
+/**
+ * The full three-step discipline in one call: truncate FIRST, then delimit — so
+ * the closing tag can never be cut off by the cap. `null` passes through
+ * (absent field ≠ empty learner string).
+ */
+export function wrapTruncatedLearnerText(text: string, max?: number): string;
+export function wrapTruncatedLearnerText(text: null, max?: number): null;
+export function wrapTruncatedLearnerText(text: string | null, max?: number): string | null;
+export function wrapTruncatedLearnerText(
+  text: string | null,
+  max: number = UNTRUSTED_TEXT_CHAR_CAP,
+): string | null {
+  return wrapUntrustedLearnerText(truncateNullable(text, max));
+}
 
 // Delimiter-injection guard (OCR major, PR #713): learner text containing the literal
 // delimiter tokens (any casing) could otherwise close the untrusted block early and
