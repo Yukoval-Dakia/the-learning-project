@@ -528,6 +528,48 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('stalled');
   });
 
+  it('uses the uncollapsed vote ledger when mixed operational losses tie the display reason', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'no_semantic_consensus' as const },
+          // The collapsed reasons tie 1:1:1. Two requested samples were still
+          // operational losses, so this is not a healthy semantic disagreement.
+          votes: { proposal: 1, abstain: 0, invalid: 1, failed: 1 },
+        };
+      }),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'failure',
+        payload: expect.objectContaining({
+          reason_code: 'no_semantic_consensus',
+          votes: { proposal: 1, abstain: 0, invalid: 1, failed: 1 },
+        }),
+      }),
+    );
+  });
+
   it('reuses abstain event ids for one job retry but not for the next scheduled run', async () => {
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const commonDeps = {

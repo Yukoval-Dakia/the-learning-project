@@ -229,9 +229,12 @@ function buildCompletionEventInput(
 }
 
 function isOperationalAbstain(result: InduceConjectureResult): boolean {
+  // The collapsed reason is intentionally conservative on a three-way tie and
+  // can become no_semantic_consensus for {proposal:1, invalid:1, failed:1}.
+  // Classify health from the uncollapsed vote ledger instead: a strict majority
+  // of operational losses means the cell failed even if its display reason tied.
   return (
-    result.outcome === 'abstain' &&
-    (result.draft.reason_code === 'invalid_output' || result.draft.reason_code === 'sample_failure')
+    result.outcome === 'abstain' && result.votes.invalid + result.votes.failed > result.samples / 2
   );
 }
 
