@@ -254,6 +254,16 @@ function normalizeGroundedProposal(
   };
 }
 
+function normalizeGroundedAbstain(
+  draft: ConjectureModelAbstainDraftT,
+  cells: EnrichedEvidenceCell[],
+): ConjectureModelAbstainDraftT | null {
+  const allowedEvidenceIds = new Set(cells.flatMap(groundedEvidenceEventIds));
+  const evidenceEventIds = [...new Set(draft.evidence_event_ids)];
+  if (evidenceEventIds.some((eventId) => !allowedEvidenceIds.has(eventId))) return null;
+  return { ...draft, evidence_event_ids: evidenceEventIds };
+}
+
 function chooseAbstainDraft(params: {
   abstains: ConjectureModelAbstainDraftT[];
   cells: EnrichedEvidenceCell[];
@@ -277,7 +287,7 @@ function chooseAbstainDraft(params: {
     reasonTallies.length === 0 || reasonTallies[0].count === reasonTallies[1]?.count
       ? 'no_semantic_consensus'
       : reasonTallies[0].reasonCode;
-  const explanationFor = (targetReason: string): string | undefined =>
+  const explanationFor = (targetReason: ConjectureAbstainReasonT): string | undefined =>
     params.abstains
       .filter((draft) => draft.reason_code === targetReason)
       .map((draft) => draft.explanation_md)
@@ -460,7 +470,9 @@ export async function induceConjecture(
       if (!draft) {
         invalidSamples += 1;
       } else if (draft.kind === 'abstain') {
-        abstains.push(draft);
+        const grounded = normalizeGroundedAbstain(draft, cells);
+        if (grounded) abstains.push(grounded);
+        else invalidSamples += 1;
       } else {
         const grounded = normalizeGroundedProposal(draft, cells);
         if (grounded) proposals.push(grounded);

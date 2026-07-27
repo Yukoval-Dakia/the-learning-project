@@ -121,17 +121,29 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
-const ResearchMeetingResultSchema = z.object({
-  considered: z.number().int().nonnegative(),
-  conjectures_created: z.number().int().nonnegative(),
-  conjectures_abstained: z.number().int().nonnegative(),
-  cells_failed: z.number().int().nonnegative(),
-  pending_before: z.number().int().nonnegative(),
-  reconciled: z.number().int().nonnegative(),
-  reconcile_skipped: z.number().int().nonnegative(),
-  cost_usd: z.number().nonnegative(),
-  trigger_event_id: z.string().min(1),
-});
+const ResearchMeetingResultSchema = z
+  .object({
+    considered: z.number().int().nonnegative(),
+    conjectures_created: z.number().int().nonnegative(),
+    conjectures_abstained: z.number().int().nonnegative(),
+    cells_failed: z.number().int().nonnegative(),
+    pending_before: z.number().int().nonnegative(),
+    reconciled: z.number().int().nonnegative(),
+    reconcile_skipped: z.number().int().nonnegative(),
+    cost_usd: z.number().nonnegative(),
+    // Empty runs deliberately have no trigger/scan anchor; the completion event
+    // still persists that `''` sentinel so redelivery can return the exact result.
+    trigger_event_id: z.string(),
+  })
+  .refine(
+    (result) =>
+      result.conjectures_created + result.conjectures_abstained + result.cells_failed ===
+      result.considered,
+    { message: 'created + abstained + failed must equal considered' },
+  )
+  .refine((result) => (result.considered === 0) === (result.trigger_event_id === ''), {
+    message: 'empty result and empty trigger_event_id must agree',
+  });
 
 type DbLike = Db | Tx;
 type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
@@ -157,7 +169,7 @@ interface PreparedConjectureCell {
   evidenceImages: LoadedConjectureEvidenceImage[];
 }
 
-function scheduledEventId(prefix: 'trigger' | 'scan', executionId: string): string {
+function scheduledEventId(prefix: 'trigger' | 'scan' | 'completion', executionId: string): string {
   const digest = createHash('sha256').update(executionId).digest('hex').slice(0, 32);
   return `research_meeting_${prefix}_${digest}`;
 }
@@ -181,16 +193,39 @@ async function defaultLoadCompletedRunResult(
   const [row] = await db
     .select({ payload: event.payload })
     .from(event)
-    .where(eq(event.id, scheduledEventId('scan', executionId)))
+    .where(eq(event.id, scheduledEventId('completion', executionId)))
     .limit(1);
   if (!row) return null;
   const parsed = z.object({ completed_result: ResearchMeetingResultSchema }).safeParse(row.payload);
   if (!parsed.success) {
     throw new Error(
-      `research_meeting_nightly: completed scan payload is unreadable for execution ${executionId}`,
+      `research_meeting_nightly: completion payload is unreadable for execution ${executionId}`,
     );
   }
   return parsed.data.completed_result;
+}
+
+function buildCompletionEventInput(
+  executionId: string,
+  result: ResearchMeetingResult,
+  now: Date,
+  causedByEventId: string | null,
+): WriteEventInput {
+  const id = scheduledEventId('completion', executionId);
+  return {
+    id,
+    actor_kind: 'agent',
+    actor_ref: RESEARCH_MEETING_ACTOR,
+    action: 'experimental:research_meeting_completed',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { completed_result: result },
+    caused_by_event_id: causedByEventId,
+    // Execution bookkeeping only; not a learner fact.
+    ingest_at: now,
+    created_at: now,
+  };
 }
 
 export interface ResearchMeetingDeps {
@@ -603,6 +638,11 @@ export async function runResearchMeetingNightly(
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
   const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
+  const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
+    await runInTransactionFn(db, async (tx) => {
+      await writeEventFn(tx, buildCompletionEventInput(executionId, result, now, null));
+    });
+  };
 
   // pg-boss may redeliver after the transaction committed but before completion
   // was acknowledged. Return the committed summary before any reads or model calls;
@@ -646,13 +686,13 @@ export async function runResearchMeetingNightly(
 
   // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has
-  // nothing to anchor. Skip the trigger + scan events entirely — even though YUK-515 now
-  // opts both out of memory, two empty-run rows would still add useless audit churn.
+  // nothing to anchor. Skip trigger + scan events; persist only the execution completion
+  // guard so a same-job redelivery cannot reconcile or discover new work twice.
   // MUST stay AFTER the reconcile call above:
   // the deterministic settlement half is never skipped. Zero external consumers of these
   // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
   if (cells.length === 0) {
-    return {
+    const idleResult: ResearchMeetingResult = {
       considered: 0,
       conjectures_created: 0,
       conjectures_abstained: 0,
@@ -663,6 +703,8 @@ export async function runResearchMeetingNightly(
       cost_usd: 0,
       trigger_event_id: '',
     };
+    await persistCompletionOnly(idleResult);
+    return idleResult;
   }
 
   // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
@@ -717,7 +759,7 @@ export async function runResearchMeetingNightly(
     );
   }
   if (preparedTopCells.length === 0) {
-    return {
+    const ungroundedResult: ResearchMeetingResult = {
       considered: 0,
       conjectures_created: 0,
       conjectures_abstained: 0,
@@ -728,6 +770,8 @@ export async function runResearchMeetingNightly(
       cost_usd: 0,
       trigger_event_id: '',
     };
+    await persistCompletionOnly(ungroundedResult);
+    return ungroundedResult;
   }
 
   // Anchor the run (provenance for each proposal + the scan subject). The actual
@@ -790,6 +834,11 @@ export async function runResearchMeetingNightly(
   const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
+  if (created + abstained + cellsFailed !== preparedTopCells.length) {
+    throw new Error(
+      `research_meeting_nightly: result invariant violated: created(${created}) + abstained(${abstained}) + failed(${cellsFailed}) !== considered(${preparedTopCells.length})`,
+    );
+  }
   const completedResultForWrite: ResearchMeetingResult = {
     considered: preparedTopCells.length,
     conjectures_created: created,
@@ -885,6 +934,10 @@ export async function runResearchMeetingNightly(
       ingest_at: now,
       created_at: now,
     });
+    await writeEventFn(
+      tx,
+      buildCompletionEventInput(executionId, completedResultForWrite, now, triggerEventId),
+    );
   });
 
   return completedResultForWrite;
@@ -897,8 +950,12 @@ export function buildResearchMeetingNightlyHandler(
   // (register-capability-jobs.ts); one handler invocation owns exactly one job id.
   return async (jobs) => {
     try {
+      const executionId = jobs[0]?.id;
+      if (!executionId) {
+        throw new Error('research_meeting_nightly: handler invoked without a pg-boss job id');
+      }
       const result = await runResearchMeetingNightly(db, {
-        executionId: jobs[0]?.id ?? newId(),
+        executionId,
       });
       console.log('[research_meeting_nightly] result', result);
       // YUK-779 — the fallible units are the top-K cells. An empty night early-returns

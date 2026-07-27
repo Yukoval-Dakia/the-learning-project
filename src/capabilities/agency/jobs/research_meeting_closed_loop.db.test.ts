@@ -35,7 +35,7 @@
 // making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
 // another silently-passing test — exactly what this ticket exists to eliminate.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
@@ -445,7 +445,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(scores).toHaveLength(1);
   });
 
-  it('rolls back trigger, proposal, and scan together when the final durable write fails', async () => {
+  it('rolls back trigger, proposal, scan, and completion when the final durable write fails', async () => {
     const db = testDb();
     await seedRecurringFailures(3);
 
@@ -453,13 +453,13 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       runResearchMeetingNightly(db, {
         executionId: 'job_atomic_rollback',
         writeEventFn: async (scope, input) => {
-          if (input.action === 'experimental:research_meeting_scan') {
-            throw new Error('scan persistence failed');
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
           }
           return writeEvent(scope, input);
         },
       }),
-    ).rejects.toThrow('scan persistence failed');
+    ).rejects.toThrow('completion persistence failed');
 
     const rows = await db.select({ action: event.action }).from(event);
     const runActions = rows
@@ -469,6 +469,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
           'experimental:trigger_research_meeting',
           'experimental:proposal',
           'experimental:research_meeting_scan',
+          'experimental:research_meeting_completed',
         ].includes(action),
       );
     expect(runActions).toEqual([]);
@@ -497,6 +498,66 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(taskRunsAfterSecond).toEqual(taskRunsAfterFirst);
     expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
       1,
+    );
+  });
+
+  it('persists an empty completion and ignores evidence that appears before same-job redelivery', async () => {
+    const db = testDb();
+    const executionId = 'job_empty_redelivery';
+
+    const first = await runResearchMeetingNightly(db, { executionId });
+    expect(first).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+      trigger_event_id: '',
+    });
+    expect(await taskKindCounts()).toEqual({});
+
+    // This evidence arrived after the first execution committed. A redelivery of
+    // that same pg-boss job must return its original result rather than treating
+    // the new rows as unfinished work from the old execution.
+    await seedRecurringFailures(3);
+    const second = await runResearchMeetingNightly(db, { executionId });
+
+    expect(second).toEqual(first);
+    expect(await taskKindCounts()).toEqual({});
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+    const bookkeeping = await db
+      .select({ action: event.action, payload: event.payload })
+      .from(event)
+      .where(
+        or(
+          eq(event.action, 'experimental:trigger_research_meeting'),
+          eq(event.action, 'experimental:research_meeting_scan'),
+          eq(event.action, 'experimental:research_meeting_completed'),
+        ),
+      );
+    expect(bookkeeping).toEqual([
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        payload: { completed_result: first },
+      }),
+    ]);
+  });
+
+  it('fails closed before model work when a committed completion payload is unreadable', async () => {
+    const db = testDb();
+    const executionId = 'job_corrupt_completion';
+    await runResearchMeetingNightly(db, { executionId });
+    await db
+      .update(event)
+      .set({ payload: { malformed: true } })
+      .where(eq(event.action, 'experimental:research_meeting_completed'));
+    await seedRecurringFailures(3);
+
+    await expect(runResearchMeetingNightly(db, { executionId })).rejects.toThrow(
+      'research_meeting_nightly: completion payload is unreadable',
+    );
+    expect(await taskKindCounts()).toEqual({});
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
     );
   });
 

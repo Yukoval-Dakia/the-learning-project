@@ -355,7 +355,7 @@ describe('induceConjecture self-consistency', () => {
     expect(result.votes).toEqual({ proposal: 1, abstain: 2, invalid: 0, failed: 0 });
   });
 
-  it('drops abstain audit refs whose content was outside the quoted sample cap', async () => {
+  it('counts an abstain with refs outside the quoted sample cap as invalid', async () => {
     const outsidePrompt = abstainSample('insufficient_evidence');
     const payload = JSON.parse(outsidePrompt.text) as Record<string, unknown>;
     payload.evidence_event_ids = ['e_a', 'e_unquoted'];
@@ -369,7 +369,9 @@ describe('induceConjecture self-consistency', () => {
       runTaskFn,
     });
 
-    expect(abstain(result).evidence_event_ids).toEqual(['e_a']);
+    expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(abstain(result).evidence_event_ids).toEqual([]);
+    expect(result.votes).toEqual({ proposal: 0, abstain: 0, invalid: 3, failed: 0 });
   });
 
   it('uses invalid_output when invalid samples outweigh one explicit abstention', async () => {

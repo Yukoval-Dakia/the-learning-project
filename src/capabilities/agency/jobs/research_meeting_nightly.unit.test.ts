@@ -29,6 +29,7 @@ import {
   RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
   type ResearchMeetingResult,
+  buildResearchMeetingNightlyHandler,
   defaultLoadEvidenceImages,
   planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
@@ -228,7 +229,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
 }
 
 describe('runResearchMeetingNightly', () => {
-  it('returns a committed scan summary on pg-boss redelivery without repeating work', async () => {
+  it('returns a committed completion summary on pg-boss redelivery without repeating work', async () => {
     const completed: ResearchMeetingResult = {
       considered: 2,
       conjectures_created: 1,
@@ -272,12 +273,13 @@ describe('runResearchMeetingNightly', () => {
     expect(result.conjectures_created).toBe(2);
     expect(result.cost_usd).toBeCloseTo(0.04, 6); // 2 × 0.02
     expect(writeAiProposalFn).toHaveBeenCalledTimes(2);
-    // trigger + scan events.
+    // trigger + scan + durable completion guard.
     const actions = writeEventFn.mock.calls.map((c) => c[1].action);
     expect(actions).toContain('experimental:trigger_research_meeting');
     expect(actions).toContain('experimental:research_meeting_scan');
-    // Both rows are internal run bookkeeping: persisted for provenance/admin reads,
-    // born opted out of Mem0 and brief regeneration.
+    expect(actions).toContain('experimental:research_meeting_completed');
+    // All three rows are internal run bookkeeping: persisted for provenance/admin
+    // reads, born opted out of Mem0 and brief regeneration.
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -294,7 +296,7 @@ describe('runResearchMeetingNightly', () => {
     );
   });
 
-  it('persists trigger, cell outcomes, and scan through one transaction scope', async () => {
+  it('persists trigger, cell outcomes, scan, and completion through one transaction scope', async () => {
     const tx = { kind: 'test-transaction' } as never;
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
@@ -312,7 +314,7 @@ describe('runResearchMeetingNightly', () => {
 
     expect(runInTransactionFn).toHaveBeenCalledTimes(1);
     expect(writeAiProposalFn).toHaveBeenCalledWith(tx, expect.anything());
-    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn).toHaveBeenCalledTimes(3);
     expect(writeEventFn.mock.calls.every(([scope]) => scope === tx)).toBe(true);
   });
 
@@ -505,6 +507,7 @@ describe('runResearchMeetingNightly', () => {
     for (const action of [
       'experimental:trigger_research_meeting',
       'experimental:research_meeting_scan',
+      'experimental:research_meeting_completed',
     ]) {
       const ids = writeEventFn.mock.calls
         .map((call) => call[1])
@@ -688,7 +691,7 @@ describe('runResearchMeetingNightly', () => {
     expect(writeAiProposalFn).not.toHaveBeenCalled();
   });
 
-  it('empty night early-returns AFTER reconcile: zero events written, zero LLM (YUK-377 复审)', async () => {
+  it('empty night persists only a completion guard after reconcile and runs zero LLM calls', async () => {
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
     const reconcileFn = vi.fn(async () => ({ reconciled: 3, skipped: 0 }));
@@ -702,8 +705,17 @@ describe('runResearchMeetingNightly', () => {
     // The deterministic reconcile half still ran (it must never be skipped)…
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(3);
-    // …but the propose half wrote NOTHING: no unnecessary trigger/scan rows, no LLM.
-    expect(writeEventFn).not.toHaveBeenCalled();
+    // …but the propose half writes no anchor/scan. One bookkeeping-only completion
+    // guard makes a same-job redelivery a no-op even if new evidence appears meanwhile.
+    expect(writeEventFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        caused_by_event_id: null,
+        payload: { completed_result: result },
+      }),
+    );
     expect(induceConjectureFn).not.toHaveBeenCalled();
     expect(result.considered).toBe(0);
     expect(result.conjectures_created).toBe(0);
@@ -827,7 +839,14 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
 
     expect(induceConjectureFn).not.toHaveBeenCalled();
-    expect(writeEventFn).not.toHaveBeenCalled();
+    expect(writeEventFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        caused_by_event_id: null,
+      }),
+    );
     expect(result).toMatchObject({
       considered: 0,
       conjectures_created: 0,
@@ -1005,6 +1024,15 @@ describe('runResearchMeetingNightly', () => {
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);
     expect(result.reconcile_skipped).toBe(1);
+  });
+});
+
+describe('buildResearchMeetingNightlyHandler', () => {
+  it('fails closed when pg-boss invokes the handler without a job id', async () => {
+    const handler = buildResearchMeetingNightlyHandler({} as never);
+    await expect(handler([])).rejects.toThrow(
+      'research_meeting_nightly: handler invoked without a pg-boss job id',
+    );
   });
 });
 
