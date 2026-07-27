@@ -1,4 +1,9 @@
-import type { Page, Route } from '@playwright/test';
+import type { Page, Request as PlaywrightRequest, Route } from '@playwright/test';
+
+import {
+  buildCalendarReportWindow,
+  resolveReportTimeZone,
+} from '../../src/capabilities/practice/api/weekly-window';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -160,14 +165,14 @@ function breaker(applied: number, tripped = false) {
   };
 }
 
-function autoAppliedDigest(reverted = false, tripped = false) {
+function autoAppliedDigest(appliedAt: string, reverted = false, tripped = false) {
   return {
     rows: [
       {
         proposal_id: 'proposal-completion-1',
         learning_item_id: 'learning-item-1',
         title: '《岳阳楼记》背诵检查',
-        applied_at: new Date(Date.now() - 60_000).toISOString(),
+        applied_at: appliedAt,
         level: 'ok',
         reverted,
       },
@@ -285,6 +290,29 @@ function degradedEffectivenessTrend() {
   };
 }
 
+function proposedChange(
+  kind: 'learning_item' | 'completion' | 'defer',
+  learningItemId: string | null,
+) {
+  if (kind === 'learning_item') {
+    return {
+      topic: '函数复习计划',
+      knowledge_node: { id: 'knowledge-math', name: '二次函数', domain: 'math' },
+      hub: { title: '函数复习计划', summary_md: '从一道典型题开始。' },
+      atomics: [],
+      longs: [],
+    };
+  }
+  if (kind === 'completion') {
+    return {
+      learning_item_id: learningItemId,
+      triggering_signals: ['mastery_threshold'],
+      evidence_json: {},
+    };
+  }
+  return { learning_item_id: learningItemId };
+}
+
 function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
   const learningItemId = kind === 'learning_item' ? null : `${id}-item`;
   return {
@@ -298,22 +326,7 @@ function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer
       kind,
       reason_md: reason,
       evidence_refs: [],
-      proposed_change:
-        kind === 'learning_item'
-          ? {
-              topic: '函数复习计划',
-              knowledge_node: { id: 'knowledge-math', name: '二次函数', domain: 'math' },
-              hub: { title: '函数复习计划', summary_md: '从一道典型题开始。' },
-              atomics: [],
-              longs: [],
-            }
-          : kind === 'completion'
-            ? {
-                learning_item_id: learningItemId,
-                triggering_signals: ['mastery_threshold'],
-                evidence_json: {},
-              }
-            : { learning_item_id: learningItemId },
+      proposed_change: proposedChange(kind, learningItemId),
     },
     status: 'pending',
     proposed_at: '2026-07-18T15:10:00.000Z',
@@ -391,6 +404,31 @@ async function fulfill(
   });
 }
 
+interface ProposalDecisionFixtureOptions {
+  proposalId: string;
+  allowedDecisions: readonly string[];
+  validationMessage: string;
+  response: (decision: string) => unknown;
+  onDecision?: (decision: string) => void;
+}
+
+async function fulfillProposalDecision(
+  route: Route,
+  request: PlaywrightRequest,
+  decisions: Array<{ id: string; decision: string }>,
+  options: ProposalDecisionFixtureOptions,
+): Promise<void> {
+  const body = request.postDataJSON() as { decision?: string } | null;
+  const decision = body?.decision;
+  if (!decision || !options.allowedDecisions.includes(decision)) {
+    await fulfill(route, { error: 'validation_error', message: options.validationMessage }, 400);
+    return;
+  }
+  options.onDecision?.(decision);
+  decisions.push({ id: options.proposalId, decision });
+  await fulfill(route, options.response(decision), 201);
+}
+
 export async function installApiFixtures(
   page: Page,
   scenario: UsabilityScenario,
@@ -401,6 +439,7 @@ export async function installApiFixtures(
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
   let autoAppliedReverted = false;
+  const autoAppliedAt = new Date(Date.now() - 60_000).toISOString();
   const proposalDecisions: Array<{ id: string; decision: string }> = [];
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
@@ -529,10 +568,10 @@ export async function installApiFixtures(
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
     if (key === 'GET /api/proposals/auto-applied') {
       if (scenario === 'inbox-auto-applied') {
-        return fulfill(route, autoAppliedDigest(autoAppliedReverted));
+        return fulfill(route, autoAppliedDigest(autoAppliedAt, autoAppliedReverted));
       }
       if (scenario === 'inbox-breaker-tripped') {
-        return fulfill(route, autoAppliedDigest(autoAppliedReverted, true));
+        return fulfill(route, autoAppliedDigest(autoAppliedAt, autoAppliedReverted, true));
       }
       return fulfill(route, { rows: [], breaker: breaker(0) });
     }
@@ -580,78 +619,66 @@ export async function installApiFixtures(
       scenario === 'inbox-auto-applied' &&
       key === 'POST /api/proposals/proposal-completion-1/decisions'
     ) {
-      const body = request.postDataJSON() as { decision?: string } | null;
-      if (body?.decision !== 'retract') {
-        return fulfill(route, { error: 'validation_error', message: 'retract is required' }, 400);
-      }
-      autoAppliedReverted = true;
-      proposalDecisions.push({ id: 'proposal-completion-1', decision: 'retract' });
-      return fulfill(
-        route,
-        {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-completion-1',
+        allowedDecisions: ['retract'],
+        validationMessage: 'retract is required',
+        onDecision: () => {
+          autoAppliedReverted = true;
+        },
+        response: (decision) => ({
           proposal_id: 'proposal-completion-1',
           proposal_kind: 'completion',
-          decision: 'retract',
+          decision,
           decision_event_id: 'event-retract-1',
           proposal_status: 'stale',
           created: true,
           idempotent: false,
-          result: { kind: 'completion', learning_item_id: 'learning-item-1' },
-        },
-        201,
-      );
+          result: { kind: 'retracted', correction_event_id: 'event-retract-1' },
+        }),
+      });
     }
     if (
       scenario === 'inbox-breaker-tripped' &&
       key === 'POST /api/proposals/proposal-breaker-completion-1/decisions'
     ) {
-      const body = request.postDataJSON() as { decision?: string } | null;
-      if (body?.decision !== 'accept' && body?.decision !== 'dismiss') {
-        return fulfill(route, { error: 'validation_error', message: 'decision is required' }, 400);
-      }
-      proposalDecisions.push({
-        id: 'proposal-breaker-completion-1',
-        decision: body.decision,
-      });
-      return fulfill(
-        route,
-        {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-breaker-completion-1',
+        allowedDecisions: ['accept', 'dismiss'],
+        validationMessage: 'decision is required',
+        response: (decision) => ({
           proposal_id: 'proposal-breaker-completion-1',
           proposal_kind: 'completion',
-          decision: body.decision,
+          decision,
           decision_event_id: 'event-breaker-decision-1',
-          proposal_status: body.decision === 'accept' ? 'accepted' : 'dismissed',
+          proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
           created: true,
           idempotent: false,
           result:
-            body.decision === 'accept'
+            decision === 'accept'
               ? {
                   kind: 'completion',
                   rate_event_id: 'event-breaker-decision-1',
                   learning_item_id: 'proposal-breaker-completion-1-item',
                 }
               : null,
-        },
-        201,
-      );
+        }),
+      });
     }
     if (
       (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') &&
       key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
     ) {
-      const body = request.postDataJSON() as { decision?: string } | null;
-      if (body?.decision !== 'accept' && body?.decision !== 'dismiss') {
-        return fulfill(route, { error: 'validation_error', message: 'decision is required' }, 400);
-      }
-      proposalDecisions.push({ id: 'proposal-learning-plan-1', decision: body.decision });
-      return fulfill(
-        route,
-        {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-learning-plan-1',
+        allowedDecisions: ['accept', 'dismiss'],
+        validationMessage: 'decision is required',
+        response: (decision) => ({
           proposal_id: 'proposal-learning-plan-1',
           proposal_kind: 'learning_item',
-          decision: body.decision,
+          decision,
           decision_event_id: 'event-decision-1',
-          proposal_status: body.decision === 'accept' ? 'accepted' : 'dismissed',
+          proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
           created: true,
           idempotent: false,
           result: {
@@ -667,9 +694,8 @@ export async function installApiFixtures(
             created_knowledge_ids: [],
             enqueued_note_generate_jobs: 0,
           },
-        },
-        201,
-      );
+        }),
+      });
     }
     if (scenario === 'coach-views' && key === 'GET /api/observability/effectiveness-trend') {
       return fulfill(route, effectivenessTrend());
@@ -715,27 +741,29 @@ export async function installApiFixtures(
           400,
         );
       }
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      });
-      const end = new Date('2026-07-18T15:10:00.000Z');
-      const daily = Array.from({ length: 7 }, (_, index) => {
-        const date = formatter.format(new Date(end.getTime() - (6 - index) * 86_400_000));
-        return {
-          date,
-          count: index === 6 ? 5 : 0,
-          correct: index === 6 ? 4 : 0,
-        };
-      });
+      let canonicalTimeZone: string;
+      try {
+        canonicalTimeZone = resolveReportTimeZone(timeZone);
+      } catch {
+        return fulfill(
+          route,
+          { error: 'invalid_timezone', message: 'timezone must be a valid IANA time zone' },
+          400,
+        );
+      }
+      const now = new Date('2026-07-18T15:10:00.000Z');
+      const reportWindow = buildCalendarReportWindow(now, 7, canonicalTimeZone);
+      const daily = reportWindow.dateKeys.map((date, index) => ({
+        date,
+        count: index === 6 ? 5 : 0,
+        correct: index === 6 ? 4 : 0,
+      }));
       return fulfill(route, {
         window: {
           days: 7,
-          from: 1_783_785_600,
-          to: 1_784_387_400,
-          time_zone: timeZone,
+          from: Math.floor(reportWindow.from.getTime() / 1_000),
+          to: Math.floor(reportWindow.to.getTime() / 1_000),
+          time_zone: reportWindow.timeZone,
         },
         totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
         ratings: { again: 1, hard: 0, good: 3, easy: 1 },
