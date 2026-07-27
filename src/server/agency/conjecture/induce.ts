@@ -344,6 +344,7 @@ const GroupSchema = z.object({
 });
 
 interface DeduplicateClaimsResult {
+  ok: boolean;
   groups: number[][];
   cost_usd: number;
   task_run_id: string | undefined;
@@ -353,23 +354,30 @@ interface DeduplicateClaimsResult {
  * Groups claim indices by semantic equivalence via a single ClaimGroupingTask call.
  * Always called when dominant.length < drafts.length (i.e., not unanimous via claimKey).
  *
- * Returns index groups, accumulated cost, and the task_run_id for provenance.
- * Falls back to all-singletons on any failure (throw, parse error, or coverage mismatch)
- * — graceful degradation restores original claimKey behaviour rather than crashing
- * the nightly cell.
+ * Returns index groups, accumulated cost, task_run_id, and explicit health.
+ * On failure the caller preserves any exact claimKey quorum already established;
+ * when no exact quorum exists, grouping is load-bearing and the cell fails operationally.
  */
 async function deduplicateClaims(
   claims: string[],
   runTaskFn: TaskTextRunFn,
 ): Promise<DeduplicateClaimsResult> {
-  const singleton = (): DeduplicateClaimsResult => ({
+  const failure = (
+    result: Pick<TaskTextResult, 'cost_usd' | 'task_run_id'> = {},
+  ): DeduplicateClaimsResult => ({
+    ok: false,
     groups: claims.map((_, i) => [i]),
-    cost_usd: 0,
-    task_run_id: undefined,
+    cost_usd: result.cost_usd ?? 0,
+    task_run_id: result.task_run_id,
   });
 
   if (claims.length <= 1) {
-    return { groups: [claims.map((_, i) => i)], cost_usd: 0, task_run_id: undefined };
+    return {
+      ok: true,
+      groups: [claims.map((_, i) => i)],
+      cost_usd: 0,
+      task_run_id: undefined,
+    };
   }
 
   let result: TaskTextResult;
@@ -381,8 +389,8 @@ async function deduplicateClaims(
     );
   } catch (err) {
     // Warn so nightly pipeline failures are observable (silent degradation masks persistent issues).
-    console.warn('[induceConjecture] ClaimGroupingTask failed, falling back to singletons:', err);
-    return singleton();
+    console.warn('[induceConjecture] ClaimGroupingTask failed, preserving exact clusters:', err);
+    return failure();
   }
 
   // Parse structured output; then scan balanced JSON objects in the text fallback.
@@ -390,16 +398,17 @@ async function deduplicateClaims(
     .filter((candidate) => candidate !== undefined && candidate !== null)
     .map((candidate) => GroupSchema.safeParse(candidate))
     .find((candidate) => candidate.success) ?? { success: false as const };
-  if (!parsed.success) return singleton();
+  if (!parsed.success) return failure(result);
 
   // Coverage guard: verify groups form a complete partition of 0..N-1
   // (each index appears exactly once — catches duplicates, gaps, and out-of-range indices).
   // A flat-length-only check passes e.g. [[0,0],[1]] (length=3=N but index 0 duplicated).
   const flatSorted = [...parsed.data.groups.flat()].sort((a, b) => a - b);
   const isPartition = flatSorted.length === claims.length && flatSorted.every((v, i) => v === i);
-  if (!isPartition) return singleton();
+  if (!isPartition) return failure(result);
 
   return {
+    ok: true,
     groups: parsed.data.groups,
     cost_usd: result.cost_usd ?? 0,
     task_run_id: result.task_run_id,
@@ -549,6 +558,7 @@ export async function induceConjecture(
   // The grouping call is non-deterministic: confidence reflects the expected value
   // of agreement, not a stable per-run signal. Downstream thresholds must treat
   // confidence as a distribution, not a point estimate.
+  const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
   if (dominant.length < proposals.length && proposals.length > 1) {
     const dedup = await deduplicateClaims(
       proposals.map((proposal) => proposal.draft.claim_md),
@@ -558,24 +568,32 @@ export async function induceConjecture(
     costUsd += dedup.cost_usd;
     if (dedup.task_run_id) taskRunIds.push(dedup.task_run_id);
 
-    // Re-map groups to draft arrays; pick the largest group as dominant.
-    // Tie-break on the group's normalized lexical claim key, never sample order.
-    const groupDrafts = dedup.groups
-      .map((g) => {
-        const groupedSamples = g.map((i) => proposals[i]);
-        return {
-          samples: groupedSamples,
-          key: [...groupedSamples.map((sample) => claimKey(sample.draft.claim_md))].sort(
-            compareLex,
-          )[0],
-        };
-      })
-      .sort((a, b) => b.samples.length - a.samples.length || compareLex(a.key, b.key));
-    dominant = groupDrafts[0].samples;
+    if (!dedup.ok) {
+      // Keep an already-established exact 2-of-N cluster. If exact matching
+      // did not reach quorum, semantic grouping is load-bearing; its outage is
+      // operational, not evidence that the model claims genuinely disagree.
+      if (dominant.length < requiredAgreement) {
+        throw new Error('induceConjecture: ClaimGroupingTask failed before semantic consensus');
+      }
+    } else {
+      // Re-map groups to draft arrays; pick the largest group as dominant.
+      // Tie-break on the group's normalized lexical claim key, never sample order.
+      const groupDrafts = dedup.groups
+        .map((g) => {
+          const groupedSamples = g.map((i) => proposals[i]);
+          return {
+            samples: groupedSamples,
+            key: [...groupedSamples.map((sample) => claimKey(sample.draft.claim_md))].sort(
+              compareLex,
+            )[0],
+          };
+        })
+        .sort((a, b) => b.samples.length - a.samples.length || compareLex(a.key, b.key));
+      dominant = groupDrafts[0].samples;
+    }
   }
 
   const agreement = dominant.length;
-  const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
   if (agreement < requiredAgreement) {
     return {
       outcome: 'abstain',

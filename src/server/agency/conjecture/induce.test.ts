@@ -846,23 +846,24 @@ describe('induceConjecture self-consistency', () => {
     expect(result.confidence).toBeCloseTo(1.0, 5);
   });
 
-  it('dedup degrades gracefully when ClaimGroupingTask returns unparseable output', async () => {
+  it('preserves an exact 2-of-3 quorum when ClaimGroupingTask is unparseable', async () => {
+    const exact = '你把链式法则当成导数相乘';
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
-      .mockResolvedValueOnce(sample('你把链式法则当成导数相乘'))
-      .mockResolvedValueOnce(sample('你误以为链式法则就是把各层导数相乘'))
-      .mockResolvedValueOnce(sample('你认为链式法则等价于将每层求导结果连乘'))
+      .mockResolvedValueOnce(sample(exact))
+      .mockResolvedValueOnce(sample(exact))
+      .mockResolvedValueOnce(sample('完全不同的主张'))
       .mockResolvedValueOnce({ text: 'sorry, I cannot help', structured_output: undefined });
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    // Falls back to claimKey singletons; no 2-of-3 convergence means no proposal.
-    expect(result.confidence).toBe(0);
-    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    expect(proposal(result).claim_md).toBe(exact);
+    expect(proposal(result).agreement_count).toBe(2);
+    expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
-  it('dedup degrades gracefully when ClaimGroupingTask throws', async () => {
+  it('fails operationally when semantic grouping is load-bearing and throws', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValueOnce(sample('你把链式法则当成导数相乘'))
@@ -870,10 +871,9 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValueOnce(sample('你认为链式法则等价于将每层求导结果连乘'))
       .mockRejectedValueOnce(new Error('AuthenticationError'));
 
-    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
-
-    expect(result.confidence).toBe(0);
-    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
+    await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
+      'ClaimGroupingTask failed before semantic consensus',
+    );
     expect(runTaskFn).toHaveBeenCalledTimes(4);
   });
 
@@ -914,7 +914,7 @@ describe('induceConjecture self-consistency', () => {
     expect((dedupCall[1] as { claims: string[] }).claims).toHaveLength(2);
   });
 
-  it('dedup falls back when LLM returns extra indices (flat count > N)', async () => {
+  it('dedup fails operationally when LLM returns extra indices (flat count > N)', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValueOnce(sample('A'))
@@ -927,13 +927,12 @@ describe('induceConjecture self-consistency', () => {
         ]),
       ); // flat count=5 ≠ N=3 → partition invalid
 
-    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
-
-    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
-    expect(result.confidence).toBe(0);
+    await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
+      'ClaimGroupingTask failed before semantic consensus',
+    );
   });
 
-  it('dedup falls back on in-range duplicate indices (flat count = N but not a partition)', async () => {
+  it('dedup fails operationally on in-range duplicate indices', async () => {
     // [[0, 0], [1]] has flat length 3 = N=3 but index 0 is duplicated and index 2 missing.
     // The old flat-length guard missed this; the partition check catches it.
     const runTaskFn = vi
@@ -943,11 +942,9 @@ describe('induceConjecture self-consistency', () => {
       .mockResolvedValueOnce(sample('C'))
       .mockResolvedValueOnce(groupResult([[0, 0], [1]])); // flat=[0,0,1], length=3=N but 0 duplicated, 2 missing
 
-    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
-
-    // Partition check rejects → singletons cannot clear the 2-of-3 convergence gate.
-    expect(abstain(result).reason_code).toBe('no_semantic_consensus');
-    expect(result.confidence).toBe(0);
+    await expect(induceConjecture({ cells: [cell()], samples: 3, runTaskFn })).rejects.toThrow(
+      'ClaimGroupingTask failed before semantic consensus',
+    );
     expect(runTaskFn).toHaveBeenCalledTimes(4); // 3 induction + 1 dedup
   });
 });

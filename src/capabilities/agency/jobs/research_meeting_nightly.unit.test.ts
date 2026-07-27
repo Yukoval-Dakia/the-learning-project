@@ -513,7 +513,9 @@ describe('runResearchMeetingNightly', () => {
       conjectures_abstained: 0,
       cells_failed: 1,
     });
-    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'MindModelInductionTask');
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'MindModelInductionTask', {
+      swallow: false,
+    });
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -570,6 +572,34 @@ describe('runResearchMeetingNightly', () => {
           votes: { proposal: 1, abstain: 0, invalid: 1, failed: 1 },
         }),
       }),
+    );
+  });
+
+  it('propagates the original transactional health-ledger error', async () => {
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {
+      throw new Error('health ledger insert failed');
+    });
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'invalid_output' as const },
+          votes: { proposal: 0, abstain: 0, invalid: 3, failed: 0 },
+        };
+      }),
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+      'health ledger insert failed',
+    );
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(
+      expect.anything(),
+      'MindModelInductionTask',
+      { swallow: false },
     );
   });
 

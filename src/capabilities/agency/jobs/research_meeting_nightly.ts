@@ -157,7 +157,11 @@ type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
-type WriteRetryableAiFailureLedgerFn = (db: DbLike, taskKind: string) => Promise<void>;
+type WriteRetryableAiFailureLedgerFn = (
+  db: DbLike,
+  taskKind: string,
+  options?: { swallow?: boolean },
+) => Promise<void>;
 type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
 type LoadEvidenceImagesFn = (
   db: Db,
@@ -894,7 +898,7 @@ export async function runResearchMeetingNightly(
       if (result.failed > 0) {
         // Operational health rows belong to the same commit boundary as the
         // run facts. A final-write rollback must not orphan/duplicate them.
-        await writeRetryableAiFailureLedgerFn(tx, 'MindModelInductionTask');
+        await writeRetryableAiFailureLedgerFn(tx, 'MindModelInductionTask', { swallow: false });
       }
       if (!result.induced) continue;
       const { cell, induced } = result;

@@ -1,7 +1,11 @@
 import type { Db, Tx } from '@/db/client';
 import { writeCostLedger } from '@/server/ai/log';
 
-export async function writeRetryableAiFailureLedger(db: Db | Tx, taskKind: string): Promise<void> {
+export async function writeRetryableAiFailureLedger(
+  db: Db | Tx,
+  taskKind: string,
+  options: { swallow?: boolean } = {},
+): Promise<void> {
   try {
     await writeCostLedger(db, {
       task_kind: taskKind,
@@ -13,6 +17,10 @@ export async function writeRetryableAiFailureLedger(db: Db | Tx, taskKind: strin
       outcome: 'failed_retryable',
     });
   } catch (err) {
+    // A failed statement poisons the surrounding PostgreSQL transaction. Let
+    // transactional callers preserve the original error rather than catching it
+    // here and surfacing a later, misleading 25P02 from a sibling durable write.
+    if (options.swallow === false) throw err;
     console.error(`[${taskKind}] writeCostLedger failed for retryable AI failure`, err);
   }
 }
