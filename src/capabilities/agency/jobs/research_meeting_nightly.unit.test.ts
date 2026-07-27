@@ -103,6 +103,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
     confidence: 0.66,
     confidence_capped: false,
     samples: input.samples,
+    primary_task_run_id: `tr_${cell.knowledge_id}_1`,
     task_run_ids: [
       `tr_${cell.knowledge_id}_1`,
       `tr_${cell.knowledge_id}_2`,
@@ -485,6 +486,7 @@ describe('runResearchMeetingNightly', () => {
   });
 
   it('classifies invalid-output abstention as a failed cell and stalls an all-bad night', async () => {
+    const tx = { kind: 'operational-failure-transaction' } as never;
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     const deps = baseDeps({
@@ -500,6 +502,7 @@ describe('runResearchMeetingNightly', () => {
       }),
       writeEventFn,
       writeRetryableAiFailureLedgerFn,
+      runInTransactionFn: vi.fn(async (_db, fn) => fn(tx)),
     });
 
     const result = await runResearchMeetingNightly({} as never, deps);
@@ -510,7 +513,7 @@ describe('runResearchMeetingNightly', () => {
       conjectures_abstained: 0,
       cells_failed: 1,
     });
-    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'MindModelInductionTask');
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

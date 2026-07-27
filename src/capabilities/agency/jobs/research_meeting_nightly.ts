@@ -157,7 +157,7 @@ type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
-type WriteRetryableAiFailureLedgerFn = (db: Db, taskKind: string) => Promise<void>;
+type WriteRetryableAiFailureLedgerFn = (db: DbLike, taskKind: string) => Promise<void>;
 type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
 type LoadEvidenceImagesFn = (
   db: Db,
@@ -260,9 +260,9 @@ export interface ResearchMeetingDeps {
   induceConjectureFn?: InduceConjectureFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeEventFn?: WriteEventFn;
-  /** Atomic durable boundary for trigger + per-cell outcomes + scan. */
+  /** Atomic durable boundary for trigger + per-cell outcomes/health + scan + completion. */
   runInTransactionFn?: RunInTransactionFn;
-  /** Redelivery guard: a committed scan means this logical execution is complete. */
+  /** Redelivery guard: a committed completion means this logical execution is complete. */
   loadCompletedRunResultFn?: LoadCompletedRunResultFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
@@ -618,7 +618,9 @@ function buildConjectureProposalInput(
       subject_id: cell.knowledge_id,
       payload: { induction_task_run_ids: induced.task_run_ids },
     },
-    task_run_id: induced.task_run_ids[0] ?? null,
+    // Scalar correlation must point at a run that produced the winning
+    // claim/probe tuple; the payload retains every sample/grouping run.
+    task_run_id: induced.primary_task_run_id,
     cost_usd: induced.cost_usd,
   };
 }
@@ -821,7 +823,6 @@ export async function runResearchMeetingNightly(
           });
         } catch (err) {
           console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
-          await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
           // Partial sample spend is retained in per-call cost_ledger rows, but the
@@ -830,9 +831,6 @@ export async function runResearchMeetingNightly(
         }
 
         const operationalFailure = isOperationalAbstain(induced);
-        if (operationalFailure) {
-          await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
-        }
         return {
           cell,
           induced,
@@ -893,6 +891,11 @@ export async function runResearchMeetingNightly(
     });
 
     for (const result of cellResults) {
+      if (result.failed > 0) {
+        // Operational health rows belong to the same commit boundary as the
+        // run facts. A final-write rollback must not orphan/duplicate them.
+        await writeRetryableAiFailureLedgerFn(tx, 'MindModelInductionTask');
+      }
       if (!result.induced) continue;
       const { cell, induced } = result;
       if (induced.outcome === 'abstain') {
@@ -943,7 +946,6 @@ export async function runResearchMeetingNightly(
         conjectures_abstained: abstained,
         cells_failed: cellsFailed,
         pending_before: knownConjectureKeys.size,
-        completed_result: completedResultForWrite,
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: null,

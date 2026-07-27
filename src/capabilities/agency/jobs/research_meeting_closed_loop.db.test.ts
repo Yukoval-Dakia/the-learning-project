@@ -484,6 +484,40 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
   });
 
+  it('rolls back operational failure ledgers with the run facts', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    sdk.respond = (prompt) => {
+      if (!prompt.includes('"evidence_cells"')) {
+        throw new Error(`unexpected task after invalid samples: ${prompt.slice(0, 120)}`);
+      }
+      return sdkSuccess({ malformed: true });
+    };
+
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId: 'job_failure_ledger_rollback',
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('completion persistence failed');
+
+    const retryableRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.outcome, 'failed_retryable'));
+    expect(retryableRows).toHaveLength(0);
+    const abstainRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:conjecture_abstained'));
+    expect(abstainRows).toHaveLength(0);
+  });
+
   it('returns the committed summary on same-job redelivery without another model run', async () => {
     const db = testDb();
     await seedRecurringFailures(3);

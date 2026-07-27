@@ -606,6 +606,8 @@ describe('induceConjecture self-consistency', () => {
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(result.samples).toBe(3);
     expect(result.task_run_ids).toEqual(['run_2', 'run_3']);
+    if (result.outcome !== 'proposal') throw new Error('expected proposal');
+    expect(result.primary_task_run_id).toBe('run_2');
     expect(result.cost_usd).toBeCloseTo(0.5, 5);
     expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(warnSpy).toHaveBeenCalledWith(
@@ -616,6 +618,25 @@ describe('induceConjecture self-consistency', () => {
         error: 'transient sample failure',
       }),
     );
+  });
+
+  it('uses a winning proposal sample for scalar task-run correlation', async () => {
+    const claim = '你把链式法则当成导数相加';
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce({
+        ...abstainSample('insufficient_evidence'),
+        task_run_id: 'run_abstain',
+      })
+      .mockResolvedValueOnce({ ...sample(claim), task_run_id: 'run_winner_1' })
+      .mockResolvedValueOnce({ ...sample(claim), task_run_id: 'run_winner_2' });
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(result.outcome).toBe('proposal');
+    if (result.outcome !== 'proposal') throw new Error('expected proposal');
+    expect(result.primary_task_run_id).toBe('run_winner_1');
+    expect(result.task_run_ids).toEqual(['run_abstain', 'run_winner_1', 'run_winner_2']);
   });
 
   it('still fails closed when every induction sample throws', async () => {

@@ -1,7 +1,7 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { writeCostLedger } from '@/server/ai/log';
 
-export async function writeRetryableAiFailureLedger(db: Db, taskKind: string): Promise<void> {
+export async function writeRetryableAiFailureLedger(db: Db | Tx, taskKind: string): Promise<void> {
   try {
     await writeCostLedger(db, {
       task_kind: taskKind,

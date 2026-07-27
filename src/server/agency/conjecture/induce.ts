@@ -91,6 +91,8 @@ export type InduceConjectureResult =
   | (InduceConjectureResultBase & {
       outcome: 'proposal';
       draft: ConjectureProposalDraftT;
+      /** One run that produced the winning claim/probe tuple (scalar correlation anchor). */
+      primary_task_run_id: string | null;
     })
   | (InduceConjectureResultBase & {
       outcome: 'abstain';
@@ -99,6 +101,11 @@ export type InduceConjectureResult =
 
 /** Confidence ceiling when ALL evidence is agent-judge (no owner corroboration). */
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
+
+interface GroundedProposalSample {
+  draft: ConjectureProposalDraftT;
+  task_run_id: string | undefined;
+}
 
 /** Parse balanced JSON objects, recovering after malformed prose candidates. */
 function jsonObjectCandidates(text: string): unknown[] {
@@ -442,7 +449,7 @@ export async function induceConjecture(
 
   // Run N samples on the Opus anthropic-sub lane (override; providers.ts exempts it
   // from the AI_PROVIDER_MODEL guard via ANTHROPIC_SUB_DEFAULT_MODEL).
-  const proposals: ConjectureProposalDraftT[] = [];
+  const proposals: GroundedProposalSample[] = [];
   const abstains: ConjectureModelAbstainDraftT[] = [];
   const taskRunIds: string[] = [];
   const sampleErrors: string[] = [];
@@ -475,7 +482,7 @@ export async function induceConjecture(
         else invalidSamples += 1;
       } else {
         const grounded = normalizeGroundedProposal(draft, cells);
-        if (grounded) proposals.push(grounded);
+        if (grounded) proposals.push({ draft: grounded, task_run_id: result.task_run_id });
         else invalidSamples += 1;
       }
     } else {
@@ -523,11 +530,11 @@ export async function induceConjecture(
   }
 
   // Fast path: claimKey clustering (byte-identical after normalisation).
-  const clusters = new Map<string, ConjectureProposalDraftT[]>();
-  for (const d of proposals) {
-    const key = claimKey(d.claim_md);
+  const clusters = new Map<string, GroundedProposalSample[]>();
+  for (const proposal of proposals) {
+    const key = claimKey(proposal.draft.claim_md);
     const bucket = clusters.get(key) ?? [];
-    bucket.push(d);
+    bucket.push(proposal);
     clusters.set(key, bucket);
   }
   let dominant = [...clusters.entries()].sort(
@@ -544,7 +551,7 @@ export async function induceConjecture(
   // confidence as a distribution, not a point estimate.
   if (dominant.length < proposals.length && proposals.length > 1) {
     const dedup = await deduplicateClaims(
-      proposals.map((d) => d.claim_md),
+      proposals.map((proposal) => proposal.draft.claim_md),
       runTaskFn,
     );
     // Accumulate cost + provenance from the dedup call.
@@ -555,14 +562,16 @@ export async function induceConjecture(
     // Tie-break on the group's normalized lexical claim key, never sample order.
     const groupDrafts = dedup.groups
       .map((g) => {
-        const groupedDrafts = g.map((i) => proposals[i]);
+        const groupedSamples = g.map((i) => proposals[i]);
         return {
-          drafts: groupedDrafts,
-          key: [...groupedDrafts.map((draft) => claimKey(draft.claim_md))].sort(compareLex)[0],
+          samples: groupedSamples,
+          key: [...groupedSamples.map((sample) => claimKey(sample.draft.claim_md))].sort(
+            compareLex,
+          )[0],
         };
       })
-      .sort((a, b) => b.drafts.length - a.drafts.length || compareLex(a.key, b.key));
-    dominant = groupDrafts[0].drafts;
+      .sort((a, b) => b.samples.length - a.samples.length || compareLex(a.key, b.key));
+    dominant = groupDrafts[0].samples;
   }
 
   const agreement = dominant.length;
@@ -599,11 +608,24 @@ export async function induceConjecture(
   const confidence_capped = allJudgeOnly && confidence > JUDGE_ONLY_CONFIDENCE_CAP;
   if (confidence_capped) confidence = JUDGE_ONLY_CONFIDENCE_CAP;
 
-  const draft = aggregateDominantDraft(dominant, agreement);
+  const draft = aggregateDominantDraft(
+    dominant.map((sample) => sample.draft),
+    agreement,
+  );
+  const primaryTaskRunId =
+    dominant.find(
+      (sample) =>
+        sample.task_run_id !== undefined &&
+        sample.draft.claim_md === draft.claim_md &&
+        sample.draft.probe_md === draft.probe_md &&
+        sample.draft.probe_reference_md === draft.probe_reference_md &&
+        sample.draft.cause_category === draft.cause_category,
+    )?.task_run_id ?? null;
 
   return {
     outcome: 'proposal',
     draft,
+    primary_task_run_id: primaryTaskRunId,
     confidence,
     confidence_capped,
     samples,
