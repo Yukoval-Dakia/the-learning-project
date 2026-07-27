@@ -231,6 +231,62 @@ test.describe('shipped-container usability regression', () => {
     expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
   });
 
+  test('route=/inbox dismiss returns the production learning-item decision result', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-auto-applied');
+    await page.goto('/inbox');
+
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/proposals/proposal-learning-plan-1/decisions',
+      ),
+      page.getByRole('button', { name: '忽略', exact: true }).click(),
+    ]);
+
+    expect(decisionResponse.status()).toBe(201);
+    expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
+    expect(await decisionResponse.json()).toMatchObject({
+      decision: 'dismiss',
+      result: { kind: 'dismissed', rate_event_id: 'event-decision-1' },
+    });
+    await expect(page.getByText('已忽略', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-learning-plan-1', decision: 'dismiss' },
+    ]);
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+
+  test('route=/inbox breaker completion dismiss returns the production decision result', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-breaker-tripped');
+    await page.goto('/inbox');
+
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            '/api/proposals/proposal-breaker-completion-1/decisions',
+      ),
+      page.getByRole('button', { name: '忽略', exact: true }).click(),
+    ]);
+
+    expect(decisionResponse.status()).toBe(201);
+    expect(await decisionResponse.json()).toMatchObject({
+      decision: 'dismiss',
+      result: { kind: 'dismissed', rate_event_id: 'event-breaker-decision-1' },
+    });
+    await expect(page.getByText('已忽略', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-breaker-completion-1', decision: 'dismiss' },
+    ]);
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+
   test('route=/coach real clicks switch views and drill from subject rollup to knowledge trend', async ({
     page,
   }) => {
@@ -262,6 +318,11 @@ test.describe('shipped-container usability regression', () => {
         page
           .getByRole('region', { name: '有作答记录的知识点表格，可横向滚动' })
           .getByText('二次函数', { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole('region', { name: '有作答记录的知识点表格，可横向滚动' })
+          .getByText('数学整体', { exact: true }),
       ).toBeVisible();
       await expectNoInternalCopy(page, '/coach');
     });

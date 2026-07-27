@@ -687,7 +687,7 @@ export async function installApiFixtures(
                   rate_event_id: 'event-breaker-decision-1',
                   learning_item_id: 'proposal-breaker-completion-1-item',
                 }
-              : null,
+              : { kind: 'dismissed', rate_event_id: 'event-breaker-decision-1' },
         }),
       });
     }
@@ -707,19 +707,22 @@ export async function installApiFixtures(
           proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
           created: true,
           idempotent: false,
-          result: {
-            kind: 'learning_item',
-            rate_event_id: 'event-decision-1',
-            hub_learning_item_id: 'learning-item-1',
-            atomic_learning_item_ids: [],
-            long_learning_item_ids: [],
-            hub_artifact_id: 'artifact-learning-item-1',
-            atomic_artifact_ids: [],
-            long_artifact_ids: [],
-            root_knowledge_id: 'knowledge-math',
-            created_knowledge_ids: [],
-            enqueued_note_generate_jobs: 0,
-          },
+          result:
+            decision === 'accept'
+              ? {
+                  kind: 'learning_item',
+                  rate_event_id: 'event-decision-1',
+                  hub_learning_item_id: 'learning-item-1',
+                  atomic_learning_item_ids: [],
+                  long_learning_item_ids: [],
+                  hub_artifact_id: 'artifact-learning-item-1',
+                  atomic_artifact_ids: [],
+                  long_artifact_ids: [],
+                  root_knowledge_id: 'knowledge-math',
+                  created_knowledge_ids: [],
+                  enqueued_note_generate_jobs: 0,
+                }
+              : { kind: 'dismissed', rate_event_id: 'event-decision-1' },
         }),
       });
     }
@@ -737,6 +740,15 @@ export async function installApiFixtures(
       return fulfill(route, {
         rows: [
           {
+            knowledge_id: 'seed:math:root',
+            name: '数学整体',
+            evidence_count: 8,
+            theta_se: degraded ? 0.9 : 0.3,
+            confidence: degraded ? 0.2 : 0.9,
+            track: null,
+            cold_start: degraded,
+          },
+          {
             knowledge_id: 'knowledge-math',
             name: '二次函数',
             evidence_count: 5,
@@ -747,9 +759,9 @@ export async function installApiFixtures(
           },
         ],
         aggregate: {
-          total_kcs: 1,
-          cold_start_count: degraded ? 1 : 0,
-          firm_count: degraded ? 0 : 1,
+          total_kcs: 2,
+          cold_start_count: degraded ? 2 : 0,
+          firm_count: degraded ? 0 : 2,
           pct_firm: degraded ? 0 : 1,
           median_theta_se: degraded ? 0.9 : 0.3,
         },
