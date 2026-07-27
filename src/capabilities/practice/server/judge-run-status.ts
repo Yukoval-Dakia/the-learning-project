@@ -99,6 +99,7 @@ export interface JudgeRunStatusEvent {
 export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunStatus {
   let status: JudgeRunStatus = 'queued';
   let terminalDeliveryId: string | null = null;
+  let startedDeliveryId: string | null = null;
   for (const e of events) {
     const deliveryId = readDeliveryId(e.payload);
     switch (e.event_type) {
@@ -111,12 +112,14 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
         terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.STARTED:
+        startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
         // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
         // 必须继续等（下一次投递可能写 DONE）。与 STARTED 同级：把 queued 推到 started
         // （确实已经跑过一次了），绝不推向 failed——只有终态 FAILED 能判死。
+        startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.QUEUED:
@@ -125,9 +128,14 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
       case JUDGE_RUN_EVENTS.REQUEUED:
         // Enqueue precedes this marker, so a fast worker can terminalize first. Matching delivery
         // identity makes that marker causally old; a different id is a genuine later recovery.
-        if (deliveryId !== null && deliveryId !== terminalDeliveryId) {
+        if (
+          deliveryId !== null &&
+          deliveryId !== terminalDeliveryId &&
+          deliveryId !== startedDeliveryId
+        ) {
           status = 'queued';
           terminalDeliveryId = null;
+          startedDeliveryId = null;
         }
         break;
       default:

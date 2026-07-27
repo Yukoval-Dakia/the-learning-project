@@ -493,7 +493,6 @@ export async function findStalledJudgePendingAttempts(
 ): Promise<StalledPendingAttemptPage> {
   const backfilled = alias(event, 'backfilled_attempt');
   const terminalRun = alias(job_events, 'terminal_judge_run');
-  const recoveryMarker = alias(job_events, 'judge_recovery_marker');
   const rows = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
     .from(event)
@@ -510,10 +509,10 @@ export async function findStalledJudgePendingAttempts(
             .from(backfilled)
             .where(eq(backfilled.id, sql`${event.payload}->>'run_id'`)),
         ),
-        // Permanent/manual terminal decisions and spent recovery budgets must be filtered
-        // BEFORE LIMIT/OFFSET. Otherwise 200 immutable rows at the front of the window make
-        // every hourly sweep restart on the same dead prefix and permanently starve a later
-        // dispatch gap.
+        // Persisted terminal/manual decisions must be filtered BEFORE LIMIT/OFFSET. Otherwise
+        // 200 immutable rows at the front of the window make every hourly sweep restart on the
+        // same dead prefix and permanently starve a later dispatch gap. Exhausted recovery
+        // budgets remain visible once so the sweeper can persist their terminal decision too.
         notExists(
           db
             .select({ one: sql`1` })
@@ -526,17 +525,6 @@ export async function findStalledJudgePendingAttempts(
               ),
             ),
         ),
-        sql`(
-          select count(distinct coalesce(
-            ${recoveryMarker.payload}->>'attempt',
-            ${recoveryMarker.payload}->>'delivery_id',
-            ${recoveryMarker.payload}->>'job_id'
-          ))
-          from ${recoveryMarker}
-          where ${recoveryMarker.business_table} = ${JUDGE_RUN_TABLE}
-            and ${recoveryMarker.business_id} = ${event.payload}->>'run_id'
-            and ${recoveryMarker.event_type} = ${JUDGE_RUN_EVENTS.REQUEUED}
-        ) < ${JUDGE_MAX_RECOVERY_ATTEMPTS}`,
       ),
     )
     .orderBy(asc(event.created_at))

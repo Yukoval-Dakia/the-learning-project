@@ -6,13 +6,17 @@ import { newId } from '@/core/ids';
 import { event, job_events } from '@/db/schema';
 import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { judgeRunJobId, recordJudgePendingAttempt } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
 
 describe('GET /api/jobs/judge_run/[id]/status', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(async () => {
     await resetDb();
   });
@@ -47,7 +51,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     expect(body.status).toBe('queued');
     expect(body.result).toBeNull();
     expect(getJobById).toHaveBeenCalledWith('judge_run', jobId);
-    vi.restoreAllMocks();
   });
 
   it('still 404s when pg-boss has no such job either', async () => {
@@ -58,7 +61,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
 
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(404);
-    vi.restoreAllMocks();
   });
 
   // YUK-777 A2 — a RECORDED answer whose dispatch failed is a real run with no job and no
@@ -89,7 +91,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(200);
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
-    vi.restoreAllMocks();
   });
 
   it('reports failed once a pending run exhausts automatic recovery', async () => {
@@ -134,7 +135,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'failed' });
     // Liveness + recovery eligibility derive from the same pg-boss snapshot.
     expect(getJobById).toHaveBeenCalledTimes(1);
-    vi.restoreAllMocks();
   });
 
   it('keeps a recorded marker-less run queued when pg-boss liveness is unknown', async () => {
@@ -159,7 +159,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(200);
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
-    vi.restoreAllMocks();
   });
 
   it('still 404s for an unknown run once a DIFFERENT run has a pending attempt recorded', async () => {
@@ -186,7 +185,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
 
     const res = await GET(new Request('http://localhost'), { id: newId() });
     expect(res.status).toBe(404);
-    vi.restoreAllMocks();
   });
 
   // W5 #TumMo — existence is not liveness. `getJobById` returns a row for terminal states too,
@@ -203,7 +201,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
 
       const res = await GET(new Request('http://localhost'), { id: runId });
       expect(res.status).toBe(404);
-      vi.restoreAllMocks();
     },
   );
 
@@ -218,7 +215,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
       const res = await GET(new Request('http://localhost'), { id: runId });
       expect(res.status).toBe(200);
       expect(((await res.json()) as { status: string }).status).toBe('queued');
-      vi.restoreAllMocks();
     },
   );
 
@@ -300,7 +296,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     // writes it to neither event, so there is nothing to reconstruct. Persisting it is a W3
     // item (YUK-777) — inventing a default here would be worse than the gap.
     expect(body.result?.score_meaning).toBeUndefined();
-    vi.restoreAllMocks();
   });
 
   it('still 404s when neither job_events NOR a domain attempt event exist', async () => {
@@ -309,7 +304,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
     const res = await GET(new Request('http://localhost'), { id: newId() });
     expect(res.status).toBe(404);
-    vi.restoreAllMocks();
   });
 
   // W5 #TusVC — liveness applies to EVERY non-terminal run, not just marker-less ones. A run
@@ -331,7 +325,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { status: string }).status).toBe('failed');
-    vi.restoreAllMocks();
   });
 
   it('a STARTED run whose queue job is dead BUT which did persist reports the real verdict', async () => {
@@ -376,7 +369,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     };
     expect(body.status).toBe('done');
     expect(body.result?.coarse_outcome).toBe('correct');
-    vi.restoreAllMocks();
   });
 
   it('an UNREACHABLE pg-boss never upgrades a lookup blip into a verdict', async () => {
@@ -394,7 +386,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     // Reports what the events say — NOT `failed`, which would be a far worse lie than a
     // stale `started` when the truth is simply unknown.
     expect(((await res.json()) as { status: string }).status).toBe('started');
-    vi.restoreAllMocks();
   });
 
   it('queued run → 200 queued, result null', async () => {

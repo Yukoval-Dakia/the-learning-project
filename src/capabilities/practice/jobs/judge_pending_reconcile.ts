@@ -115,9 +115,13 @@ export async function reconcileStalledJudgeAttempts(
   };
   // Persist these only after the paged scan. Removing rows from the query's eligible set while
   // OFFSET is advancing would shift the remaining rows left and skip candidates in this sweep.
-  // Once stamped, the next hourly run excludes them in SQL, so even a >200 manual-only prefix
-  // drains instead of permanently hiding later dispatch gaps.
-  const newlyManual: Array<{ runId: string; pendingEventId: string }> = [];
+  // Once stamped, the next hourly run excludes them in SQL, so even a >200 manual/exhausted
+  // prefix drains instead of permanently hiding later dispatch gaps.
+  const newlyTerminal: Array<{
+    runId: string;
+    pendingEventId: string;
+    reason: 'queue_terminal_manual_only' | 'recovery_budget_exhausted';
+  }> = [];
 
   let offset = 0;
   while (report.reenqueued < RECONCILE_SCAN_LIMIT && report.scanned < rawScanLimit) {
@@ -150,6 +154,11 @@ export async function reconcileStalledJudgeAttempts(
         const priorRequeues = recovery.attempts;
         if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
           report.skippedExhausted += 1;
+          newlyTerminal.push({
+            runId,
+            pendingEventId: pending.pendingEventId,
+            reason: 'recovery_budget_exhausted',
+          });
           console.warn(
             `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
             { pending_event_id: pending.pendingEventId },
@@ -173,7 +182,11 @@ export async function reconcileStalledJudgeAttempts(
         }
         if (queue.eligibility === 'manual') {
           report.skippedTerminal += 1;
-          newlyManual.push({ runId, pendingEventId: pending.pendingEventId });
+          newlyTerminal.push({
+            runId,
+            pendingEventId: pending.pendingEventId,
+            reason: 'queue_terminal_manual_only',
+          });
           continue;
         }
         if (queue.eligibility !== 'eligible') {
@@ -225,15 +238,15 @@ export async function reconcileStalledJudgeAttempts(
     }
   }
 
-  for (const manual of newlyManual) {
+  for (const terminal of newlyTerminal) {
     try {
       await writeJobEvent(db, {
         business_table: JUDGE_RUN_TABLE,
-        business_id: manual.runId,
+        business_id: terminal.runId,
         event_type: JUDGE_RUN_EVENTS.FAILED,
         payload: {
-          reason: 'queue_terminal_manual_only',
-          pending_event_id: manual.pendingEventId,
+          reason: terminal.reason,
+          pending_event_id: terminal.pendingEventId,
           observed_at: now.toISOString(),
         },
       });
@@ -242,7 +255,7 @@ export async function reconcileStalledJudgeAttempts(
       // state transition explicitly instead of claiming the permanent manual decision landed.
       report.failed += 1;
       console.error(
-        `[judge_pending_reconcile] failed to persist manual-only terminal evidence for ${manual.runId}`,
+        `[judge_pending_reconcile] failed to persist terminal evidence for ${terminal.runId}`,
         err,
       );
     }

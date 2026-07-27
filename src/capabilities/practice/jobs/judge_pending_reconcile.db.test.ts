@@ -310,7 +310,7 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
   });
 
-  it('pages past a full batch of manual-only failures to recover a later dispatch gap', async () => {
+  it('excludes manual-only FAILED evidence before LIMIT so a later gap is recovered', async () => {
     for (let i = 0; i < RECONCILE_SCAN_LIMIT + 5; i++) {
       const seeded = await seedPendingAttempt({
         agoMs: RECONCILE_STALL_MS + 10 * HOUR + i,
@@ -420,11 +420,17 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
 
     // Budget spent: the sweeper stops paying for a run that has failed every fresh dispatch.
     expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
-      scanned: 0,
+      scanned: 1,
       reenqueued: 0,
-      skippedExhausted: 0,
+      skippedExhausted: 1,
     });
     expect(boss.send).toHaveBeenCalledTimes(MAX_RECOVERY_ATTEMPTS);
+    const terminal = await testDb()
+      .select()
+      .from(job_events)
+      .where(eq(job_events.business_id, runId));
+    expect(terminal.at(-1)?.event_type).toBe(JUDGE_RUN_EVENTS.FAILED);
+    expect(terminal.at(-1)?.payload).toMatchObject({ reason: 'recovery_budget_exhausted' });
 
     // Nothing was lost by stopping — the answer is still immutable evidence.
     const pending = await testDb()

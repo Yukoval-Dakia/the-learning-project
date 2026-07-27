@@ -74,6 +74,15 @@ describe('deriveJudgeRunStatus', () => {
 });
 
 describe('deriveJudgeRunStatus — REQUEUED recovery (YUK-777)', () => {
+  it('does not let a late marker rewind the same recovery delivery from started', () => {
+    expect(
+      deriveJudgeRunStatus([
+        ev(JUDGE_RUN_EVENTS.STARTED, 'recovery-1'),
+        ev(JUDGE_RUN_EVENTS.REQUEUED, 'recovery-1'),
+      ]),
+    ).toBe('started');
+  });
+
   it('does not let a late REQUEUED marker overwrite a terminal recovery outcome', () => {
     expect(
       deriveJudgeRunStatus([
