@@ -52,7 +52,6 @@ import type {
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
-import type { ConjectureProposalDraftT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
@@ -147,6 +146,9 @@ function scheduledEventId(prefix: 'trigger' | 'scan', executionId: string): stri
 }
 
 function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+  // preparedTopCells contains at most one entry per deterministic cell.key.
+  // Deliberately hash the stable input rather than non-deterministic model output
+  // so a retry cannot create a second event merely by citing a different subset.
   const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
   const digest = createHash('sha256')
     .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
@@ -486,10 +488,10 @@ export async function defaultLoadEvidenceImages(
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
 function buildConjectureProposalInput(
   cell: EnrichedEvidenceCell,
-  induced: InduceConjectureResult,
-  draft: ConjectureProposalDraftT,
+  induced: Extract<InduceConjectureResult, { outcome: 'proposal' }>,
   triggerEventId: string,
 ): WriteAiProposalInput {
+  const draft = induced.draft;
   // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
   // Unlike probe/scan bookkeeping, this is a durable, evidence-backed belief about the
   // learner that the memory layer should retain. writeAiProposal therefore receives no
@@ -745,6 +747,8 @@ export async function runResearchMeetingNightly(
   // Trigger + every successful cell result + scan commit together. A single
   // durable-write failure rolls the whole batch back, so retry-time pending
   // proposal dedup can never shrink the logical run into a partial scan.
+  // Each runTask call has already committed its own ai_task_runs + cost_ledger
+  // rows; this transaction governs business outcomes, not model-spend accounting.
   await runInTransactionFn(db, async (tx) => {
     await writeEventFn(tx, {
       id: triggerEventId,
@@ -795,10 +799,7 @@ export async function runResearchMeetingNightly(
           created_at: now,
         });
       } else {
-        await writeAiProposalFn(
-          tx,
-          buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
-        );
+        await writeAiProposalFn(tx, buildConjectureProposalInput(cell, induced, triggerEventId));
       }
     }
 
@@ -843,6 +844,8 @@ export async function runResearchMeetingNightly(
 export function buildResearchMeetingNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
+  // Capability jobs are mounted centrally with batchSize:1
+  // (register-capability-jobs.ts); one handler invocation owns exactly one job id.
   return async (jobs) => {
     try {
       const result = await runResearchMeetingNightly(db, {

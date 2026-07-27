@@ -79,7 +79,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { ai_task_runs, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
@@ -475,6 +475,12 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
       0,
     );
+    const costs = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'MindModelInductionTask'));
+    expect(costs).toHaveLength(RESEARCH_MEETING_SAMPLES);
+    expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
   });
 
   it('persists a real abstain event and creates no conjecture proposal', async () => {

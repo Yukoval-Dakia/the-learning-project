@@ -171,6 +171,14 @@ function compareLex(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function tallyReasons<T extends string>(reasons: T[]): Array<{ reasonCode: T; count: number }> {
+  const counts = new Map<T, number>();
+  for (const reason of reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([reasonCode, count]) => ({ reasonCode, count }))
+    .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode));
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -258,12 +266,7 @@ function chooseAbstainDraft(params: {
         .filter((eventId) => allowedEvidenceIds.has(eventId)),
     ),
   ];
-  const reasonTallies = [...new Set(params.reasonVotes)]
-    .map((reasonCode) => ({
-      reasonCode,
-      count: params.reasonVotes.filter((vote) => vote === reasonCode).length,
-    }))
-    .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode));
+  const reasonTallies = tallyReasons(params.reasonVotes);
   const reason =
     reasonTallies.length === 0 || reasonTallies[0].count === reasonTallies[1]?.count
       ? 'no_semantic_consensus'
@@ -274,12 +277,8 @@ function chooseAbstainDraft(params: {
       .map((draft) => draft.explanation_md)
       .filter((value): value is string => Boolean(value))
       .sort(compareLex)[0];
-  const dominantModelReason = [...new Set(params.abstains.map((draft) => draft.reason_code))]
-    .map((reasonCode) => ({
-      reasonCode,
-      count: params.abstains.filter((draft) => draft.reason_code === reasonCode).length,
-    }))
-    .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode))[0]?.reasonCode;
+  const dominantModelReason = tallyReasons(params.abstains.map((draft) => draft.reason_code))[0]
+    ?.reasonCode;
   const orchestratorExplanation: Partial<Record<ConjectureAbstainReasonT, string>> = {
     no_semantic_consensus: 'Requested samples did not reach a strict semantic majority.',
     invalid_output: 'Most samples did not satisfy the structured grounding contract.',
