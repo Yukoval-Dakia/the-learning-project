@@ -484,6 +484,50 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('ok');
   });
 
+  it('classifies invalid-output abstention as a failed cell and stalls an all-bad night', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'invalid_output' as const },
+          votes: { proposal: 0, abstain: 0, invalid: 3, failed: 0 },
+        };
+      }),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'failure',
+        payload: expect.objectContaining({ reason_code: 'invalid_output' }),
+      }),
+    );
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created + result.conjectures_abstained,
+        failed: result.cells_failed,
+      }),
+    ).toBe('stalled');
+  });
+
   it('reuses abstain event ids for one job retry but not for the next scheduled run', async () => {
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const commonDeps = {

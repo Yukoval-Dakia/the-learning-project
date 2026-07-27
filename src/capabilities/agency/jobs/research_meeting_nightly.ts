@@ -228,6 +228,13 @@ function buildCompletionEventInput(
   };
 }
 
+function isOperationalAbstain(result: InduceConjectureResult): boolean {
+  return (
+    result.outcome === 'abstain' &&
+    (result.draft.reason_code === 'invalid_output' || result.draft.reason_code === 'sample_failure')
+  );
+}
+
 export interface ResearchMeetingDeps {
   now?: () => Date;
   /**
@@ -819,12 +826,19 @@ export async function runResearchMeetingNightly(
           return { cell, induced: null, created: 0, abstained: 0, failed: 1, cost_usd: 0 };
         }
 
+        const operationalFailure = isOperationalAbstain(induced);
+        if (operationalFailure) {
+          await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
+        }
         return {
           cell,
           induced,
           created: induced.outcome === 'proposal' ? 1 : 0,
-          abstained: induced.outcome === 'abstain' ? 1 : 0,
-          failed: 0,
+          // Evidence-related abstentions and genuine semantic disagreement are
+          // successful fail-closed decisions. Invalid output/provider-majority
+          // reasons are operational failures and must make an all-bad night stall.
+          abstained: induced.outcome === 'abstain' && !operationalFailure ? 1 : 0,
+          failed: operationalFailure ? 1 : 0,
           cost_usd: induced.cost_usd,
         };
       },
@@ -889,7 +903,7 @@ export async function runResearchMeetingNightly(
           action: 'experimental:conjecture_abstained',
           subject_kind: 'mind_model',
           subject_id: cell.knowledge_id,
-          outcome: 'partial',
+          outcome: isOperationalAbstain(induced) ? 'failure' : 'partial',
           payload: {
             reason_code: induced.draft.reason_code,
             explanation_md: induced.draft.explanation_md ?? null,
