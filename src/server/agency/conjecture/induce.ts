@@ -34,6 +34,7 @@ import {
   type ConjectureAbstainReasonT,
   ConjectureDraft,
   type ConjectureDraftT,
+  type ConjectureModelAbstainDraftT,
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -240,7 +241,7 @@ function normalizeGroundedProposal(
 }
 
 function chooseAbstainDraft(params: {
-  abstains: ConjectureAbstainDraftT[];
+  abstains: ConjectureModelAbstainDraftT[];
   cells: EnrichedEvidenceCell[];
   /**
    * One reason vote per requested sample. Explicit abstentions contribute their
@@ -279,6 +280,18 @@ function chooseAbstainDraft(params: {
     ...(explanation ? { explanation_md: explanation } : {}),
     evidence_event_ids: citedEvidenceIds,
   };
+}
+
+function baseReasonVotes(
+  abstains: ConjectureModelAbstainDraftT[],
+  invalidSamples: number,
+  failedSamples: number,
+): ConjectureAbstainReasonT[] {
+  return [
+    ...abstains.map((draft) => draft.reason_code),
+    ...Array.from<ConjectureAbstainReasonT>({ length: invalidSamples }).fill('invalid_output'),
+    ...Array.from<ConjectureAbstainReasonT>({ length: failedSamples }).fill('sample_failure'),
+  ];
 }
 
 // YUK-538 — GroupSchema: structural output contract for ClaimGroupingTask.
@@ -394,7 +407,7 @@ export async function induceConjecture(
   // Run N samples on the Opus anthropic-sub lane (override; providers.ts exempts it
   // from the AI_PROVIDER_MODEL guard via ANTHROPIC_SUB_DEFAULT_MODEL).
   const proposals: ConjectureProposalDraftT[] = [];
-  const abstains: ConjectureAbstainDraftT[] = [];
+  const abstains: ConjectureModelAbstainDraftT[] = [];
   const taskRunIds: string[] = [];
   const sampleErrors: string[] = [];
   let invalidSamples = 0;
@@ -460,13 +473,7 @@ export async function induceConjecture(
       draft: chooseAbstainDraft({
         abstains,
         cells,
-        reasonVotes: [
-          ...abstains.map((draft) => draft.reason_code),
-          ...Array.from<ConjectureAbstainReasonT>({ length: invalidSamples }).fill(
-            'invalid_output',
-          ),
-          ...Array.from<ConjectureAbstainReasonT>({ length: failedSamples }).fill('sample_failure'),
-        ],
+        reasonVotes: baseReasonVotes(abstains, invalidSamples, failedSamples),
       }),
       confidence: 0,
       confidence_capped: false,
@@ -529,11 +536,7 @@ export async function induceConjecture(
         abstains,
         cells,
         reasonVotes: [
-          ...abstains.map((draft) => draft.reason_code),
-          ...Array.from<ConjectureAbstainReasonT>({ length: invalidSamples }).fill(
-            'invalid_output',
-          ),
-          ...Array.from<ConjectureAbstainReasonT>({ length: failedSamples }).fill('sample_failure'),
+          ...baseReasonVotes(abstains, invalidSamples, failedSamples),
           ...Array.from<ConjectureAbstainReasonT>({ length: proposals.length }).fill(
             'no_semantic_consensus',
           ),

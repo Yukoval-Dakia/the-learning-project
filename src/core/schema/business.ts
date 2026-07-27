@@ -391,11 +391,18 @@ export type VariantVerificationResultT = z.infer<typeof VariantVerificationResul
 // confidence itself is NOT in this schema: it is internal calibration only, NEVER
 // rendered as a number (Phase 0 anti-number rule), so it lives on the orchestrator's
 // return type, not the model-facing record.
-export const ConjectureAbstainReason = z.enum([
+/** Reasons the model itself is allowed to return in structured output. */
+export const ConjectureModelAbstainReason = z.enum([
   'insufficient_evidence',
   'conflicting_evidence',
   'no_grounded_claim',
   'no_discriminating_probe',
+]);
+export type ConjectureModelAbstainReasonT = z.infer<typeof ConjectureModelAbstainReason>;
+
+/** Model reasons plus conditions assigned only by the self-consistency orchestrator. */
+export const ConjectureAbstainReason = z.enum([
+  ...ConjectureModelAbstainReason.options,
   'no_semantic_consensus',
   'invalid_output',
   'sample_failure',
@@ -431,18 +438,24 @@ export const ConjectureProposalDraft = z.object({
   agreement_count: z.number().int().min(1).default(1),
 });
 
-export const ConjectureAbstainDraft = z.object({
+export const ConjectureModelAbstainDraft = z.object({
   kind: z.literal('abstain'),
-  reason_code: ConjectureAbstainReason,
+  reason_code: ConjectureModelAbstainReason,
   explanation_md: z.string().trim().min(1).max(500).optional(),
   evidence_event_ids: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
 });
 
+/** Final fail-closed decision; may carry an orchestrator-assigned reason. */
+export const ConjectureAbstainDraft = ConjectureModelAbstainDraft.extend({
+  reason_code: ConjectureAbstainReason,
+});
+
 export const ConjectureDraft = z.discriminatedUnion('kind', [
   ConjectureProposalDraft,
-  ConjectureAbstainDraft,
+  ConjectureModelAbstainDraft,
 ]);
 export type ConjectureProposalDraftT = z.infer<typeof ConjectureProposalDraft>;
+export type ConjectureModelAbstainDraftT = z.infer<typeof ConjectureModelAbstainDraft>;
 export type ConjectureAbstainDraftT = z.infer<typeof ConjectureAbstainDraft>;
 export type ConjectureDraftT = z.infer<typeof ConjectureDraft>;
 

@@ -1,4 +1,4 @@
-# 当前 handoff — 2026-07-28
+# 当前 handoff — 2026-07-27
 
 ## Active line
 
@@ -28,7 +28,7 @@
 
 ## 下一步
 
-1. 提交、开 PR、独立 review + CI，关闭 YUK-799/YUK-800。
+1. 完成 PR #1089 独立 review + CI，合并并关闭 YUK-799/YUK-800。
 2. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
 3. 下一 slice：YUK-804 attempt-time snapshot，再做 YUK-787/795 二次独立 probe 与
    target-error-aware Judge；历史 v1 不批量重解释。

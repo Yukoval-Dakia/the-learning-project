@@ -390,6 +390,25 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('ok');
   });
 
+  it('uses a deterministic first-write-wins abstain event id across job replays', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeEventFn,
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+    await runResearchMeetingNightly({} as never, deps);
+
+    const abstainEventIds = writeEventFn.mock.calls
+      .map((call) => call[1])
+      .filter((input) => input.action === 'experimental:conjecture_abstained')
+      .map((input) => input.id);
+    expect(abstainEventIds).toHaveLength(2);
+    expect(new Set(abstainEventIds).size).toBe(1);
+  });
+
   it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => {

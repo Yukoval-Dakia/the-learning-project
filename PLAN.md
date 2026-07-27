@@ -2,10 +2,8 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
->
-> 更新于：2026-07-28
-
-> **【更新 2026-07-28 · Architecture exit 已通过，Grounding 产品阶段开始】**
+> 更新于：2026-07-27
+> **【更新 2026-07-27 · Architecture exit 已通过，Grounding 产品阶段开始】**
 > Architecture PR #1088 已合并为 `main@6b1beda6`；完整 exit gate 与 CI 通过。
 > Grounding 项目已转 In Progress，严格按「真实数据闸门 → 猜想证据 → 干预准备 →
 > 延迟/迁移结算 → canary」推进。
@@ -27,10 +25,14 @@
   - unit：505 files passed / 4 skipped；5759 passed / 33 skipped。
   - DB：387 files；4189 passed / 9 skipped / 1 todo。
   - migration 26/26；typecheck、lint、build、boundary / structured-judge audits 全绿。
+- **在飞**
+  - Architecture PR #1088 已合并；Architecture 项目 Completed。
+  - Product PR #1089 正在独立 review + CI；YUK-799/YUK-800 In Progress。
+  - Product branch/worktree 如上；主工作树不在本线写入。
 
 ## NEXT
 
-1. 提交本 slice，开 PR，完成独立 review + CI；合并并关闭 YUK-799/YUK-800。
+1. 完成 PR #1089 独立 review + CI；合并并关闭 YUK-799/YUK-800。
 2. 猜想证据剩余顺序：
    - YUK-804：所有新 probe attempt 持久化不可变题目快照；
    - YUK-787/795：单题 Judge 拆分答题正确性与目标错误复现；首个反证只
@@ -54,9 +56,3 @@
   claim/probe 错配、严重事实错误均为 0。
 - **auto-intervention 扩大** ← 单 owner/cohort 10 次 canary 全部事后审阅，红线为 0。
 - **真实模型验收** ← owner 数据与 anthropic-sub 运行凭据；不得用 mock 代替。
-
-## 在飞（PR / workflow / worktree）
-
-- Architecture PR #1088 已合并；Architecture 项目 Completed。
-- Product branch/worktree 如 NOW；YUK-799/YUK-800 In Progress，尚未开 PR。
-- 主工作树不在本线写入。

@@ -1700,12 +1700,12 @@ export const tasks = {
   // (induceConjecture), which calls this task N times on the Opus anthropic-sub OAuth
   // lane via per-call `override` and tallies agreement — so this registry default stays
   // mimo (registry.ts:12-16 forbids anthropic-sub as a defaultProvider; tests never
-  // need the OAuth token). Single structured-output call, no tool loop (mirrors
-  // GoalScopeTask / MemoryBriefTask).
+  // need the OAuth token). Bounded structured-output run: at most two turns and
+  // no tools (mirrors GoalScopeTask / MemoryBriefTask).
   MindModelInductionTask: {
     kind: 'MindModelInductionTask',
     description:
-      'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize its single discriminating probe + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Single structured-output call (no tool loop). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
+      'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize its single discriminating probe + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Bounded structured-output run (at most two turns, no tools). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     // YUK-786: 120s (was 60s). MEASURED, not guessed — a 12-cell real-Opus run on

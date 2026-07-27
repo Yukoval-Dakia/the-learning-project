@@ -25,14 +25,16 @@
 // Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
 // rethrow so pg-boss retries. Candidate-local grounding/image failures refill from
-// lower salience; the per-cell LLM half is swallow-safe (one cell's failure logs a
-// retryable AI ledger row and continues; partial progress is fine).
+// lower salience; per-cell induction failures are swallow-safe (one cell's failure
+// logs a retryable AI ledger row and continues; partial progress is fine), while
+// durable write failures escape as job-level infrastructure faults.
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
 // accepts/edits/rejects in the inbox; scoring + label flips are DEFERRED (PR-2 /
 // ADR-0046). The proposal only SNAPSHOTS predicted_p (the claim's bet) +
 // baseline_p_at_induction (the number to beat); it does not move any number.
 
+import { createHash } from 'node:crypto';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
@@ -135,6 +137,15 @@ type LoadEvidenceImagesFn = (
 interface PreparedConjectureCell {
   cell: EnrichedEvidenceCell;
   evidenceImages: LoadedConjectureEvidenceImage[];
+}
+
+function conjectureAbstentionEventId(cell: EnrichedEvidenceCell): string {
+  const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
+  const digest = createHash('sha256')
+    .update(`${cell.key}\0${evidenceKey}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `conjecture_abstained_${digest}`;
 }
 
 export interface ResearchMeetingDeps {
@@ -705,13 +716,15 @@ export async function runResearchMeetingNightly(
           return { created: 0, abstained: 0, failed: 1, cost_usd: 0 };
         }
 
-        // Count the Opus induction spend immediately — it was incurred regardless of
-        // whether the durable write below succeeds (OCR: don't lose cost on a write throw).
-        // These writes intentionally live outside the induction catch: a DB/outbox fault
-        // is a retryable job failure, not a MindModelInductionTask failure.
+        // The task-run rows already retain the incurred Opus spend. These writes
+        // intentionally live outside the induction catch: a DB/outbox fault is a
+        // retryable job failure, not a MindModelInductionTask failure. A failed job
+        // has no aggregate result/scan; its retry re-incurs and re-reports that total.
         if (induced.outcome === 'abstain') {
           await writeEventFn(db, {
-            id: `conjecture_abstained_${newId()}`,
+            // Same grounded input produces the same first-write-wins event across
+            // pg-boss retries; changed evidence yields a new audit record.
+            id: conjectureAbstentionEventId(cell),
             actor_kind: 'agent',
             actor_ref: RESEARCH_MEETING_ACTOR,
             action: 'experimental:conjecture_abstained',

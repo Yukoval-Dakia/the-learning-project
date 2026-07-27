@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ConjectureDraft, LearningItemOpenStatus, LearningItemStatus } from './business';
+import {
+  ConjectureAbstainDraft,
+  ConjectureDraft,
+  LearningItemOpenStatus,
+  LearningItemStatus,
+} from './business';
 
 describe('LearningItemStatus', () => {
   it('keeps practice/supply open statuses inside the canonical lifecycle enum', () => {
@@ -58,13 +63,13 @@ describe('ConjectureDraft', () => {
     });
   });
 
-  it('accepts the orchestrator sample-failure reason without fabricating a claim', () => {
-    expect(
-      ConjectureDraft.parse({
-        kind: 'abstain',
-        reason_code: 'sample_failure',
-      }),
-    ).toEqual({
+  it('keeps orchestration-only reasons out of model output while accepting the final decision', () => {
+    const sampleFailure = {
+      kind: 'abstain' as const,
+      reason_code: 'sample_failure' as const,
+    };
+    expect(ConjectureDraft.safeParse(sampleFailure).success).toBe(false);
+    expect(ConjectureAbstainDraft.parse(sampleFailure)).toEqual({
       kind: 'abstain',
       reason_code: 'sample_failure',
       evidence_event_ids: [],
