@@ -418,7 +418,26 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     }
     expect(boss.send).toHaveBeenCalledTimes(MAX_RECOVERY_ATTEMPTS);
 
-    // Budget spent: the sweeper stops paying for a run that has failed every fresh dispatch.
+    // Budget spent does not pre-empt the final delivery while pg-boss still says it can finish.
+    const latestRecoveryId = boss.send.mock.calls.at(-1)?.[2]?.id;
+    boss.getJobById.mockImplementation(async (_queue, id) =>
+      id === latestRecoveryId ? ({ id, state: 'active' } as JobWithMetadata) : null,
+    );
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      scanned: 1,
+      reenqueued: 0,
+      skippedLive: 1,
+      skippedExhausted: 0,
+    });
+    expect(
+      (await testDb().select().from(job_events).where(eq(job_events.business_id, runId))).some(
+        (row) => row.event_type === JUDGE_RUN_EVENTS.FAILED,
+      ),
+    ).toBe(false);
+
+    // Once that delivery is dead, the sweeper stops paying for a run that exhausted every fresh
+    // dispatch and persists the manual-only decision.
+    boss.getJobById.mockResolvedValue(null as JobWithMetadata | null);
     expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
       scanned: 1,
       reenqueued: 0,

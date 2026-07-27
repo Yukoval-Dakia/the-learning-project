@@ -152,20 +152,6 @@ export async function reconcileStalledJudgeAttempts(
         // sweep can duplicate a marker for the same deterministic delivery without buying another
         // judge call.
         const priorRequeues = recovery.attempts;
-        if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
-          report.skippedExhausted += 1;
-          newlyTerminal.push({
-            runId,
-            pendingEventId: pending.pendingEventId,
-            reason: 'recovery_budget_exhausted',
-          });
-          console.warn(
-            `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
-            { pending_event_id: pending.pendingEventId },
-          );
-          continue;
-        }
-
         const recoveryJobId = judgeRecoveryJobId(runId, priorRequeues + 1);
         let queue = await inspectJudgeQueue(runId, {
           ...(deps.boss ? { boss: deps.boss } : {}),
@@ -191,6 +177,23 @@ export async function reconcileStalledJudgeAttempts(
         }
         if (queue.eligibility !== 'eligible') {
           report.skippedLive += 1;
+          continue;
+        }
+
+        // The budget limits creation of another delivery; it does not revoke the final delivery
+        // while that job can still finish. Queue liveness above is authoritative, so only stamp a
+        // terminal manual decision after the latest recovery has actually stopped.
+        if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
+          report.skippedExhausted += 1;
+          newlyTerminal.push({
+            runId,
+            pendingEventId: pending.pendingEventId,
+            reason: 'recovery_budget_exhausted',
+          });
+          console.warn(
+            `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
+            { pending_event_id: pending.pendingEventId },
+          );
           continue;
         }
 
