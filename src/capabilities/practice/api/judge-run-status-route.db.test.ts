@@ -3,15 +3,20 @@
 // queued; a done run → 200 done with the structured verdict payload (#11).
 
 import { newId } from '@/core/ids';
-import { event } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import * as bossClient from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { judgeRunJobId, recordJudgePendingAttempt } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { GET } from './judge-run-status-route';
 
 describe('GET /api/jobs/judge_run/[id]/status', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(async () => {
     await resetDb();
   });
@@ -30,9 +35,12 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
   // worker-outage scenario the durable lane exists to cover.
   it('a marker-less run that pg-boss still holds reports queued, not 404', async () => {
     const runId = newId();
-    // The run_id IS the pg-boss job id (SendOptions.id at enqueue), so the route resolves it
-    // by primary key. Stub the boss client the route uses.
-    const getJobById = vi.fn().mockResolvedValue({ id: runId, state: 'created' });
+    // YUK-777 — the job id is DERIVED from the run handle, not equal to it: pg-boss job ids
+    // are uuid columns and run handles are cuid2s, so the original `{ id: runId }` would have
+    // thrown against real pg-boss. This assertion used to pass only because the fake accepted
+    // any string. The route re-derives the same uuid, so the lookup is still a PK hit.
+    const jobId = judgeRunJobId(runId);
+    const getJobById = vi.fn().mockResolvedValue({ id: jobId, state: 'created' });
     vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
       getJobById,
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
@@ -42,8 +50,7 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const body = (await res.json()) as { status: string; result: unknown };
     expect(body.status).toBe('queued');
     expect(body.result).toBeNull();
-    expect(getJobById).toHaveBeenCalledWith('judge_run', runId);
-    vi.restoreAllMocks();
+    expect(getJobById).toHaveBeenCalledWith('judge_run', jobId);
   });
 
   it('still 404s when pg-boss has no such job either', async () => {
@@ -54,7 +61,130 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
 
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(404);
-    vi.restoreAllMocks();
+  });
+
+  // YUK-777 A2 — a RECORDED answer whose dispatch failed is a real run with no job and no
+  // job_events. Both pre-existing last-resort answers were wrong for it: 404 says "no such
+  // run", `failed` says "this will never be judged". `judge_pending_reconcile` will pick it up,
+  // so the honest answer is `queued`.
+  it('reports queued for a run with no job and no events but a RECORDED pending attempt', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: { kind: 'short_answer', prompt_md: 'p' },
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+  });
+
+  it('reports failed once a pending run exhausts automatic recovery', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    await testDb()
+      .insert(job_events)
+      .values([
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { job_id: newId() },
+        },
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { job_id: newId() },
+        },
+      ]);
+    const getJobById = vi.fn().mockResolvedValue(null);
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById,
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'failed' });
+    // Liveness + recovery eligibility derive from the same pg-boss snapshot.
+    expect(getJobById).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a recorded marker-less run queued when pg-boss liveness is unknown', async () => {
+    const runId = newId();
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId,
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: {},
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockRejectedValue(new Error('temporary lookup failure'));
+
+    const res = await GET(new Request('http://localhost'), { id: runId });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { status: string }).toMatchObject({ status: 'queued' });
+  });
+
+  it('still 404s for an unknown run once a DIFFERENT run has a pending attempt recorded', async () => {
+    // Guards the containment lookup: matching on `payload @> {run_id}` must not degrade into
+    // "any pending attempt exists", which would turn every unknown id into a 200.
+    const questionId = `q_${newId()}`;
+    await recordJudgePendingAttempt(testDb(), {
+      runId: newId(),
+      sessionId: null,
+      questionId,
+      knowledgeIds: ['k1'],
+      submit: {
+        body: { question_id: questionId, rating: 'good', response_md: 'ans', auto_rate: true },
+        question_id: questionId,
+        subject_profile: { subject: 'wenyan' },
+        question_snapshot: { kind: 'short_answer', prompt_md: 'p' },
+        submitted_at: new Date().toISOString(),
+      },
+      submittedAt: new Date(),
+    });
+    vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
+      getJobById: vi.fn().mockResolvedValue(null),
+    } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
+
+    const res = await GET(new Request('http://localhost'), { id: newId() });
+    expect(res.status).toBe(404);
   });
 
   // W5 #TumMo — existence is not liveness. `getJobById` returns a row for terminal states too,
@@ -71,7 +201,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
 
       const res = await GET(new Request('http://localhost'), { id: runId });
       expect(res.status).toBe(404);
-      vi.restoreAllMocks();
     },
   );
 
@@ -86,7 +215,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
       const res = await GET(new Request('http://localhost'), { id: runId });
       expect(res.status).toBe(200);
       expect(((await res.json()) as { status: string }).status).toBe('queued');
-      vi.restoreAllMocks();
     },
   );
 
@@ -168,7 +296,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     // writes it to neither event, so there is nothing to reconstruct. Persisting it is a W3
     // item (YUK-777) — inventing a default here would be worse than the gap.
     expect(body.result?.score_meaning).toBeUndefined();
-    vi.restoreAllMocks();
   });
 
   it('still 404s when neither job_events NOR a domain attempt event exist', async () => {
@@ -177,7 +304,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
     const res = await GET(new Request('http://localhost'), { id: newId() });
     expect(res.status).toBe(404);
-    vi.restoreAllMocks();
   });
 
   // W5 #TusVC — liveness applies to EVERY non-terminal run, not just marker-less ones. A run
@@ -199,7 +325,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { status: string }).status).toBe('failed');
-    vi.restoreAllMocks();
   });
 
   it('a STARTED run whose queue job is dead BUT which did persist reports the real verdict', async () => {
@@ -244,7 +369,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     };
     expect(body.status).toBe('done');
     expect(body.result?.coarse_outcome).toBe('correct');
-    vi.restoreAllMocks();
   });
 
   it('an UNREACHABLE pg-boss never upgrades a lookup blip into a verdict', async () => {
@@ -262,7 +386,6 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     // Reports what the events say — NOT `failed`, which would be a far worse lie than a
     // stale `started` when the truth is simply unknown.
     expect(((await res.json()) as { status: string }).status).toBe('started');
-    vi.restoreAllMocks();
   });
 
   it('queued run → 200 queued, result null', async () => {

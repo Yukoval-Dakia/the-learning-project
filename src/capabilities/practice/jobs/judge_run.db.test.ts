@@ -7,15 +7,25 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
-import { event, job_events, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  job_events,
+  knowledge,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { freezeQuestionForJudge } from '../server/judge-run-payload';
-import { terminalJudgeRunResult } from '../server/judge-run-status';
-import { deriveJudgeRunStatus } from '../server/judge-run-status';
+import {
+  JUDGE_RUN_EVENTS,
+  deriveJudgeRunStatus,
+  terminalJudgeRunResult,
+} from '../server/judge-run-status';
 import {
   type JudgeRunDeps,
   type JudgeRunJobData,
@@ -146,6 +156,35 @@ describe('runJudgeRun — backfill', () => {
     expect(donePayload?.evidence_json).toBeDefined();
   });
 
+  it('threads the frozen KC-domain map through the worker after a knowledge reparent', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: 'K1',
+      domain: 'math-before',
+      parent_id: null,
+      created_at: now,
+      updated_at: now,
+    });
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const data = jobData(newId(), questionId);
+    data.submit.ability_global_by_knowledge_id = { k1: 'math-before' };
+
+    await db
+      .update(knowledge)
+      .set({ domain: 'math-after', updated_at: new Date() })
+      .where(eq(knowledge.id, 'k1'));
+    await runJudgeRun(db, data, META0, { judgeSubmitFn: mockJudgeSubmit() });
+
+    const globals = await db
+      .select({ id: mastery_state.subject_id })
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'ability_global'));
+    expect(globals.map((row) => row.id)).toEqual(['math-before']);
+  });
+
   it('idempotent re-delivery after commit does not double-write (skips, keeps one attempt + one judge)', async () => {
     const db = testDb();
     const questionId = `q_${newId()}`;
@@ -189,7 +228,12 @@ describe('runJudgeRun — backfill', () => {
 
     // retryCount 0 < retryLimit 2 → pg-boss will deliver this job again.
     await expect(
-      runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: boom }),
+      runJudgeRun(
+        db,
+        jobData(runId, questionId),
+        { ...META0, deliveryId: 'delivery-retry-1' },
+        { judgeSubmitFn: boom },
+      ),
     ).rejects.toThrow('endpoint down');
 
     // no attempt persisted (backfill never reached).
@@ -203,6 +247,9 @@ describe('runJudgeRun — backfill', () => {
     });
     // The failure IS recorded (observable, SSE can render "retrying")…
     expect(events.some((e) => e.event_type === 'judge_run.attempt_failed')).toBe(true);
+    expect(events.find((e) => e.event_type === 'judge_run.attempt_failed')?.payload).toMatchObject({
+      delivery_id: 'delivery-retry-1',
+    });
     // …but NOT as a terminal event: no FAILED, and the derived status keeps clients waiting.
     expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
     expect(deriveJudgeRunStatus(events)).toBe('started');
@@ -301,7 +348,7 @@ describe('runJudgeRun — backfill', () => {
     const second = await runJudgeRun(
       db,
       jobData(runId, questionId),
-      { retryCount: 1, retryLimit: 2 },
+      { retryCount: 1, retryLimit: 2, deliveryId: 'recovery-delivery-1' },
       {
         judgeSubmitFn: mockJudgeSubmit(),
       },
@@ -317,6 +364,9 @@ describe('runJudgeRun — backfill', () => {
     });
     const result = terminalJudgeRunResult(events) as { coarse_outcome?: string } | null;
     expect(result?.coarse_outcome).toBe('correct');
+    expect(
+      events.filter((row) => row.event_type === JUDGE_RUN_EVENTS.DONE).at(-1)?.payload,
+    ).toMatchObject({ delivery_id: 'recovery-delivery-1' });
   });
 
   it('malformed payload (invalid submitted_at) is non-retryable — FAILED, no rethrow, no attempt', async () => {

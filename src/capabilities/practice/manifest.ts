@@ -116,6 +116,10 @@ export const practiceCapability = defineCapability({
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
       'experimental:mastery_progress',
+      // YUK-777 A2 — durable judge 面「作答已录、判词未落」的不可变证据。写者只有 submit
+      // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
+      // late-arrival guard（server/judge-run-dispatch.ts）。
+      'experimental:judge_pending_attempt',
     ],
   },
   api: {
@@ -734,6 +738,21 @@ export const practiceCapability = defineCapability({
       // 注册留 handlers.ts 渐缩簿：形态要 includeMetadata:true 读 retryCount 驱动
       // 跨 provider lane 决策（D9），非注册器统一配方——此处无 load 纯归属元数据。
       { name: 'judge_run', queue: 'llm' },
+      // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
+      // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
+      // LLM 调用（付费发生在 judge_run），故 fast 层。
+      {
+        name: 'judge_pending_reconcile',
+        schedule: {
+          cron: '50 * * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'judge_pending_reconcile-sweep',
+          singletonSeconds: 60 * 60,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/judge_pending_reconcile').then((m) => m.buildJudgePendingReconcileHandler),
+      },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
       // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。

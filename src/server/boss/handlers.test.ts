@@ -66,6 +66,16 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       (c) => c[0] as string,
     );
     expect(scheduledNames).not.toContain('knowledge_maintenance_nightly');
+    expect(boss.schedule).toHaveBeenCalledWith(
+      'judge_pending_reconcile',
+      '50 * * * *',
+      {},
+      {
+        tz: 'Asia/Shanghai',
+        singletonKey: 'judge_pending_reconcile-sweep',
+        singletonSeconds: 3_600,
+      },
+    );
   });
 
   // YUK-237: every LLM/agent producer queue gets a non-default active expiry

@@ -1,6 +1,7 @@
 # Durable judge as the main path (YUK-594)
 
-Status: **RULED — owner ballot closed 2026-07-24 (D1-D9 decided, see §5).** Refs YUK-594. Docs-only; no production code in this PR.
+Status: **RULED — owner ballot closed 2026-07-24 (D1-D9 decided, see §5).** Refs YUK-594, YUK-777, YUK-800.
+W1/W2 shipped in PR #1068 behind `JUDGE_DURABLE_ENABLED=false`; W3-core (record-unjudged, reconcile sweeper, late-arrival guard) in YUK-777. **§4b records where the delivered system differs from the text above — read it before trusting §3.**
 
 Author pass: Fable. Grounded against `main` @ `90d605e2` (all `file:line` below verified on that base; drift from the ticket triage is called out inline).
 
@@ -192,7 +193,7 @@ interface JudgeRunJobData {
 
 Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chokepoint the sync path uses, so route resolution / narrowing / capability-ref version pin / telemetry are unchanged. **On success:** `writeJobEvent(tx, {business_table:'judge_run', business_id:run_id, event_type:'judge_run.done', payload: JudgeResultV2 + telemetry})` **and** — for the four persisting faces — perform the deferred FSRS/mistake/probe_result write in the same tx (atomic verdict + state). The `advice` face writes only the `judge_run.done` job_event (no domain/FSRS write).
 
-**On failure — write the failed trace in the `catch`, do NOT rely on DLQ to write it.** Grounded correction: under this repo's pg-boss config, a re-throw only schedules a delayed redelivery; when retries exhaust and the job lands in `<queue>_dlq`, **the handler is not invoked again**, so no terminal `job_event` gets written from the DLQ landing. The established convention is `note_generate.ts:293-305`: the handler's own `catch` writes the failed status in its own best-effort tx **before re-throwing** ("Mark failed so UI doesn't sit on 'pending' forever; pg-boss will still retry per policy because we rethrow"). So `judge_run` must, in its `catch`: (1) `writeJobEvent(..., event_type:'judge_run.attempt_failed', payload:{attempt, error, next: 'redelivery'|'dlq'})` in a best-effort tx (a cleanup throw is logged, never masks the original error), then (2) re-throw so pg-boss redelivers per `JOB_RETRY_LIMIT`. **Terminal-failed semantics:** the status reducer treats the latest `attempt_failed` as the current failed state (`deriveJudgeRunStatus`); a later successful redelivery writes `judge_run.done` which supersedes it (last-writer-wins, same as the copilot reducer). On DLQ exhaustion the last `attempt_failed` trace IS the terminal record — nothing further runs, which is exactly why the trace must be written each attempt, not deferred to the DLQ. (The handler may distinguish the final attempt via pg-boss's retry-count on the job to stamp `next:'dlq'`, but must not depend on any post-DLQ callback.)
+**On failure — write the failed trace in the `catch`, do NOT rely on DLQ to write it.** Grounded correction: under this repo's pg-boss config, a re-throw only schedules a delayed redelivery; when retries exhaust and the job lands in `<queue>_dlq`, **the handler is not invoked again**, so no terminal `job_event` gets written from the DLQ landing. The established convention is `note_generate.ts:293-305`: the handler's own `catch` writes the failed status in its own best-effort tx **before re-throwing** ("Mark failed so UI doesn't sit on 'pending' forever; pg-boss will still retry per policy because we rethrow"). So `judge_run` must, in its `catch`: (1) `writeJobEvent(..., event_type:'judge_run.attempt_failed', payload:{attempt, error, next: 'redelivery'|'dlq'})` in a best-effort tx (a cleanup throw is logged, never masks the original error), then (2) re-throw so pg-boss redelivers per `JOB_RETRY_LIMIT`. **Terminal-failed semantics (CORRECTED — W4 #TtWiB, ratified YUK-777 D1).** The claim that the reducer treats the latest `attempt_failed` as a failed state is **overturned**: `attempt_failed` is explicitly **NON-terminal**. It records that one delivery failed while redelivery budget remains, and `deriveJudgeRunStatus` keeps such a run at `started` — telling a client the run was dead while pg-boss had a redelivery queued that would likely write `done` was the exact lie that finding removed. Only `done` and `failed` terminate a run, and the handler writes the terminal `failed` itself on the last delivery (non-retryable, or budget spent). On DLQ exhaustion that terminal `failed` IS the record — nothing further runs, which is exactly why the trace must be written each attempt, not deferred to the DLQ. (The handler may distinguish the final attempt via pg-boss's retry-count on the job to stamp `next:'dlq'`, but must not depend on any post-DLQ callback.)
 
 ### 3.2 Idempotency
 
@@ -200,7 +201,8 @@ Handler wraps `JudgeInvoker.invoke()` (`invoker.ts:104`) — the exact same chok
 
 ### 3.3 job_events, kill switch, budget
 
-- **Progress events:** `judge_run.queued|started|running|done|failed` via `writeJobEvent`. Append `'judge_run'` to `JOB_EVENT_KIND_SET` (job-events.ts:49) or the SSE stream 400s.
+- **Progress events (CORRECTED — YUK-777 D2).** The vocabulary written here as `queued|started|running|done|failed` contradicted §3.1 and never matched the implementation. The **actual** event vocabulary is `judge_run.queued | started | attempt_failed | requeued | done | failed` — there is **no `running`** (a judge is one stateless call, with no tool-loop phase to report), and `attempt_failed` / `requeued` are non-terminal traces the reducer maps back onto `started` / `queued`. Note the distinction the vocabulary encodes: EVENTS ≠ STATES. The status enum stays `queued | started | done | failed` (`JudgeRunStatus`). Written via `writeJobEvent`; `'judge_run'` must be in `JOB_EVENT_KIND_SET` (job-events.ts) or the SSE stream 400s.
+  - `judge_run.requeued` (YUK-777 A3) is written by the reconcile sweeper when it re-dispatches a stalled unjudged attempt. It is the ONE transition that may leave a terminal state: it returns the run to `queued`, which is honest — a fresh delivery really is in flight — and its `payload.attempt` is what bounds automatic recovery.
 - **Queue config:** register `judge_run` as an **LLM-tier** queue (`EXPIRE_LLM = 3_600` / 1h; single ~30–90s LLM call, unlike copilot's AGENT tier). DLQ `judge_run_dlq` via `jobQueueOpts` (`queue-config.ts`). Retry policy inherited: `JOB_RETRY_LIMIT = 2`, `JOB_RETRY_DELAY_SECONDS = 30`, `retryBackoff: true`.
 - **Stuck-run guard:** any internal timeout must stay `< STUCK_RUN_THRESHOLD_MS = 3_600_000` (1h, `ai_task_run_reconcile.ts:47`) so the stuck-in-running sweeper doesn't false-converge a live run — same static constraint copilot's `DURABLE_BUDGET` respects.
 - **Kill switch:** an env flag `JUDGE_DURABLE_ENABLED` (per the repo's `*_ENABLED` ledger convention, reconciled by `pnpm audit:flags`) gates the enqueue path so we can dark-ship and instantly fall back to sync if the durable lane misbehaves. *This is the fallback lever referenced in §4.*
@@ -251,6 +253,87 @@ These four are correctness requirements surfaced in review — resolved here wit
 | **W4 — remove the sync fast path** (RULED D8) | Delete the synchronous judge invoke branch at all five caller sites + the `JUDGE_DURABLE_ENABLED` gate. **Gated on the D8 validation criterion**, not folded into W2/W3. | Submit face ran fully async N=7–14 consecutive days with `judge_run_dlq` depth 0, zero flag-flip reversions, and ≥1 production endpoint-down soak with cross-provider recovery observed (§5 D8). Removal PR references YUK-594 as an owner-instructed deletion. |
 
 **Sync fast-path disposition (RULED D8 — owner-instructed deletion):** the flag-gated sync fallback (`JUDGE_DURABLE_ENABLED=false` reverts any face to synchronous judging) is **transitional only** — an escape hatch for W2/W3 while async proves out. Owner ballot (2026-07-24) overrode the "keep as permanent fallback" recommendation: once async is validated (D8 criterion), the sync path is **removed outright** in W4. This is the explicit locked-decision exception to the CLAUDE.md "demote, don't delete" product principle — owner-instructed, so it does not violate the pre-AI-feature protection. Tone owner set: aggressive and clean, no over-engineering hedge. The sync path is a temporary bridge, not a keeper.
+
+---
+
+## 4b. W3-core as delivered (YUK-777)
+
+W1/W2 (PR #1068) shipped behind `JUDGE_DURABLE_ENABLED=false`. The **structural** half of W3 —
+the part that had to land before the flag could ever be flipped — is now in. What changed
+against the design as written above:
+
+### The dispatch order is now evidence-first (A2, RULED D3 finally honoured)
+
+W1/W2 diverged from D3: the worker reused `persistSubmit` wholesale and wrote the attempt in a
+single already-judged transaction, so **between the 202 and a successful backfill the learner's
+answer existed only inside the pg-boss payload**. A run whose deliveries all failed into
+`judge_run_dlq`, or whose question was deleted before pickup, lost that answer permanently —
+absent from the domain log, with no pending attempt for §3.6b's sweeper to find.
+
+Dispatch is now: `checkRateLimit → experimental:judge_pending_attempt event → boss.send →
+queued marker → 202`. The pending-attempt event is immutable evidence carrying the frozen
+judge input verbatim, so a recovered run re-judges the profile and question face the learner
+actually answered (D5 survives recovery).
+
+Two consequences worth stating because they change behaviour visible to callers:
+
+- **Admission is settled before the evidence write.** A 429 must leave no pending attempt
+  behind, or the sweeper would judge it minutes later and quietly convert every refusal into a
+  deferral.
+- **A failed `boss.send` now returns 202, not 5xx.** The answer is recorded and the sweeper
+  will dispatch it, so a failure response would be false — and would push the learner to
+  answer again, minting the duplicate attempt there is still no idempotency key to collapse.
+
+Deliberately NOT `action='attempt'`: that action requires a judged `outcome`, and
+`knowledge_mastery` / `kt_estimate_nightly` / `personalized-difficulty` all aggregate
+`action IN ('attempt','review')`, so reusing it would either invent a verdict or double-count
+the answer once the backfill writes its `review` event.
+
+### The sweeper (A3)
+
+`judge_pending_reconcile` (practice manifest, hourly) scans the **domain log** for
+pending-attempt rows with no `review` event at `id = run_id`, and re-dispatches them through
+the same rate-limited `enqueueJudgeRun` face the submit route uses. Bounded three ways: per
+sweep, per run (`judge_run.requeued` markers), and per age. Recovery re-enqueues with **no**
+pg-boss job id — the run's own job id is permanently occupied by the dead job (verified
+against real pg-boss).
+
+### Late-arrival guard (B1 + B2)
+
+The guard now has two halves instead of one enumeration:
+
+- **Evidence water mark (B2, #Tu1cY)** — the primary. A whole-attempt skip writes nothing
+  derived, so the projection check could not see it and every older attempt behind it walked
+  the material backwards. Pending-attempt rows are written unconditionally, so they are
+  visible regardless of what any earlier run did or did not write.
+- **Projection water mark** — retained, because a manual-rating submit never diverts and
+  leaves only projections. Now includes **`mastery_state(subject_kind='ability_global')`**
+  (B1, #TuxJJ): the shared per-domain row that sibling KCs collide on while sharing no
+  knowledge id. Subject ids come from `resolveAbilityGlobalSubjectIds`, which reuses the write
+  path's own domain resolver and orphan-degrade, so read and write cannot drift.
+
+### D3 `score_meaning` — persisted, not annotated away
+
+`persistSubmit` now writes `score_meaning` into the review event's embedded `payload.judge`,
+beside the `score` it qualifies, and `reconstructDoneFromDomainEvents` reads it. The crash- and
+retention-recovery paths therefore return an interpretable score instead of a bare number.
+Rows persisted before this change have no such key; the field stays optional and is omitted for
+them rather than defaulted.
+
+### Latent defect found while doing the above
+
+`SendOptions.id` is a **uuid column**, and run handles are cuid2s. W2's
+`boss.send(..., { id: runId })` would have thrown `invalid input syntax for type uuid` on the
+first real submit after the flag was flipped, and every `getJobById` liveness lookup would have
+thrown too (swallowed into `'unknown'`, so `/status` would have degraded in silence). Nothing
+caught it because every test injected a fake boss that accepted any id — a double MORE
+permissive than production. Job ids are now derived via `judgeRunJobId(runId)` (deterministic
+UUIDv8), pinned by a real-pg-boss contract test.
+
+### Still open before the flag may be flipped (YUK-800)
+
+A1 client idempotency key (**hard blocker**), A4 manual DLQ re-enqueue entry, the four
+remaining faces (§4 W3), and the pending-verdict UI. `JUDGE_DURABLE_ENABLED` remains `false`.
 
 ---
 

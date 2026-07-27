@@ -49,9 +49,34 @@ export const JUDGE_RUN_EVENTS = {
    * （未知面 / 题缺失 / 坏 payload）。last-writer wins。
    */
   FAILED: 'judge_run.failed',
+  /**
+   * **非终态**：YUK-777 A3 的 reconcile sweeper 为一条「作答已录、判词未落」的 pending
+   * attempt 重新投递了一个 judge_run job。
+   *
+   * 它把 run 拉回 `queued`——这是诚实的：确实有一次全新的投递在飞。不这样做的话，先前
+   * 那条终态 FAILED 会一直压着，poll/SSE 客户端据此停止等待，而队列里正跑着可能写出
+   * DONE 的那次重投——与 #TtWiB 修掉的是同一个谎。
+   *
+   * payload 携 `{ delivery_id, attempt }`：`attempt` 是本 run 已发生的第几次恢复重投，sweeper
+   * 用它封顶恢复次数（超过即停手，转人工，D6「manual-only, 先观察真实 DLQ 流量」）。
+   */
+  REQUEUED: 'judge_run.requeued',
 } as const;
 
 export type JudgeRunEventType = (typeof JUDGE_RUN_EVENTS)[keyof typeof JUDGE_RUN_EVENTS];
+
+/** Runtime contract for the recovery marker shared by the sweeper, poll route, and reducer. */
+export const JudgeRunRequeuedPayloadSchema = z
+  .object({
+    delivery_id: z.string().min(1).optional(),
+    /** Legacy producer field retained only so existing markers remain readable. */
+    job_id: z.string().min(1).optional(),
+    attempt: z.number().int().positive().optional(),
+  })
+  .passthrough()
+  .refine((payload) => payload.delivery_id !== undefined || payload.job_id !== undefined, {
+    message: 'requeued marker requires delivery_id',
+  });
 
 /**
  * 派生状态。terminal（done/failed）一旦出现即锁定 last-writer-wins；否则按已见的
@@ -63,6 +88,7 @@ export type JudgeRunStatus = 'queued' | 'started' | 'done' | 'failed';
 /** replay 事件的最小读取形（只看 event_type，与 copilot-run-status 同型）。 */
 export interface JudgeRunStatusEvent {
   event_type: string;
+  payload?: unknown;
 }
 
 /**
@@ -72,28 +98,48 @@ export interface JudgeRunStatusEvent {
  */
 export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunStatus {
   let status: JudgeRunStatus = 'queued';
+  let terminalDeliveryId: string | null = null;
+  let startedDeliveryId: string | null = null;
   for (const e of events) {
+    const deliveryId = readDeliveryId(e.payload);
     switch (e.event_type) {
       case JUDGE_RUN_EVENTS.DONE:
-        // terminal，last-writer wins：一次 FAILED 后的 DONE（重投改判成功）翻回成功。
         status = 'done';
+        terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.FAILED:
-        // terminal，last-writer wins。
         status = 'failed';
+        terminalDeliveryId = deliveryId;
         break;
       case JUDGE_RUN_EVENTS.STARTED:
-        // 取最高非终态阶段：只在仍是 queued 时推到 started；已 terminal 不回退。
+        startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.ATTEMPT_FAILED:
         // W4 #TtWiB — **非终态**。一次投递失败但重投还在预算内 ⇒ run 仍在飞，客户端
         // 必须继续等（下一次投递可能写 DONE）。与 STARTED 同级：把 queued 推到 started
         // （确实已经跑过一次了），绝不推向 failed——只有终态 FAILED 能判死。
+        // Legacy/direct callers may omit delivery identity. Preserve the STARTED delivery we
+        // already know instead of replacing it with null; a late same-delivery REQUEUED marker
+        // must not rewind started → queued.
+        if (deliveryId !== null) startedDeliveryId = deliveryId;
         if (status === 'queued') status = 'started';
         break;
       case JUDGE_RUN_EVENTS.QUEUED:
         // 初态；不覆盖已推进的阶段。
+        break;
+      case JUDGE_RUN_EVENTS.REQUEUED:
+        // Enqueue precedes this marker, so a fast worker can terminalize first. Matching delivery
+        // identity makes that marker causally old; a different id is a genuine later recovery.
+        if (
+          deliveryId !== null &&
+          deliveryId !== terminalDeliveryId &&
+          deliveryId !== startedDeliveryId
+        ) {
+          status = 'queued';
+          terminalDeliveryId = null;
+          startedDeliveryId = null;
+        }
         break;
       default:
         // 未知 event_type：忽略（forward-compat）。
@@ -101,6 +147,13 @@ export function deriveJudgeRunStatus(events: JudgeRunStatusEvent[]): JudgeRunSta
     }
   }
   return status;
+}
+
+function readDeliveryId(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const record = payload as Record<string, unknown>;
+  const value = record.delivery_id ?? record.job_id;
+  return typeof value === 'string' ? value : null;
 }
 
 /** replay 事件（读取形带 payload），用于从终态事件抽出判词回填结果。 */

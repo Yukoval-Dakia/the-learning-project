@@ -20,9 +20,8 @@
 //   付费调用 = 1 + JOB_RETRY_LIMIT。
 
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, job_events, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { and, desc, eq } from 'drizzle-orm';
@@ -31,7 +30,9 @@ import { ZodError } from 'zod';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
+import type { JudgeRunJobData } from '../server/judge-run-payload';
 import {
+  FrozenAbilityGlobalByKnowledgeIdSchema,
   FrozenQuestionSnapshotSchema,
   applyFrozenQuestion,
   reconstructDoneFromDomainEvents,
@@ -39,39 +40,13 @@ import {
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
 /**
- * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge）。`caller` 标面
- * （W2=submit only；W3 加 probe/paper/advice/solve）。`submit` 携冻结的 submit 输入
- * （D5：profile 冻结）；其它面 W3 各自定 payload 分支，不复用 submit 的字段形。
+ * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge），YUK-777 起 reconcile
+ * sweeper 按同一形状重投。`caller` 标面（W2=submit only；W3 加 probe/paper/advice/solve）。
+ *
+ * 定义已挪到 `../server/judge-run-payload.ts`（三个生产者共用，且 api/server 不该反向依赖
+ * jobs/）；这里 re-export 保持既有 import 面不变。
  */
-export interface JudgeRunJobData {
-  /**
-   * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
-   * event id（persistSubmit 以它做 eventId，见 opts.attemptEventId）。此「= attempt
-   * event id」契约是 submit 面特化，不对全部面通用（advice 面无 event，W3 另定）。
-   */
-  run_id: string;
-  /** 发起面（回填路由 + payload 分支判别）。W2 只有 'submit'。 */
-  caller: 'submit';
-  /** submit 面冻结输入（D5：profile 冻结进 payload，作答当下画像）。 */
-  submit: {
-    /** 冻结的 CreateAttemptBody（JSON）。worker 侧 CreateAttemptBodySchema 复校。 */
-    body: unknown;
-    question_id: string;
-    /** D5 — enqueue 时冻结的 SubjectProfile（JSON）。worker 侧 SubjectProfileSchema 复校。 */
-    subject_profile: unknown;
-    /**
-     * #2 (codex) — enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
-     * FrozenQuestionSnapshotSchema 复校后覆盖到现读行上，故提交后编辑题目不再让判分/
-     * FSRS 打在与学习者所见不同的题面上。见 server/judge-run-payload.ts。
-     *
-     * optional：本 PR 之前入队的在飞 job 没这个字段（且 flag 默认 OFF ⇒ 生产无此类
-     * job）。缺失时退回「现读行」旧行为并记一条 warn，而不是把在飞 job 判死。
-     */
-    question_snapshot?: unknown;
-    /** 作答时刻（ISO）——FSRS 调度锚定作答当下，非 worker 拾取时刻。 */
-    submitted_at: string;
-  };
-}
+export type { JudgeRunJobData } from '../server/judge-run-payload';
 
 export type JudgeRunOutcome =
   | { status: 'done'; run_id: string; coarse_outcome: string; judge_event_id: string | null }
@@ -89,6 +64,8 @@ export interface JudgeRunDeps {
 export interface JudgeRunJobMeta {
   retryCount: number;
   retryLimit: number;
+  /** pg-boss job id; absent only for legacy/direct callers. */
+  deliveryId?: string;
 }
 
 export async function runJudgeRun(
@@ -106,7 +83,7 @@ export async function runJudgeRun(
   // DONE 终态（供 SSE/poll 消费）后早返，绝不重判重写。见 recoverAlreadyPersisted；
   // 同一条恢复路径也是 #1 重复投递竞态（catch 里）的落点。
   if (await attemptAlreadyPersisted(db, runId)) {
-    return await recoverAlreadyPersisted(db, runId);
+    return await recoverAlreadyPersisted(db, runId, meta.deliveryId);
   }
 
   // started 心跳——消费者据此把 status 从 queued 推到 started。非终态进度信号，
@@ -114,7 +91,11 @@ export async function runJudgeRun(
   await bestEffortWriteJobEvent(db, {
     businessId: runId,
     eventType: JUDGE_RUN_EVENTS.STARTED,
-    payload: { caller: data.caller, retry_count: meta.retryCount },
+    payload: {
+      caller: data.caller,
+      retry_count: meta.retryCount,
+      ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
+    },
   });
 
   // #2 — tracks whether the backfill tx COMMITTED. If it did but the terminal DONE
@@ -139,6 +120,10 @@ export async function runJudgeRun(
       data.submit.question_snapshot === undefined || data.submit.question_snapshot === null
         ? null
         : FrozenQuestionSnapshotSchema.parse(data.submit.question_snapshot);
+    const abilityGlobalByKnowledgeId =
+      data.submit.ability_global_by_knowledge_id === undefined
+        ? undefined
+        : FrozenAbilityGlobalByKnowledgeIdSchema.parse(data.submit.ability_global_by_knowledge_id);
     const now = new Date(data.submit.submitted_at);
     // An unparseable submitted_at yields an Invalid Date whose getTime() is NaN;
     // feeding it into FSRS scheduling (the attempt anchor) corrupts the schedule.
@@ -212,6 +197,7 @@ export async function runJudgeRun(
     const persisted = await persistSubmit(validated, judged, {
       attemptEventId: runId,
       enforceAttemptOrdering: true,
+      abilityGlobalByKnowledgeId,
     });
     persistedOk = true;
 
@@ -224,6 +210,7 @@ export async function runJudgeRun(
       eventType: JUDGE_RUN_EVENTS.DONE,
       payload: {
         attempt_event_id: runId,
+        ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         judge_event_id: persisted.judgeEventId,
         outcome: persisted.outcome,
         final_rating: judged.finalRating,
@@ -302,7 +289,7 @@ export async function runJudgeRun(
         runId,
         err,
       );
-      return await recoverAlreadyPersisted(db, runId);
+      return await recoverAlreadyPersisted(db, runId, meta.deliveryId);
     }
     // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
@@ -347,6 +334,7 @@ export async function runJudgeRun(
           error_code: classifyJudgeRunFailure(err),
           retry_count: meta.retryCount,
           retry_limit: meta.retryLimit,
+          ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         },
       });
       // rethrow → pg-boss 按策略重投（JOB_RETRY_LIMIT=2，30s→60s backoff）。
@@ -371,6 +359,7 @@ export async function runJudgeRun(
           error_code: classifyJudgeRunFailure(err),
           retry_count: meta.retryCount,
           retry_limit: meta.retryLimit,
+          ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
         },
       });
     } catch (writeErr) {
@@ -432,20 +421,33 @@ async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> 
  * 这条重建写**必须抛错**（非 best-effort）：吞掉它，run 就停在已持久化但无终态，
  * poll/SSE 永远 pending。抛出 → pg-boss 重投 → 本守卫重试直到写成功（或 DLQ 暴露）。
  */
-async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunOutcome> {
-  const priorEvents = await computeReplay(db, {
-    businessTable: JUDGE_RUN_TABLE,
-    businessId: runId,
-    lastEventId: 0,
-  });
-  const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
+async function recoverAlreadyPersisted(
+  db: Db,
+  runId: string,
+  deliveryId?: string,
+): Promise<JudgeRunOutcome> {
+  const priorDone = await db
+    .select({ id: job_events.id })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, JUDGE_RUN_TABLE),
+        eq(job_events.business_id, runId),
+        eq(job_events.event_type, JUDGE_RUN_EVENTS.DONE),
+      ),
+    )
+    .limit(1);
+  const hasDone = priorDone.length > 0;
   if (!hasDone) {
     await writeTerminalJobEvent(db, {
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: (await reconstructDoneFromDomainEvents(db, runId)) ?? {
-        attempt_event_id: runId,
-        already_persisted: true,
+      payload: {
+        ...((await reconstructDoneFromDomainEvents(db, runId)) ?? {
+          attempt_event_id: runId,
+          already_persisted: true,
+        }),
+        ...(deliveryId ? { delivery_id: deliveryId } : {}),
       },
     });
   }
@@ -627,7 +629,7 @@ export function buildJudgeRunHandler(
         const result = await runJudgeRun(
           db,
           data,
-          { retryCount: job.retryCount, retryLimit: job.retryLimit },
+          { retryCount: job.retryCount, retryLimit: job.retryLimit, deliveryId: job.id },
           deps,
         );
         console.log(`[judge_run] ${data.run_id} -> ${result.status}`);
