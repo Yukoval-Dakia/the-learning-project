@@ -17,6 +17,7 @@ export default defineConfig({
   use: {
     baseURL,
     browserName: 'chromium',
+    timezoneId: 'UTC',
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

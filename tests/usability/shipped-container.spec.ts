@@ -140,6 +140,239 @@ test.describe('shipped-container usability regression', () => {
     expect(fixture.unexpectedRequests, 'route=/questions unexpected API fixtures').toEqual([]);
   });
 
+  test('route=/inbox renders A/B/C buckets and real clicks accept then retract projected items', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-auto-applied');
+
+    await test.step('route=/inbox state=breaker-ok renders all three strength buckets', async () => {
+      await page.goto('/inbox');
+      await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible();
+      await expect(page.getByText('自动通道正常。')).toBeVisible();
+      await expect(page.getByText('自动应用· 1 项')).toBeVisible();
+      await expect(page.getByText('待你裁决· 1 项')).toBeVisible();
+      await expect(page.getByText('仅作观察· 1 项')).toBeVisible();
+      await expect(page.getByText('1 项旁观记录，未执行变更')).toBeVisible();
+      await expect(page.getByText('建立学习主线：函数复习计划')).toBeVisible();
+      await expect(page.getByRole('term').filter({ hasText: /^学习主线$/ })).toBeVisible();
+    });
+
+    await test.step('route=/inbox control="接受" records a real B-bucket decision', async () => {
+      const [decisionResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname ===
+              '/api/proposals/proposal-learning-plan-1/decisions',
+        ),
+        page.getByRole('button', { name: '接受', exact: true }).click(),
+      ]);
+      expect(decisionResponse.status()).toBe(201);
+      expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
+      await expect(page.getByText('已接受', { exact: true })).toBeVisible();
+      expect(fixture.proposalDecisions()).toEqual([
+        { id: 'proposal-learning-plan-1', decision: 'accept' },
+      ]);
+    });
+
+    await test.step('route=/inbox control="撤销" transitions the A-bucket completion to reverted', async () => {
+      await expect(page.getByText('《岳阳楼记》背诵检查')).toBeVisible();
+      await expect(page.getByText(/分钟内可撤销/)).toBeVisible();
+      const [retractResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname === '/api/proposals/proposal-completion-1/decisions',
+        ),
+        page.getByRole('button', { name: '撤销', exact: true }).click(),
+      ]);
+      expect(retractResponse.status()).toBe(201);
+      expect(retractResponse.headers().location).toBe('/api/events/event-retract-1');
+      await expect(page.getByText('已撤销 · 恢复到应用前')).toBeVisible();
+      await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0);
+      expect(fixture.proposalDecisions()).toEqual([
+        { id: 'proposal-learning-plan-1', decision: 'accept' },
+        { id: 'proposal-completion-1', decision: 'retract' },
+      ]);
+      await expectNoInternalCopy(page, '/inbox');
+    });
+
+    expect(fixture.unexpectedRequests, 'route=/inbox unexpected API fixtures').toEqual([]);
+  });
+
+  test('route=/inbox renders the tripped breaker as an explicit return to human review', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-breaker-tripped');
+
+    await page.goto('/inbox');
+    await expect(page.getByText('自动应用已暂停。')).toBeVisible();
+    await expect(page.getByText(/30\/30/)).toBeVisible();
+    await expect(page.getByText(/已退回全人审/)).toBeVisible();
+    await expect(page.getByText('自动通道暂停后退回人工裁决。')).toBeVisible();
+    await expect(page.getByText('确认学习项已完成', { exact: true })).toBeVisible();
+    await expect(page.getByText('标记学习项已完成', { exact: true })).toBeVisible();
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            '/api/proposals/proposal-breaker-completion-1/decisions',
+      ),
+      page.getByRole('button', { name: '接受', exact: true }).click(),
+    ]);
+    expect(decisionResponse.status()).toBe(201);
+    expect(decisionResponse.headers().location).toBe('/api/events/event-breaker-decision-1');
+    await expect(page.getByText('已接受', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-breaker-completion-1', decision: 'accept' },
+    ]);
+    await expectNoInternalCopy(page, '/inbox');
+    expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
+  });
+
+  test('route=/inbox dismiss returns the production learning-item decision result', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-auto-applied');
+    await page.goto('/inbox');
+
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/proposals/proposal-learning-plan-1/decisions',
+      ),
+      page.getByRole('button', { name: '忽略', exact: true }).click(),
+    ]);
+
+    expect(decisionResponse.status()).toBe(201);
+    expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
+    expect(await decisionResponse.json()).toMatchObject({
+      decision: 'dismiss',
+      result: { kind: 'dismissed', rate_event_id: 'event-decision-1' },
+    });
+    await expect(page.getByText('已忽略', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-learning-plan-1', decision: 'dismiss' },
+    ]);
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+
+  test('route=/inbox breaker completion dismiss returns the production decision result', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'inbox-breaker-tripped');
+    await page.goto('/inbox');
+
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            '/api/proposals/proposal-breaker-completion-1/decisions',
+      ),
+      page.getByRole('button', { name: '忽略', exact: true }).click(),
+    ]);
+
+    expect(decisionResponse.status()).toBe(201);
+    expect(await decisionResponse.json()).toMatchObject({
+      decision: 'dismiss',
+      result: { kind: 'dismissed', rate_event_id: 'event-breaker-decision-1' },
+    });
+    await expect(page.getByText('已忽略', { exact: true })).toBeVisible();
+    expect(fixture.proposalDecisions()).toEqual([
+      { id: 'proposal-breaker-completion-1', decision: 'dismiss' },
+    ]);
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+
+  test('route=/coach real clicks switch views and drill from subject rollup to knowledge trend', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'coach-views');
+
+    await test.step('route=/coach control="展开知识点" transitions efficacy rollup to drilldown', async () => {
+      await page.goto('/coach');
+      await expect(page.getByRole('heading', { name: 'Coach 复盘中枢' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '成效趋势' })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await page.getByRole('button', { name: /展开知识点/ }).click();
+      await expect(page.getByText('数学 · 显著变化知识点')).toBeVisible();
+      await expect(page.getByText('二次函数', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: '返回科目' })).toBeVisible();
+      await expectNoInternalCopy(page, '/coach');
+    });
+
+    await test.step('route=/coach control="校准诊断" exposes the calibration tabpanel semantics', async () => {
+      await page.getByRole('tab', { name: '校准诊断' }).click();
+      const calibration = page.getByRole('tab', { name: '校准诊断' });
+      await expect(calibration).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tabpanel')).toHaveAttribute(
+        'aria-labelledby',
+        (await calibration.getAttribute('id')) ?? '',
+      );
+      await expect(
+        page
+          .getByRole('region', { name: '有作答记录的知识点表格，可横向滚动' })
+          .getByText('二次函数', { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole('region', { name: '有作答记录的知识点表格，可横向滚动' })
+          .getByText('数学整体', { exact: true }),
+      ).toBeVisible();
+      await expectNoInternalCopy(page, '/coach');
+    });
+
+    await test.step('route=/coach control="活动量" changes the selected tab and report state', async () => {
+      await page.getByRole('tab', { name: '活动量' }).click();
+      await expect(page.getByRole('tab', { name: '活动量' })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      const reviewCount = page.locator('.coach-kpi').filter({ hasText: '复习次数' });
+      await expect(reviewCount.getByText('复习次数')).toBeVisible();
+      await expect(reviewCount.getByText('5', { exact: true })).toBeVisible();
+      const dailyChart = page.locator('.stack-chart');
+      await expect(dailyChart.getByText('07-12', { exact: true })).toBeVisible();
+      await expect(dailyChart.getByText('07-18', { exact: true })).toBeVisible();
+      await expectNoInternalCopy(page, '/coach');
+    });
+
+    expect(fixture.unexpectedRequests, 'route=/coach unexpected API fixtures').toEqual([]);
+  });
+
+  test('route=/coach degraded mastery series honestly falls back to activity proxy', async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'coach-degraded');
+
+    await page.goto('/coach');
+    await expect(page.getByRole('tab', { name: '成效趋势' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.getByRole('button', { name: /展开知识点/ })).toHaveCount(0);
+    await expect(page.getByText('整科概览')).toBeVisible();
+    await expect(page.getByText('活动 5 次 · 无掌握度轨迹')).toBeVisible();
+    await expect(page.getByText('二次函数', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('img', { name: /数学整体/ })).toHaveCount(0);
+    await expectNoInternalCopy(page, '/coach');
+    expect(fixture.unexpectedRequests, 'route=/coach degraded unexpected API fixtures').toEqual([]);
+
+    const unexpectedStatuses = await page.evaluate(async () =>
+      Promise.all([
+        fetch('/api/proposals').then((response) => response.status),
+        fetch('/api/knowledge').then((response) => response.status),
+      ]),
+    );
+    expect(unexpectedStatuses).toEqual([501, 501]);
+    expect(fixture.unexpectedRequests).toEqual(['GET /api/proposals', 'GET /api/knowledge']);
+  });
+
   test('route=/today surfaces the prepared teaching brief with a11y landmarks and no overflow', async ({
     page,
   }) => {
@@ -199,7 +432,15 @@ test.describe('shipped-container usability regression', () => {
     // it and assert BOTH halves: the mutation was actually hit, and the band advanced to
     // the probe_ready state the server re-projects (contract §5/§6 forward-only advance).
     await test.step('route=/today control="就按这个方向验证" hits the decision mutation and advances to probe_ready', async () => {
-      await page.getByRole('button', { name: '就按这个方向验证' }).click();
+      const [decisionResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            response.url().endsWith('/api/proposals/evt_conjecture_wy1/decisions'),
+        ),
+        page.getByRole('button', { name: '就按这个方向验证' }).click(),
+      ]);
+      expect(decisionResponse.headers().location).toBe('/api/events/evt_rate_wy1');
 
       // The probe_ready prepared_action replaces the review_finding CTAs in place.
       const answerCta = page.getByRole('button', { name: '现在就试做这道题' });

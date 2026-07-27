@@ -1,4 +1,14 @@
-import type { Page, Route } from '@playwright/test';
+import type { Page, Request as PlaywrightRequest, Route } from '@playwright/test';
+
+import {
+  buildCalendarReportWindow,
+  resolveReportTimeZone,
+} from '../../src/capabilities/practice/api/weekly-window';
+import { parseAiProposalPayload } from '../../src/core/schema/proposal';
+import {
+  proposalChangeSummary,
+  proposalDisplayTitle,
+} from '../../src/server/proposals/presentation';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -9,7 +19,11 @@ export type UsabilityScenario =
   | 'unauthorized'
   | 'practice-mutation-failure'
   | 'questions-pagination'
-  | 'teaching-brief';
+  | 'teaching-brief'
+  | 'inbox-auto-applied'
+  | 'inbox-breaker-tripped'
+  | 'coach-views'
+  | 'coach-degraded';
 
 interface FixtureController {
   unexpectedRequests: string[];
@@ -29,6 +43,7 @@ interface FixtureController {
    * green. The spec asserts the exact shapes instead.
    */
   briefInteractions: () => Array<Record<string, unknown>>;
+  proposalDecisions: () => Array<{ id: string; decision: string }>;
 }
 
 const evidenceKeys = {
@@ -142,29 +157,216 @@ function teachingBriefProbeReady() {
 // YUK-789 — the A 档 auto-applied digest (/inbox) and the 成效趋势面 (/coach efficacy).
 // Both are shipped learner surfaces reachable from the same SPA build; without fixtures
 // a spec that walks into either route silently falls into the catch-all 501.
-function autoAppliedDigest() {
+const BREAKER_CAP = 30;
+const BREAKER_WINDOW_MS = 3_600_000;
+
+function breaker(applied: number, tripped = false) {
   return {
-    rows: [],
-    breaker: { tripped: false, level: 'ok', applied: 0, cap: 8, window: 7 },
+    tripped,
+    level: tripped ? 'tripped' : 'ok',
+    applied,
+    cap: BREAKER_CAP,
+    window: BREAKER_WINDOW_MS,
   };
 }
 
+function autoAppliedDigest(appliedAt: string, reverted = false, tripped = false) {
+  return {
+    rows: [
+      {
+        proposal_id: 'proposal-completion-1',
+        learning_item_id: 'learning-item-1',
+        title: '《岳阳楼记》背诵检查',
+        applied_at: appliedAt,
+        level: 'ok',
+        reverted,
+      },
+    ],
+    breaker: breaker(tripped ? BREAKER_CAP : 1, tripped),
+  };
+}
+
+const EFFECTIVENESS_METADATA = {
+  as_of: '2026-07-18T15:10:00.000Z',
+  window_start: '2026-06-18T15:10:00.000Z',
+  window_end: '2026-07-18T15:10:00.000Z',
+  timezone: 'Asia/Shanghai',
+  granularity: 'calendar_day',
+  notable_limit: 6,
+  eligible: 1,
+  returned: 1,
+  truncated: false,
+};
+
 function effectivenessTrend() {
+  const points = [
+    { at: '2026-07-11T10:00:00.000Z', p_learned: 0.38, theta_hat: 0, theta_delta: null },
+    { at: '2026-07-12T10:00:00.000Z', p_learned: 0.4, theta_hat: 0.05, theta_delta: 0.05 },
+    { at: '2026-07-13T10:00:00.000Z', p_learned: 0.42, theta_hat: 0.1, theta_delta: 0.05 },
+    { at: '2026-07-14T10:00:00.000Z', p_learned: 0.44, theta_hat: 0.15, theta_delta: 0.05 },
+    { at: '2026-07-15T10:00:00.000Z', p_learned: 0.64, theta_hat: 0.8, theta_delta: 0.65 },
+    { at: '2026-07-16T10:00:00.000Z', p_learned: 0.66, theta_hat: 0.85, theta_delta: 0.05 },
+    { at: '2026-07-17T10:00:00.000Z', p_learned: 0.68, theta_hat: 0.9, theta_delta: 0.05 },
+    { at: '2026-07-18T10:00:00.000Z', p_learned: 0.7, theta_hat: 0.95, theta_delta: 0.05 },
+  ];
+  const trend = {
+    direction: 'rising' as const,
+    confidence: 'high' as const,
+    span_evidence: 8,
+    has_mastery_signal: true,
+  };
+  const whole = {
+    knowledge_id: 'seed:math:root',
+    name: '数学整体',
+    effective_domain: 'math',
+    activity_count: 8,
+    points,
+    trend,
+  };
+  const kc = {
+    knowledge_id: 'knowledge-math',
+    name: '二次函数',
+    effective_domain: 'math',
+    activity_count: 8,
+    points,
+    trend,
+  };
+  return {
+    series: [kc],
+    subject_roots: [whole],
+    aggregate: {
+      total_kcs_with_activity: 2,
+      total_events: 16,
+      by_subject: [
+        {
+          effective_domain: 'math',
+          direction: 'rising',
+          confidence: 'medium',
+          kc_count: 2,
+          kc_with_mastery_signal: 2,
+          activity_count: 16,
+        },
+      ],
+    },
+    metadata: EFFECTIVENESS_METADATA,
+  };
+}
+
+function degradedEffectivenessTrend() {
+  const points = [
+    '2026-07-14T10:00:00.000Z',
+    '2026-07-15T10:00:00.000Z',
+    '2026-07-16T10:00:00.000Z',
+    '2026-07-17T10:00:00.000Z',
+    '2026-07-18T10:00:00.000Z',
+  ].map((at) => ({ at, p_learned: null, theta_hat: null, theta_delta: null }));
+  const trend = {
+    direction: 'insufficient' as const,
+    confidence: 'low' as const,
+    span_evidence: 0,
+    has_mastery_signal: false,
+  };
+  const degradedSeries = {
+    knowledge_id: 'seed:math:root',
+    name: '数学整体',
+    effective_domain: 'math',
+    activity_count: points.length,
+    points,
+    trend,
+  };
   return {
     series: [],
-    subject_roots: [],
-    aggregate: { total_kcs_with_activity: 0, total_events: 0, by_subject: [] },
-    metadata: {
-      as_of: '2026-07-18T15:10:00.000Z',
-      window_start: '2026-06-18T15:10:00.000Z',
-      window_end: '2026-07-18T15:10:00.000Z',
-      timezone: 'Asia/Shanghai',
-      granularity: 'calendar_day',
-      notable_limit: 6,
-      eligible: 0,
-      returned: 0,
-      truncated: false,
+    subject_roots: [degradedSeries],
+    aggregate: {
+      total_kcs_with_activity: 1,
+      total_events: 5,
+      by_subject: [
+        {
+          effective_domain: 'math',
+          direction: 'insufficient',
+          confidence: 'low',
+          kc_count: 1,
+          kc_with_mastery_signal: 0,
+          activity_count: 5,
+        },
+      ],
     },
+    metadata: { ...EFFECTIVENESS_METADATA, eligible: 0, returned: 0 },
+  };
+}
+
+function proposedChange(
+  kind: 'learning_item' | 'completion' | 'defer',
+  learningItemId: string | null,
+) {
+  if (kind === 'learning_item') {
+    return {
+      topic: '函数复习计划',
+      knowledge_node: { id: 'knowledge-math', name: '二次函数', domain: 'math' },
+      hub: { title: '函数复习计划', summary_md: '从一道典型题开始。' },
+      atomics: [],
+      longs: [],
+    };
+  }
+  if (kind === 'completion') {
+    return {
+      learning_item_id: learningItemId,
+      triggering_signals: ['mastery_threshold'],
+      evidence_json: {},
+    };
+  }
+  if (kind === 'defer') {
+    return {
+      learning_item_id: learningItemId,
+      defer_until: '2026-07-25T15:10:00.000Z',
+      reason: '等待更多作答证据后再判断。',
+    };
+  }
+  return assertNever(kind);
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled proposal fixture kind: ${String(value)}`);
+}
+
+function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
+  const learningItemId = kind === 'learning_item' ? null : `${id}-item`;
+  const target = {
+    subject_kind: 'learning_item',
+    subject_id: learningItemId,
+  };
+  const payload = parseAiProposalPayload({
+    kind,
+    target,
+    reason_md: reason,
+    evidence_refs: [],
+    proposed_change: proposedChange(kind, learningItemId),
+  });
+  return {
+    id,
+    kind,
+    target,
+    payload,
+    // Production `/api/proposals` always projects this learner-facing shape via
+    // loadProposalPresentations. Reuse the real pure title/summary projectors so
+    // shipped-container coverage cannot pass through ProposalCard's legacy fallback.
+    presentation: {
+      title: proposalDisplayTitle(payload),
+      change_summary: proposalChangeSummary(payload),
+      technical_details: JSON.stringify(payload.proposed_change, null, 2),
+      evidence_labels: {},
+      block_merge: null,
+    },
+    status: 'pending',
+    proposed_at: '2026-07-18T15:10:00.000Z',
+    decided_at: null,
+    actor_ref: kind === 'learning_item' ? 'learning_intent' : 'coach',
+    task_run_id: null,
+    cost_micro_usd: null,
+    source_action:
+      kind === 'learning_item' ? 'experimental:propose_learning_intent' : 'experimental:proposal',
+    source_subject_kind: kind === 'learning_item' ? 'artifact' : 'learning_item',
+    signals: null,
   };
 }
 
@@ -217,12 +419,45 @@ function question(index: number) {
   };
 }
 
-async function fulfill(route: Route, body: unknown, status = 200): Promise<void> {
+async function fulfill(
+  route: Route,
+  body: unknown,
+  status = 200,
+  headers?: Record<string, string>,
+): Promise<void> {
   await route.fulfill({
     status,
+    headers,
     contentType: 'application/json; charset=utf-8',
     body: JSON.stringify(body),
   });
+}
+
+interface ProposalDecisionFixtureOptions {
+  proposalId: string;
+  allowedDecisions: readonly string[];
+  validationMessage: string;
+  response: (decision: string) => { decision_event_id: string } & Record<string, unknown>;
+  onDecision?: (decision: string) => void;
+}
+
+async function fulfillProposalDecision(
+  route: Route,
+  request: PlaywrightRequest,
+  decisions: Array<{ id: string; decision: string }>,
+  options: ProposalDecisionFixtureOptions,
+): Promise<void> {
+  const body = request.postDataJSON() as { decision?: string } | null;
+  const decision = body?.decision;
+  if (!decision || !options.allowedDecisions.includes(decision)) {
+    await fulfill(route, { error: 'validation_error', message: options.validationMessage }, 400);
+    return;
+  }
+  options.onDecision?.(decision);
+  decisions.push({ id: options.proposalId, decision });
+  const response = options.response(decision);
+  const location = `/api/events/${encodeURIComponent(response.decision_event_id)}`;
+  await fulfill(route, response, 201, { Location: location });
 }
 
 export async function installApiFixtures(
@@ -234,6 +469,10 @@ export async function installApiFixtures(
   const briefInteractions: Array<Record<string, unknown>> = [];
   let mutationAttempts = 0;
   let streamStatus: 'pending' | 'skipped' = 'pending';
+  let autoAppliedReverted = false;
+  const autoAppliedAt = new Date(Date.now() - 60_000).toISOString();
+  const proposalDecisions: Array<{ id: string; decision: string }> = [];
+  const isInboxScenario = scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped';
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
@@ -319,7 +558,11 @@ export async function installApiFixtures(
     }
     // YUK-789 — the accept/dismiss mutation the band's two CTAs drive (decideProposal).
     // The accept flips the server-side brief projection to probe_ready.
-    if (method === 'POST' && /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)) {
+    if (
+      scenario === 'teaching-brief' &&
+      method === 'POST' &&
+      /^\/api\/proposals\/[^/]+\/decisions$/.test(url.pathname)
+    ) {
       briefCalls.push(`POST ${url.pathname}`);
       const body = request.postDataJSON() as { decision?: string } | null;
       // Mirror the server's validation instead of guessing: a body without a recognised
@@ -351,12 +594,221 @@ export async function installApiFixtures(
           },
         },
         201,
+        { Location: '/api/events/evt_rate_wy1' },
       );
     }
     // YUK-789 — A 档 auto-applied 读模型 (/inbox) + 成效趋势面 (/coach efficacy).
-    if (key === 'GET /api/proposals/auto-applied') return fulfill(route, autoAppliedDigest());
-    if (key === 'GET /api/observability/effectiveness-trend') {
+    if (key === 'GET /api/proposals/auto-applied') {
+      if (scenario === 'inbox-auto-applied') {
+        return fulfill(route, autoAppliedDigest(autoAppliedAt, autoAppliedReverted));
+      }
+      if (scenario === 'inbox-breaker-tripped') {
+        return fulfill(route, autoAppliedDigest(autoAppliedAt, autoAppliedReverted, true));
+      }
+      return fulfill(route, { rows: [], breaker: breaker(0) });
+    }
+    if (key === 'GET /api/proposals' && isInboxScenario) {
+      const lane = url.searchParams.get('lane');
+      if (lane === 'decision') {
+        return fulfill(route, {
+          rows:
+            scenario === 'inbox-breaker-tripped'
+              ? [
+                  inboxProposal(
+                    'proposal-breaker-completion-1',
+                    'completion',
+                    '自动通道暂停后退回人工裁决。',
+                  ),
+                ]
+              : [
+                  inboxProposal(
+                    'proposal-learning-plan-1',
+                    'learning_item',
+                    '建议先复习二次函数。',
+                  ),
+                ],
+          next_cursor: null,
+        });
+      }
+      if (lane === 'observation') {
+        return fulfill(route, {
+          rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
+          next_cursor: null,
+        });
+      }
+      return fulfill(route, { rows: [], next_cursor: null });
+    }
+    if (key === 'GET /api/knowledge' && isInboxScenario) {
+      return fulfill(route, { rows: [] });
+    }
+    if (
+      scenario === 'inbox-auto-applied' &&
+      key === 'POST /api/proposals/proposal-completion-1/decisions'
+    ) {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-completion-1',
+        allowedDecisions: ['retract'],
+        validationMessage: 'retract is required',
+        onDecision: () => {
+          autoAppliedReverted = true;
+        },
+        response: (decision) => ({
+          proposal_id: 'proposal-completion-1',
+          proposal_kind: 'completion',
+          decision,
+          decision_event_id: 'event-retract-1',
+          proposal_status: 'stale',
+          created: true,
+          idempotent: false,
+          result: { kind: 'retracted', correction_event_id: 'event-retract-1' },
+        }),
+      });
+    }
+    if (
+      scenario === 'inbox-breaker-tripped' &&
+      key === 'POST /api/proposals/proposal-breaker-completion-1/decisions'
+    ) {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-breaker-completion-1',
+        allowedDecisions: ['accept', 'dismiss'],
+        validationMessage: 'decision is required',
+        response: (decision) => ({
+          proposal_id: 'proposal-breaker-completion-1',
+          proposal_kind: 'completion',
+          decision,
+          decision_event_id: 'event-breaker-decision-1',
+          proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
+          created: true,
+          idempotent: false,
+          result:
+            decision === 'accept'
+              ? {
+                  kind: 'completion',
+                  rate_event_id: 'event-breaker-decision-1',
+                  learning_item_id: 'proposal-breaker-completion-1-item',
+                }
+              : { kind: 'dismissed', rate_event_id: 'event-breaker-decision-1' },
+        }),
+      });
+    }
+    if (
+      scenario === 'inbox-auto-applied' &&
+      key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
+    ) {
+      return fulfillProposalDecision(route, request, proposalDecisions, {
+        proposalId: 'proposal-learning-plan-1',
+        allowedDecisions: ['accept', 'dismiss'],
+        validationMessage: 'decision is required',
+        response: (decision) => ({
+          proposal_id: 'proposal-learning-plan-1',
+          proposal_kind: 'learning_item',
+          decision,
+          decision_event_id: 'event-decision-1',
+          proposal_status: decision === 'accept' ? 'accepted' : 'dismissed',
+          created: true,
+          idempotent: false,
+          result:
+            decision === 'accept'
+              ? {
+                  kind: 'learning_item',
+                  rate_event_id: 'event-decision-1',
+                  hub_learning_item_id: 'learning-item-1',
+                  atomic_learning_item_ids: [],
+                  long_learning_item_ids: [],
+                  hub_artifact_id: 'artifact-learning-item-1',
+                  atomic_artifact_ids: [],
+                  long_artifact_ids: [],
+                  root_knowledge_id: 'knowledge-math',
+                  created_knowledge_ids: [],
+                  enqueued_note_generate_jobs: 0,
+                }
+              : { kind: 'dismissed', rate_event_id: 'event-decision-1' },
+        }),
+      });
+    }
+    if (scenario === 'coach-views' && key === 'GET /api/observability/effectiveness-trend') {
       return fulfill(route, effectivenessTrend());
+    }
+    if (scenario === 'coach-degraded' && key === 'GET /api/observability/effectiveness-trend') {
+      return fulfill(route, degradedEffectivenessTrend());
+    }
+    if (
+      (scenario === 'coach-views' || scenario === 'coach-degraded') &&
+      key === 'GET /api/observability/calibration-maturity'
+    ) {
+      const degraded = scenario === 'coach-degraded';
+      return fulfill(route, {
+        rows: [
+          {
+            knowledge_id: 'seed:math:root',
+            name: '数学整体',
+            evidence_count: 8,
+            theta_se: degraded ? 0.9 : 0.3,
+            confidence: degraded ? 0.2 : 0.9,
+            track: null,
+            cold_start: degraded,
+          },
+          {
+            knowledge_id: 'knowledge-math',
+            name: '二次函数',
+            evidence_count: 5,
+            theta_se: degraded ? 0.9 : 0.3,
+            confidence: degraded ? 0.2 : 0.9,
+            track: null,
+            cold_start: degraded,
+          },
+        ],
+        aggregate: {
+          total_kcs: 2,
+          cold_start_count: degraded ? 2 : 0,
+          firm_count: degraded ? 0 : 2,
+          pct_firm: degraded ? 0 : 1,
+          median_theta_se: degraded ? 0.9 : 0.3,
+        },
+      });
+    }
+    if (
+      (scenario === 'coach-views' || scenario === 'coach-degraded') &&
+      key === 'GET /api/review/weekly'
+    ) {
+      const timeZone = url.searchParams.get('timezone');
+      if (url.searchParams.get('days') !== '7' || !timeZone) {
+        return fulfill(
+          route,
+          { error: 'validation_error', message: 'days=7 and timezone are required' },
+          400,
+        );
+      }
+      let canonicalTimeZone: string;
+      try {
+        canonicalTimeZone = resolveReportTimeZone(timeZone);
+      } catch {
+        return fulfill(
+          route,
+          { error: 'invalid_timezone', message: 'timezone must be a valid IANA time zone' },
+          400,
+        );
+      }
+      const now = new Date('2026-07-18T15:10:00.000Z');
+      const reportWindow = buildCalendarReportWindow(now, 7, canonicalTimeZone);
+      const daily = reportWindow.dateKeys.map((date, index) => ({
+        date,
+        count: index === 6 ? 5 : 0,
+        correct: index === 6 ? 4 : 0,
+      }));
+      return fulfill(route, {
+        window: {
+          days: 7,
+          from: Math.floor(reportWindow.from.getTime() / 1_000),
+          to: Math.floor(reportWindow.to.getTime() / 1_000),
+          time_zone: reportWindow.timeZone,
+        },
+        totals: { reviews: 5, failures: 1, cost_usd: 0.012 },
+        ratings: { again: 1, hard: 0, good: 3, easy: 1 },
+        daily,
+        top_causes: [{ category: 'concept', count: 1 }],
+        top_knowledge: [{ id: 'knowledge-math', name: '二次函数', failure_count: 1 }],
+      });
     }
     if (key === 'GET /api/agents/notes') return fulfill(route, { rows: [] });
     if (key === 'GET /api/artifacts/ai-changes/recent') {
@@ -413,5 +865,6 @@ export async function installApiFixtures(
     mutationAttempts: () => mutationAttempts,
     briefCalls: () => [...briefCalls],
     briefInteractions: () => [...briefInteractions],
+    proposalDecisions: () => [...proposalDecisions],
   };
 }
