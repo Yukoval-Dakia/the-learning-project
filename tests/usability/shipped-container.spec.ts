@@ -158,27 +158,41 @@ test.describe('shipped-container usability regression', () => {
     });
 
     await test.step('route=/inbox control="接受" records a real B-bucket decision', async () => {
-      await page.getByRole('button', { name: '接受', exact: true }).click();
+      const [decisionResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname ===
+              '/api/proposals/proposal-learning-plan-1/decisions',
+        ),
+        page.getByRole('button', { name: '接受', exact: true }).click(),
+      ]);
+      expect(decisionResponse.status()).toBe(201);
+      expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
       await expect(page.getByText('已接受', { exact: true })).toBeVisible();
       expect(fixture.proposalDecisions()).toEqual([
         { id: 'proposal-learning-plan-1', decision: 'accept' },
       ]);
-      expect(fixture.proposalDecisionLocations()).toEqual(['/api/events/event-decision-1']);
     });
 
     await test.step('route=/inbox control="撤销" transitions the A-bucket completion to reverted', async () => {
       await expect(page.getByText('《岳阳楼记》背诵检查')).toBeVisible();
       await expect(page.getByText(/分钟内可撤销/)).toBeVisible();
-      await page.getByRole('button', { name: '撤销', exact: true }).click();
+      const [retractResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname === '/api/proposals/proposal-completion-1/decisions',
+        ),
+        page.getByRole('button', { name: '撤销', exact: true }).click(),
+      ]);
+      expect(retractResponse.status()).toBe(201);
+      expect(retractResponse.headers().location).toBe('/api/events/event-retract-1');
       await expect(page.getByText('已撤销 · 恢复到应用前')).toBeVisible();
       await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0);
       expect(fixture.proposalDecisions()).toEqual([
         { id: 'proposal-learning-plan-1', decision: 'accept' },
         { id: 'proposal-completion-1', decision: 'retract' },
-      ]);
-      expect(fixture.proposalDecisionLocations()).toEqual([
-        '/api/events/event-decision-1',
-        '/api/events/event-retract-1',
       ]);
       await expectNoInternalCopy(page, '/inbox');
     });
@@ -198,12 +212,21 @@ test.describe('shipped-container usability regression', () => {
     await expect(page.getByText('自动通道暂停后退回人工裁决。')).toBeVisible();
     await expect(page.getByText('确认学习项已完成', { exact: true })).toBeVisible();
     await expect(page.getByText('标记学习项已完成', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '接受', exact: true }).click();
+    const [decisionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            '/api/proposals/proposal-breaker-completion-1/decisions',
+      ),
+      page.getByRole('button', { name: '接受', exact: true }).click(),
+    ]);
+    expect(decisionResponse.status()).toBe(201);
+    expect(decisionResponse.headers().location).toBe('/api/events/event-breaker-decision-1');
     await expect(page.getByText('已接受', { exact: true })).toBeVisible();
     expect(fixture.proposalDecisions()).toEqual([
       { id: 'proposal-breaker-completion-1', decision: 'accept' },
     ]);
-    expect(fixture.proposalDecisionLocations()).toEqual(['/api/events/event-breaker-decision-1']);
     await expectNoInternalCopy(page, '/inbox');
     expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
   });
