@@ -44,6 +44,7 @@ interface FixtureController {
    */
   briefInteractions: () => Array<Record<string, unknown>>;
   proposalDecisions: () => Array<{ id: string; decision: string }>;
+  proposalDecisionLocations: () => string[];
 }
 
 const evidenceKeys = {
@@ -430,7 +431,7 @@ interface ProposalDecisionFixtureOptions {
   proposalId: string;
   allowedDecisions: readonly string[];
   validationMessage: string;
-  response: (decision: string) => unknown;
+  response: (decision: string) => { decision_event_id: string } & Record<string, unknown>;
   onDecision?: (decision: string) => void;
 }
 
@@ -438,6 +439,7 @@ async function fulfillProposalDecision(
   route: Route,
   request: PlaywrightRequest,
   decisions: Array<{ id: string; decision: string }>,
+  decisionLocations: string[],
   options: ProposalDecisionFixtureOptions,
 ): Promise<void> {
   const body = request.postDataJSON() as { decision?: string } | null;
@@ -448,7 +450,10 @@ async function fulfillProposalDecision(
   }
   options.onDecision?.(decision);
   decisions.push({ id: options.proposalId, decision });
-  await fulfill(route, options.response(decision), 201);
+  const response = options.response(decision);
+  const location = `/api/events/${encodeURIComponent(response.decision_event_id)}`;
+  decisionLocations.push(location);
+  await fulfill(route, response, 201, { Location: location });
 }
 
 export async function installApiFixtures(
@@ -463,6 +468,7 @@ export async function installApiFixtures(
   let autoAppliedReverted = false;
   const autoAppliedAt = new Date(Date.now() - 60_000).toISOString();
   const proposalDecisions: Array<{ id: string; decision: string }> = [];
+  const proposalDecisionLocations: string[] = [];
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
@@ -641,7 +647,7 @@ export async function installApiFixtures(
       scenario === 'inbox-auto-applied' &&
       key === 'POST /api/proposals/proposal-completion-1/decisions'
     ) {
-      return fulfillProposalDecision(route, request, proposalDecisions, {
+      return fulfillProposalDecision(route, request, proposalDecisions, proposalDecisionLocations, {
         proposalId: 'proposal-completion-1',
         allowedDecisions: ['retract'],
         validationMessage: 'retract is required',
@@ -664,7 +670,7 @@ export async function installApiFixtures(
       scenario === 'inbox-breaker-tripped' &&
       key === 'POST /api/proposals/proposal-breaker-completion-1/decisions'
     ) {
-      return fulfillProposalDecision(route, request, proposalDecisions, {
+      return fulfillProposalDecision(route, request, proposalDecisions, proposalDecisionLocations, {
         proposalId: 'proposal-breaker-completion-1',
         allowedDecisions: ['accept', 'dismiss'],
         validationMessage: 'decision is required',
@@ -691,7 +697,7 @@ export async function installApiFixtures(
       scenario === 'inbox-auto-applied' &&
       key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
     ) {
-      return fulfillProposalDecision(route, request, proposalDecisions, {
+      return fulfillProposalDecision(route, request, proposalDecisions, proposalDecisionLocations, {
         proposalId: 'proposal-learning-plan-1',
         allowedDecisions: ['accept', 'dismiss'],
         validationMessage: 'decision is required',
@@ -850,5 +856,6 @@ export async function installApiFixtures(
     briefCalls: () => [...briefCalls],
     briefInteractions: () => [...briefInteractions],
     proposalDecisions: () => [...proposalDecisions],
+    proposalDecisionLocations: () => [...proposalDecisionLocations],
   };
 }

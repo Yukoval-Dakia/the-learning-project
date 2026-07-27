@@ -163,6 +163,7 @@ test.describe('shipped-container usability regression', () => {
       expect(fixture.proposalDecisions()).toEqual([
         { id: 'proposal-learning-plan-1', decision: 'accept' },
       ]);
+      expect(fixture.proposalDecisionLocations()).toEqual(['/api/events/event-decision-1']);
     });
 
     await test.step('route=/inbox control="撤销" transitions the A-bucket completion to reverted', async () => {
@@ -174,6 +175,10 @@ test.describe('shipped-container usability regression', () => {
       expect(fixture.proposalDecisions()).toEqual([
         { id: 'proposal-learning-plan-1', decision: 'accept' },
         { id: 'proposal-completion-1', decision: 'retract' },
+      ]);
+      expect(fixture.proposalDecisionLocations()).toEqual([
+        '/api/events/event-decision-1',
+        '/api/events/event-retract-1',
       ]);
       await expectNoInternalCopy(page, '/inbox');
     });
@@ -198,6 +203,7 @@ test.describe('shipped-container usability regression', () => {
     expect(fixture.proposalDecisions()).toEqual([
       { id: 'proposal-breaker-completion-1', decision: 'accept' },
     ]);
+    expect(fixture.proposalDecisionLocations()).toEqual(['/api/events/event-breaker-decision-1']);
     await expectNoInternalCopy(page, '/inbox');
     expect(fixture.unexpectedRequests, 'route=/inbox tripped unexpected API fixtures').toEqual([]);
   });
