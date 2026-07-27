@@ -22,10 +22,11 @@
 //   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
 //      OAuth lane) → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
 //
-// Failure asymmetry (D7 / F-1): the PRE-LLM reads run OUTSIDE the per-cell swallow —
+// Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
-// rethrow so pg-boss retries. The per-cell LLM half is swallow-safe (one cell's
-// failure logs a retryable AI ledger row and continues; partial progress is fine).
+// rethrow so pg-boss retries. Candidate-local grounding/image failures refill from
+// lower salience; the per-cell LLM half is swallow-safe (one cell's failure logs a
+// retryable AI ledger row and continues; partial progress is fine).
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
 // accepts/edits/rejects in the inbox; scoring + label flips are DEFERRED (PR-2 /
@@ -36,6 +37,7 @@ import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
 import {
+  CONJECTURE_RECURRENCE_FLOOR,
   collectConjectureEvidenceAssetRefs,
   conjectureKey,
   gatherConjectureEvidence,
@@ -125,6 +127,11 @@ type LoadEvidenceImagesFn = (
   db: Db,
   refs: readonly ConjectureEvidenceAssetRef[],
 ) => Promise<LoadedConjectureEvidenceImage[]>;
+
+interface PreparedConjectureCell {
+  cell: EnrichedEvidenceCell;
+  evidenceImages: LoadedConjectureEvidenceImage[];
+}
 
 export interface ResearchMeetingDeps {
   now?: () => Date;
@@ -409,10 +416,10 @@ export async function runResearchMeetingNightly(
   // whenever mutable/missing question context leaves an earlier candidate ungrounded. Taking
   // `cells.slice(0, K)` before this filter lets a permanently invalid high-salience prefix
   // occupy the cap every night and starve valid candidates behind it.
-  const groundedTopCells: EnrichedEvidenceCell[] = [];
+  const preparedTopCells: PreparedConjectureCell[] = [];
   let cellOffset = 0;
-  while (groundedTopCells.length < RESEARCH_MEETING_MAX_CONJECTURES && cellOffset < cells.length) {
-    const batchSize = RESEARCH_MEETING_MAX_CONJECTURES - groundedTopCells.length;
+  while (preparedTopCells.length < RESEARCH_MEETING_MAX_CONJECTURES && cellOffset < cells.length) {
+    const batchSize = RESEARCH_MEETING_MAX_CONJECTURES - preparedTopCells.length;
     const batch = cells.slice(cellOffset, cellOffset + batchSize);
     cellOffset += batch.length;
     const enriched = await enrichEvidenceCellsFn(db, {
@@ -420,9 +427,42 @@ export async function runResearchMeetingNightly(
       failures,
       reasoningTraceByAttemptId,
     });
-    groundedTopCells.push(...enriched.filter((cell) => cell.samples.length > 0));
+    const preparedBatch = await Promise.all(
+      enriched.map(async (cell): Promise<PreparedConjectureCell | null> => {
+        // Recurrence is a claim about reproducible historical context, not the raw attempt tally.
+        // Filtered mutable/missing samples cannot count toward either the threshold or provenance.
+        const evidenceEventIds = [
+          ...new Set(cell.samples.map((sample) => sample.attempt_event_id)),
+        ];
+        if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) return null;
+        const reproducibleCell: EnrichedEvidenceCell = {
+          ...cell,
+          recurrence_count: evidenceEventIds.length,
+          evidence_event_ids: evidenceEventIds,
+        };
+        try {
+          const imageRefs = collectConjectureEvidenceAssetRefs(reproducibleCell);
+          const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
+          return { cell: reproducibleCell, evidenceImages };
+        } catch (err) {
+          // A deterministic bad/missing asset must not occupy one of the permanent top-K slots.
+          // Continue in salience order so a lower candidate can still be inducted tonight.
+          console.error(
+            '[research_meeting_nightly] excluding candidate with unloadable evidence images',
+            reproducibleCell.key,
+            err,
+          );
+          return null;
+        }
+      }),
+    );
+    preparedTopCells.push(
+      ...preparedBatch.filter(
+        (candidate): candidate is PreparedConjectureCell => candidate !== null,
+      ),
+    );
   }
-  if (groundedTopCells.length === 0) {
+  if (preparedTopCells.length === 0) {
     return {
       considered: 0,
       conjectures_created: 0,
@@ -447,7 +487,7 @@ export async function runResearchMeetingNightly(
     outcome: 'success',
     payload: {
       window_days: RESEARCH_MEETING_WINDOW_DAYS,
-      candidate_cells: groundedTopCells.length,
+      candidate_cells: preparedTopCells.length,
       pending_conjectures: knownConjectureKeys.size,
     },
     // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
@@ -457,12 +497,13 @@ export async function runResearchMeetingNightly(
 
   // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
   const cellResults = await Promise.all(
-    groundedTopCells.map(
-      async (cell): Promise<{ created: number; failed: number; cost_usd: number }> => {
+    preparedTopCells.map(
+      async ({
+        cell,
+        evidenceImages,
+      }): Promise<{ created: number; failed: number; cost_usd: number }> => {
         let incurredCostUsd = 0;
         try {
-          const imageRefs = collectConjectureEvidenceAssetRefs(cell);
-          const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
           const induced = await induceConjectureFn({
             cells: [cell],
             evidenceImages,
@@ -506,7 +547,7 @@ export async function runResearchMeetingNightly(
     subject_id: triggerEventId,
     outcome: 'success',
     payload: {
-      considered: groundedTopCells.length,
+      considered: preparedTopCells.length,
       conjectures_created: created,
       cells_failed: cellsFailed,
       pending_before: knownConjectureKeys.size,
@@ -519,7 +560,7 @@ export async function runResearchMeetingNightly(
   });
 
   return {
-    considered: groundedTopCells.length,
+    considered: preparedTopCells.length,
     conjectures_created: created,
     cells_failed: cellsFailed,
     pending_before: knownConjectureKeys.size,

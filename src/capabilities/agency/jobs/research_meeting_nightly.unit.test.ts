@@ -606,6 +606,66 @@ describe('runResearchMeetingNightly', () => {
     });
   });
 
+  it('requires the recurrence floor after mutable evidence is filtered', async () => {
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const loadEvidenceImagesFn = vi.fn(async () => []);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_once']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          // One of two raw attempts was filtered because its historical context is not reproducible.
+          samples: cell.samples.slice(1),
+        })),
+      ),
+      induceConjectureFn,
+      loadEvidenceImagesFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result.considered).toBe(0);
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(loadEvidenceImagesFn).not.toHaveBeenCalled();
+  });
+
+  it('recomputes recurrence and proposal provenance from reproducible samples', async () => {
+    const rawFailures = [
+      failure('a_repro', ['k_repro'], 'concept_confusion'),
+      failure('b_repro', ['k_repro'], 'concept_confusion'),
+      failure('c_repro', ['k_repro'], 'concept_confusion'),
+    ];
+    const capturedCells: EnrichedEvidenceCell[] = [];
+    const proposals: WriteAiProposalInput[] = [];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(rawFailures)),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: cell.samples.slice(1),
+        })),
+      ),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        capturedCells.push(input.cells[0]);
+        return fakeInduced(input);
+      }),
+      writeAiProposalFn: vi.fn(async (_db, input) => {
+        proposals.push(input);
+        return 'proposal_repro';
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    const sampleIds = capturedCells[0].samples.map((sample) => sample.attempt_event_id);
+    expect(capturedCells[0].recurrence_count).toBe(2);
+    expect(capturedCells[0].evidence_event_ids).toEqual(sampleIds);
+    expect(proposals[0].payload.evidence_refs).toEqual(
+      sampleIds.map((id) => ({ kind: 'event', id })),
+    );
+    expect(proposals[0].payload.proposed_change).toMatchObject({ recurrence_count: 2 });
+  });
+
   it('bounds each grounding batch by the remaining top-K capacity', async () => {
     const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
     const deps = baseDeps({
@@ -647,6 +707,49 @@ describe('runResearchMeetingNightly', () => {
     expect(firstBatch.map((cell) => cell.knowledge_id)).toEqual(['k_a', 'k_b', 'k_c']);
     expect(secondBatch.map((cell) => cell.knowledge_id)).toEqual(['k_d', 'k_e']);
     expect(result.considered).toBe(2);
+    expect(inducedKnowledgeIds.sort()).toEqual(['k_d', 'k_e']);
+  });
+
+  it('refills top-K after unloadable evidence images instead of starving later cells', async () => {
+    const inducedKnowledgeIds: string[] = [];
+    const loadEvidenceImagesFn = vi.fn(
+      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) => {
+        const assetId = refs[0]?.asset_id ?? '';
+        if (['asset_k_a', 'asset_k_b', 'asset_k_c'].includes(assetId)) {
+          throw new Error(`missing R2 object: ${assetId}`);
+        }
+        return refs.map((ref) => ({
+          ...ref,
+          data: `BASE64_${ref.asset_id}`,
+          mediaType: 'image/png',
+        }));
+      },
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: cell.samples.map((sample, index) =>
+            index === 0
+              ? { ...sample, question_image_refs: [`asset_${cell.knowledge_id}`] }
+              : sample,
+          ),
+        })),
+      ),
+      loadEvidenceImagesFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(loadEvidenceImagesFn).toHaveBeenCalledTimes(5);
+    expect(result).toMatchObject({ considered: 2, conjectures_created: 2, cells_failed: 0 });
     expect(inducedKnowledgeIds.sort()).toEqual(['k_d', 'k_e']);
   });
 
