@@ -4,7 +4,7 @@ import {
   buildCalendarReportWindow,
   resolveReportTimeZone,
 } from '../../src/capabilities/practice/api/weekly-window';
-import type { AiProposalPayloadT } from '../../src/core/schema/proposal';
+import { parseAiProposalPayload } from '../../src/core/schema/proposal';
 import {
   proposalChangeSummary,
   proposalDisplayTitle,
@@ -315,7 +315,11 @@ function proposedChange(
       evidence_json: {},
     };
   }
-  return { learning_item_id: learningItemId };
+  return {
+    learning_item_id: learningItemId,
+    defer_until: '2026-07-25T15:10:00.000Z',
+    reason: '等待更多作答证据后再判断。',
+  };
 }
 
 function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer', reason: string) {
@@ -324,13 +328,13 @@ function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer
     subject_kind: 'learning_item',
     subject_id: learningItemId,
   };
-  const payload = {
+  const payload = parseAiProposalPayload({
     kind,
     target,
     reason_md: reason,
     evidence_refs: [],
     proposed_change: proposedChange(kind, learningItemId),
-  } as AiProposalPayloadT;
+  });
   return {
     id,
     kind,
@@ -684,7 +688,7 @@ export async function installApiFixtures(
       });
     }
     if (
-      (scenario === 'inbox-auto-applied' || scenario === 'inbox-breaker-tripped') &&
+      scenario === 'inbox-auto-applied' &&
       key === 'POST /api/proposals/proposal-learning-plan-1/decisions'
     ) {
       return fulfillProposalDecision(route, request, proposalDecisions, {
