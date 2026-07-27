@@ -2,6 +2,8 @@
 // Plan Step 8 (1c.2) will layer a Token-gate dialog over this; for now the
 // helper just throws ApiAuthError when the token is missing or rejected.
 
+import type { operations } from './api-schema.generated';
+
 export const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const AUTH_REQUIRED_MESSAGE = '访问令牌已失效，请重新输入。';
 
@@ -107,4 +109,56 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
 export async function apiJson<T>(input: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(input, init);
   return res.json() as Promise<T>;
+}
+
+export type ApiOperationId = keyof operations;
+
+type JsonContent<T> = T extends {
+  readonly content: { readonly 'application/json': infer Content };
+}
+  ? Content
+  : never;
+
+type SuccessStatus = 200 | 201 | 202 | 204;
+type OperationResponses<Id extends ApiOperationId> = operations[Id]['responses'];
+
+export type ApiOperationJsonResponse<Id extends ApiOperationId> = JsonContent<
+  OperationResponses<Id>[Extract<keyof OperationResponses<Id>, SuccessStatus>]
+>;
+
+export type ApiOperationRequestBody<Id extends ApiOperationId> = operations[Id] extends {
+  readonly requestBody: {
+    readonly content: { readonly 'application/json': infer Body };
+  };
+}
+  ? Body
+  : never;
+
+export type ApiOperationParameters<Id extends ApiOperationId> = operations[Id]['parameters'];
+
+type ApiOperationBodyInput<Id extends ApiOperationId> = [ApiOperationRequestBody<Id>] extends [
+  never,
+]
+  ? { body?: never }
+  : { body: ApiOperationRequestBody<Id> };
+
+/**
+ * Runtime-thin, generated-type client. `operationId` is intentionally retained
+ * at the callsite so request/response wire types cannot drift from the manifest
+ * even though URL construction remains domain-owned.
+ */
+export async function apiOperationJson<Id extends ApiOperationId>(
+  operationId: Id,
+  input: {
+    url: string;
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    init?: Omit<RequestInit, 'body' | 'method'>;
+  } & ApiOperationBodyInput<Id>,
+): Promise<ApiOperationJsonResponse<Id>> {
+  void operationId;
+  return apiJson<ApiOperationJsonResponse<Id>>(input.url, {
+    ...input.init,
+    method: input.method,
+    ...('body' in input && input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+  });
 }

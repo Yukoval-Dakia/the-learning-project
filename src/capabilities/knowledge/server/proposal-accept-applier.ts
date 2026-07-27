@@ -30,12 +30,16 @@ async function acceptKnowledgeProposal(
   }
   const signalProposal = { ...proposal, kind: proposal.payload.kind };
   if (proposal.status !== 'pending') {
-    return { kind, result: null, idempotent: true };
+    return {
+      kind,
+      result: { kind, result: null, idempotent: true },
+      idempotent: true,
+    };
   }
 
   const result = await acceptProposal(db, proposalId);
   await recordProposalDecisionSignal(db, signalProposal, 'accept', input.user_note);
-  return { kind, result };
+  return { kind, result: { kind, result } };
 }
 
 export const knowledgeNodeProposalAcceptApplier: ProposalAcceptApplier = (db, input) =>

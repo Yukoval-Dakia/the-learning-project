@@ -8,36 +8,14 @@
 // firm_count + median_theta_se from `rows` and reconciles bit-for-bit against
 // `aggregate`; the field names/types here must mirror the server or that compare breaks.
 
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
-export interface CalibrationMaturityRow {
-  knowledge_id: string;
-  name: string;
-  /** mastery_state.evidence_count；从未 attempt 的 KC 为 0。 */
-  evidence_count: number;
-  /** thetaSe(theta_precision)——θ̂ 标准误，现算（不持久化）。无 mastery_state 行 → null。 */
-  theta_se: number | null;
-  /** 该 KC 关联题的 item_calibration 平均 confidence。无标定题 → null。 */
-  confidence: number | null;
-  /** 该 KC 关联题的代表性 track。无标定题 → null。 */
-  track: string | null;
-  cold_start: boolean;
-}
-
-export interface CalibrationMaturityAggregate {
-  total_kcs: number;
-  cold_start_count: number;
-  firm_count: number;
-  /** firm_count / total_kcs，0..1，保 4 位小数。total_kcs=0 → 0。 */
-  pct_firm: number;
-  /** 全图 theta_se 中位数（仅计有 mastery_state 行的 KC）。无任何行 → null。 */
-  median_theta_se: number | null;
-}
-
-export interface CalibrationMaturityResponse {
-  rows: CalibrationMaturityRow[];
-  aggregate: CalibrationMaturityAggregate;
-}
+export type CalibrationMaturityResponse = ApiOperationJsonResponse<'getCalibrationMaturity'>;
+export type CalibrationMaturityRow = CalibrationMaturityResponse['rows'][number];
+export type CalibrationMaturityAggregate = CalibrationMaturityResponse['aggregate'];
 
 export const getCalibrationMaturity = () =>
-  apiJson<CalibrationMaturityResponse>('/api/observability/calibration-maturity');
+  apiOperationJson('getCalibrationMaturity', {
+    url: '/api/observability/calibration-maturity',
+    method: 'GET',
+  });

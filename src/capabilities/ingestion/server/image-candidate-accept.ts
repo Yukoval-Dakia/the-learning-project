@@ -45,7 +45,7 @@ import {
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
-import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
+import { tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 // YUK-229 — SSRF host-literal guard shared with the client (@/core/net/private-host). The
 // server keeps a throwing wrapper (assertPublicHttpUrl) + DNS-answer/redirect re-validation on

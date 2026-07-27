@@ -5,41 +5,31 @@
 // answer trail is keyed by that session_id (placement-next.ts counts events WHERE
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
 
-import { apiJson } from '@/ui/lib/api';
 import {
-  type SessionTransitionRequestOptions,
-  buildSessionTransitionRequest,
-} from '@/ui/lib/session-transition';
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiOperationJson,
+} from '@/ui/lib/api';
+import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 
 /** start/next return only the question REF (id + info score), not the full row — the
  * caller fetches the renderable question via GET /api/questions/[id] (getQuestion). */
-export interface PlacementQuestionRef {
-  questionId: string;
-  score: number;
-  scoreKind: string;
-}
-
-export interface PlacementStartResult {
-  sessionId: string;
-  knowledgeIds: string[];
-  question: PlacementQuestionRef | null;
-  /** true when the goal subgraph has no eligible question (cold tree) → caller shows
-   * the "子图还冷 · 去上传" sourcing state instead of a probe. */
-  sourcingNeeded: boolean;
-}
+export type PlacementStartResult = ApiOperationJsonResponse<'createPlacementSession'>;
+export type PlacementQuestionRef = NonNullable<PlacementStartResult['question']>;
 
 /** YUK-480 — onboarding self-report carried from the Welcome screen into the probe. Both are
  * ordering/amount-only (leanings → starter-question order, pace → probe count cap) and NEVER
  * feed θ̂/p(L). Optional — a probe started without a self-report behaves exactly as before. */
-export interface PlacementSelfReport {
-  leanings?: string[];
-  pace?: 'light' | 'medium' | 'dense';
-}
+export type PlacementSelfReport = Pick<
+  ApiOperationRequestBody<'createPlacementSession'>,
+  'leanings' | 'pace'
+>;
 
 export const startPlacement = (goalId: string, selfReport: PlacementSelfReport = {}) =>
-  apiJson<PlacementStartResult>('/api/placement-sessions', {
+  apiOperationJson('createPlacementSession', {
+    url: '/api/placement-sessions',
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       goalId,
       // Omit empty leanings / absent pace so the body stays minimal (server treats absent as
       // "no preference / default cap").
@@ -47,36 +37,29 @@ export const startPlacement = (goalId: string, selfReport: PlacementSelfReport =
         ? { leanings: selfReport.leanings }
         : {}),
       ...(selfReport.pace ? { pace: selfReport.pace } : {}),
-    }),
+    },
   });
 
-export type PlacementNextResult =
-  | { done: true; reason: string; answeredCount: number }
-  | {
-      done: false;
-      question: PlacementQuestionRef | null;
-      answeredCount: number;
-      sourcingNeeded: boolean;
-    };
+export type PlacementNextResult = ApiOperationJsonResponse<'createPlacementQuestionSelection'>;
 
 export const placementNext = (sessionId: string) =>
-  apiJson<PlacementNextResult>(
-    `/api/placement-sessions/${encodeURIComponent(sessionId)}/question-selections`,
-    {
-      method: 'POST',
-      body: JSON.stringify({}),
-    },
-  );
+  apiOperationJson('createPlacementQuestionSelection', {
+    url: `/api/placement-sessions/${encodeURIComponent(sessionId)}/question-selections`,
+    method: 'POST',
+    body: {},
+  });
 
 export const placementEnd = (
   sessionId: string,
   status: 'completed' | 'abandoned' = 'completed',
   options: SessionTransitionRequestOptions = {},
 ) =>
-  apiJson(
-    `/api/placement-sessions/${encodeURIComponent(sessionId)}`,
-    buildSessionTransitionRequest(status, options),
-  );
+  apiOperationJson('updatePlacementSession', {
+    url: `/api/placement-sessions/${encodeURIComponent(sessionId)}`,
+    method: 'PATCH',
+    body: { status },
+    init: options.keepalive ? { keepalive: true } : undefined,
+  });
 
 export interface SubmitProbeAnswerInput {
   sessionId: string;
@@ -93,9 +76,10 @@ export interface SubmitProbeAnswerInput {
 // (design: 答完统一反馈, 先别急着看对错) — we ignore the response body except for error
 // handling. `rating:'good'` is a placeholder the server overrides under auto_rate.
 export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
-  apiJson('/api/attempts', {
+  apiOperationJson('createAttempt', {
+    url: '/api/attempts',
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       question_id: input.questionId,
       session_id: input.sessionId,
       rating: 'good',
@@ -104,5 +88,5 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
       answer_image_refs: input.answerImageRefs ?? [],
       auto_rate: true,
       latency_ms: input.latencyMs ?? null,
-    }),
+    },
   });

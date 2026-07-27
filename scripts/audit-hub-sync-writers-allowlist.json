@@ -22,6 +22,11 @@
       "reason": "Sole named-primitive owner of knowledge_edge lifecycle (create/update/archive); the topology trigger fans out to every live hub on each edge write."
     },
     {
+      "path": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "tables": ["knowledge_edge"],
+      "reason": "Owner-capability proposal applier for knowledge_edge create/reverse/change-type decisions; endpoint locks, event writes, projection parity, and the topology trigger remain in the same transaction."
+    },
+    {
       "path": "src/capabilities/knowledge/server/proposals.ts",
       "tables": ["knowledge"],
       "reason": "KC proposal appliers (create/merge/reparent) — knowledge topology mutations covered by the trigger fan-out."

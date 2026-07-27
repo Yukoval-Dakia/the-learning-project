@@ -9,10 +9,12 @@
 // （observability 包端点）；设计稿的预算线（budget + bar 占比）无数据源，
 // 见 CostRibbon 组件注释。
 
-import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
-import { LearningIntentComposer } from '@/capabilities/agency/ui/LearningIntentComposer';
-import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
-import ColdStart from '@/capabilities/onboarding/ui/ColdStart';
+import {
+  AgentNotesBoard,
+  type AgentNotesResponse,
+  LearningIntentComposer,
+} from '@/capabilities/agency/ui-public';
+import { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { apiJson } from '@/ui/lib/api';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';

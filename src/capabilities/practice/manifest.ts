@@ -963,10 +963,34 @@ export const practiceCapability = defineCapability({
   // structured 节点编辑属练习域（题库生命周期）。
   proposals: {
     kinds: [
-      { kind: 'variant_question' },
-      { kind: 'question_draft' },
+      {
+        kind: 'variant_question',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.variantQuestionProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'question_draft',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionDraftProposalAcceptApplier,
+            ),
+        },
+      },
       { kind: 'judge_retraction' },
-      { kind: 'question_edit' },
+      {
+        kind: 'question_edit',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionEditProposalAcceptApplier,
+            ),
+        },
+      },
     ],
   },
   ui: { pages: uiPagesFor('practice') },

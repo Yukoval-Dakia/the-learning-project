@@ -2,90 +2,38 @@
 // AI 改动近 24h 链（notes 包端点）。undo 链直接复用 notes 包 ui 数据层
 // （跨包 ui import：workbench 是跨域壳层，plan 钦定复用而非复制）。
 
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
-export { type AiChangeRow, undoAiChange } from '@/capabilities/notes/ui/notes-api';
-import type { AiChangeRow } from '@/capabilities/notes/ui/notes-api';
+export { type AiChangeRow, undoAiChange } from '@/capabilities/notes/ui-public';
+import type { AiChangeRow } from '@/capabilities/notes/ui-public';
 
 // ── /api/workbench/summary wire（workbench-summary.db.test.ts 同形态） ──
-export interface WorkbenchSummary {
-  proposals: {
-    total: number;
-    decision_total: number;
-    by_kind: Record<string, number>;
-    has_more: boolean;
-    limit: number;
-    status: string;
-  };
-  kpi: {
-    due_count: number;
-    pending_attribution_count: number;
-    knowledge_count: number;
-    // active goal 数只服务 KPI / profile，不再作为冷启动判据。
-    goal_count: number;
-  };
-  cold_start: {
-    is_empty: boolean;
-    evidence: {
-      active_goal: boolean;
-      goal_history: boolean;
-      knowledge: boolean;
-      question: boolean;
-      source_material: boolean;
-      artifact: boolean;
-      review_due: boolean;
-      pending_attribution: boolean;
-      practice_stream: boolean;
-      proposal: boolean;
-      learning_session: boolean;
-      user_event: boolean;
-    };
-  };
-  // 当前 active goal（YUK-476）：null 只表示没有当前目标，不代表用户没有学习数据。
-  active_goal: { id: string; title: string } | null;
-  active_sessions: Array<{
-    id: string;
-    status: string;
-    summary_md: string | null;
-    started_at: number; // epoch 秒
-    ended_at: number | null;
-    duration_ms: number | null;
-    reviewed_count: number;
-  }>;
-  week_heat: Array<{ day: string; count: number }>;
-}
+export type WorkbenchSummary = ApiOperationJsonResponse<'getWorkbenchSummary'>;
 
-export const getWorkbenchSummary = () => apiJson<WorkbenchSummary>('/api/workbench/summary');
+export const getWorkbenchSummary = () =>
+  apiOperationJson('getWorkbenchSummary', {
+    url: '/api/workbench/summary',
+    method: 'GET',
+  });
 
 // ── /api/workbench/overnight-digest wire（YUK-520 A1 夜窗 digest，overnight-digest.db.test.ts
 // 同形态；与 server overnight-digest-summary.ts 的 OvernightDigest 镜像） ──
-export interface OvernightRunGroup {
-  task_kind: string;
-  count: number;
-  status_breakdown: Record<string, number>;
-}
+export type OvernightDigest = ApiOperationJsonResponse<'getOvernightDigest'>;
+export type OvernightRunGroup = OvernightDigest['runs'][number];
 // YUK-580：某 task_kind 窗内 error 计数达阈值 → 静默失败标红条目（附最近 N 条 error_message 原串）。
-export interface DegradedKind {
-  task_kind: string;
-  error_count: number;
-  recent_error_messages: string[];
-}
-export interface OvernightDigest {
-  window: { from: string; to: string };
-  // 空夜显式信号：false → 空夜态（与加载中/失败可区分，永不落 ColdStart）。
-  has_overnight_activity: boolean;
-  runs: OvernightRunGroup[];
-  note_changes_count: number;
-  new_proposals_count: number;
-  new_conjectures_count: number;
-  agent_notes_count: number;
-  degraded_kinds: DegradedKind[];
-}
+export type DegradedKind = OvernightDigest['degraded_kinds'][number];
 
-export const getOvernightDigest = () => apiJson<OvernightDigest>('/api/workbench/overnight-digest');
+export const getOvernightDigest = () =>
+  apiOperationJson('getOvernightDigest', {
+    url: '/api/workbench/overnight-digest',
+    method: 'GET',
+  });
 
 export const getRecentAiChanges = () =>
-  apiJson<{ window_hours: number; rows: AiChangeRow[] }>('/api/artifacts/ai-changes/recent');
+  apiOperationJson('listRecentArtifactAiChanges', {
+    url: '/api/artifacts/ai-changes/recent',
+    method: 'GET',
+  });
 
 // ── 热力分桶（设计稿 heat-cell data-lvl 0..5；真数据按事件量分段） ──
 // 设计稿是假数据演示无分桶规则；阈值按「单日学习事件量」常识分段：

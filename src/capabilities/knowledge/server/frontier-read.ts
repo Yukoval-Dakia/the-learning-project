@@ -20,10 +20,7 @@
 //   - ⑥ governance: reasons + bands are QUALITATIVE (prereq COUNTS / proposed-prereq
 //     NAMES + the discrete BandChip), never bare mastery probabilities.
 
-import {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-} from '@/capabilities/practice/server/learnable-frontier';
+import { isMasteredForFrontier, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { getMasteryProjection } from '@/server/mastery/state';

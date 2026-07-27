@@ -19,8 +19,7 @@
 // fallback (NOT a CauseSchema widening — critic #1) passed through
 // validateCauseAgainstProfile; a later attribution agent supersedes it.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
@@ -57,7 +56,6 @@ import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
-import { collectMasteryRefineTargets } from './note-refine-targets';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -1042,24 +1040,10 @@ export async function submitPaperSlot(
       db,
       knowledgeIds: q.knowledge_ids,
       questionId: input.questionId,
+      sourceArtifactId: q.source_ref,
       attemptEventId,
       now,
     });
-
-    // YUK-729 — go through the shared bounded helper (byte-identical to the solo
-    // path submit.ts:757) so this paper fan-out inherits the YUK-694
-    // MAX_NOTE_REFINE_FANOUT ceiling. The inline loop this replaced iterated ALL
-    // knowledge_ids with an unlimited notesForKnowledge query, enqueuing an
-    // unbounded number of paid note_refine jobs from a single paper submit.
-    const targetArtifactIds = await collectMasteryRefineTargets(db, q.source_ref, q.knowledge_ids);
-    for (const artifactId of targetArtifactIds) {
-      await enqueueMasteryNoteRefine({
-        db,
-        artifactId,
-        questionId: input.questionId,
-        triggerEventId: attemptEventId,
-      });
-    }
   }
 
   // Best-effort wrong-streak evaluation; only a newly persisted attempt may enqueue.

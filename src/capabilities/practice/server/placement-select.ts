@@ -21,7 +21,7 @@
 // it). Returns null when the goal subgraph has no eligible questions (cold DB) → the caller
 // (start handler, PR-2b) dispatches quiz_gen to source starter questions (§6 Q3).
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 import { QuestionKind } from '@/core/schema/business';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';

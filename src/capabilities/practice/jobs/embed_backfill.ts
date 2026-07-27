@@ -21,7 +21,7 @@
 // Each KC's embed text now folds its EFFECTIVE domain (getEffectiveDomain walk),
 // disambiguating same-named cross-subject KCs.
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { getEffectiveDomain } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';

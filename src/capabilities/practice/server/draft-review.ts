@@ -26,7 +26,7 @@ import { and, desc, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
-} from '@/capabilities/knowledge/server/subject-resolution';
+} from '@/capabilities/knowledge/public';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';

@@ -244,7 +244,17 @@ export const notesCapability = defineCapability({
   // ./server/note-refine-apply（persistNoteRefineApply，M3 起）；壳层
   // acceptNoteUpdateProposal 只做校验 + rate event 编排（plan 裁决 T4 只补声明不迁体）。
   proposals: {
-    kinds: [{ kind: 'note_update' }],
+    kinds: [
+      {
+        kind: 'note_update',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.noteUpdateProposalAcceptApplier,
+            ),
+        },
+      },
+    ],
   },
   ui: { pages: uiPagesFor('notes') },
 });

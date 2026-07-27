@@ -41,6 +41,7 @@ README is the project entrance for current stack + local/NAS setup. Keep it alig
 - **R2 / S3-compatible blob** via `@aws-sdk/client-s3`（`src/server/r2.ts`）
 - **Claude Agent SDK**（`@anthropic-ai/claude-agent-sdk`）via xiaomi/mimo Anthropic-compatible endpoint；runtime is self-hosted Node（CMD `node dist/server.cjs`），not Vercel Functions
 - **Switchable AI provider lane (YUK-365)**：默认走 mimo-v2.5（xiaomi key-auth）；`AI_PROVIDER_OVERRIDE=anthropic-sub` 可切到 Opus 4.8 via owner's Claude Max OAuth 订阅。Token 传递、双-provider 分支、生产 SDK 版本前置等完整机制见 `src/server/ai/AGENTS.md`。Wiring 在 `src/server/ai/providers.ts` + `runner.ts`。
+- `src/server/` 子模块精确清单以 `ls src/server/*/` 的当前输出为准，不硬编码数量。
 - **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query + Router, Zod, ts-fsrs**
 - **pg-boss** worker (`scripts/worker.ts`) for durable background jobs
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager

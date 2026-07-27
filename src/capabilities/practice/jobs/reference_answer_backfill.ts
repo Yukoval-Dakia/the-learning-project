@@ -26,7 +26,7 @@
 // the batch continues to the next row — one bad row never aborts the batch. Only
 // a genuinely-escaping infra fault re-throws (pg-boss DLQ retry).
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import {

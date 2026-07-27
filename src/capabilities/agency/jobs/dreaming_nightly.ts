@@ -11,7 +11,7 @@ import {
   listActiveGoalsWithResolvedScope,
 } from '@/capabilities/agency/server/goals/queries';
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
-import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';

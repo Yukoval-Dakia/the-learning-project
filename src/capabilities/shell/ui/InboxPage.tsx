@@ -8,7 +8,7 @@
 // shell.css）。偏差（design pre-flight 预批）：①不渲 demo window 全局数据，A 块走真读模型；
 // ②C 块「去向」用 KIND_META label + reason_md（真 wire，非设计 demo 文案）。
 
-import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
+import { getTree } from '@/capabilities/knowledge/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';

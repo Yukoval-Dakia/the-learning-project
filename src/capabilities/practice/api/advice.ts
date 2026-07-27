@@ -11,7 +11,7 @@
 // scan from limit:1 to a recent-attempt window so a user who labelled an
 // older failure isn't silently masked by a label-less re-failure.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';

@@ -17,7 +17,7 @@ import {
   type PlacementProfile,
   type ProfileKc,
   getPlacementProfile,
-} from '@/capabilities/onboarding/ui/profile-api';
+} from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';

@@ -56,10 +56,7 @@ import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 // signal — the same direction the agency goal_scope cron already crosses into
 // knowledge (loadTreeSnapshot). Mirrors that documented precedent; flip if M5
 // tightens package boundaries.
-import {
-  type FrontierResolution,
-  learnableFrontierResolved,
-} from '@/capabilities/practice/server/learnable-frontier';
+import { type FrontierResolution, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';

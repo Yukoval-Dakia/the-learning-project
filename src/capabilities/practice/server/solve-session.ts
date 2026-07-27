@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';

@@ -29,7 +29,6 @@ import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { Db } from '@/db/client';
-import { taskInputHash } from '@/server/judge/judge-execution-provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
@@ -40,24 +39,17 @@ import {
   query as sdkQuery,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
-import { createId } from '@paralleldrive/cuid2';
 import type { R2Client } from '../r2';
-import {
-  AgentRunError,
-  RETRY_ELAPSED_CAP_MS,
-  isApiErrorSuccessResult,
-  isTransientAgentFailure,
-} from './agent-run-error';
-import {
-  logMissingMcpServersWarning,
-  writeAiTaskRunFinished,
-  writeAiTaskRunStarted,
-  writeCostLedger,
-  writeToolCallLog,
-} from './log';
+import { AgentRunError, isApiErrorSuccessResult } from './agent-run-error';
+import { logMissingMcpServersWarning } from './log';
 import { populateIsolatedSkills } from './populate-skills';
-import { type TokenCounts, effectiveCostUsd } from './pricing';
-import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
+import type { ResolvedProvider } from './providers';
+import {
+  type AiRunLifecycle,
+  classifyLifecycleRetry,
+  createRunLifecycle,
+  maxLifecycleAttempts,
+} from './run-lifecycle';
 
 // ============================================================================
 // Public surface
@@ -304,19 +296,6 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-function inputHash(input: unknown): string {
-  // YUK-589 (K4c) — input_hash is best-effort provenance for the ai_task_runs
-  // row; it must NEVER fail a task run. `taskInputHash` (sha256Canonical) now
-  // throws for non-canonicalizable inputs (Map/Set/RegExp/function/symbol), so
-  // contain it and degrade to a stable string hash — restoring the pre-YUK-589
-  // `String(input)` fallback that a bare `taskInputHash` regressed away.
-  try {
-    return taskInputHash(input);
-  } catch {
-    return taskInputHash(String(input));
-  }
-}
-
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
 // default for hooks/MCP/skills; in a server we need a clean empty dir so
 // the subprocess can't pull in the developer's personal Claude config.
@@ -503,224 +482,97 @@ function buildQueryOptions(
  * would still be same-target but the pin marks a lane where wall-clock
  * determinism matters more than absorption).
  */
-function transientRetryEnabled(ctx: RunTaskCtx): boolean {
-  if (ctx.enableTransientRetry !== true) return false;
-  if (ctx.override?.provider || ctx.override?.model) return false;
-  if (hasGlobalProviderOverride()) return false;
-  return true;
-}
-
-/**
- * One SDK attempt: starts its own ai_task_runs row, runs the query, and on
- * success writes the cost ledger + terminal success row + afterRun. On ANY
- * post-row failure it throws an `AgentRunError` carrying this attempt's
- * taskRunId — it never writes the failure terminal row itself: finish_reason
- * ('error_retried' vs 'error') depends on the transient classification + the
- * retry gates, which only the outer loop knows (review R2 — a non-final
- * PERMANENT failure must never be mislabeled 'error_retried').
- */
 async function runTaskAttempt(args: {
   kind: TaskKind;
   actualInput: unknown;
   ctx: RunTaskCtx;
-  resolved: ResolvedProvider;
-  taskRunId: string;
-  inputHashValue: string;
+  lifecycle: AiRunLifecycle<RunTaskResult>;
 }): Promise<RunTaskResult> {
-  const { kind, actualInput, ctx, resolved, taskRunId, inputHashValue } = args;
-  const def = tasks[kind];
-
-  try {
-    await writeAiTaskRunStarted(ctx.db, {
-      id: taskRunId,
-      task_kind: kind,
-      provider: resolved.provider,
-      model: resolved.model,
-      input_hash: inputHashValue,
-      started_at: new Date(),
-    });
-  } catch (err) {
-    console.error('[runTask] writeAiTaskRunStarted failed', { task_run_id: taskRunId, kind, err });
-  }
-
-  const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
+  const { kind, actualInput, ctx, lifecycle } = args;
+  await lifecycle.start(actualInput);
 
   let resultText = '';
-  let usage = { inputTokens: 0, outputTokens: 0 };
-  // YUK-359: per-token-type buckets for local cost fallback (mimo reports no
-  // total_cost_usd). `usage.inputTokens` keeps the legacy input+cache_read sum
-  // for the cost_ledger.tokens_in column; `tokenCounts` keeps them split for pricing.
-  let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 };
-  let cost_usd: number | undefined;
-  let stopReason = 'unknown';
-  // YUK-299 seam: the SDK fills this on the success result when ctx.outputFormat
-  // was set AND the endpoint honoured it; otherwise it stays undefined.
-  let structuredOutput: unknown;
-  // YUK-576 — global stream_no_terminal guard (deliberate behavior change,
-  // coordinator-ruled): mirrors streamTaskCollecting's sawTerminalResult. A
-  // stream that ends WITHOUT a terminal result message was previously recorded
-  // as a silent SUCCESS (empty text, stopReason 'unknown', ledger written) —
-  // an observability-plane lie. It now throws for EVERY caller: durable paths
-  // get pg-boss redelivery; judge paths fall to 'unsupported' (same bucket as
-  // today's parse-fail).
-  let sawTerminalResult = false;
-
   try {
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, abortController, resolved),
+      options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
-      if (msg.type === 'result') {
-        if (msg.subtype === 'success') {
-          // YUK-576 (§2.4, probe-frozen): ALL API-level errors (4xx/429/5xx/
-          // connection-class) terminate as success+is_error — never as
-          // SDKResultError. YUK-590: this is a failed attempt for EVERY caller;
-          // only the outer retry gates decide whether that failure gets retried.
-          if (isApiErrorSuccessResult(msg)) {
-            console.warn('[runTask] task_run_success_with_error_flag', {
-              event: 'task_run_success_with_error_flag',
-              task_run_id: taskRunId,
-              kind,
-              api_error_status: msg.api_error_status ?? null,
-            });
-            throw new AgentRunError({
-              kind,
-              taskRunId,
-              subtype: 'api_error_result',
-              apiErrorStatus: msg.api_error_status ?? null,
-              errors: [msg.result ?? ''],
-            });
-          }
-          resultText = msg.result ?? '';
-          const u = msg.usage;
-          usage = {
-            inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
-            outputTokens: u?.output_tokens ?? 0,
-          };
-          tokenCounts = {
-            inputTokens: u?.input_tokens ?? 0,
-            outputTokens: u?.output_tokens ?? 0,
-            cacheReadTokens: u?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
-          };
-          cost_usd = msg.total_cost_usd;
-          stopReason = msg.stop_reason ?? 'stop';
-          // YUK-299: present when outputFormat is set + endpoint supports it;
-          // undefined when unsupported / not enabled (msg is already narrowed to
-          // SDKResultSuccess here, where structured_output?: unknown lives —
-          // sdk.d.ts:3579 — so no cast is needed).
-          structuredOutput = msg.structured_output;
-          sawTerminalResult = true;
-        } else {
-          // YUK-299: SDK structured-output retries exhausted lands here (its
-          // SDKResultError subtype, sdk.d.ts:3540) along with every other
-          // non-success subtype. The throw behaviour (+ failure 留痕) is
-          // unchanged; we only add a distinguishable warn for monitoring.
-          if (msg.subtype === 'error_max_structured_output_retries') {
-            console.warn(`[${kind}] structured-output retries exhausted`, {
-              task_run_id: taskRunId,
-            });
-          }
-          // YUK-576: SDKResultError carries `errors: string[]` (sdk.d.ts:3550)
-          // and NO api_error_status — the old `'api_error_status' in msg` probe
-          // was dead on this shape and errors[] was dropped. Preserve both into
-          // the structured error (errors ride into error_message via message).
+      if (msg.type !== 'result') continue;
+      if (msg.subtype === 'success') {
+        if (isApiErrorSuccessResult(msg)) {
+          console.warn('[runTask] task_run_success_with_error_flag', {
+            event: 'task_run_success_with_error_flag',
+            task_run_id: lifecycle.taskRunId,
+            kind,
+            api_error_status: msg.api_error_status ?? null,
+          });
           throw new AgentRunError({
             kind,
-            taskRunId,
-            subtype: msg.subtype,
-            errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+            taskRunId: lifecycle.taskRunId,
+            subtype: 'api_error_result',
+            apiErrorStatus: msg.api_error_status ?? null,
+            errors: [msg.result ?? ''],
           });
         }
-        break;
+        const usage = msg.usage;
+        resultText = msg.result ?? '';
+        lifecycle.recordTerminalSuccess({
+          usage: {
+            inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+            outputTokens: usage?.output_tokens ?? 0,
+          },
+          tokenCounts: {
+            inputTokens: usage?.input_tokens ?? 0,
+            outputTokens: usage?.output_tokens ?? 0,
+            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+          },
+          costUsd: msg.total_cost_usd,
+          finishReason: msg.stop_reason ?? 'stop',
+          structuredOutput: msg.structured_output,
+        });
+      } else {
+        if (msg.subtype === 'error_max_structured_output_retries') {
+          console.warn(`[${kind}] structured-output retries exhausted`, {
+            task_run_id: lifecycle.taskRunId,
+          });
+        }
+        throw new AgentRunError({
+          kind,
+          taskRunId: lifecycle.taskRunId,
+          subtype: msg.subtype,
+          errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+        });
       }
+      break;
     }
-    if (!sawTerminalResult) {
-      // Review P2-#1 hardening: an abort (budget timeout / upstream signal) can
-      // surface as a gracefully-ENDED stream rather than a throw. Classify it
-      // as the abort it is (plain Error → permanent by the whitelist-only
-      // classifier), never as transient 'stream_no_terminal'. Today this is
-      // unreachable-for-retry anyway (RETRY_ELAPSED_CAP_MS 10s < the smallest
-      // registry budget.timeout 30s), but the classifier must not lean on that
-      // unstated invariant.
-      if (abortController.signal.aborted) {
+
+    if (!lifecycle.sawTerminalSuccess) {
+      if (lifecycle.aborted) {
         throw new Error(`[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`);
       }
-      throw new AgentRunError({ kind, taskRunId, subtype: 'stream_no_terminal', errors: [] });
+      throw new AgentRunError({
+        kind,
+        taskRunId: lifecycle.taskRunId,
+        subtype: 'stream_no_terminal',
+        errors: [],
+      });
     }
+
+    const result: RunTaskResult = {
+      task_run_id: lifecycle.taskRunId,
+      text: resultText,
+      finishReason: lifecycle.finishReason,
+      usage: lifecycle.usage,
+      cost_usd: lifecycle.costUsd,
+      structured_output: lifecycle.structuredOutput,
+    };
+    await lifecycle.finishSuccess(result);
+    return result;
   } finally {
-    clearTimeout(timer);
+    // The outer retry owner disposes after it has classified a thrown error.
   }
-
-  // CostLedger: `cost_ledger.cost` is `real`, stored in USD (consistent
-  // with /api/cost/today which sums + renders as $<spend>). Write the
-  // raw USD float; do NOT multiply by 1e6.
-  // YUK-359: mimo reports no total_cost_usd → effectiveCostUsd falls back to
-  // token×price (pricing.ts). currency:'USD' is the runner path's invariant.
-  try {
-    await writeCostLedger(ctx.db, {
-      task_run_id: taskRunId,
-      task_kind: kind,
-      provider: resolved.provider,
-      model: resolved.model,
-      cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
-      currency: 'USD',
-      tokens_in: usage.inputTokens,
-      tokens_out: usage.outputTokens,
-    });
-  } catch (err) {
-    console.error('[runTask] writeCostLedger failed', { task_run_id: taskRunId, kind, err });
-  }
-
-  const result: RunTaskResult = {
-    task_run_id: taskRunId,
-    text: resultText,
-    finishReason: stopReason,
-    usage,
-    cost_usd,
-    // YUK-299: undefined for every un-migrated caller (transparent passthrough).
-    structured_output: structuredOutput,
-  };
-
-  try {
-    await writeAiTaskRunFinished(ctx.db, {
-      id: taskRunId,
-      status: 'success',
-      finish_reason: stopReason,
-      usage,
-      cost_usd,
-    });
-  } catch (err) {
-    console.error('[runTask] writeAiTaskRunFinished success failed', {
-      task_run_id: taskRunId,
-      kind,
-      err,
-    });
-    // YUK-576 (§5.1 parity): the run actually succeeded but its terminal write
-    // failed → the row is stuck at status='running'. Emit the same scannable
-    // structured event the stream paths use so the reconcile sweeper's log
-    // story covers the runTask (judge) path too. No retry — retrying a DB
-    // write during a DB outage just amplifies it.
-    console.warn('[runTask] task_run_stuck_in_running', {
-      event: 'task_run_stuck_in_running',
-      task_run_id: taskRunId,
-      kind,
-      intended_status: 'success',
-      err: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  if (ctx.middleware?.afterRun) {
-    try {
-      await ctx.middleware.afterRun(kind, result, ctx);
-    } catch (err) {
-      console.error('[runTask] afterRun middleware failed', { task_run_id: taskRunId, kind, err });
-    }
-  }
-
-  return result;
 }
 
 export async function runTask(
@@ -738,76 +590,52 @@ export async function runTask(
   const actualInput = ctx.middleware?.beforeRun
     ? await ctx.middleware.beforeRun(kind, input, ctx)
     : input;
-  const inputHashValue = inputHash(actualInput);
 
-  // YUK-576 — bounded same-resolved-target transient retry (design doc §3).
-  // maxAttempts = 1 for every caller that doesn't opt in, and
-  // 1 + budget.transientRetries (== 2 for the two vision judges) when the
-  // gates open. No while, no recursion — the loop bound is the whole story.
-  const maxAttempts = 1 + (transientRetryEnabled(ctx) ? def.budget.transientRetries : 0);
+  const maxAttempts = maxLifecycleAttempts(kind, ctx);
   const firstAttemptStartedAt = Date.now();
 
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const taskRunId = attempt === 1 ? (ctx.taskRunId ?? createId()) : createId();
+    const lifecycle = createRunLifecycle<RunTaskResult>({
+      db: ctx.db,
+      kind,
+      timeoutMs: def.budget.timeout,
+      override: ctx.override,
+      taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
+      logScope: 'runTask',
+      afterRun: ctx.middleware?.afterRun
+        ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
+        : undefined,
+    });
     // Invocation-level guard: keep the warning correlated with the first run
     // row, but never repeat it if this task later gains transient retries.
     if (attempt === 1 && def.needsToolCall && !ctx.mcpServers) {
       logMissingMcpServersWarning({
-        task_run_id: taskRunId,
+        task_run_id: lifecycle.taskRunId,
         task_kind: kind,
       });
     }
-    // Resolve exactly once per attempt (same target every time — this is a
-    // retry, not a fallback) and thread the binding into buildQueryOptions.
-    const resolved = resolveTaskProvider(kind, ctx.override);
     try {
-      return await runTaskAttempt({ kind, actualInput, ctx, resolved, taskRunId, inputHashValue });
+      return await runTaskAttempt({ kind, actualInput, ctx, lifecycle });
     } catch (err) {
       lastErr = err;
-      const elapsedMs = Date.now() - firstAttemptStartedAt;
-      // R1 sixth gate: only failures that arrived FAST (within the elapsed cap
-      // from the FIRST attempt's start) may retry — a slow 5xx that already ate
-      // most of the budget window must not double the sync-route wall clock.
-      const willRetry =
-        attempt < maxAttempts && isTransientAgentFailure(err) && elapsedMs < RETRY_ELAPSED_CAP_MS;
-      // Failure terminal-write ownership lives HERE, post-classification (R2):
-      // 'error_retried' is only ever written for a genuinely-retried attempt.
-      try {
-        await writeAiTaskRunFinished(ctx.db, {
-          id: err instanceof AgentRunError ? err.taskRunId : taskRunId,
-          status: 'failure',
-          finish_reason: willRetry ? 'error_retried' : 'error',
-          usage: { inputTokens: 0, outputTokens: 0 },
-          cost_usd: undefined,
-          error_message: err instanceof Error ? err.message : String(err),
-        });
-      } catch (finishErr) {
-        console.error('[runTask] writeAiTaskRunFinished failure failed', {
-          task_run_id: taskRunId,
-          kind,
-          err: finishErr,
-        });
-        // YUK-576 (§5.1 parity): failure terminal-write itself failed → row
-        // stuck at 'running'. Same scannable event as the stream paths.
-        console.warn('[runTask] task_run_stuck_in_running', {
-          event: 'task_run_stuck_in_running',
-          task_run_id: taskRunId,
-          kind,
-          intended_status: 'failure',
-          err: finishErr instanceof Error ? finishErr.message : String(finishErr),
-        });
-      }
-      if (!willRetry) throw err;
-      // R3 breadcrumb: chronic flakiness shows up as a stream of these warns
-      // (plus 'error_retried' clusters on the admin Failures page).
+      const retry = classifyLifecycleRetry({
+        attempt,
+        maxAttempts,
+        firstAttemptStartedAt,
+        error: err,
+      });
+      await lifecycle.finishFailure(err, retry.willRetry ? 'error_retried' : 'error');
+      if (!retry.willRetry) throw err;
       console.warn('[runTask] task_run_transient_retry', {
         event: 'task_run_transient_retry',
         kind,
-        task_run_id: taskRunId,
+        task_run_id: lifecycle.taskRunId,
         attempt,
-        elapsed_ms: elapsedMs,
+        elapsed_ms: retry.elapsedMs,
       });
+    } finally {
+      lifecycle.dispose();
     }
   }
   // Unreachable: the final attempt either returned or threw above. Kept for
@@ -840,61 +668,35 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const taskRunId = ctx.taskRunId ?? createId();
-  const resolved = resolveTaskProvider(kind, ctx.override);
+  const lifecycle = createRunLifecycle<RunTaskResult>({
+    db: ctx.db,
+    kind,
+    timeoutMs: def.budget.timeout,
+    override: ctx.override,
+    taskRunId: ctx.taskRunId,
+    signal: ctx.signal,
+    logScope: 'streamTask',
+    afterRun: ctx.middleware?.afterRun
+      ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
+      : undefined,
+  });
   let stepStartTime = Date.now();
   let iteration = 0;
-
-  const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
-
-  // YUK-238 [STB-4]: connect the request signal so a client disconnect aborts
-  // the SDK run. If the caller threads `req.signal` (see StreamTaskCtx.signal),
-  // its abort (already-aborted or future) propagates to the shared
-  // abortController that buildQueryOptions hands to the SDK below.
-  if (ctx.signal) {
-    if (ctx.signal.aborted) {
-      abortController.abort();
-    } else {
-      ctx.signal.addEventListener('abort', () => abortController.abort(), { once: true });
-    }
-  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      let usage = { inputTokens: 0, outputTokens: 0 };
-      let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 }; // YUK-359 split for pricing
-      let cost_usd: number | undefined;
-      let stopReason = 'unknown';
       let resultText = '';
 
       try {
-        // beforeRun middleware applies to streaming too — memory context
-        // should land before the first byte goes out.
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
-        try {
-          await writeAiTaskRunStarted(ctx.db, {
-            id: taskRunId,
-            task_kind: kind,
-            provider: resolved.provider,
-            model: resolved.model,
-            input_hash: inputHash(actualInput),
-            started_at: new Date(),
-          });
-        } catch (err) {
-          console.error('[streamTask] writeAiTaskRunStarted failed', {
-            task_run_id: taskRunId,
-            kind,
-            err,
-          });
-        }
+        await lifecycle.start(actualInput);
 
         const q = sdkQuery({
           prompt: promptFromInput(actualInput),
-          options: buildQueryOptions(kind, ctx, abortController, resolved),
+          options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
         });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
           if (msg.type === 'assistant') {
@@ -908,187 +710,85 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             const blocks = (msg.message.content ?? []) as ContentBlock[];
             for (const block of blocks) {
               if (block.type === 'tool_use' && ctx.autoLogToolCalls !== false) {
-                try {
-                  await writeToolCallLog(ctx.db, {
-                    task_run_id: taskRunId,
-                    task_kind: kind,
-                    tool_name: block.name,
-                    input_json: (block.input ?? {}) as Record<string, unknown>,
-                    output_json: {},
-                    iteration,
-                    latency_ms: stepLatencyMs,
-                    cost: 0,
-                  });
-                } catch (err) {
-                  console.error('[streamTask] writeToolCallLog failed', {
-                    task_run_id: taskRunId,
-                    kind,
-                    tool: block.name,
-                    err,
-                  });
-                }
+                await lifecycle.recordToolCall({
+                  toolName: block.name,
+                  inputJson: (block.input ?? {}) as Record<string, unknown>,
+                  iteration,
+                  latencyMs: stepLatencyMs,
+                });
               }
             }
             stepStartTime = Date.now();
-          } else if (msg.type === 'result') {
-            // YUK-590: streamTask shares buildQueryOptions with runTask, including
-            // maxBudgetUsd. Every terminal SDK error must therefore close the
-            // ai_task_runs row as failure instead of falling through with status
-            // 'running'. The success+is_error API shape is also a failure, matching
-            // runTask's global truthfulness invariant.
-            if (isApiErrorSuccessResult(msg)) {
-              throw new AgentRunError({
-                kind,
-                taskRunId,
-                subtype: 'api_error_result',
-                apiErrorStatus: msg.api_error_status ?? null,
-                errors: [msg.result ?? ''],
-              });
-            }
-            if (msg.subtype !== 'success') {
-              throw new AgentRunError({
-                kind,
-                taskRunId,
-                subtype: msg.subtype,
-                errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
-              });
-            }
-
-            if (msg.subtype === 'success') {
-              const u = msg.usage;
-              usage = {
-                inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
-                outputTokens: u?.output_tokens ?? 0,
-              };
-              tokenCounts = {
-                inputTokens: u?.input_tokens ?? 0,
-                outputTokens: u?.output_tokens ?? 0,
-                cacheReadTokens: u?.cache_read_input_tokens ?? 0,
-                cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
-              };
-              cost_usd = msg.total_cost_usd;
-              stopReason = msg.stop_reason ?? 'stop';
-              try {
-                await writeCostLedger(ctx.db, {
-                  task_run_id: taskRunId,
-                  task_kind: kind,
-                  provider: resolved.provider,
-                  model: resolved.model,
-                  // USD float; see runTask comment. YUK-359 local fallback.
-                  cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
-                  currency: 'USD',
-                  tokens_in: usage.inputTokens,
-                  tokens_out: usage.outputTokens,
-                });
-              } catch (err) {
-                console.error('[streamTask] writeCostLedger failed', {
-                  task_run_id: taskRunId,
-                  kind,
-                  err,
-                });
-              }
-              try {
-                await writeAiTaskRunFinished(ctx.db, {
-                  id: taskRunId,
-                  status: 'success',
-                  finish_reason: stopReason,
-                  usage,
-                  cost_usd,
-                });
-              } catch (err) {
-                console.error('[streamTask] writeAiTaskRunFinished success failed', {
-                  task_run_id: taskRunId,
-                  kind,
-                  err,
-                });
-                // YUK-240 [STB-6]: the finish-write failed, so this ai_task_runs
-                // row stays at status='running' forever (the run actually
-                // succeeded). Emit a scannable structured event so a future
-                // sweeper / dashboard can reconcile stuck rows. We deliberately
-                // do NOT retry the DB write here — when the DB is the thing
-                // failing, retrying the same write just compounds the outage.
-                // Observability-only fix; a real reconcile job is the follow-up.
-                console.warn('[streamTask] task_run_stuck_in_running', {
-                  event: 'task_run_stuck_in_running',
-                  task_run_id: taskRunId,
-                  kind,
-                  intended_status: 'success',
-                  err: err instanceof Error ? err.message : String(err),
-                });
-              }
-            }
-            break;
+            continue;
           }
-        }
-
-        if (ctx.middleware?.afterRun) {
-          try {
-            await ctx.middleware.afterRun(
+          if (msg.type !== 'result') continue;
+          if (isApiErrorSuccessResult(msg)) {
+            throw new AgentRunError({
               kind,
-              {
-                task_run_id: taskRunId,
-                text: resultText,
-                finishReason: stopReason,
-                usage,
-                cost_usd,
-              },
-              ctx,
-            );
-          } catch (err) {
-            console.error('[streamTask] afterRun middleware failed', {
-              task_run_id: taskRunId,
-              kind,
-              err,
+              taskRunId: lifecycle.taskRunId,
+              subtype: 'api_error_result',
+              apiErrorStatus: msg.api_error_status ?? null,
+              errors: [msg.result ?? ''],
             });
           }
+          if (msg.subtype !== 'success') {
+            throw new AgentRunError({
+              kind,
+              taskRunId: lifecycle.taskRunId,
+              subtype: msg.subtype,
+              errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+            });
+          }
+          const usage = msg.usage;
+          lifecycle.recordTerminalSuccess({
+            usage: {
+              inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+              outputTokens: usage?.output_tokens ?? 0,
+            },
+            tokenCounts: {
+              inputTokens: usage?.input_tokens ?? 0,
+              outputTokens: usage?.output_tokens ?? 0,
+              cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+              cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+            },
+            costUsd: msg.total_cost_usd,
+            finishReason: msg.stop_reason ?? 'stop',
+          });
+          break;
         }
-      } catch (err) {
+
+        if (!lifecycle.sawTerminalSuccess) {
+          if (lifecycle.aborted) {
+            throw new Error(`[${kind}] Agent SDK run aborted with no terminal result`);
+          }
+          throw new AgentRunError({
+            kind,
+            taskRunId: lifecycle.taskRunId,
+            subtype: 'stream_no_terminal',
+            errors: [],
+          });
+        }
+
+        const result: RunTaskResult = {
+          task_run_id: lifecycle.taskRunId,
+          text: resultText,
+          finishReason: lifecycle.finishReason,
+          usage: lifecycle.usage,
+          cost_usd: lifecycle.costUsd,
+        };
+        await lifecycle.finishSuccess(result);
+      } catch (error) {
+        await lifecycle.finishFailure(error);
         const message =
-          err instanceof Error ? `[streamTask] ${err.message}` : '[streamTask] unknown error';
-        try {
-          await writeAiTaskRunFinished(ctx.db, {
-            id: taskRunId,
-            status: 'failure',
-            finish_reason: 'error',
-            usage,
-            cost_usd,
-            error_message: err instanceof Error ? err.message : String(err),
-          });
-        } catch (finishErr) {
-          console.error('[streamTask] writeAiTaskRunFinished failure failed', {
-            task_run_id: taskRunId,
-            kind,
-            err: finishErr,
-          });
-          // YUK-240 [STB-6]: the run already errored AND the failure-status
-          // finish-write itself failed, so this ai_task_runs row is now stuck at
-          // status='running' with no terminal record. Emit the same scannable
-          // structured event the success path uses so a reconcile sweeper can
-          // find it. No retry — see the success-path note: retrying a DB write
-          // during a DB outage just amplifies it. Observability-only.
-          console.warn('[streamTask] task_run_stuck_in_running', {
-            event: 'task_run_stuck_in_running',
-            task_run_id: taskRunId,
-            kind,
-            intended_status: 'failure',
-            err: finishErr instanceof Error ? finishErr.message : String(finishErr),
-          });
-        }
-        controller.enqueue(new TextEncoder().encode(`\n\n${message}\n`));
+          error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
+        controller.enqueue(encoder.encode(`\n\n${message}\n`));
       } finally {
-        clearTimeout(timer);
+        lifecycle.dispose();
         controller.close();
       }
     },
-    // YUK-238 [STB-4]: transport-level disconnect hook. When the consumer of the
-    // response body cancels the stream (client drops the connection / aborts the
-    // fetch), the runtime invokes cancel(); abort the SDK run and clear the
-    // budget timer so the agent loop stops instead of running to completion in
-    // the background. This is the belt to StreamTaskCtx.signal's suspenders —
-    // either trigger aborts the same shared abortController.
     cancel() {
-      clearTimeout(timer);
-      abortController.abort();
+      lifecycle.abort();
     },
   });
 
@@ -1120,17 +820,8 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
 // task_run_id to persist the experimental:copilot_reply event — so this entrypoint
 // hands both back to the caller while still streaming.
 //
-// Bookkeeping (writeAiTaskRunStarted / tool-call-log / writeCostLedger /
-// writeAiTaskRunFinished) + signal/timer abort wiring mirror streamTask. The loop
-// is intentionally self-contained (NOT factored out of streamTask's body): that
-// body is tightly coupled to its ReadableStream controller (it enqueues encoded
-// bytes mid-loop and writes an error marker to the controller on catch), so sharing
-// it would either leak the controller into this Promise path or risk the
-// stream-cancel.test.ts guards on streamTask's exact behaviour. Keeping streamTask
-// byte-identical is the safer atomic move.
-// TODO(YUK-266 consolidation): once a second collecting caller appears, extract a
-// shared `runAgentStreaming(kind, input, ctx, onDelta): Promise<RunTaskResult>` that
-// streamTask wraps in a ReadableStream and this fn returns directly.
+// SDK message adaptation remains local, while run start/provider/abort/tool-log/
+// cost/terminal/after-run ownership is shared through run-lifecycle.ts.
 //
 // GRACEFUL DEGRADE (red line): if the SDK stream throws AFTER some text was
 // collected, this still resolves with the collected text + a `partial: true` flag
@@ -1153,70 +844,31 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const taskRunId = ctx.taskRunId ?? createId();
-  const resolved = resolveTaskProvider(kind, ctx.override);
+  const lifecycle = createRunLifecycle<StreamCollectResult>({
+    db: ctx.db,
+    kind,
+    timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+    override: ctx.override,
+    taskRunId: ctx.taskRunId,
+    signal: ctx.signal,
+    logScope: 'streamTaskCollecting',
+    afterRun: ctx.middleware?.afterRun
+      ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
+      : undefined,
+  });
   let stepStartTime = Date.now();
   let iteration = 0;
-
-  const abortController = new AbortController();
-  // YUK-575 (N5) — durable copilot run overrides the abort budget per-call (the
-  // durable handler runs through streamTaskCollecting). undefined-guard: non-durable
-  // callers keep def.budget.timeout verbatim (< cloudflared idle-100s for the inline
-  // fallback).
-  const timer = setTimeout(
-    () => abortController.abort(),
-    ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
-  );
-
-  // YUK-238 [STB-4] parity — thread the request signal so a client disconnect
-  // aborts the SDK run, same as streamTask.
-  if (ctx.signal) {
-    if (ctx.signal.aborted) {
-      abortController.abort();
-    } else {
-      ctx.signal.addEventListener('abort', () => abortController.abort(), { once: true });
-    }
-  }
-
-  let usage = { inputTokens: 0, outputTokens: 0 };
-  let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 }; // YUK-359 split for pricing
-  let cost_usd: number | undefined;
-  let stopReason = 'unknown';
   let resultText = '';
-  // YUK-266 — guard the "no terminal result" hole. The sibling streamTask writes
-  // the cost ledger + finished(success) row INSIDE the result-success branch, so it
-  // never records success without a terminal msg.type==='result'. This collecting
-  // variant writes those after the loop, so if the SDK stream ends WITHOUT a
-  // terminal result and without throwing, an incomplete run would otherwise be
-  // recorded as success (corrupting the cost ledger + run audit). Track whether a
-  // terminal success was actually seen; if not, throw so we fall into the existing
-  // graceful-degrade catch that records status:'failure'/finish_reason:'error'.
-  let sawTerminalResult = false;
 
   try {
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
-    try {
-      await writeAiTaskRunStarted(ctx.db, {
-        id: taskRunId,
-        task_kind: kind,
-        provider: resolved.provider,
-        model: resolved.model,
-        input_hash: inputHash(actualInput),
-        started_at: new Date(),
-      });
-    } catch (err) {
-      console.error('[streamTaskCollecting] writeAiTaskRunStarted failed', {
-        task_run_id: taskRunId,
-        kind,
-        err,
-      });
-    }
+    await lifecycle.start(actualInput);
 
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, abortController, resolved),
+      options: buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
       if (msg.type === 'assistant') {
@@ -1230,179 +882,82 @@ export async function streamTaskCollecting(
         const blocks = (msg.message.content ?? []) as ContentBlock[];
         for (const block of blocks) {
           if (block.type === 'tool_use') {
-            try {
-              await writeToolCallLog(ctx.db, {
-                task_run_id: taskRunId,
-                task_kind: kind,
-                tool_name: block.name,
-                input_json: (block.input ?? {}) as Record<string, unknown>,
-                output_json: {},
-                iteration,
-                latency_ms: stepLatencyMs,
-                cost: 0,
-              });
-            } catch (err) {
-              console.error('[streamTaskCollecting] writeToolCallLog failed', {
-                task_run_id: taskRunId,
-                kind,
-                tool: block.name,
-                err,
-              });
-            }
+            await lifecycle.recordToolCall({
+              toolName: block.name,
+              inputJson: (block.input ?? {}) as Record<string, unknown>,
+              iteration,
+              latencyMs: stepLatencyMs,
+            });
           }
         }
         stepStartTime = Date.now();
-      } else if (msg.type === 'result') {
-        if (msg.subtype === 'success') {
-          const u = msg.usage;
-          usage = {
-            inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
-            outputTokens: u?.output_tokens ?? 0,
-          };
-          tokenCounts = {
-            inputTokens: u?.input_tokens ?? 0,
-            outputTokens: u?.output_tokens ?? 0,
-            cacheReadTokens: u?.cache_read_input_tokens ?? 0,
-            cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
-          };
-          cost_usd = msg.total_cost_usd;
-          if (isApiErrorSuccessResult(msg)) {
-            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
-              event: 'task_run_success_with_error_flag',
-              task_run_id: taskRunId,
-              kind,
-              api_error_status: msg.api_error_status ?? null,
-            });
-            throw new AgentRunError({
-              kind,
-              taskRunId,
-              subtype: 'api_error_result',
-              apiErrorStatus: msg.api_error_status ?? null,
-              errors: msg.result ? [msg.result] : [],
-            });
-          }
-          stopReason = msg.stop_reason ?? 'stop';
-          sawTerminalResult = true;
-        } else {
-          const apiStatus =
-            'api_error_status' in msg && msg.api_error_status
-              ? ` http=${msg.api_error_status}`
-              : '';
-          throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
-        }
-        break;
+        continue;
       }
+      if (msg.type !== 'result') continue;
+      if (msg.subtype === 'success') {
+        const usage = msg.usage;
+        lifecycle.recordTerminalSuccess({
+          usage: {
+            inputTokens: (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0),
+            outputTokens: usage?.output_tokens ?? 0,
+          },
+          tokenCounts: {
+            inputTokens: usage?.input_tokens ?? 0,
+            outputTokens: usage?.output_tokens ?? 0,
+            cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+          },
+          costUsd: msg.total_cost_usd,
+          finishReason: msg.stop_reason ?? 'stop',
+        });
+        if (isApiErrorSuccessResult(msg)) {
+          console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+            event: 'task_run_success_with_error_flag',
+            task_run_id: lifecycle.taskRunId,
+            kind,
+            api_error_status: msg.api_error_status ?? null,
+          });
+          throw new AgentRunError({
+            kind,
+            taskRunId: lifecycle.taskRunId,
+            subtype: 'api_error_result',
+            apiErrorStatus: msg.api_error_status ?? null,
+            errors: msg.result ? [msg.result] : [],
+          });
+        }
+      } else {
+        const apiStatus =
+          'api_error_status' in msg && msg.api_error_status ? ` http=${msg.api_error_status}` : '';
+        throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
+      }
+      break;
     }
 
-    // YUK-266 — the stream ended without a terminal success result (and without
-    // throwing). Do NOT record success: throw so the graceful-degrade catch below
-    // writes status:'failure'/finish_reason:'error' and resolves partial text. This
-    // keeps the cost ledger + run audit honest, matching streamTask's invariant.
-    if (!sawTerminalResult) {
+    if (!lifecycle.sawTerminalSuccess) {
       throw new Error(`[${kind}] Agent SDK stream ended without a terminal result message`);
     }
 
-    try {
-      await writeCostLedger(ctx.db, {
-        task_run_id: taskRunId,
-        task_kind: kind,
-        provider: resolved.provider,
-        model: resolved.model,
-        // USD float; see runTask comment. YUK-359 local fallback.
-        cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
-        currency: 'USD',
-        tokens_in: usage.inputTokens,
-        tokens_out: usage.outputTokens,
-      });
-    } catch (err) {
-      console.error('[streamTaskCollecting] writeCostLedger failed', {
-        task_run_id: taskRunId,
-        kind,
-        err,
-      });
-    }
-    try {
-      await writeAiTaskRunFinished(ctx.db, {
-        id: taskRunId,
-        status: 'success',
-        finish_reason: stopReason,
-        usage,
-        cost_usd,
-      });
-    } catch (err) {
-      console.error('[streamTaskCollecting] writeAiTaskRunFinished success failed', {
-        task_run_id: taskRunId,
-        kind,
-        err,
-      });
-      console.warn('[streamTaskCollecting] task_run_stuck_in_running', {
-        event: 'task_run_stuck_in_running',
-        task_run_id: taskRunId,
-        kind,
-        intended_status: 'success',
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
-
     const result: StreamCollectResult = {
-      task_run_id: taskRunId,
+      task_run_id: lifecycle.taskRunId,
       text: resultText,
-      finishReason: stopReason,
-      usage,
-      cost_usd,
+      finishReason: lifecycle.finishReason,
+      usage: lifecycle.usage,
+      cost_usd: lifecycle.costUsd,
     };
-
-    if (ctx.middleware?.afterRun) {
-      try {
-        await ctx.middleware.afterRun(kind, result, ctx);
-      } catch (err) {
-        console.error('[streamTaskCollecting] afterRun middleware failed', {
-          task_run_id: taskRunId,
-          kind,
-          err,
-        });
-      }
-    }
-
+    await lifecycle.finishSuccess(result);
     return result;
-  } catch (err) {
-    // GRACEFUL DEGRADE — the run errored. Record the failure terminal status,
-    // then RESOLVE (do not re-throw) with whatever text was collected so the
-    // caller can still persist the turn. Mirrors streamTask's catch, which keeps
-    // streaming a marker rather than tearing the body down.
-    try {
-      await writeAiTaskRunFinished(ctx.db, {
-        id: taskRunId,
-        status: 'failure',
-        finish_reason: 'error',
-        usage,
-        cost_usd,
-        error_message: err instanceof Error ? err.message : String(err),
-      });
-    } catch (finishErr) {
-      console.error('[streamTaskCollecting] writeAiTaskRunFinished failure failed', {
-        task_run_id: taskRunId,
-        kind,
-        err: finishErr,
-      });
-      console.warn('[streamTaskCollecting] task_run_stuck_in_running', {
-        event: 'task_run_stuck_in_running',
-        task_run_id: taskRunId,
-        kind,
-        intended_status: 'failure',
-        err: finishErr instanceof Error ? finishErr.message : String(finishErr),
-      });
-    }
+  } catch (error) {
+    await lifecycle.finishFailure(error);
     return {
-      task_run_id: taskRunId,
+      task_run_id: lifecycle.taskRunId,
       text: resultText,
       finishReason: 'error',
-      usage,
-      cost_usd,
+      usage: lifecycle.usage,
+      cost_usd: lifecycle.costUsd,
       partial: true,
-      error: err instanceof Error ? err.message : String(err),
+      error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    clearTimeout(timer);
+    lifecycle.dispose();
   }
 }

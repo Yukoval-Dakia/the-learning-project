@@ -35,7 +35,7 @@ import {
   ColdStartBridgeError,
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
-} from '@/capabilities/ingestion/server/cold-start-bridge';
+} from '@/capabilities/ingestion/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';

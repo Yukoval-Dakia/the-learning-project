@@ -14,7 +14,7 @@
 
 import { and, asc, eq } from 'drizzle-orm';
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';

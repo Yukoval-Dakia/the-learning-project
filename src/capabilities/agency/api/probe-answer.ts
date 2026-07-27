@@ -42,7 +42,7 @@
 // A corrupt existing row falls through to `answerProbe`, which surfaces it as a
 // `probe_result_corrupt` 500 (never papered over).
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { JudgeKind, QuestionKind } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';

@@ -55,7 +55,7 @@ import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 // Structural-minimal opts: the dispatch shell's AcceptAiProposalOpts is
 // structurally assignable to this (appliers only read decision/user_note).
-interface AgencyApplierOpts {
+export interface AgencyApplierOpts {
   decision?: string;
   user_note?: string;
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;

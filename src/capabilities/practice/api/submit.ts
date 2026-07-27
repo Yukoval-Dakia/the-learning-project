@@ -32,8 +32,7 @@
 //   trigger). POST composes the phases and shapes the wire response.
 
 import type { Provider } from '@/ai/registry';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { emitMasteryProgressSignal } from '@/capabilities/practice/server/mastery-progress-signal';
 import { newId } from '@/core/ids';
 import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
@@ -104,7 +103,6 @@ import {
 } from '../server/judge-run-dispatch';
 import { freezeQuestionForJudge } from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
-import { collectMasteryRefineTargets } from '../server/note-refine-targets';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
@@ -1279,19 +1277,10 @@ export async function persistSubmit(
       db,
       knowledgeIds: q.knowledge_ids,
       questionId,
+      sourceArtifactId: q.source_ref,
       attemptEventId: eventId,
       now,
     });
-
-    const targetArtifactIds = await collectMasteryRefineTargets(db, q.source_ref, q.knowledge_ids);
-    for (const artifactId of targetArtifactIds) {
-      await enqueueMasteryNoteRefine({
-        db,
-        artifactId,
-        questionId,
-        triggerEventId: eventId,
-      });
-    }
   }
 
   await enqueueWrongStreakNudge(outcome, eventId);

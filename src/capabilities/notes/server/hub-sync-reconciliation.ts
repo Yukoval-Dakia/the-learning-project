@@ -12,13 +12,13 @@ import { hostname } from 'node:os';
 
 import { sql } from 'drizzle-orm';
 
-import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import { listKnowledgeEdges } from '@/capabilities/knowledge/public';
 import {
   type HubMeshAtomicInput,
   type HubMeshEdge,
   resolveHubMeshAtomics,
-} from '@/capabilities/knowledge/server/hub-mesh';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
+} from '@/capabilities/knowledge/public';
+import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 // Auto-zone builder + suppression reader live in a neutral module (YUK-384 Task 8
 // ESM-cycle lift) so both the reconciler and the nightly job — which now imports

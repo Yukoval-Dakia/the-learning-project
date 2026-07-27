@@ -15,7 +15,7 @@
 import {
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
-} from '@/capabilities/knowledge/server/domain';
+} from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 
 export async function resolveGoalPlacementScope(

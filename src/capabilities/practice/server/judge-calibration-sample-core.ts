@@ -29,7 +29,7 @@
 // AI_PROVIDER_OVERRIDE is never set or consulted for routing; sample rows
 // carry env snapshots + same_lane_suspected so a collapsed lane is visible.
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';

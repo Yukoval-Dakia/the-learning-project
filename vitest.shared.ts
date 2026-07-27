@@ -109,6 +109,7 @@ export const fastTestInclude = [
   // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
+  'src/server/ai/run-lifecycle.test.ts',
   // YUK-299 — runner outputFormat seam: zero-regression + structured_output
   // three-state read. Same justification as stream-cancel: @anthropic-ai/
   // claude-agent-sdk + @/server/ai/log are vi.mock'd and `db` is an untouched stub

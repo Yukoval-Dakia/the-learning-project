@@ -6,14 +6,13 @@
 import {
   ApiAuthError,
   ApiError,
-  apiJson,
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiOperationJson,
   clearInternalToken,
   getInternalToken,
 } from '@/ui/lib/api';
-import {
-  type SessionTransitionRequestOptions,
-  buildSessionTransitionRequest,
-} from '@/ui/lib/session-transition';
+import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 
 // ── 流 ──────────────────────────────────────────────────────────
 // 'frontier'（YUK-551）= B3 learnable_frontier 尾（前置全掌握、自身未掌握的可学前沿 KC）。
@@ -73,155 +72,73 @@ export function buildPracticeStreamUrl(knowledgeId?: string): string {
   return `/api/practice/stream?${query.toString()}`;
 }
 
-export const getStream = (knowledgeId?: string) =>
-  apiJson<StreamView>(buildPracticeStreamUrl(knowledgeId));
-
-export const advanceStreamItem = (id: string, status: StreamStatus) =>
-  apiJson<{ item: StreamItem }>(`/api/practice/stream/items/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status }),
+export const getStream = (knowledgeId?: string): Promise<StreamView> =>
+  apiOperationJson('getPracticeStream', {
+    url: buildPracticeStreamUrl(knowledgeId),
+    method: 'GET',
   });
 
-export const recomposeStream = () =>
-  apiJson<StreamView & { added: number }>('/api/practice/stream/recompose', {
+export const advanceStreamItem = (
+  id: string,
+  status: StreamStatus,
+): Promise<{ item: StreamItem }> =>
+  apiOperationJson('updatePracticeStreamItem', {
+    url: `/api/practice/stream/items/${id}`,
+    method: 'PATCH',
+    body: { status },
+  });
+
+export const recomposeStream = (): Promise<StreamView & { added: number }> =>
+  apiOperationJson('recomposePracticeStream', {
+    url: '/api/practice/stream/recompose',
     method: 'POST',
-    body: JSON.stringify({}),
   });
 
 // ── 散题（题面 + 两段式判分 + 申诉 + 解题会话） ─────────────────
-export interface QuestionDetail {
-  id: string;
-  kind: string;
-  prompt_md: string;
-  reference_md: string | null;
-  choices_md: string[] | null;
-  difficulty: number;
-  labels: Array<{ id: string; name: string }>;
-}
+export type QuestionFullDetail = ApiOperationJsonResponse<'getQuestion'>;
+export type QuestionDetail = Pick<
+  QuestionFullDetail,
+  'id' | 'kind' | 'prompt_md' | 'reference_md' | 'choices_md' | 'difficulty' | 'labels'
+>;
 
-export const getQuestion = (id: string) =>
-  apiJson<QuestionDetail>(`/api/questions/${encodeURIComponent(id)}`);
+export const getQuestion = (id: string): Promise<QuestionDetail> =>
+  apiOperationJson('getQuestion', {
+    url: `/api/questions/${encodeURIComponent(id)}`,
+    method: 'GET',
+  });
 
 export interface QuestionKnowledgeOption {
   id: string;
   name: string;
 }
 
-export const getQuestionKnowledgeOptions = () =>
-  apiJson<{ rows: QuestionKnowledgeOption[] }>('/api/knowledge');
+export const getQuestionKnowledgeOptions = (): Promise<{ rows: QuestionKnowledgeOption[] }> =>
+  apiOperationJson('getKnowledgeTreeSnapshot', {
+    url: '/api/knowledge',
+    method: 'GET',
+  });
 
 // ── 题详情面 /questions/:id（YUK-413, loom screen-question-detail）─────────────
 // GET /api/questions/:id 的完整聚合（src/server/questions/detail.ts QuestionDetail）。
 // 上面那个薄 QuestionDetail 是 solve 链用的兼容子集；详情编辑面要全投影：
 // family（变体家族）/ parts（composite 小题）/ scheduling（FSRS）/ backlinks（卷引用）
 // / timeline（attempt·review）/ version（PATCH/DELETE 乐观锁 token）。
-export interface QFullDetailLabel {
-  id: string;
-  name: string;
-}
+export type QFullDetailLabel = QuestionFullDetail['labels'][number];
+export type QFullFamilyMember = QuestionFullDetail['family']['members'][number];
+export type QFullPart = QuestionFullDetail['parts'][number];
+export type QFullPerKnowledge = QuestionFullDetail['scheduling']['per_knowledge'][number];
+export type QFullBacklink = QuestionFullDetail['backlinks'][number];
+export type QFullTimelineEntry = QuestionFullDetail['timeline'][number];
 
-export interface QFullFamilyMember {
-  id: string;
-  variant_depth: number;
-  kind: string;
-  is_self: boolean;
-}
-
-export interface QFullPart {
-  id: string;
-  kind: string;
-  part_index: number;
-  prompt_md: string;
-  difficulty: number;
-  draft_status: string | null;
-}
-
-export interface QFullPerKnowledge {
-  knowledge_id: string;
-  name: string | null;
-  mastery: number | null;
-  evidence_count: number;
-  last_evidence_at_sec: number | null;
-  decay_bucket: string;
-  due_at_sec: number | null;
-}
-
-export interface QFullBacklink {
-  artifact_id: string;
-  type: string;
-  title: string;
-  tool_kind: string | null;
-  intent_source: string;
-  generation_status: string;
-  created_at_sec: number;
-}
-
-export interface QFullTimelineEntry {
-  kind: 'attempt' | 'review';
-  event_id: string;
-  created_at_sec: number;
-  outcome: string;
-  duration_ms: number | null;
-  cause?: { primary: string; confidence: number | null } | null;
-  fsrs_rating?: 'again' | 'hard' | 'good';
-}
-
-export interface QuestionFullDetail {
-  id: string;
-  subject: string | null;
-  notation: string | null;
-  kind: string;
-  prompt_md: string;
-  reference_md: string | null;
-  choices_md: string[] | null;
-  rubric_json: unknown;
-  difficulty: number;
-  source: string;
-  source_ref: string | null;
-  source_tier: { tier: number; name: string };
-  visual_complexity: string | null;
-  figures: unknown;
-  image_refs: string[];
-  variant_depth: number;
-  root_question_id: string | null;
-  parent_variant_id: string | null;
-  parent_question_id: string | null;
-  part_index: number | null;
-  parts: QFullPart[];
-  draft_status: string | null;
-  version: number; // PATCH/DELETE 乐观锁 token（YUK-413 加在后端聚合上）。
-  knowledge_ids: string[];
-  labels: QFullDetailLabel[];
-  family: { root_question_id: string; members: QFullFamilyMember[]; variant_count: number };
-  scheduling: {
-    per_knowledge: QFullPerKnowledge[];
-    aggregate_decay_bucket: string;
-    legacy_question_fsrs: { due_at_sec: number } | null;
-  };
-  backlinks: QFullBacklink[];
-  backlinks_by_intent_source: Record<string, QFullBacklink[]>;
-  timeline: QFullTimelineEntry[];
-  metadata: Record<string, unknown> | null;
-  created_at_sec: number;
-  updated_at_sec: number;
-  computed_at_sec: number;
-}
-
-export const getQuestionFull = (id: string) =>
-  apiJson<QuestionFullDetail>(`/api/questions/${encodeURIComponent(id)}`);
+export const getQuestionFull = (id: string): Promise<QuestionFullDetail> =>
+  apiOperationJson('getQuestion', {
+    url: `/api/questions/${encodeURIComponent(id)}`,
+    method: 'GET',
+  });
 
 // PATCH 编辑面（editable surface 子集 + version 乐观锁；血缘字段后端 .strict() 拒）。
 // 返回 { ok, noop, version, event_id }——noop≡补丁与现行 row 无差异（version 不动）。
-export interface QuestionPatchBody {
-  version: number;
-  prompt_md?: string;
-  reference_md?: string | null;
-  choices_md?: string[] | null;
-  difficulty?: number;
-  knowledge_ids?: string[];
-  kind?: string;
-  draft_status?: 'draft' | 'active' | null;
-}
+export type QuestionPatchBody = ApiOperationRequestBody<'updateQuestion'>;
 
 export interface QuestionPatchResult {
   ok: boolean;
@@ -231,9 +148,10 @@ export interface QuestionPatchResult {
 }
 
 export const patchQuestion = (id: string, body: QuestionPatchBody) =>
-  apiJson<QuestionPatchResult>(`/api/questions/${encodeURIComponent(id)}`, {
+  apiOperationJson('updateQuestion', {
+    url: `/api/questions/${encodeURIComponent(id)}`,
     method: 'PATCH',
-    body: JSON.stringify(body),
+    body,
   });
 
 // DELETE 关联约束门 + 软删。两步：
@@ -355,33 +273,31 @@ export async function deleteQuestion(
   };
 }
 
-export interface JudgePreview {
-  route: string;
-  score: number | null;
-  // YUK-589 — the judge's own score_meaning (e.g. 'steps_v1_weighted',
-  // 'unit_dimension_v1'), carried verbatim from advice. It is part of the
-  // digested result object, so the submit reshape MUST echo it unchanged;
-  // hardcoding it breaks the result_digest match → supplied_unverified.
-  score_meaning: string;
-  coarse_outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
-  confidence: number;
-  feedback_md: string;
-  evidence_json: Record<string, unknown>;
-  capability_ref: { id: string; version: string };
-  suggested_rating: 'again' | 'hard' | 'good';
-  task_run_id?: string;
-  provenance_token?: string;
-}
+type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
+export type JudgePreview = Omit<ReviewAdviceWire['judge'], 'suggested_rating'> & {
+  suggested_rating: NonNullable<ReviewAdviceWire['judge']['suggested_rating']>;
+};
 
-export const getAdvice = (questionId: string, responseMd: string) =>
-  apiJson<{ judge: JudgePreview; advice: unknown }>('/api/review/advice', {
+export async function getAdvice(
+  questionId: string,
+  responseMd: string,
+): Promise<Omit<ReviewAdviceWire, 'judge'> & { judge: JudgePreview }> {
+  const response = await apiOperationJson('previewReviewAdvice', {
+    url: '/api/review/advice',
     method: 'POST',
-    body: JSON.stringify({ question_id: questionId, response_md: responseMd }),
+    body: { question_id: questionId, response_md: responseMd },
   });
-
-export interface SubmitResult {
-  review_event: { id: string; rating: string };
-  judge: { judge_event_id: string | null; suggested_rating: string } | null;
+  if (response.judge.suggested_rating === null) {
+    throw new ApiError(
+      '本次判定没有可提交的 FSRS 评级，请重试判分。',
+      422,
+      'judge_rating_unavailable',
+    );
+  }
+  return {
+    ...response,
+    judge: { ...response.judge, suggested_rating: response.judge.suggested_rating },
+  };
 }
 
 // YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。
@@ -392,112 +308,88 @@ export function computeLatencyMs(shownAtMs: number | null, nowMs: number): numbe
   return Math.max(0, Math.min(3_600_000, Math.trunc(nowMs - shownAtMs)));
 }
 
-export const submitReview = (input: {
-  question_id: string;
-  /** YUK-535 — scoped review session envelope; omitted for the ordinary daily stream. */
-  session_id?: string;
-  rating: 'again' | 'hard' | 'good';
-  response_md: string;
-  // YUK-562 (process-data 最小采集) — 学生自述解题思路 / 过程文本，服务端落到 review
-  // event payload.reasoning_trace（区别于 response_md 的最终作答）。OPTIONAL：wire 类型
-  // 先行；UI 采集框（PfSolo）过 design pre-flight 后接线。省略即字段 absent。
-  reasoning_trace?: string;
-  // YUK-444 (A10 答题置信度自评) — 学生看判定前的主观把握（1-5 整数）。服务端只透传落到
-  // review event payload.self_confidence。**observe-only**：绝不进 θ̂ / FSRS / 判分。OPTIONAL：
-  // 跳过 / 客观题 auto-commit 省略即字段 absent。
-  self_confidence?: number;
-  referenced_knowledge_ids: string[];
-  // YUK-589 — `task_run_id` and `provenance_token` are promoted to the sibling
-  // `judge_task_run_id` / `judge_provenance_token` fields below, so they are stripped
-  // from the embedded judge result (they are not part of the JudgeResultV2 shape the
-  // server re-parses).
-  judge_result_v2?: Omit<
-    JudgePreview,
-    'route' | 'suggested_rating' | 'task_run_id' | 'provenance_token'
-  >;
-  judge_provenance_token?: string;
-  judge_task_run_id?: string;
-  // YUK-372 L2 — 被答 practice_stream_item.id（流作答传被答 slot id，π_i 直 join 判别子）。
-  // 散题/非流作答省略 → server hook skip。
-  stream_item_id?: string;
-  // YUK-432 — 客观题自动判分+自动评级：true 时 server 用 judge 的 suggested rating 覆盖
-  // body.rating（auto-grade），并让客观判分流过 difficulty_calibration_label hook 产标签
-  // （B1 难度 firm-up 链解冻）。开放题省略 → 默认 false → 维持现有手动评级流。
-  auto_rate?: boolean;
-  // YUK-433 — per-attempt elapsed time (ms), clamped to the shared nonnegative safe-integer wire range.
-  // The server maps it to event payload.duration_ms; null/omission remains backward-compatible.
-  latency_ms?: number | null;
-}) => apiJson<SubmitResult>('/api/attempts', { method: 'POST', body: JSON.stringify(input) });
+type CreateAttemptWire = ApiOperationJsonResponse<'createAttempt'>;
+type PendingAttemptWire = Extract<CreateAttemptWire, { verdict: 'pending' }>;
+export type SubmitResult = Exclude<CreateAttemptWire, PendingAttemptWire>;
+export type SubmitReviewInput = Extract<
+  ApiOperationRequestBody<'createAttempt'>,
+  { question_id: string }
+>;
 
-export const fileAppeal = (judgeEventId: string, reasonMd: string) =>
-  apiJson<{ appeal_event_id: string }>('/api/appeals', {
+export async function submitReview(input: SubmitReviewInput): Promise<SubmitResult> {
+  const response = await apiOperationJson('createAttempt', {
+    url: '/api/attempts',
     method: 'POST',
-    body: JSON.stringify({ judge_event_id: judgeEventId, reason_md: reasonMd }),
+    body: input,
+  });
+  if ('verdict' in response) {
+    throw new ApiError(
+      '判分正在后台处理中，请稍后重试或刷新查看结果。',
+      202,
+      'judge_pending',
+      response,
+    );
+  }
+  return response;
+}
+
+export const fileAppeal = (
+  judgeEventId: string,
+  reasonMd: string,
+): Promise<{ appeal_event_id: string }> =>
+  apiOperationJson('createAppeal', {
+    url: '/api/appeals',
+    method: 'POST',
+    body: { judge_event_id: judgeEventId, reason_md: reasonMd },
   });
 
-export const solveStart = (questionId: string) =>
-  apiJson<{ session_id: string }>('/api/solve-sessions', {
+export const solveStart = (questionId: string): Promise<{ session_id: string }> =>
+  apiOperationJson('createSolveSession', {
+    url: '/api/solve-sessions',
     method: 'POST',
-    body: JSON.stringify({ question_id: questionId }),
+    body: { question_id: questionId },
   });
 
-export const solveHint = (questionId: string, sessionId: string, hintIndex: number) =>
-  apiJson<{ text_md: string }>(
-    `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ question_id: questionId, hint_index: hintIndex }),
-    },
-  );
+export const solveHint = (
+  questionId: string,
+  sessionId: string,
+  hintIndex: number,
+): Promise<{ text_md: string }> =>
+  apiOperationJson('createSolveHintRequest', {
+    url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
+    method: 'POST',
+    body: { question_id: questionId, hint_index: hintIndex },
+  });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
 // GET /api/questions?enrich=true 的投影（src/server/questions/list.ts QuestionListItem）。
 // enrich 路径补了 subject（派生学科 profile id）/ knowledge_labels（kchip 中文名）/
 // is_composite + children（大题展开小题）——基础投影没有的派生量，YUK-409 additive 补。
-export interface QBankSourceTier {
-  tier: number;
-  name: string;
-}
+type QBankWireResult = ApiOperationJsonResponse<'listQuestions'>;
+type QBankWireQuestion = QBankWireResult['items'][number];
 
-export interface QBankKnowledgeLabel {
-  id: string;
-  name: string;
-}
-
-export interface QBankQuestion {
-  id: string;
-  kind: string;
-  prompt_md: string; // ≤200 字预览（detail 才给全文）。
-  source: string;
-  source_tier: QBankSourceTier;
-  difficulty: number; // 1-5
-  visual_complexity: string | null;
-  knowledge_ids: string[];
-  root_question_id: string | null;
-  variant_depth: number;
-  parent_question_id: string | null;
-  part_index: number | null;
-  draft_status: string | null; // NULL≡active；'draft'≡草稿。
-  created_at_sec: number; // unix 秒。
-  // enrich 路径填（enrich:false 时后端给 null / 非大题默认）。
-  subject: string | null; // 派生学科 profile id（'yuwen'|'math'|'eng'|'general'...）。
-  notation: string | null; // server resolvable profile；retired custom 仍保留。
-  knowledge_labels: QBankKnowledgeLabel[] | null;
-  is_composite: boolean; // 有 question_part 子题（大题）。
-  children: QBankQuestion[]; // 大题的有序小题（part_index 序）；非大题为 []。
-}
-
-export interface QBankListResult {
+// Domain projection: the API contract proves composite children stop at one
+// level, while the React tree deliberately consumes one recursive view shape.
+// Keep that UI convenience separate from the generated wire type.
+export type QBankQuestion = Omit<QBankWireQuestion, 'children'> & {
+  children: QBankQuestion[];
+};
+export type QBankListResult = Omit<QBankWireResult, 'data' | 'items' | 'page'> & {
+  data?: QBankWireResult['data'];
   items: QBankQuestion[];
-  families: unknown | null; // 题库面不走 group_by_family，恒 null。
-  total: number;
-  truncated: boolean;
-  page: {
-    limit: number;
-    offset: number;
-    has_more: boolean;
+  page: Omit<QBankWireResult['page'], 'next_cursor'> & { next_cursor?: string | null };
+};
+export type QBankSourceTier = QBankQuestion['source_tier'];
+export type QBankKnowledgeLabel = NonNullable<QBankQuestion['knowledge_labels']>[number];
+
+function toQBankQuestion(row: QBankWireQuestion): QBankQuestion {
+  return {
+    ...row,
+    children: row.children.map((child) => ({
+      ...child,
+      children: [],
+    })),
   };
-  computed_at_sec: number;
 }
 
 export interface QBankListFilters {
@@ -539,8 +431,14 @@ export function buildQuestionsListQuery(filters: QBankListFilters = {}): string 
   return sp.toString();
 }
 
-export const getQuestionsList = (filters: QBankListFilters = {}) =>
-  apiJson<QBankListResult>(`/api/questions?${buildQuestionsListQuery(filters)}`);
+export const getQuestionsList = (filters: QBankListFilters = {}): Promise<QBankListResult> =>
+  apiOperationJson('listQuestions', {
+    url: `/api/questions?${buildQuestionsListQuery(filters)}`,
+    method: 'GET',
+  }).then((response) => ({
+    ...response,
+    items: response.items.map(toQBankQuestion),
+  }));
 
 // ── 卷（papers list / detail / 草稿 / 逐题提交 / 会话） ─────────
 export interface PaperListItem {
@@ -555,12 +453,17 @@ export interface PaperListItem {
   created_at: string;
 }
 
-export const getPapers = () => apiJson<{ papers: PaperListItem[] }>('/api/papers');
+export const getPapers = (): Promise<{ papers: PaperListItem[] }> =>
+  apiOperationJson('listPapers', {
+    url: '/api/papers',
+    method: 'GET',
+  });
 
-export const startPaperSession = (artifactId: string) =>
-  apiJson<{ session_id: string }>('/api/review-sessions', {
+export const startPaperSession = (artifactId: string): Promise<{ session_id: string }> =>
+  apiOperationJson('createReviewSession', {
+    url: '/api/review-sessions',
     method: 'POST',
-    body: JSON.stringify({ paper_id: artifactId }),
+    body: { paper_id: artifactId },
   });
 
 export interface PaperSlot {
@@ -600,8 +503,11 @@ export interface PaperDetail {
   sections: Array<{ section_index: number; knowledge_focus_names: string[]; slots: PaperSlot[] }>;
 }
 
-export const getPaperDetail = (artifactId: string) =>
-  apiJson<PaperDetail>(`/api/papers/${encodeURIComponent(artifactId)}`);
+export const getPaperDetail = (artifactId: string): Promise<PaperDetail> =>
+  apiOperationJson('getPaper', {
+    url: `/api/papers/${encodeURIComponent(artifactId)}`,
+    method: 'GET',
+  });
 
 type PaperWriteInput = {
   session_id: string;
@@ -688,32 +594,40 @@ export const savePaperAnswer = (
   artifactId: string,
   input: PaperWriteInput,
   options: { keepalive?: boolean } = {},
-) =>
-  apiJson(
-    `/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`,
-    buildPaperAnswerDraftInit(artifactId, input, options),
-  );
+) => {
+  const init = buildPaperAnswerDraftInit(artifactId, input, options);
+  return apiOperationJson('createPaperAnswerDraft', {
+    url: `/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`,
+    method: 'POST',
+    body: buildPaperAnswerDraftBody(artifactId, input),
+    init: init.keepalive ? { keepalive: true } : undefined,
+  });
+};
 
 export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>
-  apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/submissions`, {
+  apiOperationJson('createPaperSubmission', {
+    url: `/api/review-sessions/${encodeURIComponent(input.session_id)}/submissions`,
     method: 'POST',
-    body: JSON.stringify(buildPaperSubmissionBody(artifactId, input)),
+    body: buildPaperSubmissionBody(artifactId, input),
   });
 
 export const endPaperSession = (sessionId: string) =>
-  apiJson(
-    `/api/review-sessions/${encodeURIComponent(sessionId)}`,
-    buildSessionTransitionRequest('completed'),
-  );
+  apiOperationJson('updateReviewSession', {
+    url: `/api/review-sessions/${encodeURIComponent(sessionId)}`,
+    method: 'PATCH',
+    body: { status: 'completed' },
+  });
 
 export const pausePaperSession = (
   sessionId: string,
   options: SessionTransitionRequestOptions = {},
 ) =>
-  apiJson(
-    `/api/review-sessions/${encodeURIComponent(sessionId)}`,
-    buildSessionTransitionRequest('paused', options),
-  );
+  apiOperationJson('updateReviewSession', {
+    url: `/api/review-sessions/${encodeURIComponent(sessionId)}`,
+    method: 'PATCH',
+    body: { status: 'paused' },
+    init: options.keepalive ? { keepalive: true } : undefined,
+  });
 
 // ── 草稿审核池（owner manual gate, YUK-402/403 inc-4） ─────────────
 // 后端 server/draft-review.ts 的投影：list 是截断预览 + verify 状态；detail 是
@@ -805,22 +719,29 @@ export function buildDraftListQuery(filters: DraftListFilters): string {
 
 export const getDrafts = (filters: DraftListFilters = {}) => {
   const qs = buildDraftListQuery(filters);
-  return apiJson<DraftReviewListPage>(`/api/review/drafts${qs ? `?${qs}` : ''}`);
+  return apiOperationJson('listReviewDrafts', {
+    url: `/api/review/drafts${qs ? `?${qs}` : ''}`,
+    method: 'GET',
+  });
 };
 
-export const getDraftDetail = (id: string) =>
-  apiJson<DraftReviewDetail>(`/api/review/drafts/${encodeURIComponent(id)}`);
+export const getDraftDetail = (id: string): Promise<DraftReviewDetail> =>
+  apiOperationJson('getReviewDraft', {
+    url: `/api/review/drafts/${encodeURIComponent(id)}`,
+    method: 'GET',
+  });
 
 /** 启用：跑一遍 B5 verify，通过转 active；不过留池并回 needs_review/failed + reason。 */
 export const enableDraft = (id: string) =>
-  apiJson<DraftPromoteResult>(`/api/review/drafts/${encodeURIComponent(id)}/enable`, {
+  apiOperationJson('enableReviewDraft', {
+    url: `/api/review/drafts/${encodeURIComponent(id)}/enable`,
     method: 'POST',
-    body: JSON.stringify({}),
   });
 
 /** 强制启用：跳过 verify 直接转 active，必填 reason 留痕（actor=user · force_enable）。 */
 export const forceEnableDraft = (id: string, reason: string) =>
-  apiJson<DraftPromoteResult>(`/api/review/drafts/${encodeURIComponent(id)}/force-enable`, {
+  apiOperationJson('forceEnableReviewDraft', {
+    url: `/api/review/drafts/${encodeURIComponent(id)}/force-enable`,
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: { reason },
   });

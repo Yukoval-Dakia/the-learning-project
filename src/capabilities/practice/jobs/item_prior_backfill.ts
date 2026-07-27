@@ -14,7 +14,7 @@
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';

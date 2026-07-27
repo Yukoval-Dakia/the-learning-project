@@ -62,8 +62,8 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { type NameKcFn, tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { type NameKcFn, tagKnowledge } from '@/capabilities/knowledge/public';
 import type { CoarseOutcomeT } from '@/core/schema/capability';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {

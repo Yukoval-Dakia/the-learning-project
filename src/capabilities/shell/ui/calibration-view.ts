@@ -10,7 +10,7 @@
 // calTier / 排序比较器 / seX / lane 分桶；real-model 适配：theta_se=null（无 mastery_state 行 /
 // 冷启）回落冷启先验 SE。
 
-import type { CalibrationMaturityRow } from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
+import type { CalibrationMaturityRow } from '@/capabilities/onboarding/ui-public';
 
 export type CalTier = 'firm' | 'warming' | 'blind';
 

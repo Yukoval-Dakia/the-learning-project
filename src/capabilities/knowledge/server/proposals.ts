@@ -13,7 +13,7 @@
 // (insert/update knowledge rows) happens transactionally with the rate event
 // write to keep accept atomic.
 
-import { updateGoalScope } from '@/capabilities/agency/server/goals/queries';
+import { updateGoalScope } from '@/capabilities/agency/public';
 import { newId } from '@/core/ids';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import { AgentRef } from '@/core/schema/business';

@@ -388,9 +388,33 @@ describe('placement attempt heartbeat lifecycle', () => {
     );
 
     for (let minutes = 5; minutes <= 25; minutes += 5) {
+      const waitDeadline = Date.now() + 5_000;
+      while (waits.length === 0 && Date.now() < waitDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       clock = startedOn.getTime() + minutes * 60_000;
-      waits.shift()?.();
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      const releaseHeartbeat = waits.shift();
+      expect(
+        releaseHeartbeat,
+        `heartbeat sleep was not registered for minute ${minutes}`,
+      ).toBeTypeOf('function');
+      releaseHeartbeat?.();
+
+      const expectedLease = new Date(
+        startedOn.getTime() + (minutes + PLACEMENT_ATTEMPT_LEASE_MS / 60_000) * 60_000,
+      );
+      let observedLease: Date | null = null;
+      const renewalDeadline = Date.now() + 5_000;
+      while (Date.now() < renewalDeadline) {
+        const [renewed] = await testDb()
+          .select({ lease: placement_starter_attempt.lease_expires_at })
+          .from(placement_starter_attempt)
+          .where(eq(placement_starter_attempt.id, attempt.attemptId));
+        observedLease = renewed?.lease ?? null;
+        if (observedLease?.getTime() === expectedLease.getTime()) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(observedLease).toEqual(expectedLease);
     }
     const [row] = await testDb()
       .select()

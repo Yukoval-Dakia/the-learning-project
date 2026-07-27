@@ -20,7 +20,7 @@
 // 正确 outcome（第二实例原则）——每次触及 θ̂ 的 overturn 都写 experimental:reproject_
 // deferred marker 喂第二实例重投影引擎（全历史重投影仍属投影引擎契约，独立 issue）。
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';

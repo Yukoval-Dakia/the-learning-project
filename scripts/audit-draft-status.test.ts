@@ -262,7 +262,7 @@ const REAL_SETTERS = [
   'src/server/questions/sourced-draft-insert.ts',
   'src/server/ai/question-author.ts',
   'src/server/boss/handlers/quiz_gen.ts',
-  'src/server/proposals/legacy-record-appliers.ts',
+  'src/capabilities/ingestion/server/legacy-record-appliers.ts',
   // post-L2 explicit setters (also allowlisted, harmless-redundant):
   // (YUK-358 决定3: embedded_check_generate.ts removed with the orphan chain.)
   'src/capabilities/copilot/server/teaching/materialize-ask-check.ts',

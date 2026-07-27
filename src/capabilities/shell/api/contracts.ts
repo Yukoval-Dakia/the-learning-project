@@ -3,7 +3,12 @@ import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
 import { BRIEF_STATES, PRIMARY_ACTION_KINDS } from '@/core/schema/conjecture';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
-import { ProposalEvidenceRef } from '@/core/schema/proposal';
+import {
+  AiProposalKind,
+  AiProposalPayload,
+  ProposalDecisionResource,
+  ProposalEvidenceRef,
+} from '@/core/schema/proposal';
 import { z } from 'zod';
 
 export const SubjectListResponseSchema = z.object({
@@ -43,6 +48,54 @@ export const AutoAppliedProposalDigestSchema = z.object({
     window: z.number().int().nonnegative(),
   }),
 });
+
+const ProposalBlockPreviewResponseSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  excerpt: z.string(),
+});
+
+const ProposalPresentationResponseSchema = z.object({
+  title: z.string(),
+  change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
+  technical_details: z.string().nullable(),
+  evidence_labels: z.record(z.string(), z.string()),
+  block_merge: z
+    .object({
+      primary: ProposalBlockPreviewResponseSchema.nullable(),
+      merged: z.array(ProposalBlockPreviewResponseSchema),
+      continuity_label: z.string().nullable(),
+    })
+    .nullable(),
+});
+
+export const ProposalInboxRowResponseSchema = z.object({
+  id: z.string(),
+  kind: AiProposalKind,
+  target: z.object({ subject_kind: z.string(), subject_id: z.string().nullable() }),
+  payload: AiProposalPayload,
+  status: z.enum(['pending', 'accepted', 'dismissed', 'stale', 'rubric_rejected']),
+  proposed_at: z.string(),
+  decided_at: z.string().nullable(),
+  actor_ref: z.string(),
+  task_run_id: z.string().nullable(),
+  cost_micro_usd: z.number().int().nullable(),
+  source_action: z.string(),
+  source_subject_kind: z.string(),
+  signals: z.record(z.string(), z.unknown()).nullable(),
+  presentation: ProposalPresentationResponseSchema.nullable(),
+});
+
+export const ProposalPageResponseSchema = z.object({
+  data: z.array(ProposalInboxRowResponseSchema),
+  page: z.object({ limit: z.number().int().positive(), next_cursor: z.string().nullable() }),
+  // Compatibility fields remain part of the declared contract until every
+  // browser caller consumes the canonical collection envelope.
+  rows: z.array(ProposalInboxRowResponseSchema),
+  next_cursor: z.string().nullable(),
+});
+
+export const ProposalDecisionResponseSchema = ProposalDecisionResource;
 
 export const LegacyProposalDecisionBodySchema = z
   .object({
@@ -86,7 +139,23 @@ export const WorkbenchSummaryResponseSchema = z.object({
     knowledge_count: z.number().int().nonnegative(),
     goal_count: z.number().int().nonnegative(),
   }),
-  cold_start: z.record(z.unknown()),
+  cold_start: z.object({
+    is_empty: z.boolean(),
+    evidence: z.object({
+      active_goal: z.boolean(),
+      goal_history: z.boolean(),
+      knowledge: z.boolean(),
+      question: z.boolean(),
+      source_material: z.boolean(),
+      artifact: z.boolean(),
+      review_due: z.boolean(),
+      pending_attribution: z.boolean(),
+      practice_stream: z.boolean(),
+      proposal: z.boolean(),
+      learning_session: z.boolean(),
+      user_event: z.boolean(),
+    }),
+  }),
   active_goal: z.object({ id: z.string(), title: z.string() }).nullable(),
   active_sessions: z.array(
     z.object({

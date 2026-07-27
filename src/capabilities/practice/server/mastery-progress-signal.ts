@@ -22,14 +22,14 @@
 import { newId } from '@/core/ids';
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
+import { writeEvents } from '@/kernel/events';
 import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
 
 // Injectable writeEvent seam (defaults to the real writeEvent). Lets callers/tests
 // substitute the per-event INSERT — used to prove per-event failure isolation
 // (one throwing emit must NOT drop the others) without relying on a flaky DB
 // constraint trick. Matches writeEvent's signature exactly.
-type WriteEventFn = typeof writeEvent;
+type WriteEventsFn = typeof writeEvents;
 
 export { MASTERY_PROGRESS_ACTION };
 
@@ -107,17 +107,26 @@ export async function emitMasteryProgressSignal(input: {
   db: Db;
   knowledgeIds: string[];
   questionId?: string;
+  sourceArtifactId?: string | null;
   // 触发它的 attempt event id —— caused_by 链 + payload.evidence。
   attemptEventId?: string | null;
   now?: Date;
-  // 可注入的 writeEvent seam（默认真 writeEvent）——测试用来精确制造单 KC 失败，证明
-  // per-event 隔离。生产路径不传。
-  writeEventFn?: WriteEventFn;
-  // 每条 emit 失败时回调（带失败 KC 的 knowledge_id）。可观测 hook——不传也会 warn 计数。
+  // 可注入的 batch seam（默认真 writeEvents）。全部 sibling 在一个事务中发布；
+  // 任一失败都回滚整组，避免 subscriber 只看到同次 attempt 的部分 KC。
+  writeEventsFn?: WriteEventsFn;
+  // 批量 emit 失败时为每个 KC 回调一次。可观测 hook——不传也会 warn。
   onEmitFailure?: (knowledgeId: string, err: unknown) => void;
 }): Promise<string[]> {
-  const { db, knowledgeIds, questionId, attemptEventId, writeEventFn, onEmitFailure } = input;
-  const emit = writeEventFn ?? writeEvent;
+  const {
+    db,
+    knowledgeIds,
+    questionId,
+    sourceArtifactId,
+    attemptEventId,
+    writeEventsFn,
+    onEmitFailure,
+  } = input;
+  const emitBatch = writeEventsFn ?? writeEvents;
   const now = input.now ?? new Date();
   // readMasteryProgress 失败（罕见——纯 SELECT）→ best-effort 吞，整体返回空。
   let readings: MasteryProgressReading[];
@@ -128,58 +137,33 @@ export async function emitMasteryProgressSignal(input: {
     return [];
   }
 
-  // MAJOR + MEDIUM fix — 并行 INSERT + per-event 隔离。每条 event 独立 try（Promise.allSettled
-  // 语义），一条 throw 不连累其余。失败的进 failures 计数，绝不静默丢。
-  const emittedIds: string[] = [];
-  const failures: string[] = [];
-  const results = await Promise.allSettled(
-    readings.map(async (reading) => {
-      const eventId = newId();
-      await emit(db, {
-        id: eventId,
-        actor_kind: 'system',
-        actor_ref: 'mastery_progress_signal',
-        action: MASTERY_PROGRESS_ACTION,
-        subject_kind: 'knowledge',
-        subject_id: reading.knowledge_id,
-        // 不带 success/failure 语义——这是观测读数，非判分。
-        outcome: null,
-        payload: {
-          knowledge_id: reading.knowledge_id,
-          // 真实 p(L) delta 埋点核心字段。
-          theta_delta: reading.theta_delta,
-          p_learned: reading.p_learned,
-          theta_hat: reading.theta_hat,
-          question_id: questionId ?? null,
-          attempt_event_id: attemptEventId ?? null,
-          // PHASE-DEFERRED：跨阈阈值尚未定——埋点窗口里这条事件不 gate 任何行为。
-          // 阈值从这些事件的 Δ 分布里挑出后，触发器才从成败代理升级为跨阈 gating
-          // （ADR-0040 决定2）。
-          threshold_deferred: true,
-        },
-        caused_by_event_id: attemptEventId ?? null,
-        created_at: now,
-      });
-      return { eventId, knowledgeId: reading.knowledge_id };
-    }),
-  );
+  const rows = readings.map((reading) => ({
+    id: newId(),
+    actor_kind: 'system',
+    actor_ref: 'mastery_progress_signal',
+    action: MASTERY_PROGRESS_ACTION,
+    subject_kind: 'knowledge',
+    subject_id: reading.knowledge_id,
+    outcome: null,
+    payload: {
+      knowledge_id: reading.knowledge_id,
+      theta_delta: reading.theta_delta,
+      p_learned: reading.p_learned,
+      theta_hat: reading.theta_hat,
+      question_id: questionId ?? null,
+      source_artifact_id: sourceArtifactId ?? null,
+      attempt_event_id: attemptEventId ?? null,
+      threshold_deferred: true,
+    },
+    caused_by_event_id: attemptEventId ?? null,
+    created_at: now,
+  }));
 
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result.status === 'fulfilled') {
-      emittedIds.push(result.value.eventId);
-    } else {
-      const knowledgeId = readings[i].knowledge_id;
-      failures.push(knowledgeId);
-      onEmitFailure?.(knowledgeId, result.reason);
-    }
+  try {
+    return await db.transaction((tx) => emitBatch(tx, rows));
+  } catch (err) {
+    for (const reading of readings) onEmitFailure?.(reading.knowledge_id, err);
+    console.warn('[mastery_progress] atomic batch emit failed (non-fatal):', err);
+    return [];
   }
-  if (failures.length > 0) {
-    // 不静默丢——把失败计数 + KC 列表 surface（旁路埋点仍 best-effort，主路径不 fail）。
-    console.warn(
-      `[mastery_progress] ${failures.length}/${readings.length} emit(s) failed (non-fatal):`,
-      failures,
-    );
-  }
-  return emittedIds;
 }

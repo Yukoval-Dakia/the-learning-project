@@ -353,7 +353,15 @@ export const knowledgeCapability = defineCapability({
             ),
         },
       },
-      { kind: 'knowledge_edge' },
+      {
+        kind: 'knowledge_edge',
+        accept: {
+          load: () =>
+            import('./server/edge-proposal-accept').then(
+              (module) => module.knowledgeEdgeProposalAcceptApplier,
+            ),
+        },
+      },
       { kind: 'archive' },
     ],
   },
