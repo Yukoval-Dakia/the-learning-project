@@ -139,6 +139,11 @@ interface PreparedConjectureCell {
   evidenceImages: LoadedConjectureEvidenceImage[];
 }
 
+function scheduledEventId(prefix: 'trigger' | 'scan', executionId: string): string {
+  const digest = createHash('sha256').update(executionId).digest('hex').slice(0, 32);
+  return `research_meeting_${prefix}_${digest}`;
+}
+
 function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
   const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
   const digest = createHash('sha256')
@@ -672,7 +677,9 @@ export async function runResearchMeetingNightly(
   }
 
   // Anchor the run (provenance for each proposal + the scan subject).
-  const triggerEventId = `research_meeting_${newId()}`;
+  // The pg-boss execution id is stable across retries, so every durable fact in
+  // one logical run retains the same anchor even if a later sibling write fails.
+  const triggerEventId = scheduledEventId('trigger', executionId);
   await writeEventFn(db, {
     id: triggerEventId,
     actor_kind: 'agent',
@@ -773,7 +780,7 @@ export async function runResearchMeetingNightly(
   // DOUBLE-COUNT the AI spend in the cost ribbon (OCR review). The per-run total is still
   // surfaced via the return value (cost_usd) for the job log.
   await writeEventFn(db, {
-    id: `research_meeting_scan_${newId()}`,
+    id: scheduledEventId('scan', executionId),
     actor_kind: 'agent',
     actor_ref: RESEARCH_MEETING_ACTOR,
     action: 'experimental:research_meeting_scan',

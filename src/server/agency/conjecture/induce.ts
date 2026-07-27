@@ -551,8 +551,9 @@ export async function induceConjecture(
     };
   }
 
-  // confidence denominator is `samples` (requested), not `drafts.length` (parsed) —
-  // a failed parse is a non-agreement, not ignored. Unchanged from original.
+  // confidence denominator is `samples` (requested), not `proposals.length`
+  // (grounded) — a failed parse, ungrounded proposal, or abstention is a
+  // non-agreement, not ignored.
   let confidence = agreement / samples;
 
   // Judge-only-evidence cap: every supporting cell is agent-judge, no owner cause.

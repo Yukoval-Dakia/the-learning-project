@@ -409,6 +409,19 @@ describe('runResearchMeetingNightly', () => {
     expect(abstainEventIds).toHaveLength(3);
     expect(abstainEventIds[0]).toBe(abstainEventIds[1]);
     expect(abstainEventIds[2]).not.toBe(abstainEventIds[0]);
+
+    for (const action of [
+      'experimental:trigger_research_meeting',
+      'experimental:research_meeting_scan',
+    ]) {
+      const ids = writeEventFn.mock.calls
+        .map((call) => call[1])
+        .filter((input) => input.action === action)
+        .map((input) => input.id);
+      expect(ids).toHaveLength(3);
+      expect(ids[0]).toBe(ids[1]);
+      expect(ids[2]).not.toBe(ids[0]);
+    }
   });
 
   it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
