@@ -23,7 +23,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   RESEARCH_MEETING_MAX_CONJECTURES,
+  RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL,
+  RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
+  planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
 } from './research_meeting_nightly';
 
@@ -603,7 +606,7 @@ describe('runResearchMeetingNightly', () => {
     });
   });
 
-  it('enriches only the top-K cells (the grounding read is bounded by the salience cap)', async () => {
+  it('bounds each grounding batch by the remaining top-K capacity', async () => {
     const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
     const deps = baseDeps({
       getFailureAttemptsWithTraceFn: vi.fn(async () =>
@@ -616,6 +619,35 @@ describe('runResearchMeetingNightly', () => {
     expect(enrichEvidenceCellsFn.mock.calls[0][1].cells).toHaveLength(
       RESEARCH_MEETING_MAX_CONJECTURES,
     );
+  });
+
+  it('refills grounded top-K from lower salience cells when the leading cells are invalid', async () => {
+    const enrichEvidenceCellsFn = vi.fn(async (db, input) =>
+      (await fakeEnrich(db, input)).map((cell) =>
+        ['k_a', 'k_b', 'k_c'].includes(cell.knowledge_id) ? { ...cell, samples: [] } : cell,
+      ),
+    );
+    const inducedKnowledgeIds: string[] = [];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d', 'k_e'])),
+      ),
+      enrichEvidenceCellsFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(enrichEvidenceCellsFn).toHaveBeenCalledTimes(2);
+    const firstBatch = enrichEvidenceCellsFn.mock.calls[0][1].cells as EvidenceCell[];
+    const secondBatch = enrichEvidenceCellsFn.mock.calls[1][1].cells as EvidenceCell[];
+    expect(firstBatch.map((cell) => cell.knowledge_id)).toEqual(['k_a', 'k_b', 'k_c']);
+    expect(secondBatch.map((cell) => cell.knowledge_id)).toEqual(['k_d', 'k_e']);
+    expect(result.considered).toBe(2);
+    expect(inducedKnowledgeIds.sort()).toEqual(['k_d', 'k_e']);
   });
 
   it('does not run the grounding read on an empty night', async () => {
@@ -636,5 +668,71 @@ describe('runResearchMeetingNightly', () => {
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);
     expect(result.reconcile_skipped).toBe(1);
+  });
+});
+
+describe('planConjectureEvidenceImageLoad', () => {
+  const ref = (asset_id: string): ConjectureEvidenceAssetRef => ({
+    asset_id,
+    attempt_event_id: 'attempt_1',
+    source: 'question',
+  });
+
+  it('excludes MIME types the runner cannot encode while retaining supported images', () => {
+    expect(
+      planConjectureEvidenceImageLoad(
+        [ref('bmp'), ref('png')],
+        [
+          {
+            id: 'bmp',
+            mime_type: 'image/bmp',
+            byte_size: 100,
+            width: 10,
+            height: 10,
+          },
+          {
+            id: 'png',
+            mime_type: 'image/png',
+            byte_size: 100,
+            width: 10,
+            height: 10,
+          },
+        ],
+      ),
+    ).toEqual({
+      loadableRefs: [ref('png')],
+      excludedRefs: [ref('bmp')],
+    });
+  });
+
+  it('rejects aggregate bytes and decoded pixels before any image fetch', () => {
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('large')],
+        [
+          {
+            id: 'large',
+            mime_type: 'image/png',
+            byte_size: RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL + 1,
+            width: 10,
+            height: 10,
+          },
+        ],
+      ),
+    ).toThrow(/bytes/);
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('wide')],
+        [
+          {
+            id: 'wide',
+            mime_type: 'image/webp',
+            byte_size: 100,
+            width: RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL + 1,
+            height: 1,
+          },
+        ],
+      ),
+    ).toThrow(/pixels/);
   });
 });

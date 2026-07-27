@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest';
 import {
   CONJECTURE_RECURRENCE_FLOOR,
   LOW_PRECISION_THRESHOLD,
+  collectConjectureEvidenceAssetRefs,
   conjectureKey,
   gatherConjectureEvidence,
 } from './evidence';
+import type { EnrichedEvidenceCell } from './evidence';
 
 function failure(
   id: string,
@@ -220,5 +222,28 @@ describe('gatherConjectureEvidence — theta/baseline attach, dedup, ordering', 
     });
     expect(cells).toHaveLength(1);
     expect(cells[0].has_owner_cause).toBe(true);
+  });
+});
+
+describe('collectConjectureEvidenceAssetRefs', () => {
+  it('dedups one sample/source but preserves the same asset in other roles and attempts', () => {
+    const sample = (attempt_event_id: string) => ({
+      attempt_event_id,
+      question_image_refs: ['shared', 'shared'],
+      question_figures: [],
+      parent_question_image_refs: [],
+      parent_question_figures: [],
+      answer_image_refs: ['shared'],
+    });
+    const cell = {
+      samples: [sample('attempt_1'), sample('attempt_2')],
+    } as unknown as EnrichedEvidenceCell;
+
+    expect(collectConjectureEvidenceAssetRefs(cell)).toEqual([
+      { asset_id: 'shared', attempt_event_id: 'attempt_1', source: 'question' },
+      { asset_id: 'shared', attempt_event_id: 'attempt_1', source: 'answer' },
+      { asset_id: 'shared', attempt_event_id: 'attempt_2', source: 'question' },
+      { asset_id: 'shared', attempt_event_id: 'attempt_2', source: 'answer' },
+    ]);
   });
 });

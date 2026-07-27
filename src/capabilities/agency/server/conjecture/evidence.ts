@@ -176,9 +176,11 @@ export interface LoadedConjectureEvidenceImage extends ConjectureEvidenceAssetRe
 }
 
 /**
- * Collect unique image assets in the same order the model will receive them.
- * Figure refs and simple refs can point at the same asset, so first occurrence
- * wins and prevents duplicate image blocks.
+ * Collect image occurrences in the same order the model will receive them.
+ * Figure refs and simple refs within one sample/source can point at the same asset, so that
+ * occurrence is deduped. The same bytes in another attempt or semantic role remain separate
+ * manifest entries; collapsing them would erase that the learner reused a question image in
+ * their answer (or that the asset recurred across attempts).
  */
 export function collectConjectureEvidenceAssetRefs(
   cell: EnrichedEvidenceCell,
@@ -191,8 +193,9 @@ export function collectConjectureEvidenceAssetRefs(
     source: ConjectureEvidenceImageSource,
   ) => {
     for (const assetId of assetIds) {
-      if (seen.has(assetId)) continue;
-      seen.add(assetId);
+      const occurrenceKey = `${attemptEventId}\u0000${source}\u0000${assetId}`;
+      if (seen.has(occurrenceKey)) continue;
+      seen.add(occurrenceKey);
       refs.push({ asset_id: assetId, attempt_event_id: attemptEventId, source });
     }
   };

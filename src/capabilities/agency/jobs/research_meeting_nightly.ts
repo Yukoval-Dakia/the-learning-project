@@ -14,13 +14,12 @@
 //      traces) + per-KC mastery projection + the set of cause×KC keys that
 //      already have a PENDING conjecture (dedup);
 //   2. deterministic 取证 (gatherConjectureEvidence) → salience-sorted cells;
-//   3. take the top-K cells (RESEARCH_MEETING_MAX_CONJECTURES) — the structural
-//      per-run propose cap;
-//   4. (PRE-LLM, retryable) GROUND those K cells (enrichEvidenceCells, YUK-786):
+//   3. (PRE-LLM, retryable) GROUND cells in salience-order batches until K usable
+//      cells are found or candidates are exhausted (enrichEvidenceCells, YUK-786):
 //      KC name + subject identity + the first-hand attempt evidence (question,
 //      the owner's wrong answer, their reasoning trace, the attribution). Without
 //      this the LLM sees 7 opaque scalars and can only invent the domain;
-//   5. for each cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
+//   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on the anthropic-sub
 //      OAuth lane) → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
 //
 // Failure asymmetry (D7 / F-1): the PRE-LLM reads run OUTSIDE the per-cell swallow —
@@ -50,6 +49,7 @@ import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evi
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -59,6 +59,7 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { inArray } from 'drizzle-orm';
 
 import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
 import {
@@ -72,6 +73,10 @@ export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
 export const RESEARCH_MEETING_SAMPLES = 3;
 /** Fail closed instead of silently dropping pixels from unusually image-heavy evidence. */
 export const RESEARCH_MEETING_MAX_IMAGES_PER_CELL = 60;
+/** Raw bytes across all image occurrences in one cell, checked before any R2 read/base64. */
+export const RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL = 24 * 1024 * 1024;
+/** Decoded-pixel guard for metadata that carries dimensions. */
+export const RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL = 40_000_000;
 /** Recency window for the failure scan. */
 export const RESEARCH_MEETING_WINDOW_DAYS = 14;
 /** actor_ref stamped on the trigger / scan events + each conjecture proposal. */
@@ -173,7 +178,57 @@ function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
   return makeRunTaskFn(db);
 }
 
-async function defaultLoadEvidenceImages(
+const RUNNER_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+interface EvidenceImageMetadata {
+  id: string;
+  mime_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+}
+
+export function planConjectureEvidenceImageLoad(
+  refs: readonly ConjectureEvidenceAssetRef[],
+  metadata: readonly EvidenceImageMetadata[],
+): {
+  loadableRefs: ConjectureEvidenceAssetRef[];
+  excludedRefs: ConjectureEvidenceAssetRef[];
+} {
+  const byId = new Map(metadata.map((row) => [row.id, row]));
+  const missing = [...new Set(refs.map((ref) => ref.asset_id))].filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    throw new Error(`conjecture evidence image metadata missing: ${missing.join(', ')}`);
+  }
+
+  const loadableRefs: ConjectureEvidenceAssetRef[] = [];
+  const excludedRefs: ConjectureEvidenceAssetRef[] = [];
+  let totalBytes = 0;
+  let totalPixels = 0;
+  for (const ref of refs) {
+    const row = byId.get(ref.asset_id) as EvidenceImageMetadata;
+    if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) {
+      excludedRefs.push(ref);
+      continue;
+    }
+    loadableRefs.push(ref);
+    totalBytes += row.byte_size;
+    if (row.width !== null && row.height !== null) totalPixels += row.width * row.height;
+  }
+  if (totalBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
+    throw new Error(
+      `conjecture evidence images total ${totalBytes} bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
+    );
+  }
+  if (totalPixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
+    throw new Error(
+      `conjecture evidence images total ${totalPixels} pixels; max is ${RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL}`,
+    );
+  }
+  return { loadableRefs, excludedRefs };
+}
+
+export async function defaultLoadEvidenceImages(
   db: Db,
   refs: readonly ConjectureEvidenceAssetRef[],
 ): Promise<LoadedConjectureEvidenceImage[]> {
@@ -183,22 +238,41 @@ async function defaultLoadEvidenceImages(
       `conjecture evidence has ${refs.length} images; max is ${RESEARCH_MEETING_MAX_IMAGES_PER_CELL}`,
     );
   }
+  const assetIds = [...new Set(refs.map((ref) => ref.asset_id))];
+  const metadata = await db
+    .select({
+      id: source_asset.id,
+      mime_type: source_asset.mime_type,
+      byte_size: source_asset.byte_size,
+      width: source_asset.width,
+      height: source_asset.height,
+    })
+    .from(source_asset)
+    .where(inArray(source_asset.id, assetIds));
+  const { loadableRefs, excludedRefs } = planConjectureEvidenceImageLoad(refs, metadata);
+  if (excludedRefs.length > 0) {
+    console.warn(
+      '[research_meeting_nightly] excluding evidence images unsupported by the multimodal runner',
+      excludedRefs.map((ref) => ref.asset_id),
+    );
+  }
+  if (loadableRefs.length === 0) return [];
   const fetched = await defaultImageFetch(
-    refs.map((ref) => ref.asset_id),
+    loadableRefs.map((ref) => ref.asset_id),
     db,
   );
   // `defaultImageFetch` preserves input order but skips missing DB/R2 rows.
   // A partial packet would let the model compare text against the wrong image
   // index, so fail the cell rather than guessing which asset was absent.
-  if (fetched.length !== refs.length) {
+  if (fetched.length !== loadableRefs.length) {
     throw new Error(
-      `conjecture evidence image load incomplete: expected ${refs.length}, got ${fetched.length}`,
+      `conjecture evidence image load incomplete: expected ${loadableRefs.length}, got ${fetched.length}`,
     );
   }
-  if (fetched.some((image) => !image.mediaType.startsWith('image/'))) {
-    throw new Error('conjecture evidence contains a non-image asset');
+  if (fetched.some((image) => !RUNNER_IMAGE_MIME_TYPES.has(image.mediaType))) {
+    throw new Error('conjecture evidence image MIME changed after preflight');
   }
-  return refs.map((ref, index) => ({ ...ref, ...fetched[index] }));
+  return loadableRefs.map((ref, index) => ({ ...ref, ...fetched[index] }));
 }
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
@@ -307,18 +381,17 @@ export async function runResearchMeetingNightly(
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
   const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
-  // ── Deterministic 取证 + top-K salience cap ──
+  // ── Deterministic 取证 + grounded top-K salience cap ──
   const cells = gatherConjectureEvidence({ failures, masteryByKnowledgeId, knownConjectureKeys });
-  const topCells = cells.slice(0, RESEARCH_MEETING_MAX_CONJECTURES);
 
-  // Empty-night early return (YUK-377 复审 §3.5): zero top cells (no recurring failure
+  // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has
   // nothing to anchor. Skip the trigger + scan events entirely — even though YUK-515 now
   // opts both out of memory, two empty-run rows would still add useless audit churn.
   // MUST stay AFTER the reconcile call above:
   // the deterministic settlement half is never skipped. Zero external consumers of these
   // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
-  if (topCells.length === 0) {
+  if (cells.length === 0) {
     return {
       considered: 0,
       conjectures_created: 0,
@@ -332,19 +405,23 @@ export async function runResearchMeetingNightly(
   }
 
   // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
-  // Runs AFTER the top-K cap so the fan-out is bounded by K cells rather than by
-  // the whole failure window. A throw here is the same class of retryable DB
-  // fault as the reads above, and it happens BEFORE the anchor event write, so a
-  // pg-boss retry re-runs a clean slate.
-  const enrichedTopCells = await enrichEvidenceCellsFn(db, {
-    cells: topCells,
-    failures,
-    reasoningTraceByAttemptId,
-  });
-  // Enrichment omits samples whose mutable question context changed after the
-  // attempt. A cell with no remaining first-hand sample must not be sent to the
-  // model to fabricate a probe from ids and counters alone.
-  const groundedTopCells = enrichedTopCells.filter((cell) => cell.samples.length > 0);
+  // Enrich in salience order, at most K cells per read, and refill from lower-ranked cells
+  // whenever mutable/missing question context leaves an earlier candidate ungrounded. Taking
+  // `cells.slice(0, K)` before this filter lets a permanently invalid high-salience prefix
+  // occupy the cap every night and starve valid candidates behind it.
+  const groundedTopCells: EnrichedEvidenceCell[] = [];
+  let cellOffset = 0;
+  while (groundedTopCells.length < RESEARCH_MEETING_MAX_CONJECTURES && cellOffset < cells.length) {
+    const batchSize = RESEARCH_MEETING_MAX_CONJECTURES - groundedTopCells.length;
+    const batch = cells.slice(cellOffset, cellOffset + batchSize);
+    cellOffset += batch.length;
+    const enriched = await enrichEvidenceCellsFn(db, {
+      cells: batch,
+      failures,
+      reasoningTraceByAttemptId,
+    });
+    groundedTopCells.push(...enriched.filter((cell) => cell.samples.length > 0));
+  }
   if (groundedTopCells.length === 0) {
     return {
       considered: 0,
