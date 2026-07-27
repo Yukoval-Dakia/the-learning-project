@@ -218,6 +218,10 @@ function aggregateDominantDraft(
   };
 }
 
+function groundedEvidenceEventIds(cell: EnrichedEvidenceCell): string[] {
+  return [...new Set(cell.samples.map((sample) => sample.attempt_event_id))];
+}
+
 function normalizeGroundedProposal(
   draft: ConjectureProposalDraftT,
   cells: EnrichedEvidenceCell[],
@@ -229,7 +233,9 @@ function normalizeGroundedProposal(
   );
   if (!cell) return null;
 
-  const allowedEvidenceIds = new Set(cell.evidence_event_ids);
+  // Only attempts whose immutable question/answer packet was quoted to the model
+  // may support its claim. The cell-level list can be longer than the prompt cap.
+  const allowedEvidenceIds = new Set(groundedEvidenceEventIds(cell));
   const evidenceEventIds = [...new Set(draft.evidence_event_ids)];
   if (
     evidenceEventIds.length < 2 ||
@@ -405,7 +411,7 @@ export async function induceConjecture(
       theta_hat: c.theta_hat,
       theta_precision: c.theta_precision,
       baseline_p: c.baseline_p,
-      evidence_event_ids: c.evidence_event_ids,
+      evidence_event_ids: groundedEvidenceEventIds(c),
       // First-hand evidence: what was asked, what the owner answered, how they
       // say they thought, and what the attribution was. Free text arrives
       // already truncated + `<untrusted_learner_text>`-delimited by the enrich

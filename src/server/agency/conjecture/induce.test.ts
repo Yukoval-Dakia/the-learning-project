@@ -79,7 +79,7 @@ function cell(overrides: Partial<EnrichedEvidenceCell> = {}): EnrichedEvidenceCe
     knowledge_name: '链式法则',
     subject_id: 'math',
     subject_display_name: '数学',
-    samples: [evidenceSample()],
+    samples: [evidenceSample(), evidenceSample({ attempt_event_id: 'e_b', question_id: 'q_b' })],
     ...overrides,
   };
 }
@@ -165,7 +165,7 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
     const taskInput = await captureTaskInput();
     const cells = taskInput.evidence_cells as Array<Record<string, unknown>>;
     const samples = cells[0].evidence_samples as ConjectureEvidenceSample[];
-    expect(samples).toHaveLength(1);
+    expect(samples).toHaveLength(2);
     expect(samples[0].question_prompt_md).toContain('sin(x^2)');
     expect(samples[0].answer_md).toContain('cos(x^2)+2x');
     expect(samples[0].reasoning_trace).toContain('加起来');
@@ -404,6 +404,31 @@ describe('induceConjecture self-consistency', () => {
 
     expect(result.outcome).toBe('proposal');
     expect(result.votes).toEqual({ proposal: 2, abstain: 0, invalid: 1, failed: 0 });
+  });
+
+  it('rejects a real cell id whose content was outside the quoted sample cap', async () => {
+    const unquoted = sample('claim from unseen evidence');
+    const payload = JSON.parse(unquoted.text.slice(unquoted.text.indexOf('{'))) as Record<
+      string,
+      unknown
+    >;
+    payload.evidence_event_ids = ['e_a', 'e_unquoted'];
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue({ text: JSON.stringify(payload) });
+
+    const result = await induceConjecture({
+      cells: [
+        cell({
+          evidence_event_ids: ['e_a', 'e_b', 'e_c', 'e_unquoted'],
+        }),
+      ],
+      samples: 3,
+      runTaskFn,
+    });
+
+    expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(result.votes).toEqual({ proposal: 0, abstain: 0, invalid: 3, failed: 0 });
   });
 
   it('agreement across samples raises confidence; dominant claim returned with its tally + A13 fields', async () => {

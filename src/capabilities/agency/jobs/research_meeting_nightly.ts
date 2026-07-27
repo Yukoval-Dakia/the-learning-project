@@ -770,6 +770,8 @@ export async function runResearchMeetingNightly(
           await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
+          // Partial sample spend is retained in per-call cost_ledger rows, but the
+          // thrown orchestrator exposes no reliable partial total for this aggregate.
           return { cell, induced: null, created: 0, abstained: 0, failed: 1, cost_usd: 0 };
         }
 
