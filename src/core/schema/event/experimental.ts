@@ -7,6 +7,9 @@ import {
 } from '../business';
 import { CauseCategory } from './blocks';
 
+/** Canonical action name for mutable question-content audit events. */
+export const QUESTION_EDIT_ACTION = 'experimental:question_edit' as const;
+
 // Note (T-D7 / YUK-126, 2026-05-28): the former ToolUseExperimental schema +
 // `experimental:tool_use` reserved action have been promoted out of this file
 // into KnownEvent as `ToolUseQuery` / `action='tool_use'`. See

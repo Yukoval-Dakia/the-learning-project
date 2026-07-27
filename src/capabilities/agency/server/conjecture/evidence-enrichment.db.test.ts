@@ -302,6 +302,39 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[0].question_prompt_md).not.toContain('后来题面');
   });
 
+  it('omits reference rewrites that update the row without a question_edit event', async () => {
+    await seedKnowledge('kc_reference_edit', '参考答案版本', 'math');
+    await seedQuestion('q1', '题面', '作答时答案');
+    await seedQuestion('q2', '稳定题面', '稳定答案');
+    const createdAt = new Date('2026-07-19T00:00:00Z');
+    await testDb()
+      .update(question)
+      .set({ created_at: createdAt, updated_at: createdAt })
+      .where(eq(question.id, 'q1'));
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_reference_edit'],
+      createdAt: new Date('2026-07-19T10:00:00Z'),
+    });
+    await seedFailureWithJudge({
+      id: 'a2',
+      questionId: 'q2',
+      knowledgeIds: ['kc_reference_edit'],
+      createdAt: new Date('2026-07-19T09:00:00Z'),
+    });
+    await testDb()
+      .update(question)
+      .set({
+        reference_md: 'solve-start regenerate 写入的新答案',
+        updated_at: new Date('2026-07-19T11:00:00Z'),
+      })
+      .where(eq(question.id, 'q1'));
+
+    const [cell] = await runPipe();
+    expect(cell.samples.map((sample) => sample.question_id)).toEqual(['q2']);
+  });
+
   it('carries choice labels so letter answers retain their meaning', async () => {
     await seedKnowledge('kc_choice', '虚词辨析', 'yuwen');
     await seedQuestion('q1', '「而」在句中表示什么关系？', 'A', ['A. 转折', 'B. 并列', 'C. 修饰']);
@@ -505,10 +538,10 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     );
   });
 
-  it('degrades to nulls instead of throwing when the question row is missing', async () => {
+  it('fails closed without throwing when the question row is missing', async () => {
     await seedKnowledge('kc_shidong', '使动用法', 'yuwen');
     // No question rows seeded at all — a dangling question_id must not take
-    // down the whole nightly run; absent evidence is itself signal.
+    // down the whole nightly run, but it also cannot be paired with historical answers.
     await seedFailureWithJudge({
       id: 'a1',
       questionId: 'q_missing',
@@ -518,12 +551,10 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     await seedFailureWithJudge({ id: 'a2', questionId: 'q_missing', knowledgeIds: ['kc_shidong'] });
 
     const [cell] = await runPipe();
-    expect(cell.samples).toHaveLength(2);
-    expect(cell.samples[0].question_prompt_md).toBeNull();
-    expect(cell.samples[0].reasoning_trace).toBeNull();
-    // The rest of the packet still made it through.
+    expect(cell.samples).toEqual([]);
+    // Cell-level grounding still makes it through, so the nightly can skip the
+    // empty cell without losing observability or failing the whole run.
     expect(cell.knowledge_name).toBe('<untrusted_learner_text>使动用法</untrusted_learner_text>');
-    expect(cell.samples[0].cause_category).toBe('concept');
   });
 
   it('degrades to a null KC name when the knowledge row is missing', async () => {

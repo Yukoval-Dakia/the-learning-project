@@ -37,6 +37,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
@@ -321,7 +322,7 @@ export async function editQuestion(
       session_id: null,
       actor_kind: 'user',
       actor_ref: actorRef,
-      action: 'experimental:question_edit',
+      action: QUESTION_EDIT_ACTION,
       subject_kind: 'question',
       subject_id: questionId,
       outcome: 'success',

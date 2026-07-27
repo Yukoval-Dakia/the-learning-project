@@ -24,6 +24,7 @@
 // implementation, not two).
 
 import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/public';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { FigureRef } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -51,6 +52,8 @@ type QuestionContextRow = Pick<
   | 'parent_question_id'
   | 'image_refs'
   | 'figures'
+  | 'created_at'
+  | 'updated_at'
 >;
 
 const QUESTION_CONTEXT_FIELDS = {
@@ -61,6 +64,8 @@ const QUESTION_CONTEXT_FIELDS = {
   parent_question_id: question.parent_question_id,
   image_refs: question.image_refs,
   figures: question.figures,
+  created_at: question.created_at,
+  updated_at: question.updated_at,
 };
 
 /**
@@ -171,7 +176,7 @@ export async function enrichEvidenceCells(
           .from(event)
           .where(
             and(
-              eq(event.action, 'experimental:question_edit'),
+              eq(event.action, QUESTION_EDIT_ACTION),
               eq(event.subject_kind, 'question'),
               inArray(event.subject_id, allQuestionIds),
               gte(event.created_at, earliestAttemptAt),
@@ -277,10 +282,19 @@ function toEvidenceSample(
     (editsByQuestionId.get(questionId) ?? []).some(
       (editedAt) => editedAt.getTime() >= failure.created_at.getTime(),
     );
+  const wasMutatedAtOrAfterAttempt = (row: QuestionContextRow | undefined): boolean =>
+    row !== undefined &&
+    row.updated_at.getTime() > row.created_at.getTime() &&
+    row.updated_at.getTime() >= failure.created_at.getTime();
   // Never pair a historical answer with a mutable question row the learner did
   // not see. Until YUK-804 persists the full question snapshot on every attempt
   // path, omit samples whose child or shared parent changed at/after submission.
-  if (wasEditedAtOrAfterAttempt(q.id) || wasEditedAtOrAfterAttempt(q.parent_question_id)) {
+  if (
+    wasEditedAtOrAfterAttempt(q.id) ||
+    wasEditedAtOrAfterAttempt(q.parent_question_id) ||
+    wasMutatedAtOrAfterAttempt(q) ||
+    wasMutatedAtOrAfterAttempt(parent)
+  ) {
     return null;
   }
   const cause = effectiveCauseForConjectureFailure(failure);
