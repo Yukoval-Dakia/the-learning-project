@@ -125,12 +125,15 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
           payload: { job_id: newId() },
         },
       ]);
+    const getJobById = vi.fn().mockResolvedValue(null);
     vi.spyOn(bossClient, 'getStartedBoss').mockResolvedValue({
-      getJobById: vi.fn().mockResolvedValue(null),
+      getJobById,
     } as unknown as Awaited<ReturnType<typeof bossClient.getStartedBoss>>);
 
     const res = await GET(new Request('http://localhost'), { id: runId });
     expect((await res.json()) as { status: string }).toMatchObject({ status: 'failed' });
+    // Liveness + recovery eligibility derive from the same pg-boss snapshot.
+    expect(getJobById).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
   });
 

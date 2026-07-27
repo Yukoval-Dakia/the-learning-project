@@ -569,10 +569,21 @@ async function detectLateArrival(
 ): Promise<boolean> {
   const { now, fsrsSubjectKind, fsrsSubjectIds, knowledgeIds, questionId, runId } = input;
   const nowMs = now.getTime();
+  // Resolve the shared hierarchical-Elo write targets once. The immutable-evidence check and
+  // projection check must cover the same domain rows this attempt would update.
+  const abilityGlobalIds = await resolveAbilityGlobalSubjectIds(tx, knowledgeIds);
 
   // (a) Evidence first — it is both the cheapest to reason about and the only half that
   // survives a preceding skip.
-  if (await hasNewerAttemptEvidence(tx, { now, questionId, knowledgeIds, excludeRunId: runId })) {
+  if (
+    await hasNewerAttemptEvidence(tx, {
+      submittedAt: now,
+      questionId,
+      knowledgeIds,
+      abilityGlobalIds,
+      excludeRunId: runId,
+    })
+  ) {
     return true;
   }
 
@@ -618,7 +629,6 @@ async function detectLateArrival(
 
   // YUK-777 B1 — the SHARED per-domain θ_global rows. Empty (and unread) when
   // HIERARCHICAL_ELO_ENABLED is off, because then no global row is written either.
-  const abilityGlobalIds = await resolveAbilityGlobalSubjectIds(tx, knowledgeIds);
   if (abilityGlobalIds.length > 0) {
     const rows = await tx
       .select({ lastOutcomeAt: mastery_state.last_outcome_at })
@@ -1536,6 +1546,7 @@ export async function enqueueDurableJudge(
     // throws, the answer genuinely is not recorded anywhere and a 5xx is the truth. It
     // carries the SAME frozen input the job does, so a recovery re-enqueue reproduces this
     // dispatch exactly (D5 profile freeze + the question snapshot survive recovery).
+    const abilityGlobalIds = await resolveAbilityGlobalSubjectIds(db, validated.q.knowledge_ids);
     const pendingEventId = await recordJudgePendingAttempt(db, {
       runId,
       sessionId: validated.body.session_id ?? null,
@@ -1543,6 +1554,7 @@ export async function enqueueDurableJudge(
       // The question's OWN labels: the θ̂ write domain, a superset of the FSRS subset. The
       // late-arrival guard reads this as the material water mark.
       knowledgeIds: validated.q.knowledge_ids,
+      abilityGlobalIds,
       submit: submitInput,
       submittedAt: now,
     });

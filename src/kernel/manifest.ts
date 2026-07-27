@@ -94,16 +94,25 @@ export interface UiPageDecl {
 // biome-ignore lint/suspicious/noExplicitAny: deliberate variance escape hatch（见 docblock）
 export type JobHandlerFactory = (db: any) => (jobs: any) => Promise<unknown>;
 
+export type JobScheduleDecl = {
+  cron: string;
+  tz: string;
+} & (
+  | {
+      /** pg-boss singleton throttling is effective only when both fields are present. */
+      singletonKey: string;
+      singletonSeconds: number;
+    }
+  | {
+      singletonKey?: never;
+      singletonSeconds?: never;
+    }
+);
+
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
-  schedule?: {
-    cron: string;
-    tz: string;
-    /** Optional pg-boss throttle for sweeps that must never overlap. */
-    singletonKey?: string;
-    singletonSeconds?: number;
-  };
+  schedule?: JobScheduleDecl;
   /**
    * 队列档位 → 注册器映射建队配方（handlers.ts 三档先例）：
    * llm/agent 走 createJobQueue（先建 `<name>_dlq` 再建主队列，1h/2h expire）；

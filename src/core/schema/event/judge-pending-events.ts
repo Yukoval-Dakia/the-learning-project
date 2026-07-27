@@ -74,6 +74,15 @@ export const JudgePendingAttemptPayload = z.object({
    * the FSRS subset).
    */
   knowledge_ids: z.array(z.string()),
+  /**
+   * Frozen hierarchical-Elo write targets at answer time. Sibling KCs can write the same
+   * `mastery_state(subject_kind='ability_global')` row without sharing a knowledge id, so the
+   * immutable late-arrival watermark must carry domains as well as KC labels.
+   *
+   * Optional only for rows written before YUK-777 added this field; readers degrade those rows
+   * to the legacy knowledge-only overlap check.
+   */
+  ability_global_ids: z.array(z.string()).optional(),
   /** The frozen judge input, re-enqueued verbatim on recovery. */
   submit: JudgePendingSubmitInput,
 });

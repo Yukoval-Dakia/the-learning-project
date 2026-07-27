@@ -57,6 +57,14 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   await boss.work(decl.name, { pollingIntervalSeconds: 2, batchSize: 1 }, factory(db));
 
   if (decl.schedule) {
+    if (
+      (decl.schedule.singletonKey === undefined) !==
+      (decl.schedule.singletonSeconds === undefined)
+    ) {
+      throw new Error(
+        `job ${decl.name} schedule must declare singletonKey and singletonSeconds together`,
+      );
+    }
     await boss.schedule(
       decl.name,
       decl.schedule.cron,

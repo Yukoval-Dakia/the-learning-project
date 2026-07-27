@@ -20,9 +20,8 @@
 //   付费调用 = 1 + JOB_RETRY_LIMIT。
 
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, job_events, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { and, desc, eq } from 'drizzle-orm';
@@ -416,12 +415,18 @@ async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> 
  * poll/SSE 永远 pending。抛出 → pg-boss 重投 → 本守卫重试直到写成功（或 DLQ 暴露）。
  */
 async function recoverAlreadyPersisted(db: Db, runId: string): Promise<JudgeRunOutcome> {
-  const priorEvents = await computeReplay(db, {
-    businessTable: JUDGE_RUN_TABLE,
-    businessId: runId,
-    lastEventId: 0,
-  });
-  const hasDone = priorEvents.some((e) => e.event_type === JUDGE_RUN_EVENTS.DONE);
+  const priorDone = await db
+    .select({ id: job_events.id })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, JUDGE_RUN_TABLE),
+        eq(job_events.business_id, runId),
+        eq(job_events.event_type, JUDGE_RUN_EVENTS.DONE),
+      ),
+    )
+    .limit(1);
+  const hasDone = priorDone.length > 0;
   if (!hasDone) {
     await writeTerminalJobEvent(db, {
       businessId: runId,

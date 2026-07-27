@@ -17,11 +17,11 @@ import { computeReplay } from '@/server/events/sse_replay';
 // progress?" would eventually disagree, and the two consumers would then disagree about
 // whether a run needs recovering.
 import {
-  hasAutomaticRecoveryBudget,
-  hasPendingAttemptEvidence,
-  latestJudgeRecoveryJobId,
-  resolveAutomaticRecoveryEligibility,
-  resolveQueueLiveness,
+  getJudgeRecoveryMetadata,
+  hasAutomaticRecoveryBudgetFor,
+  inspectJudgeQueue,
+  judgeRecoveryJobId,
+  pendingAttemptRecordedAt,
 } from '../server/judge-run-dispatch';
 import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import {
@@ -71,16 +71,26 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // job; returning `started` forever told the client to poll a corpse. Asking the queue
     // first is also the cheap path: an in-flight run answers here with one PK lookup and
     // never touches the domain log.
-    const pendingEvidence = await hasPendingAttemptEvidence(db, runId);
-    const recoveryJobId = await latestJudgeRecoveryJobId(db, runId);
-    const liveness = await resolveQueueLiveness(
+    const [pendingRecordedAt, recovery] = await Promise.all([
+      pendingAttemptRecordedAt(db, runId),
+      getJudgeRecoveryMetadata(db, runId),
+    ]);
+    const pendingEvidence = pendingRecordedAt !== null;
+    let queue = await inspectJudgeQueue(
       runId,
-      recoveryJobId ? { jobId: recoveryJobId } : {},
+      recovery.latestDeliveryId ? { jobId: recovery.latestDeliveryId } : {},
     );
-    if (liveness === 'live') {
+    if (pendingEvidence && recovery.latestDeliveryId === null && queue.eligibility === 'eligible') {
+      // A successful recovery send can outlive a failed marker write. In that shape the original
+      // delivery is dead but the deterministic next recovery id is the real queue authority.
+      queue = await inspectJudgeQueue(runId, {
+        jobId: judgeRecoveryJobId(runId, recovery.attempts + 1),
+      });
+    }
+    if (queue.liveness === 'live') {
       return Response.json({ run_id: runId, status, result: null });
     }
-    if (liveness === 'unknown') {
+    if (queue.liveness === 'unknown') {
       // pg-boss did not answer. Report what the events say and change nothing — a lookup
       // blip must never be upgraded into a verdict about the run.
       if (events.length === 0 && !pendingEvidence) {
@@ -123,11 +133,8 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // re-dispatched by `judge_pending_reconcile`. Both branches below would have lied about
     // it: 404 ("no such run") and `failed` ("this will never be judged").
     if (pendingEvidence) {
-      const [eligibility, hasBudget] = await Promise.all([
-        resolveAutomaticRecoveryEligibility(runId, recoveryJobId ? { jobId: recoveryJobId } : {}),
-        hasAutomaticRecoveryBudget(db, runId),
-      ]);
-      if (eligibility === 'eligible' && hasBudget) {
+      const hasBudget = hasAutomaticRecoveryBudgetFor(pendingRecordedAt, recovery);
+      if (queue.eligibility === 'eligible' && hasBudget) {
         return Response.json({ run_id: runId, status: 'queued' as const, result: null });
       }
       console.warn(

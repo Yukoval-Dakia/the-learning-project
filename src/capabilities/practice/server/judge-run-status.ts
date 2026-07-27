@@ -65,6 +65,19 @@ export const JUDGE_RUN_EVENTS = {
 
 export type JudgeRunEventType = (typeof JUDGE_RUN_EVENTS)[keyof typeof JUDGE_RUN_EVENTS];
 
+/** Runtime contract for the recovery marker shared by the sweeper, poll route, and reducer. */
+export const JudgeRunRequeuedPayloadSchema = z
+  .object({
+    delivery_id: z.string().min(1).optional(),
+    /** Legacy producer field retained only so existing markers remain readable. */
+    job_id: z.string().min(1).optional(),
+    attempt: z.number().int().positive().optional(),
+  })
+  .passthrough()
+  .refine((payload) => payload.delivery_id !== undefined || payload.job_id !== undefined, {
+    message: 'requeued marker requires delivery_id',
+  });
+
 /**
  * 派生状态。terminal（done/failed）一旦出现即锁定 last-writer-wins；否则按已见的
  * 最新非终态事件推进 queued → started。空序列 → 'queued'（enqueue 即写 queued，

@@ -21,6 +21,7 @@ const validEvent = () => ({
     run_id: 'run_1',
     caller: 'submit',
     knowledge_ids: ['k1'],
+    ability_global_ids: ['math'],
     submit: {
       body: { question_id: 'q_1', rating: 'good' },
       question_id: 'q_1',

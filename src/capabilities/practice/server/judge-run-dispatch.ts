@@ -35,12 +35,16 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { and, asc, countDistinct, desc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import type { JudgeRunJobData } from './judge-run-payload';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
+import {
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
+  JudgeRunRequeuedPayloadSchema,
+} from './judge-run-status';
 
 /** The reserved action name. Single source for the writer, the scan, and the guard. */
 export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt' as const;
@@ -94,6 +98,8 @@ export interface RecordJudgePendingAttemptInput {
   questionId: string;
   /** The question's OWN labels at answer time = the θ̂ write domain (⊇ the FSRS subset). */
   knowledgeIds: string[];
+  /** Frozen hierarchical-Elo domain rows this attempt can write. */
+  abilityGlobalIds?: string[];
   /** The frozen judge input, stored verbatim so recovery re-judges the same inputs (D5). */
   submit: JudgeRunJobData['submit'];
   /** The answer instant — the ordering water mark. Also the row's `created_at`. */
@@ -122,6 +128,7 @@ export async function recordJudgePendingAttempt(
     run_id: input.runId,
     caller: 'submit',
     knowledge_ids: input.knowledgeIds,
+    ability_global_ids: input.abilityGlobalIds ?? [],
     submit: {
       body: input.submit.body,
       question_id: input.submit.question_id,
@@ -280,6 +287,42 @@ export type QueueLiveness = 'live' | 'dead' | 'unknown';
  */
 export type AutomaticRecoveryEligibility = 'eligible' | 'live' | 'manual' | 'unknown';
 
+export interface JudgeQueueInspection {
+  liveness: QueueLiveness;
+  eligibility: AutomaticRecoveryEligibility;
+}
+
+/**
+ * Read one pg-boss row once and derive both poll liveness and automatic-recovery eligibility.
+ * Keeping these decisions on one snapshot avoids a second queue round-trip disagreeing with the
+ * first during a status poll.
+ */
+export async function inspectJudgeQueue(
+  runId: string,
+  deps: {
+    boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    jobId?: string;
+  } = {},
+): Promise<JudgeQueueInspection> {
+  try {
+    const boss = deps.boss ?? (await getStartedBoss());
+    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
+    if (job === null || job.state === 'completed') {
+      return { liveness: 'dead', eligibility: 'eligible' };
+    }
+    if (LIVE_BOSS_STATES.has(job.state)) {
+      return { liveness: 'live', eligibility: 'live' };
+    }
+    console.warn(
+      `[judge_run] ${runId} pg-boss job is terminal (state=${job.state}) — automatic recovery is manual-only`,
+    );
+    return { liveness: 'dead', eligibility: 'manual' };
+  } catch (err) {
+    console.error('[judge_run] pg-boss lookup failed while inspecting run', runId, err);
+    return { liveness: 'unknown', eligibility: 'unknown' };
+  }
+}
+
 export async function resolveAutomaticRecoveryEligibility(
   runId: string,
   deps: {
@@ -287,20 +330,7 @@ export async function resolveAutomaticRecoveryEligibility(
     jobId?: string;
   } = {},
 ): Promise<AutomaticRecoveryEligibility> {
-  try {
-    const boss = deps.boss ?? (await getStartedBoss());
-    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
-    if (job === null || job.state === 'completed') return 'eligible';
-    if (LIVE_BOSS_STATES.has(job.state)) return 'live';
-    return 'manual';
-  } catch (err) {
-    console.error(
-      '[judge_run] pg-boss lookup failed while resolving recovery eligibility',
-      runId,
-      err,
-    );
-    return 'unknown';
-  }
+  return (await inspectJudgeQueue(runId, deps)).eligibility;
 }
 
 export async function resolveQueueLiveness(
@@ -311,41 +341,64 @@ export async function resolveQueueLiveness(
     jobId?: string;
   } = {},
 ): Promise<QueueLiveness> {
-  try {
-    const boss = deps.boss ?? (await getStartedBoss());
-    const job = await boss.getJobById(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId));
-    if (job === null) return 'dead';
-    const { state } = job;
-    if (LIVE_BOSS_STATES.has(state)) return 'live';
-    console.warn(
-      `[judge_run] ${runId} pg-boss job is not live (state=${state}) — it will not progress further`,
-    );
-    return 'dead';
-  } catch (err) {
-    console.error('[judge_run] pg-boss lookup failed while resolving run liveness', runId, err);
-    return 'unknown';
+  return (await inspectJudgeQueue(runId, deps)).liveness;
+}
+
+export interface JudgeRecoveryMetadata {
+  latestDeliveryId: string | null;
+  attempts: number;
+  hasTerminalFailure: boolean;
+}
+
+/**
+ * Read the recovery marker, distinct-attempt budget, and terminal-failure evidence in one query.
+ * Distinct identity falls back to the delivery id for legacy markers that predate `attempt`.
+ */
+export async function getJudgeRecoveryMetadata(
+  db: Db,
+  runId: string,
+): Promise<JudgeRecoveryMetadata> {
+  const rows = await db
+    .select({
+      latestPayload: sql<unknown>`(
+        array_agg(${job_events.payload} order by ${job_events.id} desc)
+        filter (where ${job_events.event_type} = ${JUDGE_RUN_EVENTS.REQUEUED})
+      )[1]`,
+      attempts: sql<number>`count(distinct case
+        when ${job_events.event_type} = ${JUDGE_RUN_EVENTS.REQUEUED}
+        then coalesce(
+          ${job_events.payload}->>'attempt',
+          ${job_events.payload}->>'delivery_id',
+          ${job_events.payload}->>'job_id'
+        )
+      end)::int`,
+      terminalFailures: sql<number>`count(*) filter (
+        where ${job_events.event_type} = ${JUDGE_RUN_EVENTS.FAILED}
+      )::int`,
+    })
+    .from(job_events)
+    .where(and(eq(job_events.business_table, JUDGE_RUN_TABLE), eq(job_events.business_id, runId)));
+  const row = rows[0];
+  const parsed = JudgeRunRequeuedPayloadSchema.safeParse(row?.latestPayload);
+  if (row?.latestPayload != null && !parsed.success) {
+    console.warn('[judge_run] latest recovery marker failed its payload contract', {
+      run_id: runId,
+      error: parsed.error.message,
+    });
   }
+  const latestDeliveryId = parsed.success
+    ? (parsed.data.delivery_id ?? parsed.data.job_id ?? null)
+    : null;
+  return {
+    latestDeliveryId,
+    attempts: row?.attempts ?? 0,
+    hasTerminalFailure: (row?.terminalFailures ?? 0) > 0,
+  };
 }
 
 /** Latest successfully recorded recovery delivery, used by poll and subsequent sweeps. */
 export async function latestJudgeRecoveryJobId(db: Db, runId: string): Promise<string | null> {
-  const rows = await db
-    .select({ payload: job_events.payload })
-    .from(job_events)
-    .where(
-      and(
-        eq(job_events.business_table, JUDGE_RUN_TABLE),
-        eq(job_events.business_id, runId),
-        eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
-      ),
-    )
-    .orderBy(desc(job_events.id))
-    .limit(1);
-  const payload = rows[0]?.payload;
-  if (typeof payload !== 'object' || payload === null) return null;
-  const jobId =
-    (payload as Record<string, unknown>).delivery_id ?? (payload as Record<string, unknown>).job_id;
-  return typeof jobId === 'string' ? jobId : null;
+  return (await getJudgeRecoveryMetadata(db, runId)).latestDeliveryId;
 }
 
 /**
@@ -357,30 +410,8 @@ export async function latestJudgeRecoveryJobId(db: Db, runId: string): Promise<s
  * enqueue — and both of those answers would be wrong for it. One indexed containment lookup
  * (the `event_payload_idx` GIN index) settles it.
  */
-export async function hasPendingAttemptEvidence(db: Db, runId: string): Promise<boolean> {
+export async function pendingAttemptRecordedAt(db: Db, runId: string): Promise<Date | null> {
   const rows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
-        sql`${event.payload} @> ${JSON.stringify({ run_id: runId })}::jsonb`,
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
-
-export const JUDGE_RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
-export const JUDGE_MAX_RECOVERY_ATTEMPTS = 2;
-
-/** Whether a pending run remains inside the automatic sweeper's age and attempt bounds. */
-export async function hasAutomaticRecoveryBudget(
-  db: Db,
-  runId: string,
-  now = new Date(),
-): Promise<boolean> {
-  const pendingRows = await db
     .select({ createdAt: event.created_at })
     .from(event)
     .where(
@@ -390,20 +421,39 @@ export async function hasAutomaticRecoveryBudget(
       ),
     )
     .limit(1);
-  const createdAt = pendingRows[0]?.createdAt;
-  if (!createdAt || createdAt.getTime() <= now.getTime() - JUDGE_RECOVERY_MAX_AGE_MS) return false;
+  return rows[0]?.createdAt ?? null;
+}
 
-  const rows = await db
-    .select({ value: countDistinct(sql`${job_events.payload}->>'attempt'`) })
-    .from(job_events)
-    .where(
-      and(
-        eq(job_events.business_table, JUDGE_RUN_TABLE),
-        eq(job_events.business_id, runId),
-        eq(job_events.event_type, JUDGE_RUN_EVENTS.REQUEUED),
-      ),
-    );
-  return (rows[0]?.value ?? 0) < JUDGE_MAX_RECOVERY_ATTEMPTS;
+export async function hasPendingAttemptEvidence(db: Db, runId: string): Promise<boolean> {
+  return (await pendingAttemptRecordedAt(db, runId)) !== null;
+}
+
+export const JUDGE_RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const JUDGE_MAX_RECOVERY_ATTEMPTS = 2;
+
+export function hasAutomaticRecoveryBudgetFor(
+  recordedAt: Date | null,
+  recovery: JudgeRecoveryMetadata,
+  now = new Date(),
+): boolean {
+  return (
+    recordedAt !== null &&
+    recordedAt.getTime() > now.getTime() - JUDGE_RECOVERY_MAX_AGE_MS &&
+    recovery.attempts < JUDGE_MAX_RECOVERY_ATTEMPTS
+  );
+}
+
+/** Whether a pending run remains inside the automatic sweeper's age and attempt bounds. */
+export async function hasAutomaticRecoveryBudget(
+  db: Db,
+  runId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const [recordedAt, recovery] = await Promise.all([
+    pendingAttemptRecordedAt(db, runId),
+    getJudgeRecoveryMetadata(db, runId),
+  ]);
+  return hasAutomaticRecoveryBudgetFor(recordedAt, recovery, now);
 }
 
 export interface StalledPendingAttempt {
@@ -498,16 +548,17 @@ export async function findStalledJudgePendingAttempts(
  * pending-attempt row is written for EVERY durable attempt at submit time and is never
  * conditional on a verdict landing, so B is visible here whether or not it wrote anything.
  *
- * Overlap is material overlap: the same question, or any shared knowledge id (the θ̂ domain,
- * which is a superset of the FSRS subset). The overlap predicate is applied in SQL before LIMIT;
- * knowledge membership uses the repository's index-supported OR-of-`@>` containment pattern.
+ * Overlap is material overlap: the same question, any shared knowledge id, or any shared frozen
+ * hierarchical-Elo domain. Every membership predicate uses top-level `payload @> ...`
+ * containment so `event_payload_idx` (`jsonb_path_ops`) can support it.
  */
 export async function hasNewerAttemptEvidence(
   tx: Tx,
   args: {
-    now: Date;
+    submittedAt: Date;
     questionId: string;
     knowledgeIds: string[];
+    abilityGlobalIds: string[];
     /** This run's own pending row must not count as evidence against itself. */
     excludeRunId: string;
   },
@@ -517,7 +568,16 @@ export async function hasNewerAttemptEvidence(
       ? sql`false`
       : sql`(${sql.join(
           args.knowledgeIds.map(
-            (id) => sql`${event.payload}->'knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+            (id) => sql`${event.payload} @> ${JSON.stringify({ knowledge_ids: [id] })}::jsonb`,
+          ),
+          sql` OR `,
+        )})`;
+  const abilityGlobalOverlap =
+    args.abilityGlobalIds.length === 0
+      ? sql`false`
+      : sql`(${sql.join(
+          args.abilityGlobalIds.map(
+            (id) => sql`${event.payload} @> ${JSON.stringify({ ability_global_ids: [id] })}::jsonb`,
           ),
           sql` OR `,
         )})`;
@@ -527,9 +587,13 @@ export async function hasNewerAttemptEvidence(
     .where(
       and(
         eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
-        gt(event.created_at, args.now),
+        gt(event.created_at, args.submittedAt),
         sql`${event.payload}->>'run_id' <> ${args.excludeRunId}`,
-        sql`(${event.payload}->'submit'->>'question_id' = ${args.questionId} OR ${knowledgeOverlap})`,
+        sql`(
+          ${event.payload} @> ${JSON.stringify({ submit: { question_id: args.questionId } })}::jsonb
+          OR ${knowledgeOverlap}
+          OR ${abilityGlobalOverlap}
+        )`,
       ),
     )
     // The overlap predicate is applied before the cap. Non-overlapping traffic can never hide a

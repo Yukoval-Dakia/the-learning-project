@@ -261,6 +261,46 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
     vi.unstubAllEnvs();
   });
 
+  it('detects a newer skipped sibling attempt from immutable domain evidence alone', async () => {
+    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
+
+    await seedKnowledge('k1', 'math');
+    await seedKnowledge('k2', 'math');
+    const olderQ = `q_${newId()}`;
+    const newerQ = `q_${newId()}`;
+    await seedQuestion(olderQ, ['k1']);
+    await seedQuestion(newerQ, ['k2']);
+
+    const older = new Date(Date.now() - 10 * MINUTE);
+    const newer = new Date(Date.now() - 1 * MINUTE);
+    await recordJudgePendingAttempt(testDb(), {
+      runId: newId(),
+      sessionId: null,
+      questionId: newerQ,
+      knowledgeIds: ['k2'],
+      abilityGlobalIds: ['math'],
+      submit: {
+        body: { question_id: newerQ, rating: 'good', response_md: 'newer', auto_rate: true },
+        question_id: newerQ,
+        subject_profile: {},
+        question_snapshot: {},
+        submitted_at: newer.toISOString(),
+      },
+      submittedAt: newer,
+    });
+
+    // The newer attempt was itself skipped: no projection records the shared-domain collision.
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    const persisted = await persistSubmit(
+      await buildValidated(olderQ, older, { rating: 'good' }),
+      manualJudged(),
+      { attemptEventId: newId(), enforceAttemptOrdering: true },
+    );
+
+    expect(persisted.lateArrival).toBe(true);
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+  });
+
   it('detects a late attempt from a SIBLING KC under the same domain (no shared knowledge id)', async () => {
     // The flag is a compile-time constant; if it were ever flipped off, no ability_global row
     // would be written and this hazard would not exist — so assert the premise rather than

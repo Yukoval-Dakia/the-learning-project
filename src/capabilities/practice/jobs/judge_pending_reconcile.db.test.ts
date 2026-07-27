@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   JUDGE_PENDING_ATTEMPT_ACTION,
+  judgeRecoveryJobId,
   recordJudgePendingAttempt,
 } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
@@ -139,6 +140,54 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     expect(boss.send).toHaveBeenCalledTimes(1);
   });
 
+  it('checks the deterministic recovery id when a successful send lost its marker', async () => {
+    const { runId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+    const recoveryId = judgeRecoveryJobId(runId, 1);
+    const boss = {
+      send: vi.fn(),
+      getJobById: vi
+        .fn()
+        .mockImplementation(async (_queue, id) =>
+          id === recoveryId ? ({ id, state: 'active' } as JobWithMetadata) : null,
+        ),
+    };
+
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      reenqueued: 0,
+      skippedLive: 1,
+    });
+    expect(boss.getJobById).toHaveBeenCalledWith('judge_run', recoveryId);
+    expect(boss.send).not.toHaveBeenCalled();
+  });
+
+  it('counts duplicate markers for one deterministic delivery as one recovery attempt', async () => {
+    const { runId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
+    const deliveryId = judgeRecoveryJobId(runId, 1);
+    await testDb()
+      .insert(job_events)
+      .values([
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { attempt: 1, delivery_id: deliveryId },
+        },
+        {
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: JUDGE_RUN_EVENTS.REQUEUED,
+          payload: { attempt: 1, delivery_id: deliveryId },
+        },
+      ]);
+    const boss = deadBoss();
+
+    expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
+      reenqueued: 1,
+      skippedExhausted: 0,
+    });
+    expect(boss.send.mock.calls[0][2]).toEqual({ id: judgeRecoveryJobId(runId, 2) });
+  });
+
   it('never auto-requeues deliberate terminal FAILED/DLQ evidence', async () => {
     const { runId } = await seedPendingAttempt({ agoMs: RECONCILE_STALL_MS + HOUR });
     await testDb()
@@ -257,6 +306,35 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     const report = await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } });
 
     expect(report).toMatchObject({ scanned: 1, reenqueued: 1 });
+    expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
+  });
+
+  it('pages past a full batch of manual-only failures to recover a later dispatch gap', async () => {
+    for (let i = 0; i < RECONCILE_SCAN_LIMIT + 5; i++) {
+      const seeded = await seedPendingAttempt({
+        agoMs: RECONCILE_STALL_MS + 10 * HOUR + i,
+      });
+      await testDb()
+        .insert(job_events)
+        .values({
+          business_table: JUDGE_RUN_TABLE,
+          business_id: seeded.runId,
+          event_type: JUDGE_RUN_EVENTS.FAILED,
+          payload: { reason: 'manual_only' },
+        });
+    }
+    const { runId: stranded } = await seedPendingAttempt({
+      agoMs: RECONCILE_STALL_MS + HOUR,
+    });
+    const boss = deadBoss();
+
+    const report = await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } });
+
+    expect(report).toMatchObject({
+      scanned: RECONCILE_SCAN_LIMIT + 6,
+      skippedTerminal: RECONCILE_SCAN_LIMIT + 5,
+      reenqueued: 1,
+    });
     expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
   });
 
