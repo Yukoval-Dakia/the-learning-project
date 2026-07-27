@@ -1,139 +1,240 @@
-# AGENTS.md instructions for /Users/yukoval/yukoval-projects/the-learning-project
+# CLAUDE.md
 
-- 始终以中文为主回复；即便用户用英文提问，也默认中文回答。除非用户明确要求使用其他语言。
-- Issue tracker 用 Linear：PR / commit 写 `YUK-XX`，分支优先用 Linear 的 `yuk-xx-...` 格式；新工作不要用裸 `#N`。详细规则见 `docs/agents/issue-tracker.md`。
-- Codex 项目级 hooks 在 `.codex/hooks.json`，镜像 Claude 侧 `.claude/settings*.json` 关键约束（直接复用 `.claude/hooks/*` 脚本，不重复实现）：
-  - Codex 当前 `PreToolUse` / `PostToolUse` 只可靠匹配 Bash；编辑类检查保持轻量：SessionStart 记录 baseline，Stop hook (`.codex/hooks/codex-stop-edit-check.mjs`) 只检查本会话新增/变化的 dirty JSON 可解析性，不在 Stop 阶段自动跑 Biome
-  - Bash workflow guard (`.codex/hooks/codex-bash-workflow-guard.mjs`) 给全仓 gate 加摩擦：`pnpm lint` / `pnpm test` / `pnpm build` 默认阻止，明确收尾时用 `CODEX_FULL_GATE=1 pnpm <script>`；同时阻止 `git add .` / `git commit` 带入 zip/tar/dmg/大文件等 artifact
-  - Bash 中禁止危险 git 操作 (`.claude/hooks/git-guard.mjs`)：force push、force delete branch、main/master 上 commit、force remove worktree
-  - Linear-tracked branch (yuk-*/foundation-*/p\<N\>-*) 上 commit 必须含 `YUK-NN`，多个 issue 必须逐个重复 Linear keyword（例如 `Closes YUK-27` + `Closes YUK-28`，不要写 `Closes YUK-27 + YUK-28`）(`.claude/hooks/linear-guard.mjs`)
-  - `git fetch` / `git pull` 后 echo upstream divergence + 上游 author (`.claude/hooks/post-fetch-divergence.sh`)
-- ⚠️ Codex 项目 Stop hook 只承担编辑检查；Claude 侧的 `linear-closeout-reminder.sh` 没有迁移到 Codex hooks，在 codex 会话里**不会自动跑**。codex 会话交付前请手动按 `docs/agents/issue-tracker.md` "Closeout issue capture gate" 检查 Linear 状态同步。
-- 如果 hooks 尚未被当前 Codex 会话加载或 trust，仍需手动遵守上述约束，并在交付前对 touched files 运行等价检查。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Agent 记忆契约（mem0 fusion · SPIKE）
+创建 Subagent 时：默认 Opus；fable 为顶档稀缺只用于终裁/最难验证位；Sonnet 只用于轻量机械活；Haiku 基本不用。（owner 2026-07-03 拍板，2026-07-07 成文化）
 
-> 适用对象：**编码 agent 跨会话的项目记忆**，不是 loom 产品的学习者事实层。repo 里有两个 mem0，严禁混用。
+## Scope Discipline
 
-三层所有权，**每条事实只有一个家，禁止双写**：
+- Implement EXACTLY what the user asked for; do not expand scope into adjacent frameworks (MCP, Skills, Plugins, full harnesses) unless explicitly requested.
+- When tempted to add infrastructure, first ask: "Did the user ask for this?" If unclear, ask before building.
+- The MCP/Skills/Plugins/harness prohibition above targets the PRODUCT surface, not the owner's chosen dev/tooling layer — serena, claude-context, superpowers, and OMC are sanctioned tooling and do not violate this rule.
 
-1. **产品事实层（既有，碰都不碰）** — `mem0ai/oss` + pgvector，collection `learning_project_memories`（ADR-0017，`src/server/memory/`）。这是 **loom 的功能**，记学习者的学习事件。Agent 记忆**绝不写入此 collection**，也不直接调它的 write path（学习者事实只经 worker `memory_event_ingest`）。
-2. **Agent 宪法** — Magic Context `ctx_memory` / `<project-memory>`。少量、高重要性、**每会话必注入**的项目不变量：模型路由、gateway 配置、架构 invariant、硬约束。
-3. **Agent 情景记忆** — mem0 **hosted** cloud（`mcp.mem0.ai`，独立云账户）。高频长尾事实：代码位置、一次性发现、per-feature 决策、bug 根因。语义 top-k 按需召回。
+## Session Discipline
 
-**写入路由：**
-- 代码位置 / 情景事实 / 某处怎么实现 → mem0 hosted（MCP `add`）。
-- 项目不变量 / 路由规则 / 跨会话硬约束 → `ctx_memory`。
-- 产品学习者事实 → 只经 ADR-0017 write path，agent 不直接写。
+- **Long-session task tracking**：当前请求涉及 ≥3 个独立步骤、或预期跨多次工具调用时，主动 `ToolSearch` 加载 `TaskCreate/TaskUpdate` 并维护任务列表；不要凭记忆推进多步工作。
+- **Environment-sensitive tasks**：涉及外部 SaaS / 本机权限 / 第三方 CLI（Cloudflare、computer-use、waifu2x 之类）时，先跑 30 秒 pre-flight—— `which` / 版本 / token 在不在 env / 本地化应用名是否解析 —— 打印 pass/fail checklist，全 pass 才进主任务。
+- **Cockpit & 全局视角（多线不乱）**：单 session 是线性引擎，全局态活在外部 ledger、不在上下文里——别试图用 session 的脑子当全局视角。**驾驶舱** = `PLAN.md`（repo 根，NOW / NEXT / PARKED / BLOCKED-ON 活看板，手边）+ Linear（权威 projects/issues）+ `.remember/`（跨 session handoff）。
+  - **PLAN.md 是看板不是日志**：正文预算 ≤200 行且头部日志区只留最新 1 条【更新】+ `更新于` 戳；超龄【更新】叙事段收尾时滚存进 `.remember/today-*.done.md` 或 `docs/planning/`；四栏对齐 = 就地改写栏目本体（过期条目删改，不得靠追加新段落对冲旧矛盾）。
+  - **Session start**：先读 `PLAN.md` + `.remember/now.md`（近况看 `recent.md` / 当日 `today-*.done.md`）+ `MEMORY.md` 重建全局视角，别从零推。
+  - **Capture-at-discovery**：任何中途冒出但出当前线的东西（bug / follow-up / 岔路 fork），当场进 `PLAN.md` PARKED 或 Linear，绝不靠记忆「我记着」。
+  - **拓扑**：1 个 driver session 持计划 + 只推一条 active 线；广度派 fan-out（workflow / subagent 当 scout，主线只收结论）；并行执行钉 git worktree（每 lane 独立 worktree + branch）；**别开对等多窗抢同一工作树**（冲突/乱的根源）。
+  - **保真**：Linear 会腐败（stale In Progress 是常态）；触及的 issue 状态当场对齐代码，周期性 re-excavation 拿 code ground 一遍。
+  - **收尾 checklist（结束前必跑）**：① `PLAN.md` 四栏**就地改写**对齐现实 + 滚存超龄日志段 + **commit**（工作树里过夜的看板等于没有看板）；② 所有发现的 follow-up 已落 Linear 或 `PLAN.md`（脑子不留）；③ 触及的 Linear issue 状态对齐代码（无假 In Progress）；④ `.remember` handoff 更新；⑤ 在飞 PR / workflow / worktree 列清状态。
 
-**晋升单向**：mem0 情景 → 宪法（高频/高置信的少数条目手动提升），**永不反向**。晋升机器未建（spike 阶段）。
+## UI Design Compliance
 
-**权衡（H 决定）**：agent 情景记忆数据**出本机进 mem0 云**——这是对 agent 记忆的有意例外；产品事实层仍 local-first 不变。hosted key 放 `~/.config/opencode/opencode.json`（全局配置，不进项目 git），不写入本仓任何文件。
+写任何 UI 代码（新组件 / 改既有组件 / 布局 / 交互）**之前**，先做 design-doc pre-flight，等用户批准后才动手：
 
-**SPIKE 目标**：验证 mem0 hosted 语义召回是否真比 Magic Context `ctx_search` 强。不强则拔掉 MCP，省得白养一套。
+1. **逐字引用**相关 design doc 段落 —— 给文件路径 + 章节锚点或行号，不要从上下文推断；找不到就停下问，不要自己编。
+2. **声明组件类型**：drawer / route / modal / page / 其它。
+3. **列出将要 touch 的文件**：标明创建 vs 修改。
 
-<!-- context7 -->
-Use Context7 MCP to fetch current documentation whenever the user asks about a library, framework, SDK, API, CLI tool, or cloud service -- even well-known ones like React, Next.js, Prisma, Express, Tailwind, Django, or Spring Boot. This includes API syntax, configuration, version migration, library-specific debugging, setup instructions, and CLI tool usage. Use even when you think you know the answer -- your training data may not reflect recent changes. Prefer this over web search for library docs.
+不适用：纯文档 / 纯后端 / 纯 schema / 纯测试 / 已经在批准过的 plan 实现步骤里。Pre-flight 完成后仍需按既有的 design-system tokens / primitives 规则落地，二者叠加生效。
 
-Do not use for: refactoring, writing scripts from scratch, debugging business logic, code review, or general programming concepts.
+## Stack note
 
-## Steps
+README is the project entrance for current stack + local/NAS setup. Keep it aligned with this note when the runtime stack changes. Current stack (post YUK-321 M5 copilot teardown, 2026-06-13):
 
-1. Always start with `resolve-library-id` using the library name and the user's question, unless the user provides an exact library ID in `/org/project` format
-2. Pick the best match (ID format: `/org/project`) by: exact name match, description relevance, code snippet count, source reputation (High/Medium preferred), and benchmark score (higher is better). If results don't look right, try alternate names or queries (e.g., "next.js" not "nextjs", or rephrase the question). Use version-specific IDs when the user mentions a version
-3. `query-docs` with the selected library ID and the user's full question (not single words)
-4. Answer using the fetched docs
-<!-- context7 -->
+- **Hono API**（`server/index.ts` + 组合根 `server/app.ts`，:8787）+ **Vite SPA**（`web/`，TanStack Router + React 19，:5173，dev 经 `/api` proxy → :8787）+ **pg-boss worker** 独立进程（`scripts/worker.ts`，dev `pnpm worker:dev`、prod `node dist/worker.cjs`）三进程；`pnpm dev:local` spawn 三者齐活
+- **Postgres + Drizzle ORM**（`postgresql` dialect, `postgres` driver）— connection from `DATABASE_URL`；editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b），**无 Redis**
+- **R2 / S3-compatible blob** via `@aws-sdk/client-s3`（`src/server/r2.ts`）
+- **Claude Agent SDK**（`@anthropic-ai/claude-agent-sdk`）via xiaomi/mimo Anthropic-compatible endpoint；runtime is self-hosted Node（CMD `node dist/server.cjs`），not Vercel Functions
+- **Switchable AI provider lane (YUK-365)**：默认走 mimo-v2.5（xiaomi key-auth）；`AI_PROVIDER_OVERRIDE=anthropic-sub` 可切到 Opus 4.8 via owner's Claude Max OAuth 订阅。Token 传递、双-provider 分支、生产 SDK 版本前置等完整机制见 `src/server/ai/AGENTS.md`。Wiring 在 `src/server/ai/providers.ts` + `runner.ts`。
+- **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query + Router, Zod, ts-fsrs**
+- **pg-boss** worker (`scripts/worker.ts`) for durable background jobs
+- **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
+- **esbuild** bundles `dist/server.cjs` / `dist/worker.cjs` / `dist/migrate.cjs`；`pnpm build` = `rw:web:build` + 三 esbuild 产物
 
-<!-- init-deep:START (generated 2026-07-03, 614a62c2@workflow/upgrade-ocr-idempotency-v2) -->
-## CODEBASE MAP
+Historical docs and audits may still describe the **Next.js 15 App Router** shape（`app/`, `next dev`, `next build`, `:3000`, `middleware.ts`, `Redis/ioredis` editing presence, `Vite/Workers/Hono/D1` 旧栈）. Treat those as historical unless a current doc or code path says otherwise. Treat **capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`** as the backend surface — every route/job/copilotTool 经 manifest 贡献制登记进组合根，不再有 `app/api/**` route handler 壳。
 
-> 导航索引。深层细节看子目录 `AGENTS.md` + 各 `README.md`。架构权威 = [ARCHITECTURE.md](./ARCHITECTURE.md)、[docs/architecture.md](./docs/architecture.md)、决策 = [docs/adr/](./docs/adr/)、领域术语 = [CONTEXT.md](./CONTEXT.md)、命令/约定 = [CLAUDE.md](./CLAUDE.md)。
+## Commands
 
-### OVERVIEW
-`loom` —— self-hosted 单用户 AI 学习系统。当前运行形状（YUK-321 M5 后）：**Hono API (`server/`, :8787) + Vite SPA (`web/`, :5173) + pg-boss worker (`scripts/worker.ts`)** 三进程。Postgres + Drizzle，R2/S3 blob，Claude Agent SDK。事件驱动核（ADR-0006 v2）：`event` 表是统一 action log，AI 是与用户对等的 actor。
-
-### 新栈两棵树（M0 起）
-```
-server/          # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
-web/             # Vite SPA（TanStack Router + React 19 + Tailwind v4）
-src/
-  kernel/        # CapabilityManifest 契约 + validateComposition
-  capabilities/  # Capability 包：manifest.ts 声明路由 / jobs / copilotTools / ui.pages
-    agency/      # 能动编排：夜链 + goal scope 提议 + agent-notes
-    copilot/     # Copilot 单人格对话面 + 工具贡献
-    ingestion/   # 录入域：OCR / Vision rescue / 抽取 / 入库
-    knowledge/   # 知识图谱域：树 + mesh + 提议 + 归因
-    notes/       # Note artifact 域：block-tree 编辑器 + Living Note refine
-    onboarding/  # 冷启域：welcome / upload / placement / profile
-    observability/ # AI 可观测性：admin 四页 + 今日成本条
-    practice/    # 练习域：review / quiz / judge / paper / 题库
-    shell/       # 工作台壳层：收件箱 + Today + Coach
-  core/          # 跨学科 Zod schema、capability registry、id helpers（无 IO）
-  db/            # Drizzle schema.ts + Postgres client
-  ai/            # 浏览器侧 task registry + prompt builder（不持 key）
-  server/        # 旧 server-only 业务层（采石场：仍运行，逐步迁入 capabilities；子模块精确数以 `ls src/server/*/` 为准）
-  subjects/      # 单学科 bundle：wenyan / math / physics
-  ui/            # 共享 React 设计系统
-scripts/         # worker.ts + migrate.ts + dev-local.ts + audits
-drizzle/         # 迁移 SQL + meta 快照
-docs/            # architecture / adr / modules / design / agents / superpowers
-```
-**不是 monorepo**（单 package.json）。`core/` 跨学科；`subjects/<name>/` 单学科特化；别把学科逻辑漏进 `core/` 或 `server/`。
-
-### WHERE TO LOOK
-| 任务 | 位置 |
-|------|------|
-| 后端 API / 组合根 | [server/AGENTS.md](./server/AGENTS.md)、`server/app.ts`、`server/index.ts` |
-| SPA / 路由 / 壳层 | [web/AGENTS.md](./web/AGENTS.md)、`web/src/router.tsx` |
-| capability 契约 | [src/kernel/AGENTS.md](./src/kernel/AGENTS.md)、`src/kernel/manifest.ts` |
-| capability 包总览 | [src/capabilities/AGENTS.md](./src/capabilities/AGENTS.md)、`src/capabilities/index.ts` |
-| 录入 / OCR / rescue | `src/capabilities/ingestion/AGENTS.md` |
-| 冷启 / welcome / placement | `src/capabilities/onboarding/` |
-| 知识树 / mesh / 提议 | `src/capabilities/knowledge/AGENTS.md` |
-| 练习 / 判分 / 组卷 | `src/capabilities/practice/AGENTS.md` |
-| Note / artifact | `src/capabilities/notes/AGENTS.md` |
-| Copilot / 对话 / 工具 | `src/capabilities/copilot/AGENTS.md` |
-| 夜链 / 能动性 | `src/capabilities/agency/AGENTS.md` |
-| 可观测性 / admin | `src/capabilities/observability/AGENTS.md` |
-| 工作台 / 收件箱 | `src/capabilities/shell/AGENTS.md` |
-| 旧 server 模块总览 | [src/server/AGENTS.md](./src/server/AGENTS.md) |
-| AI runner / tool / MCP bridge | [src/server/ai/AGENTS.md](./src/server/ai/AGENTS.md) |
-| pg-boss job catalog | [src/server/boss/handlers/AGENTS.md](./src/server/boss/handlers/AGENTS.md) |
-| DB schema / 迁移 | `src/db/schema.ts` + `drizzle/`（见 [src/db/README.md](./src/db/README.md)）|
-| Zod 业务 schema / event union | [src/core/schema/AGENTS.md](./src/core/schema/AGENTS.md) |
-| UI 组件 / 设计系统 | [src/ui/AGENTS.md](./src/ui/AGENTS.md) |
-| 学科 bundle | `src/subjects/<name>/` |
-| 运维 / audit 脚本 | `scripts/*.ts` |
-
-### COMMANDS（详见 CLAUDE.md）
 ```bash
-pnpm dev:local        # 推荐本地入口：spawn api(:8787) + web(:5173) + worker
-pnpm rw:api           # tsx watch server/index.ts（RW_WORKER=1 同进程启 worker）
-pnpm rw:web           # vite --config web/vite.config.ts
-pnpm worker:dev       # 独立 pg-boss worker 进程
+pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源；scripts/dev-local.ts 注入 DATABASE_URL + spawn api+web+worker 三进程）
+pnpm dev              # alias for pnpm dev:local
+pnpm rw:api           # tsx watch server/index.ts（RW_WORKER=1 同进程启 pg-boss worker）
+pnpm rw:web           # vite --config web/vite.config.ts（dev SPA + /api proxy → :8787）
+pnpm worker:dev       # tsx scripts/worker.ts（独立 pg-boss worker 进程）
+pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
-pnpm test             # 全量门禁：6 个 audit + unit + db + migration（详见 CLAUDE.md）
-pnpm test:unit:watch  # 快速无-DB watch
-pnpm test:db:watch    # DB/API watch（需 Docker/OrbStack）
-pnpm build            # rw:web:build + esbuild 三产物（server/worker/migrate .cjs）
+pnpm format           # biome format --write .
+pnpm test             # full pre-PR gate: profile audit + unit + DB + migration-smoke
+pnpm test:unit        # fast no-DB tests
+pnpm test:unit:watch  # fast watch loop for UI/core/schema/AI parser work
+pnpm test:watch       # alias for pnpm test:unit:watch
+pnpm test:db          # DB/API tests with shared Postgres testcontainer
+pnpm test:db:watch    # targeted DB/API watch loop
+pnpm test:migration   # migration DDL smoke; owns its own testcontainer
+pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
+pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env)
+pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
+pnpm audit:dependencies # production dependency HIGH+ advisories（CI hard gate）
+pnpm audit:api-contracts # capability route contract / legacy allowlist / OpenAPI coverage
+pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
+pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
+pnpm audit:learner-copy # 学习者可见文案禁止泄漏内部实现术语
+pnpm audit:no-learning-styles # 生产代码禁止 VAK/VARK / learning-style 个性化
+pnpm audit:draft-status # 检查每个 question INSERT 都显式 set draft_status 或在 allowlist（防容器题漏进练习池）
+pnpm audit:draft-status-reads # pool 可见性读路径必须走共享 predicate（pnpm test 用 --strict）
+pnpm audit:relations  # KG 死边反向审计：每个 relation_type 是否有特化下游消费（诊断/推荐/复习），report-only
+pnpm audit:calibration # READ-ONLY V-A1-fwd retro-validation of live A1 SRT（forward-AUC θ̂ replay），report-only，永不翻 flag
+pnpm audit:mastery-provenance # 借用 provenance 消费纪律反查（MasteryProjection 读点 guard 检查），report-only，--strict 才非零 exit
+pnpm audit:fold-writes # fold-owned 表 raw write 反向审计，report-only，--strict 可 fail
+pnpm audit:flags      # *_ENABLED 代码 ↔ ledger 对账，report-only，--strict 可 fail
+pnpm audit:projection # DB projection 重放对账；非 allowlist drift 直接 fail
+pnpm audit:golden --kind=<kind> # retained projection golden 重放
+pnpm audit:judge-golden # frozen judge output → normalized result 重放，--strict 可 fail
+pnpm audit:judge-prompts # judge task × profile prompt snapshot 对账，--strict / --write
 ```
-PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile` / `audit:draft-status`。
 
-### CONVENTIONS（仅本项目偏离项）
-- 工具链：**仅 Biome**（无 ESLint/Prettier）——2 空格 / 100 列 / 单引号 / 自动整理 imports；`noExplicitAny` + `useImportType` 为 warning。TS strict + ESM + `@/*`→`src/*`。
-- 后端 surface = capability `manifest.ts` → `src/capabilities/index.ts` 静态组合根 → `server/app.ts` 循环挂载。不再有 `app/api/**` Next.js route handler 壳。
-- 测试分区严格：依赖 DB/drizzle/postgres/PgBoss 的测试**禁止**放进 unit config；新栈约定 `src/kernel/**` / `src/capabilities/**` 的 `*.unit.test.ts` 自动进无 DB 快车道，`*.db.test.ts` 自动进 testcontainer 车道。
-- 无 Vercel / Redis；editing presence 走 PG 表 `editing_presence`。
-- 文件 mode 别硬编码——尊重 umask（`0o666 & ~umask`）。
+Each `pnpm audit:*` script has its own allowlist format, CI-gate wiring, and (for `audit:draft-status`) a NULL-semantics gotcha — see the `audits-reference` skill for full mechanics before adding a new table/field/question-insert site or touching the allowlist JSONs. Quick pointer: `audit:schema`/`audit:draft-status` allowlists need `reason` + `resolves_when{kind,ref,expected_by}`; CI runs `audit:schema`, `audit:dependencies`, and `audit:partition` as standalone hard gates. `pnpm test` itself runs `audit:api-contracts` → `audit:profile` → `audit:learner-copy` → `audit:no-learning-styles` → `audit:draft-status` → `audit:draft-status-reads --strict`, then unit/db/migration tests.
 
-### ANTI-PATTERNS (THIS PROJECT)
-- **破坏性 AI 动作没有直接 write tool**：删错题 / 合并节点 / reparent / archive 只能 `propose`，用户 accept route 才执行真实 mutation。
-- 别经 generic `/api/ai/[task]` 暴露 profile-driven / manual-rescue / tool task——走领域 route 或 worker。
-- 浏览器代码**不持** provider key——所有 AI 调用走 Hono route 或 pg-boss worker。
-- 别把派生 lifecycle 字段回写源表——建 reader / projection。
-- capability 包间禁深层 import，走 manifest 公共接口。
-- bug fix 不顺手 refactor。
-- 加新表/字段必须有 write path，否则进 `scripts/audit-schema-allowlist.json` 标注可检查解除条件。
-<!-- init-deep:END -->
+`/audit-drift` skill (`.claude/skills/audit-drift/SKILL.md`) scans ADR/planning-doc ↔ code drift. It supports interactive and scheduled invocation; scheduled runs close findings into Linear and must not create per-run branches or PRs — see the skill for details.
+
+**Behavior change (2026-05-21)**: `pnpm test:watch` is now an alias for `pnpm test:unit:watch` (no longer full+docker). For a DB watch loop use `pnpm test:db:watch`.
+
+Development loop:
+- UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
+- API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
+- Migration SQL changes: run `pnpm test:migration`.
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, `pnpm audit:draft-status`, `pnpm audit:draft-status-reads`, `pnpm test`, and `pnpm build`. `pnpm build` 经 esbuild 全量 bundle（server/worker/migrate 三 .cjs）+ Vite build，catch tsc/biome/vitest 都漏的 bundle 期错误（per YUK-67）。
+
+Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
+
+### Postman / API exploration
+
+`postman/` mirrors the Hono API surface for manual exploration (`pnpm api:smoke [folder]` runs it headless via Newman). The collection is generated from `postman/api-endpoints.json`, not hand-edited — when you add/change a route, edit that spec and run `pnpm gen:postman`. See the `postman-api` skill for the full workflow (manifest reconciliation, spec shape) or `postman/README.md`.
+
+DB tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS, runs `pnpm db:migrate` against the container once, then clones the migrated database into one `test_fork_<N>` database per configured worker via `CREATE DATABASE … TEMPLATE` (YUK-252). Vitest DB config runs `pool: 'forks'` with `maxWorkers` sourced from `tests/db-fork-constants.ts`; `tests/setup.db-fork.ts` (a `setupFiles` entry) rewrites `DATABASE_URL`/`TEST_DATABASE_URL` per worker to `test_fork_<VITEST_POOL_ID>`, so each fork gets its own cloned database and files run in parallel. Within a single fork, files still share one database and run sequentially — the hermetic contract is unchanged: every DB test must reset state in `beforeEach` (`resetDb()`) and must not assume cross-file state or execution order. To change DB test parallelism or the fork database prefix, update `tests/db-fork-constants.ts`.
+
+Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `drizzle`, or live `PgBoss` into the unit config. Route tests may be unit tests only when DB/R2/AI dependencies are mocked before importing the route module.
+
+## Architecture
+
+### Request flow
+
+后端逻辑全在 Hono route handlers 里，经 capability manifests 贡献制登记进组合根 `server/app.ts`（`buildHonoApp(capabilities)` 循环挂载 `cap.api.routes`，`[id]` → `:id` 转换由 `toHonoPath` 完成）：
+
+- `src/capabilities/copilot/manifest.ts` — Copilot chat（SSE 4 路由，AF S4）+ D14 单人格编排者 + `copilotTools` 工具贡献制（启动期 `registerCapabilityTools` 聚合完整 DomainTool inventory；surface 权限仍由 allowlists 控制）
+- `src/capabilities/observability/manifest.ts` — admin 四面（logs cost/jobs/jobs-by-id/tool_calls）+ subjects + today cost ribbon
+- `src/capabilities/ingestion/manifest.ts` — assets multipart upload → R2 + DB row + ingestion pipeline（`src/server/ingestion/`，`src/server/r2.ts`）
+- `src/capabilities/onboarding/manifest.ts` — cold-start welcome / upload / placement / profile pages
+- `src/capabilities/{knowledge,notes,practice,agency,shell}/manifest.ts` — domain CRUD + AI tasks；FSRS scheduling via `ts-fsrs` in `src/server/review/`
+- `server/app.ts` 直挂 `/api/health`（unauthenticated liveness probe）
+
+组合根侧 `/api/*` token 校验也由 `server/app.ts` 注册的 `app.use('/api/*', ...)` 中间件完成（豁免 `/api/health`）。Browser code never holds the Anthropic key — all AI calls funnel through Hono route 或 pg-boss worker。
+
+### Auth
+
+`server/app.ts` 的 `/api/*` 中间件 reject every request that lacks `x-internal-token === process.env.INTERNAL_TOKEN`，except `/api/health`（直挂免校验）。This is a single-user tool; there is no per-user auth.（旧的 `middleware.ts` Next.js 中间件已随 YUK-321 M5 退场——auth 逻辑现在在 Hono 组合根内。）
+
+### Layering
+
+```
+server/            # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
+web/               # Vite SPA 工程（root=web/；TanStack Router；@ alias 指 ../src）
+src/
+  capabilities/    # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
+    copilot/       # Copilot 域（D14 + copilotTools 贡献制）
+    observability/ # Observability 域
+    ingestion/     # 录入域
+    knowledge/     # 知识图谱域
+    notes/         # Note artifact 域
+    onboarding/    # 冷启 welcome / upload / placement / profile 域
+    practice/      # 练习域
+    agency/        # 代理域
+    shell/         # 工作台域
+    index.ts       # 静态组合根：按顺序聚合所有 capability manifests
+  kernel/          # CapabilityManifest 契约 + validateComposition 唯一性循环
+  core/            # Zod schemas, id helpers — cross-subject, no IO
+  db/              # Drizzle schema + Postgres client (single schema.ts)
+  ai/              # Task registry + browser-side caller
+  server/          # Server-only: ai/, ingestion/, knowledge/, review/, export/, r2.ts, http/
+  subjects/
+    wenyan/        # Per-subject bundle (Phase 1 dataset: classical Chinese)
+  ui/              # Shared React components
+scripts/           # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits
+docs/              # architecture.md, modules/, design/
+```
+
+`core/` is cross-subject; `subjects/<name>/` is single-subject specialisation. Keep that boundary — don't leak subject-specific logic into `core/` or `server/`. Capability 包（`src/capabilities/<name>/`）是新增路由/jobs/tools 的唯一登记面——manifest 贡献制进组合根，不再有 Next.js 壳文件仪式。
+
+### Design principles (from `docs/architecture.md` and project memory)
+
+- Evidence-first: AI actions should be traceable and reversible — runs log to `src/server/ai/log.ts`. Preserve this when adding AI features.
+
+## Planning & Architecture Workflow
+
+- For architecture/design discussions, capture decisions in versioned planning docs (e.g., `docs/planning/v0.X.md`) and ADRs (`docs/adr/ADR-NNNN.md`).
+- Before reversing a prior recommendation, re-check the user's stated requirements (e.g., Phase 1 scope) rather than re-justifying the new direction from scratch.
+
+## Code Conventions
+
+### File Permissions
+
+- Never hardcode file mode bits (e.g., `0o644`). Always respect umask: use `0o666 & ~umask` for files and `0o777 & ~umask` for directories.
+
+## Deployment
+
+Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container（`node:24-slim` 多阶段 `Dockerfile`，CMD `node dist/server.cjs`，:8787）+ worker container（同镜像，compose `command: ["node", "dist/worker.cjs"]` override）+ migrate init container（`node dist/migrate.cjs`）+ Postgres（pgvector）+ Cloudflare Tunnel for ingress. **无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。Runtime config via `.env` injected at compose level. `DATABASE_URL` points to the compose Postgres in prod / NAS, to `.env.local` for local dev, and to the testcontainer URI inside `pnpm test`. **No Vercel** — drop any `.vercel/`, `vercel env pull`, or Vercel-specific assumptions you carry from other Next.js projects（旧栈 Next.js 已于 YUK-321 M5 退场）.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in Linear (`Yukoval Studios` / `YUK`). GitHub Issues are historical only; do not create new planning / triage / roadmap work with `gh issue create`. See `docs/agents/issue-tracker.md`.
+
+For linked work, include `YUK-XX` in PR titles, PR descriptions, and commit messages; prefer Linear's branch name format `yuk-xx-...`; do not use bare `#N` for new work. When one commit/PR references multiple issues, repeat the Linear keyword for each issue (`Closes YUK-27` + `Closes YUK-28`), never shorthand like `Closes YUK-27 + YUK-28`.
+
+Before the final response for any implementation, audit, planning, or migration task, run the Linear issue capture gate:
+- create or update Linear issues for actionable follow-ups discovered in the current work, after searching for duplicates;
+- or explicitly state that no Linear issue is needed and why.
+
+Do not leave verified follow-ups only in the final prose, local TODOs, or scratch docs.
+
+### Triage labels
+
+Standard triage labels are used. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agents/domain.md`.
+
+### Codebase search (serena + claude-context)
+
+2026-06-06 起由两个 user-level MCP（`~/.claude.json` 顶层 `mcpServers`）承担，SessionStart hook (`.claude/hooks/code-search-preload.sh`) 注入分工提示：
+
+- **符号精确侧 → serena**：`find_symbol`（按名定位）、`find_referencing_symbols`（列举全部引用，带 snippet）、`get_symbols_overview`（文件结构）。已知符号名 / 列举引用 / 理解文件结构时优先于 grep。首次使用先调 `mcp__serena__initial_instructions`；返回行号是 0-based。
+- **语义召回侧 → claude-context**：`mcp__claude-context__search_code` 自然语言跨文件检索（VoyageAI voyage-code-3 + Zilliz Milvus）。「不知道在哪 / 某 feature 整体在哪实现 / grep 找不到的二次验证」时用。
+- **已知坑**：`get_indexing_status` 会在索引仍在写入时提前报「completed」——此时检索静默返回无关结果。结果明显偏靶时，查 `~/.context/mcp-codebase-snapshot.json` 的 `totalChunks`（本仓库健康值 ~13k；若 ≈ 文件数说明切块没完成）再重试。
+- grep 仍用于字面字符串枚举；grep 找不到不要断言「不存在」，先 claude-context 二次验证（SQL / migration / view 只有语义检索能命中）。工具默认 deferred，先 ToolSearch 加载 schema。
+
+## Known Limitations
+
+### Settings File Edits
+
+- The agent cannot edit `~/.claude/settings.json` (user-level, blocked by self-modification protection). For user-level changes, output the exact diff/JSON for the user to apply manually.
+- Project-level `.claude/settings.json` can be edited directly.
+
+## MCP / Tooling
+
+- MCP servers are snapshotted at session start; configuration changes (adding/swapping/renaming servers) require a session restart before they take effect. Do not attempt to test a newly-added or hot-swapped MCP server in the same session.
+
+## Product / Design Principles
+
+- Pre-AI features (e.g. question banks, quizzes, flows) are load-bearing, first-class parts of the AI-native architecture — not legacy holdovers. Do NOT propose deleting or removing ANY pre-AI feature or deterministic path when designing AI-native improvements; "delete" means "demote from sole source," never remove. Owner-instructed deletions (explicit, e.g. D6/D11-style locked decisions) are the only exception.
+
+## Engineering Approach
+
+- Default to the smallest sufficient solution, and never build unrequested infrastructure or a net-new subsystem lacking a live consumer (the project failure mode 建成不通电). BUT distinguish two cases: (1) clear scope-creep / unrequested infra → cut it, do not ask; (2) a genuine bias-variance or product-judgment fork (e.g. LIGHT vs FULL variant) → present both, mark the recommendation, and let the owner decide — do NOT unilaterally foreclose the fuller option (per `docs/design/2026-07-03-softmax-spec.md` §3, where the anti-over-engineering protocol was explicitly withdrawn in favor of dual LIGHT+FULL presentation with owner as decider). The concrete example (a single vision LLM before multi-step pipelines) still holds for case (1).
+
+## Code Review Workflow
+
+- When spawning review subagents, ensure each agent has Bash access (or dump the diff to disk and feed it) so it can fetch the PR diff.
+- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots), after the fix is committed + pushed. See the `pr` skill for the exact GitHub API mechanics (thread IDs, resolve/reply calls). Resolving threads is cleanup only — it never authorizes a merge by itself. **Merge policy（owner 2026-07-07 拍板成文，取代旧句 "PRs are owner-merged, never auto-merged"）**：全量 pre-PR gate + 独立 review + CI 全绿后，PR 可自主 merge 并按 2026-07-03 部署授权自主部署；owner 可随时点名要求任一 PR 人工合。
+
+## Shell / Environment
+
+- For millisecond timestamps use python (not `date %3N`), since macOS `date` does not support that flag.
