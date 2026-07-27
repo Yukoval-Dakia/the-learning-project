@@ -37,5 +37,5 @@
 
 ## 下一步
 
-1. commit/push/PR；issue 状态转 In Review 并附证据。
-2. PR 经独立 review、CI、合并后，才从新 worktree 开 Grounding 产品阶段。
+1. PR #1088 跟进独立 review 与 CI；修复 actionable findings。
+2. PR 合并后，才从新 worktree 开 Grounding 产品阶段。

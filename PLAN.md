@@ -37,13 +37,12 @@
 
 ## NEXT
 
-1. 组织 commit，push 并开 Architecture closeout PR。
-2. 将 YUK-751/753/771/773 改为 In Review，附 PR 与验收证据；等待独立 review + CI。
-3. Architecture PR 合并且 exit audit 全绿后：
+1. 跟进 PR #1088 的独立 review 与 CI，修复 actionable findings。
+2. Architecture PR 合并且 exit audit 全绿后：
    - Grounding project → In Progress；
    - 新建独立 product branch/worktree；
    - 先做真实数据闸门和猜想证据，再做干预准备、验证结算与 canary。
-4. 产品实现顺序：
+3. 产品实现顺序：
    - 真实 failure → grounded conjecture/probe/Judge；
    - versioned intervention snapshot → pedagogy → authored/verified package；
    - intervention-scoped practice + isolated FSRS verification；
@@ -80,5 +79,5 @@
 - Branch：`codex/architecture-deepening-closeout`
 - Worktree：
   `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/architecture-deepening-closeout`
-- PR：尚未创建；本地 exit gate 已完整收口，下一步 commit/push/open。
+- PR：#1088（ready for review）；本地 exit gate 已完整收口，等独立 review + CI。
 - 主工作树不在本线写入。
