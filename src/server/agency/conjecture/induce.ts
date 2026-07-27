@@ -268,11 +268,32 @@ function chooseAbstainDraft(params: {
     reasonTallies.length === 0 || reasonTallies[0].count === reasonTallies[1]?.count
       ? 'no_semantic_consensus'
       : reasonTallies[0].reasonCode;
-  const explanation = params.abstains
-    .filter((draft) => draft.reason_code === reason)
-    .map((draft) => draft.explanation_md)
+  const explanationFor = (targetReason: string): string | undefined =>
+    params.abstains
+      .filter((draft) => draft.reason_code === targetReason)
+      .map((draft) => draft.explanation_md)
+      .filter((value): value is string => Boolean(value))
+      .sort(compareLex)[0];
+  const dominantModelReason = [...new Set(params.abstains.map((draft) => draft.reason_code))]
+    .map((reasonCode) => ({
+      reasonCode,
+      count: params.abstains.filter((draft) => draft.reason_code === reasonCode).length,
+    }))
+    .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode))[0]?.reasonCode;
+  const orchestratorExplanation: Partial<Record<ConjectureAbstainReasonT, string>> = {
+    no_semantic_consensus: 'Requested samples did not reach a strict semantic majority.',
+    invalid_output: 'Most samples did not satisfy the structured grounding contract.',
+    sample_failure: 'Most samples failed before producing a valid structured decision.',
+  };
+  const modelContext = dominantModelReason ? explanationFor(dominantModelReason) : undefined;
+  const fallbackExplanation = [
+    orchestratorExplanation[reason],
+    modelContext ? `Model context: ${modelContext}` : undefined,
+  ]
     .filter((value): value is string => Boolean(value))
-    .sort(compareLex)[0];
+    .join(' ')
+    .slice(0, 500);
+  const explanation = explanationFor(reason) ?? (fallbackExplanation || undefined);
 
   return {
     kind: 'abstain',

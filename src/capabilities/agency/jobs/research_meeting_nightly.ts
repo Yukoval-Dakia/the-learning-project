@@ -53,7 +53,7 @@ import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evi
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { ConjectureProposalDraftT } from '@/core/schema/business';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -121,8 +121,10 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
-type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
-type WriteAiProposalFn = (db: Db, input: WriteAiProposalInput) => Promise<string>;
+type DbLike = Db | Tx;
+type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
+type WriteAiProposalFn = (db: DbLike, input: WriteAiProposalInput) => Promise<string>;
+type RunInTransactionFn = (db: Db, fn: (tx: DbLike) => Promise<void>) => Promise<void>;
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -175,6 +177,8 @@ export interface ResearchMeetingDeps {
   induceConjectureFn?: InduceConjectureFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeEventFn?: WriteEventFn;
+  /** Atomic durable boundary for trigger + per-cell outcomes + scan. */
+  runInTransactionFn?: RunInTransactionFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
@@ -499,7 +503,7 @@ function buildConjectureProposalInput(
       // The 2nd-person belief IS the card's reason — shown whole, never truncated.
       reason_md: draft.claim_md,
       // Provenance reuses the attempt event ids (no separate misconception store).
-      evidence_refs: cell.evidence_event_ids.map((id) => ({ kind: 'event' as const, id })),
+      evidence_refs: draft.evidence_event_ids.map((id) => ({ kind: 'event' as const, id })),
       proposed_change: {
         claim_md: draft.claim_md,
         // Deterministic cell facts win over the LLM echo (cause/recurrence are the
@@ -549,6 +553,9 @@ export async function runResearchMeetingNightly(
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
+  const runInTransactionFn =
+    deps.runInTransactionFn ??
+    ((database: Db, fn: (tx: DbLike) => Promise<void>) => database.transaction(fn));
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
@@ -676,38 +683,28 @@ export async function runResearchMeetingNightly(
     };
   }
 
-  // Anchor the run (provenance for each proposal + the scan subject).
+  // Anchor the run (provenance for each proposal + the scan subject). The actual
+  // trigger write joins the result writes and scan in one transaction below.
   // The pg-boss execution id is stable across retries, so every durable fact in
   // one logical run retains the same anchor even if a later sibling write fails.
   const triggerEventId = scheduledEventId('trigger', executionId);
-  await writeEventFn(db, {
-    id: triggerEventId,
-    actor_kind: 'agent',
-    actor_ref: RESEARCH_MEETING_ACTOR,
-    action: 'experimental:trigger_research_meeting',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: 'success',
-    payload: {
-      window_days: RESEARCH_MEETING_WINDOW_DAYS,
-      candidate_cells: preparedTopCells.length,
-      pending_conjectures: knownConjectureKeys.size,
-    },
-    // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
-    ingest_at: now,
-    created_at: now,
-  });
 
   // ── LLM half: independent top cells run in parallel ─────────────────────────
-  // Only provider/induction failures are cell-local and swallow-safe. Persistence
-  // failures are infrastructure faults: they must escape so pg-boss retries the
-  // job instead of misclassifying a missing durable result as an AI failure.
+  // Only provider/induction failures are cell-local and swallow-safe. Durable
+  // writes happen after all inductions and commit atomically below.
   const cellResults = await Promise.all(
     preparedTopCells.map(
       async ({
         cell,
         evidenceImages,
-      }): Promise<{ created: number; abstained: number; failed: number; cost_usd: number }> => {
+      }): Promise<{
+        cell: EnrichedEvidenceCell;
+        induced: InduceConjectureResult | null;
+        created: number;
+        abstained: number;
+        failed: number;
+        cost_usd: number;
+      }> => {
         let induced: InduceConjectureResult;
         try {
           induced = await induceConjectureFn({
@@ -726,47 +723,17 @@ export async function runResearchMeetingNightly(
           await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
-          return { created: 0, abstained: 0, failed: 1, cost_usd: 0 };
+          return { cell, induced: null, created: 0, abstained: 0, failed: 1, cost_usd: 0 };
         }
 
-        // The task-run rows already retain the incurred Opus spend. These writes
-        // intentionally live outside the induction catch: a DB/outbox fault is a
-        // retryable job failure, not a MindModelInductionTask failure. A failed job
-        // has no aggregate result/scan; its retry re-incurs and re-reports that total.
-        if (induced.outcome === 'abstain') {
-          await writeEventFn(db, {
-            // A pg-boss retry reuses job.id and therefore this first-write-wins
-            // event; the next scheduled execution has a distinct job.id and keeps
-            // its own reason/votes/task-run/cost provenance.
-            id: conjectureAbstentionEventId(executionId, cell),
-            actor_kind: 'agent',
-            actor_ref: RESEARCH_MEETING_ACTOR,
-            action: 'experimental:conjecture_abstained',
-            subject_kind: 'mind_model',
-            subject_id: cell.knowledge_id,
-            outcome: 'partial',
-            payload: {
-              reason_code: induced.draft.reason_code,
-              explanation_md: induced.draft.explanation_md ?? null,
-              evidence_event_ids: induced.draft.evidence_event_ids,
-              induction_task_run_ids: induced.task_run_ids,
-              votes: induced.votes,
-              requested_samples: induced.samples,
-            },
-            caused_by_event_id: triggerEventId,
-            cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
-            // Audit/observability only: an abstention is not a learner fact.
-            ingest_at: now,
-            created_at: now,
-          });
-          return { created: 0, abstained: 1, failed: 0, cost_usd: induced.cost_usd };
-        }
-
-        await writeAiProposalFn(
-          db,
-          buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
-        );
-        return { created: 1, abstained: 0, failed: 0, cost_usd: induced.cost_usd };
+        return {
+          cell,
+          induced,
+          created: induced.outcome === 'proposal' ? 1 : 0,
+          abstained: induced.outcome === 'abstain' ? 1 : 0,
+          failed: 0,
+          cost_usd: induced.cost_usd,
+        };
       },
     ),
   );
@@ -775,30 +742,89 @@ export async function runResearchMeetingNightly(
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
 
-  // Observability scan event — NOT cost-bearing: each conjecture proposal event already
-  // carries its own cost_micro_usd via writeAiProposal, so summing the run total here would
-  // DOUBLE-COUNT the AI spend in the cost ribbon (OCR review). The per-run total is still
-  // surfaced via the return value (cost_usd) for the job log.
-  await writeEventFn(db, {
-    id: scheduledEventId('scan', executionId),
-    actor_kind: 'agent',
-    actor_ref: RESEARCH_MEETING_ACTOR,
-    action: 'experimental:research_meeting_scan',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: 'success',
-    payload: {
-      considered: preparedTopCells.length,
-      conjectures_created: created,
-      conjectures_abstained: abstained,
-      cells_failed: cellsFailed,
-      pending_before: knownConjectureKeys.size,
-    },
-    caused_by_event_id: triggerEventId,
-    cost_micro_usd: null,
-    // Aggregate observability only; not evidence about the learner.
-    ingest_at: now,
-    created_at: now,
+  // Trigger + every successful cell result + scan commit together. A single
+  // durable-write failure rolls the whole batch back, so retry-time pending
+  // proposal dedup can never shrink the logical run into a partial scan.
+  await runInTransactionFn(db, async (tx) => {
+    await writeEventFn(tx, {
+      id: triggerEventId,
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_ACTOR,
+      action: 'experimental:trigger_research_meeting',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        window_days: RESEARCH_MEETING_WINDOW_DAYS,
+        candidate_cells: preparedTopCells.length,
+        pending_conjectures: knownConjectureKeys.size,
+      },
+      // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
+      ingest_at: now,
+      created_at: now,
+    });
+
+    for (const result of cellResults) {
+      if (!result.induced) continue;
+      const { cell, induced } = result;
+      if (induced.outcome === 'abstain') {
+        await writeEventFn(tx, {
+          // A pg-boss retry reuses job.id and therefore this first-write-wins
+          // event; the next scheduled execution has a distinct job.id and keeps
+          // its own reason/votes/task-run/cost provenance.
+          id: conjectureAbstentionEventId(executionId, cell),
+          actor_kind: 'agent',
+          actor_ref: RESEARCH_MEETING_ACTOR,
+          action: 'experimental:conjecture_abstained',
+          subject_kind: 'mind_model',
+          subject_id: cell.knowledge_id,
+          outcome: 'partial',
+          payload: {
+            reason_code: induced.draft.reason_code,
+            explanation_md: induced.draft.explanation_md ?? null,
+            evidence_event_ids: induced.draft.evidence_event_ids,
+            input_evidence_event_ids: cell.evidence_event_ids,
+            induction_task_run_ids: induced.task_run_ids,
+            votes: induced.votes,
+            requested_samples: induced.samples,
+          },
+          caused_by_event_id: triggerEventId,
+          cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
+          // Audit/observability only: an abstention is not a learner fact.
+          ingest_at: now,
+          created_at: now,
+        });
+      } else {
+        await writeAiProposalFn(
+          tx,
+          buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
+        );
+      }
+    }
+
+    // Observability scan event — NOT cost-bearing: each outcome event already
+    // carries its own cost, so summing the run total here would double-count it.
+    await writeEventFn(tx, {
+      id: scheduledEventId('scan', executionId),
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_ACTOR,
+      action: 'experimental:research_meeting_scan',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        considered: preparedTopCells.length,
+        conjectures_created: created,
+        conjectures_abstained: abstained,
+        cells_failed: cellsFailed,
+        pending_before: knownConjectureKeys.size,
+      },
+      caused_by_event_id: triggerEventId,
+      cost_micro_usd: null,
+      // Aggregate observability only; not evidence about the learner.
+      ingest_at: now,
+      created_at: now,
+    });
   });
 
   return {

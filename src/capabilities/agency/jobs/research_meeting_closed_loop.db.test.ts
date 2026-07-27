@@ -80,6 +80,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -442,6 +443,38 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
 
     const scores = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
     expect(scores).toHaveLength(1);
+  });
+
+  it('rolls back trigger, proposal, and scan together when the final durable write fails', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId: 'job_atomic_rollback',
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_scan') {
+            throw new Error('scan persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('scan persistence failed');
+
+    const rows = await db.select({ action: event.action }).from(event);
+    const runActions = rows
+      .map((row) => row.action)
+      .filter((action) =>
+        [
+          'experimental:trigger_research_meeting',
+          'experimental:proposal',
+          'experimental:research_meeting_scan',
+        ].includes(action),
+      );
+    expect(runActions).toEqual([]);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
   });
 
   it('persists a real abstain event and creates no conjecture proposal', async () => {

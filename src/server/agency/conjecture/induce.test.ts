@@ -365,6 +365,8 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
     expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(abstain(result).explanation_md).toContain('structured grounding contract');
+    expect(abstain(result).explanation_md).toContain('abstained: insufficient_evidence');
     expect(result.votes).toEqual({ proposal: 0, abstain: 1, invalid: 2, failed: 0 });
   });
 
@@ -379,6 +381,8 @@ describe('induceConjecture self-consistency', () => {
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
     expect(abstain(result).reason_code).toBe('sample_failure');
+    expect(abstain(result).explanation_md).toContain('valid structured decision');
+    expect(abstain(result).explanation_md).toContain('abstained: insufficient_evidence');
     expect(result.votes).toEqual({ proposal: 0, abstain: 1, invalid: 0, failed: 2 });
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });

@@ -216,6 +216,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
+    runInTransactionFn: vi.fn(async (db, fn) => fn(db)),
     writeRetryableAiFailureLedgerFn: vi.fn(async () => {}),
     // U8: stub the reconcile loop so unit tests never touch the DB (the real default
     // reads probe_result events). Wiring is asserted in its own test below.
@@ -256,6 +257,28 @@ describe('runResearchMeetingNightly', () => {
         ingest_at: NOW,
       }),
     );
+  });
+
+  it('persists trigger, cell outcomes, and scan through one transaction scope', async () => {
+    const tx = { kind: 'test-transaction' } as never;
+    const writeAiProposalFn = vi.fn(async () => 'prop_x');
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const runInTransactionFn = vi.fn(async (_db: unknown, fn: (scope: never) => Promise<void>) =>
+      fn(tx),
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      writeAiProposalFn,
+      writeEventFn,
+      runInTransactionFn,
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(runInTransactionFn).toHaveBeenCalledTimes(1);
+    expect(writeAiProposalFn).toHaveBeenCalledWith(tx, expect.anything());
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn.mock.calls.every(([scope]) => scope === tx)).toBe(true);
   });
 
   it('caps proposals at the top-K salient cells', async () => {
@@ -313,6 +336,39 @@ describe('runResearchMeetingNightly', () => {
     expect(input.event_override?.payload).toEqual({
       induction_task_run_ids: ['tr_k_a_1', 'tr_k_a_2', 'tr_k_a_3'],
     });
+  });
+
+  it('persists only the winning sample evidence subset as proposal support', async () => {
+    const captured: WriteAiProposalInput[] = [];
+    const failureRows = [
+      ...failuresForKcs(['k_a']),
+      failure('c_k_a_0', ['k_a'], 'concept_confusion'),
+    ];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failureRows)),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeInduced(input);
+        if (induced.outcome !== 'proposal') throw new Error('expected proposal');
+        return {
+          ...induced,
+          draft: {
+            ...induced.draft,
+            evidence_event_ids: input.cells[0].evidence_event_ids.slice(0, 2),
+          },
+        };
+      }),
+      writeAiProposalFn: vi.fn(async (_db: unknown, input: WriteAiProposalInput) => {
+        captured.push(input);
+        return 'prop_x';
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(captured[0].payload.evidence_refs).toEqual([
+      { kind: 'event', id: 'a_k_a_0' },
+      { kind: 'event', id: 'b_k_a_0' },
+    ]);
   });
 
   it('snapshots baseline_p_at_induction to the cold-start neutral 0.5 when no mastery row', async () => {
@@ -377,6 +433,7 @@ describe('runResearchMeetingNightly', () => {
         cost_micro_usd: 15_000,
         payload: expect.objectContaining({
           reason_code: 'insufficient_evidence',
+          input_evidence_event_ids: ['a_k_a_0', 'b_k_a_0'],
           votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
         }),
       }),
