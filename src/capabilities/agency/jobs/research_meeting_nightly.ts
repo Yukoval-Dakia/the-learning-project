@@ -674,16 +674,19 @@ export async function runResearchMeetingNightly(
     created_at: now,
   });
 
-  // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
+  // ── LLM half: independent top cells run in parallel ─────────────────────────
+  // Only provider/induction failures are cell-local and swallow-safe. Persistence
+  // failures are infrastructure faults: they must escape so pg-boss retries the
+  // job instead of misclassifying a missing durable result as an AI failure.
   const cellResults = await Promise.all(
     preparedTopCells.map(
       async ({
         cell,
         evidenceImages,
       }): Promise<{ created: number; abstained: number; failed: number; cost_usd: number }> => {
-        let incurredCostUsd = 0;
+        let induced: InduceConjectureResult;
         try {
-          const induced = await induceConjectureFn({
+          induced = await induceConjectureFn({
             cells: [cell],
             evidenceImages,
             samples: RESEARCH_MEETING_SAMPLES,
@@ -694,46 +697,49 @@ export async function runResearchMeetingNightly(
             // the wrong-subject steer this ticket removed from the prompt copy.
             subjectProfile: resolveSubjectProfileFn(cell.subject_id),
           });
-          // Count the Opus induction spend immediately — it was incurred regardless of
-          // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
-          incurredCostUsd = induced.cost_usd;
-          if (induced.outcome === 'abstain') {
-            await writeEventFn(db, {
-              id: `conjecture_abstained_${newId()}`,
-              actor_kind: 'agent',
-              actor_ref: RESEARCH_MEETING_ACTOR,
-              action: 'experimental:conjecture_abstained',
-              subject_kind: 'mind_model',
-              subject_id: cell.knowledge_id,
-              outcome: 'partial',
-              payload: {
-                reason_code: induced.draft.reason_code,
-                explanation_md: induced.draft.explanation_md ?? null,
-                evidence_event_ids: induced.draft.evidence_event_ids,
-                induction_task_run_ids: induced.task_run_ids,
-                votes: induced.votes,
-                requested_samples: induced.samples,
-              },
-              caused_by_event_id: triggerEventId,
-              cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
-              // Audit/observability only: an abstention is not a learner fact.
-              ingest_at: now,
-              created_at: now,
-            });
-            return { created: 0, abstained: 1, failed: 0, cost_usd: incurredCostUsd };
-          }
-          await writeAiProposalFn(
-            db,
-            buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
-          );
-          return { created: 1, abstained: 0, failed: 0, cost_usd: incurredCostUsd };
         } catch (err) {
           console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
           await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
-          return { created: 0, abstained: 0, failed: 1, cost_usd: incurredCostUsd };
+          return { created: 0, abstained: 0, failed: 1, cost_usd: 0 };
         }
+
+        // Count the Opus induction spend immediately — it was incurred regardless of
+        // whether the durable write below succeeds (OCR: don't lose cost on a write throw).
+        // These writes intentionally live outside the induction catch: a DB/outbox fault
+        // is a retryable job failure, not a MindModelInductionTask failure.
+        if (induced.outcome === 'abstain') {
+          await writeEventFn(db, {
+            id: `conjecture_abstained_${newId()}`,
+            actor_kind: 'agent',
+            actor_ref: RESEARCH_MEETING_ACTOR,
+            action: 'experimental:conjecture_abstained',
+            subject_kind: 'mind_model',
+            subject_id: cell.knowledge_id,
+            outcome: 'partial',
+            payload: {
+              reason_code: induced.draft.reason_code,
+              explanation_md: induced.draft.explanation_md ?? null,
+              evidence_event_ids: induced.draft.evidence_event_ids,
+              induction_task_run_ids: induced.task_run_ids,
+              votes: induced.votes,
+              requested_samples: induced.samples,
+            },
+            caused_by_event_id: triggerEventId,
+            cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
+            // Audit/observability only: an abstention is not a learner fact.
+            ingest_at: now,
+            created_at: now,
+          });
+          return { created: 0, abstained: 1, failed: 0, cost_usd: induced.cost_usd };
+        }
+
+        await writeAiProposalFn(
+          db,
+          buildConjectureProposalInput(cell, induced, induced.draft, triggerEventId),
+        );
+        return { created: 1, abstained: 0, failed: 0, cost_usd: induced.cost_usd };
       },
     ),
   );

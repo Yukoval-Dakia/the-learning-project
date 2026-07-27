@@ -390,6 +390,27 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('ok');
   });
 
+  it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => {
+      if (input.action === 'experimental:conjecture_abstained') {
+        throw new Error('database unavailable');
+      }
+      return input.id;
+    });
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(writeRetryableAiFailureLedgerFn).not.toHaveBeenCalled();
+  });
+
   it('swallows a single cell induction failure and continues (partial progress + ledger)', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
