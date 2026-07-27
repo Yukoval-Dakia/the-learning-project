@@ -49,10 +49,23 @@ export interface JudgeRunJobData {
      * job）。缺失时退回「现读行」旧行为并记一条 warn，而不是把在飞 job 判死。
      */
     question_snapshot?: unknown;
+    /**
+     * YUK-777 — KC → hierarchical-Elo domain mapping frozen at answer time. The worker uses
+     * this exact map for both late-arrival detection and the ability_global writes, so a
+     * knowledge-tree reparent between enqueue and pickup cannot move the write target.
+     *
+     * Optional for legacy in-flight jobs, which retain current-tree resolution.
+     */
+    ability_global_by_knowledge_id?: unknown;
     /** 作答时刻（ISO）——FSRS 调度锚定作答当下，非 worker 拾取时刻。 */
     submitted_at: string;
   };
 }
+
+export const FrozenAbilityGlobalByKnowledgeIdSchema = z.record(z.string(), z.string().min(1));
+export type FrozenAbilityGlobalByKnowledgeId = z.infer<
+  typeof FrozenAbilityGlobalByKnowledgeIdSchema
+>;
 
 /**
  * #2 (codex) — **题目数据冻结**。flag-on 时 submit 只把答案/画像冻进 payload，worker

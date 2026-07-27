@@ -10,7 +10,7 @@
 // human to recover from.
 
 import { newId } from '@/core/ids';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,14 @@ const ANSWER = 'the learner wrote this and it must never disappear';
 
 async function seedQuestion(id: string) {
   const now = new Date();
+  await testDb().insert(knowledge).values({
+    id: 'k1',
+    name: 'K1',
+    domain: 'math',
+    parent_id: null,
+    created_at: now,
+    updated_at: now,
+  });
   await testDb()
     .insert(question)
     .values({
@@ -80,12 +88,19 @@ describe('YUK-777 A2 — the answer survives a judge that never lands', () => {
     });
     expect(res.status).toBe(202);
     expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      submit: { ability_global_by_knowledge_id: { k1: 'math' } },
+    });
 
     // …and then judging NEVER completes. Every delivery fails, the job lands in
     // `judge_run_dlq`, and no worker ever writes the backfill. The queue payload is
     // gone as far as the domain is concerned. What is left of this learner's answer?
     const rows = await testDb().select().from(event);
     const carriesTheAnswer = rows.filter((r) => JSON.stringify(r.payload).includes(ANSWER));
+    expect(rows[0]?.payload).toMatchObject({
+      ability_global_ids: ['math'],
+      submit: { ability_global_by_knowledge_id: { k1: 'math' } },
+    });
 
     expect(
       carriesTheAnswer.length,

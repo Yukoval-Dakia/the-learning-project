@@ -372,4 +372,31 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
     expect(persisted.lateArrival).toBe(false);
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
   });
+
+  it('writes the submit-time frozen domain after the KC is reparented before backfill', async () => {
+    await seedKnowledge('k1', 'math-before');
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId, ['k1']);
+    const answeredAt = new Date(Date.now() - 5 * MINUTE);
+    const validated = await buildValidated(questionId, answeredAt, { rating: 'good' });
+
+    // The knowledge tree changes while the durable verdict is waiting in the queue.
+    await testDb()
+      .update(knowledge)
+      .set({ domain: 'math-after', updated_at: new Date() })
+      .where(eq(knowledge.id, 'k1'));
+
+    const persisted = await persistSubmit(validated, manualJudged(), {
+      attemptEventId: newId(),
+      enforceAttemptOrdering: true,
+      abilityGlobalByKnowledgeId: { k1: 'math-before' },
+    });
+
+    expect(persisted.lateArrival).toBe(false);
+    const globals = await testDb()
+      .select({ id: mastery_state.subject_id })
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'ability_global'));
+    expect(globals.map((row) => row.id)).toEqual(['math-before']);
+  });
 });

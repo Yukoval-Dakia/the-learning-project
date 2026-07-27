@@ -77,7 +77,9 @@ import {
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import {
   ABILITY_GLOBAL_SUBJECT_KIND,
+  type AbilityGlobalByKnowledgeId,
   getMasteryState,
+  resolveAbilityGlobalByKnowledgeId,
   resolveAbilityGlobalSubjectIds,
   updateThetaForAttempt,
 } from '@/server/mastery/state';
@@ -523,6 +525,8 @@ export interface PersistSubmitOptions {
    * reads the detection costs.
    */
   enforceAttemptOrdering?: boolean;
+  /** Frozen durable-lane ability_global targets; absent on sync/paper/legacy jobs. */
+  abilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
 }
 
 /**
@@ -565,13 +569,25 @@ async function detectLateArrival(
     questionId: string;
     /** This attempt's own run handle — its own pending row must not indict it. */
     runId: string;
+    abilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
   },
 ): Promise<boolean> {
-  const { now, fsrsSubjectKind, fsrsSubjectIds, knowledgeIds, questionId, runId } = input;
+  const {
+    now,
+    fsrsSubjectKind,
+    fsrsSubjectIds,
+    knowledgeIds,
+    questionId,
+    runId,
+    abilityGlobalByKnowledgeId,
+  } = input;
   const nowMs = now.getTime();
   // Resolve the shared hierarchical-Elo write targets once. The immutable-evidence check and
   // projection check must cover the same domain rows this attempt would update.
-  const abilityGlobalIds = await resolveAbilityGlobalSubjectIds(tx, knowledgeIds);
+  const abilityGlobalIds =
+    abilityGlobalByKnowledgeId === undefined
+      ? await resolveAbilityGlobalSubjectIds(tx, knowledgeIds)
+      : Array.from(new Set(Object.values(abilityGlobalByKnowledgeId)));
 
   // (a) Evidence first — it is both the cheapest to reason about and the only half that
   // survives a preceding skip.
@@ -767,6 +783,7 @@ export async function persistSubmit(
           // The durable lane sets `attemptEventId` = run_id, so on this path the attempt
           // event id IS the run handle its own pending row points at.
           runId: eventId,
+          abilityGlobalByKnowledgeId: opts.abilityGlobalByKnowledgeId,
         })
       : false;
     if (lateArrival) {
@@ -1107,6 +1124,7 @@ export async function persistSubmit(
           // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
           // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
           familyPrimaryKnowledgeId: primaryKnowledgeId,
+          abilityGlobalByKnowledgeId: opts.abilityGlobalByKnowledgeId,
         });
 
     // YUK-561 S2 (revert-bracket §4.1 / O2 dual-sibling) — A-class snapshot append,
@@ -1514,17 +1532,6 @@ export async function enqueueDurableJudge(
   // attempt or apply the older one on top of it. `deps.now` still overrides for tests.
   const now = deps.now ?? validated.now;
   const runId = newId();
-  const submitInput = {
-    body: validated.body,
-    question_id: validated.questionId,
-    subject_profile: subjectProfile,
-    // #2 (codex) — freeze the question state the learner ANSWERED into the payload.
-    // Without it the worker re-reads a mutable row at pickup, so an edit to
-    // prompt/reference/choices/knowledge/difficulty between the 202 and pickup judges
-    // (and schedules) a different question than the one on screen.
-    question_snapshot: freezeQuestionForJudge(validated.q),
-    submitted_at: now.toISOString(),
-  };
 
   // ── (0) ADMISSION, before anything durable ──────────────────────────────────────────
   // Order matters here specifically because step (1) is now durable. A 429 must leave NO
@@ -1546,7 +1553,23 @@ export async function enqueueDurableJudge(
     // throws, the answer genuinely is not recorded anywhere and a 5xx is the truth. It
     // carries the SAME frozen input the job does, so a recovery re-enqueue reproduces this
     // dispatch exactly (D5 profile freeze + the question snapshot survive recovery).
-    const abilityGlobalIds = await resolveAbilityGlobalSubjectIds(db, validated.q.knowledge_ids);
+    const abilityGlobalByKnowledgeId = await resolveAbilityGlobalByKnowledgeId(
+      db,
+      validated.q.knowledge_ids,
+    );
+    const abilityGlobalIds = Array.from(new Set(Object.values(abilityGlobalByKnowledgeId)));
+    const submitInput = {
+      body: validated.body,
+      question_id: validated.questionId,
+      subject_profile: subjectProfile,
+      // #2 (codex) — freeze the question state the learner ANSWERED into the payload.
+      // Without it the worker re-reads a mutable row at pickup, so an edit to
+      // prompt/reference/choices/knowledge/difficulty between the 202 and pickup judges
+      // (and schedules) a different question than the one on screen.
+      question_snapshot: freezeQuestionForJudge(validated.q),
+      ability_global_by_knowledge_id: abilityGlobalByKnowledgeId,
+      submitted_at: now.toISOString(),
+    };
     const pendingEventId = await recordJudgePendingAttempt(db, {
       runId,
       sessionId: validated.body.session_id ?? null,

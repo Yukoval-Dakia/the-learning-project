@@ -52,6 +52,8 @@ export const JudgePendingSubmitInput = z.object({
   // New durable submits always persist the frozen snapshot, while recovery preserves the legacy
   // read-live fallback instead of stranding an otherwise valid recorded answer.
   question_snapshot: z.record(z.string(), z.unknown()).optional(),
+  // Mirrors JudgeRunJobData['submit']; the worker applies the owning runtime schema.
+  ability_global_by_knowledge_id: z.record(z.string(), z.string()).optional(),
   /** ISO — the answer instant. The ordering water mark; also the FSRS scheduling anchor. */
   submitted_at: z.string().datetime(),
 });

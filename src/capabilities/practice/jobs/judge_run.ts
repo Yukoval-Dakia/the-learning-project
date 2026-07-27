@@ -32,6 +32,7 @@ import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveDurableProviderOverride } from '../server/judge-durable-config';
 import type { JudgeRunJobData } from '../server/judge-run-payload';
 import {
+  FrozenAbilityGlobalByKnowledgeIdSchema,
   FrozenQuestionSnapshotSchema,
   applyFrozenQuestion,
   reconstructDoneFromDomainEvents,
@@ -119,6 +120,10 @@ export async function runJudgeRun(
       data.submit.question_snapshot === undefined || data.submit.question_snapshot === null
         ? null
         : FrozenQuestionSnapshotSchema.parse(data.submit.question_snapshot);
+    const abilityGlobalByKnowledgeId =
+      data.submit.ability_global_by_knowledge_id === undefined
+        ? undefined
+        : FrozenAbilityGlobalByKnowledgeIdSchema.parse(data.submit.ability_global_by_knowledge_id);
     const now = new Date(data.submit.submitted_at);
     // An unparseable submitted_at yields an Invalid Date whose getTime() is NaN;
     // feeding it into FSRS scheduling (the attempt anchor) corrupts the schedule.
@@ -192,6 +197,7 @@ export async function runJudgeRun(
     const persisted = await persistSubmit(validated, judged, {
       attemptEventId: runId,
       enforceAttemptOrdering: true,
+      abilityGlobalByKnowledgeId,
     });
     persistedOk = true;
 

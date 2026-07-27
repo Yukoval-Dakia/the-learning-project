@@ -16,6 +16,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   JUDGE_PENDING_ATTEMPT_ACTION,
   judgeRecoveryJobId,
+  judgeRunJobId,
   recordJudgePendingAttempt,
 } from '../server/judge-run-dispatch';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
@@ -201,9 +202,9 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     const boss = deadBoss();
 
     expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
-      scanned: 1,
+      scanned: 0,
       reenqueued: 0,
-      skippedTerminal: 1,
+      skippedTerminal: 0,
     });
     expect(boss.send).not.toHaveBeenCalled();
   });
@@ -331,10 +332,44 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
     const report = await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } });
 
     expect(report).toMatchObject({
-      scanned: RECONCILE_SCAN_LIMIT + 6,
-      skippedTerminal: RECONCILE_SCAN_LIMIT + 5,
+      scanned: 1,
+      skippedTerminal: 0,
       reenqueued: 1,
     });
+    expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
+  });
+
+  it('persists queue-manual decisions so a prefix beyond the raw cap drains next tick', async () => {
+    const manualJobIds = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      const seeded = await seedPendingAttempt({
+        agoMs: RECONCILE_STALL_MS + 10 * HOUR + i,
+      });
+      manualJobIds.add(judgeRunJobId(seeded.runId));
+    }
+    const { runId: stranded } = await seedPendingAttempt({
+      agoMs: RECONCILE_STALL_MS + HOUR,
+    });
+    const boss = {
+      send: vi.fn().mockImplementation(async (_name, _data, options) => options?.id ?? newId()),
+      getJobById: vi
+        .fn()
+        .mockImplementation(async (_queue, id) =>
+          manualJobIds.has(id) ? ({ id, state: 'failed' } as JobWithMetadata) : null,
+        ),
+    };
+
+    // A tiny cap models the production 200-row bound: tick one can see only the dead prefix.
+    expect(
+      await reconcileStalledJudgeAttempts(testDb(), { deps: { boss }, rawScanLimit: 2 }),
+    ).toMatchObject({ scanned: 2, skippedTerminal: 2, reenqueued: 0 });
+
+    // Those queue decisions are now durable FAILED evidence and excluded before LIMIT. Tick two
+    // advances through the remaining manual row and reaches the later dispatch gap.
+    expect(
+      await reconcileStalledJudgeAttempts(testDb(), { deps: { boss }, rawScanLimit: 2 }),
+    ).toMatchObject({ scanned: 2, skippedTerminal: 1, reenqueued: 1 });
+    expect(boss.send).toHaveBeenCalledTimes(1);
     expect(boss.send.mock.calls[0][1]).toMatchObject({ run_id: stranded });
   });
 
@@ -385,9 +420,9 @@ describe('judge_pending_reconcile (YUK-777 A3)', () => {
 
     // Budget spent: the sweeper stops paying for a run that has failed every fresh dispatch.
     expect(await reconcileStalledJudgeAttempts(testDb(), { deps: { boss } })).toMatchObject({
-      scanned: 1,
+      scanned: 0,
       reenqueued: 0,
-      skippedExhausted: 1,
+      skippedExhausted: 0,
     });
     expect(boss.send).toHaveBeenCalledTimes(MAX_RECOVERY_ATTEMPTS);
 

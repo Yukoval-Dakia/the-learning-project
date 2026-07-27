@@ -7,7 +7,14 @@
 // at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
 
 import { newId } from '@/core/ids';
-import { event, job_events, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  job_events,
+  knowledge,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
@@ -144,6 +151,35 @@ describe('runJudgeRun — backfill', () => {
     // to show the judge's reasoning; both used to be dropped.
     expect(donePayload?.score_meaning).toBe('correctness');
     expect(donePayload?.evidence_json).toBeDefined();
+  });
+
+  it('threads the frozen KC-domain map through the worker after a knowledge reparent', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: 'K1',
+      domain: 'math-before',
+      parent_id: null,
+      created_at: now,
+      updated_at: now,
+    });
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId);
+    const data = jobData(newId(), questionId);
+    data.submit.ability_global_by_knowledge_id = { k1: 'math-before' };
+
+    await db
+      .update(knowledge)
+      .set({ domain: 'math-after', updated_at: new Date() })
+      .where(eq(knowledge.id, 'k1'));
+    await runJudgeRun(db, data, META0, { judgeSubmitFn: mockJudgeSubmit() });
+
+    const globals = await db
+      .select({ id: mastery_state.subject_id })
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'ability_global'));
+    expect(globals.map((row) => row.id)).toEqual(['math-before']);
   });
 
   it('idempotent re-delivery after commit does not double-write (skips, keeps one attempt + one judge)', async () => {

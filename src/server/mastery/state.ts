@@ -332,6 +332,31 @@ export async function globalThetaForDomain(db: DbLike, domain: string | null): P
 /** The `mastery_state.subject_kind` partition the hierarchical-Elo domain rows live in. */
 export const ABILITY_GLOBAL_SUBJECT_KIND = ABILITY_GLOBAL_KIND;
 
+export type AbilityGlobalByKnowledgeId = Readonly<Record<string, string>>;
+
+/**
+ * Resolve the exact hierarchical-Elo write target for every KC at one point in time.
+ *
+ * Durable judging freezes this map alongside the question snapshot. Re-resolving a KC after
+ * enqueue would let a later reparent silently move the worker's write from the domain recorded
+ * in immutable pending evidence to a different domain, breaking the late-arrival watermark.
+ */
+export async function resolveAbilityGlobalByKnowledgeId(
+  db: DbLike,
+  knowledgeIds: string[],
+): Promise<Record<string, string>> {
+  if (!HIERARCHICAL_ELO_ENABLED) return {};
+  const kcIds = Array.from(new Set(knowledgeIds)).filter((k) => k.length > 0);
+  if (kcIds.length === 0) return {};
+  const domainByKc = await batchResolveEffectiveDomains(db, kcIds);
+  const resolved: Record<string, string> = {};
+  for (const id of kcIds) {
+    const domain = domainByKc.get(id);
+    if (domain !== null && domain !== undefined) resolved[id] = domain;
+  }
+  return resolved;
+}
+
 /**
  * YUK-777 B1 — the `ability_global` subject ids `updateThetaForAttempt` WOULD write for
  * these KCs, exposed so an out-of-order check can cover them.
@@ -350,15 +375,9 @@ export async function resolveAbilityGlobalSubjectIds(
   db: DbLike,
   knowledgeIds: string[],
 ): Promise<string[]> {
-  if (!HIERARCHICAL_ELO_ENABLED) return [];
-  const kcIds = Array.from(new Set(knowledgeIds)).filter((k) => k.length > 0);
-  if (kcIds.length === 0) return [];
-  const domainByKc = await batchResolveEffectiveDomains(db, kcIds);
-  const domains = new Set<string>();
-  for (const domain of domainByKc.values()) {
-    if (domain !== null) domains.add(domain);
-  }
-  return Array.from(domains);
+  return Array.from(
+    new Set(Object.values(await resolveAbilityGlobalByKnowledgeId(db, knowledgeIds))),
+  );
 }
 
 /**
@@ -977,6 +996,11 @@ export interface UpdateThetaForAttemptInput {
    * → 退回 knowledgeIds[0]，行为与修复前等同（review 路径 [0] 本就等于 q.knowledge_ids[0]）。
    */
   familyPrimaryKnowledgeId?: string | null;
+  /**
+   * Durable-lane-only frozen KC → ability_global domain mapping. `undefined` preserves the
+   * synchronous/paper behavior of resolving the current knowledge tree inside this tx.
+   */
+  abilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
 }
 
 /**
@@ -1163,13 +1187,18 @@ export async function updateThetaForAttempt(
   const domainOfKc = new Map<string, string | null>(); // KC id → resolved domain id (null = unresolved)
   const globalThetaOfDomain = new Map<string, number>(); // domain id → current θ_global (0 if no row)
   if (HIERARCHICAL_ELO_ENABLED) {
-    // Memoized per-KC domain resolution (unique domains read their global row once).
+    // Durable jobs carry the mapping frozen at answer time. Legacy/synchronous callers omit it
+    // and retain the current-tree resolution behavior.
     for (const id of knowledgeIds) {
       let domain: string | null = null;
-      try {
-        domain = await getEffectiveDomain(tx, id);
-      } catch {
-        domain = null; // orphan / null-root-domain → no domain anchor for this KC.
+      if (input.abilityGlobalByKnowledgeId !== undefined) {
+        domain = input.abilityGlobalByKnowledgeId[id] ?? null;
+      } else {
+        try {
+          domain = await getEffectiveDomain(tx, id);
+        } catch {
+          domain = null; // orphan / null-root-domain → no domain anchor for this KC.
+        }
       }
       domainOfKc.set(id, domain);
       if (domain !== null && !globalThetaOfDomain.has(domain)) {

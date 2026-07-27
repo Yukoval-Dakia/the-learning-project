@@ -62,7 +62,7 @@ export const RECOVERY_MAX_AGE_MS = JUDGE_RECOVERY_MAX_AGE_MS;
 /** Runs re-enqueued per sweep. Bounds the burst a backlog can put on the paid queue. */
 export const RECONCILE_SCAN_LIMIT = 20;
 /** Raw pending rows inspected per sweep. Keeps pagination bounded when all candidates are manual. */
-const RECONCILE_RAW_SCAN_LIMIT = 200;
+export const RECONCILE_RAW_SCAN_LIMIT = 200;
 
 /**
  * Automatic re-enqueues per run. After this, the answer keeps sitting in the domain log as
@@ -100,10 +100,11 @@ export interface JudgePendingReconcileDeps {
  */
 export async function reconcileStalledJudgeAttempts(
   db: Db,
-  args: { now?: Date; deps?: JudgePendingReconcileDeps } = {},
+  args: { now?: Date; deps?: JudgePendingReconcileDeps; rawScanLimit?: number } = {},
 ): Promise<JudgePendingReconcileReport> {
   const now = args.now ?? new Date();
   const deps = args.deps ?? {};
+  const rawScanLimit = args.rawScanLimit ?? RECONCILE_RAW_SCAN_LIMIT;
   const report: JudgePendingReconcileReport = {
     scanned: 0,
     reenqueued: 0,
@@ -112,16 +113,18 @@ export async function reconcileStalledJudgeAttempts(
     skippedExhausted: 0,
     failed: 0,
   };
+  // Persist these only after the paged scan. Removing rows from the query's eligible set while
+  // OFFSET is advancing would shift the remaining rows left and skip candidates in this sweep.
+  // Once stamped, the next hourly run excludes them in SQL, so even a >200 manual-only prefix
+  // drains instead of permanently hiding later dispatch gaps.
+  const newlyManual: Array<{ runId: string; pendingEventId: string }> = [];
 
   let offset = 0;
-  while (report.reenqueued < RECONCILE_SCAN_LIMIT && report.scanned < RECONCILE_RAW_SCAN_LIMIT) {
+  while (report.reenqueued < RECONCILE_SCAN_LIMIT && report.scanned < rawScanLimit) {
     const page = await findStalledJudgePendingAttempts(db, {
       stalledBefore: new Date(now.getTime() - RECONCILE_STALL_MS),
       recordedAfter: new Date(now.getTime() - RECOVERY_MAX_AGE_MS),
-      limit: Math.min(
-        RECONCILE_SCAN_LIMIT - report.reenqueued,
-        RECONCILE_RAW_SCAN_LIMIT - report.scanned,
-      ),
+      limit: Math.min(RECONCILE_SCAN_LIMIT - report.reenqueued, rawScanLimit - report.scanned),
       offset,
     });
     if (page.rowsRead === 0) break;
@@ -170,6 +173,7 @@ export async function reconcileStalledJudgeAttempts(
         }
         if (queue.eligibility === 'manual') {
           report.skippedTerminal += 1;
+          newlyManual.push({ runId, pendingEventId: pending.pendingEventId });
           continue;
         }
         if (queue.eligibility !== 'eligible') {
@@ -218,6 +222,29 @@ export async function reconcileStalledJudgeAttempts(
           err,
         );
       }
+    }
+  }
+
+  for (const manual of newlyManual) {
+    try {
+      await writeJobEvent(db, {
+        business_table: JUDGE_RUN_TABLE,
+        business_id: manual.runId,
+        event_type: JUDGE_RUN_EVENTS.FAILED,
+        payload: {
+          reason: 'queue_terminal_manual_only',
+          pending_event_id: manual.pendingEventId,
+          observed_at: now.toISOString(),
+        },
+      });
+    } catch (err) {
+      // Without the marker this row remains eligible and is retried next tick. Count the failed
+      // state transition explicitly instead of claiming the permanent manual decision landed.
+      report.failed += 1;
+      console.error(
+        `[judge_pending_reconcile] failed to persist manual-only terminal evidence for ${manual.runId}`,
+        err,
+      );
     }
   }
   return report;
