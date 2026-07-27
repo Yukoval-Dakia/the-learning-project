@@ -538,6 +538,56 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     );
   });
 
+  it('filters invalid evidence before the sample cap and refills from later attempts', async () => {
+    await seedKnowledge('kc_refill', '证据回填', 'math');
+    await seedQuestion('q1', '后来改过的题面 1');
+    await seedQuestion('q2', '后来改过的题面 2');
+    await seedQuestion('q4', '稳定题面 4');
+    await seedQuestion('q5', '稳定题面 5');
+
+    for (const [id, questionId, day] of [
+      ['a1', 'q1', 25],
+      ['a2', 'q2', 24],
+      // q3 deliberately has no question row.
+      ['a3', 'q3_missing', 23],
+      ['a4', 'q4', 22],
+      ['a5', 'q5', 21],
+    ] as const) {
+      await seedFailureWithJudge({
+        id,
+        questionId,
+        knowledgeIds: ['kc_refill'],
+        createdAt: new Date(`2026-07-${day}T00:00:00Z`),
+      });
+    }
+    for (const questionId of ['q1', 'q2']) {
+      await testDb()
+        .insert(event)
+        .values({
+          id: `edit_${questionId}`,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'experimental:question_edit',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'success',
+          payload: {
+            question_id: questionId,
+            previous_version: 1,
+            next_version: 2,
+            before: { prompt_md: `作答时题面 ${questionId}` },
+            after: { prompt_md: `后来改过的题面 ${questionId}` },
+          },
+          created_at: new Date('2026-07-26T00:00:00Z'),
+        });
+    }
+
+    const [cell] = await runPipe(2);
+    expect(cell.recurrence_count).toBe(5);
+    expect(cell.evidence_event_ids.slice(0, 3)).toEqual(['a1', 'a2', 'a3']);
+    expect(cell.samples.map((sample) => sample.attempt_event_id)).toEqual(['a4', 'a5']);
+  });
+
   it('fails closed without throwing when the question row is missing', async () => {
     await seedKnowledge('kc_shidong', '使动用法', 'yuwen');
     // No question rows seeded at all — a dangling question_id must not take

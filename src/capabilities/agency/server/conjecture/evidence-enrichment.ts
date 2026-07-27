@@ -13,9 +13,10 @@
 //
 // This module is the READ half (it needs `db`); the shape it fills lives in the
 // PURE `evidence` sibling so that module keeps its no-IO unit-testability. The
-// nightly 例会 job calls this in its PRE-LLM read stage, AFTER the top-K salience
-// cap — so the query fan-out is bounded by K cells × SAMPLES_PER_CELL attempts,
-// not by the whole 14-day failure window.
+// nightly 例会 job calls this in its PRE-LLM read stage for salience-ordered cell
+// batches. Each read round is bounded by the still-empty sample slots; invalid
+// mutable/missing contexts are filtered before the quote cap and later attempts
+// refill those slots instead of being hidden behind a bad prefix.
 //
 // Untrusted-text discipline: question prompts, learner answers, reasoning traces
 // and written attributions are all authored outside the system prompt, so every
@@ -83,7 +84,7 @@ export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP = 512;
 
 export interface EnrichEvidenceCellsInput {
-  /** the top-K salient cells (post recurrence floor + dedup + salience cap). */
+  /** a salience-ordered cell batch (post recurrence floor + dedup). */
   cells: EvidenceCell[];
   /** the failure attempts the cells were folded from (the job already has them). */
   failures: ConjectureFailureAttempt[];
@@ -93,60 +94,17 @@ export interface EnrichEvidenceCellsInput {
   samplesPerCell?: number;
 }
 
-/**
- * Attach the grounding packet (KC name + subject identity + first-hand attempt
- * samples) to each cell. Rows that cannot be resolved degrade to `null` fields
- * rather than throwing: absent evidence is itself signal the model must see, and
- * a missing question row must not take down the whole nightly run.
- */
-export async function enrichEvidenceCells(
+async function loadEvidenceSampleBatch(
   db: DbLike,
-  input: EnrichEvidenceCellsInput,
-): Promise<EnrichedEvidenceCell[]> {
-  const { cells, failures } = input;
-  if (cells.length === 0) return [];
-  const samplesPerCell = input.samplesPerCell ?? CONJECTURE_EVIDENCE_SAMPLES_PER_CELL;
-  const traceByAttemptId = input.reasoningTraceByAttemptId ?? new Map<string, string | null>();
-
-  const failureByAttemptId = new Map(failures.map((f) => [f.attempt_event_id, f]));
-
-  // Pick the representative attempts FIRST so the question fetch is bounded by
-  // the quote cap, not by the cell's full recurrence tally.
-  const quotedByCellKey = new Map<string, ConjectureFailureAttempt[]>();
-  for (const cell of cells) {
-    const quoted: ConjectureFailureAttempt[] = [];
-    for (const attemptId of cell.evidence_event_ids) {
-      if (quoted.length >= samplesPerCell) break;
-      const failure = failureByAttemptId.get(attemptId);
-      if (failure) quoted.push(failure);
-    }
-    quotedByCellKey.set(cell.key, quoted);
-  }
-
-  const knowledgeIds = [...new Set(cells.map((cell) => cell.knowledge_id))];
-  const questionIds = [
-    ...new Set([...quotedByCellKey.values()].flat().map((failure) => failure.question_id)),
-  ];
-
-  const [knowledgeRows, questionRows, effectiveDomains] = await Promise.all([
-    knowledgeIds.length > 0
-      ? db
-          .select({ id: knowledge.id, name: knowledge.name })
-          .from(knowledge)
-          .where(inArray(knowledge.id, knowledgeIds))
-      : Promise.resolve([]),
-    questionIds.length > 0
-      ? db.select(QUESTION_CONTEXT_FIELDS).from(question).where(inArray(question.id, questionIds))
-      : Promise.resolve([]),
-    // The subject axis is the node's EFFECTIVE domain, not its raw column: a
-    // child KC normally carries domain=null and inherits the subject from an
-    // ancestor. Reading `knowledge.domain` directly would report "subject
-    // unknown" for exactly the common case and silently drop the whole run back
-    // to the neutral profile — i.e. it would undo this ticket's subject
-    // grounding on most cells. One query for all ids (YUK-716 batch twin).
-    batchResolveEffectiveDomains(db, knowledgeIds),
-  ]);
-
+  failures: ConjectureFailureAttempt[],
+  traceByAttemptId: ReadonlyMap<string, string | null>,
+): Promise<Map<string, ConjectureEvidenceSample>> {
+  if (failures.length === 0) return new Map();
+  const questionIds = [...new Set(failures.map((failure) => failure.question_id))];
+  const questionRows = await db
+    .select(QUESTION_CONTEXT_FIELDS)
+    .from(question)
+    .where(inArray(question.id, questionIds));
   const parentQuestionIds = [
     ...new Set(
       questionRows.map((row) => row.parent_question_id).filter((id): id is string => id !== null),
@@ -159,12 +117,10 @@ export async function enrichEvidenceCells(
           .from(question)
           .where(inArray(question.id, parentQuestionIds))
       : [];
-
-  const quotedFailures = [...quotedByCellKey.values()].flat();
   const allQuestionIds = [
     ...new Set([...questionRows, ...parentQuestionRows].map((row) => row.id)),
   ];
-  const earliestAttemptAt = quotedFailures.reduce<Date | null>(
+  const earliestAttemptAt = failures.reduce<Date | null>(
     (earliest, failure) =>
       earliest === null || failure.created_at < earliest ? failure.created_at : earliest,
     null,
@@ -184,7 +140,6 @@ export async function enrichEvidenceCells(
           )
       : [];
 
-  const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
   const questionById = new Map(
     [...questionRows, ...parentQuestionRows].map((row) => [row.id, row]),
   );
@@ -193,6 +148,98 @@ export async function enrichEvidenceCells(
     const edits = editsByQuestionId.get(row.question_id) ?? [];
     edits.push(row.created_at);
     editsByQuestionId.set(row.question_id, edits);
+  }
+  const samples = new Map<string, ConjectureEvidenceSample>();
+  for (const failure of failures) {
+    const sample = toEvidenceSample(failure, questionById, traceByAttemptId, editsByQuestionId);
+    if (sample !== null) samples.set(failure.attempt_event_id, sample);
+  }
+  return samples;
+}
+
+/**
+ * Attach the grounding packet (KC name + subject identity + first-hand attempt
+ * samples) to each cell. Rows that cannot be resolved degrade to `null` fields
+ * rather than throwing: absent evidence is itself signal the model must see, and
+ * a missing question row must not take down the whole nightly run.
+ */
+export async function enrichEvidenceCells(
+  db: DbLike,
+  input: EnrichEvidenceCellsInput,
+): Promise<EnrichedEvidenceCell[]> {
+  const { cells, failures } = input;
+  if (cells.length === 0) return [];
+  const samplesPerCell = input.samplesPerCell ?? CONJECTURE_EVIDENCE_SAMPLES_PER_CELL;
+  const traceByAttemptId = input.reasoningTraceByAttemptId ?? new Map<string, string | null>();
+
+  const failureByAttemptId = new Map(failures.map((f) => [f.attempt_event_id, f]));
+
+  const candidatesByCellKey = new Map<string, ConjectureFailureAttempt[]>();
+  for (const cell of cells) {
+    const candidates: ConjectureFailureAttempt[] = [];
+    for (const attemptId of cell.evidence_event_ids) {
+      const failure = failureByAttemptId.get(attemptId);
+      if (failure) candidates.push(failure);
+    }
+    candidatesByCellKey.set(cell.key, candidates);
+  }
+
+  const knowledgeIds = [...new Set(cells.map((cell) => cell.knowledge_id))];
+  const [knowledgeRows, effectiveDomains] = await Promise.all([
+    knowledgeIds.length > 0
+      ? db
+          .select({ id: knowledge.id, name: knowledge.name })
+          .from(knowledge)
+          .where(inArray(knowledge.id, knowledgeIds))
+      : Promise.resolve([]),
+    // The subject axis is the node's EFFECTIVE domain, not its raw column: a
+    // child KC normally carries domain=null and inherits the subject from an
+    // ancestor. Reading `knowledge.domain` directly would report "subject
+    // unknown" for exactly the common case and silently drop the whole run back
+    // to the neutral profile — i.e. it would undo this ticket's subject
+    // grounding on most cells. One query for all ids (YUK-716 batch twin).
+    batchResolveEffectiveDomains(db, knowledgeIds),
+  ]);
+
+  const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
+  const samplesByCellKey = new Map<string, ConjectureEvidenceSample[]>(
+    cells.map((cell) => [cell.key, []]),
+  );
+  const nextCandidateByCellKey = new Map<string, number>(cells.map((cell) => [cell.key, 0]));
+
+  // Filter first, cap second. Each round reads at most the still-needed number of attempts per
+  // cell; invalid/missing mutable context advances the cursor so later reproducible attempts can
+  // refill the packet instead of being permanently hidden behind the same bad prefix.
+  while (true) {
+    const roundByCellKey = new Map<string, ConjectureFailureAttempt[]>();
+    let candidatesRead = 0;
+    for (const cell of cells) {
+      const samples = samplesByCellKey.get(cell.key) ?? [];
+      const needed = samplesPerCell - samples.length;
+      if (needed <= 0) continue;
+      const candidates = candidatesByCellKey.get(cell.key) ?? [];
+      const offset = nextCandidateByCellKey.get(cell.key) ?? 0;
+      const batch = candidates.slice(offset, offset + needed);
+      if (batch.length === 0) continue;
+      roundByCellKey.set(cell.key, batch);
+      nextCandidateByCellKey.set(cell.key, offset + batch.length);
+      candidatesRead += batch.length;
+    }
+    if (candidatesRead === 0) break;
+
+    const samplesByAttemptId = await loadEvidenceSampleBatch(
+      db,
+      [...new Set([...roundByCellKey.values()].flat())],
+      traceByAttemptId,
+    );
+    for (const [cellKey, batch] of roundByCellKey) {
+      const samples = samplesByCellKey.get(cellKey) ?? [];
+      for (const failure of batch) {
+        const sample = samplesByAttemptId.get(failure.attempt_event_id);
+        if (sample !== undefined) samples.push(sample);
+      }
+      samplesByCellKey.set(cellKey, samples);
+    }
   }
 
   return cells.map((cell) => {
@@ -208,11 +255,7 @@ export async function enrichEvidenceCells(
       subject_id: subjectId,
       subject_display_name:
         subjectId === null ? null : resolveSubjectProfile(subjectId).displayName,
-      samples: (quotedByCellKey.get(cell.key) ?? [])
-        .map((failure) =>
-          toEvidenceSample(failure, questionById, traceByAttemptId, editsByQuestionId),
-        )
-        .filter((sample): sample is ConjectureEvidenceSample => sample !== null),
+      samples: samplesByCellKey.get(cell.key) ?? [],
     };
   });
 }
