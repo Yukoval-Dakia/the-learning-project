@@ -1,11 +1,7 @@
 {
   "baseCommit": "4cb5b9669e9343f5bf4a21385626edc5ed9ad257",
   "algorithm": "sha256",
-  "profiles": [
-    "general",
-    "math",
-    "yuwen"
-  ],
+  "profiles": ["general", "math", "yuwen"],
   "taskCount": 43,
   "prompts": {
     "general:AttributionTask": "0f9775c6673779e7acef549cd19e8dd675cfe78663dd691e84066e12039130bc",
