@@ -95,8 +95,8 @@ export interface ResearchMeetingResult {
   /** grounded induction completed but correctly refused to fabricate a proposal. */
   conjectures_abstained: number;
   /**
-   * YUK-779 — cells whose induction/write THREW and was swallowed by the per-cell
-   * catch below. Invariant:
+   * YUK-779 — cells whose induction THREW and was swallowed by the per-cell catch
+   * below. Invariant:
    * `cells_failed + conjectures_created + conjectures_abstained === considered`.
    *
    * Before this counter existed the swallow was visible only as
@@ -139,10 +139,10 @@ interface PreparedConjectureCell {
   evidenceImages: LoadedConjectureEvidenceImage[];
 }
 
-function conjectureAbstentionEventId(cell: EnrichedEvidenceCell): string {
+function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
   const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
   const digest = createHash('sha256')
-    .update(`${cell.key}\0${evidenceKey}`)
+    .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
     .digest('hex')
     .slice(0, 32);
   return `conjecture_abstained_${digest}`;
@@ -150,6 +150,11 @@ function conjectureAbstentionEventId(cell: EnrichedEvidenceCell): string {
 
 export interface ResearchMeetingDeps {
   now?: () => Date;
+  /**
+   * Stable for retries of one scheduled pg-boss execution, distinct for the next
+   * schedule. The real handler supplies `job.id`; direct callers get a fresh id.
+   */
+  executionId?: string;
   /**
    * YUK-786: the trace-bearing LIST reader. The bare `FailureAttempt` projection
    * is unchanged — the YUK-562 reasoning_trace rides in the wrapper alongside it.
@@ -529,6 +534,7 @@ export async function runResearchMeetingNightly(
   deps: ResearchMeetingDeps = {},
 ): Promise<ResearchMeetingResult> {
   const now = deps.now?.() ?? new Date();
+  const executionId = deps.executionId ?? newId();
   const getFailureAttemptsWithTraceFn =
     deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
@@ -722,9 +728,10 @@ export async function runResearchMeetingNightly(
         // has no aggregate result/scan; its retry re-incurs and re-reports that total.
         if (induced.outcome === 'abstain') {
           await writeEventFn(db, {
-            // Same grounded input produces the same first-write-wins event across
-            // pg-boss retries; changed evidence yields a new audit record.
-            id: conjectureAbstentionEventId(cell),
+            // A pg-boss retry reuses job.id and therefore this first-write-wins
+            // event; the next scheduled execution has a distinct job.id and keeps
+            // its own reason/votes/task-run/cost provenance.
+            id: conjectureAbstentionEventId(executionId, cell),
             actor_kind: 'agent',
             actor_ref: RESEARCH_MEETING_ACTOR,
             action: 'experimental:conjecture_abstained',
@@ -803,9 +810,11 @@ export async function runResearchMeetingNightly(
 export function buildResearchMeetingNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
-  return async () => {
+  return async (jobs) => {
     try {
-      const result = await runResearchMeetingNightly(db);
+      const result = await runResearchMeetingNightly(db, {
+        executionId: jobs[0]?.id ?? newId(),
+      });
       console.log('[research_meeting_nightly] result', result);
       // YUK-779 — the fallible units are the top-K cells. An empty night early-returns
       // with considered:0 → level `idle` (no alarm); a 限流风暴 fails every cell →

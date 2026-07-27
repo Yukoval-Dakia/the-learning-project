@@ -390,23 +390,25 @@ describe('runResearchMeetingNightly', () => {
     ).toBe('ok');
   });
 
-  it('uses a deterministic first-write-wins abstain event id across job replays', async () => {
+  it('reuses abstain event ids for one job retry but not for the next scheduled run', async () => {
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
-    const deps = baseDeps({
+    const commonDeps = {
       getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
       writeEventFn,
-    });
+    };
 
-    await runResearchMeetingNightly({} as never, deps);
-    await runResearchMeetingNightly({} as never, deps);
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_2' }));
 
     const abstainEventIds = writeEventFn.mock.calls
       .map((call) => call[1])
       .filter((input) => input.action === 'experimental:conjecture_abstained')
       .map((input) => input.id);
-    expect(abstainEventIds).toHaveLength(2);
-    expect(new Set(abstainEventIds).size).toBe(1);
+    expect(abstainEventIds).toHaveLength(3);
+    expect(abstainEventIds[0]).toBe(abstainEventIds[1]);
+    expect(abstainEventIds[2]).not.toBe(abstainEventIds[0]);
   });
 
   it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
