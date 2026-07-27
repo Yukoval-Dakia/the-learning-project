@@ -281,7 +281,33 @@ export function planConjectureEvidenceImageLoad(
     if (!countedAssetIds.has(ref.asset_id)) {
       countedAssetIds.add(ref.asset_id);
       totalBytes += row.byte_size;
-      if (row.width !== null && row.height !== null) totalPixels += row.width * row.height;
+      if (row.width === null || row.height === null) {
+        // Compressed runner-native formats can encode huge dimensions in few bytes. Their
+        // metadata dimensions are therefore required so the pre-fetch pixel cap is enforceable.
+        // BMP dimensions may be absent here because decodeUncompressedBmp validates the header.
+        if (RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) {
+          throw new Error(
+            `conjecture evidence asset ${ref.asset_id} has missing dimensions: ${row.mime_type}`,
+          );
+        }
+      } else {
+        if (
+          !Number.isInteger(row.width) ||
+          !Number.isInteger(row.height) ||
+          row.width <= 0 ||
+          row.height <= 0
+        ) {
+          throw new Error(
+            `conjecture evidence asset ${ref.asset_id} has invalid dimensions: ${row.width}x${row.height}`,
+          );
+        }
+        if (row.width > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL / row.height) {
+          throw new Error(
+            `conjecture evidence asset ${ref.asset_id} has more pixels than the safety limit`,
+          );
+        }
+        totalPixels += row.width * row.height;
+      }
     }
   }
   if (totalBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {

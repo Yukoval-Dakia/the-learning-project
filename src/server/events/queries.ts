@@ -153,7 +153,8 @@ function newerEventRow(a: EventRow, b: EventRow): boolean {
  * wrapper shape below.
  */
 function reasoningTraceFromRow(row: EventRow): string | null {
-  return (row.payload as { reasoning_trace?: string | null } | null)?.reasoning_trace ?? null;
+  const trace = (row.payload as { reasoning_trace?: unknown } | null)?.reasoning_trace;
+  return typeof trace === 'string' ? trace : null;
 }
 
 function failureEvidenceFromRow(row: EventRow): {

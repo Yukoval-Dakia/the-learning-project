@@ -682,4 +682,19 @@ describe('getFailureAttemptsWithReasoningTrace (YUK-786 list projection)', () =>
     });
     expect(rows[0].reasoning_trace).toBeNull();
   });
+
+  it('fails closed to null when a corrupt attempt stores a non-string process trace', async () => {
+    await seedQuestion('q1', 'prompt 1');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_x'],
+      reasoningTrace: { corrupt: true } as never,
+    });
+
+    const rows = await getFailureAttemptsWithReasoningTrace(testDb(), {
+      since: new Date('2026-07-01T00:00:00Z'),
+    });
+    expect(rows[0].reasoning_trace).toBeNull();
+  });
 });

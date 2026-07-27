@@ -840,6 +840,38 @@ describe('planConjectureEvidenceImageLoad', () => {
     ).toThrow(/unsupported MIME/);
   });
 
+  it('requires dimensions for compressed runner-native images but defers BMP sizing to decode', () => {
+    expect(() =>
+      planConjectureEvidenceImageLoad(
+        [ref('png')],
+        [
+          {
+            id: 'png',
+            mime_type: 'image/png',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toThrow(/missing dimensions/);
+
+    expect(
+      planConjectureEvidenceImageLoad(
+        [ref('bmp')],
+        [
+          {
+            id: 'bmp',
+            mime_type: 'image/bmp',
+            byte_size: 100,
+            width: null,
+            height: null,
+          },
+        ],
+      ),
+    ).toEqual({ loadableRefs: [ref('bmp')], transcodeAssetIds: ['bmp'] });
+  });
+
   it('counts recurring refs to one asset once for byte and pixel guards', () => {
     const recurring = [
       ref('same'),
