@@ -37,14 +37,20 @@ import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
 import {
+  collectConjectureEvidenceAssetRefs,
   conjectureKey,
   gatherConjectureEvidence,
 } from '@/capabilities/agency/server/conjecture/evidence';
-import type { EnrichedEvidenceCell } from '@/capabilities/agency/server/conjecture/evidence';
+import type {
+  ConjectureEvidenceAssetRef,
+  EnrichedEvidenceCell,
+  LoadedConjectureEvidenceImage,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
@@ -64,6 +70,8 @@ import {
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
 /** N self-consistency samples per conjecture (D2 — Opus agreement tally). */
 export const RESEARCH_MEETING_SAMPLES = 3;
+/** Fail closed instead of silently dropping pixels from unusually image-heavy evidence. */
+export const RESEARCH_MEETING_MAX_IMAGES_PER_CELL = 60;
 /** Recency window for the failure scan. */
 export const RESEARCH_MEETING_WINDOW_DAYS = 14;
 /** actor_ref stamped on the trigger / scan events + each conjecture proposal. */
@@ -107,6 +115,11 @@ type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
 type WriteRetryableAiFailureLedgerFn = (db: Db, taskKind: string) => Promise<void>;
+type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
+type LoadEvidenceImagesFn = (
+  db: Db,
+  refs: readonly ConjectureEvidenceAssetRef[],
+) => Promise<LoadedConjectureEvidenceImage[]>;
 
 export interface ResearchMeetingDeps {
   now?: () => Date;
@@ -126,6 +139,9 @@ export interface ResearchMeetingDeps {
   writeAiProposalFn?: WriteAiProposalFn;
   writeEventFn?: WriteEventFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
+  resolveSubjectProfileFn?: ResolveSubjectProfileFn;
+  /** Resolve every referenced asset to real image bytes before multimodal induction. */
+  loadEvidenceImagesFn?: LoadEvidenceImagesFn;
   /** U8 (A13): score prior probe outcomes → prediction_score event + typed-ledger. */
   reconcileFn?: (db: Db) => Promise<ReconcileResult>;
 }
@@ -155,6 +171,34 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
  */
 function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
   return makeRunTaskFn(db);
+}
+
+async function defaultLoadEvidenceImages(
+  db: Db,
+  refs: readonly ConjectureEvidenceAssetRef[],
+): Promise<LoadedConjectureEvidenceImage[]> {
+  if (refs.length === 0) return [];
+  if (refs.length > RESEARCH_MEETING_MAX_IMAGES_PER_CELL) {
+    throw new Error(
+      `conjecture evidence has ${refs.length} images; max is ${RESEARCH_MEETING_MAX_IMAGES_PER_CELL}`,
+    );
+  }
+  const fetched = await defaultImageFetch(
+    refs.map((ref) => ref.asset_id),
+    db,
+  );
+  // `defaultImageFetch` preserves input order but skips missing DB/R2 rows.
+  // A partial packet would let the model compare text against the wrong image
+  // index, so fail the cell rather than guessing which asset was absent.
+  if (fetched.length !== refs.length) {
+    throw new Error(
+      `conjecture evidence image load incomplete: expected ${refs.length}, got ${fetched.length}`,
+    );
+  }
+  if (fetched.some((image) => !image.mediaType.startsWith('image/'))) {
+    throw new Error('conjecture evidence contains a non-image asset');
+  }
+  return refs.map((ref, index) => ({ ...ref, ...fetched[index] }));
 }
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
@@ -227,6 +271,8 @@ export async function runResearchMeetingNightly(
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
+  const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
+  const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
   const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
 
@@ -295,6 +341,22 @@ export async function runResearchMeetingNightly(
     failures,
     reasoningTraceByAttemptId,
   });
+  // Enrichment omits samples whose mutable question context changed after the
+  // attempt. A cell with no remaining first-hand sample must not be sent to the
+  // model to fabricate a probe from ids and counters alone.
+  const groundedTopCells = enrichedTopCells.filter((cell) => cell.samples.length > 0);
+  if (groundedTopCells.length === 0) {
+    return {
+      considered: 0,
+      conjectures_created: 0,
+      cells_failed: 0,
+      pending_before: knownConjectureKeys.size,
+      reconciled: reconcileResult.reconciled,
+      reconcile_skipped: reconcileResult.skipped,
+      cost_usd: 0,
+      trigger_event_id: '',
+    };
+  }
 
   // Anchor the run (provenance for each proposal + the scan subject).
   const triggerEventId = `research_meeting_${newId()}`;
@@ -308,7 +370,7 @@ export async function runResearchMeetingNightly(
     outcome: 'success',
     payload: {
       window_days: RESEARCH_MEETING_WINDOW_DAYS,
-      candidate_cells: topCells.length,
+      candidate_cells: groundedTopCells.length,
       pending_conjectures: knownConjectureKeys.size,
     },
     // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
@@ -318,19 +380,22 @@ export async function runResearchMeetingNightly(
 
   // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
   const cellResults = await Promise.all(
-    enrichedTopCells.map(
+    groundedTopCells.map(
       async (cell): Promise<{ created: number; failed: number; cost_usd: number }> => {
         let incurredCostUsd = 0;
         try {
+          const imageRefs = collectConjectureEvidenceAssetRefs(cell);
+          const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
           const induced = await induceConjectureFn({
             cells: [cell],
+            evidenceImages,
             samples: RESEARCH_MEETING_SAMPLES,
             runTaskFn,
             // YUK-786: render the prompt in the cell's OWN subject voice. An
             // untagged KC (subject_id null) stays on the neutral `general`
             // profile — inheriting a concrete subject would re-introduce exactly
             // the wrong-subject steer this ticket removed from the prompt copy.
-            subjectProfile: resolveSubjectProfile(cell.subject_id),
+            subjectProfile: resolveSubjectProfileFn(cell.subject_id),
           });
           // Count the Opus induction spend immediately — it was incurred regardless of
           // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
@@ -364,7 +429,7 @@ export async function runResearchMeetingNightly(
     subject_id: triggerEventId,
     outcome: 'success',
     payload: {
-      considered: topCells.length,
+      considered: groundedTopCells.length,
       conjectures_created: created,
       cells_failed: cellsFailed,
       pending_before: knownConjectureKeys.size,
@@ -377,7 +442,7 @@ export async function runResearchMeetingNightly(
   });
 
   return {
-    considered: topCells.length,
+    considered: groundedTopCells.length,
     conjectures_created: created,
     cells_failed: cellsFailed,
     pending_before: knownConjectureKeys.size,

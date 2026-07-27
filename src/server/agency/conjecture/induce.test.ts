@@ -27,7 +27,7 @@ function evidenceSample(
       '<untrusted_learner_text>求 f(x)=sin(x^2) 的导数。</untrusted_learner_text>',
     question_reference_md: "<untrusted_learner_text>f'(x)=2x·cos(x^2)</untrusted_learner_text>",
     question_choices_md: null,
-    question_image_refs: ['asset_question'],
+    question_image_refs: [],
     question_figures: [],
     parent_question_id: null,
     parent_question_prompt_md: null,
@@ -36,12 +36,12 @@ function evidenceSample(
     parent_question_image_refs: [],
     parent_question_figures: [],
     answer_md: '<untrusted_learner_text>cos(x^2)·2x 写成了 cos(x^2)+2x</untrusted_learner_text>',
-    answer_image_refs: ['asset_answer'],
+    answer_image_refs: [],
     reasoning_trace:
       '<untrusted_learner_text>我先分别求了两层的导数，然后把它们加起来。</untrusted_learner_text>',
     cause_category: 'concept_confusion',
     cause_source: 'agent',
-    cause_analysis_md: '把复合函数的层间组合方式记错。',
+    cause_attribution_md: '把复合函数的层间组合方式记错。',
     ...overrides,
   };
 }
@@ -106,7 +106,12 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValue(sample('你把复合结构当成并列结构'));
     await induceConjecture({ cells: [cell(overrides)], samples: 1, runTaskFn });
-    return runTaskFn.mock.calls[0][1] as Record<string, unknown>;
+    const multimodal = runTaskFn.mock.calls[0][1] as {
+      text: string;
+      images: Array<{ data: string; mediaType: string }>;
+    };
+    expect(multimodal.images).toEqual([]);
+    return JSON.parse(multimodal.text) as Record<string, unknown>;
   }
 
   it('carries the KC name and the subject identity, not just the opaque id', async () => {
@@ -128,9 +133,81 @@ describe('induceConjecture taskInput grounding (YUK-786)', () => {
     expect(samples[0].answer_md).toContain('cos(x^2)+2x');
     expect(samples[0].reasoning_trace).toContain('加起来');
     expect(samples[0].cause_category).toBe('concept_confusion');
-    expect(samples[0].cause_analysis_md).toContain('复合函数');
-    expect(samples[0].question_image_refs).toEqual(['asset_question']);
-    expect(samples[0].answer_image_refs).toEqual(['asset_answer']);
+    expect(samples[0].cause_attribution_md).toContain('复合函数');
+  });
+
+  it('attaches real images in manifest order and binds each block to its evidence source', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValue(sample('你忽略了图中的边界条件'));
+    await induceConjecture({
+      cells: [
+        cell({
+          samples: [
+            evidenceSample({
+              question_image_refs: ['asset_question'],
+              parent_question_image_refs: ['asset_parent'],
+              answer_image_refs: ['asset_answer'],
+            }),
+          ],
+        }),
+      ],
+      evidenceImages: [
+        {
+          asset_id: 'asset_question',
+          attempt_event_id: 'e_a',
+          source: 'question',
+          data: 'QUESTION_BASE64',
+          mediaType: 'image/png',
+        },
+        {
+          asset_id: 'asset_parent',
+          attempt_event_id: 'e_a',
+          source: 'parent_question',
+          data: 'PARENT_BASE64',
+          mediaType: 'image/jpeg',
+        },
+        {
+          asset_id: 'asset_answer',
+          attempt_event_id: 'e_a',
+          source: 'answer',
+          data: 'ANSWER_BASE64',
+          mediaType: 'image/webp',
+        },
+      ],
+      samples: 1,
+      runTaskFn,
+    });
+
+    const multimodal = runTaskFn.mock.calls[0][1] as {
+      text: string;
+      images: Array<{ data: string; mediaType: string }>;
+    };
+    expect(multimodal.images).toEqual([
+      { data: 'QUESTION_BASE64', mediaType: 'image/png' },
+      { data: 'PARENT_BASE64', mediaType: 'image/jpeg' },
+      { data: 'ANSWER_BASE64', mediaType: 'image/webp' },
+    ]);
+    expect(JSON.parse(multimodal.text).image_manifest).toEqual([
+      {
+        image_index: 1,
+        asset_id: 'asset_question',
+        attempt_event_id: 'e_a',
+        source: 'question',
+      },
+      {
+        image_index: 2,
+        asset_id: 'asset_parent',
+        attempt_event_id: 'e_a',
+        source: 'parent_question',
+      },
+      {
+        image_index: 3,
+        asset_id: 'asset_answer',
+        attempt_event_id: 'e_a',
+        source: 'answer',
+      },
+    ]);
   });
 
   it('keeps untrusted learner text delimited on the way into the prompt', async () => {

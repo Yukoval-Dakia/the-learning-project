@@ -377,14 +377,14 @@ describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数
 
 // YUK-406 Phase 0 / YUK-440 A13 — conjecture induction task registry entry.
 describe('MindModelInductionTask registry entry', () => {
-  it('is a text-only single-shot task (Opus lane chosen per-call via override, never default)', () => {
+  it('is a multimodal single-shot task (Opus lane chosen per-call via override, never default)', () => {
     const def: TaskDef = tasks.MindModelInductionTask;
     expect(def.kind).toBe('MindModelInductionTask');
     // anthropic-sub is opt-in via override only; it is NEVER a task default
     // (registry.ts:12-16 forbids it as defaultProvider so tests need no OAuth token).
     expect(def.defaultProvider).not.toBe('anthropic-sub');
     expect(def.needsToolCall).toBe(false);
-    expect(def.isMultimodal).toBe(false);
+    expect(def.isMultimodal).toBe(true);
     expect(def.allowedTools).toEqual([]);
     expect(def.budget.maxIterations).toBe(1);
     // YUK-786: the grounded packet made this task heavier — a measured real-Opus
@@ -433,7 +433,8 @@ describe('MindModelInductionTask registry entry', () => {
       'answer_md',
       'answer_image_refs',
       'reasoning_trace',
-      'cause_analysis_md',
+      'cause_attribution_md',
+      'image_manifest',
     ]) {
       expect(p, `input contract must mention ${field}`).toContain(field);
     }
@@ -456,20 +457,21 @@ describe('MindModelInductionTask registry entry', () => {
   it('requires the claim to be reproducible from the attached evidence', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
     expect(p).toContain('能被随附证据复现');
-    // No abstain path exists in ConjectureDraft (probe_md is min(1)), so the
-    // prompt must at least tell the model to DEGRADE the claim's specificity
-    // rather than invent details when the evidence is thin.
+    // Kept as a second-line guard even though the caller now drops empty cells:
+    // a thin but non-empty sample still needs conservative specificity.
     expect(p).toContain('降到证据支持的抽象层级');
-    expect(p).toContain('evidence_samples 为空');
+    expect(p).toContain('过滤为空');
   });
 
-  it('states current-row snapshot limits without weakening eventual image delivery', () => {
+  it('states that mutable rows are filtered and real image blocks are attached in manifest order', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
-    expect(p).toContain('当前 question row 的题面上下文');
+    expect(p).toContain('作答后被编辑过');
     expect(p).toContain('YUK-804');
-    expect(p).not.toContain('question_prompt_md 是当时的题面');
-    expect(p).toContain('实际图像交给多模态模型');
-    expect(p).toContain('仅有引用时不得声称看见或解释图像内容');
+    expect(p).toContain('真实图片块');
+    expect(p).toContain('question（题图）');
+    expect(p).toContain('parent_question（父题图）');
+    expect(p).toContain('answer（作答图）');
+    expect(p).toContain('解析不完整时调用方会整格失败');
   });
 
   it('frames untrusted learner text as data, never instruction', () => {

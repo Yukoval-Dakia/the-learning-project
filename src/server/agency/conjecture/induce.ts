@@ -25,7 +25,10 @@
 // fields are aggregated deterministically before flowing to the proposal; the loop later
 // scores predicted_p against the cell's baseline_p (scoring + flip DEFERRED per ADR-0046).
 
-import type { EnrichedEvidenceCell } from '@/capabilities/agency/server/conjecture/evidence';
+import type {
+  EnrichedEvidenceCell,
+  LoadedConjectureEvidenceImage,
+} from '@/capabilities/agency/server/conjecture/evidence';
 import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
@@ -40,6 +43,12 @@ export interface InduceConjectureInput {
    * that is the exact failure mode this contract exists to make unrepresentable.
    */
   cells: EnrichedEvidenceCell[];
+  /**
+   * Real image bytes resolved from every asset ref in `cells`, in stable
+   * question → parent question → answer order. The task input manifest binds
+   * each image block back to its attempt and source.
+   */
+  evidenceImages?: LoadedConjectureEvidenceImage[];
   /** N self-consistency samples (>= 1). The nightly job passes 3. */
   samples: number;
   /** injected runner — the job wraps the real runTask (with db); faked in tests. */
@@ -248,10 +257,11 @@ export async function induceConjecture(
   input: InduceConjectureInput,
 ): Promise<InduceConjectureResult> {
   const { cells, samples, runTaskFn, priorClaimMd, subjectProfile } = input;
+  const evidenceImages = input.evidenceImages ?? [];
   if (samples < 1) throw new Error('induceConjecture: samples must be >= 1');
   if (cells.length === 0) throw new Error('induceConjecture: cells must be non-empty');
 
-  const taskInput = {
+  const taskPayload = {
     evidence_cells: cells.map((c) => ({
       knowledge_id: c.knowledge_id,
       // YUK-786 grounding: the KC as a NAME + its subject, so the claim is
@@ -272,7 +282,17 @@ export async function induceConjecture(
       // step — it is DATA for analysis, never instruction.
       evidence_samples: c.samples,
     })),
+    image_manifest: evidenceImages.map((image, index) => ({
+      image_index: index + 1,
+      asset_id: image.asset_id,
+      attempt_event_id: image.attempt_event_id,
+      source: image.source,
+    })),
     ...(priorClaimMd ? { prior_claim_md: priorClaimMd } : {}),
+  };
+  const taskInput = {
+    text: JSON.stringify(taskPayload),
+    images: evidenceImages.map(({ data, mediaType }) => ({ data, mediaType })),
   };
 
   // Run N samples on the Opus anthropic-sub lane (override; providers.ts exempts it

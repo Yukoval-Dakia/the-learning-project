@@ -11,15 +11,9 @@
 // → real gatherConjectureEvidence → real enrichEvidenceCells — so a regression in
 // any of the three seams shows up here, not only in the mocked job unit test.
 
+import { gatherConjectureEvidence } from '@/capabilities/agency/server/conjecture/evidence';
 import {
-  type ConjectureEvidenceFigure,
-  gatherConjectureEvidence,
-} from '@/capabilities/agency/server/conjecture/evidence';
-import {
-  CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP,
   CONJECTURE_EVIDENCE_CHOICES_PER_FIELD,
-  CONJECTURE_EVIDENCE_FIGURES_PER_FIELD,
-  CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD,
   enrichEvidenceCells,
 } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import type { FigureRefT } from '@/core/schema/structured_question';
@@ -27,11 +21,9 @@ import { event, knowledge, question } from '@/db/schema';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
-import { beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-
-expectTypeOf<FigureRefT>().toMatchTypeOf<ConjectureEvidenceFigure>();
-expectTypeOf<ConjectureEvidenceFigure>().toMatchTypeOf<FigureRefT>();
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
 
@@ -217,7 +209,7 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
   it('carries the question reference answer so the deviation is reconstructable', async () => {
     // Question + wrong answer alone do not show WHAT right was, and the claim is
     // supposed to be about the deviation. Load-bearing when the owner supplied a
-    // cause category with no notes (cause_analysis_md null).
+    // cause category with no notes (cause_attribution_md null).
     await seedKnowledge('kc_shici', '实词', 'yuwen');
     await seedQuestion('q1', '「学而时习之，不亦说乎」中「说」作何解？', '通「悦」，高兴');
     await seedQuestion('q2', 'prompt 2', null);
@@ -236,7 +228,7 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples[1].question_reference_md).toBeNull();
   });
 
-  it('carries question figures/image refs and image-only learner answers', async () => {
+  it('carries question figures and learner answer refs for later multimodal loading', async () => {
     await seedKnowledge('kc_visual', '图形推理', 'math');
     const figure: FigureRefT = {
       asset_id: 'asset_figure',
@@ -258,75 +250,56 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     await seedFailureWithJudge({ id: 'a2', questionId: 'q2', knowledgeIds: ['kc_visual'] });
 
     const [cell] = await runPipe();
-    expect(cell.samples[0].question_image_refs).toEqual(['asset_prompt']);
+    expect(cell.samples).toHaveLength(2);
+    expect(cell.samples[0]).toMatchObject({
+      question_id: 'q1',
+      question_image_refs: ['asset_prompt'],
+      answer_image_refs: ['asset_handwriting'],
+    });
     expect(cell.samples[0].question_figures).toEqual([figure]);
-    expect(cell.samples[0].answer_md).toBeNull();
-    expect(cell.samples[0].answer_image_refs).toEqual(['asset_handwriting']);
   });
 
-  it('bounds, trims and defensively copies image refs and figure packets', async () => {
-    await seedKnowledge('kc_visual_bounds', '图形推理', 'math');
-    const oversizedRef = `  ${'x'.repeat(CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP + 50)}  `;
-    const imageRefs = [
-      '  asset_prompt  ',
-      '   ',
-      oversizedRef,
-      ...Array.from(
-        { length: CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD + 5 },
-        (_, index) => `asset_${index}`,
-      ),
-    ];
-    const figures = Array.from(
-      { length: CONJECTURE_EVIDENCE_FIGURES_PER_FIELD + 5 },
-      (_, index): FigureRefT => ({
-        asset_id: `  figure_${index}  `,
-        role: 'diagram',
-        source_page_index: index,
-        source_bbox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
-        attached_to_index: `  stem_${index}  `,
-        attach_confidence: 'high',
-      }),
-    );
-    await seedQuestion('q1', '根据图形回答。', null, null, null, imageRefs, figures);
-    await seedQuestion('q2', 'prompt 2');
+  it('omits mutable question context edited at or after the historical attempt', async () => {
+    await seedKnowledge('kc_edit', '题面版本', 'math');
+    await seedQuestion('q1', '作答时题面');
+    await seedQuestion('q2', '未修改题面');
     await seedFailureWithJudge({
       id: 'a1',
       questionId: 'q1',
-      knowledgeIds: ['kc_visual_bounds'],
-      answerImageRefs: imageRefs,
+      knowledgeIds: ['kc_edit'],
+      createdAt: new Date('2026-07-19T10:00:00Z'),
     });
     await seedFailureWithJudge({
       id: 'a2',
       questionId: 'q2',
-      knowledgeIds: ['kc_visual_bounds'],
+      knowledgeIds: ['kc_edit'],
+      createdAt: new Date('2026-07-19T09:00:00Z'),
     });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'edit_q1',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:question_edit',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'success',
+        payload: {
+          question_id: 'q1',
+          previous_version: 1,
+          next_version: 2,
+          before: { prompt_md: '作答时题面' },
+          after: { prompt_md: '后来题面' },
+        },
+        created_at: new Date('2026-07-19T11:00:00Z'),
+      });
+    await testDb().update(question).set({ prompt_md: '后来题面' }).where(eq(question.id, 'q1'));
 
-    const db = testDb();
-    const rows = await getFailureAttemptsWithReasoningTrace(db, {
-      since: new Date('2026-07-01T00:00:00Z'),
-    });
-    const failures = rows.map((row) => row.failure);
-    const sourceRefs = failures[0].answer_image_refs;
-    const sourceSnapshot = structuredClone(sourceRefs);
-    const cells = gatherConjectureEvidence({
-      failures,
-      masteryByKnowledgeId: new Map<string, MasteryProjection>(),
-      knownConjectureKeys: new Set<string>(),
-    });
-    const [cell] = await enrichEvidenceCells(db, { cells, failures });
-    const sample = cell.samples[0];
-
-    expect(sample.question_image_refs).toHaveLength(CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD);
-    expect(sample.question_image_refs[0]).toBe('asset_prompt');
-    expect(sample.question_image_refs).not.toContain('');
-    expect(sample.question_image_refs[1]).toHaveLength(CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP);
-    expect(sample.answer_image_refs).toEqual(sample.question_image_refs);
-    expect(sample.answer_image_refs).not.toBe(sourceRefs);
-    expect(sourceRefs).toEqual(sourceSnapshot);
-    expect(sample.question_figures).toHaveLength(CONJECTURE_EVIDENCE_FIGURES_PER_FIELD);
-    expect(sample.question_figures[0].asset_id).toBe('figure_0');
-    expect(sample.question_figures[0].attached_to_index).toBe('stem_0');
-    expect(sample.question_figures[0].source_bbox).not.toBe(figures[0].source_bbox);
+    const [cell] = await runPipe();
+    expect(cell.samples).toHaveLength(1);
+    expect(cell.samples[0].question_id).toBe('q2');
+    expect(cell.samples[0].question_prompt_md).not.toContain('后来题面');
   });
 
   it('carries choice labels so letter answers retain their meaning', async () => {
@@ -449,9 +422,9 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(first.reasoning_trace).toContain('动词位置');
     expect(first.cause_category).toBe('concept');
     expect(first.cause_source).toBe('agent');
-    expect(first.cause_analysis_md).toContain('使动用法');
-    expect(first.cause_analysis_md).toMatch(/^<untrusted_learner_text>/);
-    expect(first.cause_analysis_md).toMatch(/<\/untrusted_learner_text>$/);
+    expect(first.cause_attribution_md).toContain('使动用法');
+    expect(first.cause_attribution_md).toMatch(/^<untrusted_learner_text>/);
+    expect(first.cause_attribution_md).toMatch(/<\/untrusted_learner_text>$/);
   });
 
   it('delimits knowledge names and every learner-authored field as untrusted data', async () => {

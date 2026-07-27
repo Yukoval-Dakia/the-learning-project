@@ -19,11 +19,8 @@
 // qualitative claim must later beat (scoring/flip is DEFERRED per ADR-0046; the cell
 // only carries the snapshot).
 
-import type { CauseCategoryT } from '@/core/schema/cause';
+import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
 import type { BBoxT, FigureRefT } from '@/core/schema/structured_question';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import type { FailureAttempt } from '@/server/events/queries';
-import type { MasteryProjection } from '@/server/mastery/state';
 
 /** A conjecture must recur across at least this many distinct failure attempts. */
 export const CONJECTURE_RECURRENCE_FLOOR = 2;
@@ -141,7 +138,7 @@ export interface ConjectureEvidenceSample {
    * generated outside the induction prompt, so enrich truncates and delimits them
    * as untrusted data.
    */
-  cause_analysis_md: string | null;
+  cause_attribution_md: string | null;
 }
 
 /** The db-resolved context an {@link EvidenceCell} is missing. */
@@ -159,11 +156,103 @@ export interface EvidenceCellEnrichment {
 /** An {@link EvidenceCell} carrying its grounding packet (YUK-786). */
 export type EnrichedEvidenceCell = EvidenceCell & EvidenceCellEnrichment;
 
+export type ConjectureEvidenceImageSource = 'question' | 'parent_question' | 'answer';
+
+/**
+ * One image occurrence in the stable multimodal packet order:
+ * child question → shared parent question → learner answer, per sample.
+ */
+export interface ConjectureEvidenceAssetRef {
+  asset_id: string;
+  attempt_event_id: string;
+  source: ConjectureEvidenceImageSource;
+}
+
+/** Asset ref plus the real bytes handed to the multimodal runner. */
+export interface LoadedConjectureEvidenceImage extends ConjectureEvidenceAssetRef {
+  /** base64 without a data: prefix (the runner also accepts URL/Uint8Array). */
+  data: string;
+  mediaType: string;
+}
+
+/**
+ * Collect unique image assets in the same order the model will receive them.
+ * Figure refs and simple refs can point at the same asset, so first occurrence
+ * wins and prevents duplicate image blocks.
+ */
+export function collectConjectureEvidenceAssetRefs(
+  cell: EnrichedEvidenceCell,
+): ConjectureEvidenceAssetRef[] {
+  const refs: ConjectureEvidenceAssetRef[] = [];
+  const seen = new Set<string>();
+  const append = (
+    assetIds: readonly string[],
+    attemptEventId: string,
+    source: ConjectureEvidenceImageSource,
+  ) => {
+    for (const assetId of assetIds) {
+      if (seen.has(assetId)) continue;
+      seen.add(assetId);
+      refs.push({ asset_id: assetId, attempt_event_id: attemptEventId, source });
+    }
+  };
+
+  for (const sample of cell.samples) {
+    append(
+      [...sample.question_image_refs, ...sample.question_figures.map((figure) => figure.asset_id)],
+      sample.attempt_event_id,
+      'question',
+    );
+    append(
+      [
+        ...sample.parent_question_image_refs,
+        ...sample.parent_question_figures.map((figure) => figure.asset_id),
+      ],
+      sample.attempt_event_id,
+      'parent_question',
+    );
+    append(sample.answer_image_refs, sample.attempt_event_id, 'answer');
+  }
+  return refs;
+}
+
+/**
+ * Agency-owned, read-only projection of the legacy failure stream.
+ *
+ * Keep only fields conjecture evidence actually consumes. The job's legacy
+ * `FailureAttempt` reader is structurally assignable to this contract, so the
+ * agency domain stays independently testable without importing `@/server/*`.
+ */
+export interface ConjectureFailureAttempt {
+  attempt_event_id: string;
+  question_id: string;
+  answer_md: string | null;
+  answer_image_refs: string[];
+  referenced_knowledge_ids: string[];
+  created_at: Date;
+  judge?: {
+    cause: CauseSchemaT;
+    created_at: Date;
+  };
+  user_cause?: {
+    primary_category: CauseCategoryT;
+    user_notes: string | null;
+    created_at: Date;
+  };
+}
+
+/** Minimal mastery projection consumed by the conjecture salience calculation. */
+export interface ConjectureMasteryProjection {
+  theta_hat: number;
+  theta_precision: number;
+  mastery: number;
+}
+
 export interface GatherConjectureEvidenceInput {
   /** Recent failure attempts (caller fetched via getFailureAttempts({ since })). */
-  failures: FailureAttempt[];
+  failures: ConjectureFailureAttempt[];
   /** knowledge_id → mastery projection (caller resolved via getMasteryProjection). */
-  masteryByKnowledgeId: Map<string, MasteryProjection>;
+  masteryByKnowledgeId: ReadonlyMap<string, ConjectureMasteryProjection>;
   /** dedup: conjectureKey(...) values already raised — skip these cells. */
   knownConjectureKeys: Set<string>;
 }
@@ -176,13 +265,47 @@ interface CellAccumulator {
   hasOwnerCause: boolean;
 }
 
+export interface EffectiveConjectureCause {
+  source: 'user' | 'agent';
+  primary_category: CauseCategoryT;
+  analysis_md: string | null;
+  user_notes: string | null;
+}
+
+/**
+ * Conjecture-local effective-cause projection: owner attribution wins over the
+ * upstream judge. This deliberately mirrors the legacy read policy while
+ * returning only the fields induction consumes.
+ */
+export function effectiveCauseForConjectureFailure(
+  failure: ConjectureFailureAttempt,
+): EffectiveConjectureCause | null {
+  if (failure.user_cause) {
+    return {
+      source: 'user',
+      primary_category: failure.user_cause.primary_category,
+      analysis_md: null,
+      user_notes: failure.user_cause.user_notes,
+    };
+  }
+  if (failure.judge) {
+    return {
+      source: 'agent',
+      primary_category: failure.judge.cause.primary_category,
+      analysis_md: failure.judge.cause.analysis_md,
+      user_notes: null,
+    };
+  }
+  return null;
+}
+
 export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): EvidenceCell[] {
   const { failures, masteryByKnowledgeId, knownConjectureKeys } = input;
 
   // 1. Fan each failure out across (effective cause_category × each referenced KC).
   const acc = new Map<string, CellAccumulator>();
   for (const failure of failures) {
-    const cause = effectiveCauseForFailureAttempt(failure);
+    const cause = effectiveCauseForConjectureFailure(failure);
     if (cause === null) continue; // no active cause — cannot attribute a conjecture
     const isOwnerCause = cause.source === 'user';
     for (const knowledgeId of failure.referenced_knowledge_ids) {

@@ -26,17 +26,17 @@
 import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/public';
 import { FigureRef } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import type { FailureAttempt } from '@/server/events/queries';
+import { event, knowledge, question } from '@/db/schema';
 import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
-import { inArray } from 'drizzle-orm';
+import { and, eq, gte, inArray } from 'drizzle-orm';
 
-import type {
-  ConjectureEvidenceFigure,
-  ConjectureEvidenceSample,
-  EnrichedEvidenceCell,
-  EvidenceCell,
+import {
+  type ConjectureEvidenceFigure,
+  type ConjectureEvidenceSample,
+  type ConjectureFailureAttempt,
+  type EnrichedEvidenceCell,
+  type EvidenceCell,
+  effectiveCauseForConjectureFailure,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '@/kernel/untrusted-text';
 
@@ -71,7 +71,7 @@ const QUESTION_CONTEXT_FIELDS = {
  * RESEARCH_MEETING_MAX_CONJECTURES(3) × 3 samples × 3 text fields × 2000 chars.
  */
 export const CONJECTURE_EVIDENCE_SAMPLES_PER_CELL = 3;
-/** Prompt-packet bounds; refs are identifiers, not image bytes. */
+/** Prompt-packet bounds; the real bytes are loaded later at the job composition seam. */
 export const CONJECTURE_EVIDENCE_CHOICES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
@@ -81,7 +81,7 @@ export interface EnrichEvidenceCellsInput {
   /** the top-K salient cells (post recurrence floor + dedup + salience cap). */
   cells: EvidenceCell[];
   /** the failure attempts the cells were folded from (the job already has them). */
-  failures: FailureAttempt[];
+  failures: ConjectureFailureAttempt[];
   /** attempt_event_id → YUK-562 process-data self-report, when present. */
   reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
   /** override the per-cell quote cap (tests). */
@@ -107,9 +107,9 @@ export async function enrichEvidenceCells(
 
   // Pick the representative attempts FIRST so the question fetch is bounded by
   // the quote cap, not by the cell's full recurrence tally.
-  const quotedByCellKey = new Map<string, FailureAttempt[]>();
+  const quotedByCellKey = new Map<string, ConjectureFailureAttempt[]>();
   for (const cell of cells) {
-    const quoted: FailureAttempt[] = [];
+    const quoted: ConjectureFailureAttempt[] = [];
     for (const attemptId of cell.evidence_event_ids) {
       if (quoted.length >= samplesPerCell) break;
       const failure = failureByAttemptId.get(attemptId);
@@ -155,10 +155,40 @@ export async function enrichEvidenceCells(
           .where(inArray(question.id, parentQuestionIds))
       : [];
 
+  const quotedFailures = [...quotedByCellKey.values()].flat();
+  const allQuestionIds = [
+    ...new Set([...questionRows, ...parentQuestionRows].map((row) => row.id)),
+  ];
+  const earliestAttemptAt = quotedFailures.reduce<Date | null>(
+    (earliest, failure) =>
+      earliest === null || failure.created_at < earliest ? failure.created_at : earliest,
+    null,
+  );
+  const editRows =
+    allQuestionIds.length > 0 && earliestAttemptAt !== null
+      ? await db
+          .select({ question_id: event.subject_id, created_at: event.created_at })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:question_edit'),
+              eq(event.subject_kind, 'question'),
+              inArray(event.subject_id, allQuestionIds),
+              gte(event.created_at, earliestAttemptAt),
+            ),
+          )
+      : [];
+
   const knowledgeById = new Map(knowledgeRows.map((row) => [row.id, row]));
   const questionById = new Map(
     [...questionRows, ...parentQuestionRows].map((row) => [row.id, row]),
   );
+  const editsByQuestionId = new Map<string, Date[]>();
+  for (const row of editRows) {
+    const edits = editsByQuestionId.get(row.question_id) ?? [];
+    edits.push(row.created_at);
+    editsByQuestionId.set(row.question_id, edits);
+  }
 
   return cells.map((cell) => {
     const kc = knowledgeById.get(cell.knowledge_id);
@@ -173,9 +203,11 @@ export async function enrichEvidenceCells(
       subject_id: subjectId,
       subject_display_name:
         subjectId === null ? null : resolveSubjectProfile(subjectId).displayName,
-      samples: (quotedByCellKey.get(cell.key) ?? []).map((failure) =>
-        toEvidenceSample(failure, questionById, traceByAttemptId),
-      ),
+      samples: (quotedByCellKey.get(cell.key) ?? [])
+        .map((failure) =>
+          toEvidenceSample(failure, questionById, traceByAttemptId, editsByQuestionId),
+        )
+        .filter((sample): sample is ConjectureEvidenceSample => sample !== null),
     };
   });
 }
@@ -221,7 +253,7 @@ function safeFigures(values: unknown): ConjectureEvidenceFigure[] {
 }
 
 function causeAnalysisText(
-  cause: ReturnType<typeof effectiveCauseForFailureAttempt>,
+  cause: ReturnType<typeof effectiveCauseForConjectureFailure>,
 ): string | null {
   if (cause === null) return null;
   if (cause.user_notes !== null) {
@@ -231,13 +263,27 @@ function causeAnalysisText(
 }
 
 function toEvidenceSample(
-  failure: FailureAttempt,
+  failure: ConjectureFailureAttempt,
   questionById: ReadonlyMap<string, QuestionContextRow>,
   traceByAttemptId: ReadonlyMap<string, string | null>,
-): ConjectureEvidenceSample {
+  editsByQuestionId: ReadonlyMap<string, Date[]>,
+): ConjectureEvidenceSample | null {
   const q = questionById.get(failure.question_id);
+  if (!q) return null;
   const parent = q?.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
-  const cause = effectiveCauseForFailureAttempt(failure);
+  const wasEditedAtOrAfterAttempt = (questionId: string | null | undefined): boolean =>
+    questionId !== null &&
+    questionId !== undefined &&
+    (editsByQuestionId.get(questionId) ?? []).some(
+      (editedAt) => editedAt.getTime() >= failure.created_at.getTime(),
+    );
+  // Never pair a historical answer with a mutable question row the learner did
+  // not see. Until YUK-804 persists the full question snapshot on every attempt
+  // path, omit samples whose child or shared parent changed at/after submission.
+  if (wasEditedAtOrAfterAttempt(q.id) || wasEditedAtOrAfterAttempt(q.parent_question_id)) {
+    return null;
+  }
+  const cause = effectiveCauseForConjectureFailure(failure);
   // Owner notes and upstream judge analysis occupy the same slot — the effective
   // cause policy decides which one has the last word on attribution. Both are
   // generated outside this prompt, so both receive the same explicit data boundary.
@@ -251,7 +297,7 @@ function toEvidenceSample(
     // so neither the model nor a blind reviewer can say HOW the answer deviated
     // — and the induction is asked for a claim about that deviation. Especially
     // load-bearing when the owner supplied only a cause category (no notes), in
-    // which case `cause_analysis_md` is null and this is the only correctness
+    // which case `cause_attribution_md` is null and this is the only correctness
     // signal in the sample.
     question_reference_md: wrapTruncatedLearnerText(
       q?.reference_md ?? null,
@@ -280,6 +326,6 @@ function toEvidenceSample(
     ),
     cause_category: cause?.primary_category ?? null,
     cause_source: cause?.source ?? null,
-    cause_analysis_md: causeText,
+    cause_attribution_md: causeText,
   };
 }

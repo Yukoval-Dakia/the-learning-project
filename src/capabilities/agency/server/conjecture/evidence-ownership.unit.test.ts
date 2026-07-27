@@ -11,6 +11,10 @@ describe('conjecture evidence capability ownership', () => {
 
     expect(enrichment).toContain("from '@/capabilities/knowledge/public'");
     expect(enrichment).not.toContain('@/capabilities/knowledge/server/');
+    expect(enrichment).not.toContain("from '@/server/");
+    expect(source('src/capabilities/agency/server/conjecture/evidence.ts')).not.toContain(
+      "from '@/server/",
+    );
     expect(job).toContain("from '@/capabilities/agency/server/conjecture/evidence-enrichment'");
     expect(job).not.toContain('@/server/conjectures/enrich');
   });

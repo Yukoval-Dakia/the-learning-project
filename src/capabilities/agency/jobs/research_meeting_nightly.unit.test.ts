@@ -4,6 +4,8 @@
 
 import { conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
 import type {
+  ConjectureEvidenceAssetRef,
+  ConjectureFailureAttempt,
   EnrichedEvidenceCell,
   EvidenceCell,
 } from '@/capabilities/agency/server/conjecture/evidence';
@@ -16,6 +18,7 @@ import { classifyJobYield } from '@/server/boss/job-yield';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -126,7 +129,7 @@ function fakeEnrich(
   _db: unknown,
   input: {
     cells: EvidenceCell[];
-    failures: FailureAttempt[];
+    failures: ConjectureFailureAttempt[];
     reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
   },
 ): Promise<EnrichedEvidenceCell[]> {
@@ -155,7 +158,7 @@ function fakeEnrich(
         reasoning_trace: input.reasoningTraceByAttemptId?.get(attemptId) ?? null,
         cause_category: cell.cause_category,
         cause_source: 'agent',
-        cause_analysis_md: 'agent analysis',
+        cause_attribution_md: 'agent analysis',
       })),
     })),
   );
@@ -481,9 +484,11 @@ describe('runResearchMeetingNightly', () => {
   it('enriches the top cells PRE-LLM and hands the grounded cell to induction', async () => {
     const captured: InduceConjectureInput[] = [];
     const enrichEvidenceCellsFn = vi.fn(fakeEnrich);
+    const resolveSubjectProfileFn = vi.fn(() => resolveSubjectProfile('math'));
     const deps = baseDeps({
       getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
       enrichEvidenceCellsFn,
+      resolveSubjectProfileFn,
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
         captured.push(input);
         return fakeInduced(input);
@@ -507,8 +512,95 @@ describe('runResearchMeetingNightly', () => {
       'trace of a_k_a_0',
       'trace of b_k_a_0',
     ]);
-    // Prompt renders in the cell's OWN subject, resolved from its KC domain.
-    expect(captured[0].subjectProfile?.id).toBe('yuwen');
+    // Prompt profile resolution follows the same injected collaborator discipline
+    // as the rest of the job.
+    expect(resolveSubjectProfileFn).toHaveBeenCalledWith('yuwen');
+    expect(captured[0].subjectProfile?.id).toBe('math');
+  });
+
+  it('loads question, parent, and answer images and hands their real bytes to induction', async () => {
+    const captured: InduceConjectureInput[] = [];
+    const loadEvidenceImagesFn = vi.fn(
+      async (_db: unknown, refs: readonly ConjectureEvidenceAssetRef[]) =>
+        refs.map((ref) => ({
+          ...ref,
+          data: `BASE64_${ref.asset_id}`,
+          mediaType: 'image/png',
+        })),
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: cell.samples.map((sample, index) =>
+            index === 0
+              ? {
+                  ...sample,
+                  question_image_refs: ['asset_question'],
+                  parent_question_image_refs: ['asset_parent'],
+                  answer_image_refs: ['asset_answer'],
+                }
+              : sample,
+          ),
+        })),
+      ),
+      loadEvidenceImagesFn,
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        captured.push(input);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(loadEvidenceImagesFn).toHaveBeenCalledTimes(1);
+    expect(loadEvidenceImagesFn.mock.calls[0][1]).toEqual([
+      {
+        asset_id: 'asset_question',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'question',
+      },
+      {
+        asset_id: 'asset_parent',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'parent_question',
+      },
+      {
+        asset_id: 'asset_answer',
+        attempt_event_id: 'a_k_visual_0',
+        source: 'answer',
+      },
+    ]);
+    expect(captured[0].evidenceImages).toEqual([
+      expect.objectContaining({ asset_id: 'asset_question', data: 'BASE64_asset_question' }),
+      expect.objectContaining({ asset_id: 'asset_parent', data: 'BASE64_asset_parent' }),
+      expect.objectContaining({ asset_id: 'asset_answer', data: 'BASE64_asset_answer' }),
+    ]);
+  });
+
+  it('does not call induction when enrichment filters every sample as ungrounded', async () => {
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
+      enrichEvidenceCellsFn: vi.fn(async (db, input) =>
+        (await fakeEnrich(db, input)).map((cell) => ({ ...cell, samples: [] })),
+      ),
+      induceConjectureFn,
+      writeEventFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(writeEventFn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+      cells_failed: 0,
+      trigger_event_id: '',
+    });
   });
 
   it('enriches only the top-K cells (the grounding read is bounded by the salience cap)', async () => {
