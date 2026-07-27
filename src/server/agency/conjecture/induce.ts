@@ -242,7 +242,12 @@ function normalizeGroundedProposal(
 function chooseAbstainDraft(params: {
   abstains: ConjectureAbstainDraftT[];
   cells: EnrichedEvidenceCell[];
-  reasonOverride?: ConjectureAbstainReasonT;
+  /**
+   * One reason vote per requested sample. Explicit abstentions contribute their
+   * model reason; invalid/provider/proposal-without-consensus outcomes contribute
+   * orchestrator reasons. A tied tally is itself no semantic consensus.
+   */
+  reasonVotes: ConjectureAbstainReasonT[];
 }): ConjectureAbstainDraftT {
   const allowedEvidenceIds = new Set(params.cells.flatMap((cell) => cell.evidence_event_ids));
   const citedEvidenceIds = [
@@ -252,15 +257,16 @@ function chooseAbstainDraft(params: {
         .filter((eventId) => allowedEvidenceIds.has(eventId)),
     ),
   ];
+  const reasonTallies = [...new Set(params.reasonVotes)]
+    .map((reasonCode) => ({
+      reasonCode,
+      count: params.reasonVotes.filter((vote) => vote === reasonCode).length,
+    }))
+    .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode));
   const reason =
-    params.reasonOverride ??
-    [...new Set(params.abstains.map((draft) => draft.reason_code))]
-      .map((reasonCode) => ({
-        reasonCode,
-        count: params.abstains.filter((draft) => draft.reason_code === reasonCode).length,
-      }))
-      .sort((a, b) => b.count - a.count || compareLex(a.reasonCode, b.reasonCode))[0]?.reasonCode ??
-    'no_semantic_consensus';
+    reasonTallies.length === 0 || reasonTallies[0].count === reasonTallies[1]?.count
+      ? 'no_semantic_consensus'
+      : reasonTallies[0].reasonCode;
   const explanation = params.abstains
     .filter((draft) => draft.reason_code === reason)
     .map((draft) => draft.explanation_md)
@@ -454,7 +460,13 @@ export async function induceConjecture(
       draft: chooseAbstainDraft({
         abstains,
         cells,
-        reasonOverride: abstains.length > 0 ? undefined : 'invalid_output',
+        reasonVotes: [
+          ...abstains.map((draft) => draft.reason_code),
+          ...Array.from<ConjectureAbstainReasonT>({ length: invalidSamples }).fill(
+            'invalid_output',
+          ),
+          ...Array.from<ConjectureAbstainReasonT>({ length: failedSamples }).fill('sample_failure'),
+        ],
       }),
       confidence: 0,
       confidence_capped: false,
@@ -516,7 +528,16 @@ export async function induceConjecture(
       draft: chooseAbstainDraft({
         abstains,
         cells,
-        reasonOverride: 'no_semantic_consensus',
+        reasonVotes: [
+          ...abstains.map((draft) => draft.reason_code),
+          ...Array.from<ConjectureAbstainReasonT>({ length: invalidSamples }).fill(
+            'invalid_output',
+          ),
+          ...Array.from<ConjectureAbstainReasonT>({ length: failedSamples }).fill('sample_failure'),
+          ...Array.from<ConjectureAbstainReasonT>({ length: proposals.length }).fill(
+            'no_semantic_consensus',
+          ),
+        ],
       }),
       confidence: 0,
       confidence_capped: false,

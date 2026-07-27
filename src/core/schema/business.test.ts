@@ -58,6 +58,19 @@ describe('ConjectureDraft', () => {
     });
   });
 
+  it('accepts the orchestrator sample-failure reason without fabricating a claim', () => {
+    expect(
+      ConjectureDraft.parse({
+        kind: 'abstain',
+        reason_code: 'sample_failure',
+      }),
+    ).toEqual({
+      kind: 'abstain',
+      reason_code: 'sample_failure',
+      evidence_event_ids: [],
+    });
+  });
+
   it('rejects recurrence_count < 2 (a conjecture needs >=2 distinct attempts)', () => {
     expect(ConjectureDraft.safeParse({ ...valid, recurrence_count: 1 }).success).toBe(false);
   });

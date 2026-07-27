@@ -398,6 +398,7 @@ export const ConjectureAbstainReason = z.enum([
   'no_discriminating_probe',
   'no_semantic_consensus',
   'invalid_output',
+  'sample_failure',
 ]);
 export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
 

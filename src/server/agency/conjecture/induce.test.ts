@@ -342,6 +342,47 @@ describe('induceConjecture self-consistency', () => {
     expect(result.votes).toEqual({ proposal: 0, abstain: 3, invalid: 0, failed: 0 });
   });
 
+  it('uses the majority abstain reason when two abstentions outweigh one proposal', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('a lone proposal'))
+      .mockResolvedValueOnce(abstainSample('conflicting_evidence'))
+      .mockResolvedValueOnce(abstainSample('conflicting_evidence'));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('conflicting_evidence');
+    expect(result.votes).toEqual({ proposal: 1, abstain: 2, invalid: 0, failed: 0 });
+  });
+
+  it('uses invalid_output when invalid samples outweigh one explicit abstention', async () => {
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(abstainSample('insufficient_evidence'))
+      .mockResolvedValueOnce({ text: 'not json' })
+      .mockResolvedValueOnce({ text: '{"kind":"proposal"}' });
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('invalid_output');
+    expect(result.votes).toEqual({ proposal: 0, abstain: 1, invalid: 2, failed: 0 });
+  });
+
+  it('uses sample_failure when provider failures outweigh one explicit abstention', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(abstainSample('insufficient_evidence'))
+      .mockRejectedValueOnce(new Error('provider timeout'))
+      .mockRejectedValueOnce(new Error('provider unavailable'));
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(abstain(result).reason_code).toBe('sample_failure');
+    expect(result.votes).toEqual({ proposal: 0, abstain: 1, invalid: 0, failed: 2 });
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects fabricated grounding refs as an invalid negative vote', async () => {
     const fabricated = sample('same grounded claim');
     const payload = JSON.parse(fabricated.text.slice(fabricated.text.indexOf('{'))) as Record<
