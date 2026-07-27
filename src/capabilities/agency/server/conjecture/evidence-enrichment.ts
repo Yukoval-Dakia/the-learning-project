@@ -82,6 +82,8 @@ export const CONJECTURE_EVIDENCE_CHOICES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP = 512;
+/** Keep validation reads bounded while still checking every attempt behind the recurrence tally. */
+const CONJECTURE_EVIDENCE_VALIDATION_BATCH_PER_CELL = 20;
 
 export interface EnrichEvidenceCellsInput {
   /** a salience-ordered cell batch (post recurrence floor + dedup). */
@@ -205,21 +207,22 @@ export async function enrichEvidenceCells(
   const samplesByCellKey = new Map<string, ConjectureEvidenceSample[]>(
     cells.map((cell) => [cell.key, []]),
   );
+  const reproducibleIdsByCellKey = new Map<string, string[]>(cells.map((cell) => [cell.key, []]));
   const nextCandidateByCellKey = new Map<string, number>(cells.map((cell) => [cell.key, 0]));
 
-  // Filter first, cap second. Each round reads at most the still-needed number of attempts per
-  // cell; invalid/missing mutable context advances the cursor so later reproducible attempts can
-  // refill the packet instead of being permanently hidden behind the same bad prefix.
+  // Validate every contributing attempt so recurrence/provenance stays truthful, but retain only
+  // the first `samplesPerCell` prompt-text samples. Rounds keep query fan-out bounded while an
+  // invalid/missing prefix advances instead of permanently hiding later reproducible attempts.
   while (true) {
     const roundByCellKey = new Map<string, ConjectureFailureAttempt[]>();
     let candidatesRead = 0;
     for (const cell of cells) {
-      const samples = samplesByCellKey.get(cell.key) ?? [];
-      const needed = samplesPerCell - samples.length;
-      if (needed <= 0) continue;
       const candidates = candidatesByCellKey.get(cell.key) ?? [];
       const offset = nextCandidateByCellKey.get(cell.key) ?? 0;
-      const batch = candidates.slice(offset, offset + needed);
+      const batch = candidates.slice(
+        offset,
+        offset + CONJECTURE_EVIDENCE_VALIDATION_BATCH_PER_CELL,
+      );
       if (batch.length === 0) continue;
       roundByCellKey.set(cell.key, batch);
       nextCandidateByCellKey.set(cell.key, offset + batch.length);
@@ -227,18 +230,26 @@ export async function enrichEvidenceCells(
     }
     if (candidatesRead === 0) break;
 
+    const roundFailuresById = new Map<string, ConjectureFailureAttempt>();
+    for (const failure of [...roundByCellKey.values()].flat()) {
+      roundFailuresById.set(failure.attempt_event_id, failure);
+    }
     const samplesByAttemptId = await loadEvidenceSampleBatch(
       db,
-      [...new Set([...roundByCellKey.values()].flat())],
+      [...roundFailuresById.values()],
       traceByAttemptId,
     );
     for (const [cellKey, batch] of roundByCellKey) {
       const samples = samplesByCellKey.get(cellKey) ?? [];
+      const reproducibleIds = reproducibleIdsByCellKey.get(cellKey) ?? [];
       for (const failure of batch) {
         const sample = samplesByAttemptId.get(failure.attempt_event_id);
-        if (sample !== undefined) samples.push(sample);
+        if (sample === undefined) continue;
+        reproducibleIds.push(failure.attempt_event_id);
+        if (samples.length < samplesPerCell) samples.push(sample);
       }
       samplesByCellKey.set(cellKey, samples);
+      reproducibleIdsByCellKey.set(cellKey, reproducibleIds);
     }
   }
 
@@ -249,8 +260,11 @@ export async function enrichEvidenceCells(
     // inherit the default profile — a fabricated subject label is exactly the
     // failure this ticket exists to stop.
     const subjectId = resolveKnownSubjectId(effectiveDomains.get(cell.knowledge_id) ?? null);
+    const reproducibleEventIds = reproducibleIdsByCellKey.get(cell.key) ?? [];
     return {
       ...cell,
+      recurrence_count: reproducibleEventIds.length,
+      evidence_event_ids: reproducibleEventIds,
       knowledge_name: wrapTruncatedLearnerText(kc?.name ?? null, UNTRUSTED_TEXT_CHAR_CAP),
       subject_id: subjectId,
       subject_display_name:

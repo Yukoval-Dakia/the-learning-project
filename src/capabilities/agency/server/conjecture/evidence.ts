@@ -149,7 +149,11 @@ export interface EvidenceCellEnrichment {
   subject_id: string | null;
   /** the subject's display name (e.g. 语文), or null when untagged. */
   subject_display_name: string | null;
-  /** first-hand evidence samples, capped; may be empty when rows are missing. */
+  /**
+   * Representative first-hand evidence samples, capped; may be empty when rows are missing.
+   * On an enriched cell, `evidence_event_ids` / `recurrence_count` are narrowed to ALL
+   * reproducible attempts even when only the first few samples carry prompt text.
+   */
   samples: ConjectureEvidenceSample[];
 }
 

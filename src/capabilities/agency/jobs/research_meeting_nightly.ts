@@ -195,12 +195,62 @@ interface EvidenceImageMetadata {
   height: number | null;
 }
 
+function decodeUncompressedBmp(bytes: Buffer): {
+  data: Buffer;
+  width: number;
+  height: number;
+} {
+  if (bytes.length < 54 || bytes.toString('ascii', 0, 2) !== 'BM') {
+    throw new Error('invalid BMP header');
+  }
+  const pixelOffset = bytes.readUInt32LE(10);
+  const dibSize = bytes.readUInt32LE(14);
+  const width = bytes.readInt32LE(18);
+  const signedHeight = bytes.readInt32LE(22);
+  const planes = bytes.readUInt16LE(26);
+  const bitsPerPixel = bytes.readUInt16LE(28);
+  const compression = bytes.readUInt32LE(30);
+  if (
+    dibSize < 40 ||
+    width <= 0 ||
+    signedHeight === 0 ||
+    planes !== 1 ||
+    ![24, 32].includes(bitsPerPixel) ||
+    compression !== 0
+  ) {
+    throw new Error('unsupported BMP encoding');
+  }
+  const height = Math.abs(signedHeight);
+  const pixels = width * height;
+  if (!Number.isSafeInteger(pixels) || pixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
+    throw new Error('BMP decoded-pixel limit exceeded');
+  }
+  const rowStride = Math.floor((bitsPerPixel * width + 31) / 32) * 4;
+  if (pixelOffset + rowStride * height > bytes.length) throw new Error('truncated BMP pixels');
+  const channelsIn = bitsPerPixel / 8;
+  const rgba = Buffer.allocUnsafe(pixels * 4);
+  for (let y = 0; y < height; y++) {
+    const sourceY = signedHeight > 0 ? height - 1 - y : y;
+    const rowStart = pixelOffset + sourceY * rowStride;
+    for (let x = 0; x < width; x++) {
+      const source = rowStart + x * channelsIn;
+      const target = (y * width + x) * 4;
+      rgba[target] = bytes[source + 2];
+      rgba[target + 1] = bytes[source + 1];
+      rgba[target + 2] = bytes[source];
+      // BI_RGB 32-bit's fourth byte is reserved rather than a reliable alpha channel.
+      rgba[target + 3] = 255;
+    }
+  }
+  return { data: rgba, width, height };
+}
+
 export function planConjectureEvidenceImageLoad(
   refs: readonly ConjectureEvidenceAssetRef[],
   metadata: readonly EvidenceImageMetadata[],
 ): {
   loadableRefs: ConjectureEvidenceAssetRef[];
-  excludedRefs: ConjectureEvidenceAssetRef[];
+  transcodeAssetIds: string[];
 } {
   const byId = new Map(metadata.map((row) => [row.id, row]));
   const missing = [...new Set(refs.map((ref) => ref.asset_id))].filter((id) => !byId.has(id));
@@ -209,18 +259,26 @@ export function planConjectureEvidenceImageLoad(
   }
 
   const loadableRefs: ConjectureEvidenceAssetRef[] = [];
-  const excludedRefs: ConjectureEvidenceAssetRef[] = [];
+  const transcodeAssetIds = new Set<string>();
+  const countedAssetIds = new Set<string>();
   let totalBytes = 0;
   let totalPixels = 0;
   for (const ref of refs) {
     const row = byId.get(ref.asset_id) as EvidenceImageMetadata;
-    if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) {
-      excludedRefs.push(ref);
-      continue;
+    if (!row.mime_type.startsWith('image/')) {
+      throw new Error(
+        `conjecture evidence asset ${ref.asset_id} is not an image: ${row.mime_type}`,
+      );
     }
+    if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) transcodeAssetIds.add(ref.asset_id);
     loadableRefs.push(ref);
-    totalBytes += row.byte_size;
-    if (row.width !== null && row.height !== null) totalPixels += row.width * row.height;
+    // One R2 object recurring across attempts is still one byte/pixel allocation. Occurrence
+    // refs remain expanded for semantic ordering, but safety accounting follows unique assets.
+    if (!countedAssetIds.has(ref.asset_id)) {
+      countedAssetIds.add(ref.asset_id);
+      totalBytes += row.byte_size;
+      if (row.width !== null && row.height !== null) totalPixels += row.width * row.height;
+    }
   }
   if (totalBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
     throw new Error(
@@ -232,12 +290,13 @@ export function planConjectureEvidenceImageLoad(
       `conjecture evidence images total ${totalPixels} pixels; max is ${RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL}`,
     );
   }
-  return { loadableRefs, excludedRefs };
+  return { loadableRefs, transcodeAssetIds: [...transcodeAssetIds] };
 }
 
 export async function defaultLoadEvidenceImages(
   db: Db,
   refs: readonly ConjectureEvidenceAssetRef[],
+  imageFetchFn: typeof defaultImageFetch = defaultImageFetch,
 ): Promise<LoadedConjectureEvidenceImage[]> {
   if (refs.length === 0) return [];
   if (refs.length > RESEARCH_MEETING_MAX_IMAGES_PER_CELL) {
@@ -256,30 +315,69 @@ export async function defaultLoadEvidenceImages(
     })
     .from(source_asset)
     .where(inArray(source_asset.id, assetIds));
-  const { loadableRefs, excludedRefs } = planConjectureEvidenceImageLoad(refs, metadata);
-  if (excludedRefs.length > 0) {
-    console.warn(
-      '[research_meeting_nightly] excluding evidence images unsupported by the multimodal runner',
-      excludedRefs.map((ref) => ref.asset_id),
-    );
-  }
+  const { loadableRefs, transcodeAssetIds } = planConjectureEvidenceImageLoad(refs, metadata);
   if (loadableRefs.length === 0) return [];
-  const fetched = await defaultImageFetch(
-    loadableRefs.map((ref) => ref.asset_id),
-    db,
-  );
+  // Download/base64 each R2 object once, then expand it back to occurrence order. The same
+  // diagram can recur in several attempts without paying N identical reads.
+  const uniqueAssetIds = [...new Set(loadableRefs.map((ref) => ref.asset_id))];
+  const fetched = await imageFetchFn(uniqueAssetIds, db);
   // `defaultImageFetch` preserves input order but skips missing DB/R2 rows.
-  // A partial packet would let the model compare text against the wrong image
-  // index, so fail the cell rather than guessing which asset was absent.
-  if (fetched.length !== loadableRefs.length) {
+  // A partial packet would let the model compare text against the wrong image index, so fail
+  // the cell rather than guessing which asset was absent.
+  if (fetched.length !== uniqueAssetIds.length) {
     throw new Error(
-      `conjecture evidence image load incomplete: expected ${loadableRefs.length}, got ${fetched.length}`,
+      `conjecture evidence image load incomplete: expected ${uniqueAssetIds.length}, got ${fetched.length}`,
     );
   }
-  if (fetched.some((image) => !RUNNER_IMAGE_MIME_TYPES.has(image.mediaType))) {
-    throw new Error('conjecture evidence image MIME changed after preflight');
+  const metadataById = new Map(metadata.map((row) => [row.id, row]));
+  const transcodeIds = new Set(transcodeAssetIds);
+  const fetchedByAssetId = new Map<string, { data: string; mediaType: string }>();
+  let sharpModule: typeof import('sharp') | null = null;
+  for (const [index, assetId] of uniqueAssetIds.entries()) {
+    const image = fetched[index];
+    const expectedMime = metadataById.get(assetId)?.mime_type;
+    if (image.mediaType !== expectedMime) {
+      throw new Error(`conjecture evidence image MIME changed after preflight for ${assetId}`);
+    }
+    if (transcodeIds.has(assetId)) {
+      sharpModule ??= await import('sharp');
+      const sourceBytes = Buffer.from(image.data, 'base64');
+      const bmp = image.mediaType === 'image/bmp' ? decodeUncompressedBmp(sourceBytes) : undefined;
+      const expected = metadataById.get(assetId);
+      if (
+        bmp !== undefined &&
+        ((expected?.width !== null && expected?.width !== bmp.width) ||
+          (expected?.height !== null && expected?.height !== bmp.height))
+      ) {
+        throw new Error(
+          `conjecture evidence BMP dimensions changed after preflight for ${assetId}`,
+        );
+      }
+      const png =
+        bmp === undefined
+          ? await sharpModule.default(sourceBytes, { failOn: 'error' }).png().toBuffer()
+          : await sharpModule
+              .default(bmp.data, {
+                raw: { width: bmp.width, height: bmp.height, channels: 4 },
+              })
+              .png()
+              .toBuffer();
+      fetchedByAssetId.set(assetId, {
+        data: png.toString('base64'),
+        mediaType: 'image/png',
+      });
+      continue;
+    }
+    if (!RUNNER_IMAGE_MIME_TYPES.has(image.mediaType)) {
+      throw new Error(`conjecture evidence image MIME unsupported for ${assetId}`);
+    }
+    fetchedByAssetId.set(assetId, image);
   }
-  return loadableRefs.map((ref, index) => ({ ...ref, ...fetched[index] }));
+  return loadableRefs.map((ref) => {
+    const image = fetchedByAssetId.get(ref.asset_id);
+    if (!image) throw new Error(`conjecture evidence image expansion missing ${ref.asset_id}`);
+    return { ...ref, ...image };
+  });
 }
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
@@ -430,10 +528,10 @@ export async function runResearchMeetingNightly(
     const preparedBatch = await Promise.all(
       enriched.map(async (cell): Promise<PreparedConjectureCell | null> => {
         // Recurrence is a claim about reproducible historical context, not the raw attempt tally.
-        // Filtered mutable/missing samples cannot count toward either the threshold or provenance.
-        const evidenceEventIds = [
-          ...new Set(cell.samples.map((sample) => sample.attempt_event_id)),
-        ];
+        // Enrichment validates every attempt and keeps all reproducible ids even though prompt
+        // text samples are capped. Filtered mutable/missing contexts count toward neither the
+        // threshold nor provenance, while a 4+ recurrence is not truncated back to the quote cap.
+        const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
         if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) return null;
         const reproducibleCell: EnrichedEvidenceCell = {
           ...cell,

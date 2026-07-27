@@ -532,6 +532,7 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     const [cell] = await runPipe(2);
     expect(cell.recurrence_count).toBe(5); // the tally is NOT capped…
     expect(cell.samples).toHaveLength(2); // …only how many are quoted to the LLM
+    expect(cell.evidence_event_ids).toHaveLength(5);
     // The quoted ones are the cell's own first-seen attempts.
     expect(cell.evidence_event_ids.slice(0, 2)).toEqual(
       cell.samples.map((s) => s.attempt_event_id),
@@ -583,8 +584,8 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     }
 
     const [cell] = await runPipe(2);
-    expect(cell.recurrence_count).toBe(5);
-    expect(cell.evidence_event_ids.slice(0, 3)).toEqual(['a1', 'a2', 'a3']);
+    expect(cell.recurrence_count).toBe(2);
+    expect(cell.evidence_event_ids).toEqual(['a4', 'a5']);
     expect(cell.samples.map((sample) => sample.attempt_event_id)).toEqual(['a4', 'a5']);
   });
 

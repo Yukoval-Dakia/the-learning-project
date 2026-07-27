@@ -19,6 +19,7 @@ import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,6 +27,7 @@ import {
   RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL,
   RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
+  defaultLoadEvidenceImages,
   planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
 } from './research_meeting_nightly';
@@ -588,7 +590,12 @@ describe('runResearchMeetingNightly', () => {
     const deps = baseDeps({
       getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_visual']))),
       enrichEvidenceCellsFn: vi.fn(async (db, input) =>
-        (await fakeEnrich(db, input)).map((cell) => ({ ...cell, samples: [] })),
+        (await fakeEnrich(db, input)).map((cell) => ({
+          ...cell,
+          samples: [],
+          evidence_event_ids: [],
+          recurrence_count: 0,
+        })),
       ),
       induceConjectureFn,
       writeEventFn,
@@ -616,6 +623,8 @@ describe('runResearchMeetingNightly', () => {
           ...cell,
           // One of two raw attempts was filtered because its historical context is not reproducible.
           samples: cell.samples.slice(1),
+          evidence_event_ids: cell.evidence_event_ids.slice(1),
+          recurrence_count: 1,
         })),
       ),
       induceConjectureFn,
@@ -629,11 +638,12 @@ describe('runResearchMeetingNightly', () => {
     expect(loadEvidenceImagesFn).not.toHaveBeenCalled();
   });
 
-  it('recomputes recurrence and proposal provenance from reproducible samples', async () => {
+  it('retains full reproducible recurrence and provenance beyond the prompt sample cap', async () => {
     const rawFailures = [
       failure('a_repro', ['k_repro'], 'concept_confusion'),
       failure('b_repro', ['k_repro'], 'concept_confusion'),
       failure('c_repro', ['k_repro'], 'concept_confusion'),
+      failure('d_repro', ['k_repro'], 'concept_confusion'),
     ];
     const capturedCells: EnrichedEvidenceCell[] = [];
     const proposals: WriteAiProposalInput[] = [];
@@ -642,7 +652,9 @@ describe('runResearchMeetingNightly', () => {
       enrichEvidenceCellsFn: vi.fn(async (db, input) =>
         (await fakeEnrich(db, input)).map((cell) => ({
           ...cell,
-          samples: cell.samples.slice(1),
+          // Prompt text remains representative/capped, but enrichment's ids/count cover all
+          // reproducible attempts.
+          samples: cell.samples.slice(0, 2),
         })),
       ),
       induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
@@ -657,13 +669,14 @@ describe('runResearchMeetingNightly', () => {
 
     await runResearchMeetingNightly({} as never, deps);
 
-    const sampleIds = capturedCells[0].samples.map((sample) => sample.attempt_event_id);
-    expect(capturedCells[0].recurrence_count).toBe(2);
-    expect(capturedCells[0].evidence_event_ids).toEqual(sampleIds);
+    const evidenceEventIds = capturedCells[0].evidence_event_ids;
+    expect(capturedCells[0].samples).toHaveLength(2);
+    expect(capturedCells[0].recurrence_count).toBe(4);
+    expect(evidenceEventIds).toHaveLength(4);
     expect(proposals[0].payload.evidence_refs).toEqual(
-      sampleIds.map((id) => ({ kind: 'event', id })),
+      evidenceEventIds.map((id) => ({ kind: 'event', id })),
     );
-    expect(proposals[0].payload.proposed_change).toMatchObject({ recurrence_count: 2 });
+    expect(proposals[0].payload.proposed_change).toMatchObject({ recurrence_count: 4 });
   });
 
   it('bounds each grounding batch by the remaining top-K capacity', async () => {
@@ -684,7 +697,9 @@ describe('runResearchMeetingNightly', () => {
   it('refills grounded top-K from lower salience cells when the leading cells are invalid', async () => {
     const enrichEvidenceCellsFn = vi.fn(async (db, input) =>
       (await fakeEnrich(db, input)).map((cell) =>
-        ['k_a', 'k_b', 'k_c'].includes(cell.knowledge_id) ? { ...cell, samples: [] } : cell,
+        ['k_a', 'k_b', 'k_c'].includes(cell.knowledge_id)
+          ? { ...cell, samples: [], evidence_event_ids: [], recurrence_count: 0 }
+          : cell,
       ),
     );
     const inducedKnowledgeIds: string[] = [];
@@ -781,7 +796,7 @@ describe('planConjectureEvidenceImageLoad', () => {
     source: 'question',
   });
 
-  it('excludes MIME types the runner cannot encode while retaining supported images', () => {
+  it('marks unsupported image MIME types for lossless packet-preserving transcode', () => {
     expect(
       planConjectureEvidenceImageLoad(
         [ref('bmp'), ref('png')],
@@ -803,9 +818,28 @@ describe('planConjectureEvidenceImageLoad', () => {
         ],
       ),
     ).toEqual({
-      loadableRefs: [ref('png')],
-      excludedRefs: [ref('bmp')],
+      loadableRefs: [ref('bmp'), ref('png')],
+      transcodeAssetIds: ['bmp'],
     });
+  });
+
+  it('counts recurring refs to one asset once for byte and pixel guards', () => {
+    const recurring = [
+      ref('same'),
+      { ...ref('same'), attempt_event_id: 'attempt_2' },
+      { ...ref('same'), attempt_event_id: 'attempt_3' },
+    ];
+    expect(
+      planConjectureEvidenceImageLoad(recurring, [
+        {
+          id: 'same',
+          mime_type: 'image/png',
+          byte_size: Math.floor(RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL / 2),
+          width: 14_000_000,
+          height: 1,
+        },
+      ]),
+    ).toEqual({ loadableRefs: recurring, transcodeAssetIds: [] });
   });
 
   it('rejects aggregate bytes and decoded pixels before any image fetch', () => {
@@ -837,5 +871,74 @@ describe('planConjectureEvidenceImageLoad', () => {
         ],
       ),
     ).toThrow(/pixels/);
+  });
+});
+
+describe('defaultLoadEvidenceImages', () => {
+  it('fetches each asset once, transcodes unsupported images, then expands occurrences', async () => {
+    // Minimal 1×1, 24-bit BMP (54-byte header + one four-byte-padded BGR row).
+    const bmp = Buffer.alloc(58);
+    bmp.write('BM', 0, 'ascii');
+    bmp.writeUInt32LE(bmp.length, 2);
+    bmp.writeUInt32LE(54, 10);
+    bmp.writeUInt32LE(40, 14);
+    bmp.writeInt32LE(1, 18);
+    bmp.writeInt32LE(1, 22);
+    bmp.writeUInt16LE(1, 26);
+    bmp.writeUInt16LE(24, 28);
+    bmp.writeUInt32LE(4, 34);
+    bmp.set([255, 255, 255, 0], 54);
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#000000' },
+    })
+      .png()
+      .toBuffer();
+    const metadata = [
+      {
+        id: 'asset_bmp',
+        mime_type: 'image/bmp',
+        byte_size: bmp.byteLength,
+        width: 1,
+        height: 1,
+      },
+      {
+        id: 'asset_png',
+        mime_type: 'image/png',
+        byte_size: png.byteLength,
+        width: 2,
+        height: 2,
+      },
+    ];
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => metadata),
+        })),
+      })),
+    };
+    const imageFetchFn = vi.fn(async (assetIds: string[]) =>
+      assetIds.map((assetId) =>
+        assetId === 'asset_bmp'
+          ? { data: bmp.toString('base64'), mediaType: 'image/bmp' }
+          : { data: png.toString('base64'), mediaType: 'image/png' },
+      ),
+    );
+    const refs: ConjectureEvidenceAssetRef[] = [
+      { asset_id: 'asset_bmp', attempt_event_id: 'attempt_1', source: 'question' },
+      { asset_id: 'asset_bmp', attempt_event_id: 'attempt_2', source: 'question' },
+      { asset_id: 'asset_png', attempt_event_id: 'attempt_2', source: 'answer' },
+    ];
+
+    const loaded = await defaultLoadEvidenceImages(
+      db as never,
+      refs,
+      imageFetchFn as typeof import('@/server/ai/judges/steps-judge').defaultImageFetch,
+    );
+
+    expect(imageFetchFn).toHaveBeenCalledTimes(1);
+    expect(imageFetchFn.mock.calls[0][0]).toEqual(['asset_bmp', 'asset_png']);
+    expect(loaded.map((image) => image.asset_id)).toEqual(['asset_bmp', 'asset_bmp', 'asset_png']);
+    expect(loaded.map((image) => image.mediaType)).toEqual(['image/png', 'image/png', 'image/png']);
+    expect((await sharp(Buffer.from(loaded[0].data, 'base64')).metadata()).format).toBe('png');
   });
 });
