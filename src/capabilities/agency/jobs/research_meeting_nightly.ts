@@ -53,7 +53,7 @@ import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evi
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import { source_asset } from '@/db/schema';
+import { event, source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -63,7 +63,8 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
 import {
@@ -120,10 +121,26 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
+const ResearchMeetingResultSchema = z.object({
+  considered: z.number().int().nonnegative(),
+  conjectures_created: z.number().int().nonnegative(),
+  conjectures_abstained: z.number().int().nonnegative(),
+  cells_failed: z.number().int().nonnegative(),
+  pending_before: z.number().int().nonnegative(),
+  reconciled: z.number().int().nonnegative(),
+  reconcile_skipped: z.number().int().nonnegative(),
+  cost_usd: z.number().nonnegative(),
+  trigger_event_id: z.string().min(1),
+});
+
 type DbLike = Db | Tx;
 type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
 type WriteAiProposalFn = (db: DbLike, input: WriteAiProposalInput) => Promise<string>;
 type RunInTransactionFn = (db: Db, fn: (tx: DbLike) => Promise<void>) => Promise<void>;
+type LoadCompletedRunResultFn = (
+  db: Db,
+  executionId: string,
+) => Promise<ResearchMeetingResult | null>;
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -157,6 +174,25 @@ function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidence
   return `conjecture_abstained_${digest}`;
 }
 
+async function defaultLoadCompletedRunResult(
+  db: Db,
+  executionId: string,
+): Promise<ResearchMeetingResult | null> {
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, scheduledEventId('scan', executionId)))
+    .limit(1);
+  if (!row) return null;
+  const parsed = z.object({ completed_result: ResearchMeetingResultSchema }).safeParse(row.payload);
+  if (!parsed.success) {
+    throw new Error(
+      `research_meeting_nightly: completed scan payload is unreadable for execution ${executionId}`,
+    );
+  }
+  return parsed.data.completed_result;
+}
+
 export interface ResearchMeetingDeps {
   now?: () => Date;
   /**
@@ -181,6 +217,8 @@ export interface ResearchMeetingDeps {
   writeEventFn?: WriteEventFn;
   /** Atomic durable boundary for trigger + per-cell outcomes + scan. */
   runInTransactionFn?: RunInTransactionFn;
+  /** Redelivery guard: a committed scan means this logical execution is complete. */
+  loadCompletedRunResultFn?: LoadCompletedRunResultFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
@@ -558,12 +596,19 @@ export async function runResearchMeetingNightly(
   const runInTransactionFn =
     deps.runInTransactionFn ??
     ((database: Db, fn: (tx: DbLike) => Promise<void>) => database.transaction(fn));
+  const loadCompletedRunResultFn = deps.loadCompletedRunResultFn ?? defaultLoadCompletedRunResult;
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
   const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
+
+  // pg-boss may redeliver after the transaction committed but before completion
+  // was acknowledged. Return the committed summary before any reads or model calls;
+  // otherwise pending-proposal dedup could refill this execution from lower cells.
+  const completedResult = await loadCompletedRunResultFn(db, executionId);
+  if (completedResult) return completedResult;
 
   // ── A13 reconcile (U8): score PRIOR probe outcomes against their conjecture's
   // prediction → append LOG-only prediction_score events + advance the typed-ledger
@@ -743,6 +788,17 @@ export async function runResearchMeetingNightly(
   const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
+  const completedResultForWrite: ResearchMeetingResult = {
+    considered: preparedTopCells.length,
+    conjectures_created: created,
+    conjectures_abstained: abstained,
+    cells_failed: cellsFailed,
+    pending_before: knownConjectureKeys.size,
+    reconciled: reconcileResult.reconciled,
+    reconcile_skipped: reconcileResult.skipped,
+    cost_usd: costUsd,
+    trigger_event_id: triggerEventId,
+  };
 
   // Trigger + every successful cell result + scan commit together. A single
   // durable-write failure rolls the whole batch back, so retry-time pending
@@ -819,6 +875,7 @@ export async function runResearchMeetingNightly(
         conjectures_abstained: abstained,
         cells_failed: cellsFailed,
         pending_before: knownConjectureKeys.size,
+        completed_result: completedResultForWrite,
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: null,
@@ -828,17 +885,7 @@ export async function runResearchMeetingNightly(
     });
   });
 
-  return {
-    considered: preparedTopCells.length,
-    conjectures_created: created,
-    conjectures_abstained: abstained,
-    cells_failed: cellsFailed,
-    pending_before: knownConjectureKeys.size,
-    reconciled: reconcileResult.reconciled,
-    reconcile_skipped: reconcileResult.skipped,
-    cost_usd: costUsd,
-    trigger_event_id: triggerEventId,
-  };
+  return completedResultForWrite;
 }
 
 export function buildResearchMeetingNightlyHandler(

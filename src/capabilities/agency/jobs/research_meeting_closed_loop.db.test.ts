@@ -483,6 +483,23 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
   });
 
+  it('returns the committed summary on same-job redelivery without another model run', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    const executionId = 'job_committed_redelivery';
+
+    const first = await runResearchMeetingNightly(db, { executionId });
+    const taskRunsAfterFirst = await taskKindCounts();
+    const second = await runResearchMeetingNightly(db, { executionId });
+    const taskRunsAfterSecond = await taskKindCounts();
+
+    expect(second).toEqual(first);
+    expect(taskRunsAfterSecond).toEqual(taskRunsAfterFirst);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      1,
+    );
+  });
+
   it('persists a real abstain event and creates no conjecture proposal', async () => {
     const db = testDb();
     const attemptIds = await seedRecurringFailures(3);

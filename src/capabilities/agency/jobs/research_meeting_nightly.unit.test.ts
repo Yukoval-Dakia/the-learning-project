@@ -28,6 +28,7 @@ import {
   RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL,
   RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
+  type ResearchMeetingResult,
   defaultLoadEvidenceImages,
   planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
@@ -217,6 +218,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
     runInTransactionFn: vi.fn(async (db, fn) => fn(db)),
+    loadCompletedRunResultFn: vi.fn(async () => null),
     writeRetryableAiFailureLedgerFn: vi.fn(async () => {}),
     // U8: stub the reconcile loop so unit tests never touch the DB (the real default
     // reads probe_result events). Wiring is asserted in its own test below.
@@ -226,6 +228,39 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
 }
 
 describe('runResearchMeetingNightly', () => {
+  it('returns a committed scan summary on pg-boss redelivery without repeating work', async () => {
+    const completed: ResearchMeetingResult = {
+      considered: 2,
+      conjectures_created: 1,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+      pending_before: 0,
+      reconciled: 0,
+      reconcile_skipped: 0,
+      cost_usd: 0.035,
+      trigger_event_id: 'research_meeting_trigger_committed',
+    };
+    const getFailureAttemptsWithTraceFn = vi.fn(async () => withTraces(failuresForKcs(['k_a'])));
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const reconcileFn = vi.fn(async () => ({ reconciled: 0, skipped: 0 }));
+
+    const result = await runResearchMeetingNightly(
+      {} as never,
+      baseDeps({
+        executionId: 'job_already_committed',
+        loadCompletedRunResultFn: vi.fn(async () => completed),
+        getFailureAttemptsWithTraceFn,
+        induceConjectureFn,
+        reconcileFn,
+      }),
+    );
+
+    expect(result).toEqual(completed);
+    expect(reconcileFn).not.toHaveBeenCalled();
+    expect(getFailureAttemptsWithTraceFn).not.toHaveBeenCalled();
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+  });
+
   it('proposes one conjecture per top cell and opts run bookkeeping out of memory', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
