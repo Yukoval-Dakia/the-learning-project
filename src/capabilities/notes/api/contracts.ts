@@ -49,12 +49,37 @@ const NotePageBacklinkSchema = z.object({
 });
 
 // zod-to-json-schema cannot faithfully emit the recursive TipTap node graph.
-// Keep the public wire boundary explicit and shallow while route handlers still
-// validate writes with the canonical recursive ArtifactBodyBlocks schema.
+// Keep the public wire boundary explicit and one node deep while route handlers
+// still validate writes with the canonical recursive ArtifactBodyBlocks schema.
+const ArtifactBodyBlockWireSchema = z
+  .object({
+    type: z.string(),
+    attrs: z
+      .object({
+        id: z.string().optional(),
+        semantic_kind: z
+          .enum(['definition', 'mechanism', 'example', 'pitfall', 'check'])
+          .optional(),
+        source_tier: z.string().optional(),
+        user_verified: z.boolean().optional(),
+        version: z.number().int().optional(),
+        source_markdown: z.string().optional(),
+        artifact_id: z.string().optional(),
+        block_id: z.string().optional(),
+        title: z.string().optional(),
+        question_id: z.string().optional(),
+        prompt_preview: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    content: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
 const ArtifactBodyBlocksWireSchema = z
   .object({
     type: z.literal('doc'),
-    content: z.array(z.unknown()),
+    content: z.array(ArtifactBodyBlockWireSchema),
   })
   .passthrough();
 

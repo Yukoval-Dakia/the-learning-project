@@ -185,16 +185,56 @@ export const agencyCapability = defineCapability({
   // （unsupported_proposal_kind，YUK-44 收口），归属声明与 applier 存在性解耦。
   proposals: {
     kinds: [
-      { kind: 'learning_item' },
-      { kind: 'completion' },
-      { kind: 'relearn' },
-      { kind: 'goal_scope' },
+      {
+        kind: 'learning_item',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.learningItemProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'completion',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.completionProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'relearn',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.relearnProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'goal_scope',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.goalScopeProposalAcceptApplier,
+            ),
+        },
+      },
       { kind: 'defer' },
       // YUK-406 Phase 0 / YUK-440 A13 — conjecture (subject_kind 'mind_model').
       // The accept applier 真身在 ./server/conjecture-accept (acceptConjectureProposal:
       // accept = calibration anchor / edit → mem0 CORE / reject → digest, never FSRS).
       // This package owns both the proposer (nightly 例会 job) and the applier.
-      { kind: 'conjecture' },
+      {
+        kind: 'conjecture',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.conjectureProposalAcceptApplier,
+            ),
+        },
+      },
     ],
   },
   ui: { pages: uiPagesFor('agency') },

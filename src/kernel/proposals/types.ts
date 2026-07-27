@@ -21,6 +21,7 @@ export type ProposalAcceptInput = {
 
 export interface ProposalAcceptResult {
   kind: string;
+  /** Capability-owned public accept result; it must repeat the same `kind`. */
   result: unknown;
   idempotent?: boolean;
 }
@@ -28,6 +29,11 @@ export interface ProposalAcceptResult {
 export type ProposalAcceptApplier = (
   db: unknown,
   input: ProposalAcceptInput,
+  /**
+   * Composition-only runtime seams (for example network/job fakes). This is
+   * never proposal data and never crosses into the kernel-owned input contract.
+   */
+  runtime?: unknown,
 ) => Promise<ProposalAcceptResult>;
 
 export interface ProposalAcceptDecl {

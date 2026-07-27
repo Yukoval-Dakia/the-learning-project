@@ -1,7 +1,9 @@
-# This remains a single-package repository. The root-only workspace file is the
-# canonical pnpm settings location and keeps security overrides effective on pnpm 11+.
+# The root remains the only deployable application package. The isolated
+# api-codegen workspace holds dev-only generator dependencies; this file is also
+# the canonical pnpm settings location and keeps security overrides effective on pnpm 11+.
 packages:
   - '.'
+  - 'tools/api-codegen'
 
 overrides:
   'tmp@<0.2.6': '>=0.2.6'

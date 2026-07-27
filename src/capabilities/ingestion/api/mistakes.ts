@@ -6,7 +6,7 @@ import { createId } from '@paralleldrive/cuid2';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/server/subject-profile';
+} from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';

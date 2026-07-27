@@ -299,7 +299,44 @@ export const ingestionCapability = defineCapability({
   // image_candidate 的在 ./server/image-candidate-accept（YUK-227 S3 Slice C，
   // 整文件随包迁入）。壳层 actions.ts 的 accept case 只路由到本包。
   proposals: {
-    kinds: [{ kind: 'block_merge' }, { kind: 'image_candidate' }],
+    kinds: [
+      {
+        kind: 'block_merge',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.blockMergeProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'image_candidate',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.imageCandidateProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'record_links',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.recordLinksProposalAcceptApplier,
+            ),
+        },
+      },
+      {
+        kind: 'record_promotion',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.recordPromotionProposalAcceptApplier,
+            ),
+        },
+      },
+    ],
   },
   // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
   ui: { pages: uiPagesFor('ingestion') },

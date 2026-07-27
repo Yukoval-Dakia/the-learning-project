@@ -21,7 +21,7 @@ import {
   type QuestionDetail,
   computeLatencyMs,
   getQuestion,
-} from '@/capabilities/practice/ui/practice-api';
+} from '@/capabilities/practice/ui-public';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';

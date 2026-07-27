@@ -2,25 +2,19 @@
 // At-entry goal create — POST /api/goals (agency capability, LIVE on main).
 // Contract mirrors src/capabilities/agency/api/goal-create.ts response.
 
-import { apiJson } from '@/ui/lib/api';
+import {
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiOperationJson,
+} from '@/ui/lib/api';
 
-export interface CreateGoalInput {
-  title: string;
-  subjectId?: string | null;
-  knowledgeIds?: string[];
-}
-
-export interface CreateGoalResult {
-  id: string;
-  scopeKnowledgeIds: string[];
-  status: string;
-  title: string;
-  subjectId: string | null;
-}
+export type CreateGoalInput = ApiOperationRequestBody<'createGoal'>;
+export type CreateGoalResult = ApiOperationJsonResponse<'createGoal'>;
 
 export async function createGoal(input: CreateGoalInput): Promise<CreateGoalResult> {
-  return apiJson<CreateGoalResult>('/api/goals', {
+  return apiOperationJson('createGoal', {
+    url: '/api/goals',
     method: 'POST',
-    body: JSON.stringify(input),
+    body: input,
   });
 }

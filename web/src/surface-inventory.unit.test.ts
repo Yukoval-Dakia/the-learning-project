@@ -96,21 +96,28 @@ describe('shipped UI surface inventory', () => {
   });
 
   it('keeps page surfaces lazy while the shared shell remains eager', () => {
-    const staticCapabilityUiImports = [
-      ...routerSource.matchAll(/from\s+['"](@\/capabilities\/[^'"]+\/ui(?:\/[^'"]*)?)['"]/g),
+    const capabilityImports = [
+      ...routerSource.matchAll(/from\s+['"](@\/capabilities\/[^'"]+)['"]/g),
     ]
       .map((match) => match[1])
       .sort();
 
-    expect(staticCapabilityUiImports).toEqual([
-      '@/capabilities/copilot/ui/CopilotDock',
-      '@/capabilities/shell/ui/workbench-api',
+    expect(capabilityImports).toEqual([
+      '@/capabilities/agency/ui-public',
+      '@/capabilities/copilot/ui-public',
+      '@/capabilities/ingestion/ui-public',
+      '@/capabilities/knowledge/ui-public',
+      '@/capabilities/notes/ui-public',
+      '@/capabilities/observability/ui-public',
+      '@/capabilities/onboarding/ui-public',
+      '@/capabilities/practice/ui-public',
+      '@/capabilities/shell/ui-public',
     ]);
     expect(routerSource).toContain("import('./routes/MistakesPage')");
-    expect(routerSource).not.toContain("import('@/capabilities/observability/ui/observability')");
-    for (const adminModule of ['admin-runs', 'admin-cost', 'admin-failures']) {
-      expect(routerSource).toContain(`import('@/capabilities/observability/ui/${adminModule}')`);
-    }
+    expect(routerSource).not.toMatch(/@\/capabilities\/[^'"]+\/ui\//);
+    expect(routerSource).toContain('loadAdminRunsSurface');
+    expect(routerSource).toContain('loadAdminCostSurface');
+    expect(routerSource).toContain('loadAdminFailuresSurface');
     expect(routerSource).toContain('lazyRouteComponent');
     expect(routerSource).toContain('defaultPendingComponent: RoutePending');
     expect(routerSource).toContain('aria-live="polite"');

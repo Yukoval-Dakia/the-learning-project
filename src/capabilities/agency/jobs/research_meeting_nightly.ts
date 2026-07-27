@@ -48,7 +48,7 @@ import type {
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
-import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
+import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';

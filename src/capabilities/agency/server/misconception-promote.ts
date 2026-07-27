@@ -22,10 +22,7 @@ import { createHash } from 'node:crypto';
 
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
-import {
-  archiveMisconceptionEdge,
-  createMisconceptionEdge,
-} from '@/capabilities/knowledge/server/misconception-edges';
+import { archiveMisconceptionEdge, createMisconceptionEdge } from '@/capabilities/knowledge/public';
 import { parseFlag } from '@/core/env-flags';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';

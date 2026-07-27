@@ -34,6 +34,7 @@ import {
   type JudgePreview,
   type QuestionDetail,
   type StreamItem,
+  type SubmitReviewInput,
   computeLatencyMs,
   fileAppeal,
   getAdvice,
@@ -83,16 +84,30 @@ export function isObjectiveQuestion(route: string): boolean {
 // route: steps_v1_weighted / unit_dimension_v1 / correctness) MUST be echoed
 // verbatim — hardcoding any of them breaks the digest match at submit and drops
 // the result to supplied_unverified while persisting a falsified score meaning.
-export function toSubmittedJudgeResult(pv: JudgePreview) {
-  return {
-    score: pv.score,
+export function toSubmittedJudgeResult(
+  pv: JudgePreview,
+): NonNullable<SubmitReviewInput['judge_result_v2']> {
+  const common = {
     score_meaning: pv.score_meaning,
-    coarse_outcome: pv.coarse_outcome,
     confidence: pv.confidence,
     feedback_md: pv.feedback_md,
     evidence_json: pv.evidence_json,
     capability_ref: pv.capability_ref,
   };
+  switch (pv.coarse_outcome) {
+    case 'correct':
+    case 'partial':
+      if (pv.score === null) throw new Error(`${pv.coarse_outcome} judge result requires score`);
+      return { ...common, coarse_outcome: pv.coarse_outcome, score: pv.score };
+    case 'incorrect':
+      if (pv.score !== 0) throw new Error('incorrect judge result requires score=0');
+      return { ...common, coarse_outcome: 'incorrect', score: 0 };
+    case 'unsupported':
+      if (pv.score !== null || pv.confidence !== 0) {
+        throw new Error('unsupported judge result requires score=null and confidence=0');
+      }
+      return { ...common, coarse_outcome: 'unsupported', score: null, confidence: 0 };
+  }
 }
 
 // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后退出回流（「返回流」）时是否必须把 slot 标 done。

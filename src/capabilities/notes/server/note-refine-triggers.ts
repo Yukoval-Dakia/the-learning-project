@@ -33,7 +33,7 @@ const DEFAULT_ENABLED_BY_KIND: Record<NoteRefineTriggerKind, boolean> = {
   verify: false,
 };
 
-type BossSend = (
+export type NoteRefineBossSend = (
   queue: 'note_refine',
   data: {
     artifact_id: string;
@@ -75,7 +75,7 @@ export async function enqueueNoteRefineTrigger(input: {
   evidenceIds?: string[];
   triggerEventId?: string;
   now?: Date;
-  bossSend?: BossSend;
+  bossSend?: NoteRefineBossSend;
   env?: NodeJS.ProcessEnv;
 }): Promise<NoteRefineTriggerResult> {
   if (!noteRefineTriggerEnabled(input.kind, input.env ?? process.env)) {
@@ -166,7 +166,7 @@ export const enqueueMarkWrongNoteRefine = (input: {
   blockId?: string;
   reasonMd?: string;
   triggerEventId?: string;
-  bossSend?: BossSend;
+  bossSend?: NoteRefineBossSend;
 }) =>
   enqueueNoteRefineTrigger({
     ...input,
@@ -195,7 +195,7 @@ export const enqueueVerifyNoteRefine = (input: {
   artifactId: string;
   contextMd?: string;
   triggerEventId?: string;
-  bossSend?: BossSend;
+  bossSend?: NoteRefineBossSend;
   env?: NodeJS.ProcessEnv;
   now?: Date;
 }) =>
@@ -232,7 +232,7 @@ export const enqueueMasteryNoteRefine = (input: {
   artifactId: string;
   questionId?: string;
   triggerEventId?: string;
-  bossSend?: BossSend;
+  bossSend?: NoteRefineBossSend;
 }) =>
   enqueueNoteRefineTrigger({
     ...input,
@@ -247,7 +247,7 @@ export const enqueueDreamingNoteRefine = (input: {
   db?: Db;
   artifactId: string;
   triggerEventId?: string;
-  bossSend?: BossSend;
+  bossSend?: NoteRefineBossSend;
 }) =>
   enqueueNoteRefineTrigger({
     ...input,

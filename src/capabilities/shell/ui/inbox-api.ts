@@ -5,11 +5,12 @@
 // question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
 // coral=内容生成/修订类），icon 取自 LoomIcon 既有名。
 
+import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
 import {
-  type ProposalDecisionResourceT,
-  acceptSupportedProposalKinds,
-} from '@/core/schema/proposal';
-import { apiJson } from '@/ui/lib/api';
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiOperationJson,
+} from '@/ui/lib/api';
 
 // ── kind 元数据（agency meta.ts 同形态：fallback-safe，绝不 throw） ──
 export interface KindMeta {
@@ -68,85 +69,49 @@ export const REL_LABEL: Record<string, string> = {
   derived_from: '派生 derived_from',
 };
 
-// ── wire 类型（server ProposalInboxRow 的 JSON 投影；Date → ISO string） ──
-export interface ProposalEvidenceRefWire {
-  kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
-  id: string;
-}
+// The API boundary is generated from the provider-owned manifest. The view
+// projection intentionally stays looser than the proposal union: ProposalCard
+// renders shared optional fields and supports sparse cached/test rows without
+// pretending those rows are valid wire payloads.
+type GeneratedProposalPage = ApiOperationJsonResponse<'listProposals'>;
+type GeneratedProposalRow = GeneratedProposalPage['rows'][number];
+type GeneratedProposalPayload = GeneratedProposalRow['payload'];
 
-// payload 是 AiProposalPayload 的 UI 投影：各 kind 的 proposed_change 形态
-// 不同，这里只钉 UI 实际消费的公共字段，其余经 index signature 透传。
+export type ProposalEvidenceRefWire = GeneratedProposalPayload['evidence_refs'][number];
 export interface ProposalPayloadWire {
   kind: string;
   reason_md: string;
   evidence_refs: ProposalEvidenceRefWire[];
   confidence?: number;
   proposed_change?: {
-    /** Legacy edge proposals omit this field and therefore mean create. */
-    edge_op?: 'create' | 'archive';
+    edge_op?: 'create' | 'archive' | 'supersede';
     archive_edge_id?: string;
     from_knowledge_id?: string;
     to_knowledge_id?: string;
     relation_type?: string;
     weight?: number;
-    // YUK-229 — image_candidate 窄投影（ImageCandidateProposalChange，proposal.ts）。
-    // 服务端 /api/proposals 直发完整 payload（proposals-list.ts → Response.json 的
-    // AiProposalPayloadT），无字段裁剪，故此处仅补客户端类型声明（runtime 早经
-    // index signature 透传）。图字节永不上 wire：source_url 的原图只在 accept 时下载，
-    // accept 是唯一 VLM 抽图触发。subject_id 在 propose 时为 null（资产 accept 才铸）。
     source_url?: string;
     source_title?: string;
     summary_md?: string;
     knowledge_ids?: string[];
-    // 题型约束（sourcing run 级；accept 时经 question-kind 词表归一化设 question.kind）。
-    // Zod 侧 optional free-string，未 pin 的 run 省略——UI 目前不渲染，补齐仅为 wire 对齐 schema。
     requested_kind?: string;
+    confidence?: number;
     [key: string]: unknown;
   };
   [key: string]: unknown;
 }
 
-export interface ProposalBlockPreviewWire {
-  id: string;
-  label: string;
-  excerpt: string;
-}
-
-export interface ProposalSummaryItemWire {
-  label: string;
-  value: string;
-}
-
-export interface ProposalPresentationWire {
-  title: string;
-  change_summary: ProposalSummaryItemWire[];
-  technical_details: string | null;
-  evidence_labels: Record<string, string>;
-  block_merge: {
-    primary: ProposalBlockPreviewWire | null;
-    merged: ProposalBlockPreviewWire[];
-    continuity_label: string | null;
-  } | null;
-}
-
-export interface ProposalInboxRow {
-  id: string;
+export type ProposalPresentationWire = NonNullable<GeneratedProposalRow['presentation']>;
+export type ProposalSummaryItemWire = ProposalPresentationWire['change_summary'][number];
+export type ProposalBlockPreviewWire = NonNullable<
+  NonNullable<ProposalPresentationWire['block_merge']>['primary']
+>;
+export type ProposalInboxRow = Omit<GeneratedProposalRow, 'kind' | 'payload' | 'presentation'> & {
   kind: string;
-  target: { subject_kind: string; subject_id: string | null };
   payload: ProposalPayloadWire;
-  status: string;
-  proposed_at: string;
-  decided_at: string | null;
-  actor_ref: string;
-  task_run_id: string | null;
-  cost_micro_usd: number | null;
-  source_action: string;
-  source_subject_kind: string;
-  signals: Record<string, unknown> | null;
-  /** Server-curated learner copy. Optional keeps older cached pages forward-compatible. */
+  /** Optional keeps sparse cached rows forward-compatible in the display layer. */
   presentation?: ProposalPresentationWire | null;
-}
-
+};
 export interface ProposalPageWire {
   rows: ProposalInboxRow[];
   next_cursor: string | null;
@@ -163,7 +128,15 @@ function listProposalPage(
 ): Promise<ProposalPageWire> {
   const query = new URLSearchParams({ lane, limit: String(limit), status: 'pending' });
   if (cursor) query.set('cursor', cursor);
-  return apiJson<ProposalPageWire>(`/api/proposals?${query.toString()}`);
+  return apiOperationJson('listProposals', {
+    url: `/api/proposals?${query.toString()}`,
+    method: 'GET',
+  }).then((page) => ({
+    // The generated schema validates the full discriminated union. This adapter
+    // only widens it into ProposalCard's optional-field display projection.
+    rows: page.rows as ProposalInboxRow[],
+    next_cursor: page.next_cursor,
+  }));
 }
 
 /** Fetch exactly one actionable-decision page so the first page can render before the backlog drains. */
@@ -232,9 +205,10 @@ export const decideProposal = (
   decision: ProposalDecision,
   opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
 ) =>
-  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
+  apiOperationJson('createProposalDecision', {
+    url: `/api/proposals/${encodeURIComponent(id)}/decisions`,
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       decision,
       ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
       ...(opts.userNote ? { user_note: opts.userNote } : {}),
@@ -243,43 +217,26 @@ export const decideProposal = (
       ...(opts.correctedClaimMd !== undefined
         ? { corrected_payload: { claim_md: opts.correctedClaimMd } }
         : {}),
-    }),
+    } satisfies ApiOperationRequestBody<'createProposalDecision'>,
   }).then((resource) => resource.result);
 
 export const retractProposal = (id: string) =>
-  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
+  apiOperationJson('createProposalDecision', {
+    url: `/api/proposals/${encodeURIComponent(id)}/decisions`,
     method: 'POST',
-    body: JSON.stringify({ decision: 'retract' }),
+    body: { decision: 'retract' },
   }).then((resource) => resource.result);
 
 // ── A4 强度轴 (YUK-521)：A 档 auto-applied 读模型 wire 类型 + caller ──
-// server 契约见 @/server/proposals/auto-applied-read（AutoAppliedDigest，锁步）。
-export interface AutoAppliedRowWire {
-  proposal_id: string;
-  learning_item_id: string;
-  title: string;
-  /** apply 时刻（ISO）。 */
-  applied_at: string;
-  /** apply 时熔断档位（'ok' | 'warned' | 'tripped'）。 */
-  level: string;
-  /** 是否已被既有 retract 车道撤销。 */
-  reverted: boolean;
-}
+export type AutoAppliedDigestWire = ApiOperationJsonResponse<'getAutoAppliedProposals'>;
+export type AutoAppliedRowWire = AutoAppliedDigestWire['rows'][number];
+export type VerdictBreakerWire = AutoAppliedDigestWire['breaker'];
 
-export interface VerdictBreakerWire {
-  tripped: boolean;
-  level: string;
-  applied: number;
-  cap: number;
-  window: number;
-}
-
-export interface AutoAppliedDigestWire {
-  rows: AutoAppliedRowWire[];
-  breaker: VerdictBreakerWire;
-}
-
-export const listAutoApplied = () => apiJson<AutoAppliedDigestWire>('/api/proposals/auto-applied');
+export const listAutoApplied = () =>
+  apiOperationJson('getAutoAppliedProposals', {
+    url: '/api/proposals/auto-applied',
+    method: 'GET',
+  });
 
 // YUK-271 行为恢复（codex 验证轮 P2）：block_merge accept 在目标题块已离开
 // draft 时，applier 软拒——返回 200 { stale: true } 且不写 rate event，提议

@@ -1,4 +1,4 @@
-import { apiJson } from '@/ui/lib/api';
+import { apiOperationJson } from '@/ui/lib/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DECISION_MAX_PAGES,
@@ -12,7 +12,7 @@ import {
   mergeProposalPages,
 } from './inbox-api';
 
-vi.mock('@/ui/lib/api', () => ({ apiJson: vi.fn() }));
+vi.mock('@/ui/lib/api', () => ({ apiOperationJson: vi.fn() }));
 
 function proposal(id: string, kind = 'learning_item'): ProposalInboxRow {
   return {
@@ -37,63 +37,67 @@ function page(ids: string[], next: string | null): ProposalPageWire {
 }
 
 describe('proposal decision caller', () => {
-  const apiJsonMock = vi.mocked(apiJson);
+  const apiOperationJsonMock = vi.mocked(apiOperationJson);
 
-  beforeEach(() => apiJsonMock.mockReset());
+  beforeEach(() => apiOperationJsonMock.mockReset());
 
   it('sends only the corrected claim payload for an edited accept', async () => {
-    apiJsonMock.mockResolvedValueOnce({ result: { ok: true } });
+    apiOperationJsonMock.mockResolvedValueOnce({ result: { ok: true } } as never);
 
     await decideProposal('proposal/1', 'accept', { correctedClaimMd: '改写后的判断' });
 
-    expect(apiJsonMock).toHaveBeenCalledWith('/api/proposals/proposal%2F1/decisions', {
+    expect(apiOperationJsonMock).toHaveBeenCalledWith('createProposalDecision', {
+      url: '/api/proposals/proposal%2F1/decisions',
       method: 'POST',
-      body: JSON.stringify({
+      body: {
         decision: 'accept',
         corrected_payload: { claim_md: '改写后的判断' },
-      }),
+      },
     });
   });
 });
 
 describe('progressive proposal page callers', () => {
-  const apiJsonMock = vi.mocked(apiJson);
+  const apiOperationJsonMock = vi.mocked(apiOperationJson);
 
   beforeEach(() => {
-    apiJsonMock.mockReset();
+    apiOperationJsonMock.mockReset();
   });
 
   it('fetches only the first decision page when no cursor is supplied', async () => {
-    apiJsonMock.mockResolvedValueOnce(page(['decision_1'], 'd2'));
+    apiOperationJsonMock.mockResolvedValueOnce(page(['decision_1'], 'd2') as never);
 
     await expect(listDecisionProposalPage()).resolves.toEqual(page(['decision_1'], 'd2'));
 
-    expect(apiJsonMock).toHaveBeenCalledTimes(1);
-    expect(apiJsonMock).toHaveBeenCalledWith(
-      '/api/proposals?lane=decision&limit=500&status=pending',
-    );
+    expect(apiOperationJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiOperationJsonMock).toHaveBeenCalledWith('listProposals', {
+      url: '/api/proposals?lane=decision&limit=500&status=pending',
+      method: 'GET',
+    });
   });
 
   it('fetches exactly the requested continuation page', async () => {
-    apiJsonMock.mockResolvedValueOnce(page(['decision_2'], null));
+    apiOperationJsonMock.mockResolvedValueOnce(page(['decision_2'], null) as never);
 
     await listDecisionProposalPage('d2');
 
-    expect(apiJsonMock).toHaveBeenCalledTimes(1);
-    expect(apiJsonMock).toHaveBeenCalledWith(
-      '/api/proposals?lane=decision&limit=500&status=pending&cursor=d2',
-    );
+    expect(apiOperationJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiOperationJsonMock).toHaveBeenCalledWith('listProposals', {
+      url: '/api/proposals?lane=decision&limit=500&status=pending&cursor=d2',
+      method: 'GET',
+    });
   });
 
   it('keeps the bounded observation preview on an independent request', async () => {
-    apiJsonMock.mockResolvedValueOnce(page(['observe_1'], 'o2'));
+    apiOperationJsonMock.mockResolvedValueOnce(page(['observe_1'], 'o2') as never);
 
     await listObservationProposalPreview();
 
-    expect(apiJsonMock).toHaveBeenCalledTimes(1);
-    expect(apiJsonMock).toHaveBeenCalledWith(
-      '/api/proposals?lane=observation&limit=200&status=pending',
-    );
+    expect(apiOperationJsonMock).toHaveBeenCalledTimes(1);
+    expect(apiOperationJsonMock).toHaveBeenCalledWith('listProposals', {
+      url: '/api/proposals?lane=observation&limit=200&status=pending',
+      method: 'GET',
+    });
   });
 });
 

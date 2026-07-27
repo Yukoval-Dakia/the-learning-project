@@ -3,49 +3,44 @@
 // derived from the LIVE mastery_state projection (getMasteryProjection). In-scope KCs
 // with no mastery_state row come back as tested:false (未测).
 
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
+type PlacementProfileWire = ApiOperationJsonResponse<'getPlacementProfile'>;
+
+// UI projection deliberately flattens the tested/untested discriminated union:
+// views use optional evidence fields while `tested` remains the runtime gate.
+// The transport boundary above remains generated from the manifest.
 export interface ProfileKc {
   id: string;
   name: string;
   tested: boolean;
   evidence_count: number;
-  // present only when tested:
   theta_hat?: number;
   theta_precision?: number;
   theta_se?: number;
-  /** p(L) point estimate, 0..1 (= the band mark). */
   p_l?: number;
   mastery_lo?: number;
   mastery_hi?: number;
   low_confidence?: boolean;
-  // YUK-495 #41 — raw evidence for client-side bit-exact re-derivation (deriveProfileKc).
   success_count?: number;
   fail_count?: number;
   beta?: number;
+  axis?: PlacementProfileWire['kcs'][number]['axis'];
+  day_one_prior?: PlacementProfileWire['kcs'][number]['day_one_prior'];
 }
 
-export interface PlacementProfile {
-  goalId: string;
-  title: string;
+export type PlacementProfile = Omit<
+  PlacementProfileWire,
+  'evidencedCount' | 'kcs' | 'sigma_mode' | 'weakest'
+> & {
   kcs: ProfileKc[];
-  /** YUK-614 / YUK-616 — the weakest KCs by p(L) over the FULL evidenced set (before the
-   *  surfaced-list PROFILE_KC_LIMIT cap), shared by the /today preview and /profile deep read. */
   weakest?: ProfileKc[];
-  /** YUK-614 / YUK-616 — count of KCs with real answer evidence over the FULL set: the shared,
-   *  honest coverage figure, never undercounted by truncation nor inflated by soft-layer. */
   evidencedCount?: number;
-  /** YUK-495 #41 — which σ the server display used: 'poly' = device re-derivation matches
-   *  bit-for-bit; 'libm' = Math.exp (≤1-ULP off) → badge shows honest "preview". */
   sigma_mode?: 'poly' | 'libm';
-  /** Evidence summed across tested KCs — a coverage signal, NOT a distinct-question count
-   * (one question labeled with N KCs contributes N). Computed over the full scope. */
-  evidenceCount: number;
-  /** Number of in-scope KCs that actually have evidence (a mastery_state row). */
-  testedCount: number;
-  /** Full in-scope KC count, before the surfaced list is capped (PROFILE_KC_LIMIT). */
-  totalKcs: number;
-}
+};
 
-export const getPlacementProfile = (goalId: string) =>
-  apiJson<PlacementProfile>(`/api/placement/profile?goal=${encodeURIComponent(goalId)}`);
+export const getPlacementProfile = (goalId: string): Promise<PlacementProfile> =>
+  apiOperationJson('getPlacementProfile', {
+    url: `/api/placement/profile?goal=${encodeURIComponent(goalId)}`,
+    method: 'GET',
+  });

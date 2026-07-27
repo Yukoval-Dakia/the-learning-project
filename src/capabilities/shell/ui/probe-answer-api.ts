@@ -6,33 +6,22 @@
 // AND image refs (uploaded via uploadAsset → /api/assets); a photo-only answer is
 // allowed (the route photo-only-gates to an image-consuming judge route).
 
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
-export interface PrepDeskProbeWire {
-  /** target of the answer POST. */
-  probe_question_id: string;
-  /** the question the team is about to ask. */
-  prompt_md: string;
-  knowledge_id: string | null;
-}
+export type ActiveProbesResponse = ApiOperationJsonResponse<'listPrepDeskProbes'>;
+export type PrepDeskProbeWire = ActiveProbesResponse['probes'][number];
 
-export interface ActiveProbesResponse {
-  probes: PrepDeskProbeWire[];
-}
+export const getActiveProbes = () =>
+  apiOperationJson('listPrepDeskProbes', {
+    url: '/api/prep-desk/probes',
+    method: 'GET',
+  });
 
-export const getActiveProbes = () => apiJson<ActiveProbesResponse>('/api/prep-desk/probes');
-
-export interface ProbeAnswerVerdict {
-  /** 'confirmed' = the conjecture's predicted misconception was observed (answered wrong);
-   *  'retired'   = the conjecture was falsified (answered right). */
-  status: 'confirmed' | 'retired';
-  resolution: 'confirmed' | 'retired';
-  outcome: 0 | 1;
-  idempotent?: boolean;
-}
+export type ProbeAnswerVerdict = ApiOperationJsonResponse<'answerConjectureProbe'>;
 
 export const submitProbeAnswer = (id: string, answerMd: string, answerImageRefs: string[]) =>
-  apiJson<ProbeAnswerVerdict>(`/api/conjecture/probe/${encodeURIComponent(id)}/answer`, {
+  apiOperationJson('answerConjectureProbe', {
+    url: `/api/conjecture/probe/${encodeURIComponent(id)}/answer`,
     method: 'POST',
-    body: JSON.stringify({ answer_md: answerMd, answer_image_refs: answerImageRefs }),
+    body: { answer_md: answerMd, answer_image_refs: answerImageRefs },
   });

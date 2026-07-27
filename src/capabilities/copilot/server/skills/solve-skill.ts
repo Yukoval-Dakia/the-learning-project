@@ -26,12 +26,8 @@
 
 import { eq } from 'drizzle-orm';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import {
-  SolveError,
-  buildSolveHintInput,
-  parseHintTurn,
-} from '@/capabilities/practice/server/solve-session';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { SolveError, buildSolveHintInput, parseHintTurn } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';

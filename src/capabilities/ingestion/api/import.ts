@@ -25,7 +25,7 @@ import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/server/subject-profile';
+} from '@/capabilities/knowledge/public';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';

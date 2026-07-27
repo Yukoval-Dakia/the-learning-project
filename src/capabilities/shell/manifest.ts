@@ -1,9 +1,5 @@
 import { ProposalDecisionInput } from '@/core/schema/proposal';
-import {
-  API_ERROR_RESPONSES,
-  ApiIdParamsSchema,
-  collectionResponseSchema,
-} from '@/kernel/http-contracts';
+import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { z } from 'zod';
@@ -16,6 +12,8 @@ import {
   OvernightDigestResponseSchema,
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
+  ProposalDecisionResponseSchema,
+  ProposalPageResponseSchema,
   SubjectListResponseSchema,
   TeachingBriefAckBodySchema,
   TeachingBriefAckResponseSchema,
@@ -61,7 +59,7 @@ export const shellCapability = defineCapability({
           }),
         },
         responses: {
-          200: collectionResponseSchema(z.object({ id: z.string() }).passthrough()),
+          200: ProposalPageResponseSchema,
           ...API_ERROR_RESPONSES,
         },
         successStatus: 200,
@@ -84,8 +82,8 @@ export const shellCapability = defineCapability({
         operationId: 'createProposalDecision',
         request: { params: ApiIdParamsSchema, body: ProposalDecisionInput },
         responses: {
-          200: z.object({ decision_event_id: z.string(), created: z.boolean() }).passthrough(),
-          201: z.object({ decision_event_id: z.string(), created: z.boolean() }).passthrough(),
+          200: ProposalDecisionResponseSchema,
+          201: ProposalDecisionResponseSchema,
           ...API_ERROR_RESPONSES,
         },
         successStatus: [200, 201],

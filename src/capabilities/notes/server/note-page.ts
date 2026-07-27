@@ -12,7 +12,7 @@
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,

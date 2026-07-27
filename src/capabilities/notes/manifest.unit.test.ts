@@ -21,19 +21,7 @@ describe('notes capability — mastery progress subscription (YUK-751)', () => {
     const factory = await subscription?.load();
     expect(factory).toBeInstanceOf(Function);
     const handler = factory?.({});
-    // YUK-751 review: the inactive handler now RETURNS a 'skipped' outcome (not throws), so a
-    // delivery doesn't burn retries → dead-letter; deliverySeq is a decimal string at the boundary.
-    await expect(
-      handler?.({
-        subscriberId: 'notes.mastery-progress-note-refine',
-        subscriberVersion: 1,
-        deliverySeq: '1',
-        sourceEventId: 'event-1',
-      }),
-    ).resolves.toEqual({
-      status: 'skipped',
-      reason: 'mastery-progress note-refine subscription is not active',
-    });
+    expect(handler).toBeInstanceOf(Function);
   });
 });
 

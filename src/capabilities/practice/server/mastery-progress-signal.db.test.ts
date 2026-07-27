@@ -16,7 +16,6 @@ import {
   readMasteryProgress,
 } from '@/capabilities/practice/server/mastery-progress-signal';
 import { event, job_events, mastery_state } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -232,43 +231,28 @@ describe('mastery-progress-signal (ADR-0040 决定2 p(L) delta 埋点)', () => {
     expect(after[0].updated_at.getTime()).toBe(beforeRow.updated_at.getTime());
   });
 
-  // OCR MEDIUM (~:101) — per-event error isolation. One writeEvent throwing must
-  // NOT cascade and silently drop the OTHER KCs' progress events. This is the
-  // module's ONLY purpose (collecting the Δ distribution for ADR-0040 决定2
-  // threshold analysis), so a single failure dropping the whole batch destroys it.
-  it('partial failure: one KC emit throwing does NOT drop the other KC events', async () => {
+  it('publishes all mastery siblings atomically or none', async () => {
     await seedMasteryRow('k_ok1', { theta_hat: 0.5, last_theta_delta: 0.21 });
     await seedMasteryRow('k_boom', { theta_hat: 0.6, last_theta_delta: 0.22 });
-    await seedMasteryRow('k_ok2', { theta_hat: 0.7, last_theta_delta: 0.23 });
 
-    // Inject a writeEvent seam that throws ONLY for the middle KC; the real
-    // writeEvent handles the other two. Per-event handling must let those land.
     const failed: string[] = [];
     const emitted = await emitMasteryProgressSignal({
       db: testDb(),
-      knowledgeIds: ['k_ok1', 'k_boom', 'k_ok2'],
-      attemptEventId: 'evt_partial',
-      writeEventFn: async (db, input) => {
-        if (input.subject_id === 'k_boom') {
-          throw new Error('simulated writeEvent failure for k_boom');
-        }
-        return writeEvent(db, input);
+      knowledgeIds: ['k_ok1', 'k_boom'],
+      attemptEventId: 'evt_atomic',
+      writeEventsFn: async () => {
+        throw new Error('simulated atomic batch failure');
       },
       onEmitFailure: (id) => failed.push(id),
     });
 
-    // The two healthy KCs still emitted (failure did NOT cascade / abort the loop).
-    expect(emitted).toHaveLength(2);
-
+    expect(emitted).toEqual([]);
+    expect(failed).toEqual(['k_ok1', 'k_boom']);
     const rows = await testDb()
       .select()
       .from(event)
       .where(eq(event.action, MASTERY_PROGRESS_ACTION));
-    const subjects = rows.map((r) => r.subject_id).sort();
-    expect(subjects).toEqual(['k_ok1', 'k_ok2']);
-    // The failing KC was NOT silently dropped with no signal — its failure was
-    // surfaced via the count/callback.
-    expect(failed).toEqual(['k_boom']);
+    expect(rows).toEqual([]);
   });
 
   it('cold-start KC (no mastery_state row) still emits with null delta', async () => {

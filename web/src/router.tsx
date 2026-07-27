@@ -1,8 +1,39 @@
 // M0 (YUK-313) — SPA 路由表。规则（记入 ARCHITECTURE）：capability ui 不 import
 // 路由库；导航以 (to: string) => void prop 注入——路由耦合只存在于本壳层。
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
-import { CopilotDock } from '@/capabilities/copilot/ui/CopilotDock';
-import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
+import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
+import { CopilotDock } from '@/capabilities/copilot/ui-public';
+import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
+import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
+import { loadNoteReaderPage } from '@/capabilities/notes/ui-public';
+import {
+  loadAdminConjectureScoresSurface,
+  loadAdminCostSurface,
+  loadAdminCoverageLatticeSurface,
+  loadAdminFailuresSurface,
+  loadAdminRunsSurface,
+  loadAdminSubjectTraitsSurface,
+  loadAdminSubjectsSurface,
+  loadEventDetailPage,
+} from '@/capabilities/observability/ui-public';
+import {
+  loadOnboardRecordPage,
+  loadPlacementPage,
+  loadPlacementProfilePage,
+  loadWelcomePage,
+} from '@/capabilities/onboarding/ui-public';
+import {
+  loadDraftReviewPage,
+  loadPracticeFacePage,
+  loadQuestionDetailPage,
+  loadQuestionsPage,
+} from '@/capabilities/practice/ui-public';
+import {
+  getWorkbenchSummary,
+  loadCoachHub,
+  loadInboxPage,
+  loadTodayPage,
+} from '@/capabilities/shell/ui-public';
 import { surfacePath } from '@/kernel/ui-surfaces';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
@@ -236,9 +267,7 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-const TodayRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/shell/ui/TodayPage').then((module) => module.default),
-);
+const TodayRoute = lazyNavigableRoute(loadTodayPage);
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -251,9 +280,7 @@ const todayRoute = createRoute({
 // auto-enroll 尾巴入池）。Slice 3：/placement = 真 ScreenPlacement（③ 探针 start→submit
 // (auto_rate→θ̂)→next→end），gated on PLACEMENT_PROBE_ENABLED；goalId 经 `?goal=<id>`
 // query 从 Welcome 串过来。导航走壳层 prop 注入（同 TodayRoute）。
-const WelcomeRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/onboarding/ui/WelcomePage').then((module) => module.default),
-);
+const WelcomeRoute = lazyNavigableRoute(loadWelcomePage);
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -261,9 +288,7 @@ const welcomeRoute = createRoute({
   component: WelcomeRoute,
 });
 
-const OnboardingUploadRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/onboarding/ui/OnboardRecord').then((module) => module.default),
-);
+const OnboardingUploadRoute = lazyNavigableRoute(loadOnboardRecordPage);
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -271,9 +296,7 @@ const onboardingUploadRoute = createRoute({
   component: OnboardingUploadRoute,
 });
 
-const PlacementRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/onboarding/ui/ScreenPlacement').then((module) => module.default),
-);
+const PlacementRoute = lazyNavigableRoute(loadPlacementPage);
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -283,9 +306,7 @@ const placementRoute = createRoute({
 
 // YUK-473 Slice 4 — placement-done 起始档案。placement 的 settling 落到这里
 //（?goal 串过来）；「开始日常练习」→ /today。
-const ProfileRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/onboarding/ui/ScreenProfile').then((module) => module.default),
-);
+const ProfileRoute = lazyNavigableRoute(loadPlacementProfilePage);
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -293,9 +314,7 @@ const profileRoute = createRoute({
   component: ProfileRoute,
 });
 
-const InboxRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/shell/ui/InboxPage').then((module) => module.default),
-);
+const InboxRoute = lazyNavigableRoute(loadInboxPage);
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -316,9 +335,7 @@ const mistakesRoute = createRoute({
   component: MistakesRoute,
 });
 
-const AgentNotesRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/agency/ui/page').then((module) => module.default),
-);
+const AgentNotesRoute = lazyNavigableRoute(loadAgentNotesPage);
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -327,9 +344,7 @@ const agentNotesRoute = createRoute({
 });
 
 const EventDetailRouteC = lazyRouteComponent(async () => {
-  const { default: EventDetailPage } = await import(
-    '@/capabilities/observability/ui/EventDetailPage'
-  );
+  const EventDetailPage = await loadEventDetailPage();
 
   function EventDetailRouteComponent() {
     const router = useRouter();
@@ -356,7 +371,7 @@ const eventDetailRoute = createRoute({
 // getQuery 只在 VisionTab 的 mount-only 恢复 effect 里读一次（不需要 reactive
 // 订阅）；setQuery 是 replace 语义（?ingest= 进行中会话的持久化/清除）。
 const RecordRoute = lazyRouteComponent(async () => {
-  const { default: RecordPage } = await import('@/capabilities/ingestion/ui/RecordPage');
+  const RecordPage = await loadRecordPage();
 
   function RecordRouteComponent() {
     const router = useRouter();
@@ -388,7 +403,7 @@ const recordRoute = createRoute({
 // M2-T6 (YUK-316) — 练习面。query 协议同 RecordRoute：?view=shelf 切卷架，
 // setQuery 是 replace 语义（视图切换不进 history 栈）。
 const PracticeRoute = lazyRouteComponent(async () => {
-  const { default: PracticeFacePage } = await import('@/capabilities/practice/ui/PracticeFacePage');
+  const PracticeFacePage = await loadPracticeFacePage();
 
   function PracticeRouteComponent() {
     const router = useRouter();
@@ -429,9 +444,7 @@ const practiceRoute = createRoute({
 // inc-4b (YUK-403) — 草稿审核面（owner manual gate /drafts）。loom
 // screen-draft-review。导航走壳层 prop 注入（同 PracticeRoute），page 自持
 // list/detail query + verify/force-enable mutation。
-const DraftReviewRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/practice/ui/DraftReviewPage').then((module) => module.default),
-);
+const DraftReviewRoute = lazyNavigableRoute(loadDraftReviewPage);
 
 const draftsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -444,9 +457,7 @@ const draftsRoute = createRoute({
 // page 自持 list query（多轴筛选 + composite 展开 + variant lineage）。row-click →
 // /questions/$id（QuestionDetailPage：inline 编辑 + 变体家族 + 约束删除，YUK-413 替
 // YUK-409 的 stub）。
-const QuestionsRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/practice/ui/QuestionsPage').then((module) => module.default),
-);
+const QuestionsRoute = lazyNavigableRoute(loadQuestionsPage);
 
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -455,9 +466,7 @@ const questionsRoute = createRoute({
 });
 
 const QuestionDetailRouteC = lazyRouteComponent(async () => {
-  const { default: QuestionDetailPage } = await import(
-    '@/capabilities/practice/ui/QuestionDetailPage'
-  );
+  const QuestionDetailPage = await loadQuestionDetailPage();
 
   function QuestionDetailRouteComponent() {
     const router = useRouter();
@@ -475,9 +484,7 @@ const questionDetailRoute = createRoute({
 });
 
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
-const KnowledgeIndexRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/knowledge/ui/KnowledgePage').then((module) => module.default),
-);
+const KnowledgeIndexRoute = lazyNavigableRoute(loadKnowledgePage);
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -486,9 +493,7 @@ const knowledgeRoute = createRoute({
 });
 
 const KnowledgeDetailRouteC = lazyRouteComponent(async () => {
-  const { default: KnowledgeDetailPage } = await import(
-    '@/capabilities/knowledge/ui/KnowledgeDetailPage'
-  );
+  const KnowledgeDetailPage = await loadKnowledgeDetailPage();
 
   function KnowledgeDetailRouteComponent() {
     const router = useRouter();
@@ -507,7 +512,7 @@ const knowledgeDetailRoute = createRoute({
 
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
 const NoteReaderRouteC = lazyRouteComponent(async () => {
-  const { default: NoteReaderPage } = await import('@/capabilities/notes/ui/NoteReaderPage');
+  const NoteReaderPage = await loadNoteReaderPage();
 
   function NoteReaderRouteComponent() {
     const router = useRouter();
@@ -528,9 +533,7 @@ const noteReaderRoute = createRoute({
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
-const CoachRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/shell/ui/CoachHub').then((module) => module.default),
-);
+const CoachRoute = lazyNavigableRoute(loadCoachHub);
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -538,9 +541,7 @@ const coachRoute = createRoute({
   component: CoachRoute,
 });
 
-const AdminRunsRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/admin-runs').then((module) => module.AdminRunsSurface),
-);
+const AdminRunsRoute = lazyNavigableRoute(loadAdminRunsSurface);
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -548,9 +549,7 @@ const adminRunsRoute = createRoute({
   component: AdminRunsRoute,
 });
 
-const AdminCostRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/admin-cost').then((module) => module.AdminCostSurface),
-);
+const AdminCostRoute = lazyNavigableRoute(loadAdminCostSurface);
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -558,11 +557,7 @@ const adminCostRoute = createRoute({
   component: AdminCostRoute,
 });
 
-const AdminFailuresRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/admin-failures').then(
-    (module) => module.AdminFailuresSurface,
-  ),
-);
+const AdminFailuresRoute = lazyNavigableRoute(loadAdminFailuresSurface);
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -570,9 +565,7 @@ const adminFailuresRoute = createRoute({
   component: AdminFailuresRoute,
 });
 
-const AdminSubjectsRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/subjects').then((module) => module.AdminSubjectsSurface),
-);
+const AdminSubjectsRoute = lazyNavigableRoute(loadAdminSubjectsSurface);
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -583,9 +576,7 @@ const adminSubjectsRoute = createRoute({
 // YUK-601 — trait 编辑面 detail（TanStack $id 语法；capability 组件零路由库
 // import，param 由本 wrapper 读出后以 subjectId prop 注入——design doc v1.1 §0.3）。
 const AdminSubjectTraitsRoute = lazyRouteComponent(async () => {
-  const { AdminSubjectTraitsSurface } = await import(
-    '@/capabilities/observability/ui/subject-traits'
-  );
+  const AdminSubjectTraitsSurface = await loadAdminSubjectTraitsSurface();
 
   function AdminSubjectTraitsRouteComponent() {
     const router = useRouter();
@@ -603,11 +594,7 @@ const adminSubjectTraitsRoute = createRoute({
 });
 
 // YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
-const AdminCoverageLatticeRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/coverage-lattice').then(
-    (module) => module.AdminCoverageLatticeSurface,
-  ),
-);
+const AdminCoverageLatticeRoute = lazyNavigableRoute(loadAdminCoverageLatticeSurface);
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -615,11 +602,7 @@ const adminCoverageLatticeRoute = createRoute({
   component: AdminCoverageLatticeRoute,
 });
 
-const AdminConjectureScoresRoute = lazyNavigableRoute(() =>
-  import('@/capabilities/observability/ui/conjecture-scores').then(
-    (module) => module.AdminConjectureScoresSurface,
-  ),
-);
+const AdminConjectureScoresRoute = lazyNavigableRoute(loadAdminConjectureScoresSurface);
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-conjecture-scores'),

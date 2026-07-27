@@ -1,7 +1,7 @@
 import { artifact } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { MAX_NOTE_REFINE_FANOUT, collectMasteryRefineTargets } from './note-refine-targets';
+import { MAX_NOTE_REFINE_FANOUT, collectMasteryRefineTargets } from './mastery-refine-targets';
 
 async function seedNote(id: string, knowledgeId: string, createdAt: Date): Promise<void> {
   await testDb()
@@ -24,6 +24,7 @@ describe('collectMasteryRefineTargets (YUK-694)', () => {
   beforeEach(() => resetDb());
 
   it('includes source_ref, deduplicates labels, and caps one attempt at eight jobs', async () => {
+    await seedNote('source_note', 'kc_source', new Date(Date.UTC(2025, 11, 31)));
     for (let i = 0; i < MAX_NOTE_REFINE_FANOUT + 5; i++) {
       await seedNote(`note_${i}`, 'kc_many', new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
     }

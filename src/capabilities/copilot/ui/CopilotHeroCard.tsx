@@ -21,7 +21,7 @@
 
 'use client';
 
-import { getNotePage } from '@/capabilities/notes/ui/notes-api';
+import { getNotePage } from '@/capabilities/notes/ui-public';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';

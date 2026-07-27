@@ -165,7 +165,21 @@ const NodePageBacklinkSchema = z.object({
 const NodePageBodyBlocksSchema = z
   .object({
     type: z.literal('doc'),
-    content: z.array(z.unknown()),
+    content: z.array(
+      z
+        .object({
+          type: z.string(),
+          attrs: z
+            .object({
+              id: z.string().optional(),
+              semantic_kind: z.string().optional(),
+              source_markdown: z.string().optional(),
+            })
+            .passthrough()
+            .optional(),
+        })
+        .passthrough(),
+    ),
   })
   .passthrough();
 

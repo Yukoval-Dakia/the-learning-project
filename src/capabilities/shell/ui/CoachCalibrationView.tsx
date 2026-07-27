@@ -14,15 +14,12 @@
 // 形态 PORT 自设计 docs/design/loom-refresh/project/screen-calibration.jsx（去掉 admin-h / cal-lede——
 // 复盘中枢壳已统一持 head + lede）；纯视图逻辑（tier / 排序 / SE 定位 / lane）抽在 calibration-view.ts。
 
-import { RcMaturityBadge } from '@/capabilities/onboarding/ui/recompute/RecomputeComponents';
+import { RcMaturityBadge } from '@/capabilities/onboarding/ui-public';
 import {
   type CalibrationMaturityResponse,
   getCalibrationMaturity,
-} from '@/capabilities/onboarding/ui/recompute/calibration-maturity-api';
-import {
-  RECOMPUTE_BADGE_ENABLED,
-  summarizeMaturity,
-} from '@/capabilities/onboarding/ui/recompute/recompute-core';
+} from '@/capabilities/onboarding/ui-public';
+import { RECOMPUTE_BADGE_ENABLED, summarizeMaturity } from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -45,7 +42,7 @@ import {
   sortCaret,
   toCalRows,
 } from './calibration-view';
-import '@/capabilities/onboarding/ui/recompute/recompute.css';
+import '@/capabilities/onboarding/ui-public';
 
 // tier → 徽章色调 + 文案（badge tone-* 复用全局 badge 体系）。
 const TIER_META: Record<CalTier, { label: string; tone: string }> = {

@@ -9,137 +9,27 @@
 // The only ids present (brief_id / knowledge_id / proposal_id / probe_question_id /
 // evidence ids) are transport metadata; the UI never renders them (contract §8.2).
 
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 
-/** One provenance ref. `role` discriminates; `kind`/`id` are opaque source labels. */
-export type TeachingBriefEvidenceRef =
-  | {
-      role: 'induction';
-      kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
-      id: string;
-    }
-  | { role: 'probe'; kind: 'question'; id: string }
-  | { role: 'outcome'; kind: 'event'; id: string };
+export type TeachingBriefResponse = ApiOperationJsonResponse<'getTeachingBrief'>;
+export type TeachingBrief = NonNullable<TeachingBriefResponse['brief']>;
+export type FindingTeachingBrief = Extract<TeachingBrief, { state: 'finding' }>;
+export type ProbeReadyTeachingBrief = Extract<TeachingBrief, { state: 'probe_ready' }>;
+export type OutcomeConfirmedTeachingBrief = Extract<TeachingBrief, { state: 'outcome_confirmed' }>;
+export type OutcomeRetiredTeachingBrief = Extract<TeachingBrief, { state: 'outcome_retired' }>;
+export type TeachingBriefEvidenceRef = TeachingBrief['basis']['evidence_trace'][number];
+export type TeachingBriefFindingSection = TeachingBrief['finding'];
+export type TeachingBriefBasisSection = TeachingBrief['basis'];
+export type OutcomeAcknowledgeAction = OutcomeRetiredTeachingBrief['prepared_action'];
+export type OutcomePracticeAction = OutcomeConfirmedTeachingBrief['prepared_action'];
 
-export interface TeachingBriefFindingSection {
-  claim_md: string;
-  knowledge_id: string;
-  /** canonical CauseCategory on the server; the client never branches on it. */
-  cause_category: string;
-  /**
-   * YUK-785 — present ONLY on probe_ready / outcome states after the owner rewrote the
-   * claim, and then always ≠ `claim_md`: the pre-edit claim that the served probe
-   * actually tests (the rewrite cannot change `probe_md`, so no probe tests it yet).
-   * `current_outcome.summary_md` already attributes the probe evidence to this claim;
-   * rendering the two claims side by side is the follow-up UI work.
-   */
-  tested_claim_md?: string;
-}
+export const getTeachingBrief = () =>
+  apiOperationJson('getTeachingBrief', {
+    url: '/api/prep-desk/brief',
+    method: 'GET',
+  });
 
-export interface TeachingBriefBasisSection {
-  summary_md: string;
-  evidence_trace: TeachingBriefEvidenceRef[];
-}
-
-export interface TeachingBriefBase {
-  brief_id: string;
-  state: 'finding' | 'probe_ready' | 'outcome_confirmed' | 'outcome_retired';
-  updated_at: string;
-  expires_at: string | null;
-  finding: TeachingBriefFindingSection;
-  basis: TeachingBriefBasisSection;
-}
-
-export interface FindingTeachingBrief extends TeachingBriefBase {
-  state: 'finding';
-  expires_at: string;
-  prepared_action: {
-    kind: 'review_finding';
-    proposal_id: string;
-    probe_preview_md: string;
-  };
-  current_outcome: {
-    status: 'awaiting_decision';
-    summary_md: string;
-  };
-}
-
-export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
-  state: 'probe_ready';
-  expires_at: null;
-  prepared_action: {
-    kind: 'answer_probe';
-    probe_question_id: string;
-    prompt_md: string;
-  };
-  current_outcome: {
-    status: 'awaiting_answer';
-    summary_md: string;
-  };
-}
-
-/** YUK-708 (P0F/4) — the retired outcome's executable step: acknowledge (dismiss). */
-export interface OutcomeAcknowledgeAction {
-  kind: 'acknowledge_outcome';
-  probe_result_event_id: string;
-}
-
-/**
- * YUK-709 (P0F/5) — a confirmed outcome's executable step: practise the confirmed KC on
- * demand via the existing KC-scoped practice (`/practice?kc=<knowledge_id>`). The UI
- * navigates on click; no practice state is written until the user acts.
- * `probe_result_event_id` lets the same "知道了" ack retire the brief.
- */
-export interface OutcomePracticeAction {
-  kind: 'practice_scoped';
-  knowledge_id: string;
-  probe_result_event_id: string;
-}
-
-export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
-  state: 'outcome_confirmed';
-  expires_at: string;
-  prepared_action: OutcomePracticeAction;
-  current_outcome: {
-    status: 'confirmed';
-    summary_md: string;
-    probe_question_id: string;
-    probe_result_event_id: string;
-  };
-}
-
-export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
-  state: 'outcome_retired';
-  expires_at: string;
-  prepared_action: OutcomeAcknowledgeAction;
-  current_outcome: {
-    status: 'retired';
-    summary_md: string;
-    probe_question_id: string;
-    probe_result_event_id: string;
-  };
-}
-
-export type TeachingBrief =
-  | FindingTeachingBrief
-  | ProbeReadyTeachingBrief
-  | OutcomeConfirmedTeachingBrief
-  | OutcomeRetiredTeachingBrief;
-
-export interface TeachingBriefResponse {
-  brief: TeachingBrief | null;
-}
-
-export const getTeachingBrief = () => apiJson<TeachingBriefResponse>('/api/prep-desk/brief');
-
-/** Result of acknowledging (dismissing) a delivered outcome (YUK-708). */
-export interface TeachingBriefAckResult {
-  brief_acknowledgement_event_id: string;
-  probe_result_event_id: string;
-  brief_id: string;
-  /** true when a prior ack already existed — the retry is safe, one anchor only. */
-  idempotent: boolean;
-}
+export type TeachingBriefAckResult = ApiOperationJsonResponse<'acknowledgeTeachingBrief'>;
 
 /**
  * Acknowledge a delivered outcome. Append-only + idempotent server-side: a repeated
@@ -148,7 +38,8 @@ export interface TeachingBriefAckResult {
  * (or the quiet null) is projected.
  */
 export const ackTeachingBriefOutcome = (probeResultEventId: string) =>
-  apiJson<TeachingBriefAckResult>('/api/prep-desk/brief/ack', {
+  apiOperationJson('acknowledgeTeachingBrief', {
+    url: '/api/prep-desk/brief/ack',
     method: 'POST',
-    body: JSON.stringify({ probe_result_event_id: probeResultEventId }),
+    body: { probe_result_event_id: probeResultEventId },
   });

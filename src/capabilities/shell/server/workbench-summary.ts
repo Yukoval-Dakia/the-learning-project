@@ -7,7 +7,7 @@
 // week_heat 是新聚合——旧页 WeekHeat 因无 activity 聚合端点而 OMITTED
 // （page.tsx L362-366），此处补上服务端实现。
 
-import { handleReviewDue } from '@/capabilities/practice/server/due-list';
+import { handleReviewDue } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import {
   artifact,

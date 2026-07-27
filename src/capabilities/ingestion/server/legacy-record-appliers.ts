@@ -24,17 +24,20 @@ import {
   learningItemLiveRowToSnapshot,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, eq, isNull } from 'drizzle-orm';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
-} from './applier-helpers';
-import type { ProposalInboxRow } from './inbox';
-import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
+} from '@/server/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/server/proposals/signals';
+import { lockPlacementSupplyScopes } from '@/server/question-supply/placement-supply-lock';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { and, eq, isNull } from 'drizzle-orm';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。

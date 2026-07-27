@@ -8,7 +8,7 @@
 // AutoLinksContainer auto-zone contract and ADR-0022 for the crossLinkBlock attr
 // extension (auto / relation provenance).
 
-import type { CuratedAtomic } from '@/capabilities/knowledge/server/hub-mesh';
+import type { CuratedAtomic } from '@/capabilities/knowledge/public';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 

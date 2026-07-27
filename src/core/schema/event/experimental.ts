@@ -121,6 +121,7 @@ export const MasteryProgressExperimental = z.object({
     p_learned: z.number().nullable(),
     theta_hat: z.number().nullable(),
     question_id: z.string().nullable(),
+    source_artifact_id: z.string().nullable().optional(),
     attempt_event_id: z.string().nullable(),
     threshold_deferred: z.literal(true),
   }),

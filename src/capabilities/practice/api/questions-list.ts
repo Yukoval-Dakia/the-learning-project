@@ -9,7 +9,7 @@
 // (x-internal-token); the handler mirrors the sibling list routes (zod safeParse,
 // clamp, errorResponse) and the learning-items pagination convention.
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
 import {

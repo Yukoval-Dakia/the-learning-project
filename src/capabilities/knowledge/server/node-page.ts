@@ -24,13 +24,13 @@ import {
   groupBacklinksByArtifactType,
   listBacklinks,
   resolveOwningLearningItemIds,
-} from '@/capabilities/notes/server/block-refs';
+} from '@/capabilities/notes/public';
 import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
-} from '@/capabilities/notes/server/notes-read';
-import { retrievabilityForKc } from '@/capabilities/practice/server/fsrs';
+} from '@/capabilities/notes/public';
+import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';

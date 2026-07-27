@@ -31,7 +31,7 @@ import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 
-import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/server/goals/queries';
+import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
 // PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
 // from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
 // dependency-free band-derivation helpers, no cross-capability / cross-layer reach.

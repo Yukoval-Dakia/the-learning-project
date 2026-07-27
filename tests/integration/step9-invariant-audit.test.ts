@@ -421,7 +421,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion appliers 从
       // actions.ts 等价平移至此（搬迁不改逻辑）；record_promotion 物化 target 为
       // artifact 时的单 INSERT 随代码迁入。无活 producer，旧学习记录域退役时一并删。
-      'src/server/proposals/legacy-record-appliers.ts',
+      'src/capabilities/ingestion/server/legacy-record-appliers.ts',
       'src/capabilities/notes/server/sections.ts',
       'src/capabilities/notes/server/body-blocks-edit.ts',
       'src/capabilities/notes/server/note-refine-apply.ts',

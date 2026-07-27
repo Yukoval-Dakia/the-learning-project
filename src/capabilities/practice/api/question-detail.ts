@@ -15,7 +15,7 @@
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { loadQuestionDetail } from '@/server/questions/detail';
