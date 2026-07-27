@@ -15,3 +15,11 @@ export type {
   PlacementProfile,
   ProfileKc,
 } from './ui/profile-api';
+
+export const loadWelcomePage = () => import('./ui/WelcomePage').then((module) => module.default);
+export const loadOnboardRecordPage = () =>
+  import('./ui/OnboardRecord').then((module) => module.default);
+export const loadPlacementPage = () =>
+  import('./ui/ScreenPlacement').then((module) => module.default);
+export const loadPlacementProfilePage = () =>
+  import('./ui/ScreenProfile').then((module) => module.default);

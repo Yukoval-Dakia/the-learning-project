@@ -3,6 +3,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { parse } from '@babel/parser';
 
 const ROOT = resolve('src/capabilities');
+const BROWSER_ROOTS = [resolve('web/src'), resolve('src/ui')];
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?test\.[cm]?[jt]sx?$/;
 const CAPABILITY_IMPORT_RE = /^@\/capabilities\/([^/]+)\/(.+)$/;
@@ -96,7 +97,9 @@ function targetFor(
 }
 
 function ownerFor(file: string): string | undefined {
-  const [owner, ...rest] = relative(ROOT, file).split(sep);
+  const fromRoot = relative(ROOT, file);
+  if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) return undefined;
+  const [owner, ...rest] = fromRoot.split(sep);
   return rest.length > 0 ? owner : undefined;
 }
 
@@ -113,7 +116,8 @@ for (const capability of readdirSync(ROOT).sort()) {
   }
 }
 
-for (const file of sourceFiles(ROOT).sort()) {
+const auditedFiles = [...sourceFiles(ROOT), ...BROWSER_ROOTS.flatMap(sourceFiles)].sort();
+for (const file of auditedFiles) {
   const owner = ownerFor(file);
   for (const source of importedSources(readFileSync(file, 'utf8'), file)) {
     const target = targetFor(source, file);
@@ -121,6 +125,16 @@ for (const file of sourceFiles(ROOT).sort()) {
     const { provider, entrypoint } = target;
     if (provider === owner) continue;
     if (resolve(file) === resolve(ROOT, 'index.ts') && entrypoint === 'manifest') continue;
+    if (!owner) {
+      if (entrypoint !== 'ui-public') {
+        violations.push({
+          file: relative(process.cwd(), file),
+          source,
+          reason: `browser composition may only consume '${provider}/ui-public'`,
+        });
+      }
+      continue;
+    }
     if (!PUBLIC_ENTRYPOINTS.has(entrypoint)) {
       violations.push({
         file: relative(process.cwd(), file),

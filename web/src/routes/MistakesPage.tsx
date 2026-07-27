@@ -24,7 +24,7 @@
 // ④ 科目轴：knowledge_ids[0] → getTree effective_domain → subjMeta（科目=视角派生，非实体
 //    列；同 QuestionsPage subjMeta 先例）。
 
-import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
+import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { apiJson } from '@/ui/lib/api';

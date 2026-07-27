@@ -4,3 +4,6 @@ export {
   undoAiChange,
 } from './ui/notes-api';
 export type { AiChangeRow } from './ui/notes-api';
+
+export const loadNoteReaderPage = () =>
+  import('./ui/NoteReaderPage').then((module) => module.default);
