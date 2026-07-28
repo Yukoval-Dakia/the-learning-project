@@ -94,17 +94,33 @@ async function allProbeQuestions() {
 }
 
 /**
- * Fill N active mind_probe slots via direct serves (synthetic conjecture ids — the cap
- * only counts unanswered mind_probe question rows, so how they got there is irrelevant).
+ * Fill N active mind_probe slots from well-formed historical v1 conjectures. The cap
+ * counts unanswered questions, while answerProbe also verifies the proposal provenance;
+ * seeding the proposal keeps the fixture representative instead of relying on an orphan.
  * Returns the served probe question ids so a test can answer one to free a slot.
  */
 async function fillProbeSlots(n: number): Promise<string[]> {
   const db = testDb();
   const ids: string[] = [];
   for (let i = 0; i < n; i += 1) {
+    const conjectureProposalId = `cj_fill_${i}`;
+    const payload = baseConjecture();
+    await writeAiProposal(db, {
+      id: conjectureProposalId,
+      actor_ref: 'research_meeting',
+      payload: {
+        ...payload,
+        cooldown_key: `conjecture:fill:${i}`,
+        proposed_change: {
+          ...payload.proposed_change,
+          probe_md: `filler probe ${i}`,
+          probe_reference_md: 'ref',
+        },
+      },
+    });
     const r = await serveProbeOnce({
       db,
-      conjectureProposalId: `cj_fill_${i}`,
+      conjectureProposalId,
       knowledgeId: 'kn_chain_rule',
       probeMd: `filler probe ${i}`,
       referenceMd: 'ref',

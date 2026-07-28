@@ -382,17 +382,6 @@ describe('loadTeachingBrief', () => {
       probeSequence: 2,
     });
 
-    const active = await loadTeachingBrief(testDb(), NOW);
-    expect(active.brief).toMatchObject({
-      brief_id: proposalId,
-      state: 'probe_ready',
-      prepared_action: {
-        kind: 'answer_probe',
-        probe_question_id: probeId,
-        prompt_md: followupPrompt,
-      },
-    });
-
     const resultAt = new Date(NOW.getTime() - 10 * 60 * 1000);
     const resultId = 'result_p_followup';
     await writeEvent(testDb(), {

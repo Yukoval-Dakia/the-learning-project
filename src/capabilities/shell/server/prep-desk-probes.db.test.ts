@@ -7,6 +7,7 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -15,11 +16,37 @@ import { loadActiveProbes } from './prep-desk-probes';
 let seq = 0;
 async function serve(probeMd: string, now: Date): Promise<string> {
   seq += 1;
+  const conjectureProposalId = `conj_${seq}`;
+  await writeAiProposal(testDb(), {
+    id: conjectureProposalId,
+    actor_ref: 'research_meeting',
+    created_at: now,
+    payload: {
+      kind: 'conjecture',
+      target: { subject_kind: 'mind_model', subject_id: 'kn_x' },
+      reason_md: 'fixture evidence for an active probe',
+      evidence_refs: [{ kind: 'event', id: `evidence_${seq}` }],
+      cooldown_key: `conjecture:prep-desk-probe:${seq}`,
+      proposed_change: {
+        claim_md: `fixture conjecture ${seq}`,
+        knowledge_id: 'kn_x',
+        cause_category: 'concept_misunderstanding',
+        confidence: 0.7,
+        recurrence_count: 2,
+        probe_md: probeMd,
+        probe_reference_md: `reference ${seq}`,
+        discriminating: true,
+        predicted_p: 0.3,
+        baseline_p_at_induction: 0.6,
+      },
+    },
+  });
   const served = await serveProbeOnce({
     db: testDb(),
-    conjectureProposalId: `conj_${seq}`,
+    conjectureProposalId,
     knowledgeId: 'kn_x',
     probeMd,
+    referenceMd: `reference ${seq}`,
     now,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
