@@ -326,12 +326,13 @@ export async function submitSolveAttempt(
   }
 
   const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, questionId).catch((err) => {
-    if (err instanceof QuestionEvidenceSnapshotError && err.code === 'question_not_found') {
+    if (!(err instanceof QuestionEvidenceSnapshotError)) throw err;
+    if (err.code === 'question_not_found') {
       throw new SolveError('question_not_found', err.message);
     }
     throw new SolveError(
       'question_evidence_unavailable',
-      `question ${questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
+      `question ${questionId} cannot be submitted because its evidence context is incomplete: ${err.message}`,
     );
   });
   const q = loadedQuestion.question;

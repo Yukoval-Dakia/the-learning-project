@@ -183,22 +183,22 @@ function failureEvidenceFromRow(row: EventRow): {
   let questionSnapshot: AttemptQuestionSnapshotT | null | undefined;
   if (parsedSnapshot === undefined) {
     questionSnapshot = undefined;
-  } else if (!parsedSnapshot.success) {
-    questionSnapshot = null;
-    console.warn('[failure-attempt] invalid question snapshot omitted', {
-      attempt_event_id: row.id,
-      question_id: row.subject_id,
-      reason: 'schema_invalid',
-    });
-  } else if (parsedSnapshot.data.question.question_id !== row.subject_id) {
-    questionSnapshot = null;
-    console.warn('[failure-attempt] invalid question snapshot omitted', {
-      attempt_event_id: row.id,
-      question_id: row.subject_id,
-      reason: 'subject_mismatch',
-    });
   } else {
-    questionSnapshot = parsedSnapshot.data;
+    const invalidReason = !parsedSnapshot.success
+      ? 'schema_invalid'
+      : parsedSnapshot.data.question.question_id !== row.subject_id
+        ? 'subject_mismatch'
+        : null;
+    if (invalidReason !== null) {
+      questionSnapshot = null;
+      console.warn('[failure-attempt] invalid question snapshot omitted', {
+        attempt_event_id: row.id,
+        question_id: row.subject_id,
+        reason: invalidReason,
+      });
+    } else {
+      questionSnapshot = parsedSnapshot.data;
+    }
   }
   return {
     // FSRS reviews call the same learner evidence `user_response_md`; normalize
@@ -598,6 +598,7 @@ async function loadFailureAttemptById(
     answer_md: evidence.answer_md,
     answer_image_refs: evidence.answer_image_refs,
     referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+    question_snapshot: evidence.question_snapshot,
     created_at: attempt.created_at,
     correction_state: attemptTruth,
   };

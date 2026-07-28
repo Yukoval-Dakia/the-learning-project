@@ -475,12 +475,13 @@ export async function submitPaperSlot(
   // the snapshot later used to interpret this attempt.
   const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, input.questionId).catch(
     (err) => {
-      if (err instanceof QuestionEvidenceSnapshotError && err.code === 'question_not_found') {
+      if (!(err instanceof QuestionEvidenceSnapshotError)) throw err;
+      if (err.code === 'question_not_found') {
         throw new ApiError('not_found', err.message, 404);
       }
       throw new ApiError(
         'question_evidence_unavailable',
-        `question ${input.questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
+        `question ${input.questionId} cannot be submitted because its evidence context is incomplete: ${err.message}`,
         409,
       );
     },

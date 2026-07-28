@@ -61,13 +61,13 @@ export async function loadQuestionWithAttemptSnapshot(
   if (!row) {
     throw new QuestionEvidenceSnapshotError(
       'question_not_found',
-      `loadAttemptQuestionSnapshot: question ${questionId} not found`,
+      `loadQuestionWithAttemptSnapshot: question ${questionId} not found`,
     );
   }
   if (row.question.parent_question_id !== null && row.parent_question === null) {
     throw new QuestionEvidenceSnapshotError(
       'parent_question_not_found',
-      `loadAttemptQuestionSnapshot: parent question ${row.question.parent_question_id} not found`,
+      `loadQuestionWithAttemptSnapshot: parent question ${row.question.parent_question_id} not found`,
     );
   }
   const parsed = AttemptQuestionSnapshot.safeParse({
@@ -78,7 +78,7 @@ export async function loadQuestionWithAttemptSnapshot(
   if (!parsed.success) {
     throw new QuestionEvidenceSnapshotError(
       'snapshot_invalid',
-      `loadAttemptQuestionSnapshot: question ${questionId} snapshot is invalid: ${parsed.error.message}`,
+      `loadQuestionWithAttemptSnapshot: question ${questionId} snapshot is invalid: ${parsed.error.message}`,
     );
   }
   return { question: row.question, question_snapshot: parsed.data };

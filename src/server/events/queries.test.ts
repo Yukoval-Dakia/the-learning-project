@@ -14,6 +14,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
 import {
   getFailureAttemptById,
+  getFailureAttemptWithReasoningTraceById,
   getFailureAttempts,
   getJudgeForAttempt,
   getQuestionTimeline,
@@ -220,7 +221,10 @@ describe('getFailureAttempts', () => {
       },
       parent_question: null,
     };
-    await seedAttemptEvent({ question_id: 'q1', question_snapshot: snapshot });
+    const validAttemptId = await seedAttemptEvent({
+      question_id: 'q1',
+      question_snapshot: snapshot,
+    });
     await seedAttemptEvent({
       question_id: 'q2',
       question_snapshot: {
@@ -234,6 +238,14 @@ describe('getFailureAttempts', () => {
       snapshot,
     );
     expect(results.find((result) => result.question_id === 'q2')?.question_snapshot).toBeNull();
+    await expect(getFailureAttemptById(testDb(), validAttemptId)).resolves.toMatchObject({
+      question_snapshot: snapshot,
+    });
+    await expect(
+      getFailureAttemptWithReasoningTraceById(testDb(), validAttemptId),
+    ).resolves.toMatchObject({
+      failure: { question_snapshot: snapshot },
+    });
     expect(warn).toHaveBeenCalledWith(
       '[failure-attempt] invalid question snapshot omitted',
       expect.objectContaining({
