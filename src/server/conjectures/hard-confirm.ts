@@ -26,6 +26,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
+import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -76,7 +77,7 @@ export const RECENCY_ACTIVE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
  * Maximum knowledge/result ids per SQL batch in the accountability reader. Keeps
  * IN-clause plans bounded on large nightly histories. Owner-tunable.
  */
-export const MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY = 500;
+export const MAX_ACCOUNTABILITY_IDS_PER_QUERY = 500;
 
 /**
  * Archive-honesty map: which cause_categories denote INTUITIVE / ONTOLOGICAL misconceptions
@@ -101,7 +102,7 @@ export interface DissociationRecord {
   conjectureEventId: string;
   /** the backing probe_result event identity. */
   probeResultEventId: string;
-  /** probe question identity (probe_question_id; fallback probe_result_event_id) — dedup axis 1. */
+  /** question id: anchor payload → backing probe_result.subject_id → result event id. */
   questionId: string;
   /** session/time bucket (UTC-day default) — dedup dimension 2. */
   sessionWindow: string;
@@ -400,7 +401,7 @@ function conjectureIdentityKey(causeCategory: string, knowledgeId: string): stri
 }
 
 function boundedChunks<T>(values: readonly T[]): T[][] {
-  const size = Math.max(1, MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY);
+  const size = Math.max(1, MAX_ACCOUNTABILITY_IDS_PER_QUERY);
   const chunks: T[][] = [];
   for (let offset = 0; offset < values.length; offset += size) {
     chunks.push(values.slice(offset, offset + size));
@@ -557,7 +558,7 @@ export async function gatherDissociationRecordsByIdentity(
           .from(event)
           .where(
             and(
-              eq(event.action, 'experimental:probe_result'),
+              eq(event.action, PROBE_RESULT_ACTION),
               eq(event.subject_kind, 'question'),
               inArray(event.id, chunk),
             ),
@@ -599,8 +600,8 @@ export async function gatherDissociationRecordsByIdentity(
     ) {
       continue;
     }
-    const conjectureEventId = payload.conjecture_event_id;
-    const knowledgeId = payload.knowledge_id;
+    const conjectureEventId = payload?.conjecture_event_id;
+    const knowledgeId = payload?.knowledge_id;
     if (typeof conjectureEventId !== 'string' || typeof knowledgeId !== 'string') continue;
     const identity = identityByConjectureId.get(conjectureEventId);
     if (
