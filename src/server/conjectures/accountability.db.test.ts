@@ -529,6 +529,42 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     expect(restored.get(target.key)?.state).toBe('supported');
   });
 
+  it('folds a corrected prediction-score anchor out of the live streak', async () => {
+    const target = cell('concept::kc_corrected_anchor', 2);
+    await writeConjecture('conjecture_anchor_1', target, 1);
+    await writeConjecture('conjecture_anchor_2', target, 2);
+    await writeScore('score_anchor_1', 'conjecture_anchor_1', target, 0, 1);
+    await writeScore('score_anchor_2', 'conjecture_anchor_2', target, 0, 2);
+
+    const before = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(before.get(target.key)?.state).toBe('supported');
+
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'correction_score_anchor_2',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: 'score_anchor_2',
+        outcome: 'success',
+        payload: {
+          correction_kind: 'mark_wrong',
+          reason_md: 'the derived score anchor was invalid',
+          affected_refs: [{ kind: 'open_inquiry', id: 'score_anchor_2' }],
+        },
+        created_at: new Date('2026-07-28T12:00:00.000Z'),
+      });
+
+    const corrected = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(corrected.get(target.key)).toMatchObject({
+      state: 'watch',
+      consecutive_count: 1,
+      score_event_ids: ['score_anchor_1'],
+    });
+  });
+
   it('orders dissociation by terminal confirmation while preserving score streak chronology', async () => {
     const target = cell('concept::kc_confirmation_time', 2);
     await writeConjecture('conjecture_timeline_confirm', target, 1);
@@ -621,6 +657,47 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
         // even flag-on evidence can only be EMERGING, never HARD_CONFIRM.
         hard_confirm_verdict: 'EMERGING',
         hard_confirm_enabled: true,
+      });
+
+      await testDb()
+        .insert(event)
+        .values([
+          {
+            id: 'correction_projection_emerging_1',
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: 'projection_emerging_1',
+            outcome: 'success',
+            payload: {
+              correction_kind: 'retract',
+              reason_md: 'the first terminal projection was invalid',
+              affected_refs: [{ kind: 'open_inquiry', id: 'projection_emerging_1' }],
+            },
+            created_at: new Date('2026-07-28T12:00:00.000Z'),
+          },
+          {
+            id: 'correction_projection_emerging_2',
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: 'projection_emerging_2',
+            outcome: 'success',
+            payload: {
+              correction_kind: 'retract',
+              reason_md: 'the second terminal projection was invalid',
+              affected_refs: [{ kind: 'open_inquiry', id: 'projection_emerging_2' }],
+            },
+            created_at: new Date('2026-07-28T12:00:01.000Z'),
+          },
+        ]);
+      const correctedProjection = await loadPredictionAccountabilityByKey(testDb(), [target]);
+      expect(correctedProjection.get(target.key)).toMatchObject({
+        state: 'supported',
+        rank_multiplier: 1.15,
+        hard_confirm_verdict: 'INSUFFICIENT',
       });
     } finally {
       if (original === undefined) {

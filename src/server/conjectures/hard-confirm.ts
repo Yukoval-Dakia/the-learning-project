@@ -29,6 +29,7 @@ import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { PROBE_RESULT_ACTION, PROBE_RESULT_PROJECTED_ACTION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { scorePrediction } from '@/server/conjectures/scoring';
 
 /** The canonical score fact the reconcile loop appends (reconcile.ts). */
@@ -233,7 +234,7 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
  *     so it can observe EMERGING but never perform the protected label mutation.
  *   - EMERGING     — discriminating held-M evidence is accruing but CAPPED (flag OFF, or no
  *     rival-separating probe, or no fresh owner confirm). Stays soft; renders as "emerging".
- *   - INSUFFICIENT — the gates are not met: most likely缺-skill, not a held misconception.
+ *   - INSUFFICIENT — the gates are not met: most likely a skill deficit, not a held misconception.
  */
 export type DissociationVerdict = 'HARD_CONFIRM' | 'EMERGING' | 'INSUFFICIENT';
 
@@ -587,6 +588,10 @@ export async function gatherDissociationRecordsByIdentity(
   const rows: Array<{ id: string; action: string; payload: unknown; created_at: Date }> =
     scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
+  const anchorCorrectionStatuses = await getCorrectionStatuses(
+    db,
+    rows.map((row) => row.id),
+  );
   const probeResultEventIds = [
     ...new Set(
       rows.flatMap((row) => {
@@ -659,6 +664,7 @@ export async function gatherDissociationRecordsByIdentity(
   const confirmationTimeByConjectureAndQuestion = new Map<string, Map<string, Date>>();
   for (const r of rows) {
     if (r.action !== PROBE_RESULT_PROJECTED_ACTION) continue;
+    if (anchorCorrectionStatuses.get(r.id)?.state !== 'active') continue;
     const payload = r.payload as Record<string, unknown> | null;
     const probeResultEventId = payload?.probe_result_event_id;
     if (
@@ -702,6 +708,7 @@ export async function gatherDissociationRecordsByIdentity(
 
   for (const r of rows) {
     if (r.action !== PREDICTION_SCORE_ACTION) continue;
+    if (anchorCorrectionStatuses.get(r.id)?.state !== 'active') continue;
     const payload = r.payload as Record<string, unknown> | null;
     const probeResultEventId = payload?.probe_result_event_id;
     const sourceStatus =

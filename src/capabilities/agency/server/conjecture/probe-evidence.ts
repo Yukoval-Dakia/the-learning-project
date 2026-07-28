@@ -1,4 +1,6 @@
 import {
+  PROBE_QUESTION_INITIAL_VERSION,
+  PROBE_QUESTION_KIND,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
@@ -139,8 +141,8 @@ function supportingQuestionSequence(
   const expectedPrompt = sequence === 2 ? spec.followupPromptMd : spec.promptMd;
   const expectedReference = sequence === 2 ? spec.followupReferenceMd : spec.referenceMd;
   if (
-    row.kind !== 'short_answer' ||
-    row.version !== 0 ||
+    row.kind !== PROBE_QUESTION_KIND ||
+    row.version !== PROBE_QUESTION_INITIAL_VERSION ||
     row.source !== PROBE_QUESTION_SOURCE ||
     row.source_ref !== spec.id ||
     row.draft_status !== 'draft' ||
