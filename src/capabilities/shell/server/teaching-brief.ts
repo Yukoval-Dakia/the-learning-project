@@ -669,8 +669,9 @@ export async function validateAckableOutcome(
  * The single primary outcome the reader would currently deliver (newest un-acked, in-window,
  * fully-canonical outcome), or null. Exported so the ack writer can require its target to be
  * exactly this — making the writer's ackable set identical to the reader's delivered set,
- * including the SELECTION dimension (an older outcome hidden behind a newer primary is not
- * ackable and resurfaces once the newer one is acked — YUK-708 review round-5, codex P2).
+ * including the SELECTION dimension. An older non-terminal outcome hidden behind a newer
+ * result is not ackable; once a later canonical terminal recurrence exists, its preliminary
+ * `evidence_for` is permanently superseded and must not resurface after terminal ack.
  *
  * The ack writer runs this INSIDE its advisory-locked transaction so the primary verdict and
  * the ack append share one snapshot+lock — the TOCTOU window between an out-of-tx snapshot and
@@ -713,6 +714,36 @@ export async function loadOutcomeBrief(
           WHERE ack.action = ${BRIEF_ACK_ACTION}
             AND ack.subject_kind = 'event'
             AND ack.subject_id = ${event.id}
+        )`,
+        // A terminal recurrence supersedes the earlier preliminary result for the same
+        // conjecture. This filter intentionally ignores whether the terminal was acknowledged:
+        // acknowledging the final answer must not resurrect "needs independent revalidation".
+        // Require a canonical terminal body + self-consistent conjecture provenance so a
+        // malformed row cannot hide a valid preliminary result.
+        sql`(
+          ${event.payload}->>'resolution' <> 'evidence_for'
+          OR NOT EXISTS (
+            SELECT 1 FROM ${event} AS terminal
+            WHERE terminal.action = ${PROBE_RESULT_ACTION}
+              AND terminal.subject_kind = 'question'
+              AND terminal.payload->>'conjecture_event_id' =
+                  ${event.payload}->>'conjecture_event_id'
+              AND terminal.caused_by_event_id =
+                  terminal.payload->>'conjecture_event_id'
+              AND (
+                (terminal.payload->>'resolution' = 'confirmed'
+                  AND terminal.payload->>'outcome' = '0')
+                OR (terminal.payload->>'resolution' = 'retired'
+                  AND terminal.payload->>'outcome' = '1')
+              )
+              AND (
+                terminal.created_at > ${event.created_at}
+                OR (
+                  terminal.created_at = ${event.created_at}
+                  AND terminal.id > ${event.id}
+                )
+              )
+          )
         )`,
       ),
     )

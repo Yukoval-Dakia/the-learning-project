@@ -10,9 +10,9 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { db } from '@/db/client';
-import { event, kc_typed_state } from '@/db/schema';
+import { event, kc_typed_state, question } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb } from '../../../tests/helpers/db';
@@ -150,6 +150,35 @@ describe('reconcileConjecturePredictions (DB)', () => {
     // (3) ND-5: no FSRS / attempt event was written anywhere in the loop.
     const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
     expect(attempts).toHaveLength(0);
+  });
+
+  it('does not score a recurrence probe with the first probe prediction', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    const [followup] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.source_ref, seed.conjectureProposalId),
+          sql`${question.metadata}->>'probe_sequence' = '2'`,
+        ),
+      );
+    if (!followup) throw new Error('expected the first miss to activate a recurrence probe');
+
+    const terminal = await answerProbe({
+      db,
+      probeQuestionId: followup.id,
+      outcome: 0,
+    });
+
+    // `predicted_p` belongs only to sequence 1. The independent recurrence probe has
+    // no calibrated probability yet, so it must not receive a fabricated score.
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(scoreEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
   });
 
   it('is idempotent — a second run scores nothing and writes no duplicate', async () => {

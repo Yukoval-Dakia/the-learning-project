@@ -351,6 +351,29 @@ describe('loadTeachingBrief', () => {
       followupProbeReferenceMd: followupReference,
     });
     await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    await writeEvent(testDb(), {
+      id: 'result_p_followup_preliminary',
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: firstProbeId,
+      payload: {
+        conjecture_event_id: proposalId,
+        outcome: 0,
+        resolution: 'evidence_for',
+        retrievability_at_judge: 0.45,
+        answer_md: null,
+        answer_image_refs: [],
+      },
+      caused_by_event_id: proposalId,
+      ingest_at: new Date(NOW.getTime() - 24 * 60 * 1000),
+      created_at: new Date(NOW.getTime() - 24 * 60 * 1000),
+    });
     const probeId = await seedProbe({
       proposalId,
       createdAt: new Date(NOW.getTime() - 20 * 60 * 1000),
@@ -402,6 +425,8 @@ describe('loadTeachingBrief', () => {
       },
     });
     await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
+    // The terminal result supersedes the older preliminary result. Acknowledging the
+    // terminal must close the brief rather than regress it to "needs revalidation".
     await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
   });
 

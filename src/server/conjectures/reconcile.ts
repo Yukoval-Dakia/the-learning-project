@@ -4,7 +4,7 @@
 // probe outcomes accumulate but no prediction_score ever lands and the typed-ledger
 // never advances = collect-without-power = dead loop (feedback_defer_flip_not_build).
 //
-// Per unscored probe outcome:
+// Per unscored sequence-1 probe outcome:
 //   1. join the canonical `experimental:probe_result` event to its conjecture by the
 //      DIRECT `conjecture_event_id` ref (the newer canonical model supersedes the older
 //      "join by KC + window" heuristic — the probe carries the exact proposal id);
@@ -46,7 +46,7 @@ import { z } from 'zod';
 
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
 import { type UpsertKcTypedStateInput, upsertKcTypedState } from '@/server/conjectures/typed-state';
 import { and, eq, sql } from 'drizzle-orm';
@@ -134,11 +134,17 @@ function extractConjectureFacts(ev: { payload: unknown } | null): ConjectureFact
 }
 
 /**
- * Real reader: unanswered probe outcomes that have NO prediction_score yet. The
+ * Real reader: sequence-1 probe outcomes that have NO prediction_score yet. The
  * NOT EXISTS on a prediction_score whose subject_id == the probe_result event id is
  * the idempotency filter — a re-run scores nothing already scored (append-only,
  * never a duplicate). Parse-barrier on the probe_result payload (conjecture ref /
  * outcome / resolution must be sound) drops anomalies silently.
+ *
+ * Sequence-2 recurrence probes are deliberately excluded: the conjecture's
+ * `predicted_p` is calibrated for the FIRST probe only. Reusing it for the independent
+ * follow-up would fabricate a Brier/log score for a probability the model never supplied.
+ * A future follow-up calibration contract may make sequence 2 scoreable explicitly; until
+ * then, no score is more truthful than a borrowed score.
  *
  * Deliberately UNBOUNDED (no LIMIT): a batch cap + FIFO order would let a head of
  * permanently-unscorable probes (dangling / malformed conjecture, which are `continue`d
@@ -160,6 +166,11 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
           WHERE ps.action = ${PREDICTION_SCORE_ACTION}
             AND ps.subject_kind = 'event'
             AND ps.subject_id = ${event.id}
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${question} probe
+          WHERE probe.id = ${event.subject_id}
+            AND probe.metadata->>'probe_sequence' = '2'
         )`,
       ),
     )
