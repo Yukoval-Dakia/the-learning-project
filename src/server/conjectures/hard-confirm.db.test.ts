@@ -1,4 +1,4 @@
-import { event } from '@/db/schema';
+import { event, question } from '@/db/schema';
 // YUK-531 (A5 S4 / RT1) — gatherDissociationEvidence DB reader (Tier-1, dark).
 // Proves the thin reader: it reads a KC's `experimental:prediction_score` LOG events, JOINS each
 // back to its conjecture proposal (via conjecture_event_id) to recover the misconception CAUSE,
@@ -14,6 +14,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const CONJECTURE_PROPOSAL_ACTION = 'experimental:proposal';
+const knowledgeByConjecture = new Map<string, string>();
 
 // `type` (NOT `interface`) so the payload gets an implicit index signature and stays assignable
 // to the event.payload column's `$type<Record<string, unknown>>()` (FAIL-1 typecheck fix).
@@ -46,6 +47,7 @@ async function writeConjecture(
   knowledgeId: string,
 ): Promise<void> {
   const db = testDb();
+  knowledgeByConjecture.set(conjectureEventId, knowledgeId);
   await db.insert(event).values({
     id: conjectureEventId,
     actor_kind: 'agent',
@@ -56,7 +58,22 @@ async function writeConjecture(
     payload: {
       ai_proposal: {
         kind: 'conjecture',
-        proposed_change: { cause_category: causeCategory, knowledge_id: knowledgeId },
+        target: { subject_kind: 'mind_model', subject_id: knowledgeId },
+        reason_md: 'hard-confirm test fixture',
+        evidence_refs: [{ kind: 'event', id: `evidence_${conjectureEventId}` }],
+        cooldown_key: `conjecture:${conjectureEventId}`,
+        proposed_change: {
+          claim_md: `claim ${conjectureEventId}`,
+          cause_category: causeCategory,
+          knowledge_id: knowledgeId,
+          confidence: 0.7,
+          recurrence_count: 2,
+          probe_md: `probe ${conjectureEventId}`,
+          probe_reference_md: `reference ${conjectureEventId}`,
+          discriminating: true,
+          predicted_p: 0.2,
+          baseline_p_at_induction: 0.8,
+        },
       },
     },
     created_at: new Date('2026-06-30T00:00:00Z'),
@@ -68,6 +85,30 @@ async function writeScore(payload: ScorePayload, createdAt: Date): Promise<void>
   const db = testDb();
   seq += 1;
   if (payload.conjecture_event_id) {
+    const authoritativeKnowledgeId = knowledgeByConjecture.get(payload.conjecture_event_id);
+    if (!authoritativeKnowledgeId) {
+      throw new Error(`missing conjecture fixture ${payload.conjecture_event_id}`);
+    }
+    const questionId = `question_${payload.probe_result_event_id}`;
+    await db
+      .insert(question)
+      .values({
+        id: questionId,
+        kind: 'short_answer',
+        prompt_md: `probe ${payload.conjecture_event_id}`,
+        reference_md: `reference ${payload.conjecture_event_id}`,
+        knowledge_ids: [authoritativeKnowledgeId],
+        source: 'mind_probe',
+        source_ref: payload.conjecture_event_id,
+        draft_status: 'draft',
+        metadata: {
+          conjecture_proposal_id: payload.conjecture_event_id,
+          probe_sequence: 1,
+        },
+        created_at: createdAt,
+        updated_at: createdAt,
+      })
+      .onConflictDoNothing();
     await db
       .insert(event)
       .values({
@@ -76,7 +117,7 @@ async function writeScore(payload: ScorePayload, createdAt: Date): Promise<void>
         actor_ref: 'mind_probe',
         action: 'experimental:probe_result',
         subject_kind: 'question',
-        subject_id: `question_${payload.probe_result_event_id}`,
+        subject_id: questionId,
         payload: {
           conjecture_event_id: payload.conjecture_event_id,
           outcome: payload.outcome,
@@ -103,6 +144,7 @@ describe('gatherDissociationEvidence', () => {
   beforeEach(async () => {
     await resetDb();
     seq = 0;
+    knowledgeByConjecture.clear();
   });
 
   it('reads a KC prediction_score events, dedups tuples, and counts discriminating contexts', async () => {
