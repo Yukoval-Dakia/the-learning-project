@@ -166,7 +166,8 @@ function failureEvidenceFromRow(row: EventRow): {
   answer_md: string | null;
   answer_image_refs: string[];
   referenced_knowledge_ids: string[];
-  question_snapshot: AttemptQuestionSnapshotT | null;
+  /** undefined = historical absence; null = present but invalid/corrupt. */
+  question_snapshot: AttemptQuestionSnapshotT | null | undefined;
 } {
   const payload = row.payload as {
     answer_md?: string | null;
@@ -175,7 +176,30 @@ function failureEvidenceFromRow(row: EventRow): {
     referenced_knowledge_ids?: string[];
     question_snapshot?: unknown;
   };
-  const parsedSnapshot = AttemptQuestionSnapshot.safeParse(payload.question_snapshot);
+  const parsedSnapshot =
+    payload.question_snapshot === undefined
+      ? undefined
+      : AttemptQuestionSnapshot.safeParse(payload.question_snapshot);
+  let questionSnapshot: AttemptQuestionSnapshotT | null | undefined;
+  if (parsedSnapshot === undefined) {
+    questionSnapshot = undefined;
+  } else if (!parsedSnapshot.success) {
+    questionSnapshot = null;
+    console.warn('[failure-attempt] invalid question snapshot omitted', {
+      attempt_event_id: row.id,
+      question_id: row.subject_id,
+      reason: 'schema_invalid',
+    });
+  } else if (parsedSnapshot.data.question.question_id !== row.subject_id) {
+    questionSnapshot = null;
+    console.warn('[failure-attempt] invalid question snapshot omitted', {
+      attempt_event_id: row.id,
+      question_id: row.subject_id,
+      reason: 'subject_mismatch',
+    });
+  } else {
+    questionSnapshot = parsedSnapshot.data;
+  }
   return {
     // FSRS reviews call the same learner evidence `user_response_md`; normalize
     // it onto the legacy mistake projection so every downstream consumer sees
@@ -184,10 +208,7 @@ function failureEvidenceFromRow(row: EventRow): {
       row.action === 'review' ? (payload.user_response_md ?? null) : (payload.answer_md ?? null),
     answer_image_refs: payload.answer_image_refs ?? [],
     referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
-    question_snapshot:
-      parsedSnapshot.success && parsedSnapshot.data.question.question_id === row.subject_id
-        ? parsedSnapshot.data
-        : null,
+    question_snapshot: questionSnapshot,
   };
 }
 

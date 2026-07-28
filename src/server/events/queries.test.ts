@@ -9,7 +9,7 @@ import type { EventT } from '@/core/schema/event';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import { event, material_fsrs_state } from '@/db/schema';
 import { eq, inArray } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
 import {
@@ -204,6 +204,7 @@ describe('getFailureAttempts', () => {
   });
 
   it('projects only an immutable snapshot that belongs to the attempted question', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const snapshot: AttemptQuestionSnapshotT = {
       schema_version: 1,
       question: {
@@ -233,6 +234,14 @@ describe('getFailureAttempts', () => {
       snapshot,
     );
     expect(results.find((result) => result.question_id === 'q2')?.question_snapshot).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[failure-attempt] invalid question snapshot omitted',
+      expect.objectContaining({
+        question_id: 'q2',
+        reason: 'subject_mismatch',
+      }),
+    );
+    warn.mockRestore();
   });
 
   it('filters by questionIds when provided', async () => {

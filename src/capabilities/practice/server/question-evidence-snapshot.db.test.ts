@@ -86,7 +86,7 @@ describe('attempt question evidence snapshot (YUK-804)', () => {
     });
 
     await expect(loadAttemptQuestionSnapshot(db, 'q_orphan')).rejects.toThrow(
-      'parent question q_missing_parent not found',
+      'loadAttemptQuestionSnapshot: parent question q_missing_parent not found',
     );
   });
 });

@@ -5,10 +5,12 @@ import {
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, getTableColumns } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 type DbLike = Db | Tx;
 type QuestionEvidenceSnapshotSource = typeof question.$inferSelect;
+const parentQuestion = alias(question, 'attempt_question_evidence_parent');
 
 function freezeContext(row: QuestionEvidenceSnapshotSource): QuestionEvidenceContextSnapshotT {
   return {
@@ -26,41 +28,34 @@ function freezeContext(row: QuestionEvidenceSnapshotSource): QuestionEvidenceCon
 
 /**
  * Freeze the exact child + shared parent context that makes one historical
- * learner answer interpretable. Missing parents fail closed.
+ * learner answer interpretable. One joined statement prevents a concurrent
+ * edit from producing a child/parent snapshot assembled from different reads.
+ * Missing parents fail closed.
  */
-export async function captureAttemptQuestionSnapshot(
-  db: DbLike,
-  row: QuestionEvidenceSnapshotSource,
-): Promise<AttemptQuestionSnapshotT> {
-  let parent: QuestionEvidenceSnapshotSource | null = null;
-  if (row.parent_question_id !== null) {
-    const [parentRow] = await db
-      .select()
-      .from(question)
-      .where(eq(question.id, row.parent_question_id))
-      .limit(1);
-    if (!parentRow) {
-      throw new Error(
-        `captureAttemptQuestionSnapshot: parent question ${row.parent_question_id} not found`,
-      );
-    }
-    parent = parentRow;
-  }
-
-  return AttemptQuestionSnapshot.parse({
-    schema_version: 1,
-    question: freezeContext(row),
-    parent_question: parent ? freezeContext(parent) : null,
-  });
-}
-
 export async function loadAttemptQuestionSnapshot(
   db: DbLike,
   questionId: string,
 ): Promise<AttemptQuestionSnapshotT> {
-  const [row] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
+  const [row] = await db
+    .select({
+      question: getTableColumns(question),
+      parent_question: getTableColumns(parentQuestion),
+    })
+    .from(question)
+    .leftJoin(parentQuestion, eq(question.parent_question_id, parentQuestion.id))
+    .where(eq(question.id, questionId))
+    .limit(1);
   if (!row) {
     throw new Error(`loadAttemptQuestionSnapshot: question ${questionId} not found`);
   }
-  return captureAttemptQuestionSnapshot(db, row);
+  if (row.question.parent_question_id !== null && row.parent_question === null) {
+    throw new Error(
+      `loadAttemptQuestionSnapshot: parent question ${row.question.parent_question_id} not found`,
+    );
+  }
+  return AttemptQuestionSnapshot.parse({
+    schema_version: 1,
+    question: freezeContext(row.question),
+    parent_question: row.parent_question ? freezeContext(row.parent_question) : null,
+  });
 }

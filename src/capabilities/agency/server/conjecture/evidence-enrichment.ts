@@ -356,7 +356,12 @@ function toEvidenceSample(
 ): ConjectureEvidenceSample | null {
   let q: EvidenceQuestionContext;
   let parent: EvidenceQuestionContext | undefined;
-  if (failure.question_snapshot) {
+  if (failure.question_snapshot === null) {
+    // A present-but-invalid snapshot marks corrupted or unsupported provenance.
+    // Never reinterpret it as a historical event and fall back to mutable rows.
+    return null;
+  }
+  if (failure.question_snapshot !== undefined) {
     // New attempts are self-contained evidence. Never consult the mutable
     // question table for their prompt/reference, even if the row was edited or
     // deleted after submission.

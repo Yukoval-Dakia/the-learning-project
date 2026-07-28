@@ -23,7 +23,7 @@ import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
 import { getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 const CREATED_AT = new Date('2026-07-20T00:00:00Z');
@@ -85,6 +85,7 @@ interface SeedFailureOpts {
   analysisMd?: string;
   createdAt?: Date;
   persistQuestionSnapshot?: boolean;
+  questionSnapshotOverride?: unknown;
 }
 
 // Attempts are read newest-first (created_at DESC, id DESC), and that order is
@@ -100,6 +101,8 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
   const questionSnapshot = opts.persistQuestionSnapshot
     ? await loadAttemptQuestionSnapshot(db, opts.questionId)
     : undefined;
+  const persistedSnapshot =
+    opts.questionSnapshotOverride !== undefined ? opts.questionSnapshotOverride : questionSnapshot;
   await db.insert(event).values({
     id: opts.id,
     actor_kind: 'user',
@@ -112,7 +115,7 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
       answer_md: opts.answerMd === undefined ? 'wrong answer' : opts.answerMd,
       answer_image_refs: opts.answerImageRefs ?? [],
       referenced_knowledge_ids: opts.knowledgeIds,
-      ...(questionSnapshot ? { question_snapshot: questionSnapshot } : {}),
+      ...(persistedSnapshot !== undefined ? { question_snapshot: persistedSnapshot } : {}),
       // YUK-562 process data — the field the list reader now surfaces.
       ...(opts.reasoningTrace === undefined ? {} : { reasoning_trace: opts.reasoningTrace }),
     },
@@ -361,6 +364,63 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(snapshottedSample?.question_reference_md).toContain('旧参考答案');
     expect(snapshottedSample?.question_prompt_md).not.toContain('编辑后的新题面');
     expect(cell.evidence_event_ids).toContain('a1');
+  });
+
+  it('omits present-but-invalid snapshots instead of treating them as legacy evidence', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await seedKnowledge('kc_corrupt_snapshot', '损坏快照', 'math');
+    await seedQuestion('q1', '有效题面一', '有效答案一');
+    await seedQuestion('q2', '有效题面二', '有效答案二');
+    await seedQuestion('q3', '不得回退的当前题面', '不得回退的当前答案');
+    await seedFailureWithJudge({
+      id: 'valid_snapshot_a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_corrupt_snapshot'],
+      persistQuestionSnapshot: true,
+    });
+    await seedFailureWithJudge({
+      id: 'valid_snapshot_a2',
+      questionId: 'q2',
+      knowledgeIds: ['kc_corrupt_snapshot'],
+      persistQuestionSnapshot: true,
+    });
+    await seedFailureWithJudge({
+      id: 'invalid_snapshot_a3',
+      questionId: 'q3',
+      knowledgeIds: ['kc_corrupt_snapshot'],
+      questionSnapshotOverride: {
+        schema_version: 1,
+        question: {
+          question_id: 'different-question',
+          question_version: 1,
+          parent_question_id: null,
+          prompt_md: '损坏来源',
+          reference_md: null,
+          choices_md: null,
+          image_refs: [],
+          figures: [],
+          updated_at: '2026-07-28T00:00:00.000Z',
+        },
+        parent_question: null,
+      },
+    });
+
+    const [cell] = await runPipe();
+    expect(cell.evidence_event_ids).toEqual(
+      expect.arrayContaining(['valid_snapshot_a1', 'valid_snapshot_a2']),
+    );
+    expect(cell.evidence_event_ids).not.toContain('invalid_snapshot_a3');
+    expect(cell.samples.map((sample) => sample.question_prompt_md).join('\n')).not.toContain(
+      '不得回退的当前题面',
+    );
+    expect(warn).toHaveBeenCalledWith(
+      '[failure-attempt] invalid question snapshot omitted',
+      expect.objectContaining({
+        attempt_event_id: 'invalid_snapshot_a3',
+        reason: 'subject_mismatch',
+      }),
+    );
+    warn.mockRestore();
   });
 
   it('omits reference rewrites that update the row without a question_edit event', async () => {

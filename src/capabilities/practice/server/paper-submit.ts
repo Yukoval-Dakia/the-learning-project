@@ -56,7 +56,7 @@ import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
-import { captureAttemptQuestionSnapshot } from './question-evidence-snapshot';
+import { loadAttemptQuestionSnapshot } from './question-evidence-snapshot';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -473,7 +473,7 @@ export async function submitPaperSlot(
   if (!q) {
     throw new ApiError('not_found', `question ${input.questionId} not found`, 404);
   }
-  const questionSnapshot = await captureAttemptQuestionSnapshot(db, q);
+  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id);
 
   // Resolve the profile for the slot's knowledge (primary first, then question
   // labels) — used for the D6 profile_version stamp + cause validation.

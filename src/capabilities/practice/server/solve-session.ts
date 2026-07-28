@@ -25,7 +25,7 @@ import {
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
-import { captureAttemptQuestionSnapshot } from './question-evidence-snapshot';
+import { loadAttemptQuestionSnapshot } from './question-evidence-snapshot';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -323,7 +323,7 @@ export async function submitSolveAttempt(
 
   const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
-  const questionSnapshot = await captureAttemptQuestionSnapshot(db, q);
+  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id);
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
