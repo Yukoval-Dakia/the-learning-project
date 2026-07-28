@@ -140,10 +140,14 @@ jobs:
         run: pnpm test:unit
 
   db:
-    name: DB tests
+    name: DB tests (${{ matrix.shard }}/2)
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Docs-only — DB lane skipped
         if: needs.changes.outputs.code_changed != 'true'
@@ -164,7 +168,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: DB tests
         if: needs.changes.outputs.code_changed == 'true'
-        run: pnpm test:db
+        run: pnpm test:db --shard=${{ matrix.shard }}/2
 
   migration:
     name: migration smoke
