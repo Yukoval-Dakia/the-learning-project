@@ -18,6 +18,9 @@ export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
  */
 export const PROBE_RESOLUTIONS = ['evidence_for', 'confirmed', 'retired'] as const;
 export type ProbeResolution = (typeof PROBE_RESOLUTIONS)[number];
+export function isProbeResolution(value: unknown): value is ProbeResolution {
+  return typeof value === 'string' && (PROBE_RESOLUTIONS as readonly string[]).includes(value);
+}
 /** Writer rule stamped on results whose resolution passed the YUK-787 recurrence fold. */
 export const PROBE_RESOLUTION_RULE_VERSION = 'within_learner_probe_recurrence_v2' as const;
 

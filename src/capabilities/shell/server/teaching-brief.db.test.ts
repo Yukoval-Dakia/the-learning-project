@@ -346,6 +346,8 @@ describe('loadTeachingBrief', () => {
       resolution,
     });
 
+    const warn =
+      resolution === 'evidence_for' ? vi.spyOn(console, 'warn').mockImplementation(() => {}) : null;
     const response = await loadTeachingBrief(testDb(), NOW);
     expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();
     // YUK-708/709 — confirmed offers KC-scoped practice (knowledge_id === proposal KC);
@@ -384,7 +386,12 @@ describe('loadTeachingBrief', () => {
     if (resolution === 'evidence_for') {
       expect(summary).not.toContain('得到支持');
       expect(summary).not.toContain('确证');
+      expect(warn).not.toHaveBeenCalledWith(
+        '[teaching-brief] skipped candidate',
+        expect.objectContaining({ reason: 'outcome_resolution_mismatch' }),
+      );
     }
+    warn?.mockRestore();
   });
 
   it('applies global precedence outcome > active probe > pending finding', async () => {

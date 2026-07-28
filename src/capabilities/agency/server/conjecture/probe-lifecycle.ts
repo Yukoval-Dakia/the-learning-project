@@ -58,7 +58,7 @@ import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, desc, eq, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { type PriorProbeResult, resolveProbeResolution } from './probe-resolution';
 
 type DbOrTx = Db | Tx;
@@ -443,20 +443,29 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // salt keeps the conjecture lock distinct from the per-question lock above.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
     const priorRows = await tx
-      .select({ probe_question_id: event.subject_id, payload: event.payload })
+      .select({
+        probe_result_event_id: event.id,
+        probe_question_id: event.subject_id,
+        payload: event.payload,
+      })
       .from(event)
       .where(
         and(
           eq(event.action, PROBE_RESULT_ACTION),
           eq(event.subject_kind, 'question'),
+          // Both refs are checked deliberately. `caused_by_event_id` is the indexed
+          // envelope join; the payload equality rejects provenance-broken manual/legacy
+          // rows rather than letting them strengthen a different conjecture.
           eq(event.caused_by_event_id, conjectureEventId),
           sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
-          lte(event.created_at, now),
         ),
       );
     const priorResults: PriorProbeResult[] = [];
     for (const prior of priorRows) {
-      const parsed = parseProbeResultEvent({ id: prior.probe_question_id, payload: prior.payload });
+      const parsed = parseProbeResultEvent({
+        id: prior.probe_result_event_id,
+        payload: prior.payload,
+      });
       if (!parsed) continue;
       priorResults.push({
         probe_question_id: prior.probe_question_id,
@@ -465,18 +474,21 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       });
     }
     const resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
-    const independentProbeQuestionIds = [
-      ...new Set([
-        ...priorResults
-          .filter(
-            (result) =>
-              result.outcome === 0 &&
-              (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
-          )
-          .map((result) => result.probe_question_id),
-        probeQuestionId,
-      ]),
-    ].sort();
+    const independentProbeQuestionIds =
+      outcome === 0
+        ? [
+            ...new Set([
+              ...priorResults
+                .filter(
+                  (result) =>
+                    result.outcome === 0 &&
+                    (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
+                )
+                .map((result) => result.probe_question_id),
+              probeQuestionId,
+            ]),
+          ].sort()
+        : [];
 
     const probeResultEventId = newId();
     await writeEvent(tx, {

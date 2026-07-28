@@ -292,6 +292,32 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(results.map((result) => result.status).sort()).toEqual(['confirmed', 'evidence_for']);
   });
 
+  it('folds all serialized history even when caller now predates the prior result timestamp', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    const secondProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
+      throw new Error('expected two served probes');
+    }
+    const earlier = new Date('2026-07-27T00:00:00.000Z');
+    const later = new Date('2026-07-28T00:00:00.000Z');
+
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: later,
+    });
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.probe_question_id,
+      outcome: 0,
+      now: earlier,
+    });
+
+    expect(second.status).toBe('confirmed');
+  });
+
   it('does not count a provenance-broken historical result toward confirmation', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
@@ -330,7 +356,10 @@ describe('probe one-shot lifecycle (U3)', () => {
 
     const results = await probeResultEvents(served.probe_question_id);
     expect(results).toHaveLength(1);
-    expect(results[0].payload).toMatchObject({ outcome: 1 });
+    expect(results[0].payload).toMatchObject({
+      outcome: 1,
+      independent_probe_question_ids: [],
+    });
   });
 
   it('one-shot idempotency — answering twice writes only one probe_result event', async () => {

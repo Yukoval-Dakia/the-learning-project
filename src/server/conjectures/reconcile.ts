@@ -44,7 +44,7 @@
 import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
-import type { ProbeResolution } from '@/core/schema/conjecture';
+import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -186,7 +186,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       console.warn('[reconcile] dropping malformed probe_result — invalid outcome', r.id);
       continue;
     }
-    if (resolution !== 'evidence_for' && resolution !== 'confirmed' && resolution !== 'retired') {
+    if (!isProbeResolution(resolution)) {
       console.warn('[reconcile] dropping malformed probe_result — invalid resolution', r.id);
       continue;
     }
@@ -272,9 +272,11 @@ export async function reconcileConjecturePredictions(
     // nextTypedState), so the re-run is a no-op. Writing the anchor FIRST would permanently
     // drop the ledger advance on a partial failure.
     //
-    // (1) typed-ledger cell — probe-resolution write ONLY, FLIP-inert. Phase 0 names no
-    // confused_with KC → §修正-4 gate keeps it soft (no-evidence/open). `mastered` is
-    // structurally unreachable; no FSRS (ND-5); no R(t) into written state.
+    // (1) typed-ledger cell — probe-resolution write ONLY, FLIP-inert. `evidence_for`
+    // intentionally remains `no-evidence`: one within-learner observation is logged and
+    // scored but is not strong enough to mint confused-with-X. Phase 0 names no
+    // confused_with KC → §修正-4 gate also keeps it soft (no-evidence/open). `mastered`
+    // is structurally unreachable; no FSRS (ND-5); no R(t) into written state.
     await upsertFn(db, {
       subject_id: facts.knowledge_id,
       subject_kind: 'knowledge',

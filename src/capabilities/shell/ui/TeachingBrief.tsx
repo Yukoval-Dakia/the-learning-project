@@ -631,14 +631,11 @@ function PreparedBlock({
             : '这道判别题已作答，这条判断已排除。'}
         </p>
         <div className="tb-actions">
-          <Btn
-            size="sm"
-            variant="primary"
-            icon="review"
-            onClick={() => navigate(preliminary ? '/today' : '/practice')}
-          >
-            {preliminary ? '回到今日' : '回到今日练习'}
-          </Btn>
+          {!preliminary && (
+            <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
+              回到今日练习
+            </Btn>
+          )}
           <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>
       </>

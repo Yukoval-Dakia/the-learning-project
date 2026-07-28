@@ -6894,6 +6894,10 @@ button.chip:disabled:hover {
   color: var(--good-ink);
   background: var(--good-soft);
 }
+.pa-verdict-evidence_for {
+  color: var(--again-ink);
+  background: var(--again-soft);
+}
 .pa-verdict-confirmed {
   color: var(--info-ink);
   background: var(--info-soft);

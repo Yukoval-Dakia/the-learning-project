@@ -284,7 +284,8 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expect(html).toContain(brief.current_outcome.summary_md);
     expect(html).toContain('tb-outcome-evidence_for');
     expect(html).toContain('不会据此直接安排专项练习');
-    expect(html).toContain('回到今日');
+    expect(html).toContain('知道了');
+    expect(html).not.toContain('回到今日');
     expect(html).not.toContain('针对这个点练一组');
     expect(html).not.toContain('得到支持');
     expect(html).not.toContain('确证');

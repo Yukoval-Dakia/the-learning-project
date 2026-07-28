@@ -245,7 +245,15 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
                             </Badge>
                           </td>
                           <td style={tdStyle}>
-                            <Badge tone={s.resolution === 'confirmed' ? 'good' : 'neutral'}>
+                            <Badge
+                              tone={
+                                s.resolution === 'confirmed'
+                                  ? 'good'
+                                  : s.resolution === 'evidence_for'
+                                    ? 'again'
+                                    : 'neutral'
+                              }
+                            >
                               {s.resolution}
                             </Badge>
                           </td>

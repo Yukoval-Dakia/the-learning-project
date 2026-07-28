@@ -250,7 +250,7 @@ export interface CanonicalProbeResultFacts {
 /**
  * Single source of truth for "is this a canonical, displayable/acknowledgeable probe
  * outcome". Validates the result EVENT itself: correct action, a question subject, a
- * legal resolution/outcome pair (confirmed↔0 / retired↔1), and self-consistent
+ * legal resolution/outcome pair (evidence_for↔0 / confirmed↔0 / retired↔1), and self-consistent
  * conjecture provenance (payload.conjecture_event_id non-empty and === caused_by).
  * The reader (loadOutcomeBrief) and the ack writer (teaching-brief-ack.ts) both gate on
  * this so a corrupt result can never be projected OR acknowledged — the two paths' notion
@@ -933,7 +933,8 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
         gt(event.created_at, lowerBound),
         lte(event.created_at, now),
         sql`NOT (${event.subject_kind} = 'question'
-          AND ((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
+          AND ((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
+                AND ${event.payload}->>'outcome' = '0')
             OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1')))`,
       ),
     )

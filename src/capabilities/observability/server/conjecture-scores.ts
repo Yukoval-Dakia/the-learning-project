@@ -31,7 +31,7 @@
 // (scoring.ts), NOT the Rust-deferred window mean (ADR-0046) — the response declares this
 // in `score_basis: 'single_point'` so no consumer mistakes it for a window-calibrated score.
 
-import type { ProbeResolution } from '@/core/schema/conjecture';
+import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 import { and, desc, eq } from 'drizzle-orm';
@@ -123,9 +123,7 @@ function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow 
   if (typeof predicted_p !== 'number' || !Number.isFinite(predicted_p)) return null;
   if (typeof baseline_p !== 'number' || !Number.isFinite(baseline_p)) return null;
   if (outcome !== 0 && outcome !== 1) return null;
-  if (resolution !== 'evidence_for' && resolution !== 'confirmed' && resolution !== 'retired') {
-    return null;
-  }
+  if (!isProbeResolution(resolution)) return null;
   const conj = p.conjecture_event_id;
   const probe = p.probe_result_event_id;
   const kc = p.knowledge_id;
