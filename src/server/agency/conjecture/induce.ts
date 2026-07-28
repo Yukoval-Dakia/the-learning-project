@@ -226,6 +226,8 @@ function aggregateDominantDraft(
       draft.claim_md,
       draft.probe_md,
       draft.probe_reference_md,
+      draft.followup_probe_md,
+      draft.followup_probe_reference_md,
       draft.cause_category,
     ]);
     const current = coupled.get(key);
@@ -663,6 +665,8 @@ export async function induceConjecture(
         sample.draft.claim_md === draft.claim_md &&
         sample.draft.probe_md === draft.probe_md &&
         sample.draft.probe_reference_md === draft.probe_reference_md &&
+        sample.draft.followup_probe_md === draft.followup_probe_md &&
+        sample.draft.followup_probe_reference_md === draft.followup_probe_reference_md &&
         sample.draft.cause_category === draft.cause_category,
     )?.task_run_id ?? null;
 

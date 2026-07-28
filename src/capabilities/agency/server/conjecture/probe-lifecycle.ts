@@ -33,8 +33,10 @@
 // brain-roadmap.md U3 + docs/design/2026-06-27-a13-ts-half-design.md §2.2) is a
 // SINGLE outcome event `experimental:probe_result`. There is NO serve event: the
 // "served" state IS the draft question row existing. serveProbeOnce writes ONLY the
-// question row. answerProbe writes exactly ONE probe_result event; the separate
-// judge-claim marker is never folded as probe evidence.
+// question row. answerProbe writes exactly ONE probe_result event; on the first
+// `evidence_for` it also atomically serves the pre-authored second probe so the
+// recurrence gate is reachable in production. The separate judge-claim marker is
+// never folded as probe evidence.
 //
 // Escape-hatch (a13 design §2.2): `experimental:probe_result` is NOT in
 // RESERVED_EXPERIMENTAL_ACTIONS — it validates through the loose generic
@@ -51,8 +53,10 @@ import {
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
+  PROBE_SLOTS_FULL_CODE,
   type ProbeResolution,
 } from '@/core/schema/conjecture';
+import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -78,6 +82,7 @@ export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' a
  * from a transient provider or non-discriminating result.
  */
 export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
+const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
 
 // A fixed key for the transaction-scoped advisory lock that serializes serves.
 // All probe serves contend on this single key so the count-read + insert critical
@@ -103,6 +108,8 @@ export interface ServeProbeOnceParams {
   kind?: string;
   /** Neutral default difficulty (3). */
   difficulty?: number;
+  /** 1 = initial diagnostic, 2 = recurrence-gating follow-up. */
+  probeSequence?: 1 | 2;
   now?: Date;
 }
 
@@ -145,6 +152,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
   const now = params.now ?? new Date();
   const kind = params.kind ?? 'short_answer';
   const difficulty = params.difficulty ?? 3;
+  const probeSequence = params.probeSequence ?? 1;
   const referenceMd = params.referenceMd ?? null;
 
   return db.transaction(async (tx) => {
@@ -179,6 +187,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         draft_status: 'draft',
         metadata: {
           conjecture_proposal_id: conjectureProposalId,
+          probe_sequence: probeSequence,
         },
         created_at: now,
         updated_at: now,
@@ -225,15 +234,11 @@ function parseProbeResultEvent(
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
   if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
-  if (
-    !(
-      ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
-        recordedOutcome === 0) ||
-      (recordedResolution === 'retired' && recordedOutcome === 1)
-    )
-  ) {
-    return null;
-  }
+  const isEvidencePair =
+    (recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
+    recordedOutcome === 0;
+  const isRetiredPair = recordedResolution === 'retired' && recordedOutcome === 1;
+  if (!isEvidencePair && !isRetiredPair) return null;
   return {
     status: recordedResolution,
     outcome: recordedOutcome,
@@ -363,7 +368,9 @@ export async function releaseProbeJudging(
 /**
  * Record the probe outcome as exactly ONE canonical `experimental:probe_result`
  * event (subject_kind='question', subject_id=probeQuestionId, caused_by=the
- * conjecture event id). Writes NOTHING else — no attempt event, no FSRS row (ND-5).
+ * conjecture event id). A first matching observation atomically serves the
+ * proposal's pre-authored follow-up question. It still writes no attempt and no
+ * FSRS row (ND-5).
  *
  * One-shot guard / idempotency (mirrors U2 acceptConjectureProposal): if a
  * probe_result already exists for this question, no second event is written — the
@@ -458,8 +465,12 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           // rows rather than letting them strengthen a different conjecture.
           eq(event.caused_by_event_id, conjectureEventId),
           sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
+          sql`${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')`,
+          sql`${event.payload}->>'outcome' = '0'`,
         ),
-      );
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(MAX_PROBE_HISTORY_FOR_RESOLUTION);
     const priorResults: PriorProbeResult[] = [];
     for (const prior of priorRows) {
       const parsed = parseProbeResultEvent({
@@ -519,6 +530,52 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       ingest_at: now,
       created_at: now,
     });
+
+    if (resolution === 'evidence_for') {
+      const [proposalRow] = await tx
+        .select({ payload: event.payload })
+        .from(event)
+        .where(eq(event.id, conjectureEventId))
+        .limit(1);
+      const proposalEnvelope =
+        proposalRow?.payload !== null &&
+        typeof proposalRow?.payload === 'object' &&
+        !Array.isArray(proposalRow.payload)
+          ? (proposalRow.payload as Record<string, unknown>).ai_proposal
+          : undefined;
+      const parsedProposal = AiProposalPayload.safeParse(proposalEnvelope);
+      const change =
+        parsedProposal.success && parsedProposal.data.kind === 'conjecture'
+          ? parsedProposal.data.proposed_change
+          : null;
+      if (
+        change === null ||
+        change.followup_probe_md === undefined ||
+        change.followup_probe_reference_md === undefined
+      ) {
+        throw new ApiError(
+          'probe_followup_unavailable',
+          `conjecture ${conjectureEventId} has no independently authored follow-up probe`,
+          409,
+        );
+      }
+      const followup = await serveProbeOnce({
+        db: tx,
+        conjectureProposalId: conjectureEventId,
+        knowledgeId: change.knowledge_id,
+        probeMd: change.followup_probe_md,
+        referenceMd: change.followup_probe_reference_md,
+        probeSequence: 2,
+        now,
+      });
+      if (followup.status === 'cap_reached') {
+        throw new ApiError(
+          PROBE_SLOTS_FULL_CODE,
+          `cannot record preliminary evidence: all ${MAX_CONCURRENT_ACTIVE_PROBES} mind-probe slots are active; retry after another probe completes`,
+          409,
+        );
+      }
+    }
 
     return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
   });

@@ -731,9 +731,11 @@ function buildConjectureProposalInput(
         confidence: induced.confidence, // internal sort only — NEVER rendered as a number
         recurrence_count: cell.recurrence_count,
         probe_md: draft.probe_md,
+        followup_probe_md: draft.followup_probe_md,
         // conjecture-wire #13 — single-writer judge gold reference flows draft →
         // proposal change → acceptConjectureProposal → serveProbeOnce.referenceMd.
         probe_reference_md: draft.probe_reference_md,
+        followup_probe_reference_md: draft.followup_probe_reference_md,
         discriminating: draft.discriminating,
         corrected_by_owner: false,
         // A13 (YUK-440): the falsifiable bet + the number it must later beat.

@@ -12,8 +12,9 @@
 //     submit's own code, not inside the invoker (verified: `invoker.ts` has zero
 //     fsrs/attempt/event writes). The invoker is judge-only.
 //   - this route writes a paid-judge claim marker before invoking the model, then
-//     `answerProbe` writes exactly ONE `experimental:probe_result` outcome event.
-//     Neither path writes attempt / FSRS / learner-state rows.
+//     `answerProbe` writes exactly ONE `experimental:probe_result` outcome event
+//     and may serve the pre-authored follow-up question. Neither path writes
+//     attempt / FSRS / learner-state rows.
 //   - the earlier "isolated registry path" (`resolveJudge().run()`) was a
 //     defect (review PR #705 CRITICAL): the base registry's semantic runner is a
 //     profile-validation STUB returning coarse_outcome='unsupported' — so every
@@ -168,8 +169,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // Judge via the standard invoker chokepoint (same path submit.ts uses).
     // `resolveSubjectProfileForKnowledgeIds` always returns a profile (falls back
     // to default on unresolvable knowledge id), so no null guard needed. ND-5
-    // preserved: invoke() is judge-only (zero FSRS/attempt writes); the sole write
-    // on this route is answerProbe's single probe_result event below.
+    // preserved: invoke() is judge-only (zero FSRS/attempt writes); answerProbe owns
+    // the result write and the optional pre-authored follow-up question below.
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
       db,
       probe.knowledge_ids ?? [],

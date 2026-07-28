@@ -25,6 +25,8 @@ describe('ConjectureProposalChange', () => {
     recurrence_count: 2,
     probe_md: '判断条件关系。',
     probe_reference_md: '必要不等于充分。',
+    followup_probe_md: '换一个情境再次判断条件关系。',
+    followup_probe_reference_md: '用新的反例说明必要仍不等于充分。',
     discriminating: true,
     predicted_p: 0.3,
     baseline_p_at_induction: 0.5,
@@ -37,6 +39,27 @@ describe('ConjectureProposalChange', () => {
     expect(ConjectureProposalChange.safeParse({ ...valid, claim_md: ' \n\t ' }).success).toBe(
       false,
     );
+  });
+
+  it('accepts historical no-follow-up payloads but rejects partial or duplicate v2 follow-ups', () => {
+    const {
+      followup_probe_md: _followupPrompt,
+      followup_probe_reference_md: _followupReference,
+      ...historical
+    } = valid;
+    expect(ConjectureProposalChange.safeParse(historical).success).toBe(true);
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...historical,
+        followup_probe_md: '第二题',
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...valid,
+        followup_probe_md: valid.probe_md,
+      }).success,
+    ).toBe(false);
   });
 });
 

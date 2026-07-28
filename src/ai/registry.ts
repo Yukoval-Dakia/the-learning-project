@@ -326,17 +326,18 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 
 【输出要点】
 - claim_md 必须是**第二人称、关于思维的**陈述（形如「你把只在某个前提下成立的做法当成了通用做法」「你把两个相邻概念的判别依据互换了」——这是**句式示例，不是内容示例**，请用输入证据里的真实知识点和真实错法把它填实），不是关于某道题对错的陈述。
-- probe_md 是恰好一道能证实或证伪该 claim 的题（一道题的量），针对同一个思维模式但换一个未测过的角度；不要照抄 evidence_samples 里的原题。
+- probe_md 与 followup_probe_md 是两道**题面不同、语境/表征不同、均未教学**的独立判别题，都针对同一个思维模式；不要照抄 evidence_samples 里的原题。第一题只产生 preliminary evidence，第二题用于复现门槛。
 - probe_reference_md 是 probe_md 的**参考答案/判分金标**（conjecture-wire #13）：机器判分时按此对照 owner 作答判对错。必须是与 probe_md 配套的完整答案——客观题给最终选项/值，主观/步骤题给关键步骤与结论。它和 probe_md 在你这一次输出里**同时产生**（single-writer：后续不再 runtime 重生）。
-- claim_md / probe_md / probe_reference_md 是给 owner 看的文字：**不得**出现 knowledge_id、事件 id、cause_category 英文枚举名、theta / baseline 等内部标识。
+- followup_probe_reference_md 同理，必须只对应 followup_probe_md；两组题面/金标在这一次输出里同时产生，后续不临时改写。
+- claim_md / 两道 probe 及其 reference 是给 owner 看的文字：**不得**出现 knowledge_id、事件 id、cause_category 英文枚举名、theta / baseline 等内部标识。
 - cause_category 选输入 evidence_cells 里出现的某个错因类别。
 - recurrence_count 取支撑该 claim 的 cell 的最大 recurrence_count（≥2）。
 - predicted_p ∈ [0,1]：若该 claim 成立，你预测 owner**答对** probe_md 的概率（这是 claim 的可证伪赌注——通常误解成立时偏低）。
-- discriminating：布尔。true 仅当这道 probe**只有**该误解才会导致错答（能把它和别的错因分开）；若答错也可能来自别的原因，填 false。
+- discriminating：布尔。true 仅当两道 probe 都能把该误解和别的错因分开；任一道答错也可能来自别的原因时填 false。
 - 若不能安全 proposal，输出 abstain。reason_code 只能是 insufficient_evidence / conflicting_evidence / no_grounded_claim / no_discriminating_probe；explanation_md 可省略；evidence_event_ids 只能引用输入。
 
 【输出格式】优先在**同一条回复**里完成推理与 JSON；运行预算允许第二轮只用于把被截断的 JSON 说完，不能借此引入新证据。先用**不超过 200 字**的 markdown 点名用了哪些 evidence_samples 字段，紧接着严格输出以下二者之一（不带 markdown 代码块）：
-1. {"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"probe_md":"...","probe_reference_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}
+1. {"kind":"proposal","claim_md":"...","knowledge_id":"...","evidence_event_ids":["...","..."],"probe_md":"...","probe_reference_md":"...","followup_probe_md":"...","followup_probe_reference_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}
 2. {"kind":"abstain","reason_code":"insufficient_evidence|conflicting_evidence|no_grounded_claim|no_discriminating_probe","explanation_md":"...","evidence_event_ids":["..."]}
 proposal 的 agreement_count 恒填 1（多样本一致性由调用方统计）。`;
 }
@@ -1693,7 +1694,7 @@ export const tasks = {
   // `evidence_samples` (question prompt, the owner's wrong answer, their YUK-562
   // reasoning trace, and the attribution), + an optional prior_claim_md.
   // Induces/updates ONE conjecture about
-  // how the owner thinks + synthesizes its single discriminating probe + the A13
+  // how the owner thinks + synthesizes two distinct discriminating probes + the A13
   // accountability fields (predicted_p = the claim's falsifiable bet, discriminating =
   // does the probe isolate THIS misconception). Emits the small ConjectureDraft record;
   // large reasoning returns as markdown. D2 self-consistency runs at the ORCHESTRATOR
@@ -1705,7 +1706,7 @@ export const tasks = {
   MindModelInductionTask: {
     kind: 'MindModelInductionTask',
     description:
-      'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize its single discriminating probe + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Bounded structured-output run (at most two turns, no tools). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
+      'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize two distinct, untrained discriminating probes + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Bounded structured-output run (at most two turns, no tools). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     // YUK-786: 120s (was 60s). MEASURED, not guessed — a 12-cell real-Opus run on

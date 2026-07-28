@@ -20,14 +20,18 @@
     新事件带 rule version 与参与判定的 probe ids；旧 confirmed 原样 replay。
   - Teaching Brief、即时答题反馈、evidence MCP 与生存报告均区分 preliminary /
     confirmed；n=1 不解锁 KC 专项练习。
+  - 两道独立 probe 由 induction/director 同次预生成；首次 `evidence_for` 与第二题
+    serve 同事务提交，生产路径可真正到达 `confirmed`，旧 proposal 缺第二题时失败关闭。
   - 备课台 discriminating 标签已从绝对断言降为“尝试区分这一猜想的题”。
 - **验证态**
-  - unit：506 files passed / 4 skipped；5788 passed / 33 skipped。
+  - 原提交 unit：506 files passed / 4 skipped；5788 passed / 33 skipped；review
+    follow-up 定向 unit 206/206。
   - 定向 DB：140/140；完整 DB gate 改由 GitHub Actions 判定，本地不再重复跑。
   - migration 26/26；typecheck、lint、build、boundary/API audits 全绿。
   - `audit:projection` 在迁移后的临时 Postgres 上为 0 drift。
 - **在飞**
-  - YUK-787 已完成定向本地验证，待 commit、PR、独立 review 与 GitHub CI gate。
+  - YUK-787 PR #1098 已处理首轮 review；生产 follow-up seam 修复待 push 后重新监听
+    独立 review 与 GitHub CI gate。
   - Product branch/worktree 如上；owner-dirty 主工作树不在本线写入。
 
 ## NEXT

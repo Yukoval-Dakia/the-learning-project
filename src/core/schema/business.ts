@@ -368,8 +368,9 @@ export type VariantVerificationResultT = z.infer<typeof VariantVerificationResul
 //   相乘"), NOT a statement about a single question's right/wrong.
 // - knowledge_id / evidence_event_ids: explicit grounding anchors. The orchestrator
 //   rejects a sample unless these point into the deterministic input cell.
-// - probe_md: exactly ONE untested discriminating probe (one question's worth) that
-//   would confirm or falsify the claim.
+// - probe_md / followup_probe_md: TWO distinct, untrained discriminating probes.
+//   The first matching result is only `evidence_for`; the follow-up supplies the
+//   production recurrence path required before `confirmed`.
 // - cause_category: one of the cause categories present in the input evidence cells
 //   (shared lowercase-id cause vocabulary).
 // - recurrence_count: >= 2 — a conjecture requires >= 2 distinct attempts of evidence
@@ -431,6 +432,8 @@ export const ConjectureProposalDraft = z.object({
   // worked steps the probe prompt itself doesn't. Mirrors reference_md cap on the
   // question table.
   probe_reference_md: z.string().min(1).max(2000),
+  followup_probe_md: z.string().min(1).max(1000),
+  followup_probe_reference_md: z.string().min(1).max(2000),
   cause_category: z.string().min(1).max(120),
   recurrence_count: z.number().int().min(2),
   predicted_p: z.number().min(0).max(1),
@@ -457,10 +460,17 @@ export const ConjectureAbstainDraft = ConjectureModelAbstainDraft.extend({
   reason_code: ConjectureAbstainReason,
 });
 
-export const ConjectureDraft = z.discriminatedUnion('kind', [
-  ConjectureProposalDraft,
-  ConjectureModelAbstainDraft,
-]);
+export const ConjectureDraft = z
+  .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
+  .superRefine((draft, ctx) => {
+    if (draft.kind === 'proposal' && draft.followup_probe_md.trim() === draft.probe_md.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followup_probe_md'],
+        message: 'followup_probe_md must be distinct from probe_md',
+      });
+    }
+  });
 export type ConjectureProposalDraftT = z.infer<typeof ConjectureProposalDraft>;
 export type ConjectureModelAbstainDraftT = z.infer<typeof ConjectureModelAbstainDraft>;
 export type ConjectureAbstainDraftT = z.infer<typeof ConjectureAbstainDraft>;

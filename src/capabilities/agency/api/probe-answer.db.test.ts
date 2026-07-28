@@ -94,6 +94,8 @@ async function seedConjecture(): Promise<string> {
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
         probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
+        followup_probe_md: 'd/dx cos(x^3) = ?',
+        followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
@@ -230,6 +232,21 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       outcome: 0,
       resolution: 'evidence_for',
       answer_md: 'cos(x^2)',
+    });
+    const [initialProbe] = await testDb()
+      .select({ source_ref: question.source_ref })
+      .from(question)
+      .where(eq(question.id, probeId));
+    const followups = (await testDb().select().from(question)).filter(
+      (row) =>
+        row.source_ref === initialProbe.source_ref &&
+        (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: 'd/dx cos(x^3) = ?',
+      reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+      draft_status: 'draft',
     });
     // ND-5 red line — probe answer NEVER enrolls / writes FSRS.
     expect(await fsrsRowCount()).toBe(0);

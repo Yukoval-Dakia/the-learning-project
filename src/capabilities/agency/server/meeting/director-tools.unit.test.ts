@@ -91,6 +91,8 @@ function validProposeArgs(overrides: Record<string, unknown> = {}) {
     claim_md: '你把必要条件当成充分条件',
     probe_md: '给出一个只有该误解才会答错的判别题',
     probe_reference_md: '参考答案：必要不充分的反例',
+    followup_probe_md: '换一个语境，再给出一道区分必要与充分的判别题',
+    followup_probe_reference_md: '参考答案：用新的反例说明充分性不成立',
     predicted_p: 0.3,
     discriminating: true,
     evidence_refs: ['att_1', 'att_2'],

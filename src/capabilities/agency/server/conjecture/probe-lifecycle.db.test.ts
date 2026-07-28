@@ -40,7 +40,9 @@ async function seedKnowledge(): Promise<void> {
     .onConflictDoNothing();
 }
 
-async function seedConjecture(): Promise<string> {
+async function seedConjecture({
+  includeFollowup = true,
+}: { includeFollowup?: boolean } = {}): Promise<string> {
   const db = testDb();
   return writeAiProposal(db, {
     actor_ref: 'research_meeting',
@@ -58,6 +60,12 @@ async function seedConjecture(): Promise<string> {
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
         probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
+        ...(includeFollowup
+          ? {
+              followup_probe_md: 'd/dx cos(x^3) = ?',
+              followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+            }
+          : {}),
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
@@ -88,6 +96,13 @@ async function probeResultEvents(probeQuestionId: string) {
         eq(event.subject_id, probeQuestionId),
       ),
     );
+}
+
+async function probeQuestions(proposalId: string) {
+  return testDb()
+    .select()
+    .from(question)
+    .where(and(eq(question.source, PROBE_QUESTION_SOURCE), eq(question.source_ref, proposalId)));
 }
 
 async function attemptEvents(probeQuestionId: string) {
@@ -230,26 +245,37 @@ describe('probe one-shot lifecycle (U3)', () => {
       .where(eq(material_fsrs_state.subject_id, KC_ID));
     expect(fsrsForKc).toHaveLength(0);
 
-    // Answering frees the active slot.
-    expect(await countActiveProbes(testDb())).toBe(0);
+    // The matching first result atomically replaces its freed slot with the
+    // independently authored follow-up; no dead confirmed rail.
+    expect(await countActiveProbes(testDb())).toBe(1);
+    const followups = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: 'd/dx cos(x^3) = ?',
+      reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+      draft_status: 'draft',
+    });
   });
 
-  it('second independent incorrect probe for the same conjecture becomes confirmed', async () => {
+  it('production follow-up path makes the second independent incorrect probe confirmed', async () => {
     const proposalId = await seedConjecture();
     const firstProbe = await serve(proposalId);
-    const secondProbe = await serve(proposalId);
-    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
-      throw new Error('expected two served probes');
-    }
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
 
     const first = await answerProbe({
       db: testDb(),
       probeQuestionId: firstProbe.probe_question_id,
       outcome: 0,
     });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
     const second = await answerProbe({
       db: testDb(),
-      probeQuestionId: secondProbe.probe_question_id,
+      probeQuestionId: secondProbe.id,
       outcome: 0,
     });
 
@@ -258,13 +284,10 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect((await probeResultEvents(firstProbe.probe_question_id))[0].payload).toMatchObject({
       resolution: 'evidence_for',
     });
-    expect((await probeResultEvents(secondProbe.probe_question_id))[0].payload).toMatchObject({
+    expect((await probeResultEvents(secondProbe.id))[0].payload).toMatchObject({
       resolution: 'confirmed',
       resolution_rule_version: 'within_learner_probe_recurrence_v2',
-      independent_probe_question_ids: [
-        firstProbe.probe_question_id,
-        secondProbe.probe_question_id,
-      ].sort(),
+      independent_probe_question_ids: [firstProbe.probe_question_id, secondProbe.id].sort(),
     });
   });
 
@@ -340,6 +363,22 @@ describe('probe one-shot lifecycle (U3)', () => {
       outcome: 0,
     });
     expect(result.status).toBe('evidence_for');
+  });
+
+  it('fails closed instead of stranding preliminary evidence when a legacy proposal has no follow-up', async () => {
+    const proposalId = await seedConjecture({ includeFollowup: false });
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'probe_followup_unavailable', status: 409 });
+    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
+    expect(await countActiveProbes(testDb())).toBe(1);
   });
 
   it('retire path records resolution=retired', async () => {
@@ -492,7 +531,7 @@ describe('probe one-shot lifecycle (U3)', () => {
     ).rejects.toMatchObject({ code: 'probe_missing_conjecture_ref', status: 409 });
   });
 
-  it('≤3 concurrent cap — 4th serve is cap_reached, answering frees a slot', async () => {
+  it('≤3 concurrent cap — preliminary follow-up keeps its slot while retirement frees one', async () => {
     const ids: string[] = [];
     for (let i = 0; i < MAX_CONCURRENT_ACTIVE_PROBES; i += 1) {
       const proposalId = await seedConjecture();
@@ -515,14 +554,23 @@ describe('probe one-shot lifecycle (U3)', () => {
       .where(eq(question.source, PROBE_QUESTION_SOURCE));
     expect(probeRows).toHaveLength(MAX_CONCURRENT_ACTIVE_PROBES);
 
-    // Answer one → active count drops → a new serve succeeds again.
+    // A first matching result consumes its newly freed slot with the required
+    // follow-up, so ordinary probes cannot starve the recurrence gate.
     await answerProbe({
       db: testDb(),
       probeQuestionId: ids[0],
       outcome: 0,
     });
-    expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
+    expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES);
+    expect((await serve(await seedConjecture())).status).toBe('cap_reached');
 
+    // A retired probe needs no follow-up and genuinely frees a slot.
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: ids[1],
+      outcome: 1,
+    });
+    expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
     const proposal5 = await seedConjecture();
     const reopened = await serve(proposal5);
     expect(reopened.status).toBe('served');

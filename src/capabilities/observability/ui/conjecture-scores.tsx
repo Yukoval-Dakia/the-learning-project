@@ -38,6 +38,14 @@ interface PredictionScoreRow {
   retrievability_at_judge: number | null;
   created_at: string;
 }
+
+function resolutionTone(
+  resolution: PredictionScoreRow['resolution'],
+): 'good' | 'again' | 'neutral' {
+  if (resolution === 'confirmed') return 'good';
+  if (resolution === 'evidence_for') return 'again';
+  return 'neutral';
+}
 interface TypedStateRow {
   id: string;
   knowledge_id: string;
@@ -245,17 +253,7 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
                             </Badge>
                           </td>
                           <td style={tdStyle}>
-                            <Badge
-                              tone={
-                                s.resolution === 'confirmed'
-                                  ? 'good'
-                                  : s.resolution === 'evidence_for'
-                                    ? 'again'
-                                    : 'neutral'
-                              }
-                            >
-                              {s.resolution}
-                            </Badge>
+                            <Badge tone={resolutionTone(s.resolution)}>{s.resolution}</Badge>
                           </td>
                           <td style={tdStyle}>
                             {fmt(s.brier_model)}{' '}

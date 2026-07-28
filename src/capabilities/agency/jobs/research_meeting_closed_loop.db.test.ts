@@ -97,6 +97,9 @@ const PROBE_RESULT_ACTION = 'experimental:probe_result';
 const PROBE_REFERENCE_MD =
   '意动用法：「以…为异」，主语在心里认为宾语「异」。判分金标 GOLD-REF-YUK789-4f21.';
 const PROBE_MD = '「渔人甚异之」中的「异」是使动还是意动？请说明你的判断依据。';
+const FOLLOWUP_PROBE_MD = '「邑人奇之」中的「奇」是什么用法？请用新的语境说明判断依据。';
+const FOLLOWUP_PROBE_REFERENCE_MD =
+  '意动用法：「以…为奇」，主语认为宾语「奇」，不是让宾语发生变化。';
 const CLAIM_MD = '你把「使动用法」和「意动用法」混为一谈——见到宾语前的活用动词就先当使动。';
 
 /** The ConjectureDraft every self-consistency sample returns (unanimous ⇒ no dedup call). */
@@ -107,6 +110,8 @@ const DRAFT = {
   evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
   probe_md: PROBE_MD,
   probe_reference_md: PROBE_REFERENCE_MD,
+  followup_probe_md: FOLLOWUP_PROBE_MD,
+  followup_probe_reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
   cause_category: CAUSE,
   recurrence_count: 3,
   predicted_p: 0.25,
@@ -319,6 +324,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(change.claim_md).toBe(CLAIM_MD);
     expect(change.probe_md).toBe(PROBE_MD);
     expect(change.probe_reference_md).toBe(PROBE_REFERENCE_MD);
+    expect(change.followup_probe_md).toBe(FOLLOWUP_PROBE_MD);
+    expect(change.followup_probe_reference_md).toBe(FOLLOWUP_PROBE_REFERENCE_MD);
     expect(change.knowledge_id).toBe(KC_ID);
     expect(change.cause_category).toBe(CAUSE);
     expect(change.recurrence_count).toBe(3);
@@ -390,6 +397,17 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       conjecture_event_id: proposalId,
       outcome: 0,
       resolution: 'evidence_for',
+    });
+    const followups = (await db.select().from(question)).filter(
+      (row) =>
+        row.source_ref === proposalId &&
+        (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: FOLLOWUP_PROBE_MD,
+      reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
+      draft_status: 'draft',
     });
 
     // ── 4. RECONCILE (real) — runs INSIDE the next nightly, as in production ──

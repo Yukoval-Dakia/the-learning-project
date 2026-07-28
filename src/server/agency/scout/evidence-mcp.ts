@@ -118,7 +118,12 @@ function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown 
   }
   const p = payload as Record<string, unknown>;
   let evidenceStrength: string;
-  if (p.resolution === 'evidence_for') {
+  const canonicalPair =
+    (p.outcome === 0 && (p.resolution === 'evidence_for' || p.resolution === 'confirmed')) ||
+    (p.outcome === 1 && p.resolution === 'retired');
+  if (!canonicalPair) {
+    evidenceStrength = 'unclassified';
+  } else if (p.resolution === 'evidence_for') {
     evidenceStrength = 'single_observation';
   } else if (
     p.resolution === 'confirmed' &&

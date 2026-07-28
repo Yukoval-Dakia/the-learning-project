@@ -21658,6 +21658,8 @@ export interface operations {
                       /** @default false */
                       corrected_by_owner: boolean;
                       discriminating: boolean;
+                      followup_probe_md?: string;
+                      followup_probe_reference_md?: string;
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;
@@ -22306,6 +22308,8 @@ export interface operations {
                       /** @default false */
                       corrected_by_owner: boolean;
                       discriminating: boolean;
+                      followup_probe_md?: string;
+                      followup_probe_reference_md?: string;
                       knowledge_id: string;
                       predicted_p: number;
                       probe_md: string;

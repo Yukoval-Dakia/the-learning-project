@@ -343,6 +343,44 @@ describe('get_probe_history', () => {
     });
   });
 
+  it('marks non-canonical outcome/resolution pairs unclassified', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_bad_retired', ['k1']);
+    await seedProbeQuestion('q_bad_confirmed', ['k1']);
+    const badRetired = probeResultRow(
+      'pr_bad_retired',
+      'q_bad_retired',
+      'wrong',
+      new Date(NOW.getTime() + 1000),
+      'retired',
+    );
+    badRetired.payload.outcome = 0;
+    const badConfirmed = probeResultRow(
+      'pr_bad_confirmed',
+      'q_bad_confirmed',
+      'right',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    badConfirmed.payload.outcome = 1;
+    await db.insert(event).values([badRetired, badConfirmed]);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const strengths = Object.fromEntries(
+      (
+        out.probes as Array<{
+          event_id: string;
+          payload: { evidence_strength: string };
+        }>
+      ).map((row) => [row.event_id, row.payload.evidence_strength]),
+    );
+    expect(strengths).toEqual({
+      pr_bad_confirmed: 'unclassified',
+      pr_bad_retired: 'unclassified',
+    });
+  });
+
   it('merges both actions newest-first under ONE shared row cap', async () => {
     const db = testDb();
     await seedProbeQuestion('q_probe_k1', ['k1']);

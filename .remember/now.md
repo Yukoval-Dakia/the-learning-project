@@ -20,17 +20,20 @@
 5. evidence MCP 输出 `single_observation` / `independent_recurrence` /
    `legacy_confirmed_unverified` / `counterevidence`，防止下游自我强化。
 6. discriminating UI 文案从绝对断言降为“尝试区分这一猜想的题”。
+7. review 揭示第二题原本只有测试 caller；现由 induction/director 预生成两道不同题，
+   首次 `evidence_for` 原子 serve 第二题，旧 proposal 缺第二题则失败关闭。
 
 ## 已验证
 
-- unit：506 files passed / 4 skipped；5788 passed / 33 skipped。
+- 原提交 unit：506 files passed / 4 skipped；5788 passed / 33 skipped；review
+  follow-up 定向 unit 206/206。
 - 定向 DB 140/140；完整 DB gate 按 owner 指示改由 GitHub Actions 判定，本地不再重复跑。
 - migration 26/26；typecheck、lint、build、boundary / API contract audits 全绿。
 - `audit:projection` 在迁移后的临时 Postgres 上 0 drift。
 
 ## 下一步
 
-1. commit/push YUK-787，开 PR，监听 GitHub Actions，完成独立 review + CI 后合并
-   并对齐 Linear。
+1. push PR #1098 的 production follow-up seam 修复，监听 GitHub Actions，完成独立
+   review + CI 后合并并对齐 Linear。
 2. YUK-787 合并后才启动 YUK-795 prediction_score / hard-confirm 问责轨。
 3. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
