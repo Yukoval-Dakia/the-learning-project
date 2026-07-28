@@ -30,6 +30,7 @@ import type {
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import {
+  CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
   type ConjectureAbstainReasonT,
   ConjectureDraft,
@@ -118,6 +119,8 @@ export type InduceConjectureResult =
 
 /** Confidence ceiling when ALL evidence is agent-judge (no owner corroboration). */
 export const JUDGE_ONLY_CONFIDENCE_CAP = 0.5;
+/** A grounded proposal needs recurrence, not one isolated attempt. */
+export const MIN_GROUNDED_PROPOSAL_EVIDENCE = 2;
 
 interface GroundedProposalSample {
   draft: ConjectureProposalDraftT;
@@ -262,7 +265,7 @@ function normalizeGroundedProposal(
   const allowedEvidenceIds = new Set(groundedEvidenceEventIds(cell));
   const evidenceEventIds = [...new Set(draft.evidence_event_ids)];
   if (
-    evidenceEventIds.length < 2 ||
+    evidenceEventIds.length < MIN_GROUNDED_PROPOSAL_EVIDENCE ||
     evidenceEventIds.some((eventId) => !allowedEvidenceIds.has(eventId))
   ) {
     return null;
@@ -331,7 +334,7 @@ function chooseAbstainDraft(params: {
   ]
     .filter((value): value is string => Boolean(value))
     .join(' ')
-    .slice(0, 500);
+    .slice(0, CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH);
   const explanation = explanationFor(reason) ?? (fallbackExplanation || undefined);
 
   return {

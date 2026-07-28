@@ -438,10 +438,17 @@ export const ConjectureProposalDraft = z.object({
   agreement_count: z.number().int().min(1).default(1),
 });
 
+export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
+
 export const ConjectureModelAbstainDraft = z.object({
   kind: z.literal('abstain'),
   reason_code: ConjectureModelAbstainReason,
-  explanation_md: z.string().trim().min(1).max(500).optional(),
+  explanation_md: z
+    .string()
+    .trim()
+    .min(1)
+    .max(CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH)
+    .optional(),
   evidence_event_ids: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
 });
 
