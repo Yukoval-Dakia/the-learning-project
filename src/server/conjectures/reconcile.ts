@@ -521,7 +521,11 @@ export async function reconcileConjecturePredictions(
         ...(deps.executionId ? { research_meeting_execution_id: deps.executionId } : {}),
       },
       caused_by_event_id: pr.probe_result_event_id,
-      created_at: now,
+      // Preserve the source evidence chronology. A nightly batch can reconcile
+      // several older probe results at one wall-clock instant; stamping all anchors
+      // with `now` would make the accountability fold break ties by opaque ids and
+      // could invert the latest hit/miss streak.
+      created_at: pr.created_at,
       // Opt OUT of the memory-ingestion outbox (ADR-0021): a system-derived scoring
       // event is NOT user activity and must not become a Mem0 memory. A non-NULL ingest_at
       // stamp opts the row out of the `WHERE ingest_at IS NULL` poller — mirrors the

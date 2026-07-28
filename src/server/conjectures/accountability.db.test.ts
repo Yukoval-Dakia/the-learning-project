@@ -116,6 +116,15 @@ async function writeProbeResult(
 describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
   beforeEach(resetDb);
 
+  it('fails loudly when two output keys alias the same conjecture identity', async () => {
+    const target = cell('concept::kc_collision', 2);
+    const alias = { ...target, key: 'unexpected_alias' };
+
+    await expect(loadPredictionAccountabilityByKey(testDb(), [target, alias])).rejects.toThrow(
+      'Duplicate conjecture identity target concept × kc_collision',
+    );
+  });
+
   it('turns repeated prediction misses into an observable candidate downweight', async () => {
     const target = cell('concept::kc_high', 4);
     const neutral = cell('method::kc_neutral', 2);

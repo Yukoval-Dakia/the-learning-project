@@ -102,8 +102,36 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(ev.subject_kind).toBe('event');
     expect(ev.subject_id).toBe('pr_1');
     expect(ev.caused_by_event_id).toBe('pr_1');
+    expect(ev.created_at).toEqual(new Date('2026-06-26T10:00:00Z'));
+    expect(ev.ingest_at).toEqual(new Date('2026-06-27T00:00:00Z'));
     // NOT an attempt — envelope outcome must never carry a 0|1 like a graded answer.
     expect(ev.outcome ?? null).toBeNull();
+  });
+
+  it('preserves source chronology when multiple older probes reconcile in one batch', async () => {
+    const { deps, events } = baseDeps({
+      listUnscoredProbeResultsFn: vi.fn(async () => [
+        probe({
+          probe_result_event_id: 'pr_old',
+          created_at: new Date('2026-06-25T10:00:00Z'),
+        }),
+        probe({
+          probe_result_event_id: 'pr_new',
+          created_at: new Date('2026-06-26T10:00:00Z'),
+        }),
+      ]),
+    });
+
+    await reconcileConjecturePredictions(DB, deps);
+
+    expect(events.map((event) => event.created_at?.toISOString())).toEqual([
+      '2026-06-25T10:00:00.000Z',
+      '2026-06-26T10:00:00.000Z',
+    ]);
+    expect(events.map((event) => event.ingest_at?.toISOString())).toEqual([
+      '2026-06-27T00:00:00.000Z',
+      '2026-06-27T00:00:00.000Z',
+    ]);
   });
 
   it('prediction_score payload carries the proper-scoring breakdown (predicted 0.3, baseline 0.7, outcome 0)', async () => {

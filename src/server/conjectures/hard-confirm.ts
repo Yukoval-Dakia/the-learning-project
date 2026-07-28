@@ -383,6 +383,12 @@ export interface ConjectureIdentityTarget {
   knowledgeId: string;
 }
 
+const MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY = 500;
+
+function conjectureIdentityKey(causeCategory: string, knowledgeId: string): string {
+  return `${causeCategory}\u0000${knowledgeId}`;
+}
+
 /**
  * Recover the misconception IDENTITY (cause_category × knowledge_id) for each backing conjecture
  * (read-only JOIN, ZERO writes). A `prediction_score` payload carries `conjecture_event_id`
@@ -461,25 +467,49 @@ export async function gatherDissociationRecordsByIdentity(
   targets: readonly ConjectureIdentityTarget[],
 ): Promise<Map<string, DissociationRecord[]>> {
   const out = new Map<string, DissociationRecord[]>();
-  for (const target of targets) out.set(target.key, []);
+  const targetKeyByIdentity = new Map<string, string>();
+  const identityByTargetKey = new Map<string, string>();
+  for (const target of targets) {
+    const identity = conjectureIdentityKey(target.causeCategory, target.knowledgeId);
+    const priorKey = targetKeyByIdentity.get(identity);
+    if (priorKey !== undefined && priorKey !== target.key) {
+      throw new Error(
+        `Duplicate conjecture identity target ${target.causeCategory} × ${target.knowledgeId}`,
+      );
+    }
+    const priorIdentity = identityByTargetKey.get(target.key);
+    if (priorIdentity !== undefined && priorIdentity !== identity) {
+      throw new Error(`Accountability target key ${target.key} maps to multiple identities`);
+    }
+    targetKeyByIdentity.set(identity, target.key);
+    identityByTargetKey.set(target.key, identity);
+    out.set(target.key, []);
+  }
   if (targets.length === 0) return out;
   const knowledgeIds = [...new Set(targets.map((target) => target.knowledgeId))];
-  const targetKeyByIdentity = new Map(
-    targets.map((target) => [`${target.causeCategory}\u0000${target.knowledgeId}`, target.key]),
-  );
-  const rows = await db
-    .select({ id: event.id, payload: event.payload, created_at: event.created_at })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, PREDICTION_SCORE_ACTION),
-        sql`${event.payload}->>'knowledge_id' IN (${sql.join(
-          knowledgeIds.map((knowledgeId) => sql`${knowledgeId}`),
-          sql`, `,
-        )})`,
-      ),
-    )
-    .orderBy(event.created_at);
+  const rows: Array<{ id: string; payload: unknown; created_at: Date }> = [];
+  for (
+    let offset = 0;
+    offset < knowledgeIds.length;
+    offset += MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY
+  ) {
+    const chunk = knowledgeIds.slice(offset, offset + MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY);
+    const chunkRows = await db
+      .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PREDICTION_SCORE_ACTION),
+          sql`${event.payload}->>'knowledge_id' IN (${sql.join(
+            chunk.map((knowledgeId) => sql`${knowledgeId}`),
+            sql`, `,
+          )})`,
+        ),
+      )
+      .orderBy(event.created_at, event.id);
+    rows.push(...chunkRows);
+  }
+  rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
   const scoreStatuses = await getEffectiveProbeResultStatuses(
     db,
     rows.flatMap((row) => {
@@ -518,7 +548,7 @@ export async function gatherDissociationRecordsByIdentity(
     // the SQL kc pre-filter, Finding-3). Never trust the score payload's own knowledge_id here.
     if (identity === null) continue;
     const targetKey = targetKeyByIdentity.get(
-      `${identity.cause_category}\u0000${identity.knowledge_id}`,
+      conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
     );
     if (!targetKey) continue;
     const rec = predictionScoreToRecord(r.id, r.created_at, payload);
@@ -531,7 +561,7 @@ export async function gatherDissociationEvidence(
   db: Db,
   params: { knowledgeId: string; causeCategory: string },
 ): Promise<DissociationEvidence> {
-  const key = `${params.causeCategory}\u0000${params.knowledgeId}`;
+  const key = conjectureIdentityKey(params.causeCategory, params.knowledgeId);
   const records = await gatherDissociationRecordsByIdentity(db, [
     {
       key,
