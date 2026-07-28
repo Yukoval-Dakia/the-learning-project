@@ -395,6 +395,32 @@ export interface ConjectureIdentityTarget {
   knowledgeId: string;
 }
 
+interface ProbeResultSource {
+  questionId: string;
+  createdAt: Date;
+  causedByEventId: string | null;
+  payload: Record<string, unknown> | null;
+}
+
+function anchorMatchesProbeResult(
+  anchorPayload: Record<string, unknown> | null,
+  source: ProbeResultSource | undefined,
+): boolean {
+  if (!source) return false;
+  const conjectureEventId = anchorPayload?.conjecture_event_id;
+  if (
+    typeof conjectureEventId !== 'string' ||
+    source.causedByEventId !== conjectureEventId ||
+    source.payload?.conjecture_event_id !== conjectureEventId ||
+    source.payload?.outcome !== anchorPayload?.outcome ||
+    source.payload?.resolution !== anchorPayload?.resolution
+  ) {
+    return false;
+  }
+  const anchorQuestionId = anchorPayload?.probe_question_id;
+  return anchorQuestionId === undefined || anchorQuestionId === source.questionId;
+}
+
 function conjectureIdentityKey(causeCategory: string, knowledgeId: string): string {
   return `${causeCategory}\u0000${knowledgeId}`;
 }
@@ -557,7 +583,13 @@ export async function gatherDissociationRecordsByIdentity(
     Promise.all(
       probeResultChunks.map((chunk) =>
         db
-          .select({ id: event.id, question_id: event.subject_id, created_at: event.created_at })
+          .select({
+            id: event.id,
+            question_id: event.subject_id,
+            caused_by_event_id: event.caused_by_event_id,
+            payload: event.payload,
+            created_at: event.created_at,
+          })
           .from(event)
           .where(
             and(
@@ -570,11 +602,21 @@ export async function gatherDissociationRecordsByIdentity(
     ),
   ]);
   const scoreStatuses = new Map(statusChunks.flatMap((statusMap) => [...statusMap.entries()]));
-  const sourceCreatedAtById = new Map(
-    sourceTimeChunks.flatMap((chunk) => chunk.map((row) => [row.id, row.created_at] as const)),
-  );
-  const sourceQuestionIdById = new Map(
-    sourceTimeChunks.flatMap((chunk) => chunk.map((row) => [row.id, row.question_id] as const)),
+  const sourceById = new Map(
+    sourceTimeChunks.flatMap((chunk) =>
+      chunk.map(
+        (row) =>
+          [
+            row.id,
+            {
+              questionId: row.question_id,
+              createdAt: row.created_at,
+              causedByEventId: row.caused_by_event_id,
+              payload: row.payload as Record<string, unknown> | null,
+            },
+          ] as const,
+      ),
+    ),
   );
 
   // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
@@ -599,6 +641,7 @@ export async function gatherDissociationRecordsByIdentity(
     if (
       typeof probeResultEventId !== 'string' ||
       scoreStatuses.get(probeResultEventId) !== 'active' ||
+      !anchorMatchesProbeResult(payload, sourceById.get(probeResultEventId)) ||
       payload?.resolution !== 'confirmed'
     ) {
       continue;
@@ -622,7 +665,7 @@ export async function gatherDissociationRecordsByIdentity(
       (id): id is string => typeof id === 'string' && id.length > 0,
     );
     if (new Set(validIds).size < 2) continue;
-    const confirmationTime = sourceCreatedAtById.get(probeResultEventId) ?? r.created_at;
+    const confirmationTime = sourceById.get(probeResultEventId)?.createdAt ?? r.created_at;
     const confirmationTimes =
       confirmationTimeByConjectureAndQuestion.get(conjectureEventId) ?? new Map<string, Date>();
     for (const questionId of validIds) {
@@ -643,7 +686,11 @@ export async function gatherDissociationRecordsByIdentity(
     // Fail closed on legacy/unattributable scores: without a source probe-result id
     // there is no way to fold later corrections or recurrence dependencies. Such a
     // row remains in the audit log but cannot contribute to hard-confirm evidence.
-    if (typeof probeResultEventId !== 'string' || sourceStatus !== 'active') {
+    if (
+      typeof probeResultEventId !== 'string' ||
+      sourceStatus !== 'active' ||
+      !anchorMatchesProbeResult(payload, sourceById.get(probeResultEventId))
+    ) {
       continue;
     }
     const cid = payload?.conjecture_event_id;
@@ -670,9 +717,9 @@ export async function gatherDissociationRecordsByIdentity(
       // Legacy score anchors used the nightly batch time. Always prefer the
       // backing probe-result timestamp so old and new histories share the same
       // evidence chronology without rewriting immutable events.
-      sourceCreatedAtById.get(probeResultEventId) ?? r.created_at,
+      sourceById.get(probeResultEventId)?.createdAt ?? r.created_at,
       payload,
-      sourceQuestionIdById.get(probeResultEventId),
+      sourceById.get(probeResultEventId)?.questionId,
     );
     if (parsed) {
       const confirmationTime =

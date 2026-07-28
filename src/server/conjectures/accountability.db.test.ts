@@ -78,7 +78,7 @@ async function writeScore(
   const questionId = `question_${id}`;
   const resolution = options.resolution ?? (outcome === 0 ? 'evidence_for' : 'retired');
   await writeProbeQuestion(questionId, conjectureId, cellValue.knowledge_id, 1, minute);
-  await writeProbeResult(probeResultId, conjectureId, questionId, minute, resolution);
+  await writeProbeResult(probeResultId, conjectureId, questionId, minute, resolution, outcome);
   await testDb()
     .insert(event)
     .values({
@@ -143,6 +143,7 @@ async function writeProbeResult(
   questionId: string,
   minute: number,
   resolution: 'evidence_for' | 'confirmed' | 'retired' = 'evidence_for',
+  outcome: 0 | 1 = resolution === 'retired' ? 1 : 0,
 ): Promise<void> {
   await testDb()
     .insert(event)
@@ -155,7 +156,7 @@ async function writeProbeResult(
       subject_id: questionId,
       payload: {
         conjecture_event_id: conjectureId,
-        outcome: 0,
+        outcome,
         resolution,
       },
       caused_by_event_id: conjectureId,
@@ -231,6 +232,45 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     });
   });
 
+  it('rejects a score anchor that borrows an active result from another conjecture', async () => {
+    const sourceTarget = cell('concept::kc_source', 2);
+    const forgedTarget = cell('method::kc_forged', 2);
+    await writeConjecture('conjecture_source', sourceTarget, 1);
+    await writeConjecture('conjecture_forged', forgedTarget, 2);
+    await writeScore('score_source', 'conjecture_source', sourceTarget, 0, 1);
+
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'score_forged_anchor',
+        actor_kind: 'system',
+        actor_ref: 'research_meeting',
+        action: 'experimental:prediction_score',
+        subject_kind: 'event',
+        subject_id: 'result_score_source',
+        payload: {
+          conjecture_event_id: 'conjecture_forged',
+          probe_result_event_id: 'result_score_source',
+          probe_question_id: 'question_forged',
+          knowledge_id: forgedTarget.knowledge_id,
+          predicted_p: 0.2,
+          baseline_p: 0.8,
+          outcome: 0,
+          resolution: 'evidence_for',
+          discriminating: true,
+          context: 'forged',
+        },
+        created_at: new Date('2026-07-28T11:02:00.000Z'),
+      });
+
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [forgedTarget]);
+    expect(profiles.get(forgedTarget.key)).toMatchObject({
+      state: 'watch',
+      consecutive_count: 0,
+      score_event_ids: [],
+    });
+  });
+
   it('turns repeated prediction misses into an observable candidate downweight', async () => {
     const target = cell('concept::kc_high', 4);
     const neutral = cell('method::kc_neutral', 2);
@@ -278,7 +318,7 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
 
   it.each([
     ['reference', { reference_md: 'edited reference' }],
-    ['choices', { choices_md: ['A', 'B'] }],
+    ['choices', { choices_md: ['A', 'B'] as string[] }],
     ['kind', { kind: 'choice' }],
   ] as const)(
     'drops anchored direct evidence after its %s grading contract changes',
