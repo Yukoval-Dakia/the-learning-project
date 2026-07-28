@@ -1,4 +1,4 @@
-// YUK-440 (A13) U8 — the prediction-grounding RECONCILE loop = the A13 dark-loop
+// YUK-440 (A13) U8 — the prediction-grounding RECONCILE loop
 // CONSUMER (U3 serveProbeOnce/answerProbe is the producer). It closes the
 // collect→power loop the roadmap §5 dark-loop tripwire requires: without this,
 // probe outcomes accumulate but no prediction_score ever lands and the typed-ledger
@@ -11,14 +11,16 @@
 //   2. scorePrediction(predicted_p, baseline_p_at_induction, outcome) — a PROPER-SCORING
 //      comparison (stub; Rust-owned bit-exact later, ADR-0046);
 //   3. upsertKcTypedState — advance the typed-ledger cell, probe-resolution write ONLY,
-//      FLIP-inert (written FIRST so the anchor in step 4 implies the ledger advanced);
+//      still soft/structural (written FIRST so the anchor in step 4 implies it advanced);
 //   4. append a deterministic idempotency anchor LAST:
 //      - sequence 1 → `experimental:prediction_score` with the proper score;
 //      - sequence 2 → score-free `experimental:probe_result_projected`.
 //
-// THREE FLIP-INERT RED-LINES (the whole point — defer-flip-not-build):
-//   - scorePrediction LOGS; the claim-survival FLIP (score → flip `mastered`/label) is
-//     Rust-owned + DEFERRED (ADR-0046). This loop never moves a label.
+// YUK-795 closes the former observation-only gap: prediction_score is consumed by the
+// nightly cause×KC accountability ranker. Repeated misses downweight future
+// conjecture selection and repeated hits boost it. Remaining red lines:
+//   - accountability only reorders conjecture candidates. It never flips mastery,
+//     typed-state labels, or FSRS; Rust-owned numeric windows remain deferred.
 //   - Phase 0 supplies NO `confused_with` KC (the conjecture names none) → the §修正-4
 //     gate keeps every cell SOFT (`no-evidence`/`open`). `mastered` is structurally
 //     unreachable here (upsertKcTypedState never produces it).
@@ -58,7 +60,7 @@ import {
 } from '@/server/conjectures/typed-state';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
-/** Canonical LOG-only score event — loose escape hatch, NEVER reserved. */
+/** Canonical score fact consumed by the YUK-795 accountability ranker. */
 export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 /** Score-free sequence-2 projection anchor; never represents a calibrated prediction. */
 export const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
@@ -86,6 +88,7 @@ function probeResultProjectedEventId(probeResultEventId: string): string {
 /** One resolved probe outcome to project (and, only for sequence 1, score). */
 export interface UnscoredProbeResult {
   probe_result_event_id: string;
+  probe_question_id: string;
   /** = the conjecture proposal event id (probe_result payload.conjecture_event_id). */
   conjecture_event_id: string;
   outcome: 0 | 1;
@@ -100,7 +103,7 @@ export interface UnscoredProbeResult {
 
 // The reconcile loop issues kc_typed_state writes typed DIRECTLY against the real
 // UpsertKcTypedStateInput (imported above) — no local re-declaration — so the call site stays
-// compile-time-linked to the writer's contract as it evolves. The FLIP-inert red-line
+// compile-time-linked to the writer's contract as it evolves. The typed-state boundary
 // (`confused_with_kc_id: null` → soft cell, never `mastered`, no R(t) into written state) is
 // enforced by the values reconcile supplies + the runtime test assertions, not by the type shape.
 
@@ -315,6 +318,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
   const rows = await db
     .select({
       id: event.id,
+      probe_question_id: event.subject_id,
       payload: event.payload,
       created_at: event.created_at,
       probe_metadata: question.metadata,
@@ -371,6 +375,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     const rt = p?.retrievability_at_judge;
     out.push({
       probe_result_event_id: r.id,
+      probe_question_id: r.probe_question_id,
       conjecture_event_id: conjectureEventId,
       outcome,
       resolution,
@@ -391,7 +396,8 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
  * scored against its conjecture prediction; sequence 2 is not. Append the corresponding
  * deterministic anchor LAST (so "anchored ⟹ ledgered" — a partial failure re-processes next
  * run, never drops the ledger advance). Idempotent, append-only,
- * FLIP-inert. A dangling / malformed / non-conjecture / unreadable conjecture ref is SKIPPED
+ * typed-state-inert. The score itself is live input to the YUK-795 ranker. A dangling /
+ * malformed / non-conjecture / unreadable conjecture ref is SKIPPED
  * (counted), never thrown — a single bad row must not abort the nightly run (which also
  * gates the propose half). Write faults DO propagate so pg-boss retries (self-healing).
  */
@@ -458,7 +464,7 @@ export async function reconcileConjecturePredictions(
     // nextTypedState), so the re-run is a no-op. Writing the anchor FIRST would permanently
     // drop the ledger advance on a partial failure.
     //
-    // (1) typed-ledger cell — probe-resolution write ONLY, FLIP-inert. `evidence_for`
+    // (1) typed-ledger cell — probe-resolution write ONLY, still soft. `evidence_for`
     // intentionally remains `no-evidence`: one within-learner observation is logged and
     // scored but is not strong enough to mint confused-with-X. Phase 0 names no
     // confused_with KC → §修正-4 gate also keeps it soft (no-evidence/open). `mastered`
@@ -491,9 +497,15 @@ export async function reconcileConjecturePredictions(
       payload: {
         conjecture_event_id: pr.conjecture_event_id,
         probe_result_event_id: pr.probe_result_event_id,
+        probe_question_id: pr.probe_question_id,
         knowledge_id: facts.knowledge_id,
         outcome: pr.outcome,
         resolution: pr.resolution,
+        discriminating: facts.discriminating,
+        // The two authored probes are different representations, so their
+        // immutable question ids are honest context identities. Do not stamp
+        // m_diagnostic here: only an explicit target-error Judge may supply it.
+        context: pr.probe_question_id,
         ...(score
           ? {
               predicted_p: facts.predicted_p,
@@ -510,7 +522,7 @@ export async function reconcileConjecturePredictions(
       },
       caused_by_event_id: pr.probe_result_event_id,
       created_at: now,
-      // Opt OUT of the memory-ingestion outbox (ADR-0021): a system-derived LOG-only scoring
+      // Opt OUT of the memory-ingestion outbox (ADR-0021): a system-derived scoring
       // event is NOT user activity and must not become a Mem0 memory. A non-NULL ingest_at
       // stamp opts the row out of the `WHERE ingest_at IS NULL` poller — mirrors the
       // state_snapshot / genesis / artifact-lifecycle system events.

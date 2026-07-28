@@ -1,9 +1,10 @@
 // ADR-0046: proper-scoring = Rust-first single-source-of-truth. This TS is a PLACEHOLDER
 // stub — bit-exact replacement lands with the Rust calibration kernel
 // (crates/calibration-native). Pure 3-scalar → 4-scalar, no DB / no cohort = structurally
-// n=1-safe (DROP-7 clean). The window-aggregate "beats baseline" + the claim-survival FLIP
-// are ALSO Rust-owned + deferred — this single-point stub LOGS a comparison, it NEVER
-// moves a label/number.
+// n=1-safe (DROP-7 clean). The window-aggregate "beats baseline" remains Rust-owned
+// + deferred. YUK-795 now consumes the sign of this single-point score in a named
+// two-observation ordinal streak rule for conjecture ranking; it still never moves
+// mastery, typed-state, or FSRS.
 
 export interface PredictionScore {
   /** (predicted − outcome)² — the model's Brier loss for this single probe. */
@@ -29,7 +30,8 @@ function clamp01(x: number): number {
  * baseline_p. `outcome` is 1 (answered correctly) or 0 (wrong). All outputs are
  * single-point; the HONEST "beats baseline" is the window mean
  * `1 − mean(BS_model)/mean(BS_baseline)` — Rust-owned + DEFERRED (ADR-0046). The reconcile
- * loop only appends these to a prediction_score event; it never flips a typed_state label.
+ * loop appends these to a prediction_score event; the accountability reader consumes
+ * their sign for conjecture ordering but never flips a typed_state label.
  */
 export function scorePrediction(
   predicted: number,

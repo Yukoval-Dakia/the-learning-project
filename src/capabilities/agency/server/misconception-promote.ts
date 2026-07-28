@@ -78,13 +78,14 @@ export function misconceptionPromoteEnabled(): boolean {
 }
 
 /**
- * Dark-ship flag for the HARD-confirm track (source: 'soft'→'hard' upgrade). Default OFF,
+ * Kill switch for the HARD-confirm track (source: 'soft'→'hard' upgrade). Default OFF,
  * mirrors misconceptionPromoteEnabled (read per-call so each of the three processes sees it
  * via its own env). When OFF, decideDissociation (hard-confirm.ts) is STRUCTURALLY unable to
  * return HARD_CONFIRM, so no evidence-driven hard upgrade can ever fire. This flag only makes
  * the hard track REACHABLE; a soft→hard flip additionally forces a FRESH owner confirmation at
- * the call site — it is never automatic. Nothing wires this into the live accept path yet
- * (Tier 1 ships the track dark, per design 2026-07-01-misconception-promote-mechanism.md §2).
+ * the command call site — it is never automatic. YUK-795's nightly accountability reader calls
+ * the Tier-1 decision with ownerFreshlyConfirmed=false, so it can consume INSUFFICIENT/EMERGING
+ * for ranking but can never perform the protected mutation.
  */
 export function misconceptionHardConfirmEnabled(): boolean {
   return parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED);
@@ -190,7 +191,8 @@ export interface PromoteConjectureInput {
    * Which track this promotion writes. 'soft' (default) = an AI prior the owner agreed with —
    * the ONLY value the live accept path passes. 'hard' = an evidence-confirmed weakness,
    * reachable only when the caller holds a decideDissociation()==='HARD_CONFIRM' verdict AND a
-   * fresh owner confirmation (hard-confirm.ts, dark). The F1 conflict guard makes 'soft' NEVER
+   * fresh owner confirmation. The nightly accountability caller always passes fresh=false and
+   * therefore cannot mutate this track. The F1 conflict guard makes 'soft' NEVER
    * downgrade an existing 'hard' row.
    */
   source?: 'hard' | 'soft';

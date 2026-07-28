@@ -5,9 +5,10 @@
 // producer. Read (a) is live; read (b) is NOT — see the ADR-0050 correction below.
 //
 // TWO READS (A4):
-//   (a) prediction_score events — LOG-only calibration anchors (brier / log_loss /
+//   (a) prediction_score events — calibration/accountability facts (brier / log_loss /
 //       skill_score_point single-point, NOT a window mean; never «accuracy»). LIVE: the
-//       reconcile loop appends one per scored probe.
+//       reconcile loop appends one per scored probe and YUK-795's nightly ranker consumes
+//       correction-aware score streaks.
 //   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track cell.
 //       **RAIL PENDING ENERGIZATION (YUK-794) — read (b) returns the empty set until it lands.**
 //
@@ -37,7 +38,7 @@ import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 import { and, desc, eq } from 'drizzle-orm';
 
-/** One LOG-only calibration score row (mapped from an experimental:prediction_score event). */
+/** One calibration/accountability score row (mapped from prediction_score). */
 export interface ConjecturePredictionScoreRow {
   event_id: string;
   conjecture_event_id: string;

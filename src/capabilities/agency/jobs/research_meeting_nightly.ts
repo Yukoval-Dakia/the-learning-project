@@ -13,7 +13,8 @@
 //   1. (PRE-LLM, retryable) read recent failures (with their YUK-562 reasoning
 //      traces) + per-KC mastery projection + the set of cause×KC keys that
 //      already have a PENDING conjecture (dedup);
-//   2. deterministic 取证 (gatherConjectureEvidence) → salience-sorted cells;
+//   2. deterministic 取证 (gatherConjectureEvidence) → prediction-accountability
+//      re-rank (repeated within-owner misses downweight; repeated hits boost);
 //   3. (PRE-LLM, retryable) GROUND cells in salience-order batches until K usable
 //      cells are found or candidates are exhausted (enrichEvidenceCells, YUK-786):
 //      KC name + subject identity + the first-hand attempt evidence (question,
@@ -30,9 +31,10 @@
 // durable write failures escape as job-level infrastructure faults.
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
-// accepts/edits/rejects in the inbox; scoring + label flips are DEFERRED (PR-2 /
-// ADR-0046). The proposal only SNAPSHOTS predicted_p (the claim's bet) +
-// baseline_p_at_induction (the number to beat); it does not move any number.
+// accepts/edits/rejects in the inbox. The proposal snapshots predicted_p (the
+// claim's bet) + baseline_p_at_induction (the number to beat); YUK-795 consumes
+// the resulting score history only for conjecture ordering. It never writes
+// mastery/θ/FSRS.
 
 import { createHash } from 'node:crypto';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -47,6 +49,7 @@ import {
 import type {
   ConjectureEvidenceAssetRef,
   EnrichedEvidenceCell,
+  EvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
@@ -72,6 +75,11 @@ import {
   type InduceConjectureResult,
   induceConjecture,
 } from '@/server/agency/conjecture/induce';
+import {
+  type PredictionAccountability,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
+} from '@/server/conjectures/accountability';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
@@ -180,6 +188,10 @@ type LoadEvidenceImagesFn = (
   db: Db,
   refs: readonly ConjectureEvidenceAssetRef[],
 ) => Promise<LoadedConjectureEvidenceImage[]>;
+type LoadPredictionAccountabilityFn = (
+  db: Db,
+  cells: readonly EvidenceCell[],
+) => Promise<Map<string, PredictionAccountability>>;
 
 interface PreparedConjectureCell {
   cell: EnrichedEvidenceCell;
@@ -381,6 +393,8 @@ export interface ResearchMeetingDeps {
   enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
   /** dedup base: cause×KC keys with a PENDING conjecture (default reads the inbox). */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
+  /** YUK-795: correction-aware score history folded by cause×KC identity. */
+  loadPredictionAccountabilityFn?: LoadPredictionAccountabilityFn;
   /** injected runner — defaults to the real db-bound runTask. */
   runTaskFn?: TaskTextRunFn;
   induceConjectureFn?: InduceConjectureFn;
@@ -776,6 +790,8 @@ async function runResearchMeetingNightlyClaimed(
   const enrichEvidenceCellsFn = deps.enrichEvidenceCellsFn ?? enrichEvidenceCells;
   const loadKnownConjectureKeysFn =
     deps.loadKnownConjectureKeysFn ?? defaultLoadKnownConjectureKeys;
+  const loadPredictionAccountabilityFn =
+    deps.loadPredictionAccountabilityFn ?? loadPredictionAccountabilityByKey;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
@@ -807,9 +823,9 @@ async function runResearchMeetingNightlyClaimed(
   if (completedResult) return completedResult;
 
   // ── A13 reconcile (U8): project PRIOR probe outcomes into the typed ledger.
-  // Sequence 1 also appends a LOG-only prediction_score; recurrence results append a
-  // score-free projection anchor
-  // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
+  // Sequence 1 appends a prediction_score consumed by the accountability ranker;
+  // recurrence results append a score-free projection anchor. Typed-state remains
+  // soft. Runs BEFORE the propose half: deterministic DB work, idempotent
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
   let reconcileResult = await loadReconciliationResultFn(db, executionId);
@@ -852,7 +868,16 @@ async function runResearchMeetingNightlyClaimed(
   const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
   // ── Deterministic 取证 + grounded top-K salience cap ──
-  const cells = gatherConjectureEvidence({ failures, masteryByKnowledgeId, knownConjectureKeys });
+  const gatheredCells = gatherConjectureEvidence({
+    failures,
+    masteryByKnowledgeId,
+    knownConjectureKeys,
+  });
+  const accountabilityByKey =
+    gatheredCells.length > 0
+      ? await loadPredictionAccountabilityFn(db, gatheredCells)
+      : new Map<string, PredictionAccountability>();
+  const cells = rankEvidenceCellsByAccountability(gatheredCells, accountabilityByKey);
 
   // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has

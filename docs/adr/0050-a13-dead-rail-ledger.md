@@ -1,6 +1,6 @@
 # ADR-0050 — A13 问责轨死件清账（typed-state 结构死格 / prediction_score / hard-confirm / pedagogy palette / Planning Panel）
 
-**Status**: Accepted (YUK-790，基线 `origin/main = 0c9a3336`)
+**Status**: Accepted；§(b) 已由 YUK-795 通电（2026-07-29）
 **Decision source**: 清账诊断由 YUK-790 完成；**四条的处置由 owner 2026-07-25 当场拍板**——(a)(b)(d) 三条**推翻**了本票初稿的 DEFERRED / CLOSED 建议，改判**通电 / 现在接 / 要审议**，执行分别承接到 **YUK-794 / YUK-795 / YUK-796**。(c) 维持 deferred。
 **Amends**: ADR-0049 §3（Q3 双读 reader 的「reconcile auto-mints」前提在**当前代码**下不成立——本 ADR 更正之，reader 本身保留；YUK-794 落地后该前提才真正成立）
 **Related**: ADR-0046（Rust 数值核——原 FLIP-deferred 节奏被 (b1) 裁定**提前**）· ADR-0036 / design `docs/design/2026-07-01-misconception-promote-mechanism.md`（misconception promote/hard-confirm dark track）· `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md` §0.C（anti-swarm single-director）· roadmap `docs/planning/2026-06-27-relationship-brain-roadmap.md`
@@ -60,30 +60,53 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 
 ---
 
-## (b) `prediction_score` / hard-confirm — 零**行为**消费者
+## (b) `prediction_score` / hard-confirm — **已通电（YUK-795）**
 
-> **措辞区分（保留，别退回去）**：这两条**不是「零消费者」**。说成零消费者会让人以为「建了没人用、可以删」，而实际问题是**有人看、没人据此行动**——观测通了，问责没通。准确表述是**零行为消费者**。
+> 下面保留 2026-07-25 的诊断作为决策依据；当前事实以“落地”段为准。
 
 ### (b1) `experimental:prediction_score`
 
-- 生产者：`reconcile.ts` → `reconcileConjecturePredictions()` 末尾的 `writeEventFn(db, {…})`（写 `PREDICTION_SCORE_ACTION` 事件），自陈 LOG ONLY / FLIP-inert。
+- 生产者：`reconcile.ts` → `reconcileConjecturePredictions()` 写 `PREDICTION_SCORE_ACTION`。
 - **有活的观测消费者**：`loadConjectureScores` 读它 → `GET /api/admin/conjecture-scores` → admin UI 表格（ADR-0049 §3 (a)）。
-- **无行为消费者**：score 从不移动任何标签/数字。原按 ADR-0046 归 Rust 数值核 deferred。
+- **YUK-795 前无行为消费者**：score 不改变后续候选顺序。
 
 **裁定：owner 2026-07-25 — 现在接 FLIP 消费者，不等 ADR-0046 的 Rust 节奏。执行见 YUK-795。**
 （本票初稿建议 DEFERRED「dark 观测账本」，被推翻。owner 的理由：不接，则「预测被证伪」这件事对 conjecture 的命运毫无影响，A13 的「防编造缝」就只是个仪表盘。）
 
+**YUK-795 落地规则（n=1、纯 ordinal、无群体拟合）**：
+
+1. `skill_score_point > 0` 为 hit，`< 0` 为 miss，`= 0` 为 neutral；按
+   `probe_result_event_id` 去重，correction/dependency-inactive 的来源不进入 fold。
+2. 同一 owner 的 `(cause_category × knowledge_id)` 身份跨再归纳累计；单条 miss
+   不改变排序。最新连续两条 miss → `downweighted`（0.25×）；连续两条 hit →
+   `supported`（1.15×）；mixed/neutral/不足两条 → `watch`（1.0×）。后续相反
+   streak 可以反转。
+3. `research_meeting_nightly` 在 evidence cell 的 top-K 截断**前**读取并重排，
+   因此 score 已真实改变下一次 conjecture 的生存/曝光，而不是只在 admin 表里展示。
+4. honest Rust window mean 仍 deferred；本规则只消费单点 score 的符号，不写
+   mastery、typed-state 或 FSRS。
+
 ### (b2) `hard-confirm.ts` + `misconceptionHardConfirmEnabled()`
 
-- `src/server/conjectures/hard-confirm.ts` 全部导出零生产 caller（仅两个 test 文件）；文件头自陈 dark。
-- 其闸门 `misconceptionHardConfirmEnabled()`（`src/capabilities/agency/server/misconception-promote.ts:89`）**零生产 caller**、默认 OFF。
+- YUK-795 前，`src/server/conjectures/hard-confirm.ts` 与
+  `misconceptionHardConfirmEnabled()` 均无生产 caller。
   **（注意区分，别修错文件）**：同文件 `misconceptionPromoteEnabled()` :76 **有**活 caller（`conjecture-accept.ts:167`）。只有 hard-confirm 那一半是暗的。
 - 设计出处：`docs/design/2026-07-01-misconception-promote-mechanism.md` §2（Tier 1 刻意 ship dark，soft→hard 翻转永远需要 owner 当刻新确认，绝不自动）——**这条红线在通电后依然有效**，通电指的是接上调用点，不是取消 owner 确认。
 
 **裁定：owner 2026-07-25 — 同 (b1)，并入 YUK-795 一并通电。**
 （本票初稿建议 knowingly-deferred，被推翻。）
 
-`scripts/audit-flags-ledger.json` 的 `MISCONCEPTION_HARD_CONFIRM_ENABLED.notes` 记明「零 caller 是当前状态 + 承接票」，供审计对账，避免被当死码重开。
+**YUK-795 落地**：`loadPredictionAccountabilityByKey()` 批量读取有效 score，
+调用 `summarizeDissociation()` / `decideDissociation()`，并把
+`INSUFFICIENT/EMERGING` 消费进 rank multiplier（hard flag 开启时，
+`EMERGING` 的持续命中为 1.25×；flag 关闭仍保持基础 1.15×）。
+这是真实 nightly caller，不再是 test-only export。
+
+`MISCONCEPTION_HARD_CONFIRM_ENABLED` 继续默认 OFF，理由不是 defer 问责，而是两条
+仍未满足的诚实门：当前 Judge 没有明确 `target_error_match`，且 soft→hard 必须
+owner 当刻新确认。nightly caller 强制 `ownerFreshlyConfirmed=false`，所以即使 flag
+误开也不能执行 hard mutation；它只能看到 `EMERGING`。不得把普通答错冒充
+M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同步为 live caller。
 
 ---
 

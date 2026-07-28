@@ -17,6 +17,7 @@ import {
   type InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
+import type { PredictionAccountability } from '@/server/conjectures/accountability';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import type { WriteAiProposalInput } from '@/server/proposals/writer';
@@ -219,6 +220,7 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a', 'k_b']))),
     getMasteryProjectionFn: vi.fn(async () => new Map<string, MasteryProjection>()),
     loadKnownConjectureKeysFn: vi.fn(async () => new Set<string>()),
+    loadPredictionAccountabilityFn: vi.fn(async () => new Map()),
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
@@ -342,6 +344,42 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
     expect(result.considered).toBe(RESEARCH_MEETING_MAX_CONJECTURES);
     expect(writeAiProposalFn).toHaveBeenCalledTimes(RESEARCH_MEETING_MAX_CONJECTURES);
+  });
+
+  it('applies prediction accountability before the top-K cut', async () => {
+    const inducedKnowledgeIds: string[] = [];
+    const downweightedKey = conjectureKey('concept_confusion', 'k_a');
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () =>
+        withTraces(failuresForKcs(['k_a', 'k_b', 'k_c', 'k_d'])),
+      ),
+      loadPredictionAccountabilityFn: vi.fn(
+        async () =>
+          new Map<string, PredictionAccountability>([
+            [
+              downweightedKey,
+              {
+                state: 'downweighted',
+                latest_direction: 'miss',
+                consecutive_count: 2,
+                rank_multiplier: 0.25,
+                hard_confirm_verdict: 'INSUFFICIENT',
+                hard_confirm_enabled: false,
+                score_event_ids: ['score_1', 'score_2'],
+              },
+            ],
+          ]),
+      ),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(inducedKnowledgeIds).toEqual(['k_b', 'k_c', 'k_d']);
+    expect(inducedKnowledgeIds).not.toContain('k_a');
   });
 
   it('builds a propose-only mind_model payload: provenance refs + A13 snapshot + internal confidence', async () => {

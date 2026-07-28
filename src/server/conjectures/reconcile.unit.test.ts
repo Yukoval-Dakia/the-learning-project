@@ -1,6 +1,6 @@
 // YUK-440 (A13) U8 — reconcile loop unit tests. Fully injected deps (no DB).
-// Locks the prediction-grounding contract AND the FLIP-inert red-lines:
-//   - scorePrediction LOGS a comparison, NEVER moves a label/`mastered` (ADR-0046);
+// Locks the prediction-grounding contract AND the state-boundary red-lines:
+//   - scorePrediction emits the accountability fact but NEVER moves mastery/`mastered`;
 //   - retrievability R(t) is recorded in the prediction_score EVENT only, never in
 //     the written kc_typed_state (which has no R column — fold-replayable);
 //   - this loop NEVER writes FSRS (ND-5);
@@ -53,6 +53,7 @@ function conjectureEvent(over: Record<string, unknown> = {}) {
 function probe(over: Partial<UnscoredProbeResult> = {}): UnscoredProbeResult {
   return {
     probe_result_event_id: 'pr_1',
+    probe_question_id: 'probe_1',
     conjecture_event_id: 'cj_1',
     outcome: 0,
     resolution: 'evidence_for',
@@ -111,7 +112,11 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     const p = events[0].payload as Record<string, number | string>;
     expect(p.conjecture_event_id).toBe('cj_1');
     expect(p.probe_result_event_id).toBe('pr_1');
+    expect(p.probe_question_id).toBe('probe_1');
     expect(p.knowledge_id).toBe('k_a');
+    expect(p.discriminating).toBe(true);
+    expect(p.context).toBe('probe_1');
+    expect(p).not.toHaveProperty('m_diagnostic');
     expect(p.predicted_p).toBe(0.3);
     expect(p.baseline_p).toBe(0.7);
     expect(p.outcome).toBe(0);
@@ -150,7 +155,7 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(events[0].payload).not.toHaveProperty('brier_model');
   });
 
-  it('RED-LINE: upsert is FLIP-inert — confused_with null → soft, never `mastered`, no FSRS', async () => {
+  it('RED-LINE: upsert remains soft — confused_with null, never `mastered`, no FSRS', async () => {
     const { deps, upserts } = baseDeps();
     await reconcileConjecturePredictions(DB, deps);
     const u = upserts[0];

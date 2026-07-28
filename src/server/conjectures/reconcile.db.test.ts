@@ -2,7 +2,7 @@
 // REAL producers: writeAiProposal (conjecture) → serveProbeOnce/answerProbe (U3
 // probe_result) → reconcileConjecturePredictions. Locks: sequence-1 prediction_score and
 // sequence-2 score-free projection anchors are append-only + idempotent, the typed-ledger advances
-// (FLIP-inert: soft no-evidence, never `mastered`), R(t) lives in the score event but
+// (typed-state stays soft no-evidence, never `mastered`), R(t) lives in the score event but
 // not the typed-state, and NO FSRS/attempt event is ever written (ND-5).
 
 import {
@@ -142,7 +142,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
     const result = await reconcileConjecturePredictions(db);
     expect(result).toEqual({ reconciled: 1, skipped: 0 });
 
-    // (1) one LOG-only prediction_score event keyed on the probe_result id.
+    // (1) one prediction_score accountability event keyed on the probe_result id.
     const scores = await scoreEvents(seed.probeResultEventId);
     expect(scores).toHaveLength(1);
     const p = scores[0].payload as Record<string, unknown>;

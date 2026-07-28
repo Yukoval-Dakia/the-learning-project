@@ -24,7 +24,7 @@
     "polarity": "opt-in",
     "reader_marker": "parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED)",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
-    "notes": "gates misconception hard-confirm. Opt-in/default OFF; parsed via shared parseFlag. LEDGERED (ADR-0050 §(b2), YUK-790): this reader has ZERO production caller today, and so does every export of src/server/conjectures/hard-confirm.ts that it gates — the DESIGNED Tier-1 ship order (decision logic first, call site later; design 2026-07-01-misconception-promote-mechanism.md §2), not an unwired accident. Owner ruled 2026-07-25 to wire it up: execution is YUK-795. The Tier-1 red line survives that wiring — a soft->hard flip still requires a fresh owner confirmation at the call site. Not a dead-code finding; cite ADR-0050 §(b2) + YUK-795. Contrast MISCONCEPTION_PROMOTE_ENABLED, whose reader IS live (conjecture-accept.ts:167)."
+    "notes": "gates misconception hard-confirm. Opt-in/default OFF; parsed via shared parseFlag. LIVE reader: YUK-795 loadPredictionAccountabilityByKey calls the Tier-1 dissociation decision and consumes INSUFFICIENT/EMERGING in nightly conjecture ranking. The background caller always passes ownerFreshlyConfirmed=false, so it is structurally unable to mutate source soft->hard. The flag remains default OFF because the current Judge has no honest target_error_match fact and a protected hard flip still requires a dedicated fresh owner confirmation command. See ADR-0050 §(b2)."
   },
   "RESEARCH_MEETING_AGENT_ENABLED": {
     "kind": "env",

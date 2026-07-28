@@ -15,3 +15,4 @@ export type {
 } from './server/proposal-appliers';
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
+export { misconceptionHardConfirmEnabled } from './server/misconception-promote';

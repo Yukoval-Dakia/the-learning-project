@@ -21,6 +21,9 @@ import {
 
 function rec(over: Partial<DissociationRecord> = {}): DissociationRecord {
   return {
+    scoreEventId: 'score_1',
+    conjectureEventId: 'conjecture_1',
+    probeResultEventId: 'result_1',
     questionId: 'q1',
     sessionWindow: '2026-07-01',
     judgeRunId: 'run1',

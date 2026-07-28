@@ -67,6 +67,26 @@ let seq = 0;
 async function writeScore(payload: ScorePayload, createdAt: Date): Promise<void> {
   const db = testDb();
   seq += 1;
+  if (payload.conjecture_event_id) {
+    await db
+      .insert(event)
+      .values({
+        id: payload.probe_result_event_id,
+        actor_kind: 'system',
+        actor_ref: 'mind_probe',
+        action: 'experimental:probe_result',
+        subject_kind: 'question',
+        subject_id: `question_${payload.probe_result_event_id}`,
+        payload: {
+          conjecture_event_id: payload.conjecture_event_id,
+          outcome: payload.outcome,
+          resolution: payload.resolution,
+        },
+        caused_by_event_id: payload.conjecture_event_id,
+        created_at: createdAt,
+      })
+      .onConflictDoNothing();
+  }
   await db.insert(event).values({
     id: `ps_${seq}`,
     actor_kind: 'system',

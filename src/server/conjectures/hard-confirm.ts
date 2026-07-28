@@ -2,22 +2,12 @@
 //
 // The SISTER of reconcile.ts (NOT inside it — import-ring stays pure: reconcile
 // imports scoring+typed-state, this imports scoring only; neither imports the other).
-// This module is the DARK, pure decision/audit layer for the promote-identity axis:
+// This module is the pure decision/read layer for the promote-identity axis:
 // "can this evidence DISSOCIATE a HELD misconception M from a mere skill deficit S?"
-// (R3 identifiability / SISM). It is built dark and NOT wired into the live accept
-// path — misconception-promote.ts / conjecture-accept.ts never call it. It only makes
-// the hard track REACHABLE.
-//
-// LEDGERED: **ADR-0050 §(b2)** (YUK-790). Every export here has zero production caller (tests
-// only), and so does its gate `misconceptionHardConfirmEnabled()` (`misconception-promote.ts:89`,
-// default OFF) — the DESIGNED Tier-1 shipping order (decision logic first, call site later;
-// design 2026-07-01 §2), not an unwired accident.
-// OWNER RULED 2026-07-25: wire it up — execution is **YUK-795** (the A13 accountability loop
-// goes from observation ledger to actually deciding a conjecture's fate). The Tier-1 red line
-// SURVIVES that wiring: a soft→hard flip still demands a FRESH owner confirmation at the call
-// site and is never automatic. Audits: this is not a dead-code finding — cite ADR-0050 §(b2)
-// and YUK-795. (Note the sibling `misconceptionPromoteEnabled()` at :76 IS live — only the
-// hard half is dark.)
+// (R3 identifiability / SISM). YUK-795 wires the batch reader + verdict into the
+// nightly prediction-accountability ranker. The hard-label mutation itself remains
+// fail-closed: a soft→hard flip still demands a FRESH owner confirmation at a
+// dedicated command and is never inferred from the nightly pass.
 //
 // Tier-1 red lines (design 2026-07-01-misconception-promote-mechanism.md §6):
 //   - n=1 SAFE: everything here is a COUNT, a two/three-value READ, or an ENUM. There
@@ -40,7 +30,7 @@ import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
 
-/** The canonical LOG-only score event the reconcile loop appends (reconcile.ts). */
+/** The canonical score fact the reconcile loop appends (reconcile.ts). */
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 
 // ── Tier-1 knobs (NAMED consts + owner-tunable — never learner-fitted) ───────────────
@@ -97,6 +87,12 @@ export const DORMANT_CAUSE_CATEGORIES: ReadonlySet<string> = new Set(['concept']
 
 /** One scored dissociation observation (mapped from a prediction_score event). */
 export interface DissociationRecord {
+  /** the prediction_score event identity (audit/ref provenance). */
+  scoreEventId: string;
+  /** the conjecture proposal that made the prediction. */
+  conjectureEventId: string;
+  /** the backing probe_result event identity. */
+  probeResultEventId: string;
   /** the probe question identity (probe_result_event_id) — dedup dimension 1. */
   questionId: string;
   /** session/time bucket (UTC-day default) — dedup dimension 2. */
@@ -116,7 +112,7 @@ export interface DissociationRecord {
   /** the RESPONSE matched a distractor tag / rubric facet — NOT merely "unexpectedly wrong". */
   mDiagnostic: boolean;
   /** probe lifecycle resolution. */
-  resolution: 'confirmed' | 'retired';
+  resolution: 'evidence_for' | 'confirmed' | 'retired';
   /** judging instant (→ recency / asymmetry ordering). */
   judgedAt: Date;
 }
@@ -218,12 +214,13 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
   };
 }
 
-// ── The dark decision ────────────────────────────────────────────────────────────────
+// ── Tier-1 decision ─────────────────────────────────────────────────────────────────
 
 /**
  * Dissociation verdict:
  *   - HARD_CONFIRM — soft→hard upgrade is licensed (all gates + flag ON + rival probe + fresh
- *     owner confirmation). REACHABLE only; nothing wires this into the live path yet.
+ *     owner confirmation). The nightly ranker always passes ownerFreshlyConfirmed=false,
+ *     so it can observe EMERGING but never perform the protected label mutation.
  *   - EMERGING     — discriminating held-M evidence is accruing but CAPPED (flag OFF, or no
  *     rival-separating probe, or no fresh owner confirm). Stays soft; renders as "emerging".
  *   - INSUFFICIENT — the gates are not met: most likely缺-skill, not a held misconception.
@@ -304,10 +301,9 @@ function utcDayWindow(d: Date): string {
  * if the load-bearing scoring facts are unsound. The scoring facts (predicted_p / baseline_p /
  * outcome / resolution) are already written by the reconcile loop. The DISCRIMINATION facts
  * (`discriminating` / `m_diagnostic` / `context` / `session_window` / `judge_run_id`) are read
- * DEFENSIVELY with conservative defaults: the live reconcile loop does NOT yet stamp them
- * (distractor-tag capture is a later, non-blocking capability), so from current live data every
- * record is non-M-diagnostic ⇒ hasDiscriminatingContext stays false ⇒ decideDissociation returns
- * INSUFFICIENT. That is the intended DARK behaviour — the hard track cannot fire off today's data.
+ * DEFENSIVELY with conservative defaults. Reconcile stamps the facts it genuinely owns;
+ * `m_diagnostic` stays false unless an upstream Judge explicitly supplied it. A plain wrong
+ * answer is never promoted into target-error evidence by inference.
  */
 function predictionScoreToRecord(
   eventId: string,
@@ -331,11 +327,18 @@ function predictionScoreToRecord(
   // signal. DROP = strictly safer; KEEP = weaken-fail-closed-for-nothing (Finding-2, kept as-is).
   if (typeof baselineP !== 'number' || !Number.isFinite(baselineP)) return null;
   if (outcome !== 0 && outcome !== 1) return null;
-  if (resolution !== 'confirmed' && resolution !== 'retired') return null;
+  if (resolution !== 'evidence_for' && resolution !== 'confirmed' && resolution !== 'retired') {
+    return null;
+  }
 
   const probeResultId = payload.probe_result_event_id;
+  const conjectureEventId = payload.conjecture_event_id;
+  if (typeof probeResultId !== 'string' || probeResultId.length === 0) return null;
+  if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) return null;
   const questionId =
-    typeof probeResultId === 'string' && probeResultId.length > 0 ? probeResultId : eventId;
+    typeof payload.probe_question_id === 'string' && payload.probe_question_id.length > 0
+      ? payload.probe_question_id
+      : probeResultId;
   const contextRaw = payload.context;
   const knowledgeId = payload.knowledge_id;
   const contextKey =
@@ -351,6 +354,9 @@ function predictionScoreToRecord(
   const judgeRunId = typeof judgeRaw === 'string' && judgeRaw.length > 0 ? judgeRaw : eventId;
 
   return {
+    scoreEventId: eventId,
+    conjectureEventId,
+    probeResultEventId: probeResultId,
     questionId,
     sessionWindow,
     judgeRunId,
@@ -371,9 +377,15 @@ interface ConjectureIdentity {
   knowledge_id: string;
 }
 
+export interface ConjectureIdentityTarget {
+  key: string;
+  causeCategory: string;
+  knowledgeId: string;
+}
+
 /**
  * Recover the misconception IDENTITY (cause_category × knowledge_id) for each backing conjecture
- * (dark-only JOIN, ZERO live writes). A `prediction_score` payload carries `conjecture_event_id`
+ * (read-only JOIN, ZERO writes). A `prediction_score` payload carries `conjecture_event_id`
  * (reconcile.ts) plus its OWN `knowledge_id`, but that copy is NOT the identity source of truth;
  * the authoritative identity lives in the conjecture proposal's
  * `ai_proposal.proposed_change.{cause_category,knowledge_id}` (research_meeting_nightly.ts).
@@ -440,21 +452,31 @@ function extractConjectureIdentity(
  * separation + ③ VanLehn bug-migration guard). Grouping is by cause×KC, NOT by raw
  * conjecture_event_id: a later RE-INDUCTION of the same cause×KC is a fresh proposal but the SAME
  * misconception, so its scores must accrue together. Never touches mastery/θ̂/FSRS (ND-5); only
- * reads baseline_p off the LOG events. Structurally cannot confirm hard from today's un-tagged data
+ * reads baseline_p off the score events. Structurally cannot confirm hard from today's un-tagged data
  * (see predictionScoreToRecord). The join is a query — counts/enumerates only, ZERO fitted
  * parameter (n=1 red line held).
  */
-export async function gatherDissociationEvidence(
+export async function gatherDissociationRecordsByIdentity(
   db: Db,
-  params: { knowledgeId: string; causeCategory: string },
-): Promise<DissociationEvidence> {
+  targets: readonly ConjectureIdentityTarget[],
+): Promise<Map<string, DissociationRecord[]>> {
+  const out = new Map<string, DissociationRecord[]>();
+  for (const target of targets) out.set(target.key, []);
+  if (targets.length === 0) return out;
+  const knowledgeIds = [...new Set(targets.map((target) => target.knowledgeId))];
+  const targetKeyByIdentity = new Map(
+    targets.map((target) => [`${target.causeCategory}\u0000${target.knowledgeId}`, target.key]),
+  );
   const rows = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
     .from(event)
     .where(
       and(
         eq(event.action, PREDICTION_SCORE_ACTION),
-        sql`${event.payload}->>'knowledge_id' = ${params.knowledgeId}`,
+        sql`${event.payload}->>'knowledge_id' IN (${sql.join(
+          knowledgeIds.map((knowledgeId) => sql`${knowledgeId}`),
+          sql`, `,
+        )})`,
       ),
     )
     .orderBy(event.created_at);
@@ -476,7 +498,6 @@ export async function gatherDissociationEvidence(
   }
   const identityByConjectureId = await loadIdentityByConjectureId(db, conjectureEventIds);
 
-  const records: DissociationRecord[] = [];
   for (const r of rows) {
     const payload = r.payload as Record<string, unknown> | null;
     const probeResultEventId = payload?.probe_result_event_id;
@@ -485,11 +506,7 @@ export async function gatherDissociationEvidence(
     // Fail closed on legacy/unattributable scores: without a source probe-result id
     // there is no way to fold later corrections or recurrence dependencies. Such a
     // row remains in the audit log but cannot contribute to hard-confirm evidence.
-    if (
-      typeof probeResultEventId !== 'string' ||
-      sourceStatus === 'corrected' ||
-      sourceStatus === 'dependency_inactive'
-    ) {
+    if (typeof probeResultEventId !== 'string' || sourceStatus !== 'active') {
       continue;
     }
     const cid = payload?.conjecture_event_id;
@@ -500,10 +517,27 @@ export async function gatherDissociationEvidence(
     // payload kc disagrees with its proposal kc satisfies NEITHER pool (cross-validation against
     // the SQL kc pre-filter, Finding-3). Never trust the score payload's own knowledge_id here.
     if (identity === null) continue;
-    if (identity.cause_category !== params.causeCategory) continue;
-    if (identity.knowledge_id !== params.knowledgeId) continue;
+    const targetKey = targetKeyByIdentity.get(
+      `${identity.cause_category}\u0000${identity.knowledge_id}`,
+    );
+    if (!targetKey) continue;
     const rec = predictionScoreToRecord(r.id, r.created_at, payload);
-    if (rec) records.push(rec);
+    if (rec) out.get(targetKey)?.push(rec);
   }
-  return summarizeDissociation(records);
+  return out;
+}
+
+export async function gatherDissociationEvidence(
+  db: Db,
+  params: { knowledgeId: string; causeCategory: string },
+): Promise<DissociationEvidence> {
+  const key = `${params.causeCategory}\u0000${params.knowledgeId}`;
+  const records = await gatherDissociationRecordsByIdentity(db, [
+    {
+      key,
+      knowledgeId: params.knowledgeId,
+      causeCategory: params.causeCategory,
+    },
+  ]);
+  return summarizeDissociation(records.get(key) ?? []);
 }
