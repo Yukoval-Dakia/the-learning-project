@@ -208,13 +208,38 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
   };
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function redactQuestionEvidenceForMemory(payload: unknown): unknown {
+  if (!isJsonObject(payload) || !isJsonObject(payload.question_snapshot)) return payload;
+  const snapshot = payload.question_snapshot;
+  const redactReference = (context: unknown): unknown => {
+    if (!isJsonObject(context)) return context;
+    const { reference_md: _referenceMd, ...safeContext } = context;
+    return safeContext;
+  };
+  return {
+    ...payload,
+    question_snapshot: {
+      ...snapshot,
+      question: redactReference(snapshot.question),
+      parent_question: redactReference(snapshot.parent_question),
+    },
+  };
+}
+
 function eventToText(input: MemoryEventInput): string {
   return JSON.stringify({
     id: input.id,
     action: input.action,
     subject_kind: input.subject_kind,
     subject_id: input.subject_id,
-    payload: input.payload,
+    // Attempt snapshots contain gold references for later evidence replay. They
+    // are system truth, not learner-authored facts, and must never enter Mem0's
+    // infer:true extraction prompt.
+    payload: redactQuestionEvidenceForMemory(input.payload),
   });
 }
 

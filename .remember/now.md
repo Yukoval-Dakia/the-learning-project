@@ -1,34 +1,34 @@
-# 当前 handoff — 2026-07-27
+# 当前 handoff — 2026-07-28
 
 ## Active line
 
-- Architecture exit 已完成并经 PR #1088 合并：`main@6b1beda6`。
-- 当前唯一 active 线是 Grounding「猜想证据」：
-  `codex/grounding-intervention-closed-loop`。
-- Grounding 项目已 In Progress；YUK-799/YUK-800 已 In Progress。
+- Architecture exit 已完成；Grounding 首切 PR #1089 已合并：
+  `main@0966e1a1`，YUK-799/YUK-800 已 Done。
+- 当前唯一 active 线是 Grounding「猜想证据」YUK-804：
+  `codex/grounding-question-snapshots`。
 
 ## 当前实现
 
-1. `ConjectureDraft` 是 `proposal | abstain` discriminated union。
-2. proposal 强制携带 `knowledge_id` 与至少两条 `evidence_event_ids`；调用方校验
-   必须来自确定性 evidence cell，伪造引用计 invalid vote。
-3. N=3 self-consistency 必须 ≥2 次语义收敛；abstain、invalid、provider failure、
-   分裂聚类都不能被分母吞掉。
-4. 全部 provider 调用失败仍抛错；合法 abstain / 无共识不会伪装成 provider 故障。
-5. nightly 对 abstain 写 `experimental:conjecture_abstained`，保留 reason、
-   evidence refs、votes、task-run ids 与成本；不写 conjecture proposal、不记 AI failure。
-6. `MindModelInductionTask.maxIterations=2`，无工具，第二轮仅允许补完输出。
+1. 新 attempt event 带 `schema_version=1` 的最小不可变题目快照：题面、参考、
+   选项、图像、figures、question version、updated_at。
+2. question part 同时冻结 shared parent；缺失 parent 失败关闭。
+3. 四条生产 attempt writer 均落快照：solve、paper、mistakes ingestion、enroll。
+4. Practice 持有 snapshot reader，Ingestion 只经 Practice `public.ts` 调用。
+5. 失败投影校验 snapshot question id 必须等于 event subject；新事件的 conjecture
+   evidence 只读快照，不查 mutable question row。
+6. legacy attempt/review 无快照仍可解析；题面或 parent 已编辑/变更时保守省略，
+   不配对旧答题与新题面。
 
 ## 已验证
 
-- unit：505 files passed / 4 skipped；5759 passed / 33 skipped。
-- DB：387 files；4189 passed / 9 skipped / 1 todo。
-- migration 26/26；typecheck、lint、build、boundary / structured-judge audits 全绿。
-- 定向 closed-loop DB 含真实 event parse/write abstain；director 兼容路径 20/20。
+- unit：505 files passed / 4 skipped；5779 passed / 33 skipped。
+- DB：388 files；4201 passed / 9 skipped / 1 todo。
+- migration 26/26；typecheck、lint、build、boundary / API contract audits 全绿。
+- 定向 DB 153/153：四条 writer、snapshot reader、失败投影、编辑后归纳均覆盖。
 
 ## 下一步
 
-1. 完成 PR #1089 独立 review + CI，合并并关闭 YUK-799/YUK-800。
-2. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
-3. 下一 slice：YUK-804 attempt-time snapshot，再做 YUK-787/795 二次独立 probe 与
-   target-error-aware Judge；历史 v1 不批量重解释。
+1. commit/push YUK-804，开 PR，完成独立 review + CI 后合并并对齐 Linear。
+2. 下一 slice：YUK-787/795 二次独立 probe 与 target-error-aware Judge；历史 v1
+   不批量重解释。
+3. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。

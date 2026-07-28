@@ -7,6 +7,7 @@ import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
 } from '@/capabilities/knowledge/public';
+import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -100,6 +101,7 @@ export async function POST(req: Request): Promise<Response> {
           kind: body.question_kind,
           prompt_md: body.prompt_md,
           reference_md: body.reference_md,
+          image_refs: body.prompt_image_refs,
           knowledge_ids: body.knowledge_ids,
           difficulty: body.difficulty,
           source: 'manual',
@@ -110,6 +112,7 @@ export async function POST(req: Request): Promise<Response> {
           version: 0,
         }),
       );
+      const questionSnapshot = await loadAttemptQuestionSnapshot(tx, questionId);
       await writeEvent(tx, {
         id: attemptEventId,
         session_id: null,
@@ -123,6 +126,7 @@ export async function POST(req: Request): Promise<Response> {
           answer_md: body.wrong_answer_md,
           answer_image_refs: body.wrong_answer_image_refs,
           referenced_knowledge_ids: body.knowledge_ids,
+          question_snapshot: questionSnapshot,
           // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
           // 'unknown' until the Reconstruction-as-method classifier lands.
           reconstruction_signal: 'unknown',

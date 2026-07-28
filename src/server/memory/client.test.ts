@@ -161,6 +161,62 @@ describe('createMemoryClient', () => {
     });
   });
 
+  it('redacts child and parent gold references before inferred memory extraction', async () => {
+    const memory = mem0LikeMock();
+    const client = createMemoryClient({ env, memoryFactory: () => memory });
+
+    await client.addEventMemory({
+      id: 'evt_attempt_snapshot',
+      actor_kind: 'user',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q-child',
+      payload: {
+        answer_md: 'learner answer must remain',
+        question_snapshot: {
+          schema_version: 1,
+          question: {
+            question_id: 'q-child',
+            prompt_md: 'child prompt remains',
+            reference_md: 'CHILD GOLD MUST NOT LEAVE',
+          },
+          parent_question: {
+            question_id: 'q-parent',
+            prompt_md: 'parent prompt remains',
+            reference_md: 'PARENT GOLD MUST NOT LEAVE',
+          },
+        },
+      },
+      affected_scopes: ['global'],
+      created_at: new Date('2026-07-28T00:00:00Z'),
+      kind: 'event',
+    });
+
+    const serialized = memory.add.mock.calls[0]?.[0] as string;
+    const extractionInput = JSON.parse(serialized) as {
+      payload: {
+        answer_md: string;
+        question_snapshot: {
+          question: Record<string, unknown>;
+          parent_question: Record<string, unknown>;
+        };
+      };
+    };
+    expect(extractionInput.payload.answer_md).toBe('learner answer must remain');
+    expect(extractionInput.payload.question_snapshot.question.prompt_md).toBe(
+      'child prompt remains',
+    );
+    expect(extractionInput.payload.question_snapshot.parent_question.prompt_md).toBe(
+      'parent prompt remains',
+    );
+    expect(extractionInput.payload.question_snapshot.question).not.toHaveProperty('reference_md');
+    expect(extractionInput.payload.question_snapshot.parent_question).not.toHaveProperty(
+      'reference_md',
+    );
+    expect(serialized).not.toContain('CHILD GOLD MUST NOT LEAVE');
+    expect(serialized).not.toContain('PARENT GOLD MUST NOT LEAVE');
+  });
+
   it('凭据经 config 传入（GLM→llm / 百炼→embedder），不改写任何全局 env', () => {
     // openai-compat provider 转发 config.baseURL → 构造纯同步、无全局副作用。
     const hadAnthropicBaseUrl = Object.hasOwn(process.env, 'ANTHROPIC_BASE_URL');

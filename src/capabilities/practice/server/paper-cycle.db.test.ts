@@ -245,6 +245,34 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     expect(masteryK1[0].fail_count).toBe(1);
   });
 
+  it('fails closed with a structured conflict when a slot has no shared parent evidence', async () => {
+    const db = testDb();
+    await seedQuestion('q_orphan', 'true');
+    await db
+      .update(question)
+      .set({ parent_question_id: 'missing_parent' })
+      .where(eq(question.id, 'q_orphan'));
+    await seedPaper('paper_orphan', ['q_orphan']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_orphan' });
+
+    await expect(
+      submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper_orphan',
+          questionId: 'q_orphan',
+          answerMd: 'true',
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({
+      code: 'question_evidence_unavailable',
+      status: 409,
+    });
+  });
+
   it('partial index rejects a second live draft on the same slot (DB-level guard)', async () => {
     const db = testDb();
     await seedQuestion('q1', 'true');
@@ -1607,6 +1635,13 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .limit(1);
     const payload = rows[0].payload as Record<string, unknown>;
     expect(payload.duration_ms).toBe(12_500);
+    expect(payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: { question_id: 'q1' },
+        parent_question: null,
+      },
+    });
   });
 
   // YUK-448 — when latencyMs is not supplied the key must be ABSENT (not null),

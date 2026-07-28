@@ -25,6 +25,10 @@ import {
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
+import {
+  QuestionEvidenceSnapshotError,
+  loadQuestionWithAttemptSnapshot,
+} from './question-evidence-snapshot';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -41,6 +45,7 @@ export class SolveError extends Error {
       | 'session_not_found'
       | 'session_not_active'
       | 'empty_submission'
+      | 'question_evidence_unavailable'
       | 'llm_parse_failed',
     message: string,
   ) {
@@ -320,8 +325,18 @@ export async function submitSolveAttempt(
     throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
   }
 
-  const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
+  const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, questionId).catch((err) => {
+    if (!(err instanceof QuestionEvidenceSnapshotError)) throw err;
+    if (err.code === 'question_not_found') {
+      throw new SolveError('question_not_found', `question ${questionId} not found`);
+    }
+    throw new SolveError(
+      'question_evidence_unavailable',
+      `question ${questionId} cannot be submitted because its evidence context is incomplete: ${err.message}`,
+    );
+  });
+  const q = loadedQuestion.question;
+  const questionSnapshot = loadedQuestion.question_snapshot;
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
@@ -392,6 +407,7 @@ export async function submitSolveAttempt(
         answer_md: answerMd.length > 0 ? answerMd : null,
         answer_image_refs: submission.student_image_refs ?? [],
         referenced_knowledge_ids: q.knowledge_ids,
+        question_snapshot: questionSnapshot,
         // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
         // 'unknown' until the Reconstruction-as-method classifier lands.
         reconstruction_signal: 'unknown',

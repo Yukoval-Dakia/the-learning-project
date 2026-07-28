@@ -7,6 +7,7 @@ export * from './business';
 export * from './conjecture';
 export * from './difficulty-evidence';
 export * from './proposal';
+export * from './question-evidence-snapshot';
 
 // ---------- Knowledge ----------
 export const KnowledgeInsert = g.KnowledgeInsertGenerated.extend({

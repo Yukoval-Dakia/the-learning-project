@@ -10,6 +10,7 @@ export {
 } from './server/learnable-frontier';
 export type { FrontierResolution } from './server/learnable-frontier';
 export { retrievabilityForKc } from './server/fsrs';
+export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { handleReviewDue } from './server/due-list';
 export type {
   EnqueueVariantVerifyFn,

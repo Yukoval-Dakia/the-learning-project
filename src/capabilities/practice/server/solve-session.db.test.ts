@@ -246,7 +246,19 @@ describe('submitSolveAttempt', () => {
     expect(s.status).toBe('judged');
 
     const attempts = await db.select().from(event).where(eq(event.subject_id, id));
-    expect(attempts.some((e) => e.action === 'attempt')).toBe(true);
+    const attempt = attempts.find((e) => e.action === 'attempt');
+    expect(attempt).toBeTruthy();
+    expect(attempt?.payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: {
+          question_id: id,
+          prompt_md: '化简 (a^2 - b^2)/(a - b)',
+          reference_md: '完整解：a+b。',
+        },
+        parent_question: null,
+      },
+    });
   });
 
   it('YUK-352 — captures hints_used / final_hint_level onto the attempt payload when supplied', async () => {
@@ -386,6 +398,26 @@ describe('submitSolveAttempt', () => {
         judgeFn,
       }),
     ).rejects.toMatchObject({ code: 'session_not_found' });
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with a structured error when question evidence is incomplete', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    await db
+      .update(question)
+      .set({ parent_question_id: 'missing_parent' })
+      .where(eq(question.id, id));
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 1);
+
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId,
+        submission: { student_final_answer_text: 'a+b' },
+        judgeFn,
+      }),
+    ).rejects.toMatchObject({ code: 'question_evidence_unavailable' });
     expect(judgeFn).not.toHaveBeenCalled();
   });
 

@@ -123,6 +123,13 @@ describe('enrollCapturedBlock', () => {
     expect((attempt[0].payload as Record<string, unknown>).referenced_knowledge_ids).toEqual([
       'k1',
     ]);
+    expect(attempt[0].payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: { question_id: questionId },
+        parent_question: null,
+      },
+    });
 
     const record = await db
       .select()
