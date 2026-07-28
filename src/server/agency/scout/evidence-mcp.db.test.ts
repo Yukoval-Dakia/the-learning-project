@@ -330,7 +330,10 @@ describe('get_probe_history', () => {
       'confirmed',
       'within_learner_probe_recurrence_v2',
     );
-    v2.payload.independent_probe_question_ids = ['q_v2', 'q_v2_dependency'];
+    (v2.payload as Record<string, unknown>).independent_probe_question_ids = [
+      'q_v2',
+      'q_v2_dependency',
+    ];
     await db
       .insert(event)
       .values([
@@ -372,7 +375,10 @@ describe('get_probe_history', () => {
       'confirmed',
       'within_learner_probe_recurrence_v2',
     );
-    terminal.payload.independent_probe_question_ids = ['q_dependency', 'q_terminal'];
+    (terminal.payload as Record<string, unknown>).independent_probe_question_ids = [
+      'q_dependency',
+      'q_terminal',
+    ];
     await db.insert(event).values([dependency, terminal]);
     await writeEvent(db, {
       id: 'correct_pr_dependency',
