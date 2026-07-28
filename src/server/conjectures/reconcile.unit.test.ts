@@ -143,7 +143,7 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(p.probe_question_id).toBe('probe_1');
     expect(p.knowledge_id).toBe('k_a');
     expect(p.discriminating).toBe(true);
-    expect(p.context).toBe('probe_1');
+    expect(p).not.toHaveProperty('context');
     expect(p).not.toHaveProperty('m_diagnostic');
     expect(p.predicted_p).toBe(0.3);
     expect(p.baseline_p).toBe(0.7);

@@ -522,10 +522,12 @@ export async function reconcileConjecturePredictions(
         outcome: pr.outcome,
         resolution: pr.resolution,
         discriminating: facts.discriminating,
-        // The two authored probes are different representations, so their
-        // immutable question ids are honest context identities. Do not stamp
-        // m_diagnostic here: only an explicit target-error Judge may supply it.
-        context: pr.probe_question_id,
+        // Do not infer a semantic context class from the unique question id:
+        // two authored questions can still test the same representation, and
+        // treating ids as contexts would forge the context-spread stability
+        // gate. The reader conservatively falls back to knowledge_id until an
+        // explicit symbolic/transfer/etc. class is supplied. Likewise, only an
+        // explicit target-error Judge may supply m_diagnostic.
         ...(pr.independent_probe_question_ids && pr.independent_probe_question_ids.length > 0
           ? { independent_probe_question_ids: pr.independent_probe_question_ids }
           : {}),

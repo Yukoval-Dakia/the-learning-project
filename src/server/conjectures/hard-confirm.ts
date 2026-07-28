@@ -95,7 +95,7 @@ export interface DissociationRecord {
   conjectureEventId: string;
   /** the backing probe_result event identity. */
   probeResultEventId: string;
-  /** the probe question identity (probe_result_event_id) — dedup dimension 1. */
+  /** probe question identity (probe_question_id; fallback probe_result_event_id) — dedup axis 1. */
   questionId: string;
   /** session/time bucket (UTC-day default) — dedup dimension 2. */
   sessionWindow: string;
