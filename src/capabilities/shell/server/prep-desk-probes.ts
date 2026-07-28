@@ -48,7 +48,6 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
       id: question.id,
       prompt_md: question.prompt_md,
       knowledge_ids: question.knowledge_ids,
-      metadata: question.metadata,
     })
     .from(question)
     .where(

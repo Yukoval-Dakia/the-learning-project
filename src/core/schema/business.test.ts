@@ -95,6 +95,23 @@ describe('ConjectureDraft', () => {
     ).toBe(false);
   });
 
+  it('preserves punctuation that changes a mathematical expression', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_md: '解方程 2x+3=7',
+        followup_probe_md: '解方程 2x-3=7',
+      }).success,
+    ).toBe(true);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_md: '判断 x/y 的定义域',
+        followup_probe_md: '判断 xy 的定义域',
+      }).success,
+    ).toBe(true);
+  });
+
   it('trims follow-up fields and rejects whitespace-only prompt or reference', () => {
     const parsed = ConjectureDraft.parse({
       ...valid,

@@ -447,6 +447,43 @@ describe('loadTeachingBrief', () => {
     });
   });
 
+  it('does not resurrect preliminary evidence when an older terminal crosses the display TTL first', async () => {
+    const proposalId = 'p_terminal_permanent_supersession';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    const terminalAt = new Date(NOW.getTime() - 20 * 60 * 1000);
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: terminalAt,
+    });
+
+    const afterTerminalExpiry = new Date(terminalAt.getTime() + TEACHING_BRIEF_OUTCOME_TTL_MS + 1);
+    await expect(loadTeachingBrief(testDb(), afterTerminalExpiry)).resolves.toEqual({
+      brief: null,
+    });
+  });
+
   it('hides a recurrence outcome when its preliminary evidence is corrected, then restores it', async () => {
     const proposalId = 'p_corrected_dependency';
     await seedProposal({

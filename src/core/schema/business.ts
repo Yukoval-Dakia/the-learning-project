@@ -445,14 +445,16 @@ export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
 
 /**
  * Deterministic probe identity fingerprint. It closes superficial duplication
- * through Unicode width/case, whitespace, or punctuation changes; semantic
+ * through Unicode width/case, whitespace, or non-semantic punctuation changes.
+ * Math-significant punctuation (`-`, `/`, `:`) is preserved; semantic
  * independence remains a model-authoring + blind-evaluation responsibility.
  */
 export function normalizeProbeIdentity(value: string): string {
   return value
     .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\p{P}\s_]+/gu, '');
+    .replace(/[\s_]+/gu, '')
+    .replace(/\p{P}/gu, (character) => ('-/:'.includes(character) ? character : ''));
 }
 
 export const ConjectureModelAbstainDraft = z.object({

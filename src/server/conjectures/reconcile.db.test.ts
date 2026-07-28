@@ -354,6 +354,39 @@ describe('reconcileConjecturePredictions (DB)', () => {
     await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(1);
   });
 
+  it('does not project a recurrence chain after a supporting probe drifts', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    const [followup] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.source_ref, seed.conjectureProposalId),
+          sql`${question.metadata}->>'probe_sequence' = '2'`,
+        ),
+      );
+    if (!followup) throw new Error('expected the first miss to activate a recurrence probe');
+    const terminal = await answerProbe({
+      db,
+      probeQuestionId: followup.id,
+      outcome: 0,
+    });
+    await db
+      .update(question)
+      .set({ prompt_md: 'drifted first probe prompt' })
+      .where(eq(question.id, seed.probeQuestionId));
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
+    expect((await typedRow(seed.knowledgeId))?.evidence_event_ids).toContain(
+      seed.probeResultEventId,
+    );
+  });
+
   it('does not score a recurrence probe with the first probe prediction', async () => {
     const seed = await seedAnsweredProbe({ outcome: 0 });
     const [followup] = await db

@@ -25,6 +25,12 @@ export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Bounded recent-candidate window; keeps quiet reads constant-round-trip. */
 export const TEACHING_BRIEF_CANDIDATE_WINDOW = 50;
+/**
+ * Per-conjecture terminal history inspected for permanent supersession. If this
+ * ceiling is exhausted without a valid terminal, the reader fails closed instead
+ * of resurrecting preliminary evidence from an incomplete scan.
+ */
+const TERMINAL_SCAN_PER_CONJECTURE = 8;
 
 /**
  * Every `current_outcome.summary_md` string, in one place (contract §2.2: short, factual
@@ -252,6 +258,14 @@ export interface CanonicalProbeResultFacts {
   /** = the conjecture proposal id (brief_id); payload conjecture_event_id === caused_by. */
   conjectureEventId: string;
   probeQuestionId: string;
+}
+
+/** Shared SQL mirror of the canonical resolution/outcome pair matrix. */
+function canonicalProbeResolutionOutcomeSql() {
+  return sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
+      AND ${event.payload}->>'outcome' = '0')
+    OR (${event.payload}->>'resolution' = 'retired'
+      AND ${event.payload}->>'outcome' = '1'))`;
 }
 
 /**
@@ -722,9 +736,7 @@ export async function loadOutcomeBrief(
         // otherwise a flood of corrupt results could evict an older valid outcome.
         // Keep this SQL mirror aligned with validateCanonicalProbeResult; the
         // in-loop validation below stays authoritative for provenance.
-        sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
-              AND ${event.payload}->>'outcome' = '0')
-          OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
+        canonicalProbeResolutionOutcomeSql(),
         // Corrected outcomes are excluded before the bounded window. The subquery
         // ignores structurally invalid correction kinds (notably supersede without
         // a replacement) just as getCorrectionStatuses does; the in-memory gate
@@ -772,32 +784,55 @@ export async function loadOutcomeBrief(
       }),
     ),
   ];
-  // Query every terminal row for the bounded candidate conjecture set rather than
-  // applying a global terminal LIMIT: a busy conjecture must not crowd another
-  // candidate's older terminal out and resurrect its preliminary result.
-  const terminalRows =
-    candidateConjectureIds.length === 0
-      ? []
-      : await db
-          .select()
-          .from(event)
-          .where(
-            and(
-              eq(event.action, PROBE_RESULT_ACTION),
-              eq(event.subject_kind, 'question'),
-              inArray(
-                sql<string>`${event.payload}->>'conjecture_event_id'`,
-                candidateConjectureIds,
-              ),
-              sql`${event.payload}->>'resolution_rule_version' =
-                  ${PROBE_RESOLUTION_RULE_VERSION}`,
-              sql`((${event.payload}->>'resolution' = 'confirmed'
-                    AND ${event.payload}->>'outcome' = '0')
-                OR (${event.payload}->>'resolution' = 'retired'
-                    AND ${event.payload}->>'outcome' = '1'))`,
-            ),
-          )
-          .orderBy(desc(event.created_at), desc(event.id));
+  const loadTerminalWindow = (conjectureEventId: string) =>
+    db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_RESULT_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(sql<string>`${event.payload}->>'conjecture_event_id'`, conjectureEventId),
+          sql`${event.payload}->>'resolution_rule_version' =
+              ${PROBE_RESOLUTION_RULE_VERSION}`,
+          canonicalProbeResolutionOutcomeSql(),
+          sql`${event.payload}->>'resolution' IN ('confirmed', 'retired')`,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(TERMINAL_SCAN_PER_CONJECTURE + 1);
+  // Bound each conjecture independently so one noisy history cannot crowd another
+  // candidate out of a global LIMIT. The ack transaction uses one connection and
+  // therefore loads these windows serially.
+  const terminalWindows: Array<{
+    conjectureEventId: string;
+    rows: EventRow[];
+    truncated: boolean;
+  }> = [];
+  if (serial) {
+    for (const conjectureEventId of candidateConjectureIds) {
+      const rows = await loadTerminalWindow(conjectureEventId);
+      terminalWindows.push({
+        conjectureEventId,
+        rows: rows.slice(0, TERMINAL_SCAN_PER_CONJECTURE),
+        truncated: rows.length > TERMINAL_SCAN_PER_CONJECTURE,
+      });
+    }
+  } else {
+    terminalWindows.push(
+      ...(await Promise.all(
+        candidateConjectureIds.map(async (conjectureEventId) => {
+          const rows = await loadTerminalWindow(conjectureEventId);
+          return {
+            conjectureEventId,
+            rows: rows.slice(0, TERMINAL_SCAN_PER_CONJECTURE),
+            truncated: rows.length > TERMINAL_SCAN_PER_CONJECTURE,
+          };
+        }),
+      )),
+    );
+  }
+  const terminalRows = terminalWindows.flatMap(({ rows }) => rows);
   const terminalStatuses = await getEffectiveProbeResultStatuses(
     db,
     terminalRows.map((row) => row.id),
@@ -810,6 +845,10 @@ export async function loadOutcomeBrief(
     row,
     outcome: await validateAckableOutcome(db, row, now, {
       serial,
+      // Supersession is permanent: an older terminal must not let a
+      // later-timestamp preliminary result resurface when only the terminal
+      // crosses the live display TTL.
+      skipTimeWindow: true,
       precomputedEvidenceStatus: terminalStatuses.get(row.id),
     }),
   });
@@ -831,6 +870,11 @@ export async function loadOutcomeBrief(
       isCandidateError(outcome) ? [] : [outcome.value.proposal.id],
     ),
   );
+  const incompleteTerminalConjectureIds = new Set(
+    terminalWindows.flatMap(({ conjectureEventId, truncated }) =>
+      truncated && !terminalConjectureIds.has(conjectureEventId) ? [conjectureEventId] : [],
+    ),
+  );
 
   for (const result of results) {
     if (resultStatuses.get(result.id) !== 'active') {
@@ -838,12 +882,12 @@ export async function loadOutcomeBrief(
       continue;
     }
     const canonical = validateCanonicalProbeResult(result);
-    if (
-      !isCandidateError(canonical) &&
-      canonical.value.resolution === 'evidence_for' &&
-      terminalConjectureIds.has(canonical.value.conjectureEventId)
-    ) {
-      continue;
+    if (!isCandidateError(canonical) && canonical.value.resolution === 'evidence_for') {
+      if (terminalConjectureIds.has(canonical.value.conjectureEventId)) continue;
+      if (incompleteTerminalConjectureIds.has(canonical.value.conjectureEventId)) {
+        warnSkipped('outcome', result.id, 'terminal_history_scan_truncated');
+        continue;
+      }
     }
     // Shared full-chain gate (single source of truth with the ack writer): canonical
     // result + existing canonical mind-probe + accepted conjecture proposal.
@@ -1075,9 +1119,7 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
         // Inverse of validateCanonicalProbeResult's resolution/outcome pair matrix;
         // keep both sites aligned when the canonical contract changes.
         sql`NOT (${event.subject_kind} = 'question'
-          AND ((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
-                AND ${event.payload}->>'outcome' = '0')
-            OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1')))`,
+          AND ${canonicalProbeResolutionOutcomeSql()})`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))

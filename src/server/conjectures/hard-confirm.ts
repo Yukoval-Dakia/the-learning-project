@@ -482,6 +482,9 @@ export async function gatherDissociationEvidence(
     const probeResultEventId = payload?.probe_result_event_id;
     const sourceStatus =
       typeof probeResultEventId === 'string' ? scoreStatuses.get(probeResultEventId) : undefined;
+    // Fail closed on legacy/unattributable scores: without a source probe-result id
+    // there is no way to fold later corrections or recurrence dependencies. Such a
+    // row remains in the audit log but cannot contribute to hard-confirm evidence.
     if (
       typeof probeResultEventId !== 'string' ||
       sourceStatus === 'corrected' ||

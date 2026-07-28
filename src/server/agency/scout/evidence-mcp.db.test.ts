@@ -9,6 +9,7 @@ import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { event, kc_typed_state, question, tool_call_log } from '@/db/schema';
 import { artifact } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -210,16 +211,59 @@ describe('get_question', () => {
 // payload has NO knowledge_id — {conjecture_event_id, outcome, resolution,
 // retrievability_at_judge, answer_md} keyed by subject_id = the probe question id.
 // Review F1 killed the payload-only filter that made these rows unreachable.
-async function seedProbeQuestion(id: string, knowledgeIds: string[]): Promise<void> {
-  await testDb().insert(question).values({
-    id,
-    kind: 'short_answer',
-    prompt_md: 'probe prompt',
-    knowledge_ids: knowledgeIds,
-    source: 'test',
-    created_at: NOW,
-    updated_at: NOW,
+async function ensureConjectureProposal(): Promise<void> {
+  const db = testDb();
+  const [existing] = await db.select({ id: event.id }).from(event).where(eq(event.id, 'conj_1'));
+  if (existing) return;
+  await writeAiProposal(db, {
+    id: 'conj_1',
+    actor_ref: 'research_meeting',
+    payload: {
+      kind: 'conjecture',
+      target: { subject_kind: 'mind_model', subject_id: 'k1' },
+      reason_md: 'canonical probe-history fixture',
+      evidence_refs: [{ kind: 'event', id: 'failure_1' }],
+      cooldown_key: 'conjecture:test:k1',
+      proposed_change: {
+        claim_md: 'test conjecture',
+        knowledge_id: 'k1',
+        cause_category: 'concept_confusion',
+        confidence: 0.7,
+        recurrence_count: 2,
+        probe_md: 'probe prompt',
+        probe_reference_md: 'probe reference',
+        followup_probe_md: 'follow-up probe prompt',
+        followup_probe_reference_md: 'follow-up probe reference',
+        discriminating: true,
+        corrected_by_owner: false,
+        predicted_p: 0.3,
+        baseline_p_at_induction: 0.6,
+      },
+    },
   });
+}
+
+async function seedProbeQuestion(
+  id: string,
+  knowledgeIds: string[],
+  sequence: 1 | 2 = 1,
+): Promise<void> {
+  await ensureConjectureProposal();
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: 'short_answer',
+      prompt_md: sequence === 2 ? 'follow-up probe prompt' : 'probe prompt',
+      reference_md: sequence === 2 ? 'follow-up probe reference' : 'probe reference',
+      knowledge_ids: knowledgeIds,
+      source: 'mind_probe',
+      source_ref: 'conj_1',
+      draft_status: 'draft',
+      metadata: { conjecture_proposal_id: 'conj_1', probe_sequence: sequence },
+      created_at: NOW,
+      updated_at: NOW,
+    });
 }
 
 function probeResultRow(
@@ -314,8 +358,8 @@ describe('get_probe_history', () => {
   it('does not relabel a legacy confirmed event as recurrence-gated evidence', async () => {
     const db = testDb();
     await seedProbeQuestion('q_legacy', ['k1']);
-    await seedProbeQuestion('q_v2', ['k1']);
-    await seedProbeQuestion('q_v2_dependency', ['other_kc']);
+    await seedProbeQuestion('q_v2', ['k1'], 2);
+    await seedProbeQuestion('q_v2_dependency', ['k1']);
     const dependency = probeResultRow(
       'pr_v2_dependency',
       'q_v2_dependency',
@@ -351,16 +395,14 @@ describe('get_probe_history', () => {
         }>
       ).map((row) => [row.event_id, row.payload.evidence_strength]),
     );
-    expect(strengths).toEqual({
-      pr_v2: 'independent_recurrence',
-      pr_legacy: 'legacy_confirmed_unverified',
-    });
+    expect(strengths.pr_v2).toBe('independent_recurrence');
+    expect(strengths.pr_legacy).toBe('legacy_confirmed_unverified');
   });
 
   it('invalidates a recurrence result while one of its supporting results is corrected', async () => {
     const db = testDb();
-    await seedProbeQuestion('q_dependency', ['other_kc']);
-    await seedProbeQuestion('q_terminal', ['k1']);
+    await seedProbeQuestion('q_dependency', ['k1']);
+    await seedProbeQuestion('q_terminal', ['k1'], 2);
     const dependency = probeResultRow(
       'pr_dependency',
       'q_dependency',
@@ -418,6 +460,7 @@ describe('get_probe_history', () => {
     out = await callTool('get_probe_history', { knowledge_id: 'k1' });
     expect((out.probes as Array<{ event_id: string }>).map((row) => row.event_id)).toEqual([
       'pr_terminal',
+      'pr_dependency',
     ]);
   });
 
@@ -543,9 +586,45 @@ describe('get_probe_history', () => {
       expected.push(`row_${i}`);
     }
     expect(probes.map((p) => p.event_id)).toEqual(expected);
+    expect(out.scan_truncated).toBe(false);
     const actions = new Set(probes.map((p) => p.action));
     expect(actions).toContain('experimental:probe_result');
     expect(actions).toContain('experimental:prediction_score');
+  });
+
+  it('marks probe history truncated when the scan ceiling is exhausted by inactive evidence', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    const total = EVIDENCE_LIMITS.probeHistoryRows * 10 + 1;
+    const results = Array.from({ length: total }, (_, index) =>
+      probeResultRow(
+        `pr_truncated_${index}`,
+        'q_probe_k1',
+        `answer ${index}`,
+        new Date(NOW.getTime() + index * 1000),
+      ),
+    );
+    const corrections: (typeof event.$inferInsert)[] = results.map((result, index) => ({
+      id: `correct_${result.id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: result.id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'inactive scan fixture',
+        affected_refs: [{ kind: 'open_inquiry', id: result.id }],
+      },
+      created_at: new Date(NOW.getTime() + total * 1000 + index),
+    }));
+    await db.insert(event).values(results);
+    await db.insert(event).values(corrections);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+    expect(out.scan_truncated).toBe(true);
   });
 });
 
