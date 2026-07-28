@@ -7,6 +7,7 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -40,6 +41,21 @@ async function serve(probeMd: string, now: Date): Promise<string> {
         baseline_p_at_induction: 0.6,
       },
     },
+  });
+  await writeEvent(testDb(), {
+    id: `rate_${conjectureProposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: conjectureProposalId,
+    outcome: 'success',
+    payload: {
+      rating: 'accept',
+      conjecture_id: conjectureProposalId,
+      calibration_anchor: 'accept',
+    },
+    caused_by_event_id: conjectureProposalId,
   });
   const served = await serveProbeOnce({
     db: testDb(),
@@ -76,6 +92,31 @@ describe('loadActiveProbes', () => {
 
     const { probes } = await loadActiveProbes(testDb());
     expect(probes.map((p) => p.probe_question_id)).toEqual([p1]);
+  });
+
+  it('excludes corrected conjectures without letting newer stale probes hide active ones', async () => {
+    const active = await serve('active probe', new Date('2026-07-13T00:00:01Z'));
+    const stale = await serve('stale probe', new Date('2026-07-13T00:00:02Z'));
+    await writeEvent(testDb(), {
+      id: 'correct_conj_2',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'conj_2',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'owner retracted this conjecture',
+        affected_refs: [],
+      },
+      caused_by_event_id: 'conj_2',
+    });
+
+    const { probes } = await loadActiveProbes(testDb());
+
+    expect(probes.map((probe) => probe.probe_question_id)).toEqual([active]);
+    expect(probes.some((probe) => probe.probe_question_id === stale)).toBe(false);
   });
 
   it('returns a calm empty list when there are no active probes', async () => {

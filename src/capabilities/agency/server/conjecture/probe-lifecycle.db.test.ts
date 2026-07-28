@@ -44,7 +44,7 @@ async function seedConjecture({
   includeFollowup = true,
 }: { includeFollowup?: boolean } = {}): Promise<string> {
   const db = testDb();
-  return writeAiProposal(db, {
+  const proposalId = await writeAiProposal(db, {
     actor_ref: 'research_meeting',
     payload: {
       kind: 'conjecture',
@@ -72,6 +72,18 @@ async function seedConjecture({
       },
     },
   });
+  await writeEvent(db, {
+    id: `rate_${proposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
+    caused_by_event_id: proposalId,
+  });
+  return proposalId;
 }
 
 async function serve(proposalId: string) {
@@ -401,6 +413,39 @@ describe('probe one-shot lifecycle (U3)', () => {
       outcome: 1,
       independent_probe_question_ids: [],
     });
+  });
+
+  it('rejects a retracted conjecture without writing evidence or occupying a probe slot', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+
+    await writeEvent(testDb(), {
+      id: `correct_${proposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'owner retracted the conjecture before recurrence verification',
+        affected_refs: [],
+      },
+      caused_by_event_id: proposalId,
+    });
+
+    expect(await countActiveProbes(testDb())).toBe(0);
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'probe_conjecture_inactive', status: 409 });
+    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
+    expect(await probeQuestions(proposalId)).toHaveLength(1);
   });
 
   it('one-shot idempotency — answering twice writes only one probe_result event', async () => {

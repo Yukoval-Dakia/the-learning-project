@@ -11,6 +11,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -59,6 +60,21 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
       cooldown_key: `conjecture:concept_confusion::${knowledgeId}`,
     },
     caused_by_event_id: null,
+  });
+  await writeEvent(db, {
+    id: `rate_${conjectureProposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: conjectureProposalId,
+    outcome: 'success',
+    payload: {
+      rating: 'accept',
+      conjecture_id: conjectureProposalId,
+      calibration_anchor: 'accept',
+    },
+    caused_by_event_id: conjectureProposalId,
   });
 
   const served = await serveProbeOnce({

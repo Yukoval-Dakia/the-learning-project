@@ -563,8 +563,12 @@ export async function retractAiProposal(
   // (variant_question / learning_item / goal_scope) are folded in too — strictly safer,
   // behavior unchanged.
   await db.transaction(async (tx) => {
+    // Serialize every proposal retraction with downstream lifecycle consumers that
+    // derive effects from the accepted proposal. Conjecture probes use this shared
+    // lock before committing evidence/follow-ups, so retract-vs-answer cannot leave
+    // a live recurrence probe for a stale proposal.
+    await acquireProposalDecisionLock(tx, proposalId);
     if (proposal.kind === 'question_edit') {
-      await acquireProposalDecisionLock(tx, proposalId);
       const existingRate = await findExistingRateEvent(tx, proposalId);
       if (existingRate?.decision === 'accept') {
         throw new ApiError(

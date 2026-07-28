@@ -26,6 +26,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -78,7 +79,7 @@ async function seedKnowledge(): Promise<void> {
 }
 
 async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise<string> {
-  return writeAiProposal(testDb(), {
+  const proposalId = await writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
     payload: {
       kind: 'conjecture',
@@ -106,6 +107,18 @@ async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise
       },
     },
   });
+  await writeEvent(testDb(), {
+    id: `rate_${proposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
+    caused_by_event_id: proposalId,
+  });
+  return proposalId;
 }
 
 async function serveProbe(): Promise<string> {
@@ -305,6 +318,41 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     const events = await probeResultEvents(probeId);
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({ outcome: 1, resolution: 'retired' });
+  });
+
+  it('rejects a retracted conjecture before paying the judge', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serveProbeOnce({
+      db: testDb(),
+      conjectureProposalId: proposalId,
+      knowledgeId: KC_ID,
+      probeMd: 'd/dx sin(x^2) = ?',
+      referenceMd: '2x·cos(x^2)',
+    });
+    if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+    await writeEvent(testDb(), {
+      id: `correct_${proposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'owner retracted before answering',
+        affected_refs: [],
+      },
+      caused_by_event_id: proposalId,
+    });
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+
+    const response = await answer(served.probe_question_id, 'cos(x^2)');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'probe_conjecture_inactive' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
   });
 
   it('re-answer short-circuits via peek — judge NOT invoked, recorded values win, coarse_outcome null', async () => {

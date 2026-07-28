@@ -58,8 +58,12 @@ import {
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus, getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+} from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { type PriorProbeResult, resolveProbeResolution } from './probe-resolution';
@@ -119,13 +123,14 @@ export type ServeProbeOnceResult =
   | { status: 'cap_reached'; active_count: number };
 
 /**
- * Count probes that are SERVED but not yet ANSWERED = `source='mind_probe'`
- * questions with NO `experimental:probe_result` event referencing them.
+ * Count probes that are SERVED for an active conjecture but not yet ANSWERED =
+ * `source='mind_probe'` questions with NO `experimental:probe_result` event
+ * referencing them and no effective correction on their proposal.
  * Accepts a tx so serveProbeOnce can read the count inside its transaction.
  */
 export async function countActiveProbes(db: DbOrTx): Promise<number> {
   const rows = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({ metadata: question.metadata })
     .from(question)
     .where(
       and(
@@ -138,7 +143,33 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
         )`,
       ),
     );
-  return rows[0]?.n ?? 0;
+  const conjectureIds = [
+    ...new Set(
+      rows
+        .map((row) => {
+          const metadata =
+            row.metadata !== null &&
+            typeof row.metadata === 'object' &&
+            !Array.isArray(row.metadata)
+              ? (row.metadata as Record<string, unknown>)
+              : {};
+          const conjectureId = metadata.conjecture_proposal_id;
+          return typeof conjectureId === 'string' && conjectureId.length > 0 ? conjectureId : null;
+        })
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
+  return rows.filter((row) => {
+    const metadata =
+      row.metadata !== null && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const conjectureId = metadata.conjecture_proposal_id;
+    // Corrupt provenance stays counted so it cannot silently bypass the safety cap.
+    if (typeof conjectureId !== 'string' || conjectureId.length === 0) return true;
+    return correctionStatuses.get(conjectureId)?.state === 'active';
+  }).length;
 }
 
 /**
@@ -235,15 +266,16 @@ interface FollowupProbeSpec {
   referenceMd: string;
 }
 
-type FollowupProbeLoadResult =
+type ProbeConjectureLoadResult =
   | { status: 'ready'; spec: FollowupProbeSpec }
   | { status: 'legacy' }
+  | { status: 'inactive'; reason: 'not_accepted' | 'corrected' }
   | { status: 'invalid' };
 
-async function loadFollowupProbeSpec(
+async function loadProbeConjectureState(
   db: Db | Tx,
   conjectureEventId: string,
-): Promise<FollowupProbeLoadResult> {
+): Promise<ProbeConjectureLoadResult> {
   const [proposalRow] = await db
     .select({ payload: event.payload })
     .from(event)
@@ -265,6 +297,14 @@ async function loadFollowupProbeSpec(
         : parsedProposal.error.issues,
     );
     return { status: 'invalid' };
+  }
+  const correction = await getCorrectionStatus(db, conjectureEventId);
+  if (correction.state !== 'active') {
+    return { status: 'inactive', reason: 'corrected' };
+  }
+  const decision = await findExistingRateEvent(db, conjectureEventId);
+  if (decision?.decision !== 'accept') {
+    return { status: 'inactive', reason: 'not_accepted' };
   }
   const change = parsedProposal.data.proposed_change;
   if (change.followup_probe_md === undefined || change.followup_probe_reference_md === undefined) {
@@ -312,12 +352,19 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
       409,
     );
   }
-  const followup = await loadFollowupProbeSpec(db, conjectureEventId);
+  const followup = await loadProbeConjectureState(db, conjectureEventId);
   if (followup.status === 'invalid') {
     throw new ApiError(
       'probe_proposal_invalid',
       `conjecture ${conjectureEventId} has an invalid proposal payload`,
       500,
+    );
+  }
+  if (followup.status === 'inactive') {
+    throw new ApiError(
+      'probe_conjecture_inactive',
+      `conjecture ${conjectureEventId} is ${followup.reason === 'corrected' ? 'corrected' : 'not accepted'}`,
+      409,
     );
   }
   if (sequence === 2 && followup.status !== 'ready') {
@@ -557,12 +604,23 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // both read an empty history and both persist `evidence_for`. The namespace
     // salt keeps the conjecture lock distinct from the per-question lock above.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
-    const followup = await loadFollowupProbeSpec(tx, conjectureEventId);
+    // Serialize against proposal correction/retraction. The pre-judge route check is
+    // only a cost guard; this locked re-check is the commit authority so a stale
+    // conjecture can never mint recurrence evidence or a follow-up probe.
+    await acquireProposalDecisionLock(tx, conjectureEventId);
+    const followup = await loadProbeConjectureState(tx, conjectureEventId);
     if (followup.status === 'invalid') {
       throw new ApiError(
         'probe_proposal_invalid',
         `conjecture ${conjectureEventId} has an invalid proposal payload`,
         500,
+      );
+    }
+    if (followup.status === 'inactive') {
+      throw new ApiError(
+        'probe_conjecture_inactive',
+        `conjecture ${conjectureEventId} is ${followup.reason === 'corrected' ? 'corrected' : 'not accepted'}`,
+        409,
       );
     }
     const usesRecurrenceGate = followup.status === 'ready';

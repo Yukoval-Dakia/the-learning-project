@@ -26,6 +26,7 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
@@ -117,6 +118,21 @@ async function fillProbeSlots(n: number): Promise<string[]> {
           probe_reference_md: 'ref',
         },
       },
+    });
+    await writeEvent(db, {
+      id: `rate_${conjectureProposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: conjectureProposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        conjecture_id: conjectureProposalId,
+        calibration_anchor: 'accept',
+      },
+      caused_by_event_id: conjectureProposalId,
     });
     const r = await serveProbeOnce({
       db,
