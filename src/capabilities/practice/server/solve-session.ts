@@ -25,7 +25,10 @@ import {
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
-import { loadAttemptQuestionSnapshot } from './question-evidence-snapshot';
+import {
+  QuestionEvidenceSnapshotError,
+  loadQuestionWithAttemptSnapshot,
+} from './question-evidence-snapshot';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -322,14 +325,17 @@ export async function submitSolveAttempt(
     throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
   }
 
-  const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
-  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id).catch((err) => {
+  const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, questionId).catch((err) => {
+    if (err instanceof QuestionEvidenceSnapshotError && err.code === 'question_not_found') {
+      throw new SolveError('question_not_found', err.message);
+    }
     throw new SolveError(
       'question_evidence_unavailable',
       `question ${questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
     );
   });
+  const q = loadedQuestion.question;
+  const questionSnapshot = loadedQuestion.question_snapshot;
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 

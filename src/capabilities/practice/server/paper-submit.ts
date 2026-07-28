@@ -29,7 +29,7 @@ import { validateCauseAgainstProfile } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db as defaultDb } from '@/db/client';
 import type { Db, Tx } from '@/db/client';
-import { answer, event, learning_session, question } from '@/db/schema';
+import { answer, event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -56,7 +56,10 @@ import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
-import { loadAttemptQuestionSnapshot } from './question-evidence-snapshot';
+import {
+  QuestionEvidenceSnapshotError,
+  loadQuestionWithAttemptSnapshot,
+} from './question-evidence-snapshot';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -467,19 +470,23 @@ export async function submitPaperSlot(
     );
   }
 
-  // Load the question for the judge invoker (same fields /review/submit reads).
-  const qRows = await db.select().from(question).where(eq(question.id, input.questionId)).limit(1);
-  const q = qRows[0];
-  if (!q) {
-    throw new ApiError('not_found', `question ${input.questionId} not found`, 404);
-  }
-  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id).catch((err) => {
-    throw new ApiError(
-      'question_evidence_unavailable',
-      `question ${input.questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
-      409,
-    );
-  });
+  // Load the exact question row used by the judge together with its immutable
+  // child + parent evidence. A concurrent edit cannot split judge input from
+  // the snapshot later used to interpret this attempt.
+  const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, input.questionId).catch(
+    (err) => {
+      if (err instanceof QuestionEvidenceSnapshotError && err.code === 'question_not_found') {
+        throw new ApiError('not_found', err.message, 404);
+      }
+      throw new ApiError(
+        'question_evidence_unavailable',
+        `question ${input.questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
+        409,
+      );
+    },
+  );
+  const q = loadedQuestion.question;
+  const questionSnapshot = loadedQuestion.question_snapshot;
 
   // Resolve the profile for the slot's knowledge (primary first, then question
   // labels) — used for the D6 profile_version stamp + cause validation.

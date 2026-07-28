@@ -12,6 +12,16 @@ type DbLike = Db | Tx;
 type QuestionEvidenceSnapshotSource = typeof question.$inferSelect;
 const parentQuestion = alias(question, 'attempt_question_evidence_parent');
 
+export class QuestionEvidenceSnapshotError extends Error {
+  constructor(
+    public readonly code: 'question_not_found' | 'parent_question_not_found' | 'snapshot_invalid',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'QuestionEvidenceSnapshotError';
+  }
+}
+
 function freezeContext(row: QuestionEvidenceSnapshotSource): QuestionEvidenceContextSnapshotT {
   return {
     question_id: row.id,
@@ -32,10 +42,13 @@ function freezeContext(row: QuestionEvidenceSnapshotSource): QuestionEvidenceCon
  * edit from producing a child/parent snapshot assembled from different reads.
  * Missing parents fail closed.
  */
-export async function loadAttemptQuestionSnapshot(
+export async function loadQuestionWithAttemptSnapshot(
   db: DbLike,
   questionId: string,
-): Promise<AttemptQuestionSnapshotT> {
+): Promise<{
+  question: QuestionEvidenceSnapshotSource;
+  question_snapshot: AttemptQuestionSnapshotT;
+}> {
   const [row] = await db
     .select({
       question: getTableColumns(question),
@@ -46,16 +59,34 @@ export async function loadAttemptQuestionSnapshot(
     .where(eq(question.id, questionId))
     .limit(1);
   if (!row) {
-    throw new Error(`loadAttemptQuestionSnapshot: question ${questionId} not found`);
+    throw new QuestionEvidenceSnapshotError(
+      'question_not_found',
+      `loadAttemptQuestionSnapshot: question ${questionId} not found`,
+    );
   }
   if (row.question.parent_question_id !== null && row.parent_question === null) {
-    throw new Error(
+    throw new QuestionEvidenceSnapshotError(
+      'parent_question_not_found',
       `loadAttemptQuestionSnapshot: parent question ${row.question.parent_question_id} not found`,
     );
   }
-  return AttemptQuestionSnapshot.parse({
+  const parsed = AttemptQuestionSnapshot.safeParse({
     schema_version: 1,
     question: freezeContext(row.question),
     parent_question: row.parent_question ? freezeContext(row.parent_question) : null,
   });
+  if (!parsed.success) {
+    throw new QuestionEvidenceSnapshotError(
+      'snapshot_invalid',
+      `loadAttemptQuestionSnapshot: question ${questionId} snapshot is invalid: ${parsed.error.message}`,
+    );
+  }
+  return { question: row.question, question_snapshot: parsed.data };
+}
+
+export async function loadAttemptQuestionSnapshot(
+  db: DbLike,
+  questionId: string,
+): Promise<AttemptQuestionSnapshotT> {
+  return (await loadQuestionWithAttemptSnapshot(db, questionId)).question_snapshot;
 }

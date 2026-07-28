@@ -101,6 +101,7 @@ export async function POST(req: Request): Promise<Response> {
           kind: body.question_kind,
           prompt_md: body.prompt_md,
           reference_md: body.reference_md,
+          image_refs: body.prompt_image_refs,
           knowledge_ids: body.knowledge_ids,
           difficulty: body.difficulty,
           source: 'manual',

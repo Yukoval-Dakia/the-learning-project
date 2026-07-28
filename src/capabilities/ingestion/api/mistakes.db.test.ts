@@ -212,6 +212,7 @@ describe('POST /api/mistakes', () => {
     } | null;
     expect(meta?.prompt_image_refs).toEqual(['asset_p']);
     expect(meta?.prompt_image_ref_kind).toBe('source_asset_id');
+    expect(qs[0].image_refs).toEqual(['asset_p']);
 
     const events = await db.select().from(event).where(eq(event.id, body.mistake_id));
     expect((events[0].payload as Record<string, unknown>).answer_image_refs).toEqual(['asset_w']);
@@ -222,6 +223,7 @@ describe('POST /api/mistakes', () => {
           question_id: body.question_id,
           prompt_md: qs[0].prompt_md,
           reference_md: qs[0].reference_md,
+          image_refs: ['asset_p'],
         },
         parent_question: null,
       },
