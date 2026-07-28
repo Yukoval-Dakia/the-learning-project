@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ConjectureDraft, LearningItemOpenStatus, LearningItemStatus } from './business';
+import {
+  ConjectureAbstainDraft,
+  ConjectureDraft,
+  LearningItemOpenStatus,
+  LearningItemStatus,
+} from './business';
 
 describe('LearningItemStatus', () => {
   it('keeps practice/supply open statuses inside the canonical lifecycle enum', () => {
@@ -16,7 +21,10 @@ describe('LearningItemStatus', () => {
 
 describe('ConjectureDraft', () => {
   const valid = {
+    kind: 'proposal' as const,
     claim_md: '你把链式法则当成「导数相乘」，忽略内层函数的代入。',
+    knowledge_id: 'k_chain_rule',
+    evidence_event_ids: ['attempt_1', 'attempt_2'],
     probe_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
     probe_reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
     cause_category: 'concept_confusion',
@@ -34,7 +42,38 @@ describe('ConjectureDraft', () => {
   it('defaults agreement_count to 1 when omitted (single sample)', () => {
     const { agreement_count: _omit, ...rest } = valid;
     const parsed = ConjectureDraft.parse(rest);
+    expect(parsed.kind).toBe('proposal');
+    if (parsed.kind !== 'proposal') throw new Error('expected proposal');
     expect(parsed.agreement_count).toBe(1);
+  });
+
+  it('accepts a bounded abstain without requiring a fabricated claim or probe', () => {
+    expect(
+      ConjectureDraft.parse({
+        kind: 'abstain',
+        reason_code: 'insufficient_evidence',
+        explanation_md: '错答之间没有稳定的共同模式。',
+        evidence_event_ids: ['attempt_1'],
+      }),
+    ).toEqual({
+      kind: 'abstain',
+      reason_code: 'insufficient_evidence',
+      explanation_md: '错答之间没有稳定的共同模式。',
+      evidence_event_ids: ['attempt_1'],
+    });
+  });
+
+  it('keeps orchestration-only reasons out of model output while accepting the final decision', () => {
+    const sampleFailure = {
+      kind: 'abstain' as const,
+      reason_code: 'sample_failure' as const,
+    };
+    expect(ConjectureDraft.safeParse(sampleFailure).success).toBe(false);
+    expect(ConjectureAbstainDraft.parse(sampleFailure)).toEqual({
+      kind: 'abstain',
+      reason_code: 'sample_failure',
+      evidence_event_ids: [],
+    });
   });
 
   it('rejects recurrence_count < 2 (a conjecture needs >=2 distinct attempts)', () => {
@@ -57,7 +96,9 @@ describe('ConjectureDraft', () => {
   });
 
   it('trims producer claims and rejects whitespace-only input', () => {
-    expect(ConjectureDraft.parse({ ...valid, claim_md: '  有效判断  ' }).claim_md).toBe('有效判断');
+    const parsed = ConjectureDraft.parse({ ...valid, claim_md: '  有效判断  ' });
+    if (parsed.kind !== 'proposal') throw new Error('expected proposal');
+    expect(parsed.claim_md).toBe('有效判断');
     expect(ConjectureDraft.safeParse({ ...valid, claim_md: ' \n\t ' }).success).toBe(false);
   });
 

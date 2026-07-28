@@ -25,14 +25,16 @@
 // Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
 // rethrow so pg-boss retries. Candidate-local grounding/image failures refill from
-// lower salience; the per-cell LLM half is swallow-safe (one cell's failure logs a
-// retryable AI ledger row and continues; partial progress is fine).
+// lower salience; per-cell induction failures are swallow-safe (one cell's failure
+// logs a retryable AI ledger row and continues; partial progress is fine), while
+// durable write failures escape as job-level infrastructure faults.
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
 // accepts/edits/rejects in the inbox; scoring + label flips are DEFERRED (PR-2 /
 // ADR-0046). The proposal only SNAPSHOTS predicted_p (the claim's bet) +
 // baseline_p_at_induction (the number to beat); it does not move any number.
 
+import { createHash } from 'node:crypto';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import type { Job } from 'pg-boss';
 
@@ -50,10 +52,10 @@ import type {
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
-import { source_asset } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { event, source_asset } from '@/db/schema';
 import { defaultImageFetch } from '@/server/ai/judges/steps-judge';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { type FailureAttempt, getFailureAttemptsWithReasoningTrace } from '@/server/events/queries';
@@ -61,10 +63,17 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
-import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
 import {
+  ConjectureInductionOperationalError,
+  type ConjectureInductionTaskKind,
+  type InduceConjectureResult,
+  induceConjecture,
+} from '@/server/agency/conjecture/induce';
+import {
+  PREDICTION_SCORE_ACTION,
   type ReconcileResult,
   reconcileConjecturePredictions,
 } from '@/server/conjectures/reconcile';
@@ -89,9 +98,12 @@ export interface ResearchMeetingResult {
   considered: number;
   /** conjectures actually proposed (a cell whose induction failed is dropped). */
   conjectures_created: number;
+  /** grounded induction completed but correctly refused to fabricate a proposal. */
+  conjectures_abstained: number;
   /**
-   * YUK-779 — cells whose induction/write THREW and was swallowed by the per-cell
-   * catch below. Invariant: `cells_failed + conjectures_created === considered`.
+   * YUK-779 — cells whose induction THREW and was swallowed by the per-cell catch
+   * below. Invariant:
+   * `cells_failed + conjectures_created + conjectures_abstained === considered`.
    *
    * Before this counter existed the swallow was visible only as
    * `considered > conjectures_created`, which the job never asserted on — under a
@@ -115,13 +127,53 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
-type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
-type WriteAiProposalFn = (db: Db, input: WriteAiProposalInput) => Promise<string>;
+// Durable completion payload contract: append-only and backward-compatible.
+// Future fields must be optional/defaulted so already-committed executions
+// remain readable across deployments.
+const ResearchMeetingResultSchema = z
+  .object({
+    considered: z.number().int().nonnegative(),
+    conjectures_created: z.number().int().nonnegative(),
+    conjectures_abstained: z.number().int().nonnegative(),
+    cells_failed: z.number().int().nonnegative(),
+    pending_before: z.number().int().nonnegative(),
+    reconciled: z.number().int().nonnegative(),
+    reconcile_skipped: z.number().int().nonnegative(),
+    cost_usd: z.number().nonnegative(),
+    // Empty runs deliberately have no trigger/scan anchor; the completion event
+    // still persists that `''` sentinel so redelivery can return the exact result.
+    trigger_event_id: z.string(),
+  })
+  .refine(
+    (result) =>
+      result.conjectures_created + result.conjectures_abstained + result.cells_failed ===
+      result.considered,
+    { message: 'created + abstained + failed must equal considered' },
+  )
+  .refine((result) => (result.considered === 0) === (result.trigger_event_id === ''), {
+    message: 'empty result and empty trigger_event_id must agree',
+  });
+
+type DbLike = Db | Tx;
+type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
+type WriteAiProposalFn = (db: DbLike, input: WriteAiProposalInput) => Promise<string>;
+type RunInTransactionFn = (db: Db, fn: (tx: DbLike) => Promise<void>) => Promise<void>;
+type RunWithExecutionLockFn = <T>(db: Db, executionId: string, fn: () => Promise<T>) => Promise<T>;
+type LoadCompletedRunResultFn = (
+  db: Db,
+  executionId: string,
+) => Promise<ResearchMeetingResult | null>;
+type LoadReconciliationResultFn = (db: Db, executionId: string) => Promise<ReconcileResult | null>;
+type CountReconciledForExecutionFn = (db: Db, executionId: string) => Promise<number>;
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
-type WriteRetryableAiFailureLedgerFn = (db: Db, taskKind: string) => Promise<void>;
+type WriteRetryableAiFailureLedgerFn = (
+  db: DbLike,
+  taskKind: string,
+  options?: { throwOnError?: boolean },
+) => Promise<void>;
 type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
 type LoadEvidenceImagesFn = (
   db: Db,
@@ -133,8 +185,191 @@ interface PreparedConjectureCell {
   evidenceImages: LoadedConjectureEvidenceImage[];
 }
 
+function scheduledEventId(
+  prefix: 'trigger' | 'scan' | 'reconciliation' | 'completion',
+  executionId: string,
+): string {
+  const digest = createHash('sha256').update(executionId).digest('hex').slice(0, 32);
+  return `research_meeting_${prefix}_${digest}`;
+}
+
+function conjectureCellEventId(
+  prefix: 'conjecture_abstained' | 'conjecture_proposal',
+  executionId: string,
+  cell: EnrichedEvidenceCell,
+): string {
+  // preparedTopCells contains at most one entry per deterministic cell.key.
+  // Deliberately hash the stable input rather than non-deterministic model output
+  // so a retry cannot create a second event merely by citing a different subset.
+  const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
+  const digest = createHash('sha256')
+    .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `${prefix}_${digest}`;
+}
+
+function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+  return conjectureCellEventId('conjecture_abstained', executionId, cell);
+}
+
+function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+  // A concurrent pg-boss redelivery can pass the completion read while the first
+  // worker is still running. The deterministic proposal id turns that race into
+  // first-write-wins rather than two pending conjectures for one logical cell.
+  return conjectureCellEventId('conjecture_proposal', executionId, cell);
+}
+
+async function defaultRunWithExecutionLock<T>(
+  db: Db,
+  executionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  // Hold one dedicated connection-scoped transaction lock across the whole
+  // orchestration. Business reads/writes still use their existing short
+  // transactions on `db`; this outer transaction owns only the advisory lock.
+  // A crash releases it automatically, and a concurrent redelivery blocks here,
+  // then observes the first worker's committed completion before model work.
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`research_meeting_execution:${executionId}`}, 0))`,
+    );
+    return fn();
+  });
+}
+
+async function defaultLoadCompletedRunResult(
+  db: Db,
+  executionId: string,
+): Promise<ResearchMeetingResult | null> {
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, scheduledEventId('completion', executionId)))
+    .limit(1);
+  if (!row) return null;
+  const parsed = z.object({ completed_result: ResearchMeetingResultSchema }).safeParse(row.payload);
+  if (!parsed.success) {
+    // Fail closed: treating this as unfinished would repeat paid model work and
+    // business effects, while the first-write-wins completion id cannot replace
+    // the corrupt row. Emit schema diagnostics for repair instead.
+    console.error('[research_meeting_nightly] committed completion payload is unreadable', {
+      execution_id: executionId,
+      issues: parsed.error.issues,
+    });
+    throw new Error(
+      `research_meeting_nightly: completion payload is unreadable for execution ${executionId}`,
+    );
+  }
+  return parsed.data.completed_result;
+}
+
+const ReconcileResultSchema = z.object({
+  reconciled: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+
+async function defaultLoadReconciliationResult(
+  db: Db,
+  executionId: string,
+): Promise<ReconcileResult | null> {
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, scheduledEventId('reconciliation', executionId)))
+    .limit(1);
+  if (!row) return null;
+  const parsed = z
+    .object({
+      execution_id: z.literal(executionId),
+      reconcile_result: ReconcileResultSchema,
+    })
+    .safeParse(row.payload);
+  if (!parsed.success) {
+    console.error('[research_meeting_nightly] reconciliation checkpoint is unreadable', {
+      execution_id: executionId,
+      issues: parsed.error.issues,
+    });
+    throw new Error(
+      `research_meeting_nightly: reconciliation checkpoint is unreadable for execution ${executionId}`,
+    );
+  }
+  return parsed.data.reconcile_result;
+}
+
+async function defaultCountReconciledForExecution(db: Db, executionId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PREDICTION_SCORE_ACTION),
+        sql`${event.payload} ->> 'research_meeting_execution_id' = ${executionId}`,
+      ),
+    );
+  return row?.count ?? 0;
+}
+
+function buildReconciliationEventInput(
+  executionId: string,
+  result: ReconcileResult,
+  now: Date,
+): WriteEventInput {
+  const id = scheduledEventId('reconciliation', executionId);
+  return {
+    id,
+    actor_kind: 'system',
+    actor_ref: RESEARCH_MEETING_ACTOR,
+    action: 'experimental:research_meeting_reconciled',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { execution_id: executionId, reconcile_result: result },
+    ingest_at: now,
+    created_at: now,
+  };
+}
+
+function buildCompletionEventInput(
+  executionId: string,
+  result: ResearchMeetingResult,
+  now: Date,
+  causedByEventId: string | null,
+): WriteEventInput {
+  const id = scheduledEventId('completion', executionId);
+  return {
+    id,
+    actor_kind: 'agent',
+    actor_ref: RESEARCH_MEETING_ACTOR,
+    action: 'experimental:research_meeting_completed',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { completed_result: result },
+    caused_by_event_id: causedByEventId,
+    // Execution bookkeeping only; not a learner fact.
+    ingest_at: now,
+    created_at: now,
+  };
+}
+
+function isOperationalAbstain(result: InduceConjectureResult): boolean {
+  // The collapsed reason is intentionally conservative on a three-way tie and
+  // can become no_semantic_consensus for {proposal:1, invalid:1, failed:1}.
+  // Classify health from the uncollapsed vote ledger instead: a strict majority
+  // of operational losses means the cell failed even if its display reason tied.
+  return (
+    result.outcome === 'abstain' && result.votes.invalid + result.votes.failed > result.samples / 2
+  );
+}
+
 export interface ResearchMeetingDeps {
   now?: () => Date;
+  /**
+   * Stable for retries of one scheduled pg-boss execution, distinct for the next
+   * schedule. The real handler supplies `job.id`; direct callers get a fresh id.
+   */
+  executionId?: string;
   /**
    * YUK-786: the trace-bearing LIST reader. The bare `FailureAttempt` projection
    * is unchanged — the YUK-562 reasoning_trace rides in the wrapper alongside it.
@@ -150,6 +385,16 @@ export interface ResearchMeetingDeps {
   induceConjectureFn?: InduceConjectureFn;
   writeAiProposalFn?: WriteAiProposalFn;
   writeEventFn?: WriteEventFn;
+  /** Atomic durable boundary for trigger + per-cell outcomes/health + scan + completion. */
+  runInTransactionFn?: RunInTransactionFn;
+  /** Serialize every delivery of one stable pg-boss execution id before any work. */
+  runWithExecutionLockFn?: RunWithExecutionLockFn;
+  /** Redelivery guard: a committed completion means this logical execution is complete. */
+  loadCompletedRunResultFn?: LoadCompletedRunResultFn;
+  /** Retry checkpoint for the reconcile half, persisted before proposal work. */
+  loadReconciliationResultFn?: LoadReconciliationResultFn;
+  /** Recover score writes if a crash happened before the reconcile checkpoint. */
+  countReconciledForExecutionFn?: CountReconciledForExecutionFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
@@ -457,39 +702,42 @@ export async function defaultLoadEvidenceImages(
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
 function buildConjectureProposalInput(
   cell: EnrichedEvidenceCell,
-  induced: InduceConjectureResult,
+  induced: Extract<InduceConjectureResult, { outcome: 'proposal' }>,
   triggerEventId: string,
+  proposalEventId: string,
 ): WriteAiProposalInput {
+  const draft = induced.draft;
   // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
   // Unlike probe/scan bookkeeping, this is a durable, evidence-backed belief about the
   // learner that the memory layer should retain. writeAiProposal therefore receives no
   // ingest_at opt-out; owner accept/edit remains the later calibration boundary.
   return {
+    id: proposalEventId,
     actor_ref: RESEARCH_MEETING_ACTOR,
     outcome: 'partial',
     payload: {
       kind: 'conjecture',
       target: { subject_kind: 'mind_model', subject_id: cell.knowledge_id },
       // The 2nd-person belief IS the card's reason — shown whole, never truncated.
-      reason_md: induced.draft.claim_md,
+      reason_md: draft.claim_md,
       // Provenance reuses the attempt event ids (no separate misconception store).
-      evidence_refs: cell.evidence_event_ids.map((id) => ({ kind: 'event' as const, id })),
+      evidence_refs: draft.evidence_event_ids.map((id) => ({ kind: 'event' as const, id })),
       proposed_change: {
-        claim_md: induced.draft.claim_md,
+        claim_md: draft.claim_md,
         // Deterministic cell facts win over the LLM echo (cause/recurrence are the
         // ground truth the evidence_refs back; the draft only restates them).
         knowledge_id: cell.knowledge_id,
         cause_category: cell.cause_category,
         confidence: induced.confidence, // internal sort only — NEVER rendered as a number
         recurrence_count: cell.recurrence_count,
-        probe_md: induced.draft.probe_md,
+        probe_md: draft.probe_md,
         // conjecture-wire #13 — single-writer judge gold reference flows draft →
         // proposal change → acceptConjectureProposal → serveProbeOnce.referenceMd.
-        probe_reference_md: induced.draft.probe_reference_md,
-        discriminating: induced.draft.discriminating,
+        probe_reference_md: draft.probe_reference_md,
+        discriminating: draft.discriminating,
         corrected_by_owner: false,
         // A13 (YUK-440): the falsifiable bet + the number it must later beat.
-        predicted_p: induced.draft.predicted_p,
+        predicted_p: draft.predicted_p,
         baseline_p_at_induction: cell.baseline_p ?? 0.5, // 0.5 = cold-start neutral
       },
       cooldown_key: `conjecture:${cell.key}`,
@@ -503,16 +751,22 @@ function buildConjectureProposalInput(
       subject_id: cell.knowledge_id,
       payload: { induction_task_run_ids: induced.task_run_ids },
     },
-    task_run_id: induced.task_run_ids[0] ?? null,
+    // Scalar correlation must point at a run that produced the winning
+    // claim/probe tuple; the payload retains every sample/grouping run.
+    task_run_id: induced.primary_task_run_id,
     cost_usd: induced.cost_usd,
   };
 }
 
-export async function runResearchMeetingNightly(
+async function runResearchMeetingNightlyClaimed(
   db: Db,
   deps: ResearchMeetingDeps = {},
 ): Promise<ResearchMeetingResult> {
   const now = deps.now?.() ?? new Date();
+  const executionId = deps.executionId;
+  if (!executionId) {
+    throw new Error('research_meeting_nightly: claimed execution is missing its stable id');
+  }
   const getFailureAttemptsWithTraceFn =
     deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
@@ -522,19 +776,52 @@ export async function runResearchMeetingNightly(
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
+  const runInTransactionFn =
+    deps.runInTransactionFn ??
+    ((database: Db, fn: (tx: DbLike) => Promise<void>) => database.transaction(fn));
+  const loadCompletedRunResultFn = deps.loadCompletedRunResultFn ?? defaultLoadCompletedRunResult;
+  const loadReconciliationResultFn =
+    deps.loadReconciliationResultFn ?? defaultLoadReconciliationResult;
+  const countReconciledForExecutionFn =
+    deps.countReconciledForExecutionFn ?? defaultCountReconciledForExecution;
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
-  const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
+  const reconcileFn =
+    deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d, { executionId }));
+  const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
+    await runInTransactionFn(db, async (tx) => {
+      await writeEventFn(tx, buildCompletionEventInput(executionId, result, now, null));
+    });
+  };
+
+  // pg-boss may redeliver after the transaction committed but before completion
+  // was acknowledged. Return the committed summary before any reads or model calls;
+  // otherwise pending-proposal dedup could refill this execution from lower cells.
+  const completedResult = await loadCompletedRunResultFn(db, executionId);
+  if (completedResult) return completedResult;
 
   // ── A13 reconcile (U8): score PRIOR probe outcomes against their conjecture's
   // prediction → append LOG-only prediction_score events + advance the typed-ledger
   // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
-  const reconcileResult = await reconcileFn(db);
+  let reconcileResult = await loadReconciliationResultFn(db, executionId);
+  if (!reconcileResult) {
+    // The score events are already individually idempotent. Count any score rows
+    // stamped by an earlier attempt of this execution (crash after reconcile but
+    // before checkpoint), then persist one deterministic aggregate checkpoint
+    // before proposal work. A later final-write retry reuses the original counts.
+    const previouslyReconciled = await countReconciledForExecutionFn(db, executionId);
+    const freshResult = await reconcileFn(db);
+    reconcileResult = {
+      reconciled: previouslyReconciled + freshResult.reconciled,
+      skipped: freshResult.skipped,
+    };
+    await writeEventFn(db, buildReconciliationEventInput(executionId, reconcileResult, now));
+  }
   // Surface the aggregate skip count — a non-zero value flags data-quality drift (dangling /
   // unreadable conjecture refs) that the per-probe console.warn alone makes easy to miss.
   if (reconcileResult.skipped > 0) {
@@ -565,15 +852,16 @@ export async function runResearchMeetingNightly(
 
   // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has
-  // nothing to anchor. Skip the trigger + scan events entirely — even though YUK-515 now
-  // opts both out of memory, two empty-run rows would still add useless audit churn.
+  // nothing to anchor. Skip trigger + scan events; persist only the execution completion
+  // guard so a same-job redelivery cannot reconcile or discover new work twice.
   // MUST stay AFTER the reconcile call above:
   // the deterministic settlement half is never skipped. Zero external consumers of these
   // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
   if (cells.length === 0) {
-    return {
+    const idleResult: ResearchMeetingResult = {
       considered: 0,
       conjectures_created: 0,
+      conjectures_abstained: 0,
       cells_failed: 0,
       pending_before: knownConjectureKeys.size,
       reconciled: reconcileResult.reconciled,
@@ -581,6 +869,8 @@ export async function runResearchMeetingNightly(
       cost_usd: 0,
       trigger_event_id: '',
     };
+    await persistCompletionOnly(idleResult);
+    return idleResult;
   }
 
   // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
@@ -635,9 +925,10 @@ export async function runResearchMeetingNightly(
     );
   }
   if (preparedTopCells.length === 0) {
-    return {
+    const ungroundedResult: ResearchMeetingResult = {
       considered: 0,
       conjectures_created: 0,
+      conjectures_abstained: 0,
       cells_failed: 0,
       pending_before: knownConjectureKeys.size,
       reconciled: reconcileResult.reconciled,
@@ -645,38 +936,36 @@ export async function runResearchMeetingNightly(
       cost_usd: 0,
       trigger_event_id: '',
     };
+    await persistCompletionOnly(ungroundedResult);
+    return ungroundedResult;
   }
 
-  // Anchor the run (provenance for each proposal + the scan subject).
-  const triggerEventId = `research_meeting_${newId()}`;
-  await writeEventFn(db, {
-    id: triggerEventId,
-    actor_kind: 'agent',
-    actor_ref: RESEARCH_MEETING_ACTOR,
-    action: 'experimental:trigger_research_meeting',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: 'success',
-    payload: {
-      window_days: RESEARCH_MEETING_WINDOW_DAYS,
-      candidate_cells: preparedTopCells.length,
-      pending_conjectures: knownConjectureKeys.size,
-    },
-    // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
-    ingest_at: now,
-    created_at: now,
-  });
+  // Anchor the run (provenance for each proposal + the scan subject). The actual
+  // trigger write joins the result writes and scan in one transaction below.
+  // The pg-boss execution id is stable across retries, so every durable fact in
+  // one logical run retains the same anchor even if a later sibling write fails.
+  const triggerEventId = scheduledEventId('trigger', executionId);
 
-  // ── LLM half: independent top cells run in parallel; each cell remains swallow-safe ──
+  // ── LLM half: independent top cells run in parallel ─────────────────────────
+  // Only provider/induction failures are cell-local and swallow-safe. Durable
+  // writes happen after all inductions and commit atomically below.
   const cellResults = await Promise.all(
     preparedTopCells.map(
       async ({
         cell,
         evidenceImages,
-      }): Promise<{ created: number; failed: number; cost_usd: number }> => {
-        let incurredCostUsd = 0;
+      }): Promise<{
+        cell: EnrichedEvidenceCell;
+        induced: InduceConjectureResult | null;
+        created: number;
+        abstained: number;
+        failed: number;
+        failed_task_kind: ConjectureInductionTaskKind | null;
+        cost_usd: number;
+      }> => {
+        let induced: InduceConjectureResult;
         try {
-          const induced = await induceConjectureFn({
+          induced = await induceConjectureFn({
             cells: [cell],
             evidenceImages,
             samples: RESEARCH_MEETING_SAMPLES,
@@ -687,53 +976,55 @@ export async function runResearchMeetingNightly(
             // the wrong-subject steer this ticket removed from the prompt copy.
             subjectProfile: resolveSubjectProfileFn(cell.subject_id),
           });
-          // Count the Opus induction spend immediately — it was incurred regardless of
-          // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
-          incurredCostUsd = induced.cost_usd;
-          await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
-          return { created: 1, failed: 0, cost_usd: incurredCostUsd };
         } catch (err) {
           console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
-          await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
           // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
           // so the handler can tell "no evidence tonight" from "every cell blew up".
-          return { created: 0, failed: 1, cost_usd: incurredCostUsd };
+          // Partial sample spend is retained in per-call cost_ledger rows, but the
+          // thrown orchestrator exposes no reliable partial total for this aggregate.
+          return {
+            cell,
+            induced: null,
+            created: 0,
+            abstained: 0,
+            failed: 1,
+            failed_task_kind:
+              err instanceof ConjectureInductionOperationalError
+                ? err.taskKind
+                : 'MindModelInductionTask',
+            cost_usd: 0,
+          };
         }
+
+        const operationalFailure = isOperationalAbstain(induced);
+        return {
+          cell,
+          induced,
+          created: induced.outcome === 'proposal' ? 1 : 0,
+          // Evidence-related abstentions and genuine semantic disagreement are
+          // successful fail-closed decisions. Invalid output/provider-majority
+          // reasons are operational failures and must make an all-bad night stall.
+          abstained: induced.outcome === 'abstain' && !operationalFailure ? 1 : 0,
+          failed: operationalFailure ? 1 : 0,
+          failed_task_kind: operationalFailure ? 'MindModelInductionTask' : null,
+          cost_usd: induced.cost_usd,
+        };
       },
     ),
   );
   const created = cellResults.reduce((sum, result) => sum + result.created, 0);
+  const abstained = cellResults.reduce((sum, result) => sum + result.abstained, 0);
   const cellsFailed = cellResults.reduce((sum, result) => sum + result.failed, 0);
   const costUsd = cellResults.reduce((sum, result) => sum + result.cost_usd, 0);
-
-  // Observability scan event — NOT cost-bearing: each conjecture proposal event already
-  // carries its own cost_micro_usd via writeAiProposal, so summing the run total here would
-  // DOUBLE-COUNT the AI spend in the cost ribbon (OCR review). The per-run total is still
-  // surfaced via the return value (cost_usd) for the job log.
-  await writeEventFn(db, {
-    id: `research_meeting_scan_${newId()}`,
-    actor_kind: 'agent',
-    actor_ref: RESEARCH_MEETING_ACTOR,
-    action: 'experimental:research_meeting_scan',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: 'success',
-    payload: {
-      considered: preparedTopCells.length,
-      conjectures_created: created,
-      cells_failed: cellsFailed,
-      pending_before: knownConjectureKeys.size,
-    },
-    caused_by_event_id: triggerEventId,
-    cost_micro_usd: null,
-    // Aggregate observability only; not evidence about the learner.
-    ingest_at: now,
-    created_at: now,
-  });
-
-  return {
+  if (created + abstained + cellsFailed !== preparedTopCells.length) {
+    throw new Error(
+      `research_meeting_nightly: result invariant violated: created(${created}) + abstained(${abstained}) + failed(${cellsFailed}) !== considered(${preparedTopCells.length})`,
+    );
+  }
+  const completedResultForWrite: ResearchMeetingResult = {
     considered: preparedTopCells.length,
     conjectures_created: created,
+    conjectures_abstained: abstained,
     cells_failed: cellsFailed,
     pending_before: knownConjectureKeys.size,
     reconciled: reconcileResult.reconciled,
@@ -741,14 +1032,139 @@ export async function runResearchMeetingNightly(
     cost_usd: costUsd,
     trigger_event_id: triggerEventId,
   };
+
+  // Trigger + every successful cell result + scan commit together. A single
+  // durable-write failure rolls the whole batch back, so retry-time pending
+  // proposal dedup can never shrink the logical run into a partial scan.
+  // Each runTask call has already committed its own ai_task_runs + cost_ledger
+  // rows; this transaction governs business outcomes, not model-spend accounting.
+  await runInTransactionFn(db, async (tx) => {
+    await writeEventFn(tx, {
+      id: triggerEventId,
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_ACTOR,
+      action: 'experimental:trigger_research_meeting',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        window_days: RESEARCH_MEETING_WINDOW_DAYS,
+        candidate_cells: preparedTopCells.length,
+        pending_conjectures: knownConjectureKeys.size,
+      },
+      // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
+      ingest_at: now,
+      created_at: now,
+    });
+
+    for (const result of cellResults) {
+      if (result.failed > 0) {
+        // Operational health rows belong to the same commit boundary as the
+        // run facts. A final-write rollback must not orphan/duplicate them.
+        if (!result.failed_task_kind) {
+          throw new Error('research_meeting_nightly: failed cell is missing task attribution');
+        }
+        await writeRetryableAiFailureLedgerFn(tx, result.failed_task_kind, { throwOnError: true });
+      }
+      if (!result.induced) continue;
+      const { cell, induced } = result;
+      if (induced.outcome === 'abstain') {
+        await writeEventFn(tx, {
+          // A pg-boss retry reuses job.id and therefore this first-write-wins
+          // event; the next scheduled execution has a distinct job.id and keeps
+          // its own reason/votes/task-run/cost provenance.
+          id: conjectureAbstentionEventId(executionId, cell),
+          actor_kind: 'agent',
+          actor_ref: RESEARCH_MEETING_ACTOR,
+          action: 'experimental:conjecture_abstained',
+          subject_kind: 'mind_model',
+          subject_id: cell.knowledge_id,
+          outcome: isOperationalAbstain(induced) ? 'failure' : 'partial',
+          payload: {
+            reason_code: induced.draft.reason_code,
+            explanation_md: induced.draft.explanation_md ?? null,
+            evidence_event_ids: induced.draft.evidence_event_ids,
+            input_evidence_event_ids: cell.evidence_event_ids,
+            induction_task_run_ids: induced.task_run_ids,
+            votes: induced.votes,
+            requested_samples: induced.samples,
+          },
+          caused_by_event_id: triggerEventId,
+          cost_micro_usd: costUsdToMicroUsd(induced.cost_usd),
+          // Audit/observability only: an abstention is not a learner fact.
+          ingest_at: now,
+          created_at: now,
+        });
+      } else {
+        await writeAiProposalFn(
+          tx,
+          buildConjectureProposalInput(
+            cell,
+            induced,
+            triggerEventId,
+            conjectureProposalEventId(executionId, cell),
+          ),
+        );
+      }
+    }
+
+    // Observability scan event — NOT cost-bearing: each outcome event already
+    // carries its own cost, so summing the run total here would double-count it.
+    await writeEventFn(tx, {
+      id: scheduledEventId('scan', executionId),
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_ACTOR,
+      action: 'experimental:research_meeting_scan',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        considered: preparedTopCells.length,
+        conjectures_created: created,
+        conjectures_abstained: abstained,
+        cells_failed: cellsFailed,
+        pending_before: knownConjectureKeys.size,
+      },
+      caused_by_event_id: triggerEventId,
+      cost_micro_usd: null,
+      // Aggregate observability only; not evidence about the learner.
+      ingest_at: now,
+      created_at: now,
+    });
+    await writeEventFn(
+      tx,
+      buildCompletionEventInput(executionId, completedResultForWrite, now, triggerEventId),
+    );
+  });
+
+  return completedResultForWrite;
+}
+
+export async function runResearchMeetingNightly(
+  db: Db,
+  deps: ResearchMeetingDeps = {},
+): Promise<ResearchMeetingResult> {
+  const executionId = deps.executionId ?? newId();
+  const runWithExecutionLockFn = deps.runWithExecutionLockFn ?? defaultRunWithExecutionLock;
+  return runWithExecutionLockFn(db, executionId, () =>
+    runResearchMeetingNightlyClaimed(db, { ...deps, executionId }),
+  );
 }
 
 export function buildResearchMeetingNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
-  return async () => {
+  // Capability jobs are mounted centrally with batchSize:1
+  // (register-capability-jobs.ts); one handler invocation owns exactly one job id.
+  return async (jobs) => {
     try {
-      const result = await runResearchMeetingNightly(db);
+      const executionId = jobs[0]?.id;
+      if (!executionId) {
+        throw new Error('research_meeting_nightly: handler invoked without a pg-boss job id');
+      }
+      const result = await runResearchMeetingNightly(db, {
+        executionId,
+      });
       console.log('[research_meeting_nightly] result', result);
       // YUK-779 — the fallible units are the top-K cells. An empty night early-returns
       // with considered:0 → level `idle` (no alarm); a 限流风暴 fails every cell →
@@ -756,7 +1172,8 @@ export function buildResearchMeetingNightlyHandler(
       // output into the DAG node detail.
       return reportJobYield('research_meeting_nightly', {
         attempted: result.considered,
-        succeeded: result.conjectures_created,
+        // abstain is a successful, fail-closed model decision, not an AI failure.
+        succeeded: result.conjectures_created + result.conjectures_abstained,
         failed: result.cells_failed,
       });
     } catch (err) {

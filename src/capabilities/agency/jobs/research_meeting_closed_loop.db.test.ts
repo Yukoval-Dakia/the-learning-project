@@ -35,7 +35,7 @@
 // making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
 // another silently-passing test — exactly what this ticket exists to eliminate.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
@@ -79,7 +79,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { ai_task_runs, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -100,7 +101,10 @@ const CLAIM_MD = '你把「使动用法」和「意动用法」混为一谈—�
 
 /** The ConjectureDraft every self-consistency sample returns (unanimous ⇒ no dedup call). */
 const DRAFT = {
+  kind: 'proposal',
   claim_md: CLAIM_MD,
+  knowledge_id: KC_ID,
+  evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
   probe_md: PROBE_MD,
   probe_reference_md: PROBE_REFERENCE_MD,
   cause_category: CAUSE,
@@ -439,5 +443,339 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
 
     const scores = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
     expect(scores).toHaveLength(1);
+  });
+
+  it('rolls back trigger, proposal, scan, and completion when the final durable write fails', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId: 'job_atomic_rollback',
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('completion persistence failed');
+
+    const rows = await db.select({ action: event.action }).from(event);
+    const runActions = rows
+      .map((row) => row.action)
+      .filter((action) =>
+        [
+          'experimental:trigger_research_meeting',
+          'experimental:proposal',
+          'experimental:research_meeting_scan',
+          'experimental:research_meeting_completed',
+        ].includes(action),
+      );
+    expect(runActions).toEqual([]);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+    const costs = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'MindModelInductionTask'));
+    expect(costs).toHaveLength(RESEARCH_MEETING_SAMPLES);
+    expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
+  });
+
+  it('preserves reconciliation counts when the proposal transaction fails and retries', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(proposal.id)).status).toBe(201);
+    const [probeRow] = await db
+      .select()
+      .from(question)
+      .where(eq(question.source, PROBE_QUESTION_SOURCE))
+      .limit(1);
+    expect((await answerProbeViaRoute(probeRow.id, '使动')).status).toBe(200);
+
+    const executionId = 'job_reconcile_then_final_failure';
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId,
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('completion persistence failed');
+
+    const [checkpoint] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:research_meeting_reconciled'),
+          sql`${event.payload} ->> 'execution_id' = ${executionId}`,
+        ),
+      );
+    expect(checkpoint.payload).toEqual({
+      execution_id: executionId,
+      reconcile_result: { reconciled: 1, skipped: 0 },
+    });
+
+    const retried = await runResearchMeetingNightly(db, { executionId });
+    expect(retried.reconciled).toBe(1);
+    const scores = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
+    expect(scores).toHaveLength(1);
+    expect(scores[0].payload).toMatchObject({
+      research_meeting_execution_id: executionId,
+    });
+  });
+
+  it('rolls back operational failure ledgers with the run facts', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    sdk.respond = (prompt) => {
+      if (!prompt.includes('"evidence_cells"')) {
+        throw new Error(`unexpected task after invalid samples: ${prompt.slice(0, 120)}`);
+      }
+      return sdkSuccess({ malformed: true });
+    };
+
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId: 'job_failure_ledger_rollback',
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('completion persistence failed');
+
+    const retryableRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.outcome, 'failed_retryable'));
+    expect(retryableRows).toHaveLength(0);
+    const abstainRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:conjecture_abstained'));
+    expect(abstainRows).toHaveLength(0);
+  });
+
+  it('returns the committed summary on same-job redelivery without another model run', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    const executionId = 'job_committed_redelivery';
+
+    const first = await runResearchMeetingNightly(db, { executionId });
+    const taskRunsAfterFirst = await taskKindCounts();
+    const second = await runResearchMeetingNightly(db, { executionId });
+    const taskRunsAfterSecond = await taskKindCounts();
+
+    expect(second).toEqual(first);
+    expect(taskRunsAfterSecond).toEqual(taskRunsAfterFirst);
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      1,
+    );
+  });
+
+  it('serializes concurrent deliveries before the completion guard and model work', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    const executionId = 'job_concurrent_redelivery';
+    let knownKeyReads = 0;
+    let markFirstReadStarted: (() => void) | undefined;
+    const firstReadStarted = new Promise<void>((resolve) => {
+      markFirstReadStarted = resolve;
+    });
+    let releaseBarrier: (() => void) | undefined;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const loadKnownConjectureKeysFn = async () => {
+      knownKeyReads += 1;
+      markFirstReadStarted?.();
+      await barrier;
+      return new Set<string>();
+    };
+
+    const firstPromise = runResearchMeetingNightly(db, {
+      executionId,
+      loadKnownConjectureKeysFn,
+    });
+    await firstReadStarted;
+    const secondPromise = runResearchMeetingNightly(db, {
+      executionId,
+      loadKnownConjectureKeysFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The second delivery is blocked on the execution advisory lock. It has not
+    // reached any business read or model call while the first is in-flight.
+    expect(knownKeyReads).toBe(1);
+    releaseBarrier?.();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(second).toEqual(first);
+    expect(first.conjectures_created).toBe(1);
+    expect(knownKeyReads).toBe(1);
+    expect(await taskKindCounts()).toMatchObject({
+      MindModelInductionTask: RESEARCH_MEETING_SAMPLES,
+    });
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      1,
+    );
+    const proposals = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toEqual([{ id: expect.stringMatching(/^conjecture_proposal_/) }]);
+  });
+
+  it('persists an empty completion and ignores evidence that appears before same-job redelivery', async () => {
+    const db = testDb();
+    const executionId = 'job_empty_redelivery';
+
+    const first = await runResearchMeetingNightly(db, { executionId });
+    expect(first).toMatchObject({
+      considered: 0,
+      conjectures_created: 0,
+      trigger_event_id: '',
+    });
+    expect(await taskKindCounts()).toEqual({});
+
+    // This evidence arrived after the first execution committed. A redelivery of
+    // that same pg-boss job must return its original result rather than treating
+    // the new rows as unfinished work from the old execution.
+    await seedRecurringFailures(3);
+    const second = await runResearchMeetingNightly(db, { executionId });
+
+    expect(second).toEqual(first);
+    expect(await taskKindCounts()).toEqual({});
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+    const bookkeeping = await db
+      .select({ action: event.action, payload: event.payload })
+      .from(event)
+      .where(
+        or(
+          eq(event.action, 'experimental:trigger_research_meeting'),
+          eq(event.action, 'experimental:research_meeting_scan'),
+          eq(event.action, 'experimental:research_meeting_completed'),
+        ),
+      );
+    expect(bookkeeping).toEqual([
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        payload: { completed_result: first },
+      }),
+    ]);
+  });
+
+  it('fails closed before model work when a committed completion payload is unreadable', async () => {
+    const db = testDb();
+    const executionId = 'job_corrupt_completion';
+    await runResearchMeetingNightly(db, { executionId });
+    await db
+      .update(event)
+      .set({ payload: { malformed: true } })
+      .where(eq(event.action, 'experimental:research_meeting_completed'));
+    await seedRecurringFailures(3);
+
+    await expect(runResearchMeetingNightly(db, { executionId })).rejects.toThrow(
+      'research_meeting_nightly: completion payload is unreadable',
+    );
+    expect(await taskKindCounts()).toEqual({});
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+  });
+
+  it('persists a real abstain event and creates no conjecture proposal', async () => {
+    const db = testDb();
+    const attemptIds = await seedRecurringFailures(3);
+    sdk.respond = (prompt) => {
+      if (!prompt.includes('"evidence_cells"')) {
+        throw new Error(`unexpected task after abstain: ${prompt.slice(0, 120)}`);
+      }
+      return sdkSuccess({
+        kind: 'abstain',
+        reason_code: 'insufficient_evidence',
+        explanation_md: '这些错答不足以区分稳定误解与偶发失误。',
+        evidence_event_ids: [attemptIds[0]],
+      });
+    };
+
+    const result = await runResearchMeetingNightly(db);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+    });
+    expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
+      0,
+    );
+    const abstainEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:conjecture_abstained'));
+    expect(abstainEvents).toHaveLength(1);
+    expect(abstainEvents[0]).toMatchObject({
+      actor_ref: 'research_meeting',
+      subject_kind: 'mind_model',
+      subject_id: KC_ID,
+      outcome: 'partial',
+    });
+    expect(abstainEvents[0].payload).toMatchObject({
+      reason_code: 'insufficient_evidence',
+      evidence_event_ids: [attemptIds[0]],
+      requested_samples: RESEARCH_MEETING_SAMPLES,
+      votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
+    });
+  });
+
+  it('attributes malformed semantic grouping to ClaimGroupingTask in the health ledger', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+    let inductionSample = 0;
+    sdk.respond = (prompt) => {
+      if (prompt.includes('"evidence_cells"')) {
+        inductionSample += 1;
+        return sdkSuccess({
+          ...DRAFT,
+          claim_md: `${CLAIM_MD}（表述 ${inductionSample}）`,
+        });
+      }
+      if (prompt.includes('"claims"')) return sdkSuccess({ malformed: true });
+      throw new Error(`unexpected task: ${prompt.slice(0, 120)}`);
+    };
+
+    const result = await runResearchMeetingNightly(db, {
+      executionId: 'job_grouping_attribution',
+    });
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    const failedRows = await db
+      .select({ task_kind: cost_ledger.task_kind, outcome: cost_ledger.outcome })
+      .from(cost_ledger)
+      .where(eq(cost_ledger.outcome, 'failed_retryable'));
+    expect(failedRows).toEqual([{ task_kind: 'ClaimGroupingTask', outcome: 'failed_retryable' }]);
   });
 });

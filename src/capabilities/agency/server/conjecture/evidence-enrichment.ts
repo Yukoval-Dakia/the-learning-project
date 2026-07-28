@@ -7,9 +7,10 @@
 // piece of natural language the upstream reader already carried —
 // `question_id`, `answer_md`, `judge.cause` — was dropped, and the KC arrived at
 // the LLM as a bare UUID with no subject tag. The induction prompt still asks
-// for a domain-specific claim + a whole discriminating probe + its grading gold,
-// and `ConjectureDraft.probe_md` is `min(1)` (no "insufficient evidence" exit),
-// so the model could only invent the subject and the misconception.
+// for a domain-specific claim + a whole discriminating probe + its grading gold.
+// Before YUK-799 the draft had no abstain branch, so the model could only invent
+// the subject and misconception. Grounding v2 now carries both the evidence packet
+// and a first-class refusal path; this reader remains the source of proposal refs.
 //
 // This module is the READ half (it needs `db`); the shape it fills lives in the
 // PURE `evidence` sibling so that module keeps its no-IO unit-testability. The

@@ -353,14 +353,21 @@ export const VariantVerificationResult = z.object({
 });
 export type VariantVerificationResultT = z.infer<typeof VariantVerificationResult>;
 
-// ---------- ConjectureDraft (YUK-406 Phase 0 关系脑 / YUK-440 A13) ----------
+// ---------- ConjectureDraft (YUK-406 / YUK-440 / YUK-799 Grounding v2) ----------
 //
 // The small structured record ONE induction run emits (the nightly 教研例会 job's
 // LLM step). Large reasoning stays as the run's markdown text; ONLY this bounded
 // record is schema-constrained (mirrors the VariantVerificationResult precedent).
 //
+// Grounding v2 makes unsupported output representable instead of forcing the model
+// to invent a claim/probe. `proposal` is the only branch that can be persisted as a
+// conjecture; `abstain` is a first-class, observable non-proposal.
+//
+// Proposal:
 // - claim_md: a 2nd-person belief about how the owner THINKS ("你把链式法则当成导数
 //   相乘"), NOT a statement about a single question's right/wrong.
+// - knowledge_id / evidence_event_ids: explicit grounding anchors. The orchestrator
+//   rejects a sample unless these point into the deterministic input cell.
 // - probe_md: exactly ONE untested discriminating probe (one question's worth) that
 //   would confirm or falsify the claim.
 // - cause_category: one of the cause categories present in the input evidence cells
@@ -377,16 +384,44 @@ export type VariantVerificationResultT = z.infer<typeof VariantVerificationResul
 // - agreement_count: how many of the N self-consistency samples agreed on this claim.
 //   The LLM fills 1 per single sample; induceConjecture() overwrites it with the tally.
 //
+// Abstain:
+// - reason_code: a bounded machine-readable reason;
+// - explanation_md / evidence_event_ids: optional audit context, never a hidden claim.
+//
 // confidence itself is NOT in this schema: it is internal calibration only, NEVER
 // rendered as a number (Phase 0 anti-number rule), so it lives on the orchestrator's
 // return type, not the model-facing record.
-export const ConjectureDraft = z.object({
+/** Reasons the model itself is allowed to return in structured output. */
+export const ConjectureModelAbstainReason = z.enum([
+  'insufficient_evidence',
+  'conflicting_evidence',
+  'no_grounded_claim',
+  'no_discriminating_probe',
+]);
+export type ConjectureModelAbstainReasonT = z.infer<typeof ConjectureModelAbstainReason>;
+
+/** Model reasons plus conditions assigned only by the self-consistency orchestrator. */
+export const ConjectureAbstainReason = z.enum([
+  ...ConjectureModelAbstainReason.options,
+  'no_semantic_consensus',
+  'invalid_output',
+  'sample_failure',
+]);
+export type ConjectureAbstainReasonT = z.infer<typeof ConjectureAbstainReason>;
+
+export const ConjectureProposalDraft = z.object({
+  kind: z.literal('proposal'),
   // max 280 MUST match ConjectureProposalChange.claim_md (proposal.ts) — the draft
   // feeds straight into the proposal payload (research_meeting_nightly), and it is
   // the outputFormat handed to Opus, so the model is told the REAL 280 cap. A wider
   // draft would let a 281–500-char claim pass induction then throw at the proposal
   // parse-barrier → silently swallowed + mis-logged as a retryable AI failure.
   claim_md: z.string().trim().min(1).max(280),
+  knowledge_id: z.string().trim().min(1).max(200),
+  // Schema accepts one cited primary event for the agent-led director path, whose
+  // matched deterministic cell owns recurrence_count>=2. The automatic induction
+  // orchestrator applies the stricter >=2-subset grounding gate before voting.
+  evidence_event_ids: z.array(z.string().trim().min(1).max(200)).min(1).max(50),
   probe_md: z.string().min(1).max(1000),
   // conjecture-wire #13 (YUK-538 ⑬) — single-writer judge gold reference, produced
   // once at induction by the same Opus sample that produces claim+probe (no runtime
@@ -402,6 +437,33 @@ export const ConjectureDraft = z.object({
   discriminating: z.boolean(),
   agreement_count: z.number().int().min(1).default(1),
 });
+
+export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
+
+export const ConjectureModelAbstainDraft = z.object({
+  kind: z.literal('abstain'),
+  reason_code: ConjectureModelAbstainReason,
+  explanation_md: z
+    .string()
+    .trim()
+    .min(1)
+    .max(CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH)
+    .optional(),
+  evidence_event_ids: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
+});
+
+/** Final fail-closed decision; may carry an orchestrator-assigned reason. */
+export const ConjectureAbstainDraft = ConjectureModelAbstainDraft.extend({
+  reason_code: ConjectureAbstainReason,
+});
+
+export const ConjectureDraft = z.discriminatedUnion('kind', [
+  ConjectureProposalDraft,
+  ConjectureModelAbstainDraft,
+]);
+export type ConjectureProposalDraftT = z.infer<typeof ConjectureProposalDraft>;
+export type ConjectureModelAbstainDraftT = z.infer<typeof ConjectureModelAbstainDraft>;
+export type ConjectureAbstainDraftT = z.infer<typeof ConjectureAbstainDraft>;
 export type ConjectureDraftT = z.infer<typeof ConjectureDraft>;
 
 // ---------- ToolState (tool_quiz artifact.tool_state) ----------

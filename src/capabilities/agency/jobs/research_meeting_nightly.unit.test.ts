@@ -11,9 +11,10 @@ import type {
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import type { WriteEventInput } from '@/kernel/events';
-import type {
-  InduceConjectureInput,
-  InduceConjectureResult,
+import {
+  ConjectureInductionOperationalError,
+  type InduceConjectureInput,
+  type InduceConjectureResult,
 } from '@/server/agency/conjecture/induce';
 import { classifyJobYield } from '@/server/boss/job-yield';
 import type { FailureAttempt, FailureAttemptWithReasoningTrace } from '@/server/events/queries';
@@ -28,6 +29,8 @@ import {
   RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL,
   RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
   type ResearchMeetingDeps,
+  type ResearchMeetingResult,
+  buildResearchMeetingNightlyHandler,
   defaultLoadEvidenceImages,
   planConjectureEvidenceImageLoad,
   runResearchMeetingNightly,
@@ -84,8 +87,12 @@ function projection(mastery: number): MasteryProjection {
 function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
   const cell = input.cells[0];
   return {
+    outcome: 'proposal',
     draft: {
+      kind: 'proposal',
       claim_md: `你混淆 ${cell.knowledge_id}`,
+      knowledge_id: cell.knowledge_id,
+      evidence_event_ids: cell.evidence_event_ids,
       probe_md: `probe for ${cell.knowledge_id}`,
       probe_reference_md: `reference answer for ${cell.knowledge_id}`,
       cause_category: cell.cause_category,
@@ -97,12 +104,32 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
     confidence: 0.66,
     confidence_capped: false,
     samples: input.samples,
+    primary_task_run_id: `tr_${cell.knowledge_id}_1`,
     task_run_ids: [
       `tr_${cell.knowledge_id}_1`,
       `tr_${cell.knowledge_id}_2`,
       `tr_${cell.knowledge_id}_3`,
     ],
     cost_usd: 0.02,
+    votes: { proposal: 2, abstain: 0, invalid: 0, failed: 1 },
+  };
+}
+
+function fakeAbstained(input: InduceConjectureInput): InduceConjectureResult {
+  return {
+    outcome: 'abstain',
+    draft: {
+      kind: 'abstain',
+      reason_code: 'insufficient_evidence',
+      explanation_md: '两次错答没有形成稳定的共同模式。',
+      evidence_event_ids: [input.cells[0].evidence_event_ids[0]],
+    },
+    confidence: 0,
+    confidence_capped: false,
+    samples: input.samples,
+    task_run_ids: ['tr_abstain_1', 'tr_abstain_2', 'tr_abstain_3'],
+    cost_usd: 0.015,
+    votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
   };
 }
 
@@ -193,6 +220,11 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
+    runInTransactionFn: vi.fn(async (db, fn) => fn(db)),
+    runWithExecutionLockFn: vi.fn(async (_db, _executionId, fn) => fn()),
+    loadCompletedRunResultFn: vi.fn(async () => null),
+    loadReconciliationResultFn: vi.fn(async () => null),
+    countReconciledForExecutionFn: vi.fn(async () => 0),
     writeRetryableAiFailureLedgerFn: vi.fn(async () => {}),
     // U8: stub the reconcile loop so unit tests never touch the DB (the real default
     // reads probe_result events). Wiring is asserted in its own test below.
@@ -202,6 +234,39 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
 }
 
 describe('runResearchMeetingNightly', () => {
+  it('returns a committed completion summary on pg-boss redelivery without repeating work', async () => {
+    const completed: ResearchMeetingResult = {
+      considered: 2,
+      conjectures_created: 1,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+      pending_before: 0,
+      reconciled: 0,
+      reconcile_skipped: 0,
+      cost_usd: 0.035,
+      trigger_event_id: 'research_meeting_trigger_committed',
+    };
+    const getFailureAttemptsWithTraceFn = vi.fn(async () => withTraces(failuresForKcs(['k_a'])));
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const reconcileFn = vi.fn(async () => ({ reconciled: 0, skipped: 0 }));
+
+    const result = await runResearchMeetingNightly(
+      {} as never,
+      baseDeps({
+        executionId: 'job_already_committed',
+        loadCompletedRunResultFn: vi.fn(async () => completed),
+        getFailureAttemptsWithTraceFn,
+        induceConjectureFn,
+        reconcileFn,
+      }),
+    );
+
+    expect(result).toEqual(completed);
+    expect(reconcileFn).not.toHaveBeenCalled();
+    expect(getFailureAttemptsWithTraceFn).not.toHaveBeenCalled();
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+  });
+
   it('proposes one conjecture per top cell and opts run bookkeeping out of memory', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
@@ -213,12 +278,13 @@ describe('runResearchMeetingNightly', () => {
     expect(result.conjectures_created).toBe(2);
     expect(result.cost_usd).toBeCloseTo(0.04, 6); // 2 × 0.02
     expect(writeAiProposalFn).toHaveBeenCalledTimes(2);
-    // trigger + scan events.
+    // trigger + scan + durable completion guard.
     const actions = writeEventFn.mock.calls.map((c) => c[1].action);
     expect(actions).toContain('experimental:trigger_research_meeting');
     expect(actions).toContain('experimental:research_meeting_scan');
-    // Both rows are internal run bookkeeping: persisted for provenance/admin reads,
-    // born opted out of Mem0 and brief regeneration.
+    expect(actions).toContain('experimental:research_meeting_completed');
+    // All three rows are internal run bookkeeping: persisted for provenance/admin
+    // reads, born opted out of Mem0 and brief regeneration.
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -233,6 +299,32 @@ describe('runResearchMeetingNightly', () => {
         ingest_at: NOW,
       }),
     );
+  });
+
+  it('persists trigger, cell outcomes, scan, and completion through one transaction scope', async () => {
+    const tx = { kind: 'test-transaction' } as never;
+    const writeAiProposalFn = vi.fn(async () => 'prop_x');
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const runInTransactionFn = vi.fn(async (_db: unknown, fn: (scope: never) => Promise<void>) =>
+      fn(tx),
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      writeAiProposalFn,
+      writeEventFn,
+      runInTransactionFn,
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(runInTransactionFn).toHaveBeenCalledTimes(1);
+    expect(writeAiProposalFn).toHaveBeenCalledWith(tx, expect.anything());
+    expect(writeEventFn).toHaveBeenCalledTimes(4);
+    const finalTransactionCalls = writeEventFn.mock.calls.filter(
+      ([, input]) => input.action !== 'experimental:research_meeting_reconciled',
+    );
+    expect(finalTransactionCalls).toHaveLength(3);
+    expect(finalTransactionCalls.every(([scope]) => scope === tx)).toBe(true);
   });
 
   it('caps proposals at the top-K salient cells', async () => {
@@ -292,6 +384,39 @@ describe('runResearchMeetingNightly', () => {
     });
   });
 
+  it('persists only the winning sample evidence subset as proposal support', async () => {
+    const captured: WriteAiProposalInput[] = [];
+    const failureRows = [
+      ...failuresForKcs(['k_a']),
+      failure('c_k_a_0', ['k_a'], 'concept_confusion'),
+    ];
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failureRows)),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeInduced(input);
+        if (induced.outcome !== 'proposal') throw new Error('expected proposal');
+        return {
+          ...induced,
+          draft: {
+            ...induced.draft,
+            evidence_event_ids: input.cells[0].evidence_event_ids.slice(0, 2),
+          },
+        };
+      }),
+      writeAiProposalFn: vi.fn(async (_db: unknown, input: WriteAiProposalInput) => {
+        captured.push(input);
+        return 'prop_x';
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(captured[0].payload.evidence_refs).toEqual([
+      { kind: 'event', id: 'a_k_a_0' },
+      { kind: 'event', id: 'b_k_a_0' },
+    ]);
+  });
+
   it('snapshots baseline_p_at_induction to the cold-start neutral 0.5 when no mastery row', async () => {
     const captured: WriteAiProposalInput[] = [];
     const deps = baseDeps({
@@ -323,6 +448,246 @@ describe('runResearchMeetingNightly', () => {
     expect(writeAiProposalFn).toHaveBeenCalledTimes(1);
   });
 
+  it('persists abstain observability without proposal or retryable AI failure', async () => {
+    const writeAiProposalFn = vi.fn(async () => 'unexpected');
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeAiProposalFn,
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 1,
+      cells_failed: 0,
+      cost_usd: 0.015,
+    });
+    expect(writeAiProposalFn).not.toHaveBeenCalled();
+    expect(writeRetryableAiFailureLedgerFn).not.toHaveBeenCalled();
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'partial',
+        cost_micro_usd: 15_000,
+        payload: expect.objectContaining({
+          reason_code: 'insufficient_evidence',
+          input_evidence_event_ids: ['a_k_a_0', 'b_k_a_0'],
+          votes: { proposal: 0, abstain: 3, invalid: 0, failed: 0 },
+        }),
+      }),
+    );
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created + result.conjectures_abstained,
+        failed: result.cells_failed,
+      }),
+    ).toBe('ok');
+  });
+
+  it('classifies invalid-output abstention as a failed cell and stalls an all-bad night', async () => {
+    const tx = { kind: 'operational-failure-transaction' } as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'invalid_output' as const },
+          votes: { proposal: 0, abstain: 0, invalid: 3, failed: 0 },
+        };
+      }),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+      runInTransactionFn: vi.fn(async (_db, fn) => fn(tx)),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'MindModelInductionTask', {
+      throwOnError: true,
+    });
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'failure',
+        payload: expect.objectContaining({ reason_code: 'invalid_output' }),
+      }),
+    );
+    expect(
+      classifyJobYield({
+        attempted: result.considered,
+        succeeded: result.conjectures_created + result.conjectures_abstained,
+        failed: result.cells_failed,
+      }),
+    ).toBe('stalled');
+  });
+
+  it('uses the uncollapsed vote ledger when mixed operational losses tie the display reason', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'no_semantic_consensus' as const },
+          // The collapsed reasons tie 1:1:1. Two requested samples were still
+          // operational losses, so this is not a healthy semantic disagreement.
+          votes: { proposal: 1, abstain: 0, invalid: 1, failed: 1 },
+        };
+      }),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:conjecture_abstained',
+        outcome: 'failure',
+        payload: expect.objectContaining({
+          reason_code: 'no_semantic_consensus',
+          votes: { proposal: 1, abstain: 0, invalid: 1, failed: 1 },
+        }),
+      }),
+    );
+  });
+
+  it('propagates the original transactional health-ledger error', async () => {
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {
+      throw new Error('health ledger insert failed');
+    });
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        const induced = fakeAbstained(input);
+        if (induced.outcome !== 'abstain') throw new Error('expected abstain fixture');
+        return {
+          ...induced,
+          draft: { ...induced.draft, reason_code: 'invalid_output' as const },
+          votes: { proposal: 0, abstain: 0, invalid: 3, failed: 0 },
+        };
+      }),
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+      'health ledger insert failed',
+    );
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(
+      expect.anything(),
+      'MindModelInductionTask',
+      { throwOnError: true },
+    );
+  });
+
+  it('reuses abstain event ids for one job retry but not for the next scheduled run', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const commonDeps = {
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeEventFn,
+    };
+
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_2' }));
+
+    const abstainEventIds = writeEventFn.mock.calls
+      .map((call) => call[1])
+      .filter((input) => input.action === 'experimental:conjecture_abstained')
+      .map((input) => input.id);
+    expect(abstainEventIds).toHaveLength(3);
+    expect(abstainEventIds[0]).toBe(abstainEventIds[1]);
+    expect(abstainEventIds[2]).not.toBe(abstainEventIds[0]);
+
+    for (const action of [
+      'experimental:trigger_research_meeting',
+      'experimental:research_meeting_scan',
+      'experimental:research_meeting_completed',
+    ]) {
+      const ids = writeEventFn.mock.calls
+        .map((call) => call[1])
+        .filter((input) => input.action === action)
+        .map((input) => input.id);
+      expect(ids).toHaveLength(3);
+      expect(ids[0]).toBe(ids[1]);
+      expect(ids[2]).not.toBe(ids[0]);
+    }
+  });
+
+  it('reuses proposal ids for a concurrent/retried execution but not the next scheduled run', async () => {
+    const writeAiProposalFn = vi.fn(
+      async (_db: unknown, input: WriteAiProposalInput) => input.id ?? 'missing-proposal-id',
+    );
+    const commonDeps = {
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeInduced(input)),
+      writeAiProposalFn,
+    };
+
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_1' }));
+    await runResearchMeetingNightly({} as never, baseDeps({ ...commonDeps, executionId: 'job_2' }));
+
+    const proposalIds = writeAiProposalFn.mock.calls.map((call) => call[1].id);
+    expect(proposalIds).toHaveLength(3);
+    expect(proposalIds[0]).toMatch(/^conjecture_proposal_/);
+    expect(proposalIds[0]).toBe(proposalIds[1]);
+    expect(proposalIds[2]).not.toBe(proposalIds[0]);
+  });
+
+  it('propagates an abstain event write failure without misclassifying it as an AI failure', async () => {
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => {
+      if (input.action === 'experimental:conjecture_abstained') {
+        throw new Error('database unavailable');
+      }
+      return input.id;
+    });
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => fakeAbstained(input)),
+      writeEventFn,
+      writeRetryableAiFailureLedgerFn,
+    });
+
+    await expect(runResearchMeetingNightly({} as never, deps)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(writeRetryableAiFailureLedgerFn).not.toHaveBeenCalled();
+  });
+
   it('swallows a single cell induction failure and continues (partial progress + ledger)', async () => {
     const writeAiProposalFn = vi.fn(async () => 'prop_x');
     const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
@@ -352,6 +717,34 @@ describe('runResearchMeetingNightly', () => {
         failed: result.cells_failed,
       }),
     ).toBe('ok');
+  });
+
+  it('attributes a load-bearing semantic-grouping failure to ClaimGroupingTask', async () => {
+    const tx = { kind: 'grouping-failure-transaction' } as never;
+    const writeRetryableAiFailureLedgerFn = vi.fn(async () => {});
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(failuresForKcs(['k_a']))),
+      induceConjectureFn: vi.fn(async () => {
+        throw new ConjectureInductionOperationalError(
+          'ClaimGroupingTask',
+          'semantic grouping output was malformed',
+        );
+      }),
+      writeRetryableAiFailureLedgerFn,
+      runInTransactionFn: vi.fn(async (_db, fn) => fn(tx)),
+    });
+
+    const result = await runResearchMeetingNightly({} as never, deps);
+
+    expect(result).toMatchObject({
+      considered: 1,
+      conjectures_created: 0,
+      conjectures_abstained: 0,
+      cells_failed: 1,
+    });
+    expect(writeRetryableAiFailureLedgerFn).toHaveBeenCalledWith(tx, 'ClaimGroupingTask', {
+      throwOnError: true,
+    });
   });
 
   // ── YUK-779: 静默空跑的红/绿实证 ───────────────────────────────────────────
@@ -474,7 +867,7 @@ describe('runResearchMeetingNightly', () => {
     expect(writeAiProposalFn).not.toHaveBeenCalled();
   });
 
-  it('empty night early-returns AFTER reconcile: zero events written, zero LLM (YUK-377 复审)', async () => {
+  it('empty night persists only a completion guard after reconcile and runs zero LLM calls', async () => {
     const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
     const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
     const reconcileFn = vi.fn(async () => ({ reconciled: 3, skipped: 0 }));
@@ -488,8 +881,26 @@ describe('runResearchMeetingNightly', () => {
     // The deterministic reconcile half still ran (it must never be skipped)…
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(3);
-    // …but the propose half wrote NOTHING: no unnecessary trigger/scan rows, no LLM.
-    expect(writeEventFn).not.toHaveBeenCalled();
+    // …but the propose half writes no anchor/scan. Reconcile checkpoint + completion
+    // guard make a same-job redelivery a no-op even if new evidence appears meanwhile.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_reconciled',
+        payload: expect.objectContaining({
+          reconcile_result: { reconciled: 3, skipped: 0 },
+        }),
+      }),
+    );
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        caused_by_event_id: null,
+        payload: { completed_result: result },
+      }),
+    );
     expect(induceConjectureFn).not.toHaveBeenCalled();
     expect(result.considered).toBe(0);
     expect(result.conjectures_created).toBe(0);
@@ -613,7 +1024,14 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
 
     expect(induceConjectureFn).not.toHaveBeenCalled();
-    expect(writeEventFn).not.toHaveBeenCalled();
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_completed',
+        caused_by_event_id: null,
+      }),
+    );
     expect(result).toMatchObject({
       considered: 0,
       conjectures_created: 0,
@@ -791,6 +1209,15 @@ describe('runResearchMeetingNightly', () => {
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);
     expect(result.reconcile_skipped).toBe(1);
+  });
+});
+
+describe('buildResearchMeetingNightlyHandler', () => {
+  it('fails closed when pg-boss invokes the handler without a job id', async () => {
+    const handler = buildResearchMeetingNightlyHandler({} as never);
+    await expect(handler([])).rejects.toThrow(
+      'research_meeting_nightly: handler invoked without a pg-boss job id',
+    );
   });
 });
 

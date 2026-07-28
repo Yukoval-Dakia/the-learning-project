@@ -64,7 +64,7 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('matches every prompt byte-for-byte with the exact pre-refactor oracle', () => {
+  it('matches every unchanged prompt byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('4cb5b9669e9343f5bf4a21385626edc5ed9ad257');
     expect(promptHashOracle.algorithm).toBe('sha256');
     expect(promptHashOracle.taskCount).toBe(43);
@@ -73,6 +73,10 @@ describe('task prompt definitions', () => {
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
+        // YUK-799 intentionally revises this output contract from forced proposal to
+        // proposal|abstain. Its dedicated tests below pin the new behavior; the oracle
+        // remains the pre-refactor guard for every prompt whose behavior did not change.
+        if (task === 'MindModelInductionTask') continue;
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
         const actualHash = createHash('sha256')
           .update(getTaskSystemPrompt(task, profile), 'utf8')
@@ -377,7 +381,7 @@ describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数
 
 // YUK-406 Phase 0 / YUK-440 A13 — conjecture induction task registry entry.
 describe('MindModelInductionTask registry entry', () => {
-  it('is a multimodal single-shot task (Opus lane chosen per-call via override, never default)', () => {
+  it('is a multimodal bounded-output task (Opus lane chosen per-call via override, never default)', () => {
     const def: TaskDef = tasks.MindModelInductionTask;
     expect(def.kind).toBe('MindModelInductionTask');
     // anthropic-sub is opt-in via override only; it is NEVER a task default
@@ -386,7 +390,9 @@ describe('MindModelInductionTask registry entry', () => {
     expect(def.needsToolCall).toBe(false);
     expect(def.isMultimodal).toBe(true);
     expect(def.allowedTools).toEqual([]);
-    expect(def.budget.maxIterations).toBe(1);
+    // YUK-800: measured grounded runs lost 10/24 samples at max-turns=1 after
+    // reasoning but before JSON. With no tools, turn two can only finish output.
+    expect(def.budget.maxIterations).toBe(2);
     // YUK-786: the grounded packet made this task heavier — a measured real-Opus
     // run put successful samples at 42–61s, so a 60s budget aborted a large share
     // of them mid-flight and the nightly silently dropped those cells. Do not
@@ -395,12 +401,20 @@ describe('MindModelInductionTask registry entry', () => {
     expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
   });
 
-  it('tells the model to emit reasoning + JSON in ONE reply (single-turn budget)', () => {
-    // maxIterations is 1: a model that writes only prose and plans to emit the
-    // JSON "next turn" produces error_max_turns and the cell is lost.
+  it('asks for one-reply output but permits the bounded second turn to finish JSON', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
     expect(p).toContain('同一条回复');
-    expect(p).toContain('只有一轮机会');
+    expect(p).toContain('第二轮');
+    expect(p).toContain('把被截断的 JSON 说完');
+  });
+
+  it('exposes proposal and abstain as explicit grounded output branches', () => {
+    const p = getTaskSystemPrompt('MindModelInductionTask');
+    expect(p).toContain('"kind":"proposal"');
+    expect(p).toContain('"kind":"abstain"');
+    expect(p).toContain('evidence_event_ids');
+    expect(p).toContain('insufficient_evidence');
+    expect(p).toContain('禁止为了满足格式而补造');
   });
 
   it('prompts for the A13 accountability fields (predicted_p + discriminating) and the 2nd-person framing', () => {
