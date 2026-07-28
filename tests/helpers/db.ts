@@ -112,7 +112,10 @@ const ALL_TABLES = [
 
 export async function resetDb() {
   const db = testDb();
-  for (const t of ALL_TABLES) {
-    await db.execute(sql.raw(`TRUNCATE TABLE "${t}" RESTART IDENTITY CASCADE`));
-  }
+  // One statement preserves the same whitelist + RESTART IDENTITY semantics while
+  // avoiding one network round-trip (and one cascade-NOTICE burst) per table. Every
+  // Vitest fork owns an isolated database, so taking the complete TRUNCATE lock set
+  // atomically cannot contend with another test file.
+  const tables = ALL_TABLES.map((table) => `"${table}"`).join(', ');
+  await db.execute(sql.raw(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`));
 }

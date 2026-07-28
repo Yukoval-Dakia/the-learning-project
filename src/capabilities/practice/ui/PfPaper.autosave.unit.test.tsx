@@ -109,18 +109,36 @@ function renderPaper(artifactId = 'paper_1') {
   return { ...utils, onExit, rerenderWith: (id: string) => utils.rerender(ui(id)) };
 }
 
+function setupUser() {
+  return userEvent.setup();
+}
+
+let autosaveDelayMs = 10;
+
+function keepAutosavePending() {
+  autosaveDelayMs = 100;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  autosaveDelayMs = 10;
+  const realSetTimeout = globalThis.setTimeout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) =>
+    realSetTimeout(callback, delay === 800 ? autosaveDelayMs : delay, ...args),
+  );
   mocks.getPaperDetail.mockResolvedValue(textDetail);
   mocks.pausePaperSession.mockResolvedValue({ ok: true });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('PfPaper autosave failure (YUK-713)', () => {
   it('surfaces a retry and drops the 进度保留 promise when a draft save fails', async () => {
     mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -138,7 +156,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
 
   it('clears the failure once a retried save succeeds', async () => {
     mocks.savePaperAnswer.mockRejectedValueOnce(new Error('500')).mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -162,7 +180,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
           }),
       )
       .mockRejectedValueOnce(new Error('500'));
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -182,9 +200,10 @@ describe('PfPaper autosave failure (YUK-713)', () => {
   });
 
   it('does not drop slot A pending save when switching to slot B (per-slot debounce)', async () => {
+    keepAutosavePending();
     mocks.getPaperDetail.mockResolvedValue(twoSlotDetail);
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -215,7 +234,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
         }),
     );
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -240,7 +259,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
 
   it('clears the retry chip once the failed slot is submitted (not stuck)', async () => {
     mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -287,7 +306,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
       )
       .mockRejectedValue(new Error('500'));
     mocks.getPaperDetail.mockImplementation(() => Promise.resolve(draftDetail('')));
-    const user = userEvent.setup();
+    const user = setupUser();
     const { rerenderWith } = renderPaper('paper_A');
 
     await screen.findByText('自动保存测试卷');
@@ -310,7 +329,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
 
   it('reports unsaved failures to the host on exit (no false 进度保留)', async () => {
     mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -340,7 +359,7 @@ describe('PfPaper autosave failure (YUK-713)', () => {
       ),
     );
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     const { rerenderWith } = renderPaper('paper_A');
 
     await screen.findByText('自动保存测试卷');
@@ -361,8 +380,9 @@ describe('PfPaper autosave failure (YUK-713)', () => {
 
 describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   it('flushes a pending debounced draft on exit (no lost last-800ms input)', async () => {
+    keepAutosavePending();
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -382,7 +402,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
 
   it('does not re-save an already-autosaved slot on exit (no phantom unsaved failure)', async () => {
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -400,8 +420,9 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('reports an unsaved failure when the exit flush itself fails', async () => {
+    keepAutosavePending();
     mocks.savePaperAnswer.mockRejectedValue(new Error('500'));
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -415,8 +436,9 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('flushes pending drafts with keepalive on pagehide (tab close)', async () => {
+    keepAutosavePending();
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -439,7 +461,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
           resolveSave = resolve;
         }),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -465,7 +487,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
           rejectSave = reject;
         }),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -481,13 +503,14 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('still exits (never strands the learner) when the flush throws synchronously', async () => {
+    keepAutosavePending();
     // A synchronous throw — e.g. a 401 clears the token and savePaperAnswer raises
     // ApiAuthError before the fetch — must not leave the page stuck: onExit still fires, and
     // the thrown slot is conservatively counted as unsaved rather than claimed 「进度保留」.
     mocks.savePaperAnswer.mockImplementation(() => {
       throw new Error('token cleared');
     });
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -499,11 +522,12 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('reports unsaved when exiting before the session is ready (no false 进度保留)', async () => {
+    keepAutosavePending();
     mocks.getPaperDetail.mockResolvedValue(noSessionDetail);
     // startPaperSession never resolves → sessionRef stays null through the exit, so the
     // flush's runSave takes the no-session path.
     mocks.startPaperSession.mockImplementation(() => new Promise(() => {}));
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -518,6 +542,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('exits only once even on a double-click during the flush window', async () => {
+    keepAutosavePending();
     let resolveSave: (v: unknown) => void = () => {};
     // The save hangs so the first exit is parked in its settle window when the second click
     // arrives.
@@ -527,7 +552,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
           resolveSave = resolve;
         }),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     const { onExit } = renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -547,6 +572,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('freezes the composer during the exit flush window (no dropped post-exit input)', async () => {
+    keepAutosavePending();
     let resolveSave: (v: unknown) => void = () => {};
     // The save hangs so we stay in the exit settle window while we assert.
     mocks.savePaperAnswer.mockImplementation(
@@ -555,7 +581,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
           resolveSave = resolve;
         }),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -577,7 +603,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
     const onExit = vi.fn(() => {
       throw new Error('host boom');
     });
-    const user = userEvent.setup();
+    const user = setupUser();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -602,8 +628,9 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('pagehide flushes the latest typed text (answersRef, not a stale closure)', async () => {
+    keepAutosavePending();
     mocks.savePaperAnswer.mockResolvedValue({ ok: true });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -622,6 +649,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('disables 交卷 during the exit flush window (no double transition)', async () => {
+    keepAutosavePending();
     let resolveSave: (v: unknown) => void = () => {};
     mocks.savePaperAnswer.mockImplementation(
       () =>
@@ -629,7 +657,7 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
           resolveSave = resolve;
         }),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');
@@ -648,12 +676,13 @@ describe('PfPaper exit/pagehide draft flush (YUK-732)', () => {
   });
 
   it('still pauses the session on pagehide even if the flush is problematic', async () => {
+    keepAutosavePending();
     // A synchronously-throwing save is swallowed per-slot, and the pagehide try/catch is the
     // backstop — either way the session pause must still fire.
     mocks.savePaperAnswer.mockImplementation(() => {
       throw new Error('boom');
     });
-    const user = userEvent.setup();
+    const user = setupUser();
     renderPaper();
 
     await screen.findByText('自动保存测试卷');

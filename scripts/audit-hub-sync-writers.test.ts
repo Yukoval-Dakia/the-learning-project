@@ -1887,6 +1887,9 @@ describe('auditHubSyncWriters', () => {
     });
   });
 
+  // This deliberately measures the real cold CLI path. Under the full 500-file unit
+  // run, CPU contention can delay tsx startup beyond Vitest's 10s default even though
+  // the isolated test finishes in ~2s; keep that scheduler noise from failing the gate.
   it('YUK-746 RED: runs as a CLI from a URL-significant path', () => {
     const specialRoot = mkdtempSync(join(resolve(__dirname, '..'), '.hub sync %'));
     fixtures.push(specialRoot);
@@ -1909,5 +1912,5 @@ describe('auditHubSyncWriters', () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout, result.stderr).toContain('Hub sync writer audit passed');
-  });
+  }, 20_000);
 });

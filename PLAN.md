@@ -3,9 +3,10 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-28
-> **【更新 2026-07-28 · GitHub CI 并行化落地】**
-> CI gate 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；
-> aggregate 保留原 required-check 名称，不要求本地跑 CI、不减覆盖。
+> **【更新 2026-07-28 · CI 测试长尾二次提速】**
+> YUK-817/818/819 已在 `codex/yuk-817-ci-test-speedups` 实现：DB reset 合批、
+> DB 两路 shard、unit 长尾收敛、JYEOO 硬超时修复；全量覆盖本地验证通过，
+> GitHub median 验收待分支发布后收数。
 
 ## NOW
 
@@ -15,8 +16,13 @@
   - 下一产品 slice 仍是 YUK-787/795（二次独立 probe + target-error-aware Judge）；
     尚未因本次 CI 研究启动实现。
 - **CI 提速**
-  - GitHub workflow 已完成并行化；docs-only 判定收敛为单一 fail-closed `changes` job。
-  - 待本 PR GitHub Actions 首跑验证 lane 结果与 required aggregate；无需本地复跑 CI。
+  - 首轮 workflow 并行化已在 main；本分支进一步把 54 条逐表 reset 合为一条
+    multi-table TRUNCATE，并把 388 个 DB files 等分为 2 个独立 CI matrix shard。
+  - Step9 源码只读一次；PfPaper 将 800ms debounce 在测试内缩到 10/100ms；
+    JYEOO POSIX timeout 改为 kill process group，覆盖 wrapper 已退但后代持 pipe。
+  - 本地两 shard 合计 388 files / 4,204 passed / 9 skipped / 1 todo；unit 509 files
+    / 5,781 passed / 33 skipped；migration、typecheck、tracked lint、build 与 hard
+    audits 全绿。YUK-817/818/819 保持 In Progress，待 GitHub timing 验收后 Done。
 
 ## NEXT
 
@@ -29,8 +35,8 @@
 
 ## PARKED
 
-- **CI 二次提速**：usability artifact 复用与 DB fork 调参等 GitHub timing 后再决定；
-  不做 path-aware 测试跳过。
+- **CI 后续调参**：只在 5 次非 docs-only GitHub timing 证明仍有必要时评估
+  usability artifact 复用、DB 4-way shard 或 fork 数；不做 path-aware 测试跳过。
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。

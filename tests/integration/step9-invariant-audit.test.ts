@@ -58,6 +58,44 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+interface SourceSnapshot {
+  root: string;
+  relPath: string;
+  text: string;
+}
+
+let sourceSnapshotPromise: Promise<SourceSnapshot[]> | undefined;
+
+function loadSourceSnapshot(): Promise<SourceSnapshot[]> {
+  if (sourceSnapshotPromise) return sourceSnapshotPromise;
+  sourceSnapshotPromise = (async () => {
+    const snapshot: SourceSnapshot[] = [];
+    for (const root of SCAN_ROOTS) {
+      const files = await walkFiles(path.join(REPO_ROOT, root));
+      const sources = await Promise.all(
+        files.map(async (file): Promise<SourceSnapshot | undefined> => {
+          // Parallel unit files may briefly create then remove source fixtures.
+          // A disappeared fixture cannot be a committed writer, so retain the
+          // old ENOENT fail-soft behavior while reading the repository once.
+          try {
+            return {
+              root,
+              relPath: path.relative(REPO_ROOT, file),
+              text: await fs.readFile(file, 'utf8'),
+            };
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+            throw err;
+          }
+        }),
+      );
+      snapshot.push(...sources.filter((source) => source !== undefined));
+    }
+    return snapshot;
+  })();
+  return sourceSnapshotPromise;
+}
+
 async function findWriteHits(
   tableName: string,
   opts: {
@@ -70,27 +108,18 @@ async function findWriteHits(
   const re = new RegExp(
     `\\b[\\w$]+\\s*\\.\\s*(?:${ops.join('|')})\\s*\\(\\s*${escapeRegExp(tableName)}\\s*[,)]`,
   );
+  const roots = new Set(opts.roots ?? SCAN_ROOTS);
   const hits: Hit[] = [];
-  for (const root of opts.roots ?? SCAN_ROOTS) {
-    const files = await walkFiles(path.join(REPO_ROOT, root));
-    for (const file of files) {
-      if (!opts.includeTests && (file.endsWith('.test.ts') || file.endsWith('.test.tsx'))) {
-        continue;
-      }
-      // 并行测试竞态容忍（YUK-222 gate 实测；judge-gap-audit.test.ts 同款防护）：
-      // serialize round-trip 等单元测试会在 src/subjects/ 下创建临时 fixture 目录，
-      // walk 时 readdir 已枚举该文件、随后 read 时它的 afterAll 已 rm → ENOENT。
-      // 消失的临时文件不可能是 db 写者，跳过即可；其它错误照常抛。
-      let text: string;
-      try {
-        text = await fs.readFile(file, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw err;
-      }
-      if (re.test(text)) {
-        hits.push(path.relative(REPO_ROOT, file));
-      }
+  for (const source of await loadSourceSnapshot()) {
+    if (!roots.has(source.root)) continue;
+    if (
+      !opts.includeTests &&
+      (source.relPath.endsWith('.test.ts') || source.relPath.endsWith('.test.tsx'))
+    ) {
+      continue;
+    }
+    if (re.test(source.text)) {
+      hits.push(source.relPath);
     }
   }
   return hits.sort();

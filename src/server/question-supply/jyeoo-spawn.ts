@@ -113,7 +113,15 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
     }
     // Default stdio (all piped) → ChildProcessWithoutNullStreams, so stdout/stderr are
     // non-null for capture. stdin is piped but unused (we never write to it).
-    const spawnOpts: SpawnOptionsWithoutStdio = { cwd: opts.cwd, env: childEnv };
+    // On POSIX, make the producer the leader of a new process group. jyeoo-rs may invoke
+    // helper processes; killing only the direct child leaves those descendants holding the
+    // stdout/stderr pipes open, so the Promise would not settle until they eventually exit.
+    const hasProcessGroup = process.platform !== 'win32';
+    const spawnOpts: SpawnOptionsWithoutStdio = {
+      cwd: opts.cwd,
+      env: childEnv,
+      detached: hasProcessGroup,
+    };
     const child = spawn(opts.binaryPath, opts.args, spawnOpts);
 
     // We never write to the child's stdin. Close it immediately so a producer that blocks
@@ -129,13 +137,28 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
     let settled = false;
 
     const timer = setTimeout(() => {
-      // Timeout race guard: if the child has ALREADY produced an exit disposition, the
-      // 'close' handler is merely queued behind this timer — flagging a timeout + SIGKILL
-      // here would misclassify a clean exit as a timeout and trigger a false retry. Only
-      // kill a process that is genuinely still running.
-      if (child.exitCode !== null || child.signalCode !== null) return;
+      const leaderStillRunning = child.exitCode === null && child.signalCode === null;
+
+      if (hasProcessGroup && child.pid !== undefined) {
+        try {
+          // A negative pid targets the entire POSIX process group. This also handles the
+          // case where the wrapper exited cleanly but a grandchild retained a stdio pipe:
+          // the group still exists, so the hard wall-clock bound remains real.
+          process.kill(-child.pid, 'SIGKILL');
+          timedOut = true;
+          return;
+        } catch (err) {
+          // ESRCH means the whole group is already gone and 'close' is merely queued, so
+          // retain the clean-exit disposition. Other failures fall back to the direct child.
+          if ((err as NodeJS.ErrnoException).code === 'ESRCH' && !leaderStillRunning) return;
+        }
+      } else if (!leaderStillRunning) {
+        return;
+      }
+
       timedOut = true;
-      // SIGKILL: a wedged scraper may ignore SIGTERM; we want a hard stop.
+      // Windows/fallback path: at least stop the direct child. Production runs on Linux,
+      // where the process-group path above also stops all descendants.
       child.kill('SIGKILL');
     }, opts.timeoutMs);
     // Don't let this timer keep the event loop (worker process) alive on its own.
