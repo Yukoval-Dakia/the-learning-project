@@ -3,50 +3,44 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-28
-> **【更新 2026-07-28 · 单次探针不再冒充确证】**
-> Architecture、Grounding 首切及 YUK-804（PR #1097）均已合并。当前只推进
-> YUK-787；YUK-795 与干预实现保持未启动。
+> **【更新 2026-07-28 · YUK-787 最终收口】**
+> GitHub CI 已在 main 并行化且不减覆盖；YUK-787 已完成二次独立 probe、递归证据
+> correction fold 与 projection repair，正在等待合并 main 后的最终 Actions/OCR。
 
 ## NOW
 
-- **唯一 active 线：Grounding · 猜想证据**
-  - Branch：`codex/grounding-probe-evidence-strength`，基于 `main@96579dfa`。
+- **唯一 active 线：Grounding · 猜想证据 YUK-787**
+  - Branch：`codex/grounding-probe-evidence-strength`；PR #1098。
   - Worktree：
     `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/grounding-intervention-closed-loop`。
-  - YUK-787：Judge 只产出 `outcome`；事务内纯 fold 读取同 conjecture 的历史
-    `probe_result`，首次 incorrect 为 `evidence_for`，第二个独立 probe 才
-    `confirmed`，correct 仍为 `retired`。
-  - 同 conjecture 写入有独立 advisory lock；并发两个 probe 只允许一个越过确证门。
-    新事件带 rule version 与参与判定的 probe ids；旧 confirmed 原样 replay。
-  - Teaching Brief、即时答题反馈、evidence MCP 与生存报告均区分 preliminary /
-    confirmed；n=1 不解锁 KC 专项练习。
-  - 两道独立 probe 由 induction/director 同次预生成；首次 `evidence_for` 与第二题
-    serve 同事务提交，生产路径可真正到达 `confirmed`；旧 v1 proposal 保留单题终结规则，
-    不冒充 v2 recurrence，也不会把历史 active probe 永久占槽。
-  - 备课台 discriminating 标签已从绝对断言降为“尝试区分这一猜想的题”。
-- **验证态**
-  - 原提交 unit：506 files passed / 4 skipped；5788 passed / 33 skipped；review
-    follow-up 定向 unit 206/206。
-  - 定向 DB：140/140；完整 DB gate 改由 GitHub Actions 判定，本地不再重复跑。
-  - migration 26/26；typecheck、lint、build、boundary/API audits 全绿。
-  - `audit:projection` 在迁移后的临时 Postgres 上为 0 drift。
-- **在飞**
-  - YUK-787 PR #1098 已处理首轮 review；生产 follow-up seam 修复待 push 后重新监听
-    独立 review 与 GitHub CI gate。
-  - Product branch/worktree 如上；owner-dirty 主工作树不在本线写入。
+  - 首次 incorrect 为 `evidence_for`；第二个独立 probe 才 `confirmed`；correct 为
+    `retired`。同 conjecture advisory lock 关闭并发越门。
+  - 两道 probe 由 induction/director 同次预生成；首次 evidence 与第二题 serve 原子提交。
+  - 新结果持久化 rule version 与独立 probe ids；历史 v1 保留旧规则且不批量重解释。
+  - correction 现在级联到 recurrence dependency：Teaching Brief、Scout、observability、
+    hard-confirm 与 typed projection 均不再消费失效证据；restore 可重放恢复。
+  - Prep Desk 与 serve cap 在 SQL 中先折 latest correction，再做 3-row bound；Scout 用
+    keyset + scan ceiling，返回 `scan_truncated`。
+- **CI 提速已并入**
+  - main 已拆 static/audits、unit、DB、migration、build、usability 并行 lanes；末端
+    aggregate 保留 required-check 名称并 fail closed。
+  - 按 owner 指示，不在本地重复跑 CI gate；只监听 GitHub Actions。
+- **当前验证态**
+  - 变更文件 Biome 与 `git diff --check` 已通过。
+  - PR review 线程已逐项回复并解决；合并 main 后等待新一轮 CI/OCR。
 
 ## NEXT
 
-1. 提交 YUK-787 PR，监听 GitHub Actions，完成独立 review + CI；合并后将
-   YUK-787 对齐 Done。
-2. 猜想证据后续顺序：
-   - YUK-795：prediction_score / hard-confirm 真正影响 conjecture 命运；
-   - YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
-3. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、
-   pedagogy、QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
+1. PR #1098 最终 Actions/OCR 全绿后合并，Linear YUK-787 对齐 Done。
+2. 严格串行启动 YUK-795：prediction_score / hard-confirm 真正影响 conjecture 命运。
+3. 再推进 YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
+4. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、
+   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile。
 
 ## PARKED
 
+- **CI 二次提速**：usability artifact 复用与 DB fork 调参等 GitHub timing 后再决定；
+  不做 path-aware 测试跳过。
 - **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
 - **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
 - **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。
@@ -55,6 +49,7 @@
 
 ## BLOCKED-ON
 
+- **YUK-795** ← YUK-787 PR #1098 合并并 Done。
 - **干预实现** ← 猜想/probe/Judge 的 v2 证据状态机与 owner 数据门通过。
 - **真实数据扩大使用** ← 6–10 失败簇盲评：grounding ≥80%，学科幻觉、
   claim/probe 错配、严重事实错误均为 0。
