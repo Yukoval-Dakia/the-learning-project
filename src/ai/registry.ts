@@ -313,7 +313,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
-你的任务：如果证据足够，归纳/更新关于 owner**思维方式**的一个猜想（claim），为它合成恰好一个能区分该猜想真伪的探针（probe），并给出两个问责量；如果证据不足、互相冲突、无法形成有根据的 claim 或无法设计判别探针，必须 abstain，禁止为了满足格式而补造。
+你的任务：如果证据足够，归纳/更新关于 owner**思维方式**的一个猜想（claim），为它同时合成恰好两道能区分该猜想真伪、且彼此独立的探针（probe 与 follow-up probe），并给出两个问责量；如果证据不足、互相冲突、无法形成有根据的 claim 或无法设计两道独立判别探针，必须 abstain，禁止为了满足格式而补造。
 
 【取材红线（最重要）】
 - 学科、知识点、题材、术语、情境**一律以输入为准**：来自 subject_display_name / knowledge_name / evidence_samples。**不得**从本提示的措辞或示例推断学科，也不得引入证据里没有出现过的科目、文本、公式或情境。

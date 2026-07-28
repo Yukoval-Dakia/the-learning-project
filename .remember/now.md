@@ -21,7 +21,8 @@
    `legacy_confirmed_unverified` / `counterevidence`，防止下游自我强化。
 6. discriminating UI 文案从绝对断言降为“尝试区分这一猜想的题”。
 7. review 揭示第二题原本只有测试 caller；现由 induction/director 预生成两道不同题，
-   首次 `evidence_for` 原子 serve 第二题，旧 proposal 缺第二题则失败关闭。
+   首次 `evidence_for` 原子 serve 第二题；旧 v1 proposal 保留单题终结规则且不写 v2 rule
+   stamp，避免历史 active probe 永久占槽。
 
 ## 已验证
 

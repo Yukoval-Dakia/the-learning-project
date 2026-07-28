@@ -252,6 +252,16 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.caps.proposeCount).toBe(0); // a rejected proposal never consumes a cap slot
   });
 
+  it('rejects whitespace-only follow-up prompt or reference at the tool boundary', async () => {
+    for (const field of ['followup_probe_md', 'followup_probe_reference_md'] as const) {
+      const h = build();
+      const res = await callTool('propose_conjecture', validProposeArgs({ [field]: ' \n\t ' }));
+      expect(res.ok).toBe(false);
+      expect(h.proposals).toHaveLength(0);
+      expect(h.caps.proposeCount).toBe(0);
+    }
+  });
+
   it('rejects when no first-hand evidence ref survives the agent_note filter', async () => {
     const h = build();
     const res = await callTool(

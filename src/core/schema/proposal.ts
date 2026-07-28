@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActivityRef } from './activity';
-import { QuestionKind } from './business';
+import { QuestionKind, normalizeProbeIdentity } from './business';
 import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
@@ -509,10 +509,10 @@ export const ConjectureProposalChange = z
     // mis-logged as a retryable AI failure — same trap as claim_md, see business.ts).
     probe_reference_md: z.string().min(1).max(2000),
     // Optional only for historical payload compatibility. Every v2 producer writes
-    // both fields; the answer lifecycle fails closed instead of inventing a follow-up
-    // for an old proposal that lacks them.
-    followup_probe_md: z.string().min(1).max(2000).optional(),
-    followup_probe_reference_md: z.string().min(1).max(2000).optional(),
+    // both fields; a well-formed old proposal keeps its terminal v1 answer rule
+    // instead of inventing a follow-up or stranding an active probe.
+    followup_probe_md: z.string().trim().min(1).max(2000).optional(),
+    followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
     discriminating: z.boolean(),
     corrected_by_owner: z.boolean().default(false),
     predicted_p: z.number().min(0).max(1),
@@ -530,7 +530,7 @@ export const ConjectureProposalChange = z
     }
     if (
       change.followup_probe_md !== undefined &&
-      change.followup_probe_md.trim() === change.probe_md.trim()
+      normalizeProbeIdentity(change.followup_probe_md) === normalizeProbeIdentity(change.probe_md)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

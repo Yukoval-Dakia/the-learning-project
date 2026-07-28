@@ -44,8 +44,8 @@ function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
   return 'ok';
 }
 
-// Forward-only rank for the in-place state advance (design §6 / [裁决 4]): announce +
-// move focus ONLY when the SAME brief_id moves finding → probe_ready → outcome.
+// Rank for ordinary in-place advance (design §6 / [裁决 4]); the effect also handles
+// outcome_evidence_for → the same brief's newly served recurrence probe explicitly.
 const STATE_RANK: Record<TeachingBrief['state'], number> = {
   finding: 0,
   probe_ready: 1,
@@ -106,9 +106,13 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   const [acking, setAcking] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
 
-  // §6 forward-announce: track {brief_id, rank}; the two focus targets are the
-  // 「已经为你备好」and 「当前结果」headings.
-  const prevRef = useRef<{ brief_id: string; rank: number } | null>(null);
+  // §6 forward-announce: rank covers the ordinary finding → probe → outcome path;
+  // state additionally recognizes preliminary outcome → recurrence probe.
+  const prevRef = useRef<{
+    brief_id: string;
+    rank: number;
+    state: TeachingBrief['state'];
+  } | null>(null);
   const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const [liveMsg, setLiveMsg] = useState('');
@@ -158,8 +162,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     fireSeenIfNew(brief);
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
-    const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
-    prevRef.current = { brief_id: brief.brief_id, rank }; // always refresh the baseline.
+    const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
+    const rankedForward = prev !== null && rank > prev.rank;
+    const recurrenceReady = prev?.state === 'outcome_evidence_for' && brief.state === 'probe_ready';
+    const forward = sameBrief && (rankedForward || recurrenceReady);
+    prevRef.current = { brief_id: brief.brief_id, rank, state: brief.state };
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
     (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();

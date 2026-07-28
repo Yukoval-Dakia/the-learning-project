@@ -235,10 +235,15 @@ interface FollowupProbeSpec {
   referenceMd: string;
 }
 
+type FollowupProbeLoadResult =
+  | { status: 'ready'; spec: FollowupProbeSpec }
+  | { status: 'legacy' }
+  | { status: 'invalid' };
+
 async function loadFollowupProbeSpec(
   db: Db | Tx,
   conjectureEventId: string,
-): Promise<FollowupProbeSpec | null> {
+): Promise<FollowupProbeLoadResult> {
   const [proposalRow] = await db
     .select({ payload: event.payload })
     .from(event)
@@ -251,28 +256,32 @@ async function loadFollowupProbeSpec(
       ? (proposalRow.payload as Record<string, unknown>).ai_proposal
       : undefined;
   const parsedProposal = AiProposalPayload.safeParse(proposalEnvelope);
-  const change =
-    parsedProposal.success && parsedProposal.data.kind === 'conjecture'
-      ? parsedProposal.data.proposed_change
-      : null;
-  if (
-    change === null ||
-    change.followup_probe_md === undefined ||
-    change.followup_probe_reference_md === undefined
-  ) {
-    return null;
+  if (!parsedProposal.success || parsedProposal.data.kind !== 'conjecture') {
+    console.warn(
+      '[probe-lifecycle] conjecture proposal payload is missing or invalid',
+      conjectureEventId,
+      parsedProposal.success ? [] : parsedProposal.error.issues,
+    );
+    return { status: 'invalid' };
+  }
+  const change = parsedProposal.data.proposed_change;
+  if (change.followup_probe_md === undefined || change.followup_probe_reference_md === undefined) {
+    return { status: 'legacy' };
   }
   return {
-    knowledgeId: change.knowledge_id,
-    promptMd: change.followup_probe_md,
-    referenceMd: change.followup_probe_reference_md,
+    status: 'ready',
+    spec: {
+      knowledgeId: change.knowledge_id,
+      promptMd: change.followup_probe_md,
+      referenceMd: change.followup_probe_reference_md,
+    },
   };
 }
 
 /**
- * Production-route preflight before the paid judge call. A sequence-1 probe from a
- * historical proposal without a pre-authored recurrence probe cannot enter the v2
- * lifecycle, so reject it before spending provider cost rather than after grading.
+ * Production-route preflight before the paid judge call. Malformed proposal
+ * provenance fails before provider cost. A well-formed v1 proposal remains answerable
+ * through the terminal legacy rule in answerProbe so old probes cannot occupy slots.
  */
 export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Promise<void> {
   const [probe] = await db
@@ -286,8 +295,7 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
       ? (probe.metadata as Record<string, unknown>)
       : {};
   const sequence = metadata.probe_sequence;
-  if (sequence === 2) return;
-  if (sequence !== undefined && sequence !== 1) {
+  if (sequence !== undefined && sequence !== 1 && sequence !== 2) {
     throw new ApiError(
       'probe_sequence_invalid',
       `probe ${probeQuestionId} has invalid probe_sequence`,
@@ -302,10 +310,18 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
       409,
     );
   }
-  if ((await loadFollowupProbeSpec(db, conjectureEventId)) === null) {
+  const followup = await loadFollowupProbeSpec(db, conjectureEventId);
+  if (followup.status === 'invalid') {
+    throw new ApiError(
+      'probe_proposal_invalid',
+      `conjecture ${conjectureEventId} has an invalid proposal payload`,
+      500,
+    );
+  }
+  if (sequence === 2 && followup.status !== 'ready') {
     throw new ApiError(
       'probe_followup_unavailable',
-      `conjecture ${conjectureEventId} has no independently authored follow-up probe`,
+      `follow-up probe ${probeQuestionId} has no authored follow-up specification`,
       409,
     );
   }
@@ -532,6 +548,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // both read an empty history and both persist `evidence_for`. The namespace
     // salt keeps the conjecture lock distinct from the per-question lock above.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
+    const followup = await loadFollowupProbeSpec(tx, conjectureEventId);
+    if (followup.status === 'invalid') {
+      throw new ApiError(
+        'probe_proposal_invalid',
+        `conjecture ${conjectureEventId} has an invalid proposal payload`,
+        500,
+      );
+    }
+    const usesRecurrenceGate = followup.status === 'ready';
     const priorRows = await tx
       .select({
         probe_result_event_id: event.id,
@@ -567,7 +592,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         resolution: parsed.status,
       });
     }
-    const resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
+    // Historical v1 proposals did not author a second probe. Preserve their terminal
+    // single-probe rule instead of retroactively reinterpreting or stranding them;
+    // omit the v2 rule stamp below so readers label these as legacy-unverified.
+    let resolution: ProbeResolution;
+    if (usesRecurrenceGate) {
+      resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
+    } else {
+      resolution = outcome === 0 ? 'confirmed' : 'retired';
+    }
     const independentProbeQuestionIds =
       outcome === 0
         ? [
@@ -598,8 +631,12 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         conjecture_event_id: conjectureEventId,
         outcome,
         resolution,
-        resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
-        independent_probe_question_ids: independentProbeQuestionIds,
+        ...(usesRecurrenceGate
+          ? {
+              resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
+              independent_probe_question_ids: independentProbeQuestionIds,
+            }
+          : {}),
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
         // Provenance for a photo answer: the team can later see WHAT was submitted for
@@ -615,24 +652,23 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     });
 
     if (resolution === 'evidence_for') {
-      const followupSpec = await loadFollowupProbeSpec(tx, conjectureEventId);
-      if (followupSpec === null) {
+      if (followup.status !== 'ready') {
         throw new ApiError(
-          'probe_followup_unavailable',
-          `conjecture ${conjectureEventId} has no independently authored follow-up probe`,
-          409,
+          'probe_followup_state_invariant',
+          `conjecture ${conjectureEventId} produced preliminary evidence without a follow-up`,
+          500,
         );
       }
-      const followup = await serveProbeOnce({
+      const servedFollowup = await serveProbeOnce({
         db: tx,
         conjectureProposalId: conjectureEventId,
-        knowledgeId: followupSpec.knowledgeId,
-        probeMd: followupSpec.promptMd,
-        referenceMd: followupSpec.referenceMd,
+        knowledgeId: followup.spec.knowledgeId,
+        probeMd: followup.spec.promptMd,
+        referenceMd: followup.spec.referenceMd,
         probeSequence: 2,
         now,
       });
-      if (followup.status === 'cap_reached') {
+      if (servedFollowup.status === 'cap_reached') {
         // The just-answered probe frees exactly one slot in this transaction and the
         // global serve lock prevents another writer from stealing it. Reaching the cap
         // here therefore signals an invariant violation, not recoverable contention.

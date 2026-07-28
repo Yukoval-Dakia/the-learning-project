@@ -432,8 +432,8 @@ export const ConjectureProposalDraft = z.object({
   // worked steps the probe prompt itself doesn't. Mirrors reference_md cap on the
   // question table.
   probe_reference_md: z.string().min(1).max(2000),
-  followup_probe_md: z.string().min(1).max(1000),
-  followup_probe_reference_md: z.string().min(1).max(2000),
+  followup_probe_md: z.string().trim().min(1).max(1000),
+  followup_probe_reference_md: z.string().trim().min(1).max(2000),
   cause_category: z.string().min(1).max(120),
   recurrence_count: z.number().int().min(2),
   predicted_p: z.number().min(0).max(1),
@@ -442,6 +442,18 @@ export const ConjectureProposalDraft = z.object({
 });
 
 export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
+
+/**
+ * Deterministic probe identity fingerprint. It closes superficial duplication
+ * through Unicode width/case, whitespace, or punctuation changes; semantic
+ * independence remains a model-authoring + blind-evaluation responsibility.
+ */
+export function normalizeProbeIdentity(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\p{P}\s_]+/gu, '');
+}
 
 export const ConjectureModelAbstainDraft = z.object({
   kind: z.literal('abstain'),
@@ -463,7 +475,10 @@ export const ConjectureAbstainDraft = ConjectureModelAbstainDraft.extend({
 export const ConjectureDraft = z
   .discriminatedUnion('kind', [ConjectureProposalDraft, ConjectureModelAbstainDraft])
   .superRefine((draft, ctx) => {
-    if (draft.kind === 'proposal' && draft.followup_probe_md.trim() === draft.probe_md.trim()) {
+    if (
+      draft.kind === 'proposal' &&
+      normalizeProbeIdentity(draft.followup_probe_md) === normalizeProbeIdentity(draft.probe_md)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['followup_probe_md'],

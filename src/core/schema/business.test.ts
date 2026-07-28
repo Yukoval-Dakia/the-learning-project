@@ -82,16 +82,33 @@ describe('ConjectureDraft', () => {
     expect(ConjectureDraft.safeParse({ ...valid, recurrence_count: 1 }).success).toBe(false);
   });
 
-  it('rejects an empty probe_md (exactly one discriminating probe required)', () => {
+  it('rejects an empty probe_md (two discriminating probes are required)', () => {
     expect(ConjectureDraft.safeParse({ ...valid, probe_md: '' }).success).toBe(false);
   });
 
-  it('rejects a follow-up that repeats the first probe', () => {
+  it('rejects a follow-up that repeats the first probe after identity normalization', () => {
     expect(
       ConjectureDraft.safeParse({
         ...valid,
-        followup_probe_md: valid.probe_md,
+        followup_probe_md: `  ${valid.probe_md.normalize('NFKC')}！！ `,
       }).success,
+    ).toBe(false);
+  });
+
+  it('trims follow-up fields and rejects whitespace-only prompt or reference', () => {
+    const parsed = ConjectureDraft.parse({
+      ...valid,
+      followup_probe_md: `  ${valid.followup_probe_md}  `,
+      followup_probe_reference_md: `  ${valid.followup_probe_reference_md}  `,
+    });
+    if (parsed.kind !== 'proposal') throw new Error('expected proposal');
+    expect(parsed.followup_probe_md).toBe(valid.followup_probe_md);
+    expect(parsed.followup_probe_reference_md).toBe(valid.followup_probe_reference_md);
+    expect(ConjectureDraft.safeParse({ ...valid, followup_probe_md: ' \n\t ' }).success).toBe(
+      false,
+    );
+    expect(
+      ConjectureDraft.safeParse({ ...valid, followup_probe_reference_md: ' \n\t ' }).success,
     ).toBe(false);
   });
 

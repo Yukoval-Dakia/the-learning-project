@@ -263,7 +263,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     );
   });
 
-  it('rejects a historical sequence-1 probe without a follow-up before paying the judge', async () => {
+  it('settles a historical sequence-1 probe without a follow-up via the terminal legacy rule', async () => {
     const proposalId = await seedConjecture({ includeFollowup: false });
     const served = await serveProbeOnce({
       db: testDb(),
@@ -273,14 +273,19 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       referenceMd: '2x·cos(x^2)',
     });
     if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
-    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
     const response = await answer(served.probe_question_id, 'cos(x²)');
 
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ error: 'probe_followup_unavailable' });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'confirmed',
+      outcome: 0,
+      resolution: 'confirmed',
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const [persisted] = await probeResultEvents(served.probe_question_id);
+    expect(persisted.payload).not.toHaveProperty('resolution_rule_version');
   });
 
   it('judge correct → outcome=1 → retired (conjecture falsified)', async () => {

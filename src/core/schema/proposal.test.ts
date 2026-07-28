@@ -57,7 +57,13 @@ describe('ConjectureProposalChange', () => {
     expect(
       ConjectureProposalChange.safeParse({
         ...valid,
-        followup_probe_md: valid.probe_md,
+        followup_probe_md: ` ${valid.probe_md}！！！ `,
+      }).success,
+    ).toBe(false);
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...valid,
+        followup_probe_reference_md: ' \n\t ',
       }).success,
     ).toBe(false);
   });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // YUK-707 (P0F/3) — TeachingBriefBand interactions (jsdom/RTL): loading / error, the
 // accept-dismiss CTA wiring through the canonical decideProposal pipeline, fail-closed
-// inline error, the probe_ready single-card reveal, the [裁决 4] forward-only announce +
+// inline error, the probe_ready single-card reveal, the [裁决 4] lifecycle announce +
 // focus move, and the getByRole heading/region a11y that SSR strings can't assert.
 
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
@@ -550,6 +550,26 @@ describe('TeachingBriefBand — forward announce + focus ([裁决 4])', () => {
 
     const outcome = screen.getByRole('heading', { level: 3, name: '当前结果' });
     await waitFor(() => expect(document.activeElement).toBe(outcome));
+    expect(document.querySelector('.tb-live')?.textContent).toBe(next.current_outcome.summary_md);
+  });
+
+  it('preliminary outcome→recurrence probe announces the new question and focuses its heading', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    renderWith(qc);
+    await screen.findByRole('heading', { level: 3, name: '当前结果' });
+
+    const next = probeReadyBrief();
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], { brief: next });
+    });
+
+    const prepared = screen.getByRole('heading', { level: 3, name: '已经为你备好' });
+    await waitFor(() => expect(document.activeElement).toBe(prepared));
     expect(document.querySelector('.tb-live')?.textContent).toBe(next.current_outcome.summary_md);
   });
 

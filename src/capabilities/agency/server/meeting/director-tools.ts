@@ -205,8 +205,8 @@ const ProposeConjectureShape = {
   claim_md: z.string().min(1),
   probe_md: z.string().min(1),
   probe_reference_md: z.string().min(1),
-  followup_probe_md: z.string().min(1),
-  followup_probe_reference_md: z.string().min(1),
+  followup_probe_md: z.string().trim().min(1).max(1000),
+  followup_probe_reference_md: z.string().trim().min(1).max(2000),
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
   // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are

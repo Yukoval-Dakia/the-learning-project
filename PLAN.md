@@ -21,7 +21,8 @@
   - Teaching Brief、即时答题反馈、evidence MCP 与生存报告均区分 preliminary /
     confirmed；n=1 不解锁 KC 专项练习。
   - 两道独立 probe 由 induction/director 同次预生成；首次 `evidence_for` 与第二题
-    serve 同事务提交，生产路径可真正到达 `confirmed`，旧 proposal 缺第二题时失败关闭。
+    serve 同事务提交，生产路径可真正到达 `confirmed`；旧 v1 proposal 保留单题终结规则，
+    不冒充 v2 recurrence，也不会把历史 active probe 永久占槽。
   - 备课台 discriminating 标签已从绝对断言降为“尝试区分这一猜想的题”。
 - **验证态**
   - 原提交 unit：506 files passed / 4 skipped；5788 passed / 33 skipped；review

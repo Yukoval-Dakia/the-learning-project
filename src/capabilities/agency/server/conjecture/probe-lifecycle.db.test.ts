@@ -365,20 +365,22 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(result.status).toBe('evidence_for');
   });
 
-  it('fails closed instead of stranding preliminary evidence when a legacy proposal has no follow-up', async () => {
+  it('settles a legacy proposal with the historical rule so its active probe cannot strand a slot', async () => {
     const proposalId = await seedConjecture({ includeFollowup: false });
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
 
-    await expect(
-      answerProbe({
-        db: testDb(),
-        probeQuestionId: served.probe_question_id,
-        outcome: 0,
-      }),
-    ).rejects.toMatchObject({ code: 'probe_followup_unavailable', status: 409 });
-    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
-    expect(await countActiveProbes(testDb())).toBe(1);
+    const result = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: 0,
+    });
+
+    expect(result.status).toBe('confirmed');
+    const [persisted] = await probeResultEvents(served.probe_question_id);
+    expect(persisted.payload).not.toHaveProperty('resolution_rule_version');
+    expect(persisted.payload).not.toHaveProperty('independent_probe_question_ids');
+    expect(await countActiveProbes(testDb())).toBe(0);
   });
 
   it('retire path records resolution=retired', async () => {

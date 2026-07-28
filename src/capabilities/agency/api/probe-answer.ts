@@ -167,9 +167,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // Historical v1 proposals may not contain the independently authored sequence-2
-    // probe required by the recurrence gate. Reject those before claiming or paying
-    // the judge; answerProbe repeats the check transactionally for non-route callers.
+    // Fail malformed proposal provenance before claiming or paying the judge.
+    // Well-formed v1 proposals remain answerable under answerProbe's terminal legacy
+    // rule, while v2 proposals continue through the recurrence gate.
     await assertProbeJudgeReady(db, probeQuestionId);
 
     // Judge via the standard invoker chokepoint (same path submit.ts uses).
