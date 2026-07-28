@@ -147,6 +147,36 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     );
   });
 
+  it('encodes dynamic ID segments so delimiter-bearing probe identities cannot collide', async () => {
+    const first = await recordPrimaryActionStarted(
+      testDb(),
+      {
+        briefId: 'b1',
+        actionKind: 'answer_probe',
+        probeQuestionId: 'q1|answer_probe|q2',
+      },
+      DAY1,
+    );
+    const second = await recordPrimaryActionStarted(
+      testDb(),
+      {
+        briefId: 'b1|answer_probe|q1',
+        actionKind: 'answer_probe',
+        probeQuestionId: 'q2',
+      },
+      DAY1,
+    );
+
+    expect(first.interaction_event_id).not.toBe(second.interaction_event_id);
+    expect(first.idempotent).toBe(false);
+    expect(second.idempotent).toBe(false);
+    const actionRows = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, PRIMARY_ACTION_STARTED_ACTION));
+    expect(actionRows).toHaveLength(2);
+  });
+
   it('primary_action_started records scoped_practice with its result_event_id join key', async () => {
     await recordPrimaryActionStarted(
       testDb(),

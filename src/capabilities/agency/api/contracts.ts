@@ -1,4 +1,4 @@
-import { PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
+import { PROBE_RESOLUTIONS } from '@/kernel/capability-contract-schemas';
 import { z } from 'zod';
 
 export const CreateLearningIntentBodySchema = z

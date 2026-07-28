@@ -77,10 +77,15 @@ export interface PrimaryActionStartedPayload {
   probe_question_id?: string;
 }
 
-// `|` never appears in a cuid2 / `evt_*` event id, the fixed PrimaryActionKind enum, or a
-// `YYYY-MM-DD` day, so these composites collide iff every idempotency-key field matches.
+function encodeEventIdSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
+// Encode every dynamic segment independently before joining. Public contracts accept
+// non-cuid legacy IDs, including `|`; raw concatenation could otherwise alias two
+// different brief × probe tuples and silently drop one through onConflictDoNothing.
 function briefSeenEventId(briefId: string, localDay: string): string {
-  return `bseen|${briefId}|${localDay}`;
+  return `bseen|${encodeEventIdSegment(briefId)}|${encodeEventIdSegment(localDay)}`;
 }
 
 function primaryActionEventId(
@@ -90,9 +95,11 @@ function primaryActionEventId(
   probeQuestionId?: string,
 ): string {
   if (actionKind === 'answer_probe') {
-    return `bact|${briefId}|${actionKind}|${probeQuestionId}|${localDay}`;
+    return `bact|${encodeEventIdSegment(briefId)}|${actionKind}|${encodeEventIdSegment(
+      probeQuestionId ?? '',
+    )}|${encodeEventIdSegment(localDay)}`;
   }
-  return `bact|${briefId}|${actionKind}|${localDay}`;
+  return `bact|${encodeEventIdSegment(briefId)}|${actionKind}|${encodeEventIdSegment(localDay)}`;
 }
 
 /**
