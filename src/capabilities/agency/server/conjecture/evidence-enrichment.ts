@@ -66,7 +66,7 @@ type EvidenceQuestionContext = {
   choices_md: string[] | null;
   parent_question_id: string | null;
   image_refs: string[];
-  figures: unknown;
+  figures: QuestionEvidenceContextSnapshotT['figures'];
 };
 
 function evidenceContextFromSnapshot(
@@ -369,6 +369,7 @@ function toEvidenceSample(
     parent = failure.question_snapshot.parent_question
       ? evidenceContextFromSnapshot(failure.question_snapshot.parent_question)
       : undefined;
+    if (q.parent_question_id !== null && parent === undefined) return null;
   } else {
     // Legacy degradation: use the current row only when it is demonstrably
     // unchanged since the attempt. Missing/mutated context is omitted rather

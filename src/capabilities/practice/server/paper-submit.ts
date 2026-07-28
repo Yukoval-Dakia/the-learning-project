@@ -473,7 +473,13 @@ export async function submitPaperSlot(
   if (!q) {
     throw new ApiError('not_found', `question ${input.questionId} not found`, 404);
   }
-  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id);
+  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id).catch((err) => {
+    throw new ApiError(
+      'question_evidence_unavailable',
+      `question ${input.questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
+      409,
+    );
+  });
 
   // Resolve the profile for the slot's knowledge (primary first, then question
   // labels) — used for the D6 profile_version stamp + cause validation.

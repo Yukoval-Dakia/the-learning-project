@@ -401,6 +401,26 @@ describe('submitSolveAttempt', () => {
     expect(judgeFn).not.toHaveBeenCalled();
   });
 
+  it('fails closed with a structured error when question evidence is incomplete', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    await db
+      .update(question)
+      .set({ parent_question_id: 'missing_parent' })
+      .where(eq(question.id, id));
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 1);
+
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId,
+        submission: { student_final_answer_text: 'a+b' },
+        judgeFn,
+      }),
+    ).rejects.toMatchObject({ code: 'question_evidence_unavailable' });
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
   it('rejects a second submit on an already-judged session', async () => {
     const id = await seedQuestion(seededRubricQuestion());
     const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });

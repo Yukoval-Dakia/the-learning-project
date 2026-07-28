@@ -42,6 +42,7 @@ export class SolveError extends Error {
       | 'session_not_found'
       | 'session_not_active'
       | 'empty_submission'
+      | 'question_evidence_unavailable'
       | 'llm_parse_failed',
     message: string,
   ) {
@@ -323,7 +324,12 @@ export async function submitSolveAttempt(
 
   const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
-  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id);
+  const questionSnapshot = await loadAttemptQuestionSnapshot(db, q.id).catch((err) => {
+    throw new SolveError(
+      'question_evidence_unavailable',
+      `question ${questionId} cannot be submitted because its evidence context is incomplete: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 

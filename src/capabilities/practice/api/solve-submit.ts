@@ -69,6 +69,9 @@ export async function createSolveSubmission(
       if (err.code === 'session_not_active') {
         return errorResponse(new ApiError('conflict', err.message, 409));
       }
+      if (err.code === 'question_evidence_unavailable') {
+        return errorResponse(new ApiError('question_evidence_unavailable', err.message, 409));
+      }
     }
     return errorResponse(err);
   }
