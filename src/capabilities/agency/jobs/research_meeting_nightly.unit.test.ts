@@ -221,7 +221,10 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
     runInTransactionFn: vi.fn(async (db, fn) => fn(db)),
+    runWithExecutionLockFn: vi.fn(async (_db, _executionId, fn) => fn()),
     loadCompletedRunResultFn: vi.fn(async () => null),
+    loadReconciliationResultFn: vi.fn(async () => null),
+    countReconciledForExecutionFn: vi.fn(async () => 0),
     writeRetryableAiFailureLedgerFn: vi.fn(async () => {}),
     // U8: stub the reconcile loop so unit tests never touch the DB (the real default
     // reads probe_result events). Wiring is asserted in its own test below.
@@ -316,8 +319,12 @@ describe('runResearchMeetingNightly', () => {
 
     expect(runInTransactionFn).toHaveBeenCalledTimes(1);
     expect(writeAiProposalFn).toHaveBeenCalledWith(tx, expect.anything());
-    expect(writeEventFn).toHaveBeenCalledTimes(3);
-    expect(writeEventFn.mock.calls.every(([scope]) => scope === tx)).toBe(true);
+    expect(writeEventFn).toHaveBeenCalledTimes(4);
+    const finalTransactionCalls = writeEventFn.mock.calls.filter(
+      ([, input]) => input.action !== 'experimental:research_meeting_reconciled',
+    );
+    expect(finalTransactionCalls).toHaveLength(3);
+    expect(finalTransactionCalls.every(([scope]) => scope === tx)).toBe(true);
   });
 
   it('caps proposals at the top-K salient cells', async () => {
@@ -874,9 +881,18 @@ describe('runResearchMeetingNightly', () => {
     // The deterministic reconcile half still ran (it must never be skipped)…
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(3);
-    // …but the propose half writes no anchor/scan. One bookkeeping-only completion
-    // guard makes a same-job redelivery a no-op even if new evidence appears meanwhile.
-    expect(writeEventFn).toHaveBeenCalledTimes(1);
+    // …but the propose half writes no anchor/scan. Reconcile checkpoint + completion
+    // guard make a same-job redelivery a no-op even if new evidence appears meanwhile.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'experimental:research_meeting_reconciled',
+        payload: expect.objectContaining({
+          reconcile_result: { reconciled: 3, skipped: 0 },
+        }),
+      }),
+    );
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -1008,7 +1024,7 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
 
     expect(induceConjectureFn).not.toHaveBeenCalled();
-    expect(writeEventFn).toHaveBeenCalledTimes(1);
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
     expect(writeEventFn).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

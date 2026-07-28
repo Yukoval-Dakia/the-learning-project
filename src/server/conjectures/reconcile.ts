@@ -96,6 +96,8 @@ export interface ReconcileResult {
 
 export interface ReconcileDeps {
   now?: () => Date;
+  /** Stable nightly execution id for retry-time aggregate count recovery. */
+  executionId?: string;
   /** unscored probe outcomes (idempotency lives HERE — already-scored probes excluded). */
   listUnscoredProbeResultsFn?: (db: Db) => Promise<UnscoredProbeResult[]>;
   /** load the conjecture proposal event (writeAiProposal shape: payload.ai_proposal). */
@@ -308,6 +310,7 @@ export async function reconcileConjecturePredictions(
         skill_score_point: score.skillScorePoint,
         // R(t) recorded HERE only — fold-replay needs it logged, the typed-state has no R.
         retrievability_at_judge: pr.retrievability_at_judge,
+        ...(deps.executionId ? { research_meeting_execution_id: deps.executionId } : {}),
       },
       caused_by_event_id: pr.probe_result_event_id,
       created_at: now,

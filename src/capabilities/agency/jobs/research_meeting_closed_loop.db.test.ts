@@ -35,7 +35,7 @@
 // making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
 // another silently-passing test — exactly what this ticket exists to eliminate.
 
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
@@ -484,6 +484,59 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(costs.every((row) => row.cost > 0 && row.outcome === 'success')).toBe(true);
   });
 
+  it('preserves reconciliation counts when the proposal transaction fails and retries', async () => {
+    const db = testDb();
+    await seedRecurringFailures(3);
+
+    await runResearchMeetingNightly(db);
+    const [proposal] = await listProposalInboxRows(db, {
+      status: 'pending',
+      kind: 'conjecture',
+    });
+    expect((await acceptViaRoute(proposal.id)).status).toBe(201);
+    const [probeRow] = await db
+      .select()
+      .from(question)
+      .where(eq(question.source, PROBE_QUESTION_SOURCE))
+      .limit(1);
+    expect((await answerProbeViaRoute(probeRow.id, '使动')).status).toBe(200);
+
+    const executionId = 'job_reconcile_then_final_failure';
+    await expect(
+      runResearchMeetingNightly(db, {
+        executionId,
+        writeEventFn: async (scope, input) => {
+          if (input.action === 'experimental:research_meeting_completed') {
+            throw new Error('completion persistence failed');
+          }
+          return writeEvent(scope, input);
+        },
+      }),
+    ).rejects.toThrow('completion persistence failed');
+
+    const [checkpoint] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:research_meeting_reconciled'),
+          sql`${event.payload} ->> 'execution_id' = ${executionId}`,
+        ),
+      );
+    expect(checkpoint.payload).toEqual({
+      execution_id: executionId,
+      reconcile_result: { reconciled: 1, skipped: 0 },
+    });
+
+    const retried = await runResearchMeetingNightly(db, { executionId });
+    expect(retried.reconciled).toBe(1);
+    const scores = await db.select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
+    expect(scores).toHaveLength(1);
+    expect(scores[0].payload).toMatchObject({
+      research_meeting_execution_id: executionId,
+    });
+  });
+
   it('rolls back operational failure ledgers with the run facts', async () => {
     const db = testDb();
     await seedRecurringFailures(3);
@@ -535,39 +588,49 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     );
   });
 
-  it('first-write-wins when two deliveries pass the completion guard concurrently', async () => {
+  it('serializes concurrent deliveries before the completion guard and model work', async () => {
     const db = testDb();
     await seedRecurringFailures(3);
     const executionId = 'job_concurrent_redelivery';
-    let arrivals = 0;
+    let knownKeyReads = 0;
+    let markFirstReadStarted: (() => void) | undefined;
+    const firstReadStarted = new Promise<void>((resolve) => {
+      markFirstReadStarted = resolve;
+    });
     let releaseBarrier: (() => void) | undefined;
     const barrier = new Promise<void>((resolve) => {
       releaseBarrier = resolve;
     });
     const loadKnownConjectureKeysFn = async () => {
-      arrivals += 1;
-      if (arrivals === 2) releaseBarrier?.();
+      knownKeyReads += 1;
+      markFirstReadStarted?.();
       await barrier;
       return new Set<string>();
     };
 
-    const [first, second] = await Promise.all([
-      runResearchMeetingNightly(db, {
-        executionId,
-        // Model the exact race: both workers already passed the completion read
-        // before either one commits its durable result.
-        loadCompletedRunResultFn: async () => null,
-        loadKnownConjectureKeysFn,
-      }),
-      runResearchMeetingNightly(db, {
-        executionId,
-        loadCompletedRunResultFn: async () => null,
-        loadKnownConjectureKeysFn,
-      }),
-    ]);
+    const firstPromise = runResearchMeetingNightly(db, {
+      executionId,
+      loadKnownConjectureKeysFn,
+    });
+    await firstReadStarted;
+    const secondPromise = runResearchMeetingNightly(db, {
+      executionId,
+      loadKnownConjectureKeysFn,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
+    // The second delivery is blocked on the execution advisory lock. It has not
+    // reached any business read or model call while the first is in-flight.
+    expect(knownKeyReads).toBe(1);
+    releaseBarrier?.();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(second).toEqual(first);
     expect(first.conjectures_created).toBe(1);
-    expect(second.conjectures_created).toBe(1);
+    expect(knownKeyReads).toBe(1);
+    expect(await taskKindCounts()).toMatchObject({
+      MindModelInductionTask: RESEARCH_MEETING_SAMPLES,
+    });
     expect(await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' })).toHaveLength(
       1,
     );

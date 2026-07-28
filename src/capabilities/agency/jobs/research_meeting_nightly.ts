@@ -63,7 +63,7 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
@@ -73,6 +73,7 @@ import {
   induceConjecture,
 } from '@/server/agency/conjecture/induce';
 import {
+  PREDICTION_SCORE_ACTION,
   type ReconcileResult,
   reconcileConjecturePredictions,
 } from '@/server/conjectures/reconcile';
@@ -126,6 +127,9 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
+// Durable completion payload contract: append-only and backward-compatible.
+// Future fields must be optional/defaulted so already-committed executions
+// remain readable across deployments.
 const ResearchMeetingResultSchema = z
   .object({
     considered: z.number().int().nonnegative(),
@@ -154,10 +158,13 @@ type DbLike = Db | Tx;
 type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
 type WriteAiProposalFn = (db: DbLike, input: WriteAiProposalInput) => Promise<string>;
 type RunInTransactionFn = (db: Db, fn: (tx: DbLike) => Promise<void>) => Promise<void>;
+type RunWithExecutionLockFn = <T>(db: Db, executionId: string, fn: () => Promise<T>) => Promise<T>;
 type LoadCompletedRunResultFn = (
   db: Db,
   executionId: string,
 ) => Promise<ResearchMeetingResult | null>;
+type LoadReconciliationResultFn = (db: Db, executionId: string) => Promise<ReconcileResult | null>;
+type CountReconciledForExecutionFn = (db: Db, executionId: string) => Promise<number>;
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -178,12 +185,19 @@ interface PreparedConjectureCell {
   evidenceImages: LoadedConjectureEvidenceImage[];
 }
 
-function scheduledEventId(prefix: 'trigger' | 'scan' | 'completion', executionId: string): string {
+function scheduledEventId(
+  prefix: 'trigger' | 'scan' | 'reconciliation' | 'completion',
+  executionId: string,
+): string {
   const digest = createHash('sha256').update(executionId).digest('hex').slice(0, 32);
   return `research_meeting_${prefix}_${digest}`;
 }
 
-function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+function conjectureCellEventId(
+  prefix: 'conjecture_abstained' | 'conjecture_proposal',
+  executionId: string,
+  cell: EnrichedEvidenceCell,
+): string {
   // preparedTopCells contains at most one entry per deterministic cell.key.
   // Deliberately hash the stable input rather than non-deterministic model output
   // so a retry cannot create a second event merely by citing a different subset.
@@ -192,19 +206,36 @@ function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidence
     .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
     .digest('hex')
     .slice(0, 32);
-  return `conjecture_abstained_${digest}`;
+  return `${prefix}_${digest}`;
+}
+
+function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidenceCell): string {
+  return conjectureCellEventId('conjecture_abstained', executionId, cell);
 }
 
 function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCell): string {
   // A concurrent pg-boss redelivery can pass the completion read while the first
   // worker is still running. The deterministic proposal id turns that race into
   // first-write-wins rather than two pending conjectures for one logical cell.
-  const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
-  const digest = createHash('sha256')
-    .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
-    .digest('hex')
-    .slice(0, 32);
-  return `conjecture_proposal_${digest}`;
+  return conjectureCellEventId('conjecture_proposal', executionId, cell);
+}
+
+async function defaultRunWithExecutionLock<T>(
+  db: Db,
+  executionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  // Hold one dedicated connection-scoped transaction lock across the whole
+  // orchestration. Business reads/writes still use their existing short
+  // transactions on `db`; this outer transaction owns only the advisory lock.
+  // A crash releases it automatically, and a concurrent redelivery blocks here,
+  // then observes the first worker's committed completion before model work.
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`research_meeting_execution:${executionId}`}, 0))`,
+    );
+    return fn();
+  });
 }
 
 async function defaultLoadCompletedRunResult(
@@ -231,6 +262,72 @@ async function defaultLoadCompletedRunResult(
     );
   }
   return parsed.data.completed_result;
+}
+
+const ReconcileResultSchema = z.object({
+  reconciled: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+
+async function defaultLoadReconciliationResult(
+  db: Db,
+  executionId: string,
+): Promise<ReconcileResult | null> {
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, scheduledEventId('reconciliation', executionId)))
+    .limit(1);
+  if (!row) return null;
+  const parsed = z
+    .object({
+      execution_id: z.literal(executionId),
+      reconcile_result: ReconcileResultSchema,
+    })
+    .safeParse(row.payload);
+  if (!parsed.success) {
+    console.error('[research_meeting_nightly] reconciliation checkpoint is unreadable', {
+      execution_id: executionId,
+      issues: parsed.error.issues,
+    });
+    throw new Error(
+      `research_meeting_nightly: reconciliation checkpoint is unreadable for execution ${executionId}`,
+    );
+  }
+  return parsed.data.reconcile_result;
+}
+
+async function defaultCountReconciledForExecution(db: Db, executionId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PREDICTION_SCORE_ACTION),
+        sql`${event.payload} ->> 'research_meeting_execution_id' = ${executionId}`,
+      ),
+    );
+  return row?.count ?? 0;
+}
+
+function buildReconciliationEventInput(
+  executionId: string,
+  result: ReconcileResult,
+  now: Date,
+): WriteEventInput {
+  const id = scheduledEventId('reconciliation', executionId);
+  return {
+    id,
+    actor_kind: 'system',
+    actor_ref: RESEARCH_MEETING_ACTOR,
+    action: 'experimental:research_meeting_reconciled',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: 'success',
+    payload: { execution_id: executionId, reconcile_result: result },
+    ingest_at: now,
+    created_at: now,
+  };
 }
 
 function buildCompletionEventInput(
@@ -290,8 +387,14 @@ export interface ResearchMeetingDeps {
   writeEventFn?: WriteEventFn;
   /** Atomic durable boundary for trigger + per-cell outcomes/health + scan + completion. */
   runInTransactionFn?: RunInTransactionFn;
+  /** Serialize every delivery of one stable pg-boss execution id before any work. */
+  runWithExecutionLockFn?: RunWithExecutionLockFn;
   /** Redelivery guard: a committed completion means this logical execution is complete. */
   loadCompletedRunResultFn?: LoadCompletedRunResultFn;
+  /** Retry checkpoint for the reconcile half, persisted before proposal work. */
+  loadReconciliationResultFn?: LoadReconciliationResultFn;
+  /** Recover score writes if a crash happened before the reconcile checkpoint. */
+  countReconciledForExecutionFn?: CountReconciledForExecutionFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
@@ -655,12 +758,15 @@ function buildConjectureProposalInput(
   };
 }
 
-export async function runResearchMeetingNightly(
+async function runResearchMeetingNightlyClaimed(
   db: Db,
   deps: ResearchMeetingDeps = {},
 ): Promise<ResearchMeetingResult> {
   const now = deps.now?.() ?? new Date();
-  const executionId = deps.executionId ?? newId();
+  const executionId = deps.executionId;
+  if (!executionId) {
+    throw new Error('research_meeting_nightly: claimed execution is missing its stable id');
+  }
   const getFailureAttemptsWithTraceFn =
     deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
@@ -674,12 +780,17 @@ export async function runResearchMeetingNightly(
     deps.runInTransactionFn ??
     ((database: Db, fn: (tx: DbLike) => Promise<void>) => database.transaction(fn));
   const loadCompletedRunResultFn = deps.loadCompletedRunResultFn ?? defaultLoadCompletedRunResult;
+  const loadReconciliationResultFn =
+    deps.loadReconciliationResultFn ?? defaultLoadReconciliationResult;
+  const countReconciledForExecutionFn =
+    deps.countReconciledForExecutionFn ?? defaultCountReconciledForExecution;
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
-  const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
+  const reconcileFn =
+    deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d, { executionId }));
   const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
     await runInTransactionFn(db, async (tx) => {
       await writeEventFn(tx, buildCompletionEventInput(executionId, result, now, null));
@@ -697,7 +808,20 @@ export async function runResearchMeetingNightly(
   // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
-  const reconcileResult = await reconcileFn(db);
+  let reconcileResult = await loadReconciliationResultFn(db, executionId);
+  if (!reconcileResult) {
+    // The score events are already individually idempotent. Count any score rows
+    // stamped by an earlier attempt of this execution (crash after reconcile but
+    // before checkpoint), then persist one deterministic aggregate checkpoint
+    // before proposal work. A later final-write retry reuses the original counts.
+    const previouslyReconciled = await countReconciledForExecutionFn(db, executionId);
+    const freshResult = await reconcileFn(db);
+    reconcileResult = {
+      reconciled: previouslyReconciled + freshResult.reconciled,
+      skipped: freshResult.skipped,
+    };
+    await writeEventFn(db, buildReconciliationEventInput(executionId, reconcileResult, now));
+  }
   // Surface the aggregate skip count — a non-zero value flags data-quality drift (dangling /
   // unreadable conjecture refs) that the per-probe console.warn alone makes easy to miss.
   if (reconcileResult.skipped > 0) {
@@ -1014,6 +1138,17 @@ export async function runResearchMeetingNightly(
   });
 
   return completedResultForWrite;
+}
+
+export async function runResearchMeetingNightly(
+  db: Db,
+  deps: ResearchMeetingDeps = {},
+): Promise<ResearchMeetingResult> {
+  const executionId = deps.executionId ?? newId();
+  const runWithExecutionLockFn = deps.runWithExecutionLockFn ?? defaultRunWithExecutionLock;
+  return runWithExecutionLockFn(db, executionId, () =>
+    runResearchMeetingNightlyClaimed(db, { ...deps, executionId }),
+  );
 }
 
 export function buildResearchMeetingNightlyHandler(
