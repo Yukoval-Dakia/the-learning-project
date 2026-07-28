@@ -11,7 +11,7 @@
 ## NOW
 
 - **唯一 active 线：Grounding · 猜想证据 YUK-795**
-  - Branch：`codex/yuk-795-accountability-loop`。
+  - Branch：`codex/yuk-795-accountability-loop`；PR #1101。
   - Worktree：
     `/Users/yuqi/yukoval-projects/the-learning-project-worktrees/yuk-795-accountability-loop`。
   - 规则已钉死：score point `>0`=hit、`<0`=miss、`=0`=neutral；连续一条不改变排序；
@@ -36,7 +36,7 @@
 
 ## NEXT
 
-1. 提交并推送 YUK-795 PR，只监听 GitHub Actions/OCR；不在本地重复完整 CI gate。
+1. 监听 PR #1101 的 GitHub Actions/OCR；不在本地重复完整 CI gate。
 2. 处理远端失败或 review；全绿后合并并将 YUK-795 对齐 Done。
 3. 再推进 YUK-788/803：dismiss/reopen/cooldown、prior claim、soft archive/hard 不变。
 4. 通过真实 owner 数据闸门 YUK-814 后，才进入 intervention snapshot、pedagogy、

@@ -5,7 +5,7 @@
 - Architecture exit、Grounding 首切、YUK-804 均已合并。
 - YUK-787 已随 PR #1098 合并并在 Linear Done；最终 CI Gate / OCR / CodeQL 全绿。
 - 当前唯一 active 线是 YUK-795：
-  `codex/yuk-795-accountability-loop`，基于 `origin/main@876a501a`。
+  `codex/yuk-795-accountability-loop`，PR #1101，基于 `origin/main@876a501a`。
 - 已合入 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
   重复跑 CI gate。
 
@@ -25,7 +25,7 @@
 
 ## 验证与远端
 
-- YUK-795 实现完成，尚未产生 PR。
+- YUK-795 已提交并推送为 PR #1101。
 - 定向 unit：accountability 7/7；定向 DB：accountability 4/4；改动文件
   Biome 与 `git diff --check` 已通过。此前关联 reconcile/hard-confirm/nightly
   定向测试也已通过。
@@ -36,10 +36,10 @@
 
 ## 下一步
 
-1. 提交、推送 YUK-795 并开 PR。
-2. 只监听 GitHub Actions/OCR，处理远端失败或 review；不在本地重复完整 CI gate。
-3. 全绿后合并，Linear YUK-795 对齐 Done。
-4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
+1. 只监听 PR #1101 的 GitHub Actions/OCR，处理远端失败或 review；不在本地重复
+   完整 CI gate。
+2. 全绿后合并，Linear YUK-795 对齐 Done。
+3. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
 
 ## CI 测试长尾二次提速（2026-07-29）
 
