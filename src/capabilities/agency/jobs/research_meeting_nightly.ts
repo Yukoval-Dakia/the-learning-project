@@ -74,6 +74,7 @@ import {
 } from '@/server/agency/conjecture/induce';
 import {
   PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
   type ReconcileResult,
   reconcileConjecturePredictions,
 } from '@/server/conjectures/reconcile';
@@ -303,7 +304,7 @@ async function defaultCountReconciledForExecution(db: Db, executionId: string): 
     .from(event)
     .where(
       and(
-        eq(event.action, PREDICTION_SCORE_ACTION),
+        inArray(event.action, [PREDICTION_SCORE_ACTION, PROBE_RESULT_PROJECTED_ACTION]),
         sql`${event.payload} ->> 'research_meeting_execution_id' = ${executionId}`,
       ),
     );
@@ -805,14 +806,15 @@ async function runResearchMeetingNightlyClaimed(
   const completedResult = await loadCompletedRunResultFn(db, executionId);
   if (completedResult) return completedResult;
 
-  // ── A13 reconcile (U8): score PRIOR probe outcomes against their conjecture's
-  // prediction → append LOG-only prediction_score events + advance the typed-ledger
+  // ── A13 reconcile (U8): project PRIOR probe outcomes into the typed ledger.
+  // Sequence 1 also appends a LOG-only prediction_score; recurrence results append a
+  // score-free projection anchor
   // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
   let reconcileResult = await loadReconciliationResultFn(db, executionId);
   if (!reconcileResult) {
-    // The score events are already individually idempotent. Count any score rows
+    // Both derived anchor actions are individually idempotent. Count any anchor rows
     // stamped by an earlier attempt of this execution (crash after reconcile but
     // before checkpoint), then persist one deterministic aggregate checkpoint
     // before proposal work. A later final-write retry reuses the original counts.

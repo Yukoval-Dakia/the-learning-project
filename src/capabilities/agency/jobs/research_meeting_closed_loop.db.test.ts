@@ -81,7 +81,10 @@ import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
+} from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { buildHonoApp } from '../../../../server/app';
@@ -552,6 +555,55 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(scores).toHaveLength(1);
     expect(scores[0].payload).toMatchObject({
       research_meeting_execution_id: executionId,
+    });
+  });
+
+  it('recovers a score-free recurrence projection count after a pre-checkpoint crash', async () => {
+    const db = testDb();
+    const executionId = 'job_recurrence_projection_recovery';
+    await writeEvent(db, {
+      id: 'probe_result_projected:terminal_probe_result',
+      actor_kind: 'system',
+      actor_ref: 'research_meeting',
+      action: PROBE_RESULT_PROJECTED_ACTION,
+      subject_kind: 'event',
+      subject_id: 'terminal_probe_result',
+      payload: {
+        conjecture_event_id: 'conjecture_for_terminal_probe',
+        probe_result_event_id: 'terminal_probe_result',
+        knowledge_id: KC_ID,
+        outcome: 0,
+        resolution: 'confirmed',
+        projection_kind: 'recurrence_without_prediction',
+        retrievability_at_judge: null,
+        research_meeting_execution_id: executionId,
+      },
+      caused_by_event_id: 'terminal_probe_result',
+      ingest_at: new Date(),
+      created_at: new Date(),
+    });
+
+    const reconcileFn = vi.fn(async () => ({ reconciled: 0, skipped: 0 }));
+    const recovered = await runResearchMeetingNightly(db, {
+      executionId,
+      reconcileFn,
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
+    });
+
+    expect(reconcileFn).toHaveBeenCalledTimes(1);
+    expect(recovered.reconciled).toBe(1);
+    const [checkpoint] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:research_meeting_reconciled'),
+          sql`${event.payload} ->> 'execution_id' = ${executionId}`,
+        ),
+      );
+    expect(checkpoint.payload).toEqual({
+      execution_id: executionId,
+      reconcile_result: { reconciled: 1, skipped: 0 },
     });
   });
 
