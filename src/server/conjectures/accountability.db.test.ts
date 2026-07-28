@@ -164,6 +164,27 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     );
   });
 
+  it('rejects a mis-stamped score when both payload and proposal KCs are in the batch', async () => {
+    const payloadTarget = cell('concept::kc_payload', 2);
+    const proposalTarget = cell('concept::kc_proposal', 2);
+    await writeConjecture('conjecture_cross_kc', proposalTarget, 1);
+    await writeScore('score_cross_kc', 'conjecture_cross_kc', payloadTarget, 0, 1);
+
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [
+      payloadTarget,
+      proposalTarget,
+    ]);
+
+    expect(profiles.get(payloadTarget.key)).toMatchObject({
+      state: 'watch',
+      score_event_ids: [],
+    });
+    expect(profiles.get(proposalTarget.key)).toMatchObject({
+      state: 'watch',
+      score_event_ids: [],
+    });
+  });
+
   it('turns repeated prediction misses into an observable candidate downweight', async () => {
     const target = cell('concept::kc_high', 4);
     const neutral = cell('method::kc_neutral', 2);

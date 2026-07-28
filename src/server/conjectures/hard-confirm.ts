@@ -400,7 +400,7 @@ function conjectureIdentityKey(causeCategory: string, knowledgeId: string): stri
 }
 
 function boundedChunks<T>(values: readonly T[]): T[][] {
-  const size = MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY;
+  const size = Math.max(1, MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY);
   const chunks: T[][] = [];
   for (let offset = 0; offset < values.length; offset += size) {
     chunks.push(values.slice(offset, offset + size));
@@ -649,7 +649,14 @@ export async function gatherDissociationRecordsByIdentity(
     // requested identity — so rival causes never pool (FAIL-2) AND a mis-stamped score whose
     // payload kc disagrees with its proposal kc satisfies NEITHER pool (cross-validation against
     // the SQL kc pre-filter, Finding-3). Never trust the score payload's own knowledge_id here.
-    if (identity === null) continue;
+    const payloadKnowledgeId = payload?.knowledge_id;
+    if (
+      identity === null ||
+      typeof payloadKnowledgeId !== 'string' ||
+      payloadKnowledgeId !== identity.knowledge_id
+    ) {
+      continue;
+    }
     const targetKey = targetKeyByIdentity.get(
       conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
     );
