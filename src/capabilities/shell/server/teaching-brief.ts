@@ -802,12 +802,34 @@ export async function loadOutcomeBrief(
     db,
     terminalRows.map((row) => row.id),
   );
-  const terminalConjectureIds = new Set(
-    terminalRows.flatMap((row) => {
-      if (terminalStatuses.get(row.id) !== 'active') return [];
-      const canonical = validateCanonicalProbeResult(row);
-      return isCandidateError(canonical) ? [] : [canonical.value.conjectureEventId];
+  // A terminal may suppress preliminary evidence only after the same full-chain
+  // validation used for display/ack succeeds. Event-level shape alone is not
+  // sufficient: a drifted/missing probe or non-accepted proposal must fail
+  // closed without hiding the still-valid preliminary result.
+  const validateTerminal = async (row: (typeof terminalRows)[number]) => ({
+    row,
+    outcome: await validateAckableOutcome(db, row, now, {
+      serial,
+      precomputedEvidenceStatus: terminalStatuses.get(row.id),
     }),
+  });
+  // The ack path runs on one transaction connection and therefore must remain
+  // serial; the ordinary pooled GET path can validate the bounded candidate set
+  // concurrently.
+  const terminalOutcomes = serial
+    ? await (async () => {
+        const outcomes: Awaited<ReturnType<typeof validateTerminal>>[] = [];
+        for (const row of terminalRows) outcomes.push(await validateTerminal(row));
+        return outcomes;
+      })()
+    : await Promise.all(terminalRows.map(validateTerminal));
+  const terminalOutcomesById = new Map(
+    terminalOutcomes.map(({ row, outcome }) => [row.id, outcome] as const),
+  );
+  const terminalConjectureIds = new Set(
+    terminalOutcomes.flatMap(({ outcome }) =>
+      isCandidateError(outcome) ? [] : [outcome.value.proposal.id],
+    ),
   );
 
   for (const result of results) {
@@ -825,10 +847,12 @@ export async function loadOutcomeBrief(
     }
     // Shared full-chain gate (single source of truth with the ack writer): canonical
     // result + existing canonical mind-probe + accepted conjecture proposal.
-    const outcome = await validateAckableOutcome(db, result, now, {
-      serial,
-      precomputedEvidenceStatus: resultStatuses.get(result.id),
-    });
+    const outcome =
+      terminalOutcomesById.get(result.id) ??
+      (await validateAckableOutcome(db, result, now, {
+        serial,
+        precomputedEvidenceStatus: resultStatuses.get(result.id),
+      }));
     if (isCandidateError(outcome)) {
       warnSkipped('outcome', result.id, outcome.reason);
       continue;

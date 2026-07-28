@@ -43,12 +43,7 @@
 // with zero schema-file change. Do NOT reserve them.
 
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
-import {
-  type WriteEventInput,
-  getCorrectionStatuses,
-  getEventById,
-  writeEvent,
-} from '@/kernel/events';
+import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
@@ -340,12 +335,16 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     .orderBy(event.created_at);
 
   const out: UnscoredProbeResult[] = [];
-  const correctionStatuses = await getCorrectionStatuses(
+  const evidenceStatuses = await getEffectiveProbeResultStatuses(
     db,
     rows.map((row) => row.id),
   );
   for (const r of rows) {
-    if (correctionStatuses.get(r.id)?.state !== 'active') continue;
+    // A v2 confirmation is only evidence while both independent supporting
+    // results remain active. Apply that dependency fold before writing the
+    // first projection anchor; otherwise a corrected, never-anchored
+    // preliminary result could leave an invalid terminal projection behind.
+    if (evidenceStatuses.get(r.id) !== 'active') continue;
     const p = r.payload as {
       conjecture_event_id?: unknown;
       outcome?: unknown;

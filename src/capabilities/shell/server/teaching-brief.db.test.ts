@@ -397,6 +397,56 @@ describe('loadTeachingBrief', () => {
     await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
   });
 
+  it('does not let an invalid terminal chain suppress valid preliminary evidence', async () => {
+    const proposalId = 'p_invalid_terminal_chain';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+
+    // Simulate a corrupted/mutated question chain after the terminal event was
+    // appended. The canonical terminal payload must not hide the still-valid
+    // preliminary result when its authored prompt no longer matches.
+    await testDb()
+      .update(question)
+      .set({ prompt_md: 'drifted follow-up prompt' })
+      .where(eq(question.id, followup.id));
+
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        brief_id: proposalId,
+        state: 'outcome_evidence_for',
+        current_outcome: {
+          probe_result_event_id: first.probe_result_event_id,
+          status: 'evidence_for',
+        },
+      },
+    });
+  });
+
   it('hides a recurrence outcome when its preliminary evidence is corrected, then restores it', async () => {
     const proposalId = 'p_corrected_dependency';
     await seedProposal({
