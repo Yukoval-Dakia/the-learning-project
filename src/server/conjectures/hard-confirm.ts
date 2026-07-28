@@ -73,6 +73,12 @@ export const CONTEXT_SPREAD_FLOOR = 2;
 export const RECENCY_ACTIVE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 
 /**
+ * Maximum knowledge/result ids per SQL batch in the accountability reader. Keeps
+ * IN-clause plans bounded on large nightly histories. Owner-tunable.
+ */
+export const MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY = 500;
+
+/**
  * Archive-honesty map: which cause_categories denote INTUITIVE / ONTOLOGICAL misconceptions
  * that are SUPPRESSED-not-deleted (Shtulman) → archive as `dormant` (a "cure" is machine-
  * inexpressible), vs PROCEDURAL ones that can be genuinely `resolved`. Read-time projection,
@@ -313,6 +319,7 @@ function predictionScoreToRecord(
   eventId: string,
   createdAt: Date,
   payload: Record<string, unknown> | null,
+  sourceQuestionId?: string,
 ): DissociationRecord | null {
   if (!payload) return null;
   const predictedP = payload.predicted_p;
@@ -342,7 +349,7 @@ function predictionScoreToRecord(
   const questionId =
     typeof payload.probe_question_id === 'string' && payload.probe_question_id.length > 0
       ? payload.probe_question_id
-      : probeResultId;
+      : (sourceQuestionId ?? probeResultId);
   const contextRaw = payload.context;
   const knowledgeId = payload.knowledge_id;
   const contextKey =
@@ -387,8 +394,6 @@ export interface ConjectureIdentityTarget {
   causeCategory: string;
   knowledgeId: string;
 }
-
-const MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY = 500;
 
 function conjectureIdentityKey(causeCategory: string, knowledgeId: string): string {
   return `${causeCategory}\u0000${knowledgeId}`;
@@ -548,7 +553,7 @@ export async function gatherDissociationRecordsByIdentity(
     Promise.all(
       probeResultChunks.map((chunk) =>
         db
-          .select({ id: event.id, created_at: event.created_at })
+          .select({ id: event.id, question_id: event.subject_id, created_at: event.created_at })
           .from(event)
           .where(
             and(
@@ -563,6 +568,9 @@ export async function gatherDissociationRecordsByIdentity(
   const scoreStatuses = new Map(statusChunks.flatMap((statusMap) => [...statusMap.entries()]));
   const sourceCreatedAtById = new Map(
     sourceTimeChunks.flatMap((chunk) => chunk.map((row) => [row.id, row.created_at] as const)),
+  );
+  const sourceQuestionIdById = new Map(
+    sourceTimeChunks.flatMap((chunk) => chunk.map((row) => [row.id, row.question_id] as const)),
   );
 
   // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
@@ -653,6 +661,7 @@ export async function gatherDissociationRecordsByIdentity(
       // evidence chronology without rewriting immutable events.
       sourceCreatedAtById.get(probeResultEventId) ?? r.created_at,
       payload,
+      sourceQuestionIdById.get(probeResultEventId),
     );
     if (parsed) {
       const confirmationTime =

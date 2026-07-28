@@ -56,6 +56,7 @@ async function writeScore(
     mDiagnostic?: boolean;
     context?: string;
     anchorCreatedAt?: Date;
+    includeProbeQuestionId?: boolean;
   } = {},
 ): Promise<void> {
   const probeResultId = `result_${id}`;
@@ -73,7 +74,9 @@ async function writeScore(
       payload: {
         conjecture_event_id: conjectureId,
         probe_result_event_id: probeResultId,
-        probe_question_id: `question_${id}`,
+        ...(options.includeProbeQuestionId === false
+          ? {}
+          : { probe_question_id: `question_${id}` }),
         knowledge_id: cellValue.knowledge_id,
         predicted_p: 0.2,
         baseline_p: 0.8,
@@ -303,6 +306,9 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
       resolution: 'evidence_for',
       mDiagnostic: true,
       context: 'symbolic',
+      // Pre-YUK-795 anchors omitted probe_question_id; the reader must
+      // recover it from the immutable backing probe_result envelope.
+      includeProbeQuestionId: false,
     });
     await writeScore('score_timeline_retired', 'conjecture_timeline_retired', target, 1, 2, {
       resolution: 'retired',
