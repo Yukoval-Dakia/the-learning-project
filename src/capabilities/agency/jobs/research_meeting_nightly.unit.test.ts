@@ -382,6 +382,64 @@ describe('runResearchMeetingNightly', () => {
     expect(inducedKnowledgeIds).not.toContain('k_a');
   });
 
+  it('re-applies accountability after enrichment validates the recurrence count', async () => {
+    const inducedKnowledgeIds: string[] = [];
+    const downweightedKey = conjectureKey('concept_confusion', 'k_a');
+    const rawFailures = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        failure(`a_raw_${index}`, ['k_a'], 'concept_confusion'),
+      ),
+      ...['k_b', 'k_c', 'k_d'].flatMap((knowledgeId) =>
+        Array.from({ length: 3 }, (_, index) =>
+          failure(`${knowledgeId}_raw_${index}`, [knowledgeId], 'concept_confusion'),
+        ),
+      ),
+    ];
+    const enrichEvidenceCellsFn = vi.fn(async (db, input) =>
+      (await fakeEnrich(db, input)).map((cell) =>
+        cell.knowledge_id === 'k_a'
+          ? {
+              ...cell,
+              samples: cell.samples.slice(0, 2),
+              evidence_event_ids: cell.evidence_event_ids.slice(0, 2),
+              recurrence_count: 2,
+            }
+          : cell,
+      ),
+    );
+    const deps = baseDeps({
+      getFailureAttemptsWithTraceFn: vi.fn(async () => withTraces(rawFailures)),
+      enrichEvidenceCellsFn,
+      loadPredictionAccountabilityFn: vi.fn(
+        async () =>
+          new Map<string, PredictionAccountability>([
+            [
+              downweightedKey,
+              {
+                state: 'downweighted',
+                latest_direction: 'miss',
+                consecutive_count: 2,
+                rank_multiplier: 0.25,
+                hard_confirm_verdict: 'INSUFFICIENT',
+                hard_confirm_enabled: false,
+                score_event_ids: ['score_1', 'score_2'],
+              },
+            ],
+          ]),
+      ),
+      induceConjectureFn: vi.fn(async (input: InduceConjectureInput) => {
+        inducedKnowledgeIds.push(input.cells[0].knowledge_id);
+        return fakeInduced(input);
+      }),
+    });
+
+    await runResearchMeetingNightly({} as never, deps);
+
+    expect(enrichEvidenceCellsFn).toHaveBeenCalledTimes(2);
+    expect(inducedKnowledgeIds).toEqual(['k_b', 'k_c', 'k_d']);
+    expect(inducedKnowledgeIds).not.toContain('k_a');
+  });
+
   it('builds a propose-only mind_model payload: provenance refs + A13 snapshot + internal confidence', async () => {
     const captured: WriteAiProposalInput[] = [];
     const writeAiProposalFn = vi.fn(async (_db: unknown, input: WriteAiProposalInput) => {

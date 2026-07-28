@@ -390,13 +390,13 @@ function conjectureIdentityKey(causeCategory: string, knowledgeId: string): stri
 }
 
 function boundedChunks<T>(values: readonly T[]): T[][] {
+  const size = MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY;
+  if (!Number.isInteger(size) || size <= 0) {
+    throw new Error(`Invalid accountability query chunk size: ${size}`);
+  }
   const chunks: T[][] = [];
-  for (
-    let offset = 0;
-    offset < values.length;
-    offset += MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY
-  ) {
-    chunks.push(values.slice(offset, offset + MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY));
+  for (let offset = 0; offset < values.length; offset += size) {
+    chunks.push(values.slice(offset, offset + size));
   }
   return chunks;
 }

@@ -867,7 +867,7 @@ async function runResearchMeetingNightlyClaimed(
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
   const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
-  // ── Deterministic 取证 + grounded top-K salience cap ──
+  // ── Deterministic 取证 + accountability upper-bound order ──
   const gatheredCells = gatherConjectureEvidence({
     failures,
     masteryByKnowledgeId,
@@ -903,14 +903,16 @@ async function runResearchMeetingNightlyClaimed(
   }
 
   // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
-  // Enrich in salience order, at most K cells per read, and refill from lower-ranked cells
-  // whenever mutable/missing question context leaves an earlier candidate ungrounded. Taking
-  // `cells.slice(0, K)` before this filter lets a permanently invalid high-salience prefix
-  // occupy the cap every night and starve valid candidates behind it.
-  const preparedTopCells: PreparedConjectureCell[] = [];
+  // Enrich in bounded salience batches and refill from lower-ranked cells whenever
+  // mutable/missing question context leaves an earlier candidate ungrounded. Raw
+  // recurrence is only an UPPER BOUND: after enrichment validates the immutable
+  // evidence ids, re-apply accountability to the reproducible count before the
+  // final top-K cut. Stop early only when no unprocessed raw upper bound can enter
+  // the validated top-K.
+  const preparedCandidates: PreparedConjectureCell[] = [];
   let cellOffset = 0;
-  while (preparedTopCells.length < RESEARCH_MEETING_MAX_CONJECTURES && cellOffset < cells.length) {
-    const batchSize = RESEARCH_MEETING_MAX_CONJECTURES - preparedTopCells.length;
+  while (cellOffset < cells.length) {
+    const batchSize = Math.min(RESEARCH_MEETING_MAX_CONJECTURES, cells.length - cellOffset);
     const batch = cells.slice(cellOffset, cellOffset + batchSize);
     cellOffset += batch.length;
     const enriched = await enrichEvidenceCellsFn(db, {
@@ -947,12 +949,37 @@ async function runResearchMeetingNightlyClaimed(
         }
       }),
     );
-    preparedTopCells.push(
+    preparedCandidates.push(
       ...preparedBatch.filter(
         (candidate): candidate is PreparedConjectureCell => candidate !== null,
       ),
     );
+    if (preparedCandidates.length >= RESEARCH_MEETING_MAX_CONJECTURES) {
+      const preparedKeys = new Set(preparedCandidates.map((candidate) => candidate.cell.key));
+      const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
+        [...preparedCandidates.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
+        accountabilityByKey,
+      )
+        .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
+        .map((candidate) => candidate.key);
+      if (bestPossibleTopKeys.every((key) => preparedKeys.has(key))) break;
+    }
   }
+  const preparedByKey = new Map(
+    preparedCandidates.map((candidate) => [candidate.cell.key, candidate] as const),
+  );
+  const preparedTopCells = rankEvidenceCellsByAccountability(
+    preparedCandidates.map((candidate) => candidate.cell),
+    accountabilityByKey,
+  )
+    .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
+    .map((cell) => {
+      const prepared = preparedByKey.get(cell.key);
+      if (!prepared) {
+        throw new Error(`research_meeting_nightly: prepared candidate missing for ${cell.key}`);
+      }
+      return prepared;
+    });
   if (preparedTopCells.length === 0) {
     const ungroundedResult: ResearchMeetingResult = {
       considered: 0,
