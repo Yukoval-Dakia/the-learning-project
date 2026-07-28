@@ -56,6 +56,7 @@ import { checkRateLimit } from '@/server/http/rate-limit';
 import { eq } from 'drizzle-orm';
 import {
   answerProbe,
+  assertProbeJudgeReady,
   claimProbeJudging,
   peekExistingProbeResult,
   releaseProbeJudging,
@@ -165,6 +166,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         422,
       );
     }
+
+    // Historical v1 proposals may not contain the independently authored sequence-2
+    // probe required by the recurrence gate. Reject those before claiming or paying
+    // the judge; answerProbe repeats the check transactionally for non-route callers.
+    await assertProbeJudgeReady(db, probeQuestionId);
 
     // Judge via the standard invoker chokepoint (same path submit.ts uses).
     // `resolveSubjectProfileForKnowledgeIds` always returns a profile (falls back

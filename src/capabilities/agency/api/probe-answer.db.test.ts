@@ -77,7 +77,7 @@ async function seedKnowledge(): Promise<void> {
     .onConflictDoNothing();
 }
 
-async function seedConjecture(): Promise<string> {
+async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise<string> {
   return writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
     payload: {
@@ -94,8 +94,12 @@ async function seedConjecture(): Promise<string> {
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
         probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
-        followup_probe_md: 'd/dx cos(x^3) = ?',
-        followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+        ...(opts.includeFollowup === false
+          ? {}
+          : {
+              followup_probe_md: 'd/dx cos(x^3) = ?',
+              followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+            }),
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
@@ -257,6 +261,26 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
         answer_md: 'cos(x^2)',
       }),
     );
+  });
+
+  it('rejects a historical sequence-1 probe without a follow-up before paying the judge', async () => {
+    const proposalId = await seedConjecture({ includeFollowup: false });
+    const served = await serveProbeOnce({
+      db: testDb(),
+      conjectureProposalId: proposalId,
+      knowledgeId: KC_ID,
+      probeMd: 'd/dx sin(x^2) = ?',
+      referenceMd: '2x·cos(x^2)',
+    });
+    if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+    mockInvoke.mockClear();
+
+    const response = await answer(served.probe_question_id, 'cos(x²)');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'probe_followup_unavailable' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
   });
 
   it('judge correct → outcome=1 → retired (conjecture falsified)', async () => {

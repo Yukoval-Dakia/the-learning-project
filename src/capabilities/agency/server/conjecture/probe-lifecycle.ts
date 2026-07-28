@@ -229,6 +229,88 @@ export interface AnswerProbeResult {
   idempotent?: boolean;
 }
 
+interface FollowupProbeSpec {
+  knowledgeId: string;
+  promptMd: string;
+  referenceMd: string;
+}
+
+async function loadFollowupProbeSpec(
+  db: Db | Tx,
+  conjectureEventId: string,
+): Promise<FollowupProbeSpec | null> {
+  const [proposalRow] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, conjectureEventId))
+    .limit(1);
+  const proposalEnvelope =
+    proposalRow?.payload !== null &&
+    typeof proposalRow?.payload === 'object' &&
+    !Array.isArray(proposalRow.payload)
+      ? (proposalRow.payload as Record<string, unknown>).ai_proposal
+      : undefined;
+  const parsedProposal = AiProposalPayload.safeParse(proposalEnvelope);
+  const change =
+    parsedProposal.success && parsedProposal.data.kind === 'conjecture'
+      ? parsedProposal.data.proposed_change
+      : null;
+  if (
+    change === null ||
+    change.followup_probe_md === undefined ||
+    change.followup_probe_reference_md === undefined
+  ) {
+    return null;
+  }
+  return {
+    knowledgeId: change.knowledge_id,
+    promptMd: change.followup_probe_md,
+    referenceMd: change.followup_probe_reference_md,
+  };
+}
+
+/**
+ * Production-route preflight before the paid judge call. A sequence-1 probe from a
+ * historical proposal without a pre-authored recurrence probe cannot enter the v2
+ * lifecycle, so reject it before spending provider cost rather than after grading.
+ */
+export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Promise<void> {
+  const [probe] = await db
+    .select({ source: question.source, metadata: question.metadata })
+    .from(question)
+    .where(eq(question.id, probeQuestionId))
+    .limit(1);
+  if (!probe || probe.source !== PROBE_QUESTION_SOURCE) return;
+  const metadata =
+    probe.metadata !== null && typeof probe.metadata === 'object' && !Array.isArray(probe.metadata)
+      ? (probe.metadata as Record<string, unknown>)
+      : {};
+  const sequence = metadata.probe_sequence;
+  if (sequence === 2) return;
+  if (sequence !== undefined && sequence !== 1) {
+    throw new ApiError(
+      'probe_sequence_invalid',
+      `probe ${probeQuestionId} has invalid probe_sequence`,
+      409,
+    );
+  }
+  const conjectureEventId = metadata.conjecture_proposal_id;
+  if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+    throw new ApiError(
+      'probe_missing_conjecture_ref',
+      `probe ${probeQuestionId} has no conjecture_proposal_id`,
+      409,
+    );
+  }
+  if ((await loadFollowupProbeSpec(db, conjectureEventId)) === null) {
+    throw new ApiError(
+      'probe_followup_unavailable',
+      `conjecture ${conjectureEventId} has no independently authored follow-up probe`,
+      409,
+    );
+  }
+}
+
 function parseProbeResultEvent(
   existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
 ): AnswerProbeResult | null {
@@ -533,27 +615,8 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     });
 
     if (resolution === 'evidence_for') {
-      const [proposalRow] = await tx
-        .select({ payload: event.payload })
-        .from(event)
-        .where(eq(event.id, conjectureEventId))
-        .limit(1);
-      const proposalEnvelope =
-        proposalRow?.payload !== null &&
-        typeof proposalRow?.payload === 'object' &&
-        !Array.isArray(proposalRow.payload)
-          ? (proposalRow.payload as Record<string, unknown>).ai_proposal
-          : undefined;
-      const parsedProposal = AiProposalPayload.safeParse(proposalEnvelope);
-      const change =
-        parsedProposal.success && parsedProposal.data.kind === 'conjecture'
-          ? parsedProposal.data.proposed_change
-          : null;
-      if (
-        change === null ||
-        change.followup_probe_md === undefined ||
-        change.followup_probe_reference_md === undefined
-      ) {
+      const followupSpec = await loadFollowupProbeSpec(tx, conjectureEventId);
+      if (followupSpec === null) {
         throw new ApiError(
           'probe_followup_unavailable',
           `conjecture ${conjectureEventId} has no independently authored follow-up probe`,
@@ -563,9 +626,9 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       const followup = await serveProbeOnce({
         db: tx,
         conjectureProposalId: conjectureEventId,
-        knowledgeId: change.knowledge_id,
-        probeMd: change.followup_probe_md,
-        referenceMd: change.followup_probe_reference_md,
+        knowledgeId: followupSpec.knowledgeId,
+        probeMd: followupSpec.promptMd,
+        referenceMd: followupSpec.referenceMd,
         probeSequence: 2,
         now,
       });
