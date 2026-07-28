@@ -507,51 +507,33 @@ export const TeachingBriefInteractionBodySchema = z
   // answer_probe similarly requires its question id; accept_probe carries neither identity.
   .superRefine((body, ctx) => {
     if (body.type !== 'primary_action_started') return;
-    if (body.action_kind === 'scoped_practice') {
-      if (body.result_event_id === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'scoped_practice requires result_event_id',
-          path: ['result_event_id'],
-        });
-      }
-      if (body.probe_question_id !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'probe_question_id is only allowed for the answer_probe action',
-          path: ['probe_question_id'],
-        });
-      }
-    } else if (body.action_kind === 'answer_probe') {
-      if (body.probe_question_id === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'answer_probe requires probe_question_id',
-          path: ['probe_question_id'],
-        });
-      }
-      if (body.result_event_id !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'result_event_id is only allowed for the scoped_practice action',
-          path: ['result_event_id'],
-        });
-      }
-    } else {
-      if (body.result_event_id !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'result_event_id is only allowed for the scoped_practice action',
-          path: ['result_event_id'],
-        });
-      }
-      if (body.probe_question_id !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'probe_question_id is only allowed for the answer_probe action',
-          path: ['probe_question_id'],
-        });
-      }
+    if (body.action_kind === 'scoped_practice' && body.result_event_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scoped_practice requires result_event_id',
+        path: ['result_event_id'],
+      });
+    }
+    if (body.action_kind === 'answer_probe' && body.probe_question_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'answer_probe requires probe_question_id',
+        path: ['probe_question_id'],
+      });
+    }
+    if (body.action_kind !== 'scoped_practice' && body.result_event_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'result_event_id is only allowed for the scoped_practice action',
+        path: ['result_event_id'],
+      });
+    }
+    if (body.action_kind !== 'answer_probe' && body.probe_question_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'probe_question_id is only allowed for the answer_probe action',
+        path: ['probe_question_id'],
+      });
     }
   });
 

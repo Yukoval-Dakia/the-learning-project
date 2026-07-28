@@ -247,7 +247,7 @@ function probeResultRow(
       retrievability_at_judge: 0.8,
       answer_md: answerMd,
     },
-    caused_by_event_id: null,
+    caused_by_event_id: 'conj_1',
     task_run_id: null,
     cost_micro_usd: null,
     created_at: createdAt,
@@ -315,18 +315,28 @@ describe('get_probe_history', () => {
     const db = testDb();
     await seedProbeQuestion('q_legacy', ['k1']);
     await seedProbeQuestion('q_v2', ['k1']);
+    await seedProbeQuestion('q_v2_dependency', ['other_kc']);
+    const dependency = probeResultRow(
+      'pr_v2_dependency',
+      'q_v2_dependency',
+      'prior',
+      new Date(NOW.getTime() + 500),
+    );
+    const v2 = probeResultRow(
+      'pr_v2',
+      'q_v2',
+      'new',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    v2.payload.independent_probe_question_ids = ['q_v2', 'q_v2_dependency'];
     await db
       .insert(event)
       .values([
+        dependency,
         probeResultRow('pr_legacy', 'q_legacy', 'old', new Date(NOW.getTime() + 1000), 'confirmed'),
-        probeResultRow(
-          'pr_v2',
-          'q_v2',
-          'new',
-          new Date(NOW.getTime() + 2000),
-          'confirmed',
-          'within_learner_probe_recurrence_v2',
-        ),
+        v2,
       ]);
 
     const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
@@ -342,6 +352,67 @@ describe('get_probe_history', () => {
       pr_v2: 'independent_recurrence',
       pr_legacy: 'legacy_confirmed_unverified',
     });
+  });
+
+  it('invalidates a recurrence result while one of its supporting results is corrected', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_dependency', ['other_kc']);
+    await seedProbeQuestion('q_terminal', ['k1']);
+    const dependency = probeResultRow(
+      'pr_dependency',
+      'q_dependency',
+      'first miss',
+      new Date(NOW.getTime() + 1000),
+    );
+    const terminal = probeResultRow(
+      'pr_terminal',
+      'q_terminal',
+      'second miss',
+      new Date(NOW.getTime() + 2000),
+      'confirmed',
+      'within_learner_probe_recurrence_v2',
+    );
+    terminal.payload.independent_probe_question_ids = ['q_dependency', 'q_terminal'];
+    await db.insert(event).values([dependency, terminal]);
+    await writeEvent(db, {
+      id: 'correct_pr_dependency',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_dependency',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'the first observation was invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_dependency' }],
+      },
+      created_at: new Date(NOW.getTime() + 3000),
+    });
+
+    let out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+
+    await writeEvent(db, {
+      id: 'restore_pr_dependency',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_dependency',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'the first observation was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_dependency' }],
+      },
+      created_at: new Date(NOW.getTime() + 4000),
+    });
+
+    out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect((out.probes as Array<{ event_id: string }>).map((row) => row.event_id)).toEqual([
+      'pr_terminal',
+    ]);
   });
 
   it('hides corrected probe evidence and its linked score until restore', async () => {

@@ -146,6 +146,68 @@ export interface UpsertKcTypedStateInput {
   last_evidence_at: Date;
 }
 
+export type ReplaceKcTypedStateInput = UpsertKcTypedStateInput;
+
+/**
+ * Replace one derived cell from a complete replay snapshot. Unlike the append
+ * writer below, this writer may remove invalidated provenance or delete the cell
+ * when no effective projected evidence remains.
+ */
+export async function replaceKcTypedState(
+  db: Db,
+  subjectId: string,
+  input: ReplaceKcTypedStateInput | null,
+  subjectKind = 'knowledge',
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${subjectId}`}))`,
+    );
+    if (!input) {
+      await tx
+        .delete(kc_typed_state)
+        .where(
+          and(
+            eq(kc_typed_state.subject_kind, subjectKind),
+            eq(kc_typed_state.subject_id, subjectId),
+          ),
+        );
+      return;
+    }
+    const next = nextTypedState({
+      proposed: input.proposed,
+      confused_with_kc_id: input.confused_with_kc_id ?? null,
+      discriminating: input.discriminating,
+      recurrence_count: input.recurrence_count,
+    });
+    const now = new Date();
+    await tx
+      .insert(kc_typed_state)
+      .values({
+        id: newId(),
+        subject_kind: subjectKind,
+        subject_id: subjectId,
+        typed_state: next.typed_state,
+        confused_with_kc_id: next.confused_with_kc_id,
+        lifecycle: next.lifecycle,
+        evidence_event_ids: [...new Set(input.evidence_event_ids)],
+        last_evidence_at: input.last_evidence_at,
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [kc_typed_state.subject_kind, kc_typed_state.subject_id],
+        set: {
+          typed_state: next.typed_state,
+          confused_with_kc_id: next.confused_with_kc_id,
+          lifecycle: next.lifecycle,
+          evidence_event_ids: [...new Set(input.evidence_event_ids)],
+          last_evidence_at: input.last_evidence_at,
+          updated_at: now,
+        },
+      });
+  });
+}
+
 /**
  * Single-writer upsert of one (subject_kind, subject_id) typed-state row. Takes its own
  * advisory lock (independent namespace) so concurrent updates of the same KC serialize

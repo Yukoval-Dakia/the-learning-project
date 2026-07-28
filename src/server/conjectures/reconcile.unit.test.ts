@@ -73,6 +73,7 @@ function baseDeps(over: Partial<ReconcileDeps> = {}): {
     now: () => new Date('2026-06-27T00:00:00Z'),
     listUnscoredProbeResultsFn: vi.fn(async () => [probe()]),
     getEventByIdFn: vi.fn(async () => conjectureEvent()),
+    repairCorrectedProjectionsFn: vi.fn(async () => {}),
     writeEventFn: vi.fn(async (_db: Db, input: WriteEventInput) => {
       events.push(input);
       return input.id;

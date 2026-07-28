@@ -35,6 +35,7 @@
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -457,6 +458,14 @@ export async function gatherDissociationEvidence(
       ),
     )
     .orderBy(event.created_at);
+  const scoreStatuses = await getEffectiveProbeResultStatuses(
+    db,
+    rows.flatMap((row) => {
+      const probeResultEventId = (row.payload as Record<string, unknown> | null)
+        ?.probe_result_event_id;
+      return typeof probeResultEventId === 'string' ? [probeResultEventId] : [];
+    }),
+  );
 
   // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
   // keep only the rows whose proposal (cause × kc) equals the requested misconception identity.
@@ -470,6 +479,16 @@ export async function gatherDissociationEvidence(
   const records: DissociationRecord[] = [];
   for (const r of rows) {
     const payload = r.payload as Record<string, unknown> | null;
+    const probeResultEventId = payload?.probe_result_event_id;
+    const sourceStatus =
+      typeof probeResultEventId === 'string' ? scoreStatuses.get(probeResultEventId) : undefined;
+    if (
+      typeof probeResultEventId !== 'string' ||
+      sourceStatus === 'corrected' ||
+      sourceStatus === 'dependency_inactive'
+    ) {
+      continue;
+    }
     const cid = payload?.conjecture_event_id;
     const identity = typeof cid === 'string' ? (identityByConjectureId.get(cid) ?? null) : null;
     // Identity-scoped on the PROPOSAL (source of truth, both axes). Drop the score when it is

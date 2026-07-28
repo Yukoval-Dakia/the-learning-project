@@ -40,8 +40,6 @@ export interface ActiveProbesResult {
   probes: ActiveProbe[];
 }
 
-const ACTIVE_PROBE_SCAN_BATCH = 50;
-
 function extractConjectureId(metadata: unknown): string | null {
   const record =
     metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -55,54 +53,61 @@ function extractConjectureId(metadata: unknown): string | null {
  * Load the ≤3 served-but-unanswered probes for active conjectures, newest first.
  */
 export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
-  const probes: ActiveProbe[] = [];
-  let offset = 0;
-  while (probes.length < ACTIVE_PROBES_MAX) {
-    const rows = await db
-      .select({
-        id: question.id,
-        prompt_md: question.prompt_md,
-        knowledge_ids: question.knowledge_ids,
-        metadata: question.metadata,
-      })
-      .from(question)
-      .where(
-        and(
-          eq(question.source, PROBE_QUESTION_SOURCE),
-          sql`NOT EXISTS (
-            SELECT 1 FROM ${event}
-            WHERE ${event.subject_kind} = 'question'
-              AND ${event.subject_id} = ${question.id}
-              AND ${event.action} = ${PROBE_RESULT_ACTION}
-          )`,
-        ),
-      )
-      .orderBy(desc(question.created_at), desc(question.id))
-      .limit(ACTIVE_PROBE_SCAN_BATCH)
-      .offset(offset);
-    if (rows.length === 0) break;
-    offset += rows.length;
-    const conjectureIds = [
-      ...new Set(
-        rows
-          .map((row) => extractConjectureId(row.metadata))
-          .filter((id): id is string => id !== null),
+  const rows = await db
+    .select({
+      id: question.id,
+      prompt_md: question.prompt_md,
+      knowledge_ids: question.knowledge_ids,
+      metadata: question.metadata,
+    })
+    .from(question)
+    .where(
+      and(
+        eq(question.source, PROBE_QUESTION_SOURCE),
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${event}
+          WHERE ${event.subject_kind} = 'question'
+            AND ${event.subject_id} = ${question.id}
+            AND ${event.action} = ${PROBE_RESULT_ACTION}
+        )`,
+        // Mirror getCorrectionStatuses' latest-write-wins fold in SQL so stale,
+        // unanswered probes are removed before the three-row window is applied.
+        // Missing provenance stays visible for repair rather than freeing a slot.
+        sql`(
+          COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
+          OR COALESCE((
+            SELECT correction.payload->>'correction_kind'
+            FROM ${event} AS correction
+            WHERE correction.action = 'correct'
+              AND correction.subject_kind = 'event'
+              AND correction.subject_id =
+                  ${question.metadata}->>'conjecture_proposal_id'
+            ORDER BY correction.created_at DESC, correction.id DESC
+            LIMIT 1
+          ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
+        )`,
       ),
-    ];
-    const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
-    for (const row of rows) {
-      const conjectureId = extractConjectureId(row.metadata);
-      // Preserve visibility for corrupt provenance so the user can surface and
-      // repair it rather than silently losing a slot.
-      if (conjectureId && correctionStatuses.get(conjectureId)?.state !== 'active') continue;
-      probes.push({
+    )
+    .orderBy(desc(question.created_at), desc(question.id))
+    .limit(ACTIVE_PROBES_MAX);
+  const conjectureIds = [
+    ...new Set(
+      rows
+        .map((row) => extractConjectureId(row.metadata))
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
+  const probes = rows.flatMap((row) => {
+    const conjectureId = extractConjectureId(row.metadata);
+    if (conjectureId && correctionStatuses.get(conjectureId)?.state !== 'active') return [];
+    return [
+      {
         probe_question_id: row.id,
         prompt_md: row.prompt_md ?? '',
         knowledge_id: row.knowledge_ids?.[0] ?? null,
-      });
-      if (probes.length === ACTIVE_PROBES_MAX) break;
-    }
-    if (rows.length < ACTIVE_PROBE_SCAN_BATCH) break;
-  }
+      },
+    ];
+  });
   return { probes };
 }

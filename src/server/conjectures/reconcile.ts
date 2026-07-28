@@ -42,6 +42,7 @@
 // RESERVED_EXPERIMENTAL_ACTIONS → both validate via the loose generic ExperimentalEvent
 // with zero schema-file change. Do NOT reserve them.
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import {
   type WriteEventInput,
   getCorrectionStatuses,
@@ -54,8 +55,13 @@ import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjectur
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
-import { type UpsertKcTypedStateInput, upsertKcTypedState } from '@/server/conjectures/typed-state';
-import { and, eq, sql } from 'drizzle-orm';
+import {
+  type ReplaceKcTypedStateInput,
+  type UpsertKcTypedStateInput,
+  replaceKcTypedState,
+  upsertKcTypedState,
+} from '@/server/conjectures/typed-state';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 /** Canonical LOG-only score event — loose escape hatch, NEVER reserved. */
 export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
@@ -118,6 +124,8 @@ export interface ReconcileDeps {
   listUnscoredProbeResultsFn?: (db: Db) => Promise<UnscoredProbeResult[]>;
   /** load the conjecture proposal event (writeAiProposal shape: payload.ai_proposal). */
   getEventByIdFn?: (db: Db, id: string) => Promise<{ payload: unknown } | null>;
+  /** Replay already-anchored cells whose source evidence has correction history. */
+  repairCorrectedProjectionsFn?: (db: Db) => Promise<void>;
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
   upsertKcTypedStateFn?: (db: Db, input: UpsertKcTypedStateInput) => Promise<void>;
 }
@@ -146,6 +154,144 @@ function extractConjectureFacts(ev: { payload: unknown } | null): ConjectureFact
   if (!aiProposal || aiProposal.kind !== 'conjecture') return null;
   const parsed = ConjectureFactsSchema.safeParse(aiProposal.proposed_change);
   return parsed.success ? parsed.data : null;
+}
+
+interface ProjectionAnchor {
+  probeResultEventId: string;
+  conjectureEventId: string;
+}
+
+function projectionAnchor(row: { subject_id: string; payload: unknown }): ProjectionAnchor | null {
+  const payload = row.payload as Record<string, unknown> | null;
+  const probeResultEventId = payload?.probe_result_event_id;
+  const conjectureEventId = payload?.conjecture_event_id;
+  if (
+    typeof probeResultEventId !== 'string' ||
+    probeResultEventId !== row.subject_id ||
+    typeof conjectureEventId !== 'string' ||
+    conjectureEventId.length === 0
+  ) {
+    return null;
+  }
+  return { probeResultEventId, conjectureEventId };
+}
+
+async function rebuildTypedStateForKnowledge(db: Db, knowledgeId: string): Promise<void> {
+  const anchorRows = await db
+    .select({ subject_id: event.subject_id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        inArray(event.action, [PREDICTION_SCORE_ACTION, PROBE_RESULT_PROJECTED_ACTION]),
+        sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+      ),
+    );
+  const anchors = anchorRows.flatMap((row) => {
+    const parsed = projectionAnchor(row);
+    return parsed ? [parsed] : [];
+  });
+  const statuses = await getEffectiveProbeResultStatuses(
+    db,
+    anchors.map((anchor) => anchor.probeResultEventId),
+  );
+  const activeAnchors = anchors.filter(
+    (anchor) => statuses.get(anchor.probeResultEventId) === 'active',
+  );
+  if (activeAnchors.length === 0) {
+    await replaceKcTypedState(db, knowledgeId, null);
+    return;
+  }
+
+  const resultRows = await db
+    .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        inArray(
+          event.id,
+          activeAnchors.map((anchor) => anchor.probeResultEventId),
+        ),
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.id));
+  const conjectureIds = [...new Set(activeAnchors.map((anchor) => anchor.conjectureEventId))];
+  const conjectureRows = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(inArray(event.id, conjectureIds));
+  const factsByConjecture = new Map(
+    conjectureRows.flatMap((row) => {
+      const facts = extractConjectureFacts(row);
+      return facts?.knowledge_id === knowledgeId ? [[row.id, facts] as const] : [];
+    }),
+  );
+  const anchorByResult = new Map(
+    activeAnchors.map((anchor) => [anchor.probeResultEventId, anchor] as const),
+  );
+  const replayRows = resultRows.flatMap((row) => {
+    const anchor = anchorByResult.get(row.id);
+    const payload = row.payload as Record<string, unknown> | null;
+    const resolution = payload?.resolution;
+    const outcome = payload?.outcome;
+    if (
+      !anchor ||
+      payload?.conjecture_event_id !== anchor.conjectureEventId ||
+      !isProbeResolution(resolution) ||
+      (outcome !== 0 && outcome !== 1)
+    ) {
+      return [];
+    }
+    const facts = factsByConjecture.get(anchor.conjectureEventId);
+    return facts ? [{ row, anchor, resolution, facts }] : [];
+  });
+  const latest = replayRows.at(-1);
+  if (!latest) {
+    await replaceKcTypedState(db, knowledgeId, null);
+    return;
+  }
+  const replacement: ReplaceKcTypedStateInput = {
+    subject_id: knowledgeId,
+    subject_kind: 'knowledge',
+    proposed: latest.resolution === 'confirmed' ? 'confused-with-X' : 'no-evidence',
+    confused_with_kc_id: null,
+    discriminating: latest.facts.discriminating,
+    recurrence_count: latest.facts.recurrence_count,
+    evidence_event_ids: [
+      ...new Set(
+        replayRows.flatMap(({ anchor }) => [anchor.conjectureEventId, anchor.probeResultEventId]),
+      ),
+    ],
+    last_evidence_at: latest.row.created_at,
+  };
+  await replaceKcTypedState(db, knowledgeId, replacement);
+}
+
+async function defaultRepairCorrectedProjections(db: Db): Promise<void> {
+  const correctedResultIds = db
+    .select({ id: event.subject_id })
+    .from(event)
+    .where(and(eq(event.action, 'correct'), eq(event.subject_kind, 'event')));
+  const affectedAnchors = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        inArray(event.action, [PREDICTION_SCORE_ACTION, PROBE_RESULT_PROJECTED_ACTION]),
+        inArray(event.subject_id, correctedResultIds),
+      ),
+    );
+  const knowledgeIds = [
+    ...new Set(
+      affectedAnchors.flatMap((row) => {
+        const knowledgeId = (row.payload as Record<string, unknown> | null)?.knowledge_id;
+        return typeof knowledgeId === 'string' && knowledgeId.length > 0 ? [knowledgeId] : [];
+      }),
+    ),
+  ];
+  for (const knowledgeId of knowledgeIds) {
+    await rebuildTypedStateForKnowledge(db, knowledgeId);
+  }
 }
 
 /**
@@ -257,7 +403,10 @@ export async function reconcileConjecturePredictions(
   const getEventByIdFn = deps.getEventByIdFn ?? getEventById;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const upsertFn = deps.upsertKcTypedStateFn ?? upsertKcTypedState;
+  const repairCorrectedProjections =
+    deps.repairCorrectedProjectionsFn ?? defaultRepairCorrectedProjections;
 
+  await repairCorrectedProjections(db);
   const unscored = await listUnscored(db);
   let reconciled = 0;
   let skipped = 0;

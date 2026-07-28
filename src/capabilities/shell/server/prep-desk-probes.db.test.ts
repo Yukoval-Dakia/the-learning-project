@@ -15,7 +15,10 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadActiveProbes } from './prep-desk-probes';
 
 let seq = 0;
-async function serve(probeMd: string, now: Date): Promise<string> {
+async function serve(
+  probeMd: string,
+  now: Date,
+): Promise<{ probeQuestionId: string; conjectureProposalId: string }> {
   seq += 1;
   const conjectureProposalId = `conj_${seq}`;
   await writeAiProposal(testDb(), {
@@ -66,7 +69,7 @@ async function serve(probeMd: string, now: Date): Promise<string> {
     now,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
-  return served.probe_question_id;
+  return { probeQuestionId: served.probe_question_id, conjectureProposalId };
 }
 
 describe('loadActiveProbes', () => {
@@ -81,42 +84,45 @@ describe('loadActiveProbes', () => {
 
     const { probes } = await loadActiveProbes(testDb());
     expect(() => PrepDeskProbesResponseSchema.parse({ probes })).not.toThrow();
-    expect(probes.map((p) => p.probe_question_id)).toEqual([p2, p1]); // newest first
+    expect(probes.map((p) => p.probe_question_id)).toEqual([
+      p2.probeQuestionId,
+      p1.probeQuestionId,
+    ]); // newest first
     expect(probes[0]).toMatchObject({ prompt_md: 'probe B', knowledge_id: 'kn_x' });
   });
 
   it('excludes answered probes (those with a probe_result event)', async () => {
     const p1 = await serve('unanswered', new Date('2026-07-13T00:00:01Z'));
     const p2 = await serve('answered', new Date('2026-07-13T00:00:02Z'));
-    await answerProbe({ db: testDb(), probeQuestionId: p2, outcome: 1 });
+    await answerProbe({ db: testDb(), probeQuestionId: p2.probeQuestionId, outcome: 1 });
 
     const { probes } = await loadActiveProbes(testDb());
-    expect(probes.map((p) => p.probe_question_id)).toEqual([p1]);
+    expect(probes.map((p) => p.probe_question_id)).toEqual([p1.probeQuestionId]);
   });
 
   it('excludes corrected conjectures without letting newer stale probes hide active ones', async () => {
     const active = await serve('active probe', new Date('2026-07-13T00:00:01Z'));
     const stale = await serve('stale probe', new Date('2026-07-13T00:00:02Z'));
     await writeEvent(testDb(), {
-      id: 'correct_conj_2',
+      id: `correct_${stale.conjectureProposalId}`,
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'correct',
       subject_kind: 'event',
-      subject_id: 'conj_2',
+      subject_id: stale.conjectureProposalId,
       outcome: 'success',
       payload: {
         correction_kind: 'retract',
         reason_md: 'owner retracted this conjecture',
-        affected_refs: [{ kind: 'open_inquiry', id: 'conj_2' }],
+        affected_refs: [{ kind: 'open_inquiry', id: stale.conjectureProposalId }],
       },
-      caused_by_event_id: 'conj_2',
+      caused_by_event_id: stale.conjectureProposalId,
     });
 
     const { probes } = await loadActiveProbes(testDb());
 
-    expect(probes.map((probe) => probe.probe_question_id)).toEqual([active]);
-    expect(probes.some((probe) => probe.probe_question_id === stale)).toBe(false);
+    expect(probes.map((probe) => probe.probe_question_id)).toEqual([active.probeQuestionId]);
+    expect(probes.some((probe) => probe.probe_question_id === stale.probeQuestionId)).toBe(false);
   });
 
   it('returns a calm empty list when there are no active probes', async () => {

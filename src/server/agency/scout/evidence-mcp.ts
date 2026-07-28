@@ -17,16 +17,16 @@
 //      done by the orchestration layer after the run via persistToolTrace(); a
 //      per-handler write can't correlate to the ai_task_runs row (scout spec §2 (b)).
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
 import { writeToolCallLog } from '@/server/ai/log';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { FindingsCapture } from './report-findings';
 import { ReportFindingsSchema, ReportFindingsShape } from './report-findings';
@@ -74,6 +74,7 @@ export const EVIDENCE_LIMITS = {
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
 const PROBE_HISTORY_SCAN_BATCH = EVIDENCE_LIMITS.probeHistoryRows * 2;
+const PROBE_HISTORY_SCAN_CEILING = EVIDENCE_LIMITS.probeHistoryRows * 10;
 
 interface ProbeHistoryRow {
   id: string;
@@ -134,6 +135,8 @@ function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown 
   }
   const p = payload as Record<string, unknown>;
   let evidenceStrength: string;
+  // `unclassified` is the deliberate fail-closed bucket for corrupt or
+  // non-canonical outcome/resolution pairs; it is never promoted to an evidence tier.
   const canonicalPair =
     (p.outcome === 0 && (p.resolution === 'evidence_for' || p.resolution === 'confirmed')) ||
     (p.outcome === 1 && p.resolution === 'retired');
@@ -289,8 +292,16 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             .from(question)
             .where(sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`);
           const activeRows: ProbeHistoryRow[] = [];
-          let offset = 0;
-          while (activeRows.length < EVIDENCE_LIMITS.probeHistoryRows) {
+          const seenRowIds = new Set<string>();
+          let scannedCount = 0;
+          let scanTruncated = false;
+          let cursor: { createdAt: Date; id: string } | null = null;
+          while (
+            activeRows.length < EVIDENCE_LIMITS.probeHistoryRows &&
+            scannedCount < PROBE_HISTORY_SCAN_CEILING
+          ) {
+            const remaining = PROBE_HISTORY_SCAN_CEILING - scannedCount;
+            const batchSize = Math.min(PROBE_HISTORY_SCAN_BATCH, remaining);
             const rows = await db
               .select({
                 id: event.id,
@@ -300,23 +311,32 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
               })
               .from(event)
               .where(
-                or(
-                  and(
-                    eq(event.action, PREDICTION_SCORE_ACTION),
-                    sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+                and(
+                  or(
+                    and(
+                      eq(event.action, PREDICTION_SCORE_ACTION),
+                      sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+                    ),
+                    and(
+                      eq(event.action, PROBE_RESULT_ACTION),
+                      inArray(event.subject_id, probeQuestionIds),
+                    ),
                   ),
-                  and(
-                    eq(event.action, PROBE_RESULT_ACTION),
-                    inArray(event.subject_id, probeQuestionIds),
-                  ),
+                  cursor
+                    ? or(
+                        lt(event.created_at, cursor.createdAt),
+                        and(eq(event.created_at, cursor.createdAt), lt(event.id, cursor.id)),
+                      )
+                    : undefined,
                 ),
               )
               .orderBy(desc(event.created_at), desc(event.id))
-              .limit(PROBE_HISTORY_SCAN_BATCH)
-              .offset(offset);
+              .limit(batchSize);
             if (rows.length === 0) break;
-            offset += rows.length;
-            const correctionStatuses = await getCorrectionStatuses(
+            scannedCount += rows.length;
+            const last = rows.at(-1);
+            if (last) cursor = { createdAt: last.created_at, id: last.id };
+            const evidenceStatuses = await getEffectiveProbeResultStatuses(
               db,
               rows.flatMap((row) => {
                 const targetId = correctionTargetId(row);
@@ -325,11 +345,21 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             );
             for (const row of rows) {
               const targetId = correctionTargetId(row);
-              if (targetId && correctionStatuses.get(targetId)?.state !== 'active') continue;
+              const evidenceStatus = targetId ? evidenceStatuses.get(targetId) : undefined;
+              if (evidenceStatus === 'corrected' || evidenceStatus === 'dependency_inactive')
+                continue;
+              if (seenRowIds.has(row.id)) continue;
+              seenRowIds.add(row.id);
               activeRows.push(row);
               if (activeRows.length === EVIDENCE_LIMITS.probeHistoryRows) break;
             }
-            if (rows.length < PROBE_HISTORY_SCAN_BATCH) break;
+            if (rows.length < batchSize) break;
+            if (
+              scannedCount >= PROBE_HISTORY_SCAN_CEILING &&
+              activeRows.length < EVIDENCE_LIMITS.probeHistoryRows
+            ) {
+              scanTruncated = true;
+            }
           }
           trace(
             getProbeHistoryName,
@@ -337,6 +367,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             activeRows.map((r) => r.id),
           );
           return textResult({
+            scan_truncated: scanTruncated,
             probes: activeRows.map((r) => ({
               event_id: r.id,
               action: r.action,

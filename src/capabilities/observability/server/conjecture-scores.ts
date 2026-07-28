@@ -31,6 +31,7 @@
 // (scoring.ts), NOT the Rust-deferred window mean (ADR-0046) — the response declares this
 // in `score_basis: 'single_point'` so no consumer mistakes it for a window-calibrated score.
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
@@ -224,7 +225,28 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
     .where(eq(event.action, PREDICTION_SCORE_ACTION))
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(ADMIN_SCAN_LIMIT + 1);
-  const scores = collectBoundedRows(scoreRows, rowToScore);
+  const scoreStatuses = await getEffectiveProbeResultStatuses(
+    db,
+    scoreRows.flatMap((row) => {
+      const probeResultEventId = (row.payload as Record<string, unknown> | null)
+        ?.probe_result_event_id;
+      return typeof probeResultEventId === 'string' ? [probeResultEventId] : [];
+    }),
+  );
+  const scores = collectBoundedRows(scoreRows, (row) => {
+    const probeResultEventId = (row.payload as Record<string, unknown> | null)
+      ?.probe_result_event_id;
+    const sourceStatus =
+      typeof probeResultEventId === 'string' ? scoreStatuses.get(probeResultEventId) : undefined;
+    if (
+      typeof probeResultEventId !== 'string' ||
+      sourceStatus === 'corrected' ||
+      sourceStatus === 'dependency_inactive'
+    ) {
+      return null;
+    }
+    return rowToScore(row);
+  });
   const typedRows = await db
     .select()
     .from(kc_typed_state)

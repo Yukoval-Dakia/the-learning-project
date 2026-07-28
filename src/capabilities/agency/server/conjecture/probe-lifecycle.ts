@@ -66,7 +66,11 @@ import {
 } from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { type PriorProbeResult, resolveProbeResolution } from './probe-resolution';
+import {
+  type PriorProbeResult,
+  isEvidenceResult,
+  resolveProbeResolution,
+} from './probe-resolution';
 
 type DbOrTx = Db | Tx;
 
@@ -152,8 +156,24 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
             AND ${event.subject_id} = ${question.id}
             AND ${event.action} = ${PROBE_RESULT_ACTION}
         )`,
+        // Exclude corrected conjectures before the cap-sized window. Keep missing
+        // provenance in the count so corrupt rows cannot silently free a slot.
+        sql`(
+          COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
+          OR COALESCE((
+            SELECT correction.payload->>'correction_kind'
+            FROM ${event} AS correction
+            WHERE correction.action = 'correct'
+              AND correction.subject_kind = 'event'
+              AND correction.subject_id =
+                  ${question.metadata}->>'conjecture_proposal_id'
+            ORDER BY correction.created_at DESC, correction.id DESC
+            LIMIT 1
+          ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
+        )`,
       ),
-    );
+    )
+    .limit(MAX_CONCURRENT_ACTIVE_PROBES);
   const conjectureIds = [
     ...new Set(
       rows
@@ -682,13 +702,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         outcome === 0
           ? [
               ...new Set([
-                ...priorResults
-                  .filter(
-                    (result) =>
-                      result.outcome === 0 &&
-                      (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
-                  )
-                  .map((result) => result.probe_question_id),
+                ...priorResults.filter(isEvidenceResult).map((result) => result.probe_question_id),
                 probeQuestionId,
               ]),
             ].sort()

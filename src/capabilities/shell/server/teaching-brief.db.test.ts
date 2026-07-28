@@ -397,6 +397,129 @@ describe('loadTeachingBrief', () => {
     await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
   });
 
+  it('hides a recurrence outcome when its preliminary evidence is corrected, then restores it', async () => {
+    const proposalId = 'p_corrected_dependency';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    const terminal = await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: terminal.probe_result_event_id },
+      },
+    });
+
+    await writeEvent(testDb(), {
+      id: `correct_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'preliminary evidence invalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date(NOW.getTime() - 5 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+
+    await writeEvent(testDb(), {
+      id: `restore_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'preliminary evidence revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date(NOW.getTime() - 4 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: terminal.probe_result_event_id },
+      },
+    });
+  });
+
+  it('does not display a corrected outcome and restores it on a later restore event', async () => {
+    const seeded = await seedOutcome({
+      proposalId: 'p_corrected_outcome',
+      proposalAt: new Date(NOW.getTime() - DAY_MS),
+      probeAt: new Date(NOW.getTime() - 60 * 60 * 1000),
+      resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
+    });
+    await writeEvent(testDb(), {
+      id: `correct_${seeded.resultId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seeded.resultId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'outcome invalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seeded.resultId }],
+      },
+      created_at: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+
+    await writeEvent(testDb(), {
+      id: `restore_${seeded.resultId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seeded.resultId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'outcome revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seeded.resultId }],
+      },
+      created_at: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: seeded.resultId },
+      },
+    });
+  });
+
   it.each([
     [
       'evidence_for',

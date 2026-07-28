@@ -6,6 +6,13 @@ export interface PriorProbeResult {
   resolution: ProbeResolution;
 }
 
+export function isEvidenceResult(result: PriorProbeResult): boolean {
+  return (
+    result.outcome === 0 &&
+    (result.resolution === 'evidence_for' || result.resolution === 'confirmed')
+  );
+}
+
 /**
  * Convert a grading outcome into a conjecture-survival decision.
  *
@@ -22,10 +29,7 @@ export function resolveProbeResolution(
 ): ProbeResolution {
   if (outcome === 1) return 'retired';
   const hasIndependentPrior = priorResults.some(
-    (result) =>
-      result.probe_question_id !== currentProbeQuestionId &&
-      result.outcome === 0 &&
-      (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
+    (result) => result.probe_question_id !== currentProbeQuestionId && isEvidenceResult(result),
   );
   return hasIndependentPrior ? 'confirmed' : 'evidence_for';
 }

@@ -13,3 +13,5 @@ export type {
   LearningItemAcceptResult,
   RelearnAcceptResult,
 } from './server/proposal-appliers';
+export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
+export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';

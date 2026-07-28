@@ -1,6 +1,7 @@
 // YUK-706 (P0F/2) — one read-only TeachingBrief projected from the existing
 // conjecture proposal → mind-probe question → probe-result event chain.
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
   BRIEF_ACK_ACTION,
@@ -622,6 +623,10 @@ export async function validateAckableOutcome(
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
   const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
+  const resultStatuses = await getEffectiveProbeResultStatuses(db, [result.id]);
+  if (resultStatuses.get(result.id) !== 'active') {
+    return { reason: 'result_evidence_inactive' };
+  }
 
   // Time window — identical to loadOutcomeBrief's SQL prefilter (shared TTL constant, no
   // literal duplication). Half-open, eligible iff (now − OUTCOME_TTL) < created_at <= now:
@@ -709,6 +714,18 @@ export async function loadOutcomeBrief(
         sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
               AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
+        // Corrected outcomes are excluded before the bounded window. This mirrors
+        // getEffectiveProbeResultStatuses' direct correction fold; the in-memory
+        // gate additionally validates recurrence dependencies.
+        sql`COALESCE((
+          SELECT correction.payload->>'correction_kind'
+          FROM ${event} AS correction
+          WHERE correction.action = 'correct'
+            AND correction.subject_kind = 'event'
+            AND correction.subject_id = ${event.id}
+          ORDER BY correction.created_at DESC, correction.id DESC
+          LIMIT 1
+        ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
         // YUK-708 (contract §4.2): an acknowledged outcome loses eligibility immediately.
         // Excluded pre-window (like the corrupt-pair filter) so a burst of acked results
         // cannot evict an older un-acked valid outcome. Ack existence is binary — there
@@ -719,41 +736,72 @@ export async function loadOutcomeBrief(
             AND ack.subject_kind = 'event'
             AND ack.subject_id = ${event.id}
         )`,
-        // A v2 terminal recurrence supersedes preliminary results for the same conjecture.
-        // Use the persisted lifecycle rule stamp, not created_at ordering: answer replay may
-        // intentionally carry an earlier caller timestamp than the preliminary evidence.
-        // This filter intentionally ignores whether the terminal was acknowledged:
-        // acknowledging the final answer must not resurrect "needs independent revalidation".
-        // Defense-in-depth prefilter: require the v2 writer stamp, a valid terminal
-        // resolution/outcome pair, and self-consistent conjecture provenance. This is not
-        // a second full chain validation (question existence/KC/prompt stay owned by the
-        // writer and validateAckableOutcome).
-        sql`(
-          ${event.payload}->>'resolution' <> 'evidence_for'
-          OR NOT EXISTS (
-            SELECT 1 FROM ${event} AS terminal
-            WHERE terminal.action = ${PROBE_RESULT_ACTION}
-              AND terminal.subject_kind = 'question'
-              AND terminal.payload->>'conjecture_event_id' =
-                  ${event.payload}->>'conjecture_event_id'
-              AND terminal.caused_by_event_id =
-                  terminal.payload->>'conjecture_event_id'
-              AND terminal.payload->>'resolution_rule_version' =
-                  ${PROBE_RESOLUTION_RULE_VERSION}
-              AND (
-                (terminal.payload->>'resolution' = 'confirmed'
-                  AND terminal.payload->>'outcome' = '0')
-                OR (terminal.payload->>'resolution' = 'retired'
-                  AND terminal.payload->>'outcome' = '1')
-              )
-          )
-        )`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
+  const resultStatuses = await getEffectiveProbeResultStatuses(
+    db,
+    results.map((result) => result.id),
+  );
+  const candidateConjectureIds = [
+    ...new Set(
+      results.flatMap((result) => {
+        const conjectureEventId = toRecord(result.payload).conjecture_event_id;
+        return typeof conjectureEventId === 'string' ? [conjectureEventId] : [];
+      }),
+    ),
+  ];
+  const terminalRows =
+    candidateConjectureIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, PROBE_RESULT_ACTION),
+              eq(event.subject_kind, 'question'),
+              inArray(
+                sql<string>`${event.payload}->>'conjecture_event_id'`,
+                candidateConjectureIds,
+              ),
+              sql`${event.payload}->>'resolution_rule_version' =
+                  ${PROBE_RESOLUTION_RULE_VERSION}`,
+              sql`((${event.payload}->>'resolution' = 'confirmed'
+                    AND ${event.payload}->>'outcome' = '0')
+                OR (${event.payload}->>'resolution' = 'retired'
+                    AND ${event.payload}->>'outcome' = '1'))`,
+            ),
+          )
+          .orderBy(desc(event.created_at), desc(event.id))
+          .limit(TEACHING_BRIEF_CANDIDATE_WINDOW * 2);
+  const terminalStatuses = await getEffectiveProbeResultStatuses(
+    db,
+    terminalRows.map((row) => row.id),
+  );
+  const terminalConjectureIds = new Set(
+    terminalRows.flatMap((row) => {
+      if (terminalStatuses.get(row.id) !== 'active') return [];
+      const canonical = validateCanonicalProbeResult(row);
+      return isCandidateError(canonical) ? [] : [canonical.value.conjectureEventId];
+    }),
+  );
+
   for (const result of results) {
+    if (resultStatuses.get(result.id) !== 'active') {
+      warnSkipped('outcome', result.id, 'result_evidence_inactive');
+      continue;
+    }
+    const canonical = validateCanonicalProbeResult(result);
+    if (
+      !isCandidateError(canonical) &&
+      canonical.value.resolution === 'evidence_for' &&
+      terminalConjectureIds.has(canonical.value.conjectureEventId)
+    ) {
+      continue;
+    }
     // Shared full-chain gate (single source of truth with the ack writer): canonical
     // result + existing canonical mind-probe + accepted conjecture proposal.
     const outcome = await validateAckableOutcome(db, result, now, { serial });
