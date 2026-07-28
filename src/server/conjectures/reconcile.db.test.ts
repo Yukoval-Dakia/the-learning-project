@@ -21,7 +21,6 @@ import { PREDICTION_SCORE_ACTION, reconcileConjecturePredictions } from './recon
 interface SeedOpts {
   knowledgeId?: string;
   outcome?: 0 | 1;
-  resolution?: 'confirmed' | 'retired';
   predicted_p?: number;
   baseline_p?: number;
   retrievability?: number | null;
@@ -68,7 +67,6 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
     db,
     probeQuestionId: served.probe_question_id,
     outcome: opts.outcome ?? 0,
-    resolution: opts.resolution ?? 'confirmed',
     retrievabilityAtJudge: opts.retrievability ?? null,
   });
 
@@ -104,7 +102,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
     await resetDb();
   });
 
-  it('scores a confirmed probe → LOG prediction_score + soft typed-ledger cell (FLIP-inert)', async () => {
+  it('scores preliminary evidence → LOG prediction_score + soft typed-ledger cell', async () => {
     const seed = await seedAnsweredProbe({ outcome: 0, retrievability: 0.42 });
 
     const result = await reconcileConjecturePredictions(db);
@@ -119,6 +117,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(p.predicted_p).toBe(0.3);
     expect(p.baseline_p).toBe(0.7);
     expect(p.outcome).toBe(0);
+    expect(p.resolution).toBe('evidence_for');
     expect(p.brier_model).toBeCloseTo(0.09, 9);
     expect(p.brier_baseline).toBeCloseTo(0.49, 9);
     // R(t) recorded HERE (in the log event).
@@ -215,7 +214,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
   });
 
   it('a retired probe still writes a soft no-evidence cell', async () => {
-    await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1, resolution: 'retired' });
+    await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1 });
     const result = await reconcileConjecturePredictions(db);
     expect(result.reconciled).toBe(1);
     const ts = await typedRow('k_ret');

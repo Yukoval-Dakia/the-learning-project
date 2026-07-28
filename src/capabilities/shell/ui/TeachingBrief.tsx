@@ -49,6 +49,7 @@ function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
 const STATE_RANK: Record<TeachingBrief['state'], number> = {
   finding: 0,
   probe_ready: 1,
+  outcome_evidence_for: 2,
   outcome_confirmed: 2,
   outcome_retired: 2,
 };
@@ -56,7 +57,7 @@ const STATE_RANK: Record<TeachingBrief['state'], number> = {
 function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIconName {
   if (status === 'confirmed') return 'check';
   if (status === 'retired') return 'checkCircle';
-  return 'sparkle'; // awaiting_decision / awaiting_answer
+  return 'sparkle'; // awaiting_decision / awaiting_answer / evidence_for
 }
 
 // The three read surfaces whose counts move when a brief advances or retires: the brief
@@ -228,6 +229,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     // prepared_action is now practice_scoped (YUK-709), so gate on the outcome status
     // rather than the action kind; non-outcome briefs have nothing to acknowledge.
     if (
+      brief.current_outcome.status !== 'evidence_for' &&
       brief.current_outcome.status !== 'confirmed' &&
       brief.current_outcome.status !== 'retired'
     ) {
@@ -617,17 +619,25 @@ function PreparedBlock({
   }
 
   if (brief.prepared_action.kind === 'acknowledge_outcome') {
-    // outcome_retired (YUK-708/709 / contract §2.2 · §4.2 · §9) — the probe ruled the
-    // finding out; nothing more is prepared and NO extra practice is created. The main step
-    // is to continue the original plan (back to the planned daily practice, no KC scope),
-    // with the append-only "知道了" ack to dismiss. On failure keep the outcome + retry
-    // (contract §7).
+    // `evidence_for` and `retired` both avoid scoped practice, but for opposite
+    // reasons: one observation is still preliminary; a retired conjecture was
+    // ruled out. Keep their copy distinct so the UI never upgrades n=1 to fact.
+    const preliminary = brief.current_outcome.status === 'evidence_for';
     return (
       <>
-        <p className="tb-prepared-done">这道判别题已作答，这条判断已排除。</p>
+        <p className="tb-prepared-done">
+          {preliminary
+            ? '这道判别题已作答；仍需独立复验，不会据此直接安排专项练习。'
+            : '这道判别题已作答，这条判断已排除。'}
+        </p>
         <div className="tb-actions">
-          <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
-            回到今日练习
+          <Btn
+            size="sm"
+            variant="primary"
+            icon="review"
+            onClick={() => navigate(preliminary ? '/today' : '/practice')}
+          >
+            {preliminary ? '回到今日' : '回到今日练习'}
           </Btn>
           <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>

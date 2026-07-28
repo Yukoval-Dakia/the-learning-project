@@ -90,8 +90,8 @@ export const ProbeAnswerBodySchema = z
   });
 
 export const ProbeAnswerResponseSchema = z.object({
-  status: z.enum(['confirmed', 'retired']),
-  resolution: z.enum(['confirmed', 'retired']),
+  status: z.enum(['evidence_for', 'confirmed', 'retired']),
+  resolution: z.enum(['evidence_for', 'confirmed', 'retired']),
   outcome: z.union([z.literal(0), z.literal(1)]),
   probe_result_event_id: z.string(),
   coarse_outcome: z.enum(['correct', 'incorrect']).nullable(),

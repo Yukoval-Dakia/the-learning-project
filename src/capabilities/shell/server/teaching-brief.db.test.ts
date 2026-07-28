@@ -1,6 +1,6 @@
 // YUK-706 (P0F/2) — TeachingBrief read model DB contract.
 //
-// Locks the four projected states, global precedence, TTLs, full P→Q→R provenance
+// Locks the projected states, global precedence, TTLs, full P→Q→R provenance
 // validation, corrupt-row fail-closed behavior, anti-guilt wire, and the zero-write
 // boundary. The read model deliberately does not depend on overnight-digest or the
 // downstream prediction_score reconcile loop.
@@ -212,22 +212,37 @@ async function seedOutcome(opts: {
   proposalAt: Date;
   probeAt: Date;
   resultAt: Date;
-  resolution: 'confirmed' | 'retired';
+  resolution?: 'evidence_for' | 'confirmed' | 'retired';
 }): Promise<{ probeId: string; resultId: string }> {
   const probeId = await seedAcceptedProbe({
     proposalId: opts.proposalId,
     proposalAt: opts.proposalAt,
     probeAt: opts.probeAt,
   });
-  const result = await answerProbe({
-    db: testDb(),
-    probeQuestionId: probeId,
-    outcome: opts.resolution === 'confirmed' ? 0 : 1,
-    resolution: opts.resolution,
-    retrievabilityAtJudge: 0.413579,
-    now: opts.resultAt,
+  const resolution = opts.resolution ?? 'confirmed';
+  const resultId = `result_${opts.proposalId}`;
+  // Reader fixture: write the persisted resolution verbatim so legacy confirmed
+  // events remain covered without asking the new writer to bypass its n=1 gate.
+  await writeEvent(testDb(), {
+    id: resultId,
+    actor_kind: 'system',
+    actor_ref: 'mind_probe',
+    action: 'experimental:probe_result',
+    subject_kind: 'question',
+    subject_id: probeId,
+    payload: {
+      conjecture_event_id: opts.proposalId,
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      retrievability_at_judge: 0.413579,
+      answer_md: null,
+      answer_image_refs: [],
+    },
+    caused_by_event_id: opts.proposalId,
+    ingest_at: opts.resultAt,
+    created_at: opts.resultAt,
   });
-  return { probeId, resultId: result.probe_result_event_id };
+  return { probeId, resultId };
 }
 
 async function tableCounts(): Promise<{ events: number; questions: number }> {
@@ -314,6 +329,11 @@ describe('loadTeachingBrief', () => {
   });
 
   it.each([
+    [
+      'evidence_for',
+      'outcome_evidence_for',
+      '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
+    ],
     ['confirmed', 'outcome_confirmed', '这条判断得到这次探针的支持；下一步可以针对这个点练习。'],
     ['retired', 'outcome_retired', '这条判断被这次探针排除；原计划可以继续。'],
   ] as const)('projects %s probe result as %s', async (resolution, state, summary) => {
@@ -361,6 +381,10 @@ describe('loadTeachingBrief', () => {
       kind: 'event',
       id: resultId,
     });
+    if (resolution === 'evidence_for') {
+      expect(summary).not.toContain('得到支持');
+      expect(summary).not.toContain('确证');
+    }
   });
 
   it('applies global precedence outcome > active probe > pending finding', async () => {
@@ -393,7 +417,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
-      resolution: 'confirmed',
     });
     // A still-active probe sits behind the outcome; once the outcome is acked, the
     // probe is the next globally-preferred candidate (outcome > probe > finding).
@@ -419,7 +442,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
-      resolution: 'retired',
     });
     await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
 
@@ -432,7 +454,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - DAY_MS),
-      resolution: 'confirmed',
     });
     // A window's worth of NEWER outcomes, each acknowledged. Excluded pre-window, they
     // must not crowd the older un-acked survivor out of the bounded candidate set.
@@ -463,7 +484,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 10 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 9 * DAY_MS),
       resultAt: new Date(NOW.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS),
-      resolution: 'confirmed',
     });
     await seedAcceptedProbe({
       proposalId: 'p_old_active',
@@ -495,7 +515,6 @@ describe('loadTeachingBrief', () => {
       db: testDb(),
       probeQuestionId: activeQuestion.id,
       outcome: 1,
-      resolution: 'retired',
       now: new Date(NOW.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS),
     });
 
@@ -509,7 +528,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt: new Date(NOW.getTime() - 60 * 60 * 1000),
-      resolution: 'confirmed',
     });
     await writeEvent(testDb(), {
       id: 'r_orphan_newer',
@@ -625,14 +643,12 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt,
-      resolution: 'confirmed',
     });
     const outcomeB = await seedOutcome({
       proposalId: 'p_tie_outcome_b',
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 90 * 60 * 1000),
       resultAt,
-      resolution: 'retired',
     });
     const expectedOutcome = [outcomeA, outcomeB].sort((a, b) =>
       a.resultId < b.resultId ? 1 : -1,
@@ -838,7 +854,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - DAY_MS),
-      resolution: 'confirmed',
     });
     // Newer results with non-canonical resolution/outcome pairs — these must be
     // filtered before the bounded window, not occupy it.

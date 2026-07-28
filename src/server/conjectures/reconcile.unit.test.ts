@@ -54,7 +54,7 @@ function probe(over: Partial<UnscoredProbeResult> = {}): UnscoredProbeResult {
     probe_result_event_id: 'pr_1',
     conjecture_event_id: 'cj_1',
     outcome: 0,
-    resolution: 'confirmed',
+    resolution: 'evidence_for',
     retrievability_at_judge: null,
     created_at: new Date('2026-06-26T10:00:00Z'),
     ...over,
@@ -125,9 +125,8 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     const u = upserts[0];
     expect(u.subject_id).toBe('k_a');
     expect(u.subject_kind).toBe('knowledge');
-    // confirmed → proposes confused-with-X, but the conjecture names no X → null →
-    // §修正-4 gate keeps it soft. The reconcile NEVER supplies a confused_with KC in Phase 0.
-    expect(u.proposed).toBe('confused-with-X');
+    // One matching probe is only preliminary, so reconcile proposes no-evidence.
+    expect(u.proposed).toBe('no-evidence');
     expect(u.confused_with_kc_id).toBeNull();
     expect(u.discriminating).toBe(true);
     expect(u.recurrence_count).toBe(3);

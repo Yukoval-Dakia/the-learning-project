@@ -114,7 +114,7 @@ const DRAFT = {
   agreement_count: 1,
 };
 
-/** What the vision judge model returns for a wrong answer (→ confirmed, outcome 0). */
+/** What the vision judge model returns for a wrong answer (→ preliminary evidence, outcome 0). */
 const JUDGE_INCORRECT = {
   coarse_outcome: 'incorrect',
   score: 0,
@@ -359,8 +359,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(answerRes.status).toBe(200);
     const answerBody = (await answerRes.json()) as Record<string, unknown>;
     expect(answerBody).toMatchObject({
-      status: 'confirmed',
-      resolution: 'confirmed',
+      status: 'evidence_for',
+      resolution: 'evidence_for',
       outcome: 0,
       coarse_outcome: 'incorrect',
       idempotent: false,
@@ -389,7 +389,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(probeResult.payload).toMatchObject({
       conjecture_event_id: proposalId,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
     });
 
     // ── 4. RECONCILE (real) — runs INSIDE the next nightly, as in production ──
@@ -408,7 +408,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       predicted_p: DRAFT.predicted_p,
       baseline_p: 0.5,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
     });
 
     // The typed ledger advanced off the SAME two events (FLIP-inert soft cell).

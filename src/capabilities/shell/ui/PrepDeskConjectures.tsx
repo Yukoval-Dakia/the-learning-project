@@ -161,7 +161,7 @@ function PrepDeskCard({
         <span className="pd-recur">
           <LoomIcon name="history" size={12} /> {`反复出现 ${c.recurrence_count} 次`}
         </span>
-        {c.discriminating && <span className="pd-tag">只有这个误区会错的一道题</span>}
+        {c.discriminating && <span className="pd-tag">尝试区分这一猜想的题</span>}
         {c.corrected_by_owner && <span className="pd-tag pd-corrected">你改过</span>}
       </div>
 

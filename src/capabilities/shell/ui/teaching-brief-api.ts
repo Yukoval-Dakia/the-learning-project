@@ -15,6 +15,10 @@ export type TeachingBriefResponse = ApiOperationJsonResponse<'getTeachingBrief'>
 export type TeachingBrief = NonNullable<TeachingBriefResponse['brief']>;
 export type FindingTeachingBrief = Extract<TeachingBrief, { state: 'finding' }>;
 export type ProbeReadyTeachingBrief = Extract<TeachingBrief, { state: 'probe_ready' }>;
+export type OutcomeEvidenceForTeachingBrief = Extract<
+  TeachingBrief,
+  { state: 'outcome_evidence_for' }
+>;
 export type OutcomeConfirmedTeachingBrief = Extract<TeachingBrief, { state: 'outcome_confirmed' }>;
 export type OutcomeRetiredTeachingBrief = Extract<TeachingBrief, { state: 'outcome_retired' }>;
 export type TeachingBriefEvidenceRef = TeachingBrief['basis']['evidence_trace'][number];

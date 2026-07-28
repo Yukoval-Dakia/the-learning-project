@@ -221,7 +221,14 @@ async function seedProbeQuestion(id: string, knowledgeIds: string[]): Promise<vo
   });
 }
 
-function probeResultRow(id: string, probeQuestionId: string, answerMd: string, createdAt: Date) {
+function probeResultRow(
+  id: string,
+  probeQuestionId: string,
+  answerMd: string,
+  createdAt: Date,
+  resolution: 'evidence_for' | 'confirmed' | 'retired' = 'evidence_for',
+  resolutionRuleVersion?: string,
+) {
   return {
     id,
     session_id: null,
@@ -233,8 +240,9 @@ function probeResultRow(id: string, probeQuestionId: string, answerMd: string, c
     outcome: null,
     payload: {
       conjecture_event_id: 'conj_1',
-      outcome: 0,
-      resolution: 'refuted',
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      ...(resolutionRuleVersion ? { resolution_rule_version: resolutionRuleVersion } : {}),
       retrievability_at_judge: 0.8,
       answer_md: answerMd,
     },
@@ -298,7 +306,41 @@ describe('get_probe_history', () => {
     );
     // Non-learner payload keys pass through untouched.
     expect(pr.payload.conjecture_event_id).toBe('conj_1');
-    expect(pr.payload.resolution).toBe('refuted');
+    expect(pr.payload.resolution).toBe('evidence_for');
+    expect(pr.payload.evidence_strength).toBe('single_observation');
+  });
+
+  it('does not relabel a legacy confirmed event as recurrence-gated evidence', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_legacy', ['k1']);
+    await seedProbeQuestion('q_v2', ['k1']);
+    await db
+      .insert(event)
+      .values([
+        probeResultRow('pr_legacy', 'q_legacy', 'old', new Date(NOW.getTime() + 1000), 'confirmed'),
+        probeResultRow(
+          'pr_v2',
+          'q_v2',
+          'new',
+          new Date(NOW.getTime() + 2000),
+          'confirmed',
+          'within_learner_probe_recurrence_v2',
+        ),
+      ]);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const strengths = Object.fromEntries(
+      (
+        out.probes as Array<{
+          event_id: string;
+          payload: { evidence_strength: string };
+        }>
+      ).map((row) => [row.event_id, row.payload.evidence_strength]),
+    );
+    expect(strengths).toEqual({
+      pr_v2: 'independent_recurrence',
+      pr_legacy: 'legacy_confirmed_unverified',
+    });
   });
 
   it('merges both actions newest-first under ONE shared row cap', async () => {

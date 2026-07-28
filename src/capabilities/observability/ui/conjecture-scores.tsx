@@ -30,7 +30,7 @@ interface PredictionScoreRow {
   predicted_p: number;
   baseline_p: number;
   outcome: 0 | 1;
-  resolution: 'confirmed' | 'retired';
+  resolution: 'evidence_for' | 'confirmed' | 'retired';
   brier_model: number | null;
   brier_baseline: number | null;
   log_loss_model: number | null;

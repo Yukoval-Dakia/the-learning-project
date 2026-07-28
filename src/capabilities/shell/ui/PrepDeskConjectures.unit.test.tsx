@@ -53,6 +53,12 @@ describe('PrepDeskConjectures', () => {
     expect(html).toContain('反复出现 4 次');
   });
 
+  it('frames model-reported discriminating as tentative, never an absolute claim', () => {
+    const html = render([conjecture({ discriminating: true })]);
+    expect(html).toContain('尝试区分这一猜想的题');
+    expect(html).not.toContain('只有这个误区会错的一道题');
+  });
+
   it('NEVER renders a calibration number (anti-guilt KILL criterion, §2a)', () => {
     const html = render([conjecture()]);
     // No confidence / predicted-probability framing in any form.

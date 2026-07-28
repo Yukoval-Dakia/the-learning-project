@@ -20,12 +20,10 @@
 //     free-text probe fail-closed 422 and no probe_result was ever written. The
 //     invoker path is the ONLY path that actually evaluates free-text.
 //
-// A5-a outcome→resolution split (spec §10 A5 option a; retire semantics moved
-// INTO this wave from §8 defer):
-//   judge coarse_outcome 'incorrect' → outcome=0 → resolution='confirmed'
-//     (the learner erred on a discriminating probe → the conjecture's predicted
-//     misconception is CONFIRMED; reconcile will mint the soft confused-with-X
-//     state on the next nightly run).
+// YUK-787 outcome→resolution split:
+//   judge coarse_outcome 'incorrect' → outcome=0. The lifecycle then reads the
+//     immutable history for the same conjecture: the first independent hit is
+//     `evidence_for`; only a later independent hit is `confirmed`.
 //   judge coarse_outcome 'correct'   → outcome=1 → resolution='retired'
 //     (the learner answered correctly → the conjecture is FALSIFIED; retire).
 //
@@ -64,23 +62,19 @@ import {
 import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from './contracts';
 
 /**
- * Map the judge's coarse_outcome onto the probe lifecycle's (outcome, resolution)
- * pair. Returns null when the outcome is non-discriminating (partial / unsupported)
- * → caller fail-closes with a 422.
+ * Map the judge's coarse outcome onto grading only. Conjecture-survival resolution
+ * is a separate historical fold inside `answerProbe`.
  *
- * 'incorrect'   → outcome=0 → 'confirmed'  (conjecture's predicted error observed)
- * 'correct'     → outcome=1 → 'retired'    (conjecture falsified)
- * 'partial'     → null                      (ambiguous → fail-closed)
- * 'unsupported' → null                      (judge cannot grade → fail-closed)
+ * 'incorrect'   → outcome=0
+ * 'correct'     → outcome=1
+ * 'partial' / 'unsupported' → null (fail closed)
  */
-function mapOutcome(
-  coarse: JudgeResultV2T['coarse_outcome'],
-): { outcome: 0 | 1; resolution: 'confirmed' | 'retired' } | null {
+function mapGradingOutcome(coarse: JudgeResultV2T['coarse_outcome']): 0 | 1 | null {
   switch (coarse) {
     case 'incorrect':
-      return { outcome: 0, resolution: 'confirmed' };
+      return 0;
     case 'correct':
-      return { outcome: 1, resolution: 'retired' };
+      return 1;
     case 'partial':
     case 'unsupported':
       return null;
@@ -224,8 +218,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
       const judgeResult = invoked.result;
 
-      const mapped = mapOutcome(judgeResult.coarse_outcome);
-      if (mapped === null) {
+      const outcome = mapGradingOutcome(judgeResult.coarse_outcome);
+      if (outcome === null) {
         // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
         // (its slot is not consumed) so the owner can re-answer or resolve via admin.
         throw new ApiError(
@@ -238,16 +232,14 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       const result = await answerProbe({
         db,
         probeQuestionId,
-        outcome: mapped.outcome,
-        resolution: mapped.resolution,
+        outcome,
         answer_md: answerMd,
         answer_image_refs: answerImageRefs,
       });
 
-      // The response reports the RECORDED outcome/resolution (from answerProbe),
-      // NOT the current request's mapping — on an idempotent re-answer the recorded
-      // values are faithful while the current judge call was NOT the basis. The
-      // coarse_outcome field is informational about THIS call's judge verdict.
+      // The response reports the RECORDED outcome/resolution (from answerProbe).
+      // On an idempotent race the stored values win; this call's coarse outcome is
+      // informational and cannot reinterpret the immutable result.
       return Response.json({
         status: result.status,
         resolution: result.status,

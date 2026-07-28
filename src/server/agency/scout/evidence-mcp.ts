@@ -19,6 +19,7 @@
 
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
+import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { writeToolCallLog } from '@/server/ai/log';
@@ -107,19 +108,40 @@ function textResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
 }
 
-// probe_result payloads carry the learner's raw probe answer (answer_md) — learner
-// free text, so it gets the same delimit+truncate discipline as get_attempt_details
-// (review F1/F2 family). Other payload keys — and prediction_score payloads, which
-// carry no learner text — pass through untouched.
+// probe_result payloads carry both learner free text and a conjecture-survival
+// resolution. Delimit the answer as before, and add an explicit evidence-strength
+// label so a downstream model cannot mistake `evidence_for` (one observation) for
+// recurrence-gated confirmation. Existing persisted resolution is never rewritten.
 function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown {
   if (action !== PROBE_RESULT_ACTION || payload === null || typeof payload !== 'object') {
     return payload;
   }
   const p = payload as Record<string, unknown>;
-  if (typeof p.answer_md !== 'string') return payload;
+  let evidenceStrength: string;
+  if (p.resolution === 'evidence_for') {
+    evidenceStrength = 'single_observation';
+  } else if (
+    p.resolution === 'confirmed' &&
+    p.resolution_rule_version === PROBE_RESOLUTION_RULE_VERSION
+  ) {
+    evidenceStrength = 'independent_recurrence';
+  } else if (p.resolution === 'confirmed') {
+    evidenceStrength = 'legacy_confirmed_unverified';
+  } else if (p.resolution === 'retired') {
+    evidenceStrength = 'counterevidence';
+  } else {
+    evidenceStrength = 'unclassified';
+  }
   return {
     ...p,
-    answer_md: wrapUntrustedLearnerText(truncate(p.answer_md, EVIDENCE_LIMITS.attemptTextChars)),
+    evidence_strength: evidenceStrength,
+    ...(typeof p.answer_md === 'string'
+      ? {
+          answer_md: wrapUntrustedLearnerText(
+            truncate(p.answer_md, EVIDENCE_LIMITS.attemptTextChars),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -233,7 +255,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       ),
       tool(
         getProbeHistoryName,
-        'Read this knowledge point past probe results and prediction scores (newest first, capped). Empty is itself signal — no probe cycle has produced evidence yet.',
+        'Read this knowledge point past probe results and prediction scores (newest first, capped). For probe results, evidence_strength=single_observation is preliminary n=1 evidence only, independent_recurrence is v2 recurrence-gated confirmation, legacy_confirmed_unverified is a historical label whose recurrence was not recorded, and counterevidence is a correct probe that retired the conjecture. Never promote single_observation or legacy_confirmed_unverified to a fact. Empty is itself signal — no probe cycle has produced evidence yet.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;

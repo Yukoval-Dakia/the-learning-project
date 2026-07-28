@@ -1,8 +1,8 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route DB test.
 //
 // Asserts the route's three contracts:
-//   1. HAPPY (A5-a outcome→resolution split): judge 'incorrect' → outcome=0 →
-//      'confirmed' + probe_result event; judge 'correct' → outcome=1 → 'retired'.
+//   1. HAPPY (YUK-787 outcome→resolution split): judge 'incorrect' → outcome=0 →
+//      first-hit `evidence_for`; judge 'correct' → outcome=1 → 'retired'.
 //   2. IDEMPOTENCY: re-answer short-circuits via `peekExistingProbeResult` BEFORE
 //      invoking the judge (LLM cost guard) — judge NOT called, recorded values
 //      returned with coarse_outcome: null.
@@ -209,7 +209,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('judge incorrect → outcome=0 → confirmed + ONE probe_result event, no FSRS (ND-5)', async () => {
+  it('judge incorrect → outcome=0 → evidence_for + ONE probe_result event, no FSRS', async () => {
     const probeId = await serveProbe();
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
@@ -217,9 +217,9 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
-      status: 'confirmed',
+      status: 'evidence_for',
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       coarse_outcome: 'incorrect',
       idempotent: false,
     });
@@ -228,7 +228,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       answer_md: 'cos(x^2)',
     });
     // ND-5 red line — probe answer NEVER enrolls / writes FSRS.
@@ -270,7 +270,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(1);
 
     // Second answer — peek finds the existing probe_result and short-circuits
-    // BEFORE invoking the judge. The recorded resolution (confirmed) wins; the
+    // BEFORE invoking the judge. The recorded resolution (evidence_for) wins; the
     // judge is NOT called again (LLM cost guard). coarse_outcome is null because
     // this call did not judge.
     mockInvoke.mockClear();
@@ -282,13 +282,13 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(body.idempotent).toBe(true);
     expect(body.coarse_outcome).toBeNull();
     // Recorded resolution is faithfully reported, NOT rewritten by this request.
-    expect(body.status).toBe('confirmed');
-    expect(body.resolution).toBe('confirmed');
+    expect(body.status).toBe('evidence_for');
+    expect(body.resolution).toBe('evidence_for');
     expect(body.outcome).toBe(0);
 
     const events = await probeResultEvents(probeId);
     expect(events).toHaveLength(1);
-    expect(events[0].payload).toMatchObject({ resolution: 'confirmed', outcome: 0 });
+    expect(events[0].payload).toMatchObject({ resolution: 'evidence_for', outcome: 0 });
   });
 
   it('persists a per-probe claim before judging so concurrent answers pay at most once', async () => {

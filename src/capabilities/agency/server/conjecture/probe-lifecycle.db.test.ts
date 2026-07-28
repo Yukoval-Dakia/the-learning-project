@@ -18,6 +18,7 @@ import {
   PROBE_QUESTION_SOURCE,
   answerProbe,
   countActiveProbes,
+  peekExistingProbeResult,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
@@ -178,7 +179,7 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(rows.some((r) => r.id === served.probe_question_id)).toBe(false);
   });
 
-  it('answer writes exactly one experimental:probe_result, NO attempt, NO FSRS row', async () => {
+  it('first incorrect answer writes evidence_for, not confirmed, with no attempt or FSRS row', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
@@ -187,10 +188,9 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 0,
-      resolution: 'confirmed',
       answer_md: 'multiplies derivatives',
     });
-    expect(answered.status).toBe('confirmed');
+    expect(answered.status).toBe('evidence_for');
     expect(answered.idempotent).toBeUndefined();
 
     const results = await probeResultEvents(served.probe_question_id);
@@ -199,7 +199,9 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(results[0].payload).toMatchObject({
       conjecture_event_id: proposalId,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
+      resolution_rule_version: 'within_learner_probe_recurrence_v2',
+      independent_probe_question_ids: [served.probe_question_id],
       retrievability_at_judge: null,
       answer_md: 'multiplies derivatives',
     });
@@ -232,6 +234,88 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(await countActiveProbes(testDb())).toBe(0);
   });
 
+  it('second independent incorrect probe for the same conjecture becomes confirmed', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    const secondProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
+      throw new Error('expected two served probes');
+    }
+
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+    });
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.probe_question_id,
+      outcome: 0,
+    });
+
+    expect(first.status).toBe('evidence_for');
+    expect(second.status).toBe('confirmed');
+    expect((await probeResultEvents(firstProbe.probe_question_id))[0].payload).toMatchObject({
+      resolution: 'evidence_for',
+    });
+    expect((await probeResultEvents(secondProbe.probe_question_id))[0].payload).toMatchObject({
+      resolution: 'confirmed',
+      resolution_rule_version: 'within_learner_probe_recurrence_v2',
+      independent_probe_question_ids: [
+        firstProbe.probe_question_id,
+        secondProbe.probe_question_id,
+      ].sort(),
+    });
+  });
+
+  it('serializes concurrent distinct answers so exactly one crosses the confirmation gate', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    const secondProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
+      throw new Error('expected two served probes');
+    }
+
+    const results = await Promise.all([
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: firstProbe.probe_question_id,
+        outcome: 0,
+      }),
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: secondProbe.probe_question_id,
+        outcome: 0,
+      }),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(['confirmed', 'evidence_for']);
+  });
+
+  it('does not count a provenance-broken historical result toward confirmation', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    await writeEvent(testDb(), {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'prior_probe',
+      payload: { conjecture_event_id: proposalId, outcome: 0, resolution: 'evidence_for' },
+      caused_by_event_id: 'different_conjecture',
+      created_at: new Date(),
+    });
+
+    const result = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: 0,
+    });
+    expect(result.status).toBe('evidence_for');
+  });
+
   it('retire path records resolution=retired', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
@@ -241,13 +325,12 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 1,
-      resolution: 'retired',
     });
     expect(answered.status).toBe('retired');
 
     const results = await probeResultEvents(served.probe_question_id);
     expect(results).toHaveLength(1);
-    expect(results[0].payload).toMatchObject({ outcome: 1, resolution: 'retired' });
+    expect(results[0].payload).toMatchObject({ outcome: 1 });
   });
 
   it('one-shot idempotency — answering twice writes only one probe_result event', async () => {
@@ -259,29 +342,27 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 0,
-      resolution: 'confirmed',
     });
     const second = await answerProbe({
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 1,
-      resolution: 'retired',
     });
 
     expect(second.idempotent).toBe(true);
-    // The recorded result (confirmed) wins — the second call did NOT overwrite it.
-    expect(second.status).toBe('confirmed');
+    // The recorded preliminary result wins — the replay did NOT overwrite it.
+    expect(second.status).toBe('evidence_for');
     expect(second.probe_result_event_id).toBe(first.probe_result_event_id);
     expect(await probeResultEvents(served.probe_question_id)).toHaveLength(1);
   });
 
-  it('idempotent re-answer surfaces a corrupt recorded resolution instead of substituting the request value', async () => {
+  it('idempotent re-answer surfaces a corrupt recorded resolution instead of inventing one', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
 
     // Simulate a corrupt prior probe_result (e.g. manual DB edit) with no valid
-    // resolution. answerProbe must NOT blend in the caller's resolution — it fails loud.
+    // resolution. answerProbe must not reinterpret the corrupt history — it fails loud.
     await writeEvent(testDb(), {
       id: newId(),
       actor_kind: 'system',
@@ -299,14 +380,38 @@ describe('probe one-shot lifecycle (U3)', () => {
         db: testDb(),
         probeQuestionId: served.probe_question_id,
         outcome: 1,
-        resolution: 'retired',
       }),
     ).rejects.toMatchObject({ code: 'probe_result_corrupt', status: 500 });
   });
 
+  it('replays a legacy stored confirmed result without reinterpreting it as evidence_for', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: served.probe_question_id,
+      payload: { conjecture_event_id: proposalId, outcome: 0, resolution: 'confirmed' },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+
+    await expect(peekExistingProbeResult(testDb(), served.probe_question_id)).resolves.toEqual({
+      status: 'confirmed',
+      outcome: 0,
+      probe_result_event_id: resultId,
+      idempotent: true,
+    });
+  });
+
   it('answer rejects an unknown question id with 404 probe_not_found', async () => {
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0 }),
     ).rejects.toMatchObject({ code: 'probe_not_found', status: 404 });
   });
 
@@ -330,7 +435,7 @@ describe('probe one-shot lifecycle (U3)', () => {
         updated_at: now,
       });
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0 }),
     ).rejects.toMatchObject({ code: 'not_a_probe', status: 409 });
   });
 
@@ -354,7 +459,7 @@ describe('probe one-shot lifecycle (U3)', () => {
         updated_at: now,
       });
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0 }),
     ).rejects.toMatchObject({ code: 'probe_missing_conjecture_ref', status: 409 });
   });
 
@@ -386,7 +491,6 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: ids[0],
       outcome: 0,
-      resolution: 'confirmed',
     });
     expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
 

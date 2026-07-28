@@ -6,6 +6,7 @@ import {
   BRIEF_ACK_ACTION,
   PROBE_QUESTION_SOURCE,
   PROBE_RESULT_ACTION,
+  type ProbeResolution,
 } from '@/core/schema/conjecture';
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -32,6 +33,9 @@ export const TEACHING_BRIEF_OUTCOME_COPY = {
   AWAITING_DECISION: '这仍是一条待检验的判断。',
   AWAITING_ANSWER: '判别题已备好；完成后再更新这条判断。',
   AWAITING_ANSWER_REWRITTEN: '判别题针对的是你改写前的那条判断；你的改写还没有配套的判别题。',
+  EVIDENCE_FOR: '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
+  EVIDENCE_FOR_REWRITTEN:
+    '这次表现与改写前的那条判断一致，但单次探针不足以下结论；你的改写仍未被检验。',
   CONFIRMED: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
   CONFIRMED_REWRITTEN: '这次探针支持的是你改写前的那条判断；你的改写还没有被检验。',
   RETIRED: '这条判断被这次探针排除；原计划可以继续。',
@@ -75,7 +79,12 @@ export interface TeachingBriefBasisSection {
 export interface TeachingBriefBase {
   /** Stable identity: the conjecture proposal event id. */
   brief_id: string;
-  state: 'finding' | 'probe_ready' | 'outcome_confirmed' | 'outcome_retired';
+  state:
+    | 'finding'
+    | 'probe_ready'
+    | 'outcome_evidence_for'
+    | 'outcome_confirmed'
+    | 'outcome_retired';
   updated_at: string;
   expires_at: string | null;
   finding: TeachingBriefFindingSection;
@@ -149,6 +158,18 @@ export interface OutcomeConfirmedTeachingBrief extends TeachingBriefBase {
   };
 }
 
+export interface OutcomeEvidenceForTeachingBrief extends TeachingBriefBase {
+  state: 'outcome_evidence_for';
+  expires_at: string;
+  prepared_action: OutcomeAcknowledgeAction;
+  current_outcome: {
+    status: 'evidence_for';
+    summary_md: string;
+    probe_question_id: string;
+    probe_result_event_id: string;
+  };
+}
+
 export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
   state: 'outcome_retired';
   expires_at: string;
@@ -164,6 +185,7 @@ export interface OutcomeRetiredTeachingBrief extends TeachingBriefBase {
 export type TeachingBrief =
   | FindingTeachingBrief
   | ProbeReadyTeachingBrief
+  | OutcomeEvidenceForTeachingBrief
   | OutcomeConfirmedTeachingBrief
   | OutcomeRetiredTeachingBrief;
 
@@ -218,7 +240,7 @@ export function isCandidateError<T>(result: CandidateResult<T>): result is Candi
 
 /** The canonical facts a probe_result outcome event must carry to be projectable. */
 export interface CanonicalProbeResultFacts {
-  resolution: 'confirmed' | 'retired';
+  resolution: ProbeResolution;
   outcome: 0 | 1;
   /** = the conjecture proposal id (brief_id); payload conjecture_event_id === caused_by. */
   conjectureEventId: string;
@@ -249,7 +271,10 @@ export function validateCanonicalProbeResult(
   const resolution = payload.resolution;
   const outcome = payload.outcome;
   if (
-    !((resolution === 'confirmed' && outcome === 0) || (resolution === 'retired' && outcome === 1))
+    !(
+      ((resolution === 'evidence_for' || resolution === 'confirmed') && outcome === 0) ||
+      (resolution === 'retired' && outcome === 1)
+    )
   ) {
     return { reason: 'outcome_resolution_mismatch' };
   }
@@ -515,7 +540,7 @@ function appendProbeEvidence(
 export interface AckableOutcomeFacts {
   proposal: ConjectureFacts;
   probe: QuestionRow;
-  resolution: 'confirmed' | 'retired';
+  resolution: ProbeResolution;
   /** = the conjecture proposal id (brief_id). */
   conjectureEventId: string;
 }
@@ -647,7 +672,12 @@ export async function loadOutcomeBrief(
   db: DbLike,
   now: Date,
   { serial = false }: { serial?: boolean } = {},
-): Promise<OutcomeConfirmedTeachingBrief | OutcomeRetiredTeachingBrief | null> {
+): Promise<
+  | OutcomeEvidenceForTeachingBrief
+  | OutcomeConfirmedTeachingBrief
+  | OutcomeRetiredTeachingBrief
+  | null
+> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS);
   const results = await db
     .select()
@@ -661,7 +691,8 @@ export async function loadOutcomeBrief(
         // Only canonical resolution/outcome pairs may occupy the bounded window,
         // otherwise a flood of corrupt results could evict an older valid outcome.
         // The in-loop validation below stays authoritative for provenance.
-        sql`((${event.payload}->>'resolution' = 'confirmed' AND ${event.payload}->>'outcome' = '0')
+        sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
+              AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
         // YUK-708 (contract §4.2): an acknowledged outcome loses eligibility immediately.
         // Excluded pre-window (like the corrupt-pair filter) so a burst of acked results
@@ -705,6 +736,27 @@ export async function loadOutcomeBrief(
       finding,
       basis: { summary_md: proposal.reasonMd, evidence_trace: evidence },
     };
+    if (resolution === 'evidence_for') {
+      return {
+        ...common,
+        state: 'outcome_evidence_for',
+        // A single matching answer is only preliminary evidence. It must not unlock
+        // KC practice as if the conjecture were confirmed; the learner can dismiss
+        // this update while a later independent probe supplies the next decision.
+        prepared_action: {
+          kind: 'acknowledge_outcome' as const,
+          probe_result_event_id: result.id,
+        },
+        current_outcome: {
+          status: 'evidence_for',
+          summary_md: rewritten
+            ? TEACHING_BRIEF_OUTCOME_COPY.EVIDENCE_FOR_REWRITTEN
+            : TEACHING_BRIEF_OUTCOME_COPY.EVIDENCE_FOR,
+          probe_question_id: probe.id,
+          probe_result_event_id: result.id,
+        },
+      };
+    }
     if (resolution === 'confirmed') {
       return {
         ...common,

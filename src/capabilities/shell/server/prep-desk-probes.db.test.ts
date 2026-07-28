@@ -45,7 +45,7 @@ describe('loadActiveProbes', () => {
   it('excludes answered probes (those with a probe_result event)', async () => {
     const p1 = await serve('unanswered', new Date('2026-07-13T00:00:01Z'));
     const p2 = await serve('answered', new Date('2026-07-13T00:00:02Z'));
-    await answerProbe({ db: testDb(), probeQuestionId: p2, outcome: 1, resolution: 'retired' });
+    await answerProbe({ db: testDb(), probeQuestionId: p2, outcome: 1 });
 
     const { probes } = await loadActiveProbes(testDb());
     expect(probes.map((p) => p.probe_question_id)).toEqual([p1]);

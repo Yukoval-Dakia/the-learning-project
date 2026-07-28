@@ -348,6 +348,22 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
     z
       .object({
         ...teachingBriefCommon,
+        state: z.literal('outcome_evidence_for'),
+        expires_at: z.string().datetime(),
+        prepared_action: OutcomeAcknowledgeActionSchema,
+        current_outcome: z
+          .object({
+            status: z.literal('evidence_for'),
+            summary_md: z.string().min(1),
+            probe_question_id: z.string().min(1),
+            probe_result_event_id: z.string().min(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...teachingBriefCommon,
         state: z.literal('outcome_confirmed'),
         expires_at: z.string().datetime(),
         prepared_action: OutcomePracticeActionSchema,
@@ -386,7 +402,9 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
   // the wire loudly instead of silently.
   .superRefine((brief, ctx) => {
     if (
-      (brief.state === 'outcome_confirmed' || brief.state === 'outcome_retired') &&
+      (brief.state === 'outcome_evidence_for' ||
+        brief.state === 'outcome_confirmed' ||
+        brief.state === 'outcome_retired') &&
       brief.prepared_action.probe_result_event_id !== brief.current_outcome.probe_result_event_id
     ) {
       ctx.addIssue({

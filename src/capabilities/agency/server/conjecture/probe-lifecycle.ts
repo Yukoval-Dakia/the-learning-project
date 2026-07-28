@@ -49,14 +49,17 @@ import { newId } from '@/core/ids';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
+  PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
+  type ProbeResolution,
 } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lte, sql } from 'drizzle-orm';
+import { type PriorProbeResult, resolveProbeResolution } from './probe-resolution';
 
 type DbOrTx = Db | Tx;
 
@@ -191,8 +194,6 @@ export interface AnswerProbeParams {
   probeQuestionId: string;
   /** Graded correctness of the probe answer (the prediction-test outcome). */
   outcome: 0 | 1;
-  /** Qualitative conjecture-lifecycle decision. */
-  resolution: 'confirmed' | 'retired';
   /**
    * Phase-deferred (feedback_phase_deferred_comments): R(t) snapshot at judge time.
    * Defaults to null. The field is present NOW to keep the probe_result event shape
@@ -211,7 +212,7 @@ export interface AnswerProbeParams {
 }
 
 export interface AnswerProbeResult {
-  status: 'confirmed' | 'retired';
+  status: ProbeResolution;
   /** The recorded 0|1 outcome (faithfully reported on BOTH fresh + idempotent paths). */
   outcome: 0 | 1;
   probe_result_event_id: string;
@@ -223,8 +224,16 @@ function parseProbeResultEvent(
 ): AnswerProbeResult | null {
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
   if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  if (
+    !(
+      ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
+        recordedOutcome === 0) ||
+      (recordedResolution === 'retired' && recordedOutcome === 1)
+    )
+  ) {
+    return null;
+  }
   return {
     status: recordedResolution,
     outcome: recordedOutcome,
@@ -364,7 +373,7 @@ export async function releaseProbeJudging(
  * one-shot guarantee holds under concurrency, not just sequentially.
  */
 export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProbeResult> {
-  const { db, probeQuestionId, outcome, resolution } = params;
+  const { db, probeQuestionId, outcome } = params;
   const now = params.now ?? new Date();
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
@@ -413,12 +422,10 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       )
       .limit(1);
     if (existing) {
-      // Idempotent: report the RECORDED resolution faithfully — NEVER substitute the
-      // current request's `resolution` (a re-answer with a different resolution must
-      // not silently rewrite what the record says happened). A probe_result is always
-      // written with a valid resolution; a missing/invalid one means a corrupt event
-      // row (e.g. a manual DB edit), which we surface loudly rather than paper over by
-      // blending in the caller's value.
+      // Idempotent: report the RECORDED resolution faithfully. Never re-run the
+      // historical fold for an already-settled question: that would reinterpret an
+      // immutable legacy result under today's rule. A missing/invalid value is a
+      // corrupt event row, surfaced loudly rather than synthesized from the new answer.
       const parsed = parseProbeResultEvent(existing);
       if (!parsed) {
         throw new ApiError(
@@ -429,6 +436,47 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       }
       return parsed;
     }
+
+    // Serialize the evidence-strength fold per conjecture, not only per question.
+    // Without this second lock, two different probes answered concurrently could
+    // both read an empty history and both persist `evidence_for`. The namespace
+    // salt keeps the conjecture lock distinct from the per-question lock above.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
+    const priorRows = await tx
+      .select({ probe_question_id: event.subject_id, payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_RESULT_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.caused_by_event_id, conjectureEventId),
+          sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
+          lte(event.created_at, now),
+        ),
+      );
+    const priorResults: PriorProbeResult[] = [];
+    for (const prior of priorRows) {
+      const parsed = parseProbeResultEvent({ id: prior.probe_question_id, payload: prior.payload });
+      if (!parsed) continue;
+      priorResults.push({
+        probe_question_id: prior.probe_question_id,
+        outcome: parsed.outcome,
+        resolution: parsed.status,
+      });
+    }
+    const resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
+    const independentProbeQuestionIds = [
+      ...new Set([
+        ...priorResults
+          .filter(
+            (result) =>
+              result.outcome === 0 &&
+              (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
+          )
+          .map((result) => result.probe_question_id),
+        probeQuestionId,
+      ]),
+    ].sort();
 
     const probeResultEventId = newId();
     await writeEvent(tx, {
@@ -444,6 +492,8 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         conjecture_event_id: conjectureEventId,
         outcome,
         resolution,
+        resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
+        independent_probe_question_ids: independentProbeQuestionIds,
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
         // Provenance for a photo answer: the team can later see WHAT was submitted for
@@ -471,7 +521,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
  *
  * Returns:
  *   - the recorded `AnswerProbeResult` (idempotent: true) when a VALID probe_result
- *     exists (outcome ∈ {0,1}, resolution ∈ {confirmed,retired});
+ *     exists (outcome ∈ {0,1}, resolution ∈ {evidence_for,confirmed,retired});
  *   - `null` when NO probe_result exists (caller proceeds to judge + answerProbe);
  *   - `null` when an existing event is CORRUPT (caller proceeds to judge + answerProbe,
  *     which surfaces the `probe_result_corrupt` 500 — the judge call is wasted on this

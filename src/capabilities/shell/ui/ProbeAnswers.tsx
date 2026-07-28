@@ -3,6 +3,8 @@
 // and/or IMAGE (handwriting/photo) — submitting to the conjecture probe-answer route.
 // The judge grades it and the verdict is surfaced gently:
 //   retired  (answered right) → the conjecture is falsified: "答对了 —— 这条排除了"
+//   evidence_for (first wrong answer) → preliminary within-learner evidence; requires
+//             another independent probe and does NOT unlock scoped practice.
 //   confirmed (answered wrong) → the predicted misconception is real (constructive,
 //             NEVER "你果然不会"): "这块确实卡了 —— 教研团会据此为你备练".
 //
@@ -29,6 +31,32 @@ import {
 
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
+}
+
+function VerdictMessage({
+  verdict,
+}: {
+  verdict: ProbeAnswerVerdict['resolution'];
+}) {
+  if (verdict === 'retired') {
+    return (
+      <span className="pa-verdict-txt">
+        <LoomIcon name="check" size={14} /> 答对了 —— 这条猜想排除了。
+      </span>
+    );
+  }
+  if (verdict === 'evidence_for') {
+    return (
+      <span className="pa-verdict-txt">
+        <LoomIcon name="target" size={14} /> 这次表现与猜想一致，但还需要独立复验。
+      </span>
+    );
+  }
+  return (
+    <span className="pa-verdict-txt">
+      <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
+    </span>
+  );
 }
 
 export function ProbeAnswers() {
@@ -132,15 +160,7 @@ export function ProbeAnswerCard({
 
       {verdict ? (
         <output className={`pa-verdict pa-verdict-${verdict}`}>
-          {verdict === 'retired' ? (
-            <span className="pa-verdict-txt">
-              <LoomIcon name="check" size={14} /> 答对了 —— 这条猜想排除了。
-            </span>
-          ) : (
-            <span className="pa-verdict-txt">
-              <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
-            </span>
-          )}
+          <VerdictMessage verdict={verdict} />
           <Btn size="sm" variant="ghost" onClick={onDismiss}>
             知道了
           </Btn>

@@ -708,7 +708,6 @@ describe('acceptConjectureProposal lifecycle', () => {
         db,
         probeQuestionId: seededProbeIds[0],
         outcome: 0,
-        resolution: 'confirmed',
       });
       expect(await countActiveProbes(db)).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
 

@@ -44,6 +44,7 @@
 import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
+import type { ProbeResolution } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -74,7 +75,7 @@ export interface UnscoredProbeResult {
   /** = the conjecture proposal event id (probe_result payload.conjecture_event_id). */
   conjecture_event_id: string;
   outcome: 0 | 1;
-  resolution: 'confirmed' | 'retired';
+  resolution: ProbeResolution;
   /** R(t) snapshot at judge time, or null. Logged in the score event; never written to state. */
   retrievability_at_judge: number | null;
   /** the probe judging time = the new evidence's timestamp (→ last_evidence_at). */
@@ -185,7 +186,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       console.warn('[reconcile] dropping malformed probe_result — invalid outcome', r.id);
       continue;
     }
-    if (resolution !== 'confirmed' && resolution !== 'retired') {
+    if (resolution !== 'evidence_for' && resolution !== 'confirmed' && resolution !== 'retired') {
       console.warn('[reconcile] dropping malformed probe_result — invalid resolution', r.id);
       continue;
     }

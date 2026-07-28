@@ -14,6 +14,7 @@ import { TeachingBriefBand } from './TeachingBrief';
 import type {
   FindingTeachingBrief,
   OutcomeConfirmedTeachingBrief,
+  OutcomeEvidenceForTeachingBrief,
   OutcomeRetiredTeachingBrief,
   ProbeReadyTeachingBrief,
 } from './teaching-brief-api';
@@ -131,6 +132,20 @@ function retiredBrief(): OutcomeRetiredTeachingBrief {
     current_outcome: {
       status: 'retired',
       summary_md: '这条判断被这次探针排除；原计划可以继续。',
+      probe_question_id: 'q_probe_01',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
+  };
+}
+
+function evidenceForBrief(): OutcomeEvidenceForTeachingBrief {
+  return {
+    ...outcomeBrief(),
+    state: 'outcome_evidence_for',
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    current_outcome: {
+      status: 'evidence_for',
+      summary_md: '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
       probe_question_id: 'q_probe_01',
       probe_result_event_id: 'evt_probe_result_01',
     },
@@ -375,6 +390,27 @@ describe('TeachingBriefBand — outcome ack (jsdom, YUK-708)', () => {
     );
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['overnight-digest'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['prep-desk-probes'] });
+  });
+
+  it('preliminary evidence can be acknowledged without exposing scoped practice', async () => {
+    ackOutcomeMock.mockResolvedValue({
+      brief_acknowledgement_event_id: 'ack_1',
+      probe_result_event_id: 'evt_probe_result_01',
+      brief_id: 'evt_conj_01',
+      idempotent: false,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    expect(screen.queryByRole('button', { name: '针对这个点练一组' })).toBeNull();
+    await user.click(await screen.findByRole('button', { name: '知道了' }));
+    expect(ackOutcomeMock).toHaveBeenCalledWith('evt_probe_result_01');
   });
 
   it('ack failure keeps the outcome and surfaces a non-blaming retry (contract §7)', async () => {

@@ -7,10 +7,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  answerProbe,
-  serveProbeOnce,
-} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { newId } from '@/core/ids';
 import { learnerLocalDay } from '@/core/learner-day';
 import { BRIEF_SEEN_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { writeEvent } from '@/kernel/events';
@@ -34,7 +32,7 @@ function windowAroundNow(): { from: string; to: string } {
 }
 
 async function seedChain(
-  resolution: 'confirmed' | 'retired',
+  resolution: 'evidence_for' | 'confirmed' | 'retired',
   opts: { dismiss?: boolean; answerAt?: Date } = {},
 ): Promise<{ proposalId: string; resultId: string }> {
   const proposalId = await writeAiProposal(testDb(), {
@@ -93,16 +91,28 @@ async function seedChain(
     referenceMd: '2x·cos(x^2)',
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
-  const result = await answerProbe({
-    db: testDb(),
-    probeQuestionId: served.probe_question_id,
-    outcome: resolution === 'confirmed' ? 0 : 1,
-    resolution,
-    // Stamp the probe_result's created_at to place the ANSWER inside or outside the report window
-    // independently of when the probe was served (defaults to real now = in-window).
-    ...(opts.answerAt ? { now: opts.answerAt } : {}),
+  const resultId = newId();
+  const answerAt = opts.answerAt ?? new Date();
+  await writeEvent(testDb(), {
+    id: resultId,
+    actor_kind: 'system',
+    actor_ref: 'mind_probe',
+    action: PROBE_RESULT_ACTION,
+    subject_kind: 'question',
+    subject_id: served.probe_question_id,
+    payload: {
+      conjecture_event_id: proposalId,
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      retrievability_at_judge: null,
+      answer_md: null,
+      answer_image_refs: [],
+    },
+    caused_by_event_id: proposalId,
+    ingest_at: answerAt,
+    created_at: answerAt,
   });
-  return { proposalId, resultId: result.probe_result_event_id };
+  return { proposalId, resultId };
 }
 
 describe('loadTeachingBriefReportInput (YUK-710)', () => {
@@ -117,8 +127,18 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.days_with_briefs).toBe(0);
     expect(report.brief_to_action.rate).toBeNull();
     expect(report.probe_completion.rate).toBeNull();
-    expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 0, retired: 0 });
     expect(report.time_to_action.count).toBe(0);
+  });
+
+  it('reports preliminary evidence separately from confirmed and retired outcomes', async () => {
+    await seedChain('evidence_for');
+    const { from, to } = windowAroundNow();
+    const report = computeTeachingBriefReport(
+      await loadTeachingBriefReportInput(testDb(), from, to),
+    );
+    expect(report.outcomes).toEqual({ evidence_for: 1, confirmed: 0, retired: 0 });
+    expect(report.confirmed_to_scoped_practice.denominator).toBe(0);
   });
 
   it('loads a full confirmed + retired + dismissed chain with interactions', async () => {
@@ -157,7 +177,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     // Two probes served (confirmed + retired), both answered.
     expect(report.probes_served).toBe(2);
     expect(report.probe_completion).toEqual({ numerator: 2, denominator: 2, rate: 1 });
-    expect(report.outcomes).toEqual({ confirmed: 1, retired: 1 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 1, retired: 1 });
     // The one confirmed outcome had a scoped_practice start joined by result_event_id.
     expect(report.confirmed_to_scoped_practice).toEqual({ numerator: 1, denominator: 1, rate: 1 });
     // seen → first action pairing on the confirmed brief-day.
@@ -176,7 +196,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     expect(report.days_with_briefs).toBe(0);
     expect(report.decisions).toEqual({ accept: 0, edit: 0, dismiss: 0 });
     expect(report.probes_served).toBe(0);
-    expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 0, retired: 0 });
   });
 
   it('a probe served in-window but answered out-of-window is not counted as completed', async () => {
@@ -196,7 +216,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     // 0/1 completion (answer is out-of-window), NOT a fabricated 1/1.
     expect(report.probe_completion).toEqual({ numerator: 0, denominator: 1, rate: 0 });
     // The out-of-window outcome is absent too — completion and outcomes stay consistent.
-    expect(report.outcomes).toEqual({ confirmed: 0, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 0, retired: 0 });
   });
 
   it('drops a brief_seen row whose local_day is malformed (no phantom empty day)', async () => {
@@ -240,7 +260,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
       action: PROBE_RESULT_ACTION,
       subject_kind: 'question',
       subject_id: 'q_missing_probe',
-      payload: { conjecture_event_id: 'p_orphan', outcome: 0, resolution: 'confirmed' },
+      payload: { conjecture_event_id: 'p_orphan', outcome: 0 },
       caused_by_event_id: 'p_orphan',
       ingest_at: new Date(),
     });
@@ -251,7 +271,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     const report = computeTeachingBriefReport(
       await loadTeachingBriefReportInput(testDb(), from, to),
     );
-    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 1, retired: 0 });
     expect(report.skipped_corrupt_outcomes).toBe(1);
   });
 
@@ -283,7 +303,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
       await loadTeachingBriefReportInput(testDb(), from, to),
     );
     // Retract folded away the accepted status, but the outcome is still counted, not skipped.
-    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 1, retired: 0 });
     expect(report.skipped_corrupt_outcomes).toBe(0);
   });
 
@@ -297,7 +317,7 @@ describe('loadTeachingBriefReportInput (YUK-710)', () => {
     const report = computeTeachingBriefReport(
       await loadTeachingBriefReportInput(testDb(), from, to),
     );
-    expect(report.outcomes).toEqual({ confirmed: 0, retired: 1 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 0, retired: 1 });
     // The ack converts the seen retired brief-day (1/1) — without counting it, retired days would be
     // permanently non-converted (round-6 codex P2). No primary action was started.
     expect(report.brief_to_action).toEqual({ numerator: 1, denominator: 1, rate: 1 });

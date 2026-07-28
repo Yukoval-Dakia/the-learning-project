@@ -11,7 +11,7 @@ export const ConjectureScoresResponseSchema = z.object({
       predicted_p: z.number(),
       baseline_p: z.number(),
       outcome: z.union([z.literal(0), z.literal(1)]),
-      resolution: z.enum(['confirmed', 'retired']),
+      resolution: z.enum(['evidence_for', 'confirmed', 'retired']),
       brier_model: z.number().nullable(),
       brier_baseline: z.number().nullable(),
       log_loss_model: z.number().nullable(),

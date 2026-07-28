@@ -2632,7 +2632,7 @@ export interface operations {
               predicted_p: number;
               probe_result_event_id: string;
               /** @enum {string} */
-              resolution: 'confirmed' | 'retired';
+              resolution: 'evidence_for' | 'confirmed' | 'retired';
               retrievability_at_judge: number | null;
               skill_score_point: number | null;
             }[];
@@ -9303,9 +9303,9 @@ export interface operations {
             outcome: 0 | 1;
             probe_result_event_id: string;
             /** @enum {string} */
-            resolution: 'confirmed' | 'retired';
+            resolution: 'evidence_for' | 'confirmed' | 'retired';
             /** @enum {string} */
-            status: 'confirmed' | 'retired';
+            status: 'evidence_for' | 'confirmed' | 'retired';
           };
         };
       };
@@ -20255,6 +20255,59 @@ export interface operations {
                         probe_question_id: string;
                         probe_result_event_id: string;
                         /** @enum {string} */
+                        status: 'evidence_for';
+                        summary_md: string;
+                      };
+                      /** Format: date-time */
+                      expires_at: string;
+                      finding: {
+                        cause_category: string;
+                        claim_md: string;
+                        knowledge_id: string;
+                        tested_claim_md?: string;
+                      };
+                      prepared_action: {
+                        /** @enum {string} */
+                        kind: 'acknowledge_outcome';
+                        probe_result_event_id: string;
+                      };
+                      /** @enum {string} */
+                      state: 'outcome_evidence_for';
+                      /** Format: date-time */
+                      updated_at: string;
+                    }
+                  | {
+                      basis: {
+                        evidence_trace: (
+                          | {
+                              id: string;
+                              /** @enum {string} */
+                              kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
+                              /** @enum {string} */
+                              role: 'induction';
+                            }
+                          | {
+                              id: string;
+                              /** @enum {string} */
+                              kind: 'question';
+                              /** @enum {string} */
+                              role: 'probe';
+                            }
+                          | {
+                              id: string;
+                              /** @enum {string} */
+                              kind: 'event';
+                              /** @enum {string} */
+                              role: 'outcome';
+                            }
+                        )[];
+                        summary_md: string;
+                      };
+                      brief_id: string;
+                      current_outcome: {
+                        probe_question_id: string;
+                        probe_result_event_id: string;
+                        /** @enum {string} */
                         status: 'confirmed';
                         summary_md: string;
                       };
@@ -20591,7 +20644,12 @@ export interface operations {
           | {
               brief_id: string;
               /** @enum {string} */
-              brief_state: 'finding' | 'probe_ready' | 'outcome_confirmed' | 'outcome_retired';
+              brief_state:
+                | 'finding'
+                | 'probe_ready'
+                | 'outcome_evidence_for'
+                | 'outcome_confirmed'
+                | 'outcome_retired';
               /** @enum {string} */
               type: 'brief_seen';
             }
