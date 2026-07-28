@@ -147,10 +147,12 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
           process.kill(-child.pid, 'SIGKILL');
           timedOut = true;
           return;
-        } catch (err) {
+        } catch {
           // ESRCH means the whole group is already gone and 'close' is merely queued, so
-          // retain the clean-exit disposition. Other failures fall back to the direct child.
-          if ((err as NodeJS.ErrnoException).code === 'ESRCH' && !leaderStillRunning) return;
+          // retain the clean-exit disposition. A different group-kill error must not turn
+          // an already-exited leader into a false timeout either; only a live leader can
+          // take the direct-child fallback below.
+          if (!leaderStillRunning) return;
         }
       } else if (!leaderStillRunning) {
         return;
