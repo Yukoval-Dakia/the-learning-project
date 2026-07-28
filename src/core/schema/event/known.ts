@@ -4,6 +4,7 @@ import { ActivityRef } from '../activity';
 import { AttemptPayload } from '../attempt-payload';
 import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
+import { AttemptQuestionSnapshot } from '../question-evidence-snapshot';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
 // REASONING_TRACE_MAX_LEN 的真源在 core/limits.ts（纯模块）：这里只 import 来给下面两处
@@ -120,6 +121,11 @@ export const AttemptOnQuestion = z.object({
     // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
     // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
     reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
+    // YUK-804 — immutable question evidence at answer time. Optional only for
+    // historical events; every live attempt writer must stamp it. The snapshot
+    // includes a shared parent stem for question parts, so later edits/deletes
+    // cannot pair a new prompt with an old learner answer.
+    question_snapshot: AttemptQuestionSnapshot.optional(),
   }),
   ...baseOptionalFields,
 });

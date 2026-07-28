@@ -31,6 +31,7 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 
+import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { createLearningRecord } from '@/server/records/queries';
@@ -176,6 +177,7 @@ export async function enrollCapturedBlock(
   // A success attempt feeds the knowledge_mastery view (ADR-0012); it does NOT
   // advance FSRS (no `review` event written) — see ADR-0024.
   const attemptEventId = createId();
+  const questionSnapshot = await loadAttemptQuestionSnapshot(tx, input.questionId);
   await writeEvent(tx, {
     id: attemptEventId,
     session_id: null,
@@ -189,6 +191,7 @@ export async function enrollCapturedBlock(
       answer_md: input.answerMd,
       answer_image_refs: input.answerImageRefs,
       referenced_knowledge_ids: input.knowledgeIds,
+      question_snapshot: questionSnapshot,
       generated_by: generatedBy,
     },
     caused_by_event_id: null,

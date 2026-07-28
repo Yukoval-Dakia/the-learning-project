@@ -25,6 +25,7 @@ import {
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
+import { captureAttemptQuestionSnapshot } from './question-evidence-snapshot';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -322,6 +323,7 @@ export async function submitSolveAttempt(
 
   const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
   if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
+  const questionSnapshot = await captureAttemptQuestionSnapshot(db, q);
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
@@ -392,6 +394,7 @@ export async function submitSolveAttempt(
         answer_md: answerMd.length > 0 ? answerMd : null,
         answer_image_refs: submission.student_image_refs ?? [],
         referenced_knowledge_ids: q.knowledge_ids,
+        question_snapshot: questionSnapshot,
         // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
         // 'unknown' until the Reconstruction-as-method classifier lands.
         reconstruction_signal: 'unknown',

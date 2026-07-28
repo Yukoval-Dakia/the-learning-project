@@ -56,6 +56,7 @@ import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
+import { captureAttemptQuestionSnapshot } from './question-evidence-snapshot';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -472,6 +473,7 @@ export async function submitPaperSlot(
   if (!q) {
     throw new ApiError('not_found', `question ${input.questionId} not found`, 404);
   }
+  const questionSnapshot = await captureAttemptQuestionSnapshot(db, q);
 
   // Resolve the profile for the slot's knowledge (primary first, then question
   // labels) — used for the D6 profile_version stamp + cause validation.
@@ -761,6 +763,7 @@ export async function submitPaperSlot(
         answer_md: input.answerMd,
         answer_image_refs: input.answerImageRefs ?? [],
         referenced_knowledge_ids: referencedKnowledgeIds,
+        question_snapshot: questionSnapshot,
         // YUK-448 — wall-clock RT, mirroring the solo path (submit.ts:532).
         // Conditional spread keeps the key ABSENT (not null) when no RT data, so
         // the read-side AttemptOnQuestion schema (known.ts:37, `duration_ms:

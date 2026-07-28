@@ -8,6 +8,10 @@ import {
   getEffectiveTruths,
 } from '@/capabilities/practice/server/effective-truth';
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import {
+  AttemptQuestionSnapshot,
+  type AttemptQuestionSnapshotT,
+} from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
@@ -52,6 +56,7 @@ export type FailureAttempt = {
   answer_md: string | null;
   answer_image_refs: string[];
   referenced_knowledge_ids: string[];
+  question_snapshot?: AttemptQuestionSnapshotT | null;
   created_at: Date;
   correction_state: EffectiveTruth;
   judge?: FailureAttemptJudge;
@@ -161,13 +166,16 @@ function failureEvidenceFromRow(row: EventRow): {
   answer_md: string | null;
   answer_image_refs: string[];
   referenced_knowledge_ids: string[];
+  question_snapshot: AttemptQuestionSnapshotT | null;
 } {
   const payload = row.payload as {
     answer_md?: string | null;
     user_response_md?: string | null;
     answer_image_refs?: string[];
     referenced_knowledge_ids?: string[];
+    question_snapshot?: unknown;
   };
+  const parsedSnapshot = AttemptQuestionSnapshot.safeParse(payload.question_snapshot);
   return {
     // FSRS reviews call the same learner evidence `user_response_md`; normalize
     // it onto the legacy mistake projection so every downstream consumer sees
@@ -176,6 +184,10 @@ function failureEvidenceFromRow(row: EventRow): {
       row.action === 'review' ? (payload.user_response_md ?? null) : (payload.answer_md ?? null),
     answer_image_refs: payload.answer_image_refs ?? [],
     referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+    question_snapshot:
+      parsedSnapshot.success && parsedSnapshot.data.question.question_id === row.subject_id
+        ? parsedSnapshot.data
+        : null,
   };
 }
 
@@ -374,6 +386,7 @@ async function loadFailureAttempts(
       answer_md: evidence.answer_md,
       answer_image_refs: evidence.answer_image_refs,
       referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+      question_snapshot: evidence.question_snapshot,
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
     };

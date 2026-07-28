@@ -215,6 +215,17 @@ describe('POST /api/mistakes', () => {
 
     const events = await db.select().from(event).where(eq(event.id, body.mistake_id));
     expect((events[0].payload as Record<string, unknown>).answer_image_refs).toEqual(['asset_w']);
+    expect(events[0].payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: {
+          question_id: body.question_id,
+          prompt_md: qs[0].prompt_md,
+          reference_md: qs[0].reference_md,
+        },
+        parent_question: null,
+      },
+    });
   });
 
   // Lane D (YUK-482): a failed attempt with no user-supplied cause still enqueues

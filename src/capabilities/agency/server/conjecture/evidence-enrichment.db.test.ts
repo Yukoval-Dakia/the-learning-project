@@ -16,6 +16,7 @@ import {
   CONJECTURE_EVIDENCE_CHOICES_PER_FIELD,
   enrichEvidenceCells,
 } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
+import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { event, knowledge, question } from '@/db/schema';
 import { UNTRUSTED_TEXT_CHAR_CAP } from '@/kernel/untrusted-text';
@@ -83,6 +84,7 @@ interface SeedFailureOpts {
   causeCategory?: string;
   analysisMd?: string;
   createdAt?: Date;
+  persistQuestionSnapshot?: boolean;
 }
 
 // Attempts are read newest-first (created_at DESC, id DESC), and that order is
@@ -95,6 +97,9 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
   const db = testDb();
   seedSeq += 1;
   const createdAt = opts.createdAt ?? new Date(CREATED_AT.getTime() - seedSeq * 60_000);
+  const questionSnapshot = opts.persistQuestionSnapshot
+    ? await loadAttemptQuestionSnapshot(db, opts.questionId)
+    : undefined;
   await db.insert(event).values({
     id: opts.id,
     actor_kind: 'user',
@@ -107,6 +112,7 @@ async function seedFailureWithJudge(opts: SeedFailureOpts): Promise<void> {
       answer_md: opts.answerMd === undefined ? 'wrong answer' : opts.answerMd,
       answer_image_refs: opts.answerImageRefs ?? [],
       referenced_knowledge_ids: opts.knowledgeIds,
+      ...(questionSnapshot ? { question_snapshot: questionSnapshot } : {}),
       // YUK-562 process data — the field the list reader now surfaces.
       ...(opts.reasoningTrace === undefined ? {} : { reasoning_trace: opts.reasoningTrace }),
     },
@@ -300,6 +306,61 @@ describe('enrichEvidenceCells (YUK-786 grounding packet)', () => {
     expect(cell.samples).toHaveLength(1);
     expect(cell.samples[0].question_id).toBe('q2');
     expect(cell.samples[0].question_prompt_md).not.toContain('后来题面');
+  });
+
+  it('uses the immutable attempt snapshot after the live question is edited', async () => {
+    await seedKnowledge('kc_snapshot', '题面快照', 'math');
+    await seedQuestion('q1', '作答时旧题面', '旧参考答案');
+    await seedQuestion('q2', '稳定题面', '稳定答案');
+    await seedFailureWithJudge({
+      id: 'a1',
+      questionId: 'q1',
+      knowledgeIds: ['kc_snapshot'],
+      createdAt: new Date('2026-07-19T10:00:00Z'),
+      persistQuestionSnapshot: true,
+    });
+    await seedFailureWithJudge({
+      id: 'a2',
+      questionId: 'q2',
+      knowledgeIds: ['kc_snapshot'],
+      createdAt: new Date('2026-07-19T09:00:00Z'),
+      persistQuestionSnapshot: true,
+    });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'edit_snapshotted_q1',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:question_edit',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'success',
+        payload: {
+          question_id: 'q1',
+          previous_version: 0,
+          next_version: 1,
+          before: { prompt_md: '作答时旧题面', reference_md: '旧参考答案' },
+          after: { prompt_md: '编辑后的新题面', reference_md: '新参考答案' },
+        },
+        created_at: new Date('2026-07-19T11:00:00Z'),
+      });
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: '编辑后的新题面',
+        reference_md: '新参考答案',
+        version: 1,
+        updated_at: new Date('2026-07-19T11:00:00Z'),
+      })
+      .where(eq(question.id, 'q1'));
+
+    const [cell] = await runPipe();
+    const snapshottedSample = cell.samples.find((sample) => sample.question_id === 'q1');
+    expect(snapshottedSample?.question_prompt_md).toContain('作答时旧题面');
+    expect(snapshottedSample?.question_reference_md).toContain('旧参考答案');
+    expect(snapshottedSample?.question_prompt_md).not.toContain('编辑后的新题面');
+    expect(cell.evidence_event_ids).toContain('a1');
   });
 
   it('omits reference rewrites that update the row without a question_edit event', async () => {

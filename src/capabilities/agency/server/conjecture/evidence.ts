@@ -20,6 +20,7 @@
 // only carries the snapshot).
 
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
+import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import type { BBoxT, FigureRefT } from '@/core/schema/structured_question';
 
 /** A conjecture must recur across at least this many distinct failure attempts. */
@@ -243,6 +244,8 @@ export interface ConjectureFailureAttempt {
   answer_md: string | null;
   answer_image_refs: string[];
   referenced_knowledge_ids: string[];
+  /** Immutable on new attempt events; absent/null for legacy and review rows. */
+  question_snapshot?: AttemptQuestionSnapshotT | null;
   created_at: Date;
   judge?: {
     cause: CauseSchemaT;

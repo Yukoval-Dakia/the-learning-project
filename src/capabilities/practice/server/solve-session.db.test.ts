@@ -246,7 +246,19 @@ describe('submitSolveAttempt', () => {
     expect(s.status).toBe('judged');
 
     const attempts = await db.select().from(event).where(eq(event.subject_id, id));
-    expect(attempts.some((e) => e.action === 'attempt')).toBe(true);
+    const attempt = attempts.find((e) => e.action === 'attempt');
+    expect(attempt).toBeTruthy();
+    expect(attempt?.payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: {
+          question_id: id,
+          prompt_md: '化简 (a^2 - b^2)/(a - b)',
+          reference_md: '完整解：a+b。',
+        },
+        parent_question: null,
+      },
+    });
   });
 
   it('YUK-352 — captures hints_used / final_hint_level onto the attempt payload when supplied', async () => {

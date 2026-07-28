@@ -153,6 +153,21 @@ describe('parseAttemptPayloadForKind (错型 reject gate)', () => {
 });
 
 describe('AttemptOnQuestion event payload back-compat (byte-identical anchor)', () => {
+  const questionSnapshot = {
+    schema_version: 1 as const,
+    question: {
+      question_id: 'q-1',
+      question_version: 3,
+      parent_question_id: null,
+      prompt_md: '旧题面',
+      reference_md: '旧答案',
+      choices_md: null,
+      image_refs: [],
+      figures: [],
+      updated_at: '2026-07-28T00:00:00.000Z',
+    },
+    parent_question: null,
+  };
   const baseEvent = {
     actor_kind: 'user' as const,
     actor_ref: 'owner',
@@ -178,6 +193,31 @@ describe('AttemptOnQuestion event payload back-compat (byte-identical anchor)', 
       payload: { ...baseEvent.payload, attempt_payload: { kind: 'choice', selected: ['A'] } },
     });
     expect(parsed.payload.attempt_payload).toEqual({ kind: 'choice', selected: ['A'] });
+  });
+
+  it('parses a new attempt event with immutable question evidence', () => {
+    const parsed = AttemptOnQuestion.parse({
+      ...baseEvent,
+      payload: { ...baseEvent.payload, question_snapshot: questionSnapshot },
+    });
+    expect(parsed.payload.question_snapshot).toEqual(questionSnapshot);
+  });
+
+  it('rejects a question snapshot whose frozen parent does not match the child', () => {
+    const result = AttemptOnQuestion.safeParse({
+      ...baseEvent,
+      payload: {
+        ...baseEvent.payload,
+        question_snapshot: {
+          ...questionSnapshot,
+          question: {
+            ...questionSnapshot.question,
+            parent_question_id: 'q-parent',
+          },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it('rejects an attempt event carrying a malformed attempt_payload', () => {

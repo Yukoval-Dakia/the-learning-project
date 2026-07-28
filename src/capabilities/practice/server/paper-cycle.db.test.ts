@@ -1607,6 +1607,13 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .limit(1);
     const payload = rows[0].payload as Record<string, unknown>;
     expect(payload.duration_ms).toBe(12_500);
+    expect(payload).toMatchObject({
+      question_snapshot: {
+        schema_version: 1,
+        question: { question_id: 'q1' },
+        parent_question: null,
+      },
+    });
   });
 
   // YUK-448 — when latencyMs is not supplied the key must be ABSENT (not null),

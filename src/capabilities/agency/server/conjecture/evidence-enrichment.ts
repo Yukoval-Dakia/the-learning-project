@@ -27,6 +27,7 @@
 
 import { batchResolveEffectiveDomains } from '@/capabilities/knowledge/public';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
+import type { QuestionEvidenceContextSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import { FigureRef } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -57,6 +58,30 @@ type QuestionContextRow = Pick<
   | 'created_at'
   | 'updated_at'
 >;
+
+type EvidenceQuestionContext = {
+  id: string;
+  prompt_md: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  parent_question_id: string | null;
+  image_refs: string[];
+  figures: unknown;
+};
+
+function evidenceContextFromSnapshot(
+  snapshot: QuestionEvidenceContextSnapshotT,
+): EvidenceQuestionContext {
+  return {
+    id: snapshot.question_id,
+    prompt_md: snapshot.prompt_md,
+    reference_md: snapshot.reference_md,
+    choices_md: snapshot.choices_md,
+    parent_question_id: snapshot.parent_question_id,
+    image_refs: snapshot.image_refs,
+    figures: snapshot.figures,
+  };
+}
 
 const QUESTION_CONTEXT_FIELDS = {
   id: question.id,
@@ -329,32 +354,46 @@ function toEvidenceSample(
   traceByAttemptId: ReadonlyMap<string, string | null>,
   editsByQuestionId: ReadonlyMap<string, Date[]>,
 ): ConjectureEvidenceSample | null {
-  const q = questionById.get(failure.question_id);
-  if (!q) return null;
-  const parent = q.parent_question_id ? questionById.get(q.parent_question_id) : undefined;
-  // A question_part without its shared stem is not interpretable evidence. Fail closed like a
-  // missing child row so a later reproducible attempt can refill the candidate.
-  if (q.parent_question_id !== null && parent === undefined) return null;
-  const wasEditedAtOrAfterAttempt = (questionId: string | null | undefined): boolean =>
-    questionId !== null &&
-    questionId !== undefined &&
-    (editsByQuestionId.get(questionId) ?? []).some(
-      (editedAt) => editedAt.getTime() >= failure.created_at.getTime(),
-    );
-  const wasMutatedAtOrAfterAttempt = (row: QuestionContextRow | undefined): boolean =>
-    row !== undefined &&
-    row.updated_at.getTime() > row.created_at.getTime() &&
-    row.updated_at.getTime() >= failure.created_at.getTime();
-  // Never pair a historical answer with a mutable question row the learner did
-  // not see. Until YUK-804 persists the full question snapshot on every attempt
-  // path, omit samples whose child or shared parent changed at/after submission.
-  if (
-    wasEditedAtOrAfterAttempt(q.id) ||
-    wasEditedAtOrAfterAttempt(q.parent_question_id) ||
-    wasMutatedAtOrAfterAttempt(q) ||
-    wasMutatedAtOrAfterAttempt(parent)
-  ) {
-    return null;
+  let q: EvidenceQuestionContext;
+  let parent: EvidenceQuestionContext | undefined;
+  if (failure.question_snapshot) {
+    // New attempts are self-contained evidence. Never consult the mutable
+    // question table for their prompt/reference, even if the row was edited or
+    // deleted after submission.
+    q = evidenceContextFromSnapshot(failure.question_snapshot.question);
+    parent = failure.question_snapshot.parent_question
+      ? evidenceContextFromSnapshot(failure.question_snapshot.parent_question)
+      : undefined;
+  } else {
+    // Legacy degradation: use the current row only when it is demonstrably
+    // unchanged since the attempt. Missing/mutated context is omitted rather
+    // than pairing an old answer with a new prompt.
+    const liveQuestion = questionById.get(failure.question_id);
+    if (!liveQuestion) return null;
+    const liveParent = liveQuestion.parent_question_id
+      ? questionById.get(liveQuestion.parent_question_id)
+      : undefined;
+    if (liveQuestion.parent_question_id !== null && liveParent === undefined) return null;
+    const wasEditedAtOrAfterAttempt = (questionId: string | null | undefined): boolean =>
+      questionId !== null &&
+      questionId !== undefined &&
+      (editsByQuestionId.get(questionId) ?? []).some(
+        (editedAt) => editedAt.getTime() >= failure.created_at.getTime(),
+      );
+    const wasMutatedAtOrAfterAttempt = (row: QuestionContextRow | undefined): boolean =>
+      row !== undefined &&
+      row.updated_at.getTime() > row.created_at.getTime() &&
+      row.updated_at.getTime() >= failure.created_at.getTime();
+    if (
+      wasEditedAtOrAfterAttempt(liveQuestion.id) ||
+      wasEditedAtOrAfterAttempt(liveQuestion.parent_question_id) ||
+      wasMutatedAtOrAfterAttempt(liveQuestion) ||
+      wasMutatedAtOrAfterAttempt(liveParent)
+    ) {
+      return null;
+    }
+    q = liveQuestion;
+    parent = liveParent;
   }
   const cause = effectiveCauseForConjectureFailure(failure);
   // Owner notes and upstream judge analysis occupy the same slot — the effective

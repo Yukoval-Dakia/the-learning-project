@@ -6,6 +6,7 @@
 
 import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
+import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import { event, material_fsrs_state } from '@/db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -27,6 +28,7 @@ async function seedAttemptEvent(opts: {
   answer_md?: string;
   answer_image_refs?: string[];
   referenced_knowledge_ids?: string[];
+  question_snapshot?: AttemptQuestionSnapshotT;
   created_at?: Date;
 }): Promise<string> {
   const db = testDb();
@@ -44,6 +46,7 @@ async function seedAttemptEvent(opts: {
       answer_md: opts.answer_md ?? 'wrong',
       answer_image_refs: opts.answer_image_refs ?? [],
       referenced_knowledge_ids: opts.referenced_knowledge_ids ?? [],
+      ...(opts.question_snapshot ? { question_snapshot: opts.question_snapshot } : {}),
     },
     caused_by_event_id: null,
     task_run_id: null,
@@ -198,6 +201,38 @@ describe('getFailureAttempts', () => {
     expect(results[1].judge?.cause.analysis_md).toBe('concept confusion');
     expect(results[1].answer_md).toBe('wrong answer 1');
     expect(results[1].referenced_knowledge_ids).toEqual(['k1', 'k2']);
+  });
+
+  it('projects only an immutable snapshot that belongs to the attempted question', async () => {
+    const snapshot: AttemptQuestionSnapshotT = {
+      schema_version: 1,
+      question: {
+        question_id: 'q1',
+        question_version: 2,
+        parent_question_id: null,
+        prompt_md: '作答时题面',
+        reference_md: '作答时答案',
+        choices_md: null,
+        image_refs: [],
+        figures: [],
+        updated_at: '2026-07-28T00:00:00.000Z',
+      },
+      parent_question: null,
+    };
+    await seedAttemptEvent({ question_id: 'q1', question_snapshot: snapshot });
+    await seedAttemptEvent({
+      question_id: 'q2',
+      question_snapshot: {
+        ...snapshot,
+        question: { ...snapshot.question, question_id: 'different-question' },
+      },
+    });
+
+    const results = await getFailureAttempts(testDb());
+    expect(results.find((result) => result.question_id === 'q1')?.question_snapshot).toEqual(
+      snapshot,
+    );
+    expect(results.find((result) => result.question_id === 'q2')?.question_snapshot).toBeNull();
   });
 
   it('filters by questionIds when provided', async () => {
