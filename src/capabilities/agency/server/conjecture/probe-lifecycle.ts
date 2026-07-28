@@ -260,7 +260,9 @@ async function loadFollowupProbeSpec(
     console.warn(
       '[probe-lifecycle] conjecture proposal payload is missing or invalid',
       conjectureEventId,
-      parsedProposal.success ? [] : parsedProposal.error.issues,
+      parsedProposal.success
+        ? `unexpected proposal kind: ${parsedProposal.data.kind}`
+        : parsedProposal.error.issues,
     );
     return { status: 'invalid' };
   }

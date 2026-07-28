@@ -512,6 +512,8 @@ export const ConjectureProposalChange = z
     // both fields; a well-formed old proposal keeps its terminal v1 answer rule
     // instead of inventing a follow-up or stranding an active probe.
     followup_probe_md: z.string().trim().min(1).max(2000).optional(),
+    // Like probe_reference_md above, this draft-fed cap MUST remain identical to
+    // ConjectureProposalDraft.followup_probe_reference_md in business.ts.
     followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
     discriminating: z.boolean(),
     corrected_by_owner: z.boolean().default(false),
