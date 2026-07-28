@@ -271,6 +271,52 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     });
   });
 
+  it.each([
+    ['predicted probability', { predicted_p: 0.9, baseline_p: 0.8 }],
+    ['baseline probability', { predicted_p: 0.2, baseline_p: 0.1 }],
+  ] as const)(
+    'rejects a score anchor whose %s drifts from the proposal',
+    async (label, probabilities) => {
+      const target = cell(`concept::kc_probability_${label.replace(' ', '_')}`, 2);
+      const conjectureId = `conjecture_probability_${label.replace(' ', '_')}`;
+      const questionId = `question_probability_${label.replace(' ', '_')}`;
+      const resultId = `result_probability_${label.replace(' ', '_')}`;
+      await writeConjecture(conjectureId, target, 1);
+      await writeProbeQuestion(questionId, conjectureId, target.knowledge_id, 1, 1);
+      await writeProbeResult(resultId, conjectureId, questionId, 1, 'evidence_for', 0);
+
+      await testDb()
+        .insert(event)
+        .values({
+          id: `score_probability_${label.replace(' ', '_')}`,
+          actor_kind: 'system',
+          actor_ref: 'research_meeting',
+          action: 'experimental:prediction_score',
+          subject_kind: 'event',
+          subject_id: resultId,
+          payload: {
+            conjecture_event_id: conjectureId,
+            probe_result_event_id: resultId,
+            probe_question_id: questionId,
+            knowledge_id: target.knowledge_id,
+            ...probabilities,
+            outcome: 0,
+            resolution: 'evidence_for',
+            discriminating: true,
+            context: 'symbolic',
+          },
+          created_at: new Date('2026-07-28T11:01:00.000Z'),
+        });
+
+      const profiles = await loadPredictionAccountabilityByKey(testDb(), [target]);
+      expect(profiles.get(target.key)).toMatchObject({
+        state: 'watch',
+        consecutive_count: 0,
+        score_event_ids: [],
+      });
+    },
+  );
+
   it('turns repeated prediction misses into an observable candidate downweight', async () => {
     const target = cell('concept::kc_high', 4);
     const neutral = cell('method::kc_neutral', 2);

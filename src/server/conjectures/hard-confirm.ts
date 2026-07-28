@@ -387,6 +387,8 @@ function predictionScoreToRecord(
 interface ConjectureIdentity {
   cause_category: string;
   knowledge_id: string;
+  predictedP: number;
+  baselinePAtInduction: number;
 }
 
 export interface ConjectureIdentityTarget {
@@ -435,15 +437,10 @@ function boundedChunks<T>(values: readonly T[]): T[][] {
 }
 
 /**
- * Recover the misconception IDENTITY (cause_category × knowledge_id) for each backing conjecture
- * (read-only JOIN, ZERO writes). A `prediction_score` payload carries `conjecture_event_id`
- * (reconcile.ts) plus its OWN `knowledge_id`, but that copy is NOT the identity source of truth;
- * the authoritative identity lives in the conjecture proposal's
- * `ai_proposal.proposed_change.{cause_category,knowledge_id}` (research_meeting_nightly.ts).
- * Batch-load the referenced proposals by id and map conjecture_event_id → identity. Fail-closed: a
- * missing / non-conjecture / malformed proposal (EITHER axis absent) yields NO entry, so its scores
- * are UN-attributable and drop out of every gather — a score we cannot attribute to a specific
- * (cause×KC) misconception must never pool into one.
+ * Recover the misconception identity and immutable scoring facts for each backing
+ * conjecture (read-only JOIN, ZERO writes). The proposal is authoritative for
+ * cause, KC, predicted_p, and baseline_p_at_induction; copies on a score anchor
+ * are only accepted after exact cross-validation.
  */
 async function loadIdentityByConjectureId(
   db: Db,
@@ -468,11 +465,8 @@ async function loadIdentityByConjectureId(
 }
 
 /**
- * Read the (cause_category, knowledge_id) IDENTITY off a conjecture proposal
- * (`ai_proposal.proposed_change`), fail-closed. BOTH axes must be present non-empty strings, else
- * null (⇒ the score is un-attributable and drops out of every gather). The knowledge_id read here
- * is the identity SOURCE OF TRUTH — the score payload's own knowledge_id is cross-checked against
- * it, never trusted alone (Finding-3 fix).
+ * Read identity and immutable scoring facts off a conjecture proposal,
+ * fail-closed. Score payload copies are never trusted alone.
  */
 function extractConjectureIdentity(
   payload: Record<string, unknown> | null,
@@ -484,12 +478,37 @@ function extractConjectureIdentity(
   const change = aiProposal.proposed_change as {
     cause_category?: unknown;
     knowledge_id?: unknown;
+    predicted_p?: unknown;
+    baseline_p_at_induction?: unknown;
   } | null;
   const cause = change?.cause_category;
   const kc = change?.knowledge_id;
+  const predictedP = change?.predicted_p;
+  const baselinePAtInduction = change?.baseline_p_at_induction;
   if (typeof cause !== 'string' || cause.length === 0) return null;
   if (typeof kc !== 'string' || kc.length === 0) return null;
-  return { cause_category: cause, knowledge_id: kc };
+  if (
+    typeof predictedP !== 'number' ||
+    !Number.isFinite(predictedP) ||
+    predictedP < 0 ||
+    predictedP > 1
+  ) {
+    return null;
+  }
+  if (
+    typeof baselinePAtInduction !== 'number' ||
+    !Number.isFinite(baselinePAtInduction) ||
+    baselinePAtInduction < 0 ||
+    baselinePAtInduction > 1
+  ) {
+    return null;
+  }
+  return {
+    cause_category: cause,
+    knowledge_id: kc,
+    predictedP,
+    baselinePAtInduction,
+  };
 }
 
 /**
@@ -561,6 +580,10 @@ export async function gatherDissociationRecordsByIdentity(
         .orderBy(event.created_at, event.id),
     ),
   );
+  // Current production is an n=1 owner history, so keeping the bounded-query
+  // batches in one chronologically sorted fold is intentional. If this reader
+  // expands to multi-owner cohorts, replace this whole-history accumulator with
+  // per-owner cursors; truncating here would silently change streak semantics.
   const rows: Array<{ id: string; action: string; payload: unknown; created_at: Date }> =
     scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
@@ -704,7 +727,9 @@ export async function gatherDissociationRecordsByIdentity(
     if (
       identity === null ||
       typeof payloadKnowledgeId !== 'string' ||
-      payloadKnowledgeId !== identity.knowledge_id
+      payloadKnowledgeId !== identity.knowledge_id ||
+      payload?.predicted_p !== identity.predictedP ||
+      payload?.baseline_p !== identity.baselinePAtInduction
     ) {
       continue;
     }

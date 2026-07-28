@@ -175,8 +175,8 @@ describe('gatherDissociationEvidence', () => {
       {
         knowledge_id: 'kn_chain_rule',
         conjecture_event_id: 'cj_chain',
-        predicted_p: 0.25,
-        baseline_p: 0.75,
+        predicted_p: 0.2,
+        baseline_p: 0.8,
         outcome: 0,
         resolution: 'confirmed',
         probe_result_event_id: 'pr_2',
@@ -377,8 +377,8 @@ describe('gatherDissociationEvidence', () => {
       {
         knowledge_id: 'kn_a',
         conjecture_event_id: 'cj_b',
-        predicted_p: 0.25,
-        baseline_p: 0.75,
+        predicted_p: 0.2,
+        baseline_p: 0.8,
         outcome: 0,
         resolution: 'confirmed',
         probe_result_event_id: 'pr_mis',
