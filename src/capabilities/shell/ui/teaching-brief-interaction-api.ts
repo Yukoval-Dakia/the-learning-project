@@ -3,8 +3,9 @@
 // These two signals feed the two-week survival report. They are NON-BLOCKING telemetry:
 // the brief was already shown / the action already started, so a failed POST must never
 // disrupt the learner flow. Errors are swallowed, and the server is idempotent per
-// brief × local day (seen) / brief × action_kind × local day (action), so a retry-on-render
-// or a double-click cannot inflate the ledger. Nothing here renders to the learner — no
+// brief × local day (seen) / action identity × local day; answer identity includes the probe
+// question so its recurrence is distinct. A retry-on-render or double-click cannot inflate
+// the ledger. Nothing here renders to the learner — no
 // count, streak, unread, or success-rate is ever surfaced (contract §8.1 / acceptance 4).
 //
 // Deliberately uses a BARE fetch, not apiFetch: apiFetch invalidates the internal token on a
@@ -29,7 +30,14 @@ export type TeachingBriefInteractionBody =
   | {
       type: 'primary_action_started';
       brief_id: string;
-      action_kind: Exclude<PrimaryActionKind, 'scoped_practice'>;
+      action_kind: Exclude<PrimaryActionKind, 'scoped_practice' | 'answer_probe'>;
+      probe_question_id?: never;
+    }
+  | {
+      type: 'primary_action_started';
+      brief_id: string;
+      action_kind: 'answer_probe';
+      probe_question_id: string;
     };
 
 /**

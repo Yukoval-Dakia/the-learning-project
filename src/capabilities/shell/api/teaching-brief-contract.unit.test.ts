@@ -239,13 +239,21 @@ describe('TeachingBriefInteractionBodySchema', () => {
     ).toBe(true);
   });
 
-  it('accepts scoped_practice WITH a result_event_id, and accept/answer WITHOUT one', () => {
+  it('accepts scoped_practice/result, answer/probe, and identity-free accept', () => {
     expect(
       TeachingBriefInteractionBodySchema.safeParse({
         type: 'primary_action_started',
         brief_id: 'p_contract',
         action_kind: 'scoped_practice',
         result_event_id: 'evt_result',
+      }).success,
+    ).toBe(true);
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'answer_probe',
+        probe_question_id: 'q_probe_1',
       }).success,
     ).toBe(true);
     expect(
@@ -280,6 +288,24 @@ describe('TeachingBriefInteractionBodySchema', () => {
         }).success,
       ).toBe(false);
     }
+  });
+
+  it('requires probe_question_id only on answer_probe', () => {
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'answer_probe',
+      }).success,
+    ).toBe(false);
+    expect(
+      TeachingBriefInteractionBodySchema.safeParse({
+        type: 'primary_action_started',
+        brief_id: 'p_contract',
+        action_kind: 'accept_probe',
+        probe_question_id: 'q_probe_1',
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects an unknown action_kind, empty brief_id, and extra keys', () => {

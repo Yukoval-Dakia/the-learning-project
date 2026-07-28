@@ -60,7 +60,10 @@ function findingBrief(): FindingTeachingBrief {
   };
 }
 
-function probeReadyBrief(briefId = 'evt_conj_01'): ProbeReadyTeachingBrief {
+function probeReadyBrief(
+  briefId = 'evt_conj_01',
+  probeQuestionId = 'q_probe_01',
+): ProbeReadyTeachingBrief {
   return {
     brief_id: briefId,
     state: 'probe_ready',
@@ -75,12 +78,12 @@ function probeReadyBrief(briefId = 'evt_conj_01'): ProbeReadyTeachingBrief {
       summary_md: '这个模式在最近几次相关作答中重复出现。',
       evidence_trace: [
         { role: 'induction', kind: 'event', id: 'evt_attempt_a' },
-        { role: 'probe', kind: 'question', id: 'q_probe_01' },
+        { role: 'probe', kind: 'question', id: probeQuestionId },
       ],
     },
     prepared_action: {
       kind: 'answer_probe',
-      probe_question_id: 'q_probe_01',
+      probe_question_id: probeQuestionId,
       prompt_md: PROBE_TEXT,
     },
     current_outcome: {
@@ -360,6 +363,44 @@ describe('TeachingBriefBand — probe_ready reveal (jsdom)', () => {
     expect(cta.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getAllByRole('button', { name: '提交作答' })).toHaveLength(1);
     expect(screen.getByPlaceholderText(/写下你的解答/)).toBeTruthy();
+  });
+
+  it('collapses a recurrence probe and records a distinct start per question', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ brief: null }));
+    vi.stubGlobal('fetch', fetchMock);
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: probeReadyBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    const firstCta = await screen.findByRole('button', { name: '现在就试做这道题' });
+    await user.click(firstCta);
+    expect(firstCta.getAttribute('aria-expanded')).toBe('true');
+
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    });
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], {
+        brief: probeReadyBrief('evt_conj_01', 'q_probe_02'),
+      });
+    });
+
+    const secondCta = screen.getByRole('button', { name: '现在就试做这道题' });
+    await waitFor(() => expect(secondCta.getAttribute('aria-expanded')).toBe('false'));
+    expect(screen.queryByPlaceholderText(/写下你的解答/)).toBeNull();
+    await user.click(secondCta);
+
+    const answerStarts = fetchMock.mock.calls
+      .filter((call) => String(call[0]).includes('/api/prep-desk/brief/interaction'))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
+      .filter(
+        (body) => body.type === 'primary_action_started' && body.action_kind === 'answer_probe',
+      );
+    expect(answerStarts).toEqual([
+      expect.objectContaining({ probe_question_id: 'q_probe_01' }),
+      expect.objectContaining({ probe_question_id: 'q_probe_02' }),
+    ]);
   });
 });
 

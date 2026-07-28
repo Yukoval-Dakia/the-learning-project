@@ -4,7 +4,8 @@
 // funnel signal. The heavy lifting (deterministic idempotency, append, mem0 opt-out) lives in
 // the writer (server/teaching-brief-interactions.ts). REST status mirrors the ack route: a fresh
 // append → 201 Created (+ Location); an idempotent repeat (same brief × local day, or
-// brief × action_kind × local day) → 200 OK. An unparseable / malformed body → 400. This is a
+// action identity × local day; answer identity includes probe_question_id) → 200 OK.
+// An unparseable / malformed body → 400. This is a
 // pure observational write — it never fails on the underlying brief's current state (telemetry
 // must not disappear because the brief just advanced), so it does NOT re-derive the read model.
 
@@ -41,6 +42,7 @@ export async function POST(req: Request): Promise<Response> {
             briefId: body.brief_id,
             actionKind: body.action_kind,
             resultEventId: body.result_event_id,
+            probeQuestionId: body.probe_question_id,
           });
 
     // 201 when this call created the row, 200 when a prior identical interaction already

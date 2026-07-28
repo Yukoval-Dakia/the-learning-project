@@ -536,6 +536,24 @@
     ]
   },
   {
+    "path": "/api/prep-desk/brief/interaction",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "教研简报交互事实：记录 brief_seen 或 primary_action_started（YUK-710/YUK-787）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "type": "primary_action_started",
+          "brief_id": "REPLACE_BRIEF_ID",
+          "action_kind": "answer_probe",
+          "probe_question_id": "REPLACE_PROBE_QUESTION_ID"
+        },
+        "notes": "append-only、非阻塞 telemetry。brief_seen 需 brief_state；accept_probe 不带实例 id；answer_probe 必须带 probe_question_id，使同一 brief 的首次与独立复验分别幂等计数；scoped_practice 必须带 result_event_id。新写入返回 201，重复 idempotency key 返回 200；不写 FSRS/mastery，需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/prep-desk/conjectures",
     "methods": [
       {

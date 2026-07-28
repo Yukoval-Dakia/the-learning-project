@@ -15,8 +15,9 @@
 //
 // Idempotency (contract-style, mirrors the ack writer's "one effective row" guarantee but
 // without an advisory lock): each event's row id is DETERMINISTIC in its idempotency key —
-// `brief_id × learner-local day` for a seen, `brief_id × action_kind × learner-local day` for
-// an action start. writeEvent's `onConflictDoNothing({ target: event.id })` then makes a
+// `brief_id × learner-local day` for a seen; action starts use `brief_id × action_kind ×
+// learner-local day`, plus probe_question_id for answer_probe (one brief can carry two probes).
+// writeEvent's `onConflictDoNothing({ target: event.id })` then makes a
 // re-render / React Query refetch / reload / dev strict-mode double-invoke a hard no-op at the
 // PK, so the ledger can never inflate. The PK conflict IS the serialization, so unlike the ack
 // (whose idempotency key ≠ its event id and which needs a deliverability re-check under lock)
@@ -72,6 +73,8 @@ export interface PrimaryActionStartedPayload {
   started_at: string;
   /** Present only for scoped_practice (the confirmed outcome's probe_result event id). */
   result_event_id?: string;
+  /** Present only for answer_probe; distinguishes initial and recurrence starts. */
+  probe_question_id?: string;
 }
 
 // `|` never appears in a cuid2 / `evt_*` event id, the fixed PrimaryActionKind enum, or a
@@ -84,7 +87,11 @@ function primaryActionEventId(
   briefId: string,
   actionKind: PrimaryActionKind,
   localDay: string,
+  probeQuestionId?: string,
 ): string {
+  if (actionKind === 'answer_probe') {
+    return `bact|${briefId}|${actionKind}|${probeQuestionId}|${localDay}`;
+  }
   return `bact|${briefId}|${actionKind}|${localDay}`;
 }
 
@@ -159,13 +166,19 @@ export async function recordBriefSeen(
 
 /**
  * Record that the learner started a brief's prepared action. Idempotent per
- * brief_id × action_kind × learner-local day (so a double-click never inflates the funnel).
+ * brief_id × action_kind × learner-local day (so a double-click never inflates the funnel);
+ * answer_probe additionally keys on probe_question_id so the independent recurrence is counted.
  * `resultEventId` is present only for scoped_practice (the confirmed outcome's probe_result), so
  * the report can join a confirmed outcome to its practice start. NO answer text is ever recorded.
  */
 export async function recordPrimaryActionStarted(
   db: Db,
-  input: { briefId: string; actionKind: PrimaryActionKind; resultEventId?: string },
+  input: {
+    briefId: string;
+    actionKind: PrimaryActionKind;
+    resultEventId?: string;
+    probeQuestionId?: string;
+  },
   now: Date = new Date(),
 ): Promise<RecordInteractionResult> {
   // Server-layer self-defense (double layer with the route's Zod refine): result_event_id is
@@ -182,15 +195,24 @@ export async function recordPrimaryActionStarted(
       'recordPrimaryActionStarted: resultEventId is only allowed for the scoped_practice action',
     );
   }
+  if (input.actionKind === 'answer_probe' && !input.probeQuestionId) {
+    throw new Error('recordPrimaryActionStarted: answer_probe requires probeQuestionId');
+  }
+  if (input.actionKind !== 'answer_probe' && input.probeQuestionId) {
+    throw new Error(
+      'recordPrimaryActionStarted: probeQuestionId is only allowed for the answer_probe action',
+    );
+  }
   const localDay = learnerLocalDay(now);
   const payload: PrimaryActionStartedPayload = {
     action_kind: input.actionKind,
     local_day: localDay,
     started_at: now.toISOString(),
     ...(input.resultEventId ? { result_event_id: input.resultEventId } : {}),
+    ...(input.probeQuestionId ? { probe_question_id: input.probeQuestionId } : {}),
   };
   return appendInteraction(db, {
-    id: primaryActionEventId(input.briefId, input.actionKind, localDay),
+    id: primaryActionEventId(input.briefId, input.actionKind, localDay, input.probeQuestionId),
     action: PRIMARY_ACTION_STARTED_ACTION,
     briefId: input.briefId,
     localDay,

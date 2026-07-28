@@ -99,7 +99,7 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     expect(await rows(BRIEF_SEEN_ACTION, 'b1')).toHaveLength(1);
   });
 
-  it('primary_action_started is idempotent per brief × kind × day, but distinct kinds coexist', async () => {
+  it('primary_action_started is idempotent per action identity and counts both recurrence probes', async () => {
     const accept = await recordPrimaryActionStarted(
       testDb(),
       { briefId: 'b1', actionKind: 'accept_probe' },
@@ -118,12 +118,33 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
     // A different kind on the SAME brief + day is a distinct funnel step → its own row.
     const answer = await recordPrimaryActionStarted(
       testDb(),
-      { briefId: 'b1', actionKind: 'answer_probe' },
+      { briefId: 'b1', actionKind: 'answer_probe', probeQuestionId: 'q1' },
       DAY1,
     );
     expect(answer.idempotent).toBe(false);
 
-    expect(await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1')).toHaveLength(2);
+    const answerAgain = await recordPrimaryActionStarted(
+      testDb(),
+      { briefId: 'b1', actionKind: 'answer_probe', probeQuestionId: 'q1' },
+      DAY1,
+    );
+    expect(answerAgain.idempotent).toBe(true);
+
+    const recurrence = await recordPrimaryActionStarted(
+      testDb(),
+      { briefId: 'b1', actionKind: 'answer_probe', probeQuestionId: 'q2' },
+      DAY1,
+    );
+    expect(recurrence.idempotent).toBe(false);
+
+    const actionRows = await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1');
+    expect(actionRows).toHaveLength(3);
+    expect(actionRows.map((row) => row.payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action_kind: 'answer_probe', probe_question_id: 'q1' }),
+        expect.objectContaining({ action_kind: 'answer_probe', probe_question_id: 'q2' }),
+      ]),
+    );
   });
 
   it('primary_action_started records scoped_practice with its result_event_id join key', async () => {
@@ -166,6 +187,16 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
         DAY1,
       ),
     ).rejects.toThrow(/scoped_practice requires resultEventId/);
+    await expect(
+      recordPrimaryActionStarted(testDb(), { briefId: 'b1', actionKind: 'answer_probe' }, DAY1),
+    ).rejects.toThrow(/answer_probe requires probeQuestionId/);
+    await expect(
+      recordPrimaryActionStarted(
+        testDb(),
+        { briefId: 'b1', actionKind: 'accept_probe', probeQuestionId: 'q1' },
+        DAY1,
+      ),
+    ).rejects.toThrow(/only allowed for the answer_probe/);
     expect(await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1')).toHaveLength(0);
   });
 

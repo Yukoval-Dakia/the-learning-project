@@ -1466,6 +1466,34 @@
             "description": "备课台读模型：top ≤3 pending conjecture（教研团 Phase 0 / U4，YUK-406/YUK-440）\n\n**Notes:** 返回 { conjectures: [{ id, claim, knowledge_id, cause_category, probe_md, recurrence_count, discriminating, corrected_by_owner, evidence:[{kind,id}], proposed_at }] }。salience（confidence × recurrence_count）DESC 排序后 cap 3。confidence、predicted_p、baseline_p_at_induction 永不过线（本地校准值，anti-false-precision）。probe_md = 未跑的判别探针文本（团队「即将问」的题，非 flashcard）。需 x-internal-token"
           },
           "response": []
+        },
+        {
+          "name": "POST /api/prep-desk/brief/interaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/prep-desk/brief/interaction",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "prep-desk", "brief", "interaction"]
+            },
+            "description": "教研简报交互事实：记录 brief_seen 或 primary_action_started（YUK-710/YUK-787）\n\n**Notes:** append-only、非阻塞 telemetry。brief_seen 需 brief_state；accept_probe 不带实例 id；answer_probe 必须带 probe_question_id，使同一 brief 的首次与独立复验分别幂等计数；scoped_practice 必须带 result_event_id。新写入返回 201，重复 idempotency key 返回 200；不写 FSRS/mastery，需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"primary_action_started\",\n  \"brief_id\": \"REPLACE_BRIEF_ID\",\n  \"action_kind\": \"answer_probe\",\n  \"probe_question_id\": \"REPLACE_PROBE_QUESTION_ID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         }
       ]
     },

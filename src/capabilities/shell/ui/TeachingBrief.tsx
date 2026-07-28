@@ -112,6 +112,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     brief_id: string;
     rank: number;
     state: TeachingBrief['state'];
+    probe_question_id: string | null;
   } | null>(null);
   const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -136,6 +137,16 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
 
   useEffect(() => {
     const prev = prevRef.current;
+    const currentProbeQuestionId =
+      brief?.prepared_action.kind === 'answer_probe'
+        ? brief.prepared_action.probe_question_id
+        : null;
+    const recurrenceReady =
+      prev?.state === 'outcome_evidence_for' && brief?.state === 'probe_ready';
+    const preparedProbeChanged =
+      currentProbeQuestionId !== null &&
+      prev?.probe_question_id !== null &&
+      prev?.probe_question_id !== currentProbeQuestionId;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
@@ -150,6 +161,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       setAckFailed(false);
       setDeciding(false);
       setAcking(false);
+    } else if (recurrenceReady || preparedProbeChanged) {
+      // A recurrence probe deliberately reuses the conjecture's brief_id. It is still a
+      // different task: collapse the old answer form so the new probe gets its own reveal
+      // action and starts from a calm, unexpanded state.
+      setRevealed(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -164,9 +180,13 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
     const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
     const rankedForward = prev !== null && rank > prev.rank;
-    const recurrenceReady = prev?.state === 'outcome_evidence_for' && brief.state === 'probe_ready';
     const forward = sameBrief && (rankedForward || recurrenceReady);
-    prevRef.current = { brief_id: brief.brief_id, rank, state: brief.state };
+    prevRef.current = {
+      brief_id: brief.brief_id,
+      rank,
+      state: brief.state,
+      probe_question_id: currentProbeQuestionId,
+    };
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
     (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();
@@ -430,6 +450,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                       type: 'primary_action_started',
                       brief_id: brief.brief_id,
                       action_kind: 'answer_probe',
+                      probe_question_id: brief.prepared_action.probe_question_id,
                     });
                   }
                   setRevealed(true);

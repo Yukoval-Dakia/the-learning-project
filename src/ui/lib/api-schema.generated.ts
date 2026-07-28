@@ -20657,6 +20657,7 @@ export interface operations {
               /** @enum {string} */
               action_kind: 'accept_probe' | 'answer_probe' | 'scoped_practice';
               brief_id: string;
+              probe_question_id?: string;
               result_event_id?: string;
               /** @enum {string} */
               type: 'primary_action_started';

@@ -472,7 +472,8 @@ export const TeachingBriefAckResponseSchema = z
 // union on `type`: a `brief_seen` (opened a delivered brief, idempotent per brief × local day)
 // or a `primary_action_started` (started the prepared action). `brief_id` is the stable brief
 // id (= the conjecture proposal event id). No answer / claim text is ever accepted — only the
-// action kind and the optional confirmed-outcome `result_event_id` (scoped_practice join key).
+// action kind and its scoped identity: result_event_id for practice or probe_question_id for
+// an answer start. No answer content is accepted.
 export const TeachingBriefInteractionBodySchema = z
   .discriminatedUnion('type', [
     z
@@ -490,6 +491,9 @@ export const TeachingBriefInteractionBodySchema = z
         // Present only for scoped_practice (the confirmed outcome's probe_result event id) — the
         // "only scoped_practice may carry it" invariant is enforced by the superRefine below.
         result_event_id: z.string().min(1).optional(),
+        // Present only for answer_probe. It distinguishes the initial and recurrence probe
+        // starts while brief_id remains the same conjecture id.
+        probe_question_id: z.string().min(1).optional(),
       })
       .strict(),
   ])
@@ -500,7 +504,7 @@ export const TeachingBriefInteractionBodySchema = z
   //     it, and the deterministic event id means a first row written without it could never be
   //     back-filled (onConflictDoNothing swallows a later retry), so a missing id must fail loudly at
   //     the boundary rather than silently drop the outcome from the count.
-  //   - any other action WITH it → reject (accept_probe / answer_probe have no probe_result yet).
+  // answer_probe similarly requires its question id; accept_probe carries neither identity.
   .superRefine((body, ctx) => {
     if (body.type !== 'primary_action_started') return;
     if (body.action_kind === 'scoped_practice') {
@@ -511,12 +515,43 @@ export const TeachingBriefInteractionBodySchema = z
           path: ['result_event_id'],
         });
       }
-    } else if (body.result_event_id !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'result_event_id is only allowed for the scoped_practice action',
-        path: ['result_event_id'],
-      });
+      if (body.probe_question_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'probe_question_id is only allowed for the answer_probe action',
+          path: ['probe_question_id'],
+        });
+      }
+    } else if (body.action_kind === 'answer_probe') {
+      if (body.probe_question_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'answer_probe requires probe_question_id',
+          path: ['probe_question_id'],
+        });
+      }
+      if (body.result_event_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'result_event_id is only allowed for the scoped_practice action',
+          path: ['result_event_id'],
+        });
+      }
+    } else {
+      if (body.result_event_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'result_event_id is only allowed for the scoped_practice action',
+          path: ['result_event_id'],
+        });
+      }
+      if (body.probe_question_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'probe_question_id is only allowed for the answer_probe action',
+          path: ['probe_question_id'],
+        });
+      }
     }
   });
 
