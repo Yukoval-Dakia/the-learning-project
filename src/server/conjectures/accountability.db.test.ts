@@ -55,6 +55,7 @@ async function writeScore(
     resolution?: 'evidence_for' | 'confirmed' | 'retired';
     mDiagnostic?: boolean;
     context?: string;
+    anchorCreatedAt?: Date;
   } = {},
 ): Promise<void> {
   const probeResultId = `result_${id}`;
@@ -82,7 +83,9 @@ async function writeScore(
         ...(options.mDiagnostic === undefined ? {} : { m_diagnostic: options.mDiagnostic }),
         context: options.context ?? `question_${id}`,
       },
-      created_at: new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:00.000Z`),
+      created_at:
+        options.anchorCreatedAt ??
+        new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:00.000Z`),
     });
 }
 
@@ -170,6 +173,35 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
       consecutive_count: 2,
       rank_multiplier: 1.15,
       hard_confirm_verdict: 'INSUFFICIENT',
+    });
+  });
+
+  it('orders legacy same-batch score anchors by their backing probe-result timestamps', async () => {
+    const target = cell('concept::kc_legacy_chronology', 2);
+    const legacyBatchTime = new Date('2026-07-28T23:00:00.000Z');
+    await writeConjecture('conjecture_legacy_1', target, 1);
+    await writeConjecture('conjecture_legacy_2', target, 2);
+    await writeConjecture('conjecture_legacy_3', target, 3);
+    // Event ids sort hit/hit/miss, but source time is miss/hit/hit. Pre-YUK-795
+    // anchors shared one nightly created_at, so the reader must recover chronology
+    // from the immutable backing probe results rather than opaque score ids.
+    await writeScore('z_miss_oldest', 'conjecture_legacy_1', target, 1, 1, {
+      anchorCreatedAt: legacyBatchTime,
+    });
+    await writeScore('a_hit_middle', 'conjecture_legacy_2', target, 0, 2, {
+      anchorCreatedAt: legacyBatchTime,
+    });
+    await writeScore('b_hit_latest', 'conjecture_legacy_3', target, 0, 3, {
+      anchorCreatedAt: legacyBatchTime,
+    });
+
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [target]);
+
+    expect(profiles.get(target.key)).toMatchObject({
+      state: 'supported',
+      latest_direction: 'hit',
+      consecutive_count: 2,
+      rank_multiplier: 1.15,
     });
   });
 

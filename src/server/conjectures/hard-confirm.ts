@@ -389,6 +389,18 @@ function conjectureIdentityKey(causeCategory: string, knowledgeId: string): stri
   return `${causeCategory}\u0000${knowledgeId}`;
 }
 
+function boundedChunks<T>(values: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  for (
+    let offset = 0;
+    offset < values.length;
+    offset += MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY
+  ) {
+    chunks.push(values.slice(offset, offset + MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY));
+  }
+  return chunks;
+}
+
 /**
  * Recover the misconception IDENTITY (cause_category × knowledge_id) for each backing conjecture
  * (read-only JOIN, ZERO writes). A `prediction_score` payload carries `conjecture_event_id`
@@ -406,10 +418,15 @@ async function loadIdentityByConjectureId(
 ): Promise<Map<string, ConjectureIdentity>> {
   const out = new Map<string, ConjectureIdentity>();
   if (conjectureEventIds.size === 0) return out;
-  const rows = await db
-    .select({ id: event.id, payload: event.payload })
-    .from(event)
-    .where(inArray(event.id, [...conjectureEventIds]));
+  const rowChunks = await Promise.all(
+    boundedChunks([...conjectureEventIds]).map((chunk) =>
+      db
+        .select({ id: event.id, payload: event.payload })
+        .from(event)
+        .where(inArray(event.id, chunk)),
+    ),
+  );
+  const rows = rowChunks.flat();
   for (const r of rows) {
     const identity = extractConjectureIdentity(r.payload as Record<string, unknown> | null);
     if (identity !== null) out.set(r.id, identity);
@@ -487,36 +504,55 @@ export async function gatherDissociationRecordsByIdentity(
   }
   if (targets.length === 0) return out;
   const knowledgeIds = [...new Set(targets.map((target) => target.knowledgeId))];
-  const rows: Array<{ id: string; payload: unknown; created_at: Date }> = [];
-  for (
-    let offset = 0;
-    offset < knowledgeIds.length;
-    offset += MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY
-  ) {
-    const chunk = knowledgeIds.slice(offset, offset + MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY);
-    const chunkRows = await db
-      .select({ id: event.id, payload: event.payload, created_at: event.created_at })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, PREDICTION_SCORE_ACTION),
-          sql`${event.payload}->>'knowledge_id' IN (${sql.join(
-            chunk.map((knowledgeId) => sql`${knowledgeId}`),
-            sql`, `,
-          )})`,
-        ),
-      )
-      .orderBy(event.created_at, event.id);
-    rows.push(...chunkRows);
-  }
+  const scoreChunks = await Promise.all(
+    boundedChunks(knowledgeIds).map((chunk) =>
+      db
+        .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, PREDICTION_SCORE_ACTION),
+            sql`${event.payload}->>'knowledge_id' IN (${sql.join(
+              chunk.map((knowledgeId) => sql`${knowledgeId}`),
+              sql`, `,
+            )})`,
+          ),
+        )
+        .orderBy(event.created_at, event.id),
+    ),
+  );
+  const rows: Array<{ id: string; payload: unknown; created_at: Date }> = scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
-  const scoreStatuses = await getEffectiveProbeResultStatuses(
-    db,
-    rows.flatMap((row) => {
-      const probeResultEventId = (row.payload as Record<string, unknown> | null)
-        ?.probe_result_event_id;
-      return typeof probeResultEventId === 'string' ? [probeResultEventId] : [];
-    }),
+  const probeResultEventIds = [
+    ...new Set(
+      rows.flatMap((row) => {
+        const probeResultEventId = (row.payload as Record<string, unknown> | null)
+          ?.probe_result_event_id;
+        return typeof probeResultEventId === 'string' ? [probeResultEventId] : [];
+      }),
+    ),
+  ];
+  const probeResultChunks = boundedChunks(probeResultEventIds);
+  const [statusChunks, sourceTimeChunks] = await Promise.all([
+    Promise.all(probeResultChunks.map((chunk) => getEffectiveProbeResultStatuses(db, chunk))),
+    Promise.all(
+      probeResultChunks.map((chunk) =>
+        db
+          .select({ id: event.id, created_at: event.created_at })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:probe_result'),
+              eq(event.subject_kind, 'question'),
+              inArray(event.id, chunk),
+            ),
+          ),
+      ),
+    ),
+  ]);
+  const scoreStatuses = new Map(statusChunks.flatMap((statusMap) => [...statusMap.entries()]));
+  const sourceCreatedAtById = new Map(
+    sourceTimeChunks.flatMap((chunk) => chunk.map((row) => [row.id, row.created_at] as const)),
   );
 
   // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
@@ -551,7 +587,14 @@ export async function gatherDissociationRecordsByIdentity(
       conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
     );
     if (!targetKey) continue;
-    const rec = predictionScoreToRecord(r.id, r.created_at, payload);
+    const rec = predictionScoreToRecord(
+      r.id,
+      // Legacy score anchors used the nightly batch time. Always prefer the
+      // backing probe-result timestamp so old and new histories share the same
+      // evidence chronology without rewriting immutable events.
+      sourceCreatedAtById.get(probeResultEventId) ?? r.created_at,
+      payload,
+    );
     if (rec) out.get(targetKey)?.push(rec);
   }
   return out;
