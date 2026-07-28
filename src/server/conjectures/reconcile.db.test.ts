@@ -83,6 +83,7 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
     conjectureProposalId,
     knowledgeId,
     probeMd: 'probe text',
+    referenceMd: 'reference text',
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
 

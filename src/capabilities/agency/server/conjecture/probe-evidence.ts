@@ -24,12 +24,24 @@ interface ConjectureProbeSpec {
   id: string;
   knowledgeId: string;
   promptMd: string;
+  referenceMd: string;
   followupPromptMd: string | null;
+  followupReferenceMd: string | null;
 }
 
 type SupportingQuestionRow = Pick<
   typeof question.$inferSelect,
-  'id' | 'source' | 'source_ref' | 'draft_status' | 'prompt_md' | 'knowledge_ids' | 'metadata'
+  | 'id'
+  | 'kind'
+  | 'prompt_md'
+  | 'reference_md'
+  | 'choices_md'
+  | 'knowledge_ids'
+  | 'source'
+  | 'source_ref'
+  | 'draft_status'
+  | 'metadata'
+  | 'version'
 >;
 
 const probeResultColumns = {
@@ -41,12 +53,16 @@ const probeResultColumns = {
 
 const supportingQuestionColumns = {
   id: question.id,
+  kind: question.kind,
+  prompt_md: question.prompt_md,
+  reference_md: question.reference_md,
+  choices_md: question.choices_md,
+  knowledge_ids: question.knowledge_ids,
   source: question.source,
   source_ref: question.source_ref,
   draft_status: question.draft_status,
-  prompt_md: question.prompt_md,
-  knowledge_ids: question.knowledge_ids,
   metadata: question.metadata,
+  version: question.version,
 } as const;
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -107,7 +123,9 @@ function parseConjectureProbeSpec(row: typeof event.$inferSelect): ConjecturePro
     id: row.id,
     knowledgeId: change.knowledge_id,
     promptMd: change.probe_md,
+    referenceMd: change.probe_reference_md,
     followupPromptMd: change.followup_probe_md ?? null,
+    followupReferenceMd: change.followup_probe_reference_md ?? null,
   };
 }
 
@@ -119,7 +137,10 @@ function supportingQuestionSequence(
   const sequence = metadata.probe_sequence ?? 1;
   if (sequence !== 1 && sequence !== 2) return null;
   const expectedPrompt = sequence === 2 ? spec.followupPromptMd : spec.promptMd;
+  const expectedReference = sequence === 2 ? spec.followupReferenceMd : spec.referenceMd;
   if (
+    row.kind !== 'short_answer' ||
+    row.version !== 0 ||
     row.source !== PROBE_QUESTION_SOURCE ||
     row.source_ref !== spec.id ||
     row.draft_status !== 'draft' ||
@@ -127,7 +148,10 @@ function supportingQuestionSequence(
     row.knowledge_ids.length === 0 ||
     row.knowledge_ids[0] !== spec.knowledgeId ||
     expectedPrompt === null ||
-    row.prompt_md !== expectedPrompt
+    expectedReference === null ||
+    row.prompt_md !== expectedPrompt ||
+    row.reference_md !== expectedReference ||
+    row.choices_md !== null
   ) {
     return null;
   }
@@ -242,9 +266,14 @@ export async function getEffectiveProbeResultStatuses(
               inArray(event.id, evidenceConjectureEventIds),
             ),
           );
+  const proposalCorrectionStatuses = await getCorrectionStatuses(
+    db,
+    proposalRows.map((row) => row.id),
+  );
   const questionById = new Map(questionRows.map((row) => [row.id, row] as const));
   const specByConjectureId = new Map(
     proposalRows.flatMap((row) => {
+      if (proposalCorrectionStatuses.get(row.id)?.state !== 'active') return [];
       const spec = parseConjectureProbeSpec(row);
       return spec ? [[spec.id, spec] as const] : [];
     }),

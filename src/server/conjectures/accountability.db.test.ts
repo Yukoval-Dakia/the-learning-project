@@ -121,7 +121,8 @@ async function writeProbeQuestion(
       id,
       kind: 'short_answer',
       prompt_md: sequence === 1 ? `probe ${conjectureId}` : `followup ${conjectureId}`,
-      reference_md: `reference ${conjectureId}`,
+      reference_md:
+        sequence === 1 ? `reference ${conjectureId}` : `followup reference ${conjectureId}`,
       knowledge_ids: [knowledgeId],
       source: 'mind_probe',
       source_ref: conjectureId,
@@ -269,6 +270,65 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
 
     const after = await loadPredictionAccountabilityByKey(testDb(), [target]);
     expect(after.get(target.key)).toMatchObject({
+      state: 'watch',
+      consecutive_count: 0,
+      score_event_ids: [],
+    });
+  });
+
+  it.each([
+    ['reference', { reference_md: 'edited reference' }],
+    ['choices', { choices_md: ['A', 'B'] }],
+    ['kind', { kind: 'choice' }],
+  ] as const)(
+    'drops anchored direct evidence after its %s grading contract changes',
+    async (label, patch) => {
+      const target = cell(`concept::kc_stale_${label}`, 2);
+      const conjectureId = `conjecture_stale_${label}`;
+      const scoreId = `score_stale_${label}`;
+      await writeConjecture(conjectureId, target, 1);
+      await writeScore(scoreId, conjectureId, target, 0, 1);
+
+      await testDb()
+        .update(question)
+        .set({ ...patch, version: 1 })
+        .where(eq(question.id, `question_${scoreId}`));
+
+      const profile = await loadPredictionAccountabilityByKey(testDb(), [target]);
+      expect(profile.get(target.key)).toMatchObject({
+        state: 'watch',
+        consecutive_count: 0,
+        score_event_ids: [],
+      });
+    },
+  );
+
+  it('drops anchored direct evidence after the owner retracts its source proposal', async () => {
+    const target = cell('concept::kc_retracted_proposal', 2);
+    const conjectureId = 'conjecture_retracted_proposal';
+    await writeConjecture(conjectureId, target, 1);
+    await writeScore('score_retracted_proposal', conjectureId, target, 0, 1);
+
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'correction_retracted_proposal',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: conjectureId,
+        outcome: 'success',
+        payload: {
+          correction_kind: 'retract',
+          reason_md: 'the conjecture was withdrawn',
+          affected_refs: [{ kind: 'open_inquiry', id: conjectureId }],
+        },
+        created_at: new Date('2026-07-28T12:00:00.000Z'),
+      });
+
+    const profile = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(profile.get(target.key)).toMatchObject({
       state: 'watch',
       consecutive_count: 0,
       score_event_ids: [],

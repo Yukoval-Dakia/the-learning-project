@@ -956,6 +956,10 @@ async function runResearchMeetingNightlyClaimed(
     );
     if (preparedCandidates.length >= RESEARCH_MEETING_MAX_CONJECTURES) {
       const preparedKeys = new Set(preparedCandidates.map((candidate) => candidate.cell.key));
+      // Unprocessed cells intentionally retain their raw recurrence count as an
+      // upper bound. Giving them the benefit of the doubt can only delay this
+      // optimization and enrich an extra batch; it cannot skip a candidate that
+      // would enter the validated top-K.
       const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
         [...preparedCandidates.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
         accountabilityByKey,
