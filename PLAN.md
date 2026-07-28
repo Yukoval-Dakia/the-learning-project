@@ -2,11 +2,10 @@
 
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
-> 更新于：2026-07-28
-> **【更新 2026-07-28 · CI 测试长尾二次提速】**
-> YUK-817/818/819 已在 `codex/yuk-817-ci-test-speedups` 实现：DB reset 合批、
-> DB 两路 shard、unit 长尾收敛、JYEOO 硬超时修复；全量覆盖本地验证通过，
-> GitHub median 验收待分支发布后收数。
+> 更新于：2026-07-29
+> **【更新 2026-07-29 · PR #1100 CI gate 通过】**
+> DB reset 合批、DB 两路 shard、unit 长尾收敛与 JYEOO 硬超时修复已通过
+> Linux CI 和独立 review；DB 首次样本明显缩短，5 次 median 验收仍待收数。
 
 ## NOW
 
@@ -16,13 +15,13 @@
   - 下一产品 slice 仍是 YUK-787/795（二次独立 probe + target-error-aware Judge）；
     尚未因本次 CI 研究启动实现。
 - **CI 提速**
-  - 首轮 workflow 并行化已在 main；本分支进一步把 54 条逐表 reset 合为一条
-    multi-table TRUNCATE，并把 388 个 DB files 等分为 2 个独立 CI matrix shard。
+  - PR #1100 把 54 条逐表 reset 合为一条 multi-table TRUNCATE，并把 388 个
+    DB files 等分为 2 个独立 CI matrix shard；aggregate 继续 fail closed。
   - Step9 源码只读一次；PfPaper 将 800ms debounce 在测试内缩到 10/100ms；
     JYEOO POSIX timeout 改为 kill process group，覆盖 wrapper 已退但后代持 pipe。
-  - 本地两 shard 合计 388 files / 4,204 passed / 9 skipped / 1 todo；unit 509 files
-    / 5,781 passed / 33 skipped；migration、typecheck、tracked lint、build 与 hard
-    audits 全绿。YUK-817/818/819 保持 In Progress，待 GitHub timing 验收后 Done。
+  - GitHub run `30378606905` 全绿：DB shard 为 6m15s / 5m11s（旧 critical path
+    13m12s）；unit 为 2m42s，首轮 run 为 2m14s（旧基线 2m16s），尚不能证明
+    20% median 改善。YUK-817/818 保持 In Progress；YUK-819 合并后可 Done。
 
 ## NEXT
 

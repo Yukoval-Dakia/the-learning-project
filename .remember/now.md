@@ -1,4 +1,4 @@
-# 当前 handoff — 2026-07-28
+# 当前 handoff — 2026-07-29
 
 ## Active line
 
@@ -32,9 +32,11 @@
    不批量重解释。
 2. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
 
-## CI 测试长尾二次提速（2026-07-28）
+## CI 测试长尾二次提速（2026-07-29）
 
 - 分支：`codex/yuk-817-ci-test-speedups`（基于 `origin/main@13c2b858`）。
+- PR：#1100；GitHub run `30378606905` 全绿，独立 OCR review 的 clean-exit
+  timeout classification 发现已修复并 resolve。
 - YUK-817：`resetDb()` 的 54 条逐表 TRUNCATE 合为一条 multi-table TRUNCATE；
   CI DB lane 使用 Vitest `--shard=1/2`、`--shard=2/2` matrix，aggregate 仍 fail closed。
 - YUK-818：Step9 invariant suite 对 `src/app/scripts` 建一次 immutable source snapshot；
@@ -47,5 +49,7 @@
 - 验证：两 DB shards 覆盖 388 files（4,204 passed / 9 skipped / 1 todo）；unit
   509 files（5,781 passed / 33 skipped）；migration 26/26；typecheck、tracked lint、
   schema/dependency/partition/API/profile/copy/draft/hub-sync audits、build 全绿。
-- Linear YUK-817/818/819 保持 In Progress；必须发布分支并收 5 次非 docs-only GitHub
-  timing 后才能完成 median 验收，当前不虚报 CI 提速百分比。
+- GitHub 首个完整样本：DB shard 6m15s / 5m11s，对比旧 critical path 13m12s；
+  unit 2m42s，前一轮 2m14s，对比旧基线 2m16s，未证明 20% median 改善。
+- YUK-817/818 必须继续收满 5 次非 docs-only GitHub timing；YUK-819 在 #1100
+  合并且 Linux gate 保持绿色后可 Done，当前不虚报 median 提速百分比。
