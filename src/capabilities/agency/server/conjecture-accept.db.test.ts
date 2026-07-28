@@ -703,11 +703,11 @@ describe('acceptConjectureProposal lifecycle', () => {
       });
       expect(await rateEvents(proposalId)).toHaveLength(0);
 
-      // (3) Complete one active probe → a slot frees.
+      // (3) Retire one active probe → no follow-up is needed, so a slot frees.
       await answerProbe({
         db,
         probeQuestionId: seededProbeIds[0],
-        outcome: 0,
+        outcome: 1,
       });
       expect(await countActiveProbes(db)).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
 

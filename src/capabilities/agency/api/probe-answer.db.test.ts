@@ -278,7 +278,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     const response = await answer(served.probe_question_id, 'cos(x²)');
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ code: 'probe_followup_unavailable' });
+    await expect(response.json()).resolves.toMatchObject({ error: 'probe_followup_unavailable' });
     expect(mockInvoke).not.toHaveBeenCalled();
     await expect(probeResultEvents(served.probe_question_id)).resolves.toHaveLength(0);
   });

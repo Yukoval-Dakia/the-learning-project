@@ -57,6 +57,8 @@ function conjecturePayload() {
       recurrence_count: 2,
       probe_md: PROBE_MD,
       probe_reference_md: PROBE_REFERENCE_MD,
+      followup_probe_md: 'd/dx cos(x^3) = ?',
+      followup_probe_reference_md: '-3x^2·sin(x^3)',
       discriminating: true,
       predicted_p: 0.3,
       baseline_p_at_induction: 0.6,
