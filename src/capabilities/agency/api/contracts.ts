@@ -1,3 +1,4 @@
+import { PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
 import { z } from 'zod';
 
 export const CreateLearningIntentBodySchema = z
@@ -90,8 +91,8 @@ export const ProbeAnswerBodySchema = z
   });
 
 export const ProbeAnswerResponseSchema = z.object({
-  status: z.enum(['evidence_for', 'confirmed', 'retired']),
-  resolution: z.enum(['evidence_for', 'confirmed', 'retired']),
+  status: z.enum(PROBE_RESOLUTIONS),
+  resolution: z.enum(PROBE_RESOLUTIONS),
   outcome: z.union([z.literal(0), z.literal(1)]),
   probe_result_event_id: z.string(),
   coarse_outcome: z.enum(['correct', 'incorrect']).nullable(),

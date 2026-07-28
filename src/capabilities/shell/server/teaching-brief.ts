@@ -721,8 +721,10 @@ export async function loadOutcomeBrief(
         // intentionally carry an earlier caller timestamp than the preliminary evidence.
         // This filter intentionally ignores whether the terminal was acknowledged:
         // acknowledging the final answer must not resurrect "needs independent revalidation".
-        // Require a canonical terminal body + self-consistent conjecture provenance so a
-        // malformed row cannot hide a valid preliminary result.
+        // Defense-in-depth prefilter: require the v2 writer stamp, a valid terminal
+        // resolution/outcome pair, and self-consistent conjecture provenance. This is not
+        // a second full chain validation (question existence/KC/prompt stay owned by the
+        // writer and validateAckableOutcome).
         sql`(
           ${event.payload}->>'resolution' <> 'evidence_for'
           OR NOT EXISTS (

@@ -332,14 +332,21 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
 function parseProbeResultEvent(
   existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
 ): AnswerProbeResult | null {
+  // The production route has always written confirmed↔0 and retired↔1; v2 adds
+  // evidence_for↔0. Any other historical pairing could only come from a manual/internal
+  // contract violation, so fail closed rather than replaying contradictory evidence.
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
   if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
-  const isEvidencePair =
-    (recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
-    recordedOutcome === 0;
-  const isRetiredPair = recordedResolution === 'retired' && recordedOutcome === 1;
-  if (!isEvidencePair && !isRetiredPair) return null;
+  if (
+    !(
+      ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
+        recordedOutcome === 0) ||
+      (recordedResolution === 'retired' && recordedOutcome === 1)
+    )
+  ) {
+    return null;
+  }
   return {
     status: recordedResolution,
     outcome: recordedOutcome,
@@ -559,65 +566,67 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       );
     }
     const usesRecurrenceGate = followup.status === 'ready';
-    const priorRows = await tx
-      .select({
-        probe_result_event_id: event.id,
-        probe_question_id: event.subject_id,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, PROBE_RESULT_ACTION),
-          eq(event.subject_kind, 'question'),
-          // Both refs are checked deliberately. `caused_by_event_id` is the indexed
-          // envelope join; the payload equality rejects provenance-broken manual/legacy
-          // rows rather than letting them strengthen a different conjecture.
-          eq(event.caused_by_event_id, conjectureEventId),
-          sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
-          sql`${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')`,
-          sql`${event.payload}->>'outcome' = '0'`,
-        ),
-      )
-      .orderBy(desc(event.created_at), desc(event.id))
-      .limit(MAX_PROBE_HISTORY_FOR_RESOLUTION);
-    const priorResults: PriorProbeResult[] = [];
-    for (const prior of priorRows) {
-      const parsed = parseProbeResultEvent({
-        id: prior.probe_result_event_id,
-        payload: prior.payload,
-      });
-      if (!parsed) continue;
-      priorResults.push({
-        probe_question_id: prior.probe_question_id,
-        outcome: parsed.outcome,
-        resolution: parsed.status,
-      });
-    }
     // Historical v1 proposals did not author a second probe. Preserve their terminal
     // single-probe rule instead of retroactively reinterpreting or stranding them;
-    // omit the v2 rule stamp below so readers label these as legacy-unverified.
+    // omit the v2 rule stamp below so readers label these as legacy-unverified. They
+    // also skip the JSONB history scan, whose output cannot affect their terminal rule.
     let resolution: ProbeResolution;
+    let independentProbeQuestionIds: string[] = [];
     if (usesRecurrenceGate) {
+      const priorRows = await tx
+        .select({
+          probe_result_event_id: event.id,
+          probe_question_id: event.subject_id,
+          payload: event.payload,
+        })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, PROBE_RESULT_ACTION),
+            eq(event.subject_kind, 'question'),
+            // Both refs are checked deliberately. `caused_by_event_id` is the indexed
+            // envelope join; the payload equality rejects provenance-broken manual/legacy
+            // rows rather than letting them strengthen a different conjecture.
+            eq(event.caused_by_event_id, conjectureEventId),
+            sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
+            sql`${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')`,
+            sql`${event.payload}->>'outcome' = '0'`,
+          ),
+        )
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(MAX_PROBE_HISTORY_FOR_RESOLUTION);
+      const priorResults: PriorProbeResult[] = [];
+      for (const prior of priorRows) {
+        const parsed = parseProbeResultEvent({
+          id: prior.probe_result_event_id,
+          payload: prior.payload,
+        });
+        if (!parsed) continue;
+        priorResults.push({
+          probe_question_id: prior.probe_question_id,
+          outcome: parsed.outcome,
+          resolution: parsed.status,
+        });
+      }
       resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
+      independentProbeQuestionIds =
+        outcome === 0
+          ? [
+              ...new Set([
+                ...priorResults
+                  .filter(
+                    (result) =>
+                      result.outcome === 0 &&
+                      (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
+                  )
+                  .map((result) => result.probe_question_id),
+                probeQuestionId,
+              ]),
+            ].sort()
+          : [];
     } else {
       resolution = outcome === 0 ? 'confirmed' : 'retired';
     }
-    const independentProbeQuestionIds =
-      outcome === 0
-        ? [
-            ...new Set([
-              ...priorResults
-                .filter(
-                  (result) =>
-                    result.outcome === 0 &&
-                    (result.resolution === 'evidence_for' || result.resolution === 'confirmed'),
-                )
-                .map((result) => result.probe_question_id),
-              probeQuestionId,
-            ]),
-          ].sort()
-        : [];
 
     const probeResultEventId = newId();
     await writeEvent(tx, {
