@@ -328,7 +328,7 @@ export async function submitSolveAttempt(
   const loadedQuestion = await loadQuestionWithAttemptSnapshot(db, questionId).catch((err) => {
     if (!(err instanceof QuestionEvidenceSnapshotError)) throw err;
     if (err.code === 'question_not_found') {
-      throw new SolveError('question_not_found', err.message);
+      throw new SolveError('question_not_found', `question ${questionId} not found`);
     }
     throw new SolveError(
       'question_evidence_unavailable',

@@ -184,11 +184,14 @@ function failureEvidenceFromRow(row: EventRow): {
   if (parsedSnapshot === undefined) {
     questionSnapshot = undefined;
   } else {
-    const invalidReason = !parsedSnapshot.success
-      ? 'schema_invalid'
-      : parsedSnapshot.data.question.question_id !== row.subject_id
-        ? 'subject_mismatch'
-        : null;
+    let invalidReason: 'schema_invalid' | 'subject_mismatch' | null;
+    if (!parsedSnapshot.success) {
+      invalidReason = 'schema_invalid';
+    } else if (parsedSnapshot.data.question.question_id !== row.subject_id) {
+      invalidReason = 'subject_mismatch';
+    } else {
+      invalidReason = null;
+    }
     if (invalidReason !== null) {
       questionSnapshot = null;
       console.warn('[failure-attempt] invalid question snapshot omitted', {

@@ -369,6 +369,8 @@ function toEvidenceSample(
     parent = failure.question_snapshot.parent_question
       ? evidenceContextFromSnapshot(failure.question_snapshot.parent_question)
       : undefined;
+    // Defense in depth for manually constructed FailureAttempt values: the
+    // parsed event schema already guarantees this invariant.
     if (q.parent_question_id !== null && parent === undefined) return null;
   } else {
     // Legacy degradation: use the current row only when it is demonstrably

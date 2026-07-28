@@ -477,7 +477,7 @@ export async function submitPaperSlot(
     (err) => {
       if (!(err instanceof QuestionEvidenceSnapshotError)) throw err;
       if (err.code === 'question_not_found') {
-        throw new ApiError('not_found', err.message, 404);
+        throw new ApiError('not_found', `question ${input.questionId} not found`, 404);
       }
       throw new ApiError(
         'question_evidence_unavailable',
