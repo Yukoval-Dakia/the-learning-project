@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
   type ReconcileDeps,
   type UnscoredProbeResult,
   reconcileConjecturePredictions,
@@ -117,6 +118,35 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(p.brier_model).toBeCloseTo(0.09, 9);
     expect(p.brier_baseline).toBeCloseTo(0.49, 9);
     expect(p.skill_score_point as number).toBeGreaterThan(0);
+  });
+
+  it('projects a recurrence result without fabricating a prediction score', async () => {
+    const { deps, events, upserts } = baseDeps({
+      listUnscoredProbeResultsFn: vi.fn(async () => [
+        probe({
+          probe_result_event_id: 'pr_2',
+          resolution: 'confirmed',
+          prediction_score_eligible: false,
+        }),
+      ]),
+    });
+
+    await expect(reconcileConjecturePredictions(DB, deps)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    expect(upserts[0].evidence_event_ids).toEqual(['cj_1', 'pr_2']);
+    expect(events[0]).toMatchObject({
+      id: 'probe_result_projected:pr_2',
+      action: PROBE_RESULT_PROJECTED_ACTION,
+      subject_id: 'pr_2',
+    });
+    expect(events[0].payload).toMatchObject({
+      projection_kind: 'recurrence_without_prediction',
+      resolution: 'confirmed',
+    });
+    expect(events[0].payload).not.toHaveProperty('predicted_p');
+    expect(events[0].payload).not.toHaveProperty('brier_model');
   });
 
   it('RED-LINE: upsert is FLIP-inert — confused_with null → soft, never `mastered`, no FSRS', async () => {

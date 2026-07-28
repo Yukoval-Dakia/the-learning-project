@@ -1,7 +1,7 @@
 // YUK-440 (A13) U8 — reconcile loop DB tests (real Postgres). End-to-end through the
 // REAL producers: writeAiProposal (conjecture) → serveProbeOnce/answerProbe (U3
-// probe_result) → reconcileConjecturePredictions. Locks: prediction_score is appended
-// LOG-only + idempotent (no duplicate on re-run), the typed-ledger advances
+// probe_result) → reconcileConjecturePredictions. Locks: sequence-1 prediction_score and
+// sequence-2 score-free projection anchors are append-only + idempotent, the typed-ledger advances
 // (FLIP-inert: soft no-evidence, never `mastered`), R(t) lives in the score event but
 // not the typed-state, and NO FSRS/attempt event is ever written (ND-5).
 
@@ -16,7 +16,11 @@ import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb } from '../../../tests/helpers/db';
-import { PREDICTION_SCORE_ACTION, reconcileConjecturePredictions } from './reconcile';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
+  reconcileConjecturePredictions,
+} from './reconcile';
 
 interface SeedOpts {
   knowledgeId?: string;
@@ -99,6 +103,18 @@ async function scoreEvents(probeResultEventId: string) {
     );
 }
 
+async function projectionEvents(probeResultEventId: string) {
+  return db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_PROJECTED_ACTION),
+        eq(event.subject_id, probeResultEventId),
+      ),
+    );
+}
+
 describe('reconcileConjecturePredictions (DB)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -174,11 +190,16 @@ describe('reconcileConjecturePredictions (DB)', () => {
     // `predicted_p` belongs only to sequence 1. The independent recurrence probe has
     // no calibrated probability yet, so it must not receive a fabricated score.
     await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
-      reconciled: 1,
+      reconciled: 2,
       skipped: 0,
     });
     await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
     await expect(scoreEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(1);
+    const projected = await typedRow(seed.knowledgeId);
+    expect([...(projected?.evidence_event_ids ?? [])].sort()).toEqual(
+      [seed.conjectureProposalId, seed.probeResultEventId, terminal.probe_result_event_id].sort(),
+    );
   });
 
   it('is idempotent — a second run scores nothing and writes no duplicate', async () => {

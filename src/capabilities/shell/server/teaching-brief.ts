@@ -5,6 +5,7 @@ import type { CauseCategoryT } from '@/core/schema/cause';
 import {
   BRIEF_ACK_ACTION,
   PROBE_QUESTION_SOURCE,
+  PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
   type ProbeResolution,
 } from '@/core/schema/conjecture';
@@ -715,8 +716,10 @@ export async function loadOutcomeBrief(
             AND ack.subject_kind = 'event'
             AND ack.subject_id = ${event.id}
         )`,
-        // A terminal recurrence supersedes the earlier preliminary result for the same
-        // conjecture. This filter intentionally ignores whether the terminal was acknowledged:
+        // A v2 terminal recurrence supersedes preliminary results for the same conjecture.
+        // Use the persisted lifecycle rule stamp, not created_at ordering: answer replay may
+        // intentionally carry an earlier caller timestamp than the preliminary evidence.
+        // This filter intentionally ignores whether the terminal was acknowledged:
         // acknowledging the final answer must not resurrect "needs independent revalidation".
         // Require a canonical terminal body + self-consistent conjecture provenance so a
         // malformed row cannot hide a valid preliminary result.
@@ -730,18 +733,13 @@ export async function loadOutcomeBrief(
                   ${event.payload}->>'conjecture_event_id'
               AND terminal.caused_by_event_id =
                   terminal.payload->>'conjecture_event_id'
+              AND terminal.payload->>'resolution_rule_version' =
+                  ${PROBE_RESOLUTION_RULE_VERSION}
               AND (
                 (terminal.payload->>'resolution' = 'confirmed'
                   AND terminal.payload->>'outcome' = '0')
                 OR (terminal.payload->>'resolution' = 'retired'
                   AND terminal.payload->>'outcome' = '1')
-              )
-              AND (
-                terminal.created_at > ${event.created_at}
-                OR (
-                  terminal.created_at = ${event.created_at}
-                  AND terminal.id > ${event.id}
-                )
               )
           )
         )`,
