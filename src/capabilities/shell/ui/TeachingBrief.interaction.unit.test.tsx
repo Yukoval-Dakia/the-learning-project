@@ -366,7 +366,9 @@ describe('TeachingBriefBand — probe_ready reveal (jsdom)', () => {
   });
 
   it('collapses a recurrence probe and records a distinct start per question', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ brief: null }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ brief: null }),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const qc = mkClient();
     qc.setQueryData(['teaching-brief'], { brief: probeReadyBrief() });
