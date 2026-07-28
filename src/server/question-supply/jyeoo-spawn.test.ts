@@ -38,17 +38,38 @@ describe('spawnJyeooFetch', () => {
   });
 
   it('kills a wedged process at the wall-clock timeout', async () => {
+    const startedAt = performance.now();
     const r = await spawnJyeooFetch({
       binaryPath: SH,
-      args: ['-c', 'sleep 5'],
+      // Two descendant levels verify that the timeout kills the process tree, not only
+      // the direct shell while its children keep the captured stdio pipes open.
+      args: ['-c', 'sh -c "sleep 5"'],
       timeoutMs: 100,
       maxStdoutBytes: 1_000_000,
       maxStderrBytes: 100_000,
     });
+    const elapsedMs = performance.now() - startedAt;
     expect(r.timedOut).toBe(true);
     // SIGKILL leaves a null exit code + the signal name.
     expect(r.exitCode).toBeNull();
     expect(r.signal).toBe('SIGKILL');
+    expect(elapsedMs).toBeLessThan(1500);
+  });
+
+  it('kills descendants that retain stdio after their wrapper exits', async () => {
+    const startedAt = performance.now();
+    const r = await spawnJyeooFetch({
+      binaryPath: SH,
+      // The wrapper exits 0 immediately; the background child inherits stdout/stderr.
+      // Waiting for ChildProcess "close" would otherwise take the full five seconds.
+      args: ['-c', 'sleep 5 &'],
+      timeoutMs: 100,
+      maxStdoutBytes: 1_000_000,
+      maxStderrBytes: 100_000,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.timedOut).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(1500);
   });
 
   it('flags stdout truncation when the byte cap is exceeded', async () => {
