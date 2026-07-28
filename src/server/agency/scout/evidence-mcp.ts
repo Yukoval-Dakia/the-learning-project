@@ -132,10 +132,9 @@ function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown 
     evidenceStrength = 'independent_recurrence';
   } else if (p.resolution === 'confirmed') {
     evidenceStrength = 'legacy_confirmed_unverified';
-  } else if (p.resolution === 'retired') {
-    evidenceStrength = 'counterevidence';
   } else {
-    evidenceStrength = 'unclassified';
+    // canonicalPair plus the branches above leave only outcome=1 / retired.
+    evidenceStrength = 'counterevidence';
   }
   return {
     ...p,

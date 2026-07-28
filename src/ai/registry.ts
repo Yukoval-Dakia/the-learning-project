@@ -332,7 +332,7 @@ function buildMindModelInductionPrompt(profile: SubjectProfile): string {
 - claim_md / 两道 probe 及其 reference 是给 owner 看的文字：**不得**出现 knowledge_id、事件 id、cause_category 英文枚举名、theta / baseline 等内部标识。
 - cause_category 选输入 evidence_cells 里出现的某个错因类别。
 - recurrence_count 取支撑该 claim 的 cell 的最大 recurrence_count（≥2）。
-- predicted_p ∈ [0,1]：若该 claim 成立，你预测 owner**答对** probe_md 的概率（这是 claim 的可证伪赌注——通常误解成立时偏低）。
+- predicted_p ∈ [0,1]：若该 claim 成立，你预测 owner**答对** probe_md（第一道 probe）的概率（这是 claim 的可证伪赌注——通常误解成立时偏低）。
 - discriminating：布尔。true 仅当两道 probe 都能把该误解和别的错因分开；任一道答错也可能来自别的原因时填 false。
 - 若不能安全 proposal，输出 abstain。reason_code 只能是 insufficient_evidence / conflicting_evidence / no_grounded_claim / no_discriminating_probe；explanation_md 可省略；evidence_event_ids 只能引用输入。
 

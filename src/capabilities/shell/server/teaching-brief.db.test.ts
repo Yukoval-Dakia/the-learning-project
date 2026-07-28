@@ -120,6 +120,8 @@ interface ProposalSeed {
   evidence?: Array<{ kind: 'event' | 'question'; id: string }>;
   predictedP?: number;
   baselineP?: number;
+  followupProbeMd?: string;
+  followupProbeReferenceMd?: string;
 }
 
 async function seedProposal(seed: ProposalSeed): Promise<string> {
@@ -146,6 +148,12 @@ async function seedProposal(seed: ProposalSeed): Promise<string> {
         recurrence_count: seed.recurrenceCount ?? 2,
         probe_md: `probe for ${seed.id}`,
         probe_reference_md: `reference for ${seed.id}`,
+        ...(seed.followupProbeMd !== undefined && seed.followupProbeReferenceMd !== undefined
+          ? {
+              followup_probe_md: seed.followupProbeMd,
+              followup_probe_reference_md: seed.followupProbeReferenceMd,
+            }
+          : {}),
         discriminating: true,
         predicted_p: seed.predictedP ?? 0.3,
         baseline_p_at_induction: seed.baselineP ?? 0.6,
@@ -183,13 +191,17 @@ async function seedProbe(opts: {
   proposalId: string;
   knowledgeId?: string;
   createdAt: Date;
+  promptMd?: string;
+  referenceMd?: string;
+  probeSequence?: 1 | 2;
 }): Promise<string> {
   const served = await serveProbeOnce({
     db: testDb(),
     conjectureProposalId: opts.proposalId,
     knowledgeId: opts.knowledgeId ?? `kn_${opts.proposalId}`,
-    probeMd: `probe for ${opts.proposalId}`,
-    referenceMd: `reference for ${opts.proposalId}`,
+    probeMd: opts.promptMd ?? `probe for ${opts.proposalId}`,
+    referenceMd: opts.referenceMd ?? `reference for ${opts.proposalId}`,
+    probeSequence: opts.probeSequence,
     now: opts.createdAt,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
@@ -326,6 +338,71 @@ describe('loadTeachingBrief', () => {
         summary_md: '判别题针对的是你改写前的那条判断；你的改写还没有配套的判别题。',
       },
     });
+  });
+
+  it('projects and acknowledges a confirmed sequence-2 probe against its authored follow-up prompt', async () => {
+    const proposalId = 'p_followup';
+    const followupPrompt = 'independent follow-up for p_followup';
+    const followupReference = 'reference for independent follow-up';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: followupPrompt,
+      followupProbeReferenceMd: followupReference,
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const probeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 20 * 60 * 1000),
+      promptMd: followupPrompt,
+      referenceMd: followupReference,
+      probeSequence: 2,
+    });
+
+    const active = await loadTeachingBrief(testDb(), NOW);
+    expect(active.brief).toMatchObject({
+      brief_id: proposalId,
+      state: 'probe_ready',
+      prepared_action: {
+        kind: 'answer_probe',
+        probe_question_id: probeId,
+        prompt_md: followupPrompt,
+      },
+    });
+
+    const resultAt = new Date(NOW.getTime() - 10 * 60 * 1000);
+    const resultId = 'result_p_followup';
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: 'experimental:probe_result',
+      subject_kind: 'question',
+      subject_id: probeId,
+      payload: {
+        conjecture_event_id: proposalId,
+        outcome: 0,
+        resolution: 'confirmed',
+        retrievability_at_judge: 0.4,
+        answer_md: null,
+        answer_image_refs: [],
+      },
+      caused_by_event_id: proposalId,
+      ingest_at: resultAt,
+      created_at: resultAt,
+    });
+
+    const settled = await loadTeachingBrief(testDb(), NOW);
+    expect(settled.brief).toMatchObject({
+      brief_id: proposalId,
+      state: 'outcome_confirmed',
+      current_outcome: {
+        probe_question_id: probeId,
+        probe_result_event_id: resultId,
+      },
+    });
+    await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
   });
 
   it.each([

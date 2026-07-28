@@ -53,7 +53,6 @@ import {
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
-  PROBE_SLOTS_FULL_CODE,
   type ProbeResolution,
 } from '@/core/schema/conjecture';
 import { AiProposalPayload } from '@/core/schema/proposal';
@@ -82,6 +81,8 @@ export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' a
  * from a transient provider or non-discriminating result.
  */
 export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
+// v2 reaches a terminal resolution after at most two independent wrong answers.
+// Fifty is a defensive legacy/corruption ceiling, not an expected lifecycle length.
 const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
 
 // A fixed key for the transaction-scoped advisory lock that serializes serves.
@@ -569,10 +570,13 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         now,
       });
       if (followup.status === 'cap_reached') {
+        // The just-answered probe frees exactly one slot in this transaction and the
+        // global serve lock prevents another writer from stealing it. Reaching the cap
+        // here therefore signals an invariant violation, not recoverable contention.
         throw new ApiError(
-          PROBE_SLOTS_FULL_CODE,
-          `cannot record preliminary evidence: all ${MAX_CONCURRENT_ACTIVE_PROBES} mind-probe slots are active; retry after another probe completes`,
-          409,
+          'probe_followup_cap_invariant',
+          `follow-up probe could not claim the slot released by ${probeQuestionId}`,
+          500,
         );
       }
     }

@@ -213,6 +213,8 @@ interface ConjectureFacts {
   causeCategory: CauseCategoryT;
   reasonMd: string;
   probeMd: string;
+  /** Sequence-2 prompt authored with the proposal; absent only on historical v1 rows. */
+  followupProbeMd: string | null;
   evidence: TeachingBriefEvidenceRef[];
   createdAt: Date;
   /** Internal selector ranking only — never serialized into the wire (contract §5). */
@@ -337,6 +339,7 @@ function factsFromProposalRow(
       causeCategory: change.cause_category,
       reasonMd: row.payload.reason_md,
       probeMd: change.probe_md,
+      followupProbeMd: change.followup_probe_md ?? null,
       evidence: dedupeEvidence(
         row.payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -380,6 +383,7 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       causeCategory: change.cause_category,
       reasonMd: payload.reason_md,
       probeMd: change.probe_md,
+      followupProbeMd: change.followup_probe_md ?? null,
       evidence: dedupeEvidence(
         payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -523,9 +527,15 @@ function validateProbeQuestion(
   if (toRecord(probe.metadata).conjecture_proposal_id !== proposal.id) {
     return 'probe_metadata_ref_mismatch';
   }
+  const sequence = toRecord(probe.metadata).probe_sequence;
+  if (sequence !== undefined && sequence !== 1 && sequence !== 2) {
+    return 'probe_sequence_invalid';
+  }
   if (probe.knowledge_ids.length === 0) return 'probe_knowledge_empty';
   if (probe.knowledge_ids[0] !== proposal.knowledgeId) return 'probe_knowledge_mismatch';
-  if (probe.prompt_md !== proposal.probeMd) return 'probe_prompt_mismatch';
+  const expectedPrompt = sequence === 2 ? proposal.followupProbeMd : proposal.probeMd;
+  if (expectedPrompt === null) return 'probe_followup_missing';
+  if (probe.prompt_md !== expectedPrompt) return 'probe_prompt_mismatch';
   return null;
 }
 
@@ -862,9 +872,9 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       },
       current_outcome: {
         status: 'awaiting_answer',
-        // YUK-785 — validateProbeQuestion above already proved prompt_md === the
-        // proposal's probe_md, so after a rewrite this prepared question demonstrably
-        // tests the pre-edit claim; say so rather than implying it tests the rewrite.
+        // YUK-785/787 — validateProbeQuestion above already proved prompt_md equals
+        // the sequence-specific prompt authored with this proposal, so after a rewrite
+        // this prepared question demonstrably tests the pre-edit claim.
         summary_md:
           finding.tested_claim_md !== undefined
             ? TEACHING_BRIEF_OUTCOME_COPY.AWAITING_ANSWER_REWRITTEN
