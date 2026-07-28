@@ -219,6 +219,13 @@ async function defaultLoadCompletedRunResult(
   if (!row) return null;
   const parsed = z.object({ completed_result: ResearchMeetingResultSchema }).safeParse(row.payload);
   if (!parsed.success) {
+    // Fail closed: treating this as unfinished would repeat paid model work and
+    // business effects, while the first-write-wins completion id cannot replace
+    // the corrupt row. Emit schema diagnostics for repair instead.
+    console.error('[research_meeting_nightly] committed completion payload is unreadable', {
+      execution_id: executionId,
+      issues: parsed.error.issues,
+    });
     throw new Error(
       `research_meeting_nightly: completion payload is unreadable for execution ${executionId}`,
     );
