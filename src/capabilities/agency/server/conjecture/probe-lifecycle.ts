@@ -167,6 +167,13 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
               AND correction.subject_kind = 'event'
               AND correction.subject_id =
                   ${question.metadata}->>'conjecture_proposal_id'
+              AND (
+                (correction.payload->>'correction_kind' = 'supersede'
+                  AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
+                OR (correction.payload->>'correction_kind' IN
+                    ('retract', 'mark_wrong', 'restore')
+                  AND NOT correction.payload ? 'replacement_event_id')
+              )
             ORDER BY correction.created_at DESC, correction.id DESC
             LIMIT 1
           ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
@@ -174,20 +181,7 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
       ),
     )
     .limit(MAX_CONCURRENT_ACTIVE_PROBES);
-  const conjectureIds = [
-    ...new Set(
-      rows
-        .map((row) => extractConjectureId(row.metadata))
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-  const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
-  return rows.filter((row) => {
-    const conjectureId = extractConjectureId(row.metadata);
-    // Corrupt provenance stays counted so it cannot silently bypass the safety cap.
-    if (typeof conjectureId !== 'string' || conjectureId.length === 0) return true;
-    return correctionStatuses.get(conjectureId)?.state === 'active';
-  }).length;
+  return rows.length;
 }
 
 /**

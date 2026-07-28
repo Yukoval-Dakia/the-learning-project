@@ -177,6 +177,10 @@ function projectionAnchor(row: { subject_id: string; payload: unknown }): Projec
 }
 
 async function rebuildTypedStateForKnowledge(db: Db, knowledgeId: string): Promise<void> {
+  // All replay reads precede replaceKcTypedState's per-KC lock. Production schedules
+  // reconciliation as a single pg-boss instance; if that invariant is relaxed, move
+  // these reads under the same transaction + lock so a concurrent anchor cannot land
+  // between the snapshot and replacement.
   const anchorRows = await db
     .select({ subject_id: event.subject_id, payload: event.payload })
     .from(event)
@@ -251,8 +255,6 @@ async function rebuildTypedStateForKnowledge(db: Db, knowledgeId: string): Promi
     return;
   }
   const replacement: ReplaceKcTypedStateInput = {
-    subject_id: knowledgeId,
-    subject_kind: 'knowledge',
     proposed: latest.resolution === 'confirmed' ? 'confused-with-X' : 'no-evidence',
     confused_with_kc_id: null,
     discriminating: latest.facts.discriminating,

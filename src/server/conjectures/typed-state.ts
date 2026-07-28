@@ -146,7 +146,7 @@ export interface UpsertKcTypedStateInput {
   last_evidence_at: Date;
 }
 
-export type ReplaceKcTypedStateInput = UpsertKcTypedStateInput;
+export type ReplaceKcTypedStateInput = Omit<UpsertKcTypedStateInput, 'subject_id' | 'subject_kind'>;
 
 /**
  * Replace one derived cell from a complete replay snapshot. Unlike the append
@@ -181,6 +181,7 @@ export async function replaceKcTypedState(
       recurrence_count: input.recurrence_count,
     });
     const now = new Date();
+    const evidenceEventIds = [...new Set(input.evidence_event_ids)];
     await tx
       .insert(kc_typed_state)
       .values({
@@ -190,7 +191,7 @@ export async function replaceKcTypedState(
         typed_state: next.typed_state,
         confused_with_kc_id: next.confused_with_kc_id,
         lifecycle: next.lifecycle,
-        evidence_event_ids: [...new Set(input.evidence_event_ids)],
+        evidence_event_ids: evidenceEventIds,
         last_evidence_at: input.last_evidence_at,
         updated_at: now,
       })
@@ -200,7 +201,7 @@ export async function replaceKcTypedState(
           typed_state: next.typed_state,
           confused_with_kc_id: next.confused_with_kc_id,
           lifecycle: next.lifecycle,
-          evidence_event_ids: [...new Set(input.evidence_event_ids)],
+          evidence_event_ids: evidenceEventIds,
           last_evidence_at: input.last_evidence_at,
           updated_at: now,
         },

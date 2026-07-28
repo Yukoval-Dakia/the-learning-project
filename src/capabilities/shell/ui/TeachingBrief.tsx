@@ -144,9 +144,10 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     const recurrenceReady =
       prev?.state === 'outcome_evidence_for' && brief?.state === 'probe_ready';
     const preparedProbeChanged =
+      prev !== null &&
       currentProbeQuestionId !== null &&
-      prev?.probe_question_id !== null &&
-      prev?.probe_question_id !== currentProbeQuestionId;
+      prev.probe_question_id !== null &&
+      prev.probe_question_id !== currentProbeQuestionId;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);

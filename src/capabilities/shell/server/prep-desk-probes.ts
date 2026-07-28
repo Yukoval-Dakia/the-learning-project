@@ -20,7 +20,6 @@ import {
 } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 // Single-source the persisted probe contract from core without reaching into the
@@ -38,15 +37,6 @@ export interface ActiveProbe {
 
 export interface ActiveProbesResult {
   probes: ActiveProbe[];
-}
-
-function extractConjectureId(metadata: unknown): string | null {
-  const record =
-    metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
-      ? (metadata as Record<string, unknown>)
-      : {};
-  const id = record.conjecture_proposal_id;
-  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 /**
@@ -82,6 +72,13 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
               AND correction.subject_kind = 'event'
               AND correction.subject_id =
                   ${question.metadata}->>'conjecture_proposal_id'
+              AND (
+                (correction.payload->>'correction_kind' = 'supersede'
+                  AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
+                OR (correction.payload->>'correction_kind' IN
+                    ('retract', 'mark_wrong', 'restore')
+                  AND NOT correction.payload ? 'replacement_event_id')
+              )
             ORDER BY correction.created_at DESC, correction.id DESC
             LIMIT 1
           ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
@@ -90,24 +87,10 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     )
     .orderBy(desc(question.created_at), desc(question.id))
     .limit(ACTIVE_PROBES_MAX);
-  const conjectureIds = [
-    ...new Set(
-      rows
-        .map((row) => extractConjectureId(row.metadata))
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-  const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
-  const probes = rows.flatMap((row) => {
-    const conjectureId = extractConjectureId(row.metadata);
-    if (conjectureId && correctionStatuses.get(conjectureId)?.state !== 'active') return [];
-    return [
-      {
-        probe_question_id: row.id,
-        prompt_md: row.prompt_md ?? '',
-        knowledge_id: row.knowledge_ids?.[0] ?? null,
-      },
-    ];
-  });
+  const probes = rows.map((row) => ({
+    probe_question_id: row.id,
+    prompt_md: row.prompt_md ?? '',
+    knowledge_id: row.knowledge_ids?.[0] ?? null,
+  }));
   return { probes };
 }

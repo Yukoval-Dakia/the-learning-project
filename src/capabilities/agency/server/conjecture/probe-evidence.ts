@@ -15,6 +15,13 @@ interface ProbeResultRow {
   payload: unknown;
 }
 
+const probeResultColumns = {
+  id: event.id,
+  subject_id: event.subject_id,
+  caused_by_event_id: event.caused_by_event_id,
+  payload: event.payload,
+} as const;
+
 function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -31,7 +38,13 @@ function supportingQuestionIds(row: ProbeResultRow): string[] | null {
     return null;
   }
   const rawIds = payload.independent_probe_question_ids;
-  if (!Array.isArray(rawIds)) return [];
+  if (!Array.isArray(rawIds)) {
+    console.warn(
+      '[probe-evidence] confirmed v2 recurrence has invalid independent_probe_question_ids',
+      row.id,
+    );
+    return [];
+  }
   return [...new Set(rawIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
 }
 
@@ -60,12 +73,7 @@ export async function getEffectiveProbeResultStatuses(
   if (ids.length === 0) return statuses;
 
   const rows = await db
-    .select({
-      id: event.id,
-      subject_id: event.subject_id,
-      caused_by_event_id: event.caused_by_event_id,
-      payload: event.payload,
-    })
+    .select(probeResultColumns)
     .from(event)
     .where(
       and(
@@ -95,12 +103,7 @@ export async function getEffectiveProbeResultStatuses(
     dependencyQuestionIds.length === 0
       ? []
       : await db
-          .select({
-            id: event.id,
-            subject_id: event.subject_id,
-            caused_by_event_id: event.caused_by_event_id,
-            payload: event.payload,
-          })
+          .select(probeResultColumns)
           .from(event)
           .where(
             and(

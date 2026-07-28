@@ -1,7 +1,10 @@
 // YUK-706 (P0F/2) — one read-only TeachingBrief projected from the existing
 // conjecture proposal → mind-probe question → probe-result event chain.
 
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
+import {
+  type EffectiveProbeResultStatus,
+  getEffectiveProbeResultStatuses,
+} from '@/capabilities/agency/public';
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
   BRIEF_ACK_ACTION,
@@ -618,13 +621,21 @@ export async function validateAckableOutcome(
     serial = false,
     skipTimeWindow = false,
     skipCurrentStatusFold = false,
-  }: { serial?: boolean; skipTimeWindow?: boolean; skipCurrentStatusFold?: boolean } = {},
+    precomputedEvidenceStatus,
+  }: {
+    serial?: boolean;
+    skipTimeWindow?: boolean;
+    skipCurrentStatusFold?: boolean;
+    precomputedEvidenceStatus?: EffectiveProbeResultStatus;
+  } = {},
 ): Promise<CandidateResult<AckableOutcomeFacts>> {
   const canonical = validateCanonicalProbeResult(result);
   if (isCandidateError(canonical)) return canonical;
   const { resolution, conjectureEventId, probeQuestionId } = canonical.value;
-  const resultStatuses = await getEffectiveProbeResultStatuses(db, [result.id]);
-  if (resultStatuses.get(result.id) !== 'active') {
+  const evidenceStatus =
+    precomputedEvidenceStatus ??
+    (await getEffectiveProbeResultStatuses(db, [result.id])).get(result.id);
+  if (evidenceStatus !== 'active') {
     return { reason: 'result_evidence_inactive' };
   }
 
@@ -714,15 +725,23 @@ export async function loadOutcomeBrief(
         sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
               AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
-        // Corrected outcomes are excluded before the bounded window. This mirrors
-        // getEffectiveProbeResultStatuses' direct correction fold; the in-memory
-        // gate additionally validates recurrence dependencies.
+        // Corrected outcomes are excluded before the bounded window. The subquery
+        // ignores structurally invalid correction kinds (notably supersede without
+        // a replacement) just as getCorrectionStatuses does; the in-memory gate
+        // additionally validates the full event and recurrence dependencies.
         sql`COALESCE((
           SELECT correction.payload->>'correction_kind'
           FROM ${event} AS correction
           WHERE correction.action = 'correct'
             AND correction.subject_kind = 'event'
             AND correction.subject_id = ${event.id}
+            AND (
+              (correction.payload->>'correction_kind' = 'supersede'
+                AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
+              OR (correction.payload->>'correction_kind' IN
+                  ('retract', 'mark_wrong', 'restore')
+                AND NOT correction.payload ? 'replacement_event_id')
+            )
           ORDER BY correction.created_at DESC, correction.id DESC
           LIMIT 1
         ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
@@ -753,6 +772,9 @@ export async function loadOutcomeBrief(
       }),
     ),
   ];
+  // Query every terminal row for the bounded candidate conjecture set rather than
+  // applying a global terminal LIMIT: a busy conjecture must not crowd another
+  // candidate's older terminal out and resurrect its preliminary result.
   const terminalRows =
     candidateConjectureIds.length === 0
       ? []
@@ -775,8 +797,7 @@ export async function loadOutcomeBrief(
                     AND ${event.payload}->>'outcome' = '1'))`,
             ),
           )
-          .orderBy(desc(event.created_at), desc(event.id))
-          .limit(TEACHING_BRIEF_CANDIDATE_WINDOW * 2);
+          .orderBy(desc(event.created_at), desc(event.id));
   const terminalStatuses = await getEffectiveProbeResultStatuses(
     db,
     terminalRows.map((row) => row.id),
@@ -804,7 +825,10 @@ export async function loadOutcomeBrief(
     }
     // Shared full-chain gate (single source of truth with the ack writer): canonical
     // result + existing canonical mind-probe + accepted conjecture proposal.
-    const outcome = await validateAckableOutcome(db, result, now, { serial });
+    const outcome = await validateAckableOutcome(db, result, now, {
+      serial,
+      precomputedEvidenceStatus: resultStatuses.get(result.id),
+    });
     if (isCandidateError(outcome)) {
       warnSkipped('outcome', result.id, outcome.reason);
       continue;

@@ -84,7 +84,11 @@ export interface ConjectureScoresRead {
 export interface ConjectureScanDiagnostics {
   /** Raw matching rows actually passed through the fail-closed mapper. */
   scanned_count: number;
-  /** Scanned rows rejected by the mapper. Unscanned older rows are not counted. */
+  /**
+   * Scanned rows rejected by the mapper, including malformed score payloads and
+   * scores whose source probe evidence was later invalidated. Unscanned older
+   * rows are not counted.
+   */
   dropped_count: number;
   /** True when older matching rows exist but the result/scan bound stopped inspection. */
   scan_truncated: boolean;
@@ -110,6 +114,11 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isValidDate(value: unknown): value is Date {
   return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+function extractProbeResultEventId(row: typeof event.$inferSelect): string | undefined {
+  const id = (row.payload as Record<string, unknown> | null)?.probe_result_event_id;
+  return typeof id === 'string' ? id : undefined;
 }
 
 function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow | null {
@@ -228,14 +237,12 @@ export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead
   const scoreStatuses = await getEffectiveProbeResultStatuses(
     db,
     scoreRows.flatMap((row) => {
-      const probeResultEventId = (row.payload as Record<string, unknown> | null)
-        ?.probe_result_event_id;
+      const probeResultEventId = extractProbeResultEventId(row);
       return typeof probeResultEventId === 'string' ? [probeResultEventId] : [];
     }),
   );
   const scores = collectBoundedRows(scoreRows, (row) => {
-    const probeResultEventId = (row.payload as Record<string, unknown> | null)
-      ?.probe_result_event_id;
+    const probeResultEventId = extractProbeResultEventId(row);
     const sourceStatus =
       typeof probeResultEventId === 'string' ? scoreStatuses.get(probeResultEventId) : undefined;
     if (
