@@ -341,7 +341,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       payload: {
         correction_kind: 'retract',
         reason_md: 'owner retracted before answering',
-        affected_refs: [],
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
       },
       caused_by_event_id: proposalId,
     });

@@ -108,7 +108,7 @@ describe('loadActiveProbes', () => {
       payload: {
         correction_kind: 'retract',
         reason_md: 'owner retracted this conjecture',
-        affected_refs: [],
+        affected_refs: [{ kind: 'open_inquiry', id: 'conj_2' }],
       },
       caused_by_event_id: 'conj_2',
     });

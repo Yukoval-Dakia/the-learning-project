@@ -431,7 +431,7 @@ describe('probe one-shot lifecycle (U3)', () => {
       payload: {
         correction_kind: 'retract',
         reason_md: 'owner retracted the conjecture before recurrence verification',
-        affected_refs: [],
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
       },
       caused_by_event_id: proposalId,
     });
