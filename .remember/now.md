@@ -2,35 +2,43 @@
 
 ## Active line
 
-- Architecture exit 已完成；Grounding 首切 PR #1089 已合并：
-  `main@0966e1a1`，YUK-799/YUK-800 已 Done。
-- Grounding「猜想证据」YUK-804 已由 PR #1097 合并到 `main@96579df`；下一产品
-  slice 是 YUK-787/795，尚未启动实现。
+- Architecture exit、Grounding 首切、YUK-804 均已合并。
+- 当前唯一 active 线是 YUK-787：
+  `codex/grounding-probe-evidence-strength`，PR #1098。
+- 已合入 `origin/main@e7155fe5` 的 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
+  重复跑 CI gate。
 
 ## 当前实现
 
-1. 新 attempt event 带 `schema_version=1` 的最小不可变题目快照：题面、参考、
-   选项、图像、figures、question version、updated_at。
-2. question part 同时冻结 shared parent；缺失 parent 失败关闭。
-3. 四条生产 attempt writer 均落快照：solve、paper、mistakes ingestion、enroll。
-4. Practice 持有 snapshot reader，Ingestion 只经 Practice `public.ts` 调用。
-5. 失败投影校验 snapshot question id 必须等于 event subject；新事件的 conjecture
-   evidence 只读快照，不查 mutable question row。
-6. legacy attempt/review 无快照仍可解析；题面或 parent 已编辑/变更时保守省略，
-   不配对旧答题与新题面。
+1. probe route 只把 Judge 粗判映射为 `outcome`；resolution 在 lifecycle 事务内折叠。
+2. 首次 incorrect → `evidence_for`；第二个独立 probe incorrect → `confirmed`；
+   correct → `retired`。同 conjecture advisory lock 关闭并发竞态。
+3. induction/director 同次生成两道 probe；首次 evidence 与 follow-up serve 原子提交。
+4. 新结果保存 recurrence rule version 与独立 probe ids；历史 v1 不重解释。
+5. Teaching Brief、即时反馈、survival report 与 evidence MCP 明确区分 preliminary / confirmed；
+   n=1 不解锁 scoped practice。
+6. Agency public reader 折叠 probe result 自身 correction 及 recurrence dependency correction。
+7. Teaching Brief、Scout、observability 与 hard-confirm 只消费有效证据；restore 恢复资格。
+8. reconcile 对已有 anchor 的 correction 做 typed-state replay；失效证据删除，restore 后恢复。
+9. Prep Desk / active cap 在 SQL 中先折 latest correction 再限 3 行；无历史 backlog 扫描。
+10. Scout history 使用 `(created_at,id)` keyset、去重、10× scan ceiling 与
+    `scan_truncated`，避免 OFFSET 漂移和无界调用。
 
-## 已验证
+## 验证与远端
 
-- unit：505 files passed / 4 skipped；5779 passed / 33 skipped。
-- DB：388 files；4201 passed / 9 skipped / 1 todo。
-- migration 26/26；typecheck、lint、build、boundary / API contract audits 全绿。
-- 定向 DB 153/153：四条 writer、snapshot reader、失败投影、编辑后归纳均覆盖。
+- 变更文件 Biome、`git diff --check` 已通过。
+- PR #1098 的已知 review 线程均已逐项回复并解决。
+- main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
+  aggregate 保留 required-check 名称并 fail closed。
+- 合并 main 后只监听 GitHub Actions/OCR；不在本地跑完整 CI gate。
+- CI 方案说明：`docs/research/2026-07-28-ci-speedup.md`。
 
 ## 下一步
 
-1. 下一 slice：YUK-787/795 二次独立 probe 与 target-error-aware Judge；历史 v1
-   不批量重解释。
-2. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
+1. 推送最新 main merge commit，监听 PR #1098 新一轮 GitHub Actions/OCR；处理新增阻塞项。
+2. 全绿后 squash merge，Linear YUK-787 → Done。
+3. 严格串行启动 YUK-795 prediction_score / hard-confirm 问责轨。
+4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
 
 ## CI 测试长尾二次提速（2026-07-29）
 

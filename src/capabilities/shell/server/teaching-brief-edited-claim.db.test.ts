@@ -57,6 +57,8 @@ function conjecturePayload() {
       recurrence_count: 2,
       probe_md: PROBE_MD,
       probe_reference_md: PROBE_REFERENCE_MD,
+      followup_probe_md: 'd/dx cos(x^3) = ?',
+      followup_probe_reference_md: '-3x^2·sin(x^3)',
       discriminating: true,
       predicted_p: 0.3,
       baseline_p_at_induction: 0.6,
@@ -121,14 +123,13 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     });
   });
 
-  it('a confirmed outcome credits the pre-edit claim, never the rewrite', async () => {
+  it('a preliminary outcome credits the pre-edit claim without n=1 support wording', async () => {
     const { proposalId, probeQuestionId } = await acceptWithRewrite();
-    // The learner errs on the discriminating probe → judge 'incorrect' → confirmed.
+    // The learner errs once: this is preliminary evidence, not confirmation.
     const settled = await answerProbe({
       db: testDb(),
       probeQuestionId,
       outcome: 0,
-      resolution: 'confirmed',
     });
 
     const response = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
@@ -140,21 +141,23 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     // for the displayed judgement) must no longer be producible.
     expect(brief).toMatchObject({
       brief_id: proposalId,
-      state: 'outcome_confirmed',
+      state: 'outcome_evidence_for',
       finding: { claim_md: OWNER_REWRITE, tested_claim_md: ORIGINAL_CLAIM },
       current_outcome: {
-        status: 'confirmed',
+        status: 'evidence_for',
         probe_question_id: probeQuestionId,
         probe_result_event_id: settled.probe_result_event_id,
-        summary_md: '这次探针支持的是你改写前的那条判断；你的改写还没有被检验。',
+        summary_md: '这次表现与改写前的那条判断一致，但单次探针不足以下结论；你的改写仍未被检验。',
       },
     });
     expect(brief?.current_outcome.summary_md).not.toContain(UNQUALIFIED_SUPPORT_COPY);
+    expect(brief?.current_outcome.summary_md).not.toContain('得到支持');
+    expect(brief?.current_outcome.summary_md).not.toContain('确证');
   });
 
   it('a retired outcome likewise credits the pre-edit claim', async () => {
     const { probeQuestionId } = await acceptWithRewrite();
-    await answerProbe({ db: testDb(), probeQuestionId, outcome: 1, resolution: 'retired' });
+    await answerProbe({ db: testDb(), probeQuestionId, outcome: 1 });
 
     const { brief } = await loadTeachingBrief(testDb(), new Date(Date.now() + 1000));
     expect(brief).toMatchObject({
@@ -207,7 +210,7 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     expect(rate.payload).not.toHaveProperty('corrected_claim_md');
   });
 
-  it('a PLAIN accept is byte-identical to today — no rewrite, no disclosure key', async () => {
+  it('a plain accept keeps the first incorrect result preliminary with no disclosure key', async () => {
     const db = testDb();
     const proposalId = await writeAiProposal(db, {
       actor_ref: 'research_meeting',
@@ -219,17 +222,16 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
       db,
       probeQuestionId: probe.id,
       outcome: 0,
-      resolution: 'confirmed',
     });
 
     const response = await loadTeachingBrief(db, new Date(Date.now() + 1000));
     expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();
     expect(response.brief).toMatchObject({
-      state: 'outcome_confirmed',
+      state: 'outcome_evidence_for',
       finding: { claim_md: ORIGINAL_CLAIM },
       current_outcome: {
-        status: 'confirmed',
-        summary_md: '这条判断得到这次探针的支持；下一步可以针对这个点练习。',
+        status: 'evidence_for',
+        summary_md: '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
       },
     });
     // Contract §2.1 absent-key discipline: nothing was rewritten, so the key must be

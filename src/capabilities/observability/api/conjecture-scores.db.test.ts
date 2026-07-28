@@ -41,7 +41,7 @@ async function seedPredictionScore(opts: {
   predicted_p: number;
   baseline_p: number;
   outcome: 0 | 1;
-  resolution: 'confirmed' | 'retired';
+  resolution: 'evidence_for' | 'confirmed' | 'retired';
   brier_model: number;
   brier_baseline: number;
   log_loss_model: number;
@@ -123,7 +123,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       predicted_p: 0.3,
       baseline_p: 0.6,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       brier_model: 0.09,
       brier_baseline: 0.36,
       log_loss_model: 0.356,
@@ -154,7 +154,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       predicted_p: 0.3,
       baseline_p: 0.6,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       brier_model: 0.09,
       brier_baseline: 0.36,
       log_loss_model: 0.356,

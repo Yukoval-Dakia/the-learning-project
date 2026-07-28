@@ -27,6 +27,8 @@ describe('ConjectureDraft', () => {
     evidence_event_ids: ['attempt_1', 'attempt_2'],
     probe_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
     probe_reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
+    followup_probe_md: "对 g(x)=cos(x^3)，写出 g'(x) 并标出内层导数。",
+    followup_probe_reference_md: "g'(x)=-3x^2·sin(x^3)；内层导数是 3x²。",
     cause_category: 'concept_confusion',
     recurrence_count: 3,
     predicted_p: 0.35,
@@ -34,7 +36,7 @@ describe('ConjectureDraft', () => {
     agreement_count: 2,
   };
 
-  it('accepts a well-formed second-person conjecture with exactly one probe', () => {
+  it('accepts a well-formed second-person conjecture with two distinct probes', () => {
     const parsed = ConjectureDraft.safeParse(valid);
     expect(parsed.success).toBe(true);
   });
@@ -80,8 +82,51 @@ describe('ConjectureDraft', () => {
     expect(ConjectureDraft.safeParse({ ...valid, recurrence_count: 1 }).success).toBe(false);
   });
 
-  it('rejects an empty probe_md (exactly one discriminating probe required)', () => {
+  it('rejects an empty probe_md (two discriminating probes are required)', () => {
     expect(ConjectureDraft.safeParse({ ...valid, probe_md: '' }).success).toBe(false);
+  });
+
+  it('rejects a follow-up that repeats the first probe after identity normalization', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        followup_probe_md: `  ${valid.probe_md.normalize('NFKC')}！！ `,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('preserves punctuation that changes a mathematical expression', () => {
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_md: '解方程 2x+3=7',
+        followup_probe_md: '解方程 2x-3=7',
+      }).success,
+    ).toBe(true);
+    expect(
+      ConjectureDraft.safeParse({
+        ...valid,
+        probe_md: '判断 x/y 的定义域',
+        followup_probe_md: '判断 xy 的定义域',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('trims follow-up fields and rejects whitespace-only prompt or reference', () => {
+    const parsed = ConjectureDraft.parse({
+      ...valid,
+      followup_probe_md: `  ${valid.followup_probe_md}  `,
+      followup_probe_reference_md: `  ${valid.followup_probe_reference_md}  `,
+    });
+    if (parsed.kind !== 'proposal') throw new Error('expected proposal');
+    expect(parsed.followup_probe_md).toBe(valid.followup_probe_md);
+    expect(parsed.followup_probe_reference_md).toBe(valid.followup_probe_reference_md);
+    expect(ConjectureDraft.safeParse({ ...valid, followup_probe_md: ' \n\t ' }).success).toBe(
+      false,
+    );
+    expect(
+      ConjectureDraft.safeParse({ ...valid, followup_probe_reference_md: ' \n\t ' }).success,
+    ).toBe(false);
   });
 
   it('rejects predicted_p outside [0,1] (A13 falsifiable prediction is a probability)', () => {

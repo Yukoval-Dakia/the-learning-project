@@ -778,7 +778,7 @@
                 }
               ]
             },
-            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。A5-a 分流：judge 'incorrect' → outcome=0 → 'confirmed'（猜测成立）；'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
+            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"answer_md\": \"2x·cos(x^2)\"\n}",
@@ -1464,6 +1464,34 @@
               "path": ["api", "prep-desk", "conjectures"]
             },
             "description": "备课台读模型：top ≤3 pending conjecture（教研团 Phase 0 / U4，YUK-406/YUK-440）\n\n**Notes:** 返回 { conjectures: [{ id, claim, knowledge_id, cause_category, probe_md, recurrence_count, discriminating, corrected_by_owner, evidence:[{kind,id}], proposed_at }] }。salience（confidence × recurrence_count）DESC 排序后 cap 3。confidence、predicted_p、baseline_p_at_induction 永不过线（本地校准值，anti-false-precision）。probe_md = 未跑的判别探针文本（团队「即将问」的题，非 flashcard）。需 x-internal-token"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/prep-desk/brief/interaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/prep-desk/brief/interaction",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "prep-desk", "brief", "interaction"]
+            },
+            "description": "教研简报交互事实：记录 brief_seen 或 primary_action_started（YUK-710/YUK-787）\n\n**Notes:** append-only、非阻塞 telemetry。brief_seen 需 brief_state；accept_probe 不带实例 id；answer_probe 必须带 probe_question_id，使同一 brief 的首次与独立复验分别幂等计数；scoped_practice 必须带 result_event_id。新写入返回 201，重复 idempotency key 返回 200；不写 FSRS/mastery，需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"primary_action_started\",\n  \"brief_id\": \"REPLACE_BRIEF_ID\",\n  \"action_kind\": \"answer_probe\",\n  \"probe_question_id\": \"REPLACE_PROBE_QUESTION_ID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "response": []
         }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActivityRef } from './activity';
-import { QuestionKind } from './business';
+import { QuestionKind, normalizeProbeIdentity } from './business';
 import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
@@ -493,25 +493,54 @@ export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalCha
 // `confused-with-X`, so a single off-target failure cannot flip the ledger to a
 // misconception state (the consistency-gate role YUK-344 plays in Phase 1+; Phase 0
 // substitutes this in-payload contract). See docs/design/2026-06-27-a13-ts-half-design.md.
-export const ConjectureProposalChange = z.object({
-  claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS),
-  knowledge_id: z.string().min(1),
-  cause_category: CauseCategory,
-  confidence: z.number().min(0).max(1),
-  recurrence_count: z.number().int().min(2),
-  probe_md: z.string().min(1).max(2000),
-  // conjecture-wire #13 (YUK-538 ⑬) — judge gold reference (single-writer: induced
-  // once, flows to serveProbeOnce.referenceMd → question.reference_md). max 2000
-  // mirrors ConjectureDraft.probe_reference_md (business.ts) — the draft feeds this
-  // payload directly, so the caps MUST stay in lockstep (a wider draft would let a
-  // 2001-char reference pass induction then throw at this parse-barrier, swallowed +
-  // mis-logged as a retryable AI failure — same trap as claim_md, see business.ts).
-  probe_reference_md: z.string().min(1).max(2000),
-  discriminating: z.boolean(),
-  corrected_by_owner: z.boolean().default(false),
-  predicted_p: z.number().min(0).max(1),
-  baseline_p_at_induction: z.number().min(0).max(1),
-});
+export const ConjectureProposalChange = z
+  .object({
+    claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS),
+    knowledge_id: z.string().min(1),
+    cause_category: CauseCategory,
+    confidence: z.number().min(0).max(1),
+    recurrence_count: z.number().int().min(2),
+    probe_md: z.string().min(1).max(2000),
+    // conjecture-wire #13 (YUK-538 ⑬) — judge gold reference (single-writer: induced
+    // once, flows to serveProbeOnce.referenceMd → question.reference_md). max 2000
+    // mirrors ConjectureDraft.probe_reference_md (business.ts) — the draft feeds this
+    // payload directly, so the caps MUST stay in lockstep (a wider draft would let a
+    // 2001-char reference pass induction then throw at this parse-barrier, swallowed +
+    // mis-logged as a retryable AI failure — same trap as claim_md, see business.ts).
+    probe_reference_md: z.string().min(1).max(2000),
+    // Optional only for historical payload compatibility. Every v2 producer writes
+    // both fields; a well-formed old proposal keeps its terminal v1 answer rule
+    // instead of inventing a follow-up or stranding an active probe.
+    followup_probe_md: z.string().trim().min(1).max(2000).optional(),
+    // Like probe_reference_md above, this draft-fed cap MUST remain identical to
+    // ConjectureProposalDraft.followup_probe_reference_md in business.ts.
+    followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
+    discriminating: z.boolean(),
+    corrected_by_owner: z.boolean().default(false),
+    predicted_p: z.number().min(0).max(1),
+    baseline_p_at_induction: z.number().min(0).max(1),
+  })
+  .superRefine((change, ctx) => {
+    const hasPrompt = change.followup_probe_md !== undefined;
+    const hasReference = change.followup_probe_reference_md !== undefined;
+    if (hasPrompt !== hasReference) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: hasPrompt ? ['followup_probe_reference_md'] : ['followup_probe_md'],
+        message: 'follow-up probe prompt and reference must be provided together',
+      });
+    }
+    if (
+      change.followup_probe_md !== undefined &&
+      normalizeProbeIdentity(change.followup_probe_md) === normalizeProbeIdentity(change.probe_md)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followup_probe_md'],
+        message: 'followup_probe_md must be distinct from probe_md',
+      });
+    }
+  });
 export type ConjectureProposalChangeT = z.infer<typeof ConjectureProposalChange>;
 
 export const AiProposalPayload = z.discriminatedUnion('kind', [

@@ -12,6 +12,7 @@ export {
 } from '@/core/schema/business';
 export { ActivityRef } from '@/core/schema/activity';
 export { CoarseOutcome, JudgeResultV2, ScoreMeaning } from '@/core/schema/capability';
+export { PROBE_RESOLUTIONS } from '@/core/schema/conjecture';
 export { CorrectArtifactEvent } from '@/core/schema/event';
 export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { SuggestionKind } from '@/core/schema/event/known';

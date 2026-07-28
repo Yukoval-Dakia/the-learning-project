@@ -205,6 +205,8 @@ const ProposeConjectureShape = {
   claim_md: z.string().min(1),
   probe_md: z.string().min(1),
   probe_reference_md: z.string().min(1),
+  followup_probe_md: z.string().trim().min(1).max(1000),
+  followup_probe_reference_md: z.string().trim().min(1).max(2000),
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
   // PRIMARY event ids only (attempt / review / probe / prediction_score) — agent_note ids are
@@ -328,7 +330,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
       // reason } (soft, so the director can react) and NEVER consumes a cap slot.
       tool(
         PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
+        'PROPOSE (not write) one conjecture about how the owner thinks + two distinct, untrained discriminating probes and their references. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / review / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
         ProposeConjectureShape,
         async (args) => {
           // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
@@ -419,6 +421,8 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             evidence_event_ids: primaryRefs,
             probe_md: a.probe_md,
             probe_reference_md: a.probe_reference_md,
+            followup_probe_md: a.followup_probe_md,
+            followup_probe_reference_md: a.followup_probe_reference_md,
             cause_category: causeCategory,
             recurrence_count: recurrenceCount,
             predicted_p: a.predicted_p,
@@ -494,6 +498,8 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
                 recurrence_count: recurrenceCount,
                 probe_md: a.probe_md,
                 probe_reference_md: a.probe_reference_md,
+                followup_probe_md: a.followup_probe_md,
+                followup_probe_reference_md: a.followup_probe_reference_md,
                 discriminating: a.discriminating,
                 corrected_by_owner: false,
                 predicted_p: a.predicted_p,

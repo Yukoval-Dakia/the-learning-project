@@ -1,7 +1,7 @@
 // YUK-440 (A13) U8 — reconcile loop DB tests (real Postgres). End-to-end through the
 // REAL producers: writeAiProposal (conjecture) → serveProbeOnce/answerProbe (U3
-// probe_result) → reconcileConjecturePredictions. Locks: prediction_score is appended
-// LOG-only + idempotent (no duplicate on re-run), the typed-ledger advances
+// probe_result) → reconcileConjecturePredictions. Locks: sequence-1 prediction_score and
+// sequence-2 score-free projection anchors are append-only + idempotent, the typed-ledger advances
 // (FLIP-inert: soft no-evidence, never `mastered`), R(t) lives in the score event but
 // not the typed-state, and NO FSRS/attempt event is ever written (ND-5).
 
@@ -10,18 +10,22 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { db } from '@/db/client';
-import { event, kc_typed_state } from '@/db/schema';
+import { event, kc_typed_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb } from '../../../tests/helpers/db';
-import { PREDICTION_SCORE_ACTION, reconcileConjecturePredictions } from './reconcile';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
+  reconcileConjecturePredictions,
+} from './reconcile';
 
 interface SeedOpts {
   knowledgeId?: string;
   outcome?: 0 | 1;
-  resolution?: 'confirmed' | 'retired';
   predicted_p?: number;
   baseline_p?: number;
   retrievability?: number | null;
@@ -46,6 +50,8 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
         recurrence_count: 3,
         probe_md: 'probe text',
         probe_reference_md: 'reference text',
+        followup_probe_md: 'independent follow-up probe text',
+        followup_probe_reference_md: 'independent follow-up reference text',
         discriminating: true,
         corrected_by_owner: false,
         predicted_p: opts.predicted_p ?? 0.3,
@@ -54,6 +60,21 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
       cooldown_key: `conjecture:concept_confusion::${knowledgeId}`,
     },
     caused_by_event_id: null,
+  });
+  await writeEvent(db, {
+    id: `rate_${conjectureProposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: conjectureProposalId,
+    outcome: 'success',
+    payload: {
+      rating: 'accept',
+      conjecture_id: conjectureProposalId,
+      calibration_anchor: 'accept',
+    },
+    caused_by_event_id: conjectureProposalId,
   });
 
   const served = await serveProbeOnce({
@@ -68,7 +89,6 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
     db,
     probeQuestionId: served.probe_question_id,
     outcome: opts.outcome ?? 0,
-    resolution: opts.resolution ?? 'confirmed',
     retrievabilityAtJudge: opts.retrievability ?? null,
   });
 
@@ -99,12 +119,24 @@ async function scoreEvents(probeResultEventId: string) {
     );
 }
 
+async function projectionEvents(probeResultEventId: string) {
+  return db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_PROJECTED_ACTION),
+        eq(event.subject_id, probeResultEventId),
+      ),
+    );
+}
+
 describe('reconcileConjecturePredictions (DB)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('scores a confirmed probe → LOG prediction_score + soft typed-ledger cell (FLIP-inert)', async () => {
+  it('scores preliminary evidence → LOG prediction_score + soft typed-ledger cell', async () => {
     const seed = await seedAnsweredProbe({ outcome: 0, retrievability: 0.42 });
 
     const result = await reconcileConjecturePredictions(db);
@@ -119,6 +151,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(p.predicted_p).toBe(0.3);
     expect(p.baseline_p).toBe(0.7);
     expect(p.outcome).toBe(0);
+    expect(p.resolution).toBe('evidence_for');
     expect(p.brier_model).toBeCloseTo(0.09, 9);
     expect(p.brier_baseline).toBeCloseTo(0.49, 9);
     // R(t) recorded HERE (in the log event).
@@ -149,6 +182,243 @@ describe('reconcileConjecturePredictions (DB)', () => {
     // (3) ND-5: no FSRS / attempt event was written anywhere in the loop.
     const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
     expect(attempts).toHaveLength(0);
+  });
+
+  it('ignores corrected probe evidence until a later restore', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    await writeEvent(db, {
+      id: `correct_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'probe evidence is invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-01T00:00:00.000Z'),
+    });
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(0);
+    await expect(projectionEvents(seed.probeResultEventId)).resolves.toHaveLength(0);
+    await expect(typedRow(seed.knowledgeId)).resolves.toBeNull();
+
+    await writeEvent(db, {
+      id: `restore_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'probe evidence was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-01T00:00:01.000Z'),
+    });
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(typedRow(seed.knowledgeId)).resolves.not.toBeNull();
+  });
+
+  it('rebuilds an already-anchored typed projection after correction and restore', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(typedRow(seed.knowledgeId)).resolves.not.toBeNull();
+
+    await writeEvent(db, {
+      id: `late_correct_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'late invalidation after projection',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-02T00:00:00.000Z'),
+    });
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    await expect(typedRow(seed.knowledgeId)).resolves.toBeNull();
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+
+    await writeEvent(db, {
+      id: `late_restore_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'late evidence revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-02T00:00:01.000Z'),
+    });
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    expect((await typedRow(seed.knowledgeId))?.evidence_event_ids).toEqual([
+      seed.conjectureProposalId,
+      seed.probeResultEventId,
+    ]);
+  });
+
+  it('does not project an unanchored recurrence result whose preliminary dependency was corrected', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    const [followup] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.source_ref, seed.conjectureProposalId),
+          sql`${question.metadata}->>'probe_sequence' = '2'`,
+        ),
+      );
+    if (!followup) throw new Error('expected the first miss to activate a recurrence probe');
+    const terminal = await answerProbe({
+      db,
+      probeQuestionId: followup.id,
+      outcome: 0,
+    });
+
+    await writeEvent(db, {
+      id: `correct_dependency_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'preliminary evidence invalidated before projection',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-03T00:00:00.000Z'),
+    });
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(0);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
+    await expect(typedRow(seed.knowledgeId)).resolves.toBeNull();
+
+    await writeEvent(db, {
+      id: `restore_dependency_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'preliminary evidence revalidated before projection',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-03T00:00:01.000Z'),
+    });
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 2,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(1);
+  });
+
+  it('does not project a recurrence chain after a supporting probe drifts', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    const [followup] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.source_ref, seed.conjectureProposalId),
+          sql`${question.metadata}->>'probe_sequence' = '2'`,
+        ),
+      );
+    if (!followup) throw new Error('expected the first miss to activate a recurrence probe');
+    const terminal = await answerProbe({
+      db,
+      probeQuestionId: followup.id,
+      outcome: 0,
+    });
+    await db
+      .update(question)
+      .set({ prompt_md: 'drifted first probe prompt' })
+      .where(eq(question.id, seed.probeQuestionId));
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
+    expect((await typedRow(seed.knowledgeId))?.evidence_event_ids).toContain(
+      seed.probeResultEventId,
+    );
+  });
+
+  it('does not score a recurrence probe with the first probe prediction', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    const [followup] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          eq(question.source_ref, seed.conjectureProposalId),
+          sql`${question.metadata}->>'probe_sequence' = '2'`,
+        ),
+      );
+    if (!followup) throw new Error('expected the first miss to activate a recurrence probe');
+
+    const terminal = await answerProbe({
+      db,
+      probeQuestionId: followup.id,
+      outcome: 0,
+    });
+
+    // `predicted_p` belongs only to sequence 1. The independent recurrence probe has
+    // no calibrated probability yet, so it must not receive a fabricated score.
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 2,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(scoreEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
+    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(1);
+    const projected = await typedRow(seed.knowledgeId);
+    expect([...(projected?.evidence_event_ids ?? [])].sort()).toEqual(
+      [seed.conjectureProposalId, seed.probeResultEventId, terminal.probe_result_event_id].sort(),
+    );
   });
 
   it('is idempotent — a second run scores nothing and writes no duplicate', async () => {
@@ -215,7 +485,7 @@ describe('reconcileConjecturePredictions (DB)', () => {
   });
 
   it('a retired probe still writes a soft no-evidence cell', async () => {
-    await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1, resolution: 'retired' });
+    await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1 });
     const result = await reconcileConjecturePredictions(db);
     expect(result.reconciled).toBe(1);
     const ts = await typedRow('k_ret');

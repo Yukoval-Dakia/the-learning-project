@@ -1,6 +1,6 @@
 # CI 提速研究：先缩短关键路径，不削覆盖
 
-**日期**：2026-07-28  
+**日期**：2026-07-28
 **状态**：Phase 1 已实现；等待 GitHub Actions 首轮实测
 **范围**：`.github/workflows/ci-gate.yml` 的 required gate 与 usability job
 

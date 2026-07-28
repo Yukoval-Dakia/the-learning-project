@@ -536,6 +536,24 @@
     ]
   },
   {
+    "path": "/api/prep-desk/brief/interaction",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "教研简报交互事实：记录 brief_seen 或 primary_action_started（YUK-710/YUK-787）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "type": "primary_action_started",
+          "brief_id": "REPLACE_BRIEF_ID",
+          "action_kind": "answer_probe",
+          "probe_question_id": "REPLACE_PROBE_QUESTION_ID"
+        },
+        "notes": "append-only、非阻塞 telemetry。brief_seen 需 brief_state；accept_probe 不带实例 id；answer_probe 必须带 probe_question_id，使同一 brief 的首次与独立复验分别幂等计数；scoped_practice 必须带 result_event_id。新写入返回 201，重复 idempotency key 返回 200；不写 FSRS/mastery，需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/prep-desk/conjectures",
     "methods": [
       {
@@ -559,7 +577,7 @@
         "bodyExample": {
           "answer_md": "2x·cos(x^2)"
         },
-        "notes": "conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。A5-a 分流：judge 'incorrect' → outcome=0 → 'confirmed'（猜测成立）；'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
+        "notes": "conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
       }
     ]
   },

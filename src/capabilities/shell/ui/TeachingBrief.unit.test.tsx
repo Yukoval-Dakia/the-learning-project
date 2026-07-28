@@ -11,6 +11,7 @@ import { TeachingBriefBand } from './TeachingBrief';
 import type {
   FindingTeachingBrief,
   OutcomeConfirmedTeachingBrief,
+  OutcomeEvidenceForTeachingBrief,
   OutcomeRetiredTeachingBrief,
   ProbeReadyTeachingBrief,
   TeachingBrief,
@@ -115,6 +116,20 @@ function outcomeConfirmedBrief(
       probe_result_event_id: 'evt_probe_result_01',
     },
     ...overrides,
+  };
+}
+
+function outcomeEvidenceForBrief(): OutcomeEvidenceForTeachingBrief {
+  return {
+    ...outcomeConfirmedBrief(),
+    state: 'outcome_evidence_for',
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    current_outcome: {
+      status: 'evidence_for',
+      summary_md: '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
+      probe_question_id: 'q_probe_01',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
   };
 }
 
@@ -260,6 +275,20 @@ describe('TeachingBriefBand — state rendering (SSR)', () => {
     expect(html).not.toContain('已经备好三道题');
     expect(html).not.toContain('就按这个方向验证');
     expect(html).not.toContain('现在就试做这道题');
+    expectClean(html);
+  });
+
+  it('outcome_evidence_for: says n=1 is preliminary and does not unlock scoped practice', () => {
+    const brief = outcomeEvidenceForBrief();
+    const html = render(brief);
+    expect(html).toContain(brief.current_outcome.summary_md);
+    expect(html).toContain('tb-outcome-evidence_for');
+    expect(html).toContain('不会据此直接安排专项练习');
+    expect(html).toContain('知道了');
+    expect(html).not.toContain('回到今日');
+    expect(html).not.toContain('针对这个点练一组');
+    expect(html).not.toContain('得到支持');
+    expect(html).not.toContain('确证');
     expectClean(html);
   });
 

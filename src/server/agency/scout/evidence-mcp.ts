@@ -17,8 +17,10 @@
 //      done by the orchestration layer after the run via persistToolTrace(); a
 //      per-handler write can't correlate to the ai_task_runs row (scout spec §2 (b)).
 
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
+import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { writeToolCallLog } from '@/server/ai/log';
@@ -71,6 +73,21 @@ export const EVIDENCE_LIMITS = {
 //     pre-reconcile window.
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
+const PROBE_HISTORY_SCAN_CEILING = EVIDENCE_LIMITS.probeHistoryRows * 10;
+
+interface ProbeHistoryRow {
+  id: string;
+  action: string;
+  created_at: Date;
+  payload: unknown;
+}
+
+function correctionTargetId(row: ProbeHistoryRow): string | null {
+  if (row.action === PROBE_RESULT_ACTION) return row.id;
+  const probeResultEventId = (row.payload as { probe_result_event_id?: unknown } | null)
+    ?.probe_result_event_id;
+  return typeof probeResultEventId === 'string' ? probeResultEventId : null;
+}
 
 /** The knowledge-channel these agent-notes are addressed to (spec §1). */
 const AGENT_NOTES_CHANNEL = 'research_meeting' as const;
@@ -107,19 +124,46 @@ function textResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
 }
 
-// probe_result payloads carry the learner's raw probe answer (answer_md) — learner
-// free text, so it gets the same delimit+truncate discipline as get_attempt_details
-// (review F1/F2 family). Other payload keys — and prediction_score payloads, which
-// carry no learner text — pass through untouched.
+// probe_result payloads carry both learner free text and a conjecture-survival
+// resolution. Delimit the answer as before, and add an explicit evidence-strength
+// label so a downstream model cannot mistake `evidence_for` (one observation) for
+// recurrence-gated confirmation. Existing persisted resolution is never rewritten.
 function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown {
   if (action !== PROBE_RESULT_ACTION || payload === null || typeof payload !== 'object') {
     return payload;
   }
   const p = payload as Record<string, unknown>;
-  if (typeof p.answer_md !== 'string') return payload;
+  let evidenceStrength: string;
+  // `unclassified` is the deliberate fail-closed bucket for corrupt or
+  // non-canonical outcome/resolution pairs; it is never promoted to an evidence tier.
+  const canonicalPair =
+    (p.outcome === 0 && (p.resolution === 'evidence_for' || p.resolution === 'confirmed')) ||
+    (p.outcome === 1 && p.resolution === 'retired');
+  if (!canonicalPair) {
+    evidenceStrength = 'unclassified';
+  } else if (p.resolution === 'evidence_for') {
+    evidenceStrength = 'single_observation';
+  } else if (
+    p.resolution === 'confirmed' &&
+    p.resolution_rule_version === PROBE_RESOLUTION_RULE_VERSION
+  ) {
+    evidenceStrength = 'independent_recurrence';
+  } else if (p.resolution === 'confirmed') {
+    evidenceStrength = 'legacy_confirmed_unverified';
+  } else {
+    // canonicalPair plus the branches above leave only outcome=1 / retired.
+    evidenceStrength = 'counterevidence';
+  }
   return {
     ...p,
-    answer_md: wrapUntrustedLearnerText(truncate(p.answer_md, EVIDENCE_LIMITS.attemptTextChars)),
+    evidence_strength: evidenceStrength,
+    ...(typeof p.answer_md === 'string'
+      ? {
+          answer_md: wrapUntrustedLearnerText(
+            truncate(p.answer_md, EVIDENCE_LIMITS.attemptTextChars),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -233,7 +277,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       ),
       tool(
         getProbeHistoryName,
-        'Read this knowledge point past probe results and prediction scores (newest first, capped). Empty is itself signal — no probe cycle has produced evidence yet.',
+        'Read this knowledge point past probe results and prediction scores (newest first, capped). For probe results, evidence_strength=single_observation is preliminary n=1 evidence only, independent_recurrence is v2 recurrence-gated confirmation, legacy_confirmed_unverified is a historical label whose recurrence was not recorded, and counterevidence is a correct probe that retired the conjecture. Never promote single_observation or legacy_confirmed_unverified to a fact. Empty is itself signal — no probe cycle has produced evidence yet.',
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
@@ -246,7 +290,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             .select({ id: question.id })
             .from(question)
             .where(sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`);
-          const rows = await db
+          const scannedRows = await db
             .select({
               id: event.id,
               action: event.action,
@@ -267,14 +311,33 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
               ),
             )
             .orderBy(desc(event.created_at), desc(event.id))
-            .limit(EVIDENCE_LIMITS.probeHistoryRows);
+            .limit(PROBE_HISTORY_SCAN_CEILING + 1);
+          const candidateRows = scannedRows.slice(0, PROBE_HISTORY_SCAN_CEILING);
+          const evidenceStatuses = await getEffectiveProbeResultStatuses(
+            db,
+            candidateRows.flatMap((row) => {
+              const targetId = correctionTargetId(row);
+              return targetId ? [targetId] : [];
+            }),
+          );
+          const activeRows: ProbeHistoryRow[] = candidateRows
+            .filter((row) => {
+              const targetId = correctionTargetId(row);
+              const evidenceStatus = targetId ? evidenceStatuses.get(targetId) : undefined;
+              return evidenceStatus !== 'corrected' && evidenceStatus !== 'dependency_inactive';
+            })
+            .slice(0, EVIDENCE_LIMITS.probeHistoryRows);
+          const scanTruncated =
+            scannedRows.length > PROBE_HISTORY_SCAN_CEILING &&
+            activeRows.length < EVIDENCE_LIMITS.probeHistoryRows;
           trace(
             getProbeHistoryName,
             { knowledge_id: knowledgeId },
-            rows.map((r) => r.id),
+            activeRows.map((r) => r.id),
           );
           return textResult({
-            probes: rows.map((r) => ({
+            scan_truncated: scanTruncated,
+            probes: activeRows.map((r) => ({
               event_id: r.id,
               action: r.action,
               created_at: r.created_at.toISOString(),

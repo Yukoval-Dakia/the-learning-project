@@ -18,6 +18,7 @@ import {
   PROBE_QUESTION_SOURCE,
   answerProbe,
   countActiveProbes,
+  peekExistingProbeResult,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
@@ -39,9 +40,11 @@ async function seedKnowledge(): Promise<void> {
     .onConflictDoNothing();
 }
 
-async function seedConjecture(): Promise<string> {
+async function seedConjecture({
+  includeFollowup = true,
+}: { includeFollowup?: boolean } = {}): Promise<string> {
   const db = testDb();
-  return writeAiProposal(db, {
+  const proposalId = await writeAiProposal(db, {
     actor_ref: 'research_meeting',
     payload: {
       kind: 'conjecture',
@@ -57,12 +60,30 @@ async function seedConjecture(): Promise<string> {
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
         probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
+        ...(includeFollowup
+          ? {
+              followup_probe_md: 'd/dx cos(x^3) = ?',
+              followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+            }
+          : {}),
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
       },
     },
   });
+  await writeEvent(db, {
+    id: `rate_${proposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
+    caused_by_event_id: proposalId,
+  });
+  return proposalId;
 }
 
 async function serve(proposalId: string) {
@@ -87,6 +108,13 @@ async function probeResultEvents(probeQuestionId: string) {
         eq(event.subject_id, probeQuestionId),
       ),
     );
+}
+
+async function probeQuestions(proposalId: string) {
+  return testDb()
+    .select()
+    .from(question)
+    .where(and(eq(question.source, PROBE_QUESTION_SOURCE), eq(question.source_ref, proposalId)));
 }
 
 async function attemptEvents(probeQuestionId: string) {
@@ -178,7 +206,7 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(rows.some((r) => r.id === served.probe_question_id)).toBe(false);
   });
 
-  it('answer writes exactly one experimental:probe_result, NO attempt, NO FSRS row', async () => {
+  it('first incorrect answer writes evidence_for, not confirmed, with no attempt or FSRS row', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
@@ -187,10 +215,9 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 0,
-      resolution: 'confirmed',
       answer_md: 'multiplies derivatives',
     });
-    expect(answered.status).toBe('confirmed');
+    expect(answered.status).toBe('evidence_for');
     expect(answered.idempotent).toBeUndefined();
 
     const results = await probeResultEvents(served.probe_question_id);
@@ -199,7 +226,9 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(results[0].payload).toMatchObject({
       conjecture_event_id: proposalId,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
+      resolution_rule_version: 'within_learner_probe_recurrence_v2',
+      independent_probe_question_ids: [served.probe_question_id],
       retrievability_at_judge: null,
       answer_md: 'multiplies derivatives',
     });
@@ -228,7 +257,225 @@ describe('probe one-shot lifecycle (U3)', () => {
       .where(eq(material_fsrs_state.subject_id, KC_ID));
     expect(fsrsForKc).toHaveLength(0);
 
-    // Answering frees the active slot.
+    // The matching first result atomically replaces its freed slot with the
+    // independently authored follow-up; no dead confirmed rail.
+    expect(await countActiveProbes(testDb())).toBe(1);
+    const followups = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: 'd/dx cos(x^3) = ?',
+      reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+      draft_status: 'draft',
+    });
+  });
+
+  it('production follow-up path makes the second independent incorrect probe confirmed', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
+
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+    });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.id,
+      outcome: 0,
+    });
+
+    expect(first.status).toBe('evidence_for');
+    expect(second.status).toBe('confirmed');
+    expect((await probeResultEvents(firstProbe.probe_question_id))[0].payload).toMatchObject({
+      resolution: 'evidence_for',
+    });
+    expect((await probeResultEvents(secondProbe.id))[0].payload).toMatchObject({
+      resolution: 'confirmed',
+      resolution_rule_version: 'within_learner_probe_recurrence_v2',
+      independent_probe_question_ids: [firstProbe.probe_question_id, secondProbe.id].sort(),
+    });
+  });
+
+  it('excludes corrected preliminary evidence and does not author a third probe', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:00.000Z'),
+    });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
+    await writeEvent(testDb(), {
+      id: `correct_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'the preliminary probe evidence was invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date('2026-07-28T00:00:01.000Z'),
+    });
+
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:02.000Z'),
+    });
+
+    expect(second.status).toBe('evidence_for');
+    expect(await probeQuestions(proposalId)).toHaveLength(2);
+    expect(await countActiveProbes(testDb())).toBe(0);
+  });
+
+  it('counts restored preliminary evidence toward recurrence confirmation', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:00.000Z'),
+    });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
+    for (const [index, correctionKind] of (['retract', 'restore'] as const).entries()) {
+      await writeEvent(testDb(), {
+        id: `${correctionKind}_${first.probe_result_event_id}`,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: first.probe_result_event_id,
+        outcome: 'success',
+        payload: {
+          correction_kind: correctionKind,
+          reason_md: `${correctionKind} preliminary evidence in test`,
+          affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+        },
+        created_at: new Date(`2026-07-28T00:00:0${index + 1}.000Z`),
+      });
+    }
+
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:03.000Z'),
+    });
+
+    expect(second.status).toBe('confirmed');
+  });
+
+  it('serializes concurrent distinct answers so exactly one crosses the confirmation gate', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    const secondProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
+      throw new Error('expected two served probes');
+    }
+
+    const results = await Promise.all([
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: firstProbe.probe_question_id,
+        outcome: 0,
+      }),
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: secondProbe.probe_question_id,
+        outcome: 0,
+      }),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(['confirmed', 'evidence_for']);
+  });
+
+  it('folds all serialized history even when caller now predates the prior result timestamp', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    const secondProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served' || secondProbe.status !== 'served') {
+      throw new Error('expected two served probes');
+    }
+    const earlier = new Date('2026-07-27T00:00:00.000Z');
+    const later = new Date('2026-07-28T00:00:00.000Z');
+
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: later,
+    });
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.probe_question_id,
+      outcome: 0,
+      now: earlier,
+    });
+
+    expect(second.status).toBe('confirmed');
+  });
+
+  it('does not count a provenance-broken historical result toward confirmation', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    await writeEvent(testDb(), {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: 'prior_probe',
+      payload: { conjecture_event_id: proposalId, outcome: 0, resolution: 'evidence_for' },
+      caused_by_event_id: 'different_conjecture',
+      created_at: new Date(),
+    });
+
+    const result = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: 0,
+    });
+    expect(result.status).toBe('evidence_for');
+  });
+
+  it('settles a legacy proposal with the historical rule so its active probe cannot strand a slot', async () => {
+    const proposalId = await seedConjecture({ includeFollowup: false });
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+
+    const result = await answerProbe({
+      db: testDb(),
+      probeQuestionId: served.probe_question_id,
+      outcome: 0,
+    });
+
+    expect(result.status).toBe('confirmed');
+    const [persisted] = await probeResultEvents(served.probe_question_id);
+    expect(persisted.payload).not.toHaveProperty('resolution_rule_version');
+    expect(persisted.payload).not.toHaveProperty('independent_probe_question_ids');
     expect(await countActiveProbes(testDb())).toBe(0);
   });
 
@@ -241,13 +488,48 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 1,
-      resolution: 'retired',
     });
     expect(answered.status).toBe('retired');
 
     const results = await probeResultEvents(served.probe_question_id);
     expect(results).toHaveLength(1);
-    expect(results[0].payload).toMatchObject({ outcome: 1, resolution: 'retired' });
+    expect(results[0].payload).toMatchObject({
+      outcome: 1,
+      independent_probe_question_ids: [],
+    });
+  });
+
+  it('rejects a retracted conjecture without writing evidence or occupying a probe slot', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+
+    await writeEvent(testDb(), {
+      id: `correct_${proposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'owner retracted the conjecture before recurrence verification',
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
+      },
+      caused_by_event_id: proposalId,
+    });
+
+    expect(await countActiveProbes(testDb())).toBe(0);
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'probe_conjecture_inactive', status: 409 });
+    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
+    expect(await probeQuestions(proposalId)).toHaveLength(1);
   });
 
   it('one-shot idempotency — answering twice writes only one probe_result event', async () => {
@@ -259,29 +541,27 @@ describe('probe one-shot lifecycle (U3)', () => {
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 0,
-      resolution: 'confirmed',
     });
     const second = await answerProbe({
       db: testDb(),
       probeQuestionId: served.probe_question_id,
       outcome: 1,
-      resolution: 'retired',
     });
 
     expect(second.idempotent).toBe(true);
-    // The recorded result (confirmed) wins — the second call did NOT overwrite it.
-    expect(second.status).toBe('confirmed');
+    // The recorded preliminary result wins — the replay did NOT overwrite it.
+    expect(second.status).toBe('evidence_for');
     expect(second.probe_result_event_id).toBe(first.probe_result_event_id);
     expect(await probeResultEvents(served.probe_question_id)).toHaveLength(1);
   });
 
-  it('idempotent re-answer surfaces a corrupt recorded resolution instead of substituting the request value', async () => {
+  it('idempotent re-answer surfaces a corrupt recorded resolution instead of inventing one', async () => {
     const proposalId = await seedConjecture();
     const served = await serve(proposalId);
     if (served.status !== 'served') throw new Error('expected served');
 
     // Simulate a corrupt prior probe_result (e.g. manual DB edit) with no valid
-    // resolution. answerProbe must NOT blend in the caller's resolution — it fails loud.
+    // resolution. answerProbe must not reinterpret the corrupt history — it fails loud.
     await writeEvent(testDb(), {
       id: newId(),
       actor_kind: 'system',
@@ -299,14 +579,38 @@ describe('probe one-shot lifecycle (U3)', () => {
         db: testDb(),
         probeQuestionId: served.probe_question_id,
         outcome: 1,
-        resolution: 'retired',
       }),
     ).rejects.toMatchObject({ code: 'probe_result_corrupt', status: 500 });
   });
 
+  it('replays a legacy stored confirmed result without reinterpreting it as evidence_for', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+    const resultId = newId();
+    await writeEvent(testDb(), {
+      id: resultId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: served.probe_question_id,
+      payload: { conjecture_event_id: proposalId, outcome: 0, resolution: 'confirmed' },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+
+    await expect(peekExistingProbeResult(testDb(), served.probe_question_id)).resolves.toEqual({
+      status: 'confirmed',
+      outcome: 0,
+      probe_result_event_id: resultId,
+      idempotent: true,
+    });
+  });
+
   it('answer rejects an unknown question id with 404 probe_not_found', async () => {
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0 }),
     ).rejects.toMatchObject({ code: 'probe_not_found', status: 404 });
   });
 
@@ -330,7 +634,7 @@ describe('probe one-shot lifecycle (U3)', () => {
         updated_at: now,
       });
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0 }),
     ).rejects.toMatchObject({ code: 'not_a_probe', status: 409 });
   });
 
@@ -354,11 +658,11 @@ describe('probe one-shot lifecycle (U3)', () => {
         updated_at: now,
       });
     await expect(
-      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0 }),
     ).rejects.toMatchObject({ code: 'probe_missing_conjecture_ref', status: 409 });
   });
 
-  it('≤3 concurrent cap — 4th serve is cap_reached, answering frees a slot', async () => {
+  it('≤3 concurrent cap — preliminary follow-up keeps its slot while retirement frees one', async () => {
     const ids: string[] = [];
     for (let i = 0; i < MAX_CONCURRENT_ACTIVE_PROBES; i += 1) {
       const proposalId = await seedConjecture();
@@ -381,15 +685,23 @@ describe('probe one-shot lifecycle (U3)', () => {
       .where(eq(question.source, PROBE_QUESTION_SOURCE));
     expect(probeRows).toHaveLength(MAX_CONCURRENT_ACTIVE_PROBES);
 
-    // Answer one → active count drops → a new serve succeeds again.
+    // A first matching result consumes its newly freed slot with the required
+    // follow-up, so ordinary probes cannot starve the recurrence gate.
     await answerProbe({
       db: testDb(),
       probeQuestionId: ids[0],
       outcome: 0,
-      resolution: 'confirmed',
+    });
+    expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES);
+    expect((await serve(await seedConjecture())).status).toBe('cap_reached');
+
+    // A retired probe needs no follow-up and genuinely frees a slot.
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: ids[1],
+      outcome: 1,
     });
     expect(await countActiveProbes(testDb())).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
-
     const proposal5 = await seedConjecture();
     const reopened = await serve(proposal5);
     expect(reopened.status).toBe('served');

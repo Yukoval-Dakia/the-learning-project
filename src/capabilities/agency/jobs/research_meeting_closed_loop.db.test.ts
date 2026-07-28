@@ -81,7 +81,10 @@ import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { PREDICTION_SCORE_ACTION } from '@/server/conjectures/reconcile';
+import {
+  PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
+} from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { buildHonoApp } from '../../../../server/app';
@@ -97,6 +100,9 @@ const PROBE_RESULT_ACTION = 'experimental:probe_result';
 const PROBE_REFERENCE_MD =
   '意动用法：「以…为异」，主语在心里认为宾语「异」。判分金标 GOLD-REF-YUK789-4f21.';
 const PROBE_MD = '「渔人甚异之」中的「异」是使动还是意动？请说明你的判断依据。';
+const FOLLOWUP_PROBE_MD = '「邑人奇之」中的「奇」是什么用法？请用新的语境说明判断依据。';
+const FOLLOWUP_PROBE_REFERENCE_MD =
+  '意动用法：「以…为奇」，主语认为宾语「奇」，不是让宾语发生变化。';
 const CLAIM_MD = '你把「使动用法」和「意动用法」混为一谈——见到宾语前的活用动词就先当使动。';
 
 /** The ConjectureDraft every self-consistency sample returns (unanimous ⇒ no dedup call). */
@@ -107,6 +113,8 @@ const DRAFT = {
   evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
   probe_md: PROBE_MD,
   probe_reference_md: PROBE_REFERENCE_MD,
+  followup_probe_md: FOLLOWUP_PROBE_MD,
+  followup_probe_reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
   cause_category: CAUSE,
   recurrence_count: 3,
   predicted_p: 0.25,
@@ -114,7 +122,7 @@ const DRAFT = {
   agreement_count: 1,
 };
 
-/** What the vision judge model returns for a wrong answer (→ confirmed, outcome 0). */
+/** What the vision judge model returns for a wrong answer (→ preliminary evidence, outcome 0). */
 const JUDGE_INCORRECT = {
   coarse_outcome: 'incorrect',
   score: 0,
@@ -319,6 +327,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(change.claim_md).toBe(CLAIM_MD);
     expect(change.probe_md).toBe(PROBE_MD);
     expect(change.probe_reference_md).toBe(PROBE_REFERENCE_MD);
+    expect(change.followup_probe_md).toBe(FOLLOWUP_PROBE_MD);
+    expect(change.followup_probe_reference_md).toBe(FOLLOWUP_PROBE_REFERENCE_MD);
     expect(change.knowledge_id).toBe(KC_ID);
     expect(change.cause_category).toBe(CAUSE);
     expect(change.recurrence_count).toBe(3);
@@ -359,8 +369,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(answerRes.status).toBe(200);
     const answerBody = (await answerRes.json()) as Record<string, unknown>;
     expect(answerBody).toMatchObject({
-      status: 'confirmed',
-      resolution: 'confirmed',
+      status: 'evidence_for',
+      resolution: 'evidence_for',
       outcome: 0,
       coarse_outcome: 'incorrect',
       idempotent: false,
@@ -389,7 +399,18 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(probeResult.payload).toMatchObject({
       conjecture_event_id: proposalId,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
+    });
+    const followups = (await db.select().from(question)).filter(
+      (row) =>
+        row.source_ref === proposalId &&
+        (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: FOLLOWUP_PROBE_MD,
+      reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
+      draft_status: 'draft',
     });
 
     // ── 4. RECONCILE (real) — runs INSIDE the next nightly, as in production ──
@@ -408,7 +429,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       predicted_p: DRAFT.predicted_p,
       baseline_p: 0.5,
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
     });
 
     // The typed ledger advanced off the SAME two events (FLIP-inert soft cell).
@@ -534,6 +555,55 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(scores).toHaveLength(1);
     expect(scores[0].payload).toMatchObject({
       research_meeting_execution_id: executionId,
+    });
+  });
+
+  it('recovers a score-free recurrence projection count after a pre-checkpoint crash', async () => {
+    const db = testDb();
+    const executionId = 'job_recurrence_projection_recovery';
+    await writeEvent(db, {
+      id: 'probe_result_projected:terminal_probe_result',
+      actor_kind: 'system',
+      actor_ref: 'research_meeting',
+      action: PROBE_RESULT_PROJECTED_ACTION,
+      subject_kind: 'event',
+      subject_id: 'terminal_probe_result',
+      payload: {
+        conjecture_event_id: 'conjecture_for_terminal_probe',
+        probe_result_event_id: 'terminal_probe_result',
+        knowledge_id: KC_ID,
+        outcome: 0,
+        resolution: 'confirmed',
+        projection_kind: 'recurrence_without_prediction',
+        retrievability_at_judge: null,
+        research_meeting_execution_id: executionId,
+      },
+      caused_by_event_id: 'terminal_probe_result',
+      ingest_at: new Date(),
+      created_at: new Date(),
+    });
+
+    const reconcileFn = vi.fn(async () => ({ reconciled: 0, skipped: 0 }));
+    const recovered = await runResearchMeetingNightly(db, {
+      executionId,
+      reconcileFn,
+      getFailureAttemptsWithTraceFn: vi.fn(async () => []),
+    });
+
+    expect(reconcileFn).toHaveBeenCalledTimes(1);
+    expect(recovered.reconciled).toBe(1);
+    const [checkpoint] = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:research_meeting_reconciled'),
+          sql`${event.payload} ->> 'execution_id' = ${executionId}`,
+        ),
+      );
+    expect(checkpoint.payload).toEqual({
+      execution_id: executionId,
+      reconcile_result: { reconciled: 1, skipped: 0 },
     });
   });
 

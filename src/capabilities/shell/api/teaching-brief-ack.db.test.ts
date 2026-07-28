@@ -8,7 +8,6 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
 import { event, material_fsrs_state, question } from '@/db/schema';
@@ -23,7 +22,7 @@ import { POST } from './teaching-brief-ack';
 const KC_ID = 'kn_chain_rule';
 
 async function seedOutcome(
-  resolution: 'confirmed' | 'retired',
+  resolution: 'evidence_for' | 'confirmed' | 'retired',
   opts: { accept?: boolean; resultAt?: Date } = {},
 ): Promise<string> {
   const accept = opts.accept ?? true;
@@ -75,16 +74,28 @@ async function seedOutcome(
     referenceMd: '2x·cos(x^2)',
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
-  const result = await answerProbe({
-    db: testDb(),
-    probeQuestionId: served.probe_question_id,
-    outcome: resolution === 'confirmed' ? 0 : 1,
-    resolution,
-    // `resultAt` stamps the outcome event's created_at to exercise the deliverability
-    // time window (future / expired); defaults to real now for the happy path.
-    ...(opts.resultAt ? { now: opts.resultAt } : {}),
+  const resultId = newId();
+  const resultAt = opts.resultAt ?? new Date();
+  await writeEvent(testDb(), {
+    id: resultId,
+    actor_kind: 'system',
+    actor_ref: 'mind_probe',
+    action: 'experimental:probe_result',
+    subject_kind: 'question',
+    subject_id: served.probe_question_id,
+    payload: {
+      conjecture_event_id: proposalId,
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      retrievability_at_judge: null,
+      answer_md: null,
+      answer_image_refs: [],
+    },
+    caused_by_event_id: proposalId,
+    ingest_at: resultAt,
+    created_at: resultAt,
   });
-  return result.probe_result_event_id;
+  return resultId;
 }
 
 async function ackEvents(resultEventId: string) {
@@ -116,7 +127,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
   });
 
   it('writes exactly one append-only ack and echoes the brief provenance', async () => {
-    const resultId = await seedOutcome('confirmed');
+    const resultId = await seedOutcome('evidence_for');
 
     const res = await post({ probe_result_event_id: resultId });
     expect(res.status).toBe(201); // fresh create (REST convention, mirrors proposal-decisions)
@@ -278,7 +289,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
       subject_kind: 'question',
       subject_id: 'q_probe_illegal',
       // Illegal: 'confirmed' must pair with outcome=0, not 1.
-      payload: { conjecture_event_id: 'p_illegal', outcome: 1, resolution: 'confirmed' },
+      payload: { conjecture_event_id: 'p_illegal', outcome: 1 },
       caused_by_event_id: 'p_illegal',
     });
     const res = await post({ probe_result_event_id: resultId });
@@ -296,7 +307,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
       subject_kind: 'question',
       subject_id: 'q_probe_incoherent',
       // Legal pair, but incoherent provenance: payload ref ≠ caused_by.
-      payload: { conjecture_event_id: 'p_ref', outcome: 0, resolution: 'confirmed' },
+      payload: { conjecture_event_id: 'p_ref', outcome: 0 },
       caused_by_event_id: 'p_different',
     });
     const res = await post({ probe_result_event_id: resultId });
@@ -317,7 +328,7 @@ describe('POST /api/prep-desk/brief/ack (YUK-708)', () => {
       subject_kind: 'question',
       // canonical result body, but subject points at a question that does not exist.
       subject_id: newId(),
-      payload: { conjecture_event_id: 'p_orphan', outcome: 0, resolution: 'confirmed' },
+      payload: { conjecture_event_id: 'p_orphan', outcome: 0 },
       caused_by_event_id: 'p_orphan',
     });
     const res = await post({ probe_result_event_id: resultId });

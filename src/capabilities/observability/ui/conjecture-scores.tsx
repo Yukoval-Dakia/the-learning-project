@@ -30,13 +30,21 @@ interface PredictionScoreRow {
   predicted_p: number;
   baseline_p: number;
   outcome: 0 | 1;
-  resolution: 'confirmed' | 'retired';
+  resolution: 'evidence_for' | 'confirmed' | 'retired';
   brier_model: number | null;
   brier_baseline: number | null;
   log_loss_model: number | null;
   skill_score_point: number | null;
   retrievability_at_judge: number | null;
   created_at: string;
+}
+
+function resolutionTone(
+  resolution: PredictionScoreRow['resolution'],
+): 'good' | 'again' | 'neutral' {
+  if (resolution === 'confirmed') return 'good';
+  if (resolution === 'evidence_for') return 'again';
+  return 'neutral';
 }
 interface TypedStateRow {
   id: string;
@@ -245,9 +253,7 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
                             </Badge>
                           </td>
                           <td style={tdStyle}>
-                            <Badge tone={s.resolution === 'confirmed' ? 'good' : 'neutral'}>
-                              {s.resolution}
-                            </Badge>
+                            <Badge tone={resolutionTone(s.resolution)}>{s.resolution}</Badge>
                           </td>
                           <td style={tdStyle}>
                             {fmt(s.brier_model)}{' '}

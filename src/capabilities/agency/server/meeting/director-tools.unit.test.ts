@@ -91,6 +91,8 @@ function validProposeArgs(overrides: Record<string, unknown> = {}) {
     claim_md: '你把必要条件当成充分条件',
     probe_md: '给出一个只有该误解才会答错的判别题',
     probe_reference_md: '参考答案：必要不充分的反例',
+    followup_probe_md: '换一个语境，再给出一道区分必要与充分的判别题',
+    followup_probe_reference_md: '参考答案：用新的反例说明充分性不成立',
     predicted_p: 0.3,
     discriminating: true,
     evidence_refs: ['att_1', 'att_2'],
@@ -248,6 +250,16 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(res.ok).toBe(false);
     expect(h.proposals).toHaveLength(0);
     expect(h.caps.proposeCount).toBe(0); // a rejected proposal never consumes a cap slot
+  });
+
+  it('rejects whitespace-only follow-up prompt or reference at the tool boundary', async () => {
+    for (const field of ['followup_probe_md', 'followup_probe_reference_md'] as const) {
+      const h = build();
+      const res = await callTool('propose_conjecture', validProposeArgs({ [field]: ' \n\t ' }));
+      expect(res.ok).toBe(false);
+      expect(h.proposals).toHaveLength(0);
+      expect(h.caps.proposeCount).toBe(0);
+    }
   });
 
   it('rejects when no first-hand evidence ref survives the agent_note filter', async () => {

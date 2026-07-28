@@ -69,7 +69,9 @@ export const agencyCapability = defineCapability({
         // Isolated from the attempt/FSRS write path: judge routes via
         // defaultJudgeKindForQuestion → capability registry resolveJudge →
         // runner.run() PURE, then answerProbe writes exactly ONE
-        // experimental:probe_result event (ND-5). A5-a outcome→resolution split.
+        // experimental:probe_result event and, for preliminary evidence, atomically
+        // serves the pre-authored follow-up question (ND-5). Grading is separate
+        // from the recurrence-gated conjecture resolution (YUK-787).
         method: 'POST',
         path: '/api/conjecture/probe/[id]/answer',
         operationId: 'answerConjectureProbe',

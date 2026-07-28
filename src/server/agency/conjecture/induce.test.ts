@@ -95,6 +95,8 @@ function sample(
     discriminating?: boolean;
     probe_md?: string;
     probe_reference_md?: string;
+    followup_probe_md?: string;
+    followup_probe_reference_md?: string;
   } = {},
 ): TaskTextResult {
   return {
@@ -108,6 +110,10 @@ function sample(
       probe_reference_md:
         extra.probe_reference_md ??
         "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式法则：外导 × 内导）。",
+      followup_probe_md:
+        extra.followup_probe_md ?? "对 g(x)=cos(x^3)，写出 g'(x) 并说明链式法则的内层导数。",
+      followup_probe_reference_md:
+        extra.followup_probe_reference_md ?? "g'(x)=-3x^2·sin(x^3)；内层导数为 3x²。",
       cause_category: 'concept_confusion',
       recurrence_count: 3,
       predicted_p: extra.predicted_p ?? 0.3,
@@ -533,6 +539,8 @@ describe('induceConjecture self-consistency', () => {
           evidence_event_ids: ['e_a', 'e_b'],
           probe_md: '这是例题没覆盖的新情形，请预测。',
           probe_reference_md: '对新情形应用原例题的泛化规则，给出预测值与依据。',
+          followup_probe_md: '换一个未见过的情形，再次预测并说明依据。',
+          followup_probe_reference_md: '在第二个新情形中应用同一泛化规则，给出预测值与依据。',
           cause_category: 'concept_confusion',
           recurrence_count: 2,
           predicted_p: 0.4,

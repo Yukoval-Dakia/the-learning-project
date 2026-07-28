@@ -1,8 +1,8 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route DB test.
 //
 // Asserts the route's three contracts:
-//   1. HAPPY (A5-a outcome→resolution split): judge 'incorrect' → outcome=0 →
-//      'confirmed' + probe_result event; judge 'correct' → outcome=1 → 'retired'.
+//   1. HAPPY (YUK-787 outcome→resolution split): judge 'incorrect' → outcome=0 →
+//      first-hit `evidence_for`; judge 'correct' → outcome=1 → 'retired'.
 //   2. IDEMPOTENCY: re-answer short-circuits via `peekExistingProbeResult` BEFORE
 //      invoking the judge (LLM cost guard) — judge NOT called, recorded values
 //      returned with coarse_outcome: null.
@@ -26,6 +26,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -77,8 +78,8 @@ async function seedKnowledge(): Promise<void> {
     .onConflictDoNothing();
 }
 
-async function seedConjecture(): Promise<string> {
-  return writeAiProposal(testDb(), {
+async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise<string> {
+  const proposalId = await writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
     payload: {
       kind: 'conjecture',
@@ -94,12 +95,30 @@ async function seedConjecture(): Promise<string> {
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
         probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
+        ...(opts.includeFollowup === false
+          ? {}
+          : {
+              followup_probe_md: 'd/dx cos(x^3) = ?',
+              followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+            }),
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
       },
     },
   });
+  await writeEvent(testDb(), {
+    id: `rate_${proposalId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: proposalId, calibration_anchor: 'accept' },
+    caused_by_event_id: proposalId,
+  });
+  return proposalId;
 }
 
 async function serveProbe(): Promise<string> {
@@ -209,7 +228,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('judge incorrect → outcome=0 → confirmed + ONE probe_result event, no FSRS (ND-5)', async () => {
+  it('judge incorrect → outcome=0 → evidence_for + ONE probe_result event, no FSRS', async () => {
     const probeId = await serveProbe();
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
@@ -217,9 +236,9 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
-      status: 'confirmed',
+      status: 'evidence_for',
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       coarse_outcome: 'incorrect',
       idempotent: false,
     });
@@ -228,8 +247,23 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({
       outcome: 0,
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       answer_md: 'cos(x^2)',
+    });
+    const [initialProbe] = await testDb()
+      .select({ source_ref: question.source_ref })
+      .from(question)
+      .where(eq(question.id, probeId));
+    const followups = (await testDb().select().from(question)).filter(
+      (row) =>
+        row.source_ref === initialProbe.source_ref &&
+        (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    expect(followups).toHaveLength(1);
+    expect(followups[0]).toMatchObject({
+      prompt_md: 'd/dx cos(x^3) = ?',
+      reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+      draft_status: 'draft',
     });
     // ND-5 red line — probe answer NEVER enrolls / writes FSRS.
     expect(await fsrsRowCount()).toBe(0);
@@ -240,6 +274,31 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
         answer_md: 'cos(x^2)',
       }),
     );
+  });
+
+  it('settles a historical sequence-1 probe without a follow-up via the terminal legacy rule', async () => {
+    const proposalId = await seedConjecture({ includeFollowup: false });
+    const served = await serveProbeOnce({
+      db: testDb(),
+      conjectureProposalId: proposalId,
+      knowledgeId: KC_ID,
+      probeMd: 'd/dx sin(x^2) = ?',
+      referenceMd: '2x·cos(x^2)',
+    });
+    if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+
+    const response = await answer(served.probe_question_id, 'cos(x²)');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'confirmed',
+      outcome: 0,
+      resolution: 'confirmed',
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const [persisted] = await probeResultEvents(served.probe_question_id);
+    expect(persisted.payload).not.toHaveProperty('resolution_rule_version');
   });
 
   it('judge correct → outcome=1 → retired (conjecture falsified)', async () => {
@@ -261,6 +320,41 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(events[0].payload).toMatchObject({ outcome: 1, resolution: 'retired' });
   });
 
+  it('rejects a retracted conjecture before paying the judge', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serveProbeOnce({
+      db: testDb(),
+      conjectureProposalId: proposalId,
+      knowledgeId: KC_ID,
+      probeMd: 'd/dx sin(x^2) = ?',
+      referenceMd: '2x·cos(x^2)',
+    });
+    if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+    await writeEvent(testDb(), {
+      id: `correct_${proposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'owner retracted before answering',
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
+      },
+      caused_by_event_id: proposalId,
+    });
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+
+    const response = await answer(served.probe_question_id, 'cos(x^2)');
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'probe_conjecture_inactive' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(served.probe_question_id)).toHaveLength(0);
+  });
+
   it('re-answer short-circuits via peek — judge NOT invoked, recorded values win, coarse_outcome null', async () => {
     const probeId = await serveProbe();
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
@@ -270,7 +364,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(1);
 
     // Second answer — peek finds the existing probe_result and short-circuits
-    // BEFORE invoking the judge. The recorded resolution (confirmed) wins; the
+    // BEFORE invoking the judge. The recorded resolution (evidence_for) wins; the
     // judge is NOT called again (LLM cost guard). coarse_outcome is null because
     // this call did not judge.
     mockInvoke.mockClear();
@@ -282,13 +376,13 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(body.idempotent).toBe(true);
     expect(body.coarse_outcome).toBeNull();
     // Recorded resolution is faithfully reported, NOT rewritten by this request.
-    expect(body.status).toBe('confirmed');
-    expect(body.resolution).toBe('confirmed');
+    expect(body.status).toBe('evidence_for');
+    expect(body.resolution).toBe('evidence_for');
     expect(body.outcome).toBe(0);
 
     const events = await probeResultEvents(probeId);
     expect(events).toHaveLength(1);
-    expect(events[0].payload).toMatchObject({ resolution: 'confirmed', outcome: 0 });
+    expect(events[0].payload).toMatchObject({ resolution: 'evidence_for', outcome: 0 });
   });
 
   it('persists a per-probe claim before judging so concurrent answers pay at most once', async () => {

@@ -126,7 +126,7 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     expect(report.decisions).toEqual({ accept: 1, edit: 1, dismiss: 2 });
     expect(report.probes_served).toBe(2);
     expect(report.probe_completion).toEqual({ numerator: 1, denominator: 2, rate: 0.5 });
-    expect(report.outcomes).toEqual({ confirmed: 1, retired: 1 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 1, retired: 1 });
     // 1 confirmed, and it had a scoped_practice start joined by result_event_id.
     expect(report.confirmed_to_scoped_practice).toEqual({
       numerator: 1,
@@ -246,7 +246,7 @@ describe('computeTeachingBriefReport (YUK-710)', () => {
     const report = computeTeachingBriefReport(input);
     expect(report.skipped_corrupt_outcomes).toBe(3);
     // The dropped rows never inflate confirmed/retired (the whole point of the round-4 fix).
-    expect(report.outcomes).toEqual({ confirmed: 1, retired: 0 });
+    expect(report.outcomes).toEqual({ evidence_for: 0, confirmed: 1, retired: 0 });
     expect(formatTeachingBriefReport(report)).toContain('broken chain');
   });
 

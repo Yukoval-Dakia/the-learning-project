@@ -44,11 +44,12 @@ function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
   return 'ok';
 }
 
-// Forward-only rank for the in-place state advance (design §6 / [裁决 4]): announce +
-// move focus ONLY when the SAME brief_id moves finding → probe_ready → outcome.
+// Rank for ordinary in-place advance (design §6 / [裁决 4]); the effect also handles
+// outcome_evidence_for → the same brief's newly served recurrence probe explicitly.
 const STATE_RANK: Record<TeachingBrief['state'], number> = {
   finding: 0,
   probe_ready: 1,
+  outcome_evidence_for: 2,
   outcome_confirmed: 2,
   outcome_retired: 2,
 };
@@ -56,7 +57,7 @@ const STATE_RANK: Record<TeachingBrief['state'], number> = {
 function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIconName {
   if (status === 'confirmed') return 'check';
   if (status === 'retired') return 'checkCircle';
-  return 'sparkle'; // awaiting_decision / awaiting_answer
+  return 'sparkle'; // awaiting_decision / awaiting_answer / evidence_for
 }
 
 // The three read surfaces whose counts move when a brief advances or retires: the brief
@@ -105,9 +106,14 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   const [acking, setAcking] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
 
-  // §6 forward-announce: track {brief_id, rank}; the two focus targets are the
-  // 「已经为你备好」and 「当前结果」headings.
-  const prevRef = useRef<{ brief_id: string; rank: number } | null>(null);
+  // §6 forward-announce: rank covers the ordinary finding → probe → outcome path;
+  // state additionally recognizes preliminary outcome → recurrence probe.
+  const prevRef = useRef<{
+    brief_id: string;
+    rank: number;
+    state: TeachingBrief['state'];
+    probe_question_id: string | null;
+  } | null>(null);
   const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
   const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const [liveMsg, setLiveMsg] = useState('');
@@ -131,6 +137,17 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
 
   useEffect(() => {
     const prev = prevRef.current;
+    const currentProbeQuestionId =
+      brief?.prepared_action.kind === 'answer_probe'
+        ? brief.prepared_action.probe_question_id
+        : null;
+    const recurrenceReady =
+      prev?.state === 'outcome_evidence_for' && brief?.state === 'probe_ready';
+    const preparedProbeChanged =
+      prev !== null &&
+      currentProbeQuestionId !== null &&
+      prev.probe_question_id !== null &&
+      prev.probe_question_id !== currentProbeQuestionId;
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
@@ -145,6 +162,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       setAckFailed(false);
       setDeciding(false);
       setAcking(false);
+    } else if (recurrenceReady || preparedProbeChanged) {
+      // A recurrence probe deliberately reuses the conjecture's brief_id. It is still a
+      // different task: collapse the old answer form so the new probe gets its own reveal
+      // action and starts from a calm, unexpanded state.
+      setRevealed(false);
     }
     if (!brief) {
       prevRef.current = null; // null → reset baseline; never announce.
@@ -157,8 +179,15 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     fireSeenIfNew(brief);
     const rank = STATE_RANK[brief.state];
     // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
-    const forward = prev !== null && prev.brief_id === brief.brief_id && rank > prev.rank;
-    prevRef.current = { brief_id: brief.brief_id, rank }; // always refresh the baseline.
+    const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
+    const rankedForward = prev !== null && rank > prev.rank;
+    const forward = sameBrief && (rankedForward || recurrenceReady);
+    prevRef.current = {
+      brief_id: brief.brief_id,
+      rank,
+      state: brief.state,
+      probe_question_id: currentProbeQuestionId,
+    };
     if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
     setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
     (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();
@@ -228,6 +257,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     // prepared_action is now practice_scoped (YUK-709), so gate on the outcome status
     // rather than the action kind; non-outcome briefs have nothing to acknowledge.
     if (
+      brief.current_outcome.status !== 'evidence_for' &&
       brief.current_outcome.status !== 'confirmed' &&
       brief.current_outcome.status !== 'retired'
     ) {
@@ -421,6 +451,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                       type: 'primary_action_started',
                       brief_id: brief.brief_id,
                       action_kind: 'answer_probe',
+                      probe_question_id: brief.prepared_action.probe_question_id,
                     });
                   }
                   setRevealed(true);
@@ -617,18 +648,23 @@ function PreparedBlock({
   }
 
   if (brief.prepared_action.kind === 'acknowledge_outcome') {
-    // outcome_retired (YUK-708/709 / contract §2.2 · §4.2 · §9) — the probe ruled the
-    // finding out; nothing more is prepared and NO extra practice is created. The main step
-    // is to continue the original plan (back to the planned daily practice, no KC scope),
-    // with the append-only "知道了" ack to dismiss. On failure keep the outcome + retry
-    // (contract §7).
+    // `evidence_for` and `retired` both avoid scoped practice, but for opposite
+    // reasons: one observation is still preliminary; a retired conjecture was
+    // ruled out. Keep their copy distinct so the UI never upgrades n=1 to fact.
+    const preliminary = brief.current_outcome.status === 'evidence_for';
     return (
       <>
-        <p className="tb-prepared-done">这道判别题已作答，这条判断已排除。</p>
+        <p className="tb-prepared-done">
+          {preliminary
+            ? '这道判别题已作答；仍需独立复验，不会据此直接安排专项练习。'
+            : '这道判别题已作答，这条判断已排除。'}
+        </p>
         <div className="tb-actions">
-          <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
-            回到今日练习
-          </Btn>
+          {!preliminary && (
+            <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
+              回到今日练习
+            </Btn>
+          )}
           <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>
       </>

@@ -33,8 +33,10 @@
 // brain-roadmap.md U3 + docs/design/2026-06-27-a13-ts-half-design.md §2.2) is a
 // SINGLE outcome event `experimental:probe_result`. There is NO serve event: the
 // "served" state IS the draft question row existing. serveProbeOnce writes ONLY the
-// question row. answerProbe writes exactly ONE probe_result event; the separate
-// judge-claim marker is never folded as probe evidence.
+// question row. answerProbe writes exactly ONE probe_result event; on the first
+// `evidence_for` it also atomically serves the pre-authored second probe so the
+// recurrence gate is reachable in production. The separate judge-claim marker is
+// never folded as probe evidence.
 //
 // Escape-hatch (a13 design §2.2): `experimental:probe_result` is NOT in
 // RESERVED_EXPERIMENTAL_ACTIONS — it validates through the loose generic
@@ -49,14 +51,26 @@ import { newId } from '@/core/ids';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
+  PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
+  type ProbeResolution,
 } from '@/core/schema/conjecture';
+import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus, getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+} from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import {
+  type PriorProbeResult,
+  isEvidenceResult,
+  resolveProbeResolution,
+} from './probe-resolution';
 
 type DbOrTx = Db | Tx;
 
@@ -75,11 +89,25 @@ export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' a
  * from a transient provider or non-discriminating result.
  */
 export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
+// v2 reaches a terminal resolution after at most two independent wrong answers.
+// Fifty is a defensive legacy/corruption ceiling, not an expected lifecycle length.
+const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
 
 // A fixed key for the transaction-scoped advisory lock that serializes serves.
 // All probe serves contend on this single key so the count-read + insert critical
 // section runs one-at-a-time (genuine ≤cap guarantee, not just READ COMMITTED hope).
 const PROBE_SERVE_LOCK_KEY = 406_440_3 as const;
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function extractConjectureId(metadata: unknown): string | null {
+  const value = toRecord(metadata).conjecture_proposal_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
 
 export interface ServeProbeOnceParams {
   // conjecture-wire #13 — acceptConjectureProposal passes its OUTER tx here so the
@@ -100,6 +128,8 @@ export interface ServeProbeOnceParams {
   kind?: string;
   /** Neutral default difficulty (3). */
   difficulty?: number;
+  /** 1 = initial diagnostic, 2 = recurrence-gating follow-up. */
+  probeSequence?: 1 | 2;
   now?: Date;
 }
 
@@ -108,13 +138,14 @@ export type ServeProbeOnceResult =
   | { status: 'cap_reached'; active_count: number };
 
 /**
- * Count probes that are SERVED but not yet ANSWERED = `source='mind_probe'`
- * questions with NO `experimental:probe_result` event referencing them.
+ * Count probes that are SERVED for an active conjecture but not yet ANSWERED =
+ * `source='mind_probe'` questions with NO `experimental:probe_result` event
+ * referencing them and no effective correction on their proposal.
  * Accepts a tx so serveProbeOnce can read the count inside its transaction.
  */
 export async function countActiveProbes(db: DbOrTx): Promise<number> {
   const rows = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({ metadata: question.metadata })
     .from(question)
     .where(
       and(
@@ -125,9 +156,32 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
             AND ${event.subject_id} = ${question.id}
             AND ${event.action} = ${PROBE_RESULT_ACTION}
         )`,
+        // Exclude corrected conjectures before the cap-sized window. Keep missing
+        // provenance in the count so corrupt rows cannot silently free a slot.
+        sql`(
+          COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
+          OR COALESCE((
+            SELECT correction.payload->>'correction_kind'
+            FROM ${event} AS correction
+            WHERE correction.action = 'correct'
+              AND correction.subject_kind = 'event'
+              AND correction.subject_id =
+                  ${question.metadata}->>'conjecture_proposal_id'
+              AND (
+                (correction.payload->>'correction_kind' = 'supersede'
+                  AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
+                OR (correction.payload->>'correction_kind' IN
+                    ('retract', 'mark_wrong', 'restore')
+                  AND NOT correction.payload ? 'replacement_event_id')
+              )
+            ORDER BY correction.created_at DESC, correction.id DESC
+            LIMIT 1
+          ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
+        )`,
       ),
-    );
-  return rows[0]?.n ?? 0;
+    )
+    .limit(MAX_CONCURRENT_ACTIVE_PROBES);
+  return rows.length;
 }
 
 /**
@@ -142,6 +196,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
   const now = params.now ?? new Date();
   const kind = params.kind ?? 'short_answer';
   const difficulty = params.difficulty ?? 3;
+  const probeSequence = params.probeSequence ?? 1;
   const referenceMd = params.referenceMd ?? null;
 
   return db.transaction(async (tx) => {
@@ -176,6 +231,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         draft_status: 'draft',
         metadata: {
           conjecture_proposal_id: conjectureProposalId,
+          probe_sequence: probeSequence,
         },
         created_at: now,
         updated_at: now,
@@ -191,8 +247,6 @@ export interface AnswerProbeParams {
   probeQuestionId: string;
   /** Graded correctness of the probe answer (the prediction-test outcome). */
   outcome: 0 | 1;
-  /** Qualitative conjecture-lifecycle decision. */
-  resolution: 'confirmed' | 'retired';
   /**
    * Phase-deferred (feedback_phase_deferred_comments): R(t) snapshot at judge time.
    * Defaults to null. The field is present NOW to keep the probe_result event shape
@@ -211,20 +265,147 @@ export interface AnswerProbeParams {
 }
 
 export interface AnswerProbeResult {
-  status: 'confirmed' | 'retired';
+  status: ProbeResolution;
   /** The recorded 0|1 outcome (faithfully reported on BOTH fresh + idempotent paths). */
   outcome: 0 | 1;
   probe_result_event_id: string;
   idempotent?: boolean;
 }
 
+interface FollowupProbeSpec {
+  knowledgeId: string;
+  promptMd: string;
+  referenceMd: string;
+}
+
+type ProbeConjectureLoadResult =
+  | { status: 'ready'; spec: FollowupProbeSpec }
+  | { status: 'legacy' }
+  | { status: 'inactive'; reason: 'not_accepted' | 'corrected' }
+  | { status: 'invalid' };
+
+async function loadProbeConjectureState(
+  db: Db | Tx,
+  conjectureEventId: string,
+): Promise<ProbeConjectureLoadResult> {
+  const [proposalRow] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(eq(event.id, conjectureEventId))
+    .limit(1);
+  const proposalEnvelope =
+    proposalRow?.payload !== null &&
+    typeof proposalRow?.payload === 'object' &&
+    !Array.isArray(proposalRow.payload)
+      ? (proposalRow.payload as Record<string, unknown>).ai_proposal
+      : undefined;
+  const parsedProposal = AiProposalPayload.safeParse(proposalEnvelope);
+  if (!parsedProposal.success || parsedProposal.data.kind !== 'conjecture') {
+    console.warn(
+      '[probe-lifecycle] conjecture proposal payload is missing or invalid',
+      conjectureEventId,
+      parsedProposal.success
+        ? `unexpected proposal kind: ${parsedProposal.data.kind}`
+        : parsedProposal.error.issues,
+    );
+    return { status: 'invalid' };
+  }
+  const correction = await getCorrectionStatus(db, conjectureEventId);
+  if (correction.state !== 'active') {
+    return { status: 'inactive', reason: 'corrected' };
+  }
+  const decision = await findExistingRateEvent(db, conjectureEventId);
+  if (decision?.decision !== 'accept') {
+    return { status: 'inactive', reason: 'not_accepted' };
+  }
+  const change = parsedProposal.data.proposed_change;
+  if (change.followup_probe_md === undefined || change.followup_probe_reference_md === undefined) {
+    return { status: 'legacy' };
+  }
+  return {
+    status: 'ready',
+    spec: {
+      knowledgeId: change.knowledge_id,
+      promptMd: change.followup_probe_md,
+      referenceMd: change.followup_probe_reference_md,
+    },
+  };
+}
+
+/**
+ * Production-route preflight before the paid judge call. Malformed proposal
+ * provenance fails before provider cost. A well-formed v1 proposal remains answerable
+ * through the terminal legacy rule in answerProbe so old probes cannot occupy slots.
+ * This intentionally duplicates the later locked authority read: preflight avoids
+ * unnecessary provider cost, while answerProbe must re-fold mutable correction state
+ * under the proposal decision lock before it appends the result.
+ */
+export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Promise<void> {
+  const [probe] = await db
+    .select({ source: question.source, metadata: question.metadata })
+    .from(question)
+    .where(eq(question.id, probeQuestionId))
+    .limit(1);
+  if (!probe || probe.source !== PROBE_QUESTION_SOURCE) return;
+  const metadata = toRecord(probe.metadata);
+  const sequence = metadata.probe_sequence;
+  if (sequence !== undefined && sequence !== 1 && sequence !== 2) {
+    throw new ApiError(
+      'probe_sequence_invalid',
+      `probe ${probeQuestionId} has invalid probe_sequence`,
+      409,
+    );
+  }
+  const conjectureEventId = metadata.conjecture_proposal_id;
+  if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+    throw new ApiError(
+      'probe_missing_conjecture_ref',
+      `probe ${probeQuestionId} has no conjecture_proposal_id`,
+      409,
+    );
+  }
+  const followup = await loadProbeConjectureState(db, conjectureEventId);
+  if (followup.status === 'invalid') {
+    throw new ApiError(
+      'probe_proposal_invalid',
+      `conjecture ${conjectureEventId} has an invalid proposal payload`,
+      500,
+    );
+  }
+  if (followup.status === 'inactive') {
+    throw new ApiError(
+      'probe_conjecture_inactive',
+      `conjecture ${conjectureEventId} is ${followup.reason === 'corrected' ? 'corrected' : 'not accepted'}`,
+      409,
+    );
+  }
+  if (sequence === 2 && followup.status !== 'ready') {
+    throw new ApiError(
+      'probe_followup_unavailable',
+      `follow-up probe ${probeQuestionId} has no authored follow-up specification`,
+      409,
+    );
+  }
+}
+
 function parseProbeResultEvent(
   existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
 ): AnswerProbeResult | null {
+  // The production route has always written confirmed↔0 and retired↔1; v2 adds
+  // evidence_for↔0. Any other historical pairing could only come from a manual/internal
+  // contract violation, so fail closed rather than replaying contradictory evidence.
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
-  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
   if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  if (
+    !(
+      ((recordedResolution === 'evidence_for' || recordedResolution === 'confirmed') &&
+        recordedOutcome === 0) ||
+      (recordedResolution === 'retired' && recordedOutcome === 1)
+    )
+  ) {
+    return null;
+  }
   return {
     status: recordedResolution,
     outcome: recordedOutcome,
@@ -354,7 +535,9 @@ export async function releaseProbeJudging(
 /**
  * Record the probe outcome as exactly ONE canonical `experimental:probe_result`
  * event (subject_kind='question', subject_id=probeQuestionId, caused_by=the
- * conjecture event id). Writes NOTHING else — no attempt event, no FSRS row (ND-5).
+ * conjecture event id). A first matching observation atomically serves the
+ * proposal's pre-authored follow-up question. It still writes no attempt and no
+ * FSRS row (ND-5).
  *
  * One-shot guard / idempotency (mirrors U2 acceptConjectureProposal): if a
  * probe_result already exists for this question, no second event is written — the
@@ -364,7 +547,7 @@ export async function releaseProbeJudging(
  * one-shot guarantee holds under concurrency, not just sequentially.
  */
 export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProbeResult> {
-  const { db, probeQuestionId, outcome, resolution } = params;
+  const { db, probeQuestionId, outcome } = params;
   const now = params.now ?? new Date();
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
@@ -389,12 +572,20 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     if (probe.source !== PROBE_QUESTION_SOURCE) {
       throw new ApiError('not_a_probe', `question ${probeQuestionId} is not a mind_probe`, 409);
     }
-    const conjectureEventId = (probe.metadata as Record<string, unknown> | null)
-      ?.conjecture_proposal_id;
-    if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+    const conjectureEventId = extractConjectureId(probe.metadata);
+    if (!conjectureEventId) {
       throw new ApiError(
         'probe_missing_conjecture_ref',
         `probe ${probeQuestionId} has no conjecture_proposal_id`,
+        409,
+      );
+    }
+    const probeMetadata = toRecord(probe.metadata);
+    const probeSequence = probeMetadata.probe_sequence;
+    if (probeSequence !== undefined && probeSequence !== 1 && probeSequence !== 2) {
+      throw new ApiError(
+        'probe_sequence_invalid',
+        `probe ${probeQuestionId} has invalid probe_sequence`,
         409,
       );
     }
@@ -413,12 +604,10 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       )
       .limit(1);
     if (existing) {
-      // Idempotent: report the RECORDED resolution faithfully — NEVER substitute the
-      // current request's `resolution` (a re-answer with a different resolution must
-      // not silently rewrite what the record says happened). A probe_result is always
-      // written with a valid resolution; a missing/invalid one means a corrupt event
-      // row (e.g. a manual DB edit), which we surface loudly rather than paper over by
-      // blending in the caller's value.
+      // Idempotent: report the RECORDED resolution faithfully. Never re-run the
+      // historical fold for an already-settled question: that would reinterpret an
+      // immutable legacy result under today's rule. A missing/invalid value is a
+      // corrupt event row, surfaced loudly rather than synthesized from the new answer.
       const parsed = parseProbeResultEvent(existing);
       if (!parsed) {
         throw new ApiError(
@@ -428,6 +617,92 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         );
       }
       return parsed;
+    }
+
+    // Serialize the evidence-strength fold per conjecture, not only per question.
+    // Without this second lock, two different probes answered concurrently could
+    // both read an empty history and both persist `evidence_for`. The namespace
+    // salt keeps the conjecture lock distinct from the per-question lock above.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
+    // Serialize against proposal correction/retraction. The pre-judge route check is
+    // only a cost guard; this locked re-check is the commit authority so a stale
+    // conjecture can never mint recurrence evidence or a follow-up probe.
+    await acquireProposalDecisionLock(tx, conjectureEventId);
+    const followup = await loadProbeConjectureState(tx, conjectureEventId);
+    if (followup.status === 'invalid') {
+      throw new ApiError(
+        'probe_proposal_invalid',
+        `conjecture ${conjectureEventId} has an invalid proposal payload`,
+        500,
+      );
+    }
+    if (followup.status === 'inactive') {
+      throw new ApiError(
+        'probe_conjecture_inactive',
+        `conjecture ${conjectureEventId} is ${followup.reason === 'corrected' ? 'corrected' : 'not accepted'}`,
+        409,
+      );
+    }
+    const usesRecurrenceGate = followup.status === 'ready';
+    // Historical v1 proposals did not author a second probe. Preserve their terminal
+    // single-probe rule instead of retroactively reinterpreting or stranding them;
+    // omit the v2 rule stamp below so readers label these as legacy-unverified. They
+    // also skip the JSONB history scan, whose output cannot affect their terminal rule.
+    let resolution: ProbeResolution;
+    let independentProbeQuestionIds: string[] = [];
+    if (usesRecurrenceGate) {
+      const priorRows = await tx
+        .select({
+          probe_result_event_id: event.id,
+          probe_question_id: event.subject_id,
+          payload: event.payload,
+        })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, PROBE_RESULT_ACTION),
+            eq(event.subject_kind, 'question'),
+            // Both refs are checked deliberately. `caused_by_event_id` is the indexed
+            // envelope join; the payload equality rejects provenance-broken manual/legacy
+            // rows rather than letting them strengthen a different conjecture.
+            eq(event.caused_by_event_id, conjectureEventId),
+            sql`${event.payload}->>'conjecture_event_id' = ${conjectureEventId}`,
+            sql`${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')`,
+            sql`${event.payload}->>'outcome' = '0'`,
+          ),
+        )
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(MAX_PROBE_HISTORY_FOR_RESOLUTION);
+      const priorResults: PriorProbeResult[] = [];
+      const priorCorrectionStatuses = await getCorrectionStatuses(
+        tx,
+        priorRows.map((prior) => prior.probe_result_event_id),
+      );
+      for (const prior of priorRows) {
+        if (priorCorrectionStatuses.get(prior.probe_result_event_id)?.state !== 'active') continue;
+        const parsed = parseProbeResultEvent({
+          id: prior.probe_result_event_id,
+          payload: prior.payload,
+        });
+        if (!parsed) continue;
+        priorResults.push({
+          probe_question_id: prior.probe_question_id,
+          outcome: parsed.outcome,
+          resolution: parsed.status,
+        });
+      }
+      resolution = resolveProbeResolution(outcome, probeQuestionId, priorResults);
+      independentProbeQuestionIds =
+        outcome === 0
+          ? [
+              ...new Set([
+                ...priorResults.filter(isEvidenceResult).map((result) => result.probe_question_id),
+                probeQuestionId,
+              ]),
+            ].sort()
+          : [];
+    } else {
+      resolution = outcome === 0 ? 'confirmed' : 'retired';
     }
 
     const probeResultEventId = newId();
@@ -444,6 +719,12 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         conjecture_event_id: conjectureEventId,
         outcome,
         resolution,
+        ...(usesRecurrenceGate
+          ? {
+              resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
+              independent_probe_question_ids: independentProbeQuestionIds,
+            }
+          : {}),
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
         // Provenance for a photo answer: the team can later see WHAT was submitted for
@@ -458,6 +739,35 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       created_at: now,
     });
 
+    if (resolution === 'evidence_for' && probeSequence !== 2) {
+      if (followup.status !== 'ready') {
+        throw new ApiError(
+          'probe_followup_state_invariant',
+          `conjecture ${conjectureEventId} produced preliminary evidence without a follow-up`,
+          500,
+        );
+      }
+      const servedFollowup = await serveProbeOnce({
+        db: tx,
+        conjectureProposalId: conjectureEventId,
+        knowledgeId: followup.spec.knowledgeId,
+        probeMd: followup.spec.promptMd,
+        referenceMd: followup.spec.referenceMd,
+        probeSequence: 2,
+        now,
+      });
+      if (servedFollowup.status === 'cap_reached') {
+        // The just-answered probe frees exactly one slot in this transaction and the
+        // global serve lock prevents another writer from stealing it. Reaching the cap
+        // here therefore signals an invariant violation, not recoverable contention.
+        throw new ApiError(
+          'probe_followup_cap_invariant',
+          `follow-up probe could not claim the slot released by ${probeQuestionId}`,
+          500,
+        );
+      }
+    }
+
     return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
   });
 }
@@ -471,7 +781,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
  *
  * Returns:
  *   - the recorded `AnswerProbeResult` (idempotent: true) when a VALID probe_result
- *     exists (outcome ∈ {0,1}, resolution ∈ {confirmed,retired});
+ *     exists (outcome ∈ {0,1}, resolution ∈ {evidence_for,confirmed,retired});
  *   - `null` when NO probe_result exists (caller proceeds to judge + answerProbe);
  *   - `null` when an existing event is CORRUPT (caller proceeds to judge + answerProbe,
  *     which surfaces the `probe_result_corrupt` 500 — the judge call is wasted on this

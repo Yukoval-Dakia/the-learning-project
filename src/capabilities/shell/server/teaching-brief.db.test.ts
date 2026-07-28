@@ -1,6 +1,6 @@
 // YUK-706 (P0F/2) — TeachingBrief read model DB contract.
 //
-// Locks the four projected states, global precedence, TTLs, full P→Q→R provenance
+// Locks the projected states, global precedence, TTLs, full P→Q→R provenance
 // validation, corrupt-row fail-closed behavior, anti-guilt wire, and the zero-write
 // boundary. The read model deliberately does not depend on overnight-digest or the
 // downstream prediction_score reconcile loop.
@@ -120,6 +120,8 @@ interface ProposalSeed {
   evidence?: Array<{ kind: 'event' | 'question'; id: string }>;
   predictedP?: number;
   baselineP?: number;
+  followupProbeMd?: string;
+  followupProbeReferenceMd?: string;
 }
 
 async function seedProposal(seed: ProposalSeed): Promise<string> {
@@ -146,6 +148,12 @@ async function seedProposal(seed: ProposalSeed): Promise<string> {
         recurrence_count: seed.recurrenceCount ?? 2,
         probe_md: `probe for ${seed.id}`,
         probe_reference_md: `reference for ${seed.id}`,
+        ...(seed.followupProbeMd !== undefined && seed.followupProbeReferenceMd !== undefined
+          ? {
+              followup_probe_md: seed.followupProbeMd,
+              followup_probe_reference_md: seed.followupProbeReferenceMd,
+            }
+          : {}),
         discriminating: true,
         predicted_p: seed.predictedP ?? 0.3,
         baseline_p_at_induction: seed.baselineP ?? 0.6,
@@ -183,13 +191,17 @@ async function seedProbe(opts: {
   proposalId: string;
   knowledgeId?: string;
   createdAt: Date;
+  promptMd?: string;
+  referenceMd?: string;
+  probeSequence?: 1 | 2;
 }): Promise<string> {
   const served = await serveProbeOnce({
     db: testDb(),
     conjectureProposalId: opts.proposalId,
     knowledgeId: opts.knowledgeId ?? `kn_${opts.proposalId}`,
-    probeMd: `probe for ${opts.proposalId}`,
-    referenceMd: `reference for ${opts.proposalId}`,
+    probeMd: opts.promptMd ?? `probe for ${opts.proposalId}`,
+    referenceMd: opts.referenceMd ?? `reference for ${opts.proposalId}`,
+    probeSequence: opts.probeSequence,
     now: opts.createdAt,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
@@ -212,22 +224,37 @@ async function seedOutcome(opts: {
   proposalAt: Date;
   probeAt: Date;
   resultAt: Date;
-  resolution: 'confirmed' | 'retired';
+  resolution?: 'evidence_for' | 'confirmed' | 'retired';
 }): Promise<{ probeId: string; resultId: string }> {
   const probeId = await seedAcceptedProbe({
     proposalId: opts.proposalId,
     proposalAt: opts.proposalAt,
     probeAt: opts.probeAt,
   });
-  const result = await answerProbe({
-    db: testDb(),
-    probeQuestionId: probeId,
-    outcome: opts.resolution === 'confirmed' ? 0 : 1,
-    resolution: opts.resolution,
-    retrievabilityAtJudge: 0.413579,
-    now: opts.resultAt,
+  const resolution = opts.resolution ?? 'confirmed';
+  const resultId = `result_${opts.proposalId}`;
+  // Reader fixture: write the persisted resolution verbatim so legacy confirmed
+  // events remain covered without asking the new writer to bypass its n=1 gate.
+  await writeEvent(testDb(), {
+    id: resultId,
+    actor_kind: 'system',
+    actor_ref: 'mind_probe',
+    action: 'experimental:probe_result',
+    subject_kind: 'question',
+    subject_id: probeId,
+    payload: {
+      conjecture_event_id: opts.proposalId,
+      outcome: resolution === 'retired' ? 1 : 0,
+      resolution,
+      retrievability_at_judge: 0.413579,
+      answer_md: null,
+      answer_image_refs: [],
+    },
+    caused_by_event_id: opts.proposalId,
+    ingest_at: opts.resultAt,
+    created_at: opts.resultAt,
   });
-  return { probeId, resultId: result.probe_result_event_id };
+  return { probeId, resultId };
 }
 
 async function tableCounts(): Promise<{ events: number; questions: number }> {
@@ -313,7 +340,279 @@ describe('loadTeachingBrief', () => {
     });
   });
 
+  it('projects and acknowledges a confirmed sequence-2 probe against its authored follow-up prompt', async () => {
+    const proposalId = 'p_followup';
+    const followupPrompt = 'independent follow-up for p_followup';
+    const followupReference = 'reference for independent follow-up';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: followupPrompt,
+      followupProbeReferenceMd: followupReference,
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    expect(first.status).toBe('evidence_for');
+    const followups = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.source_ref, proposalId));
+    const followup = followups.find(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!followup) throw new Error('expected the preliminary result to activate a follow-up');
+    expect(followup.prompt_md).toBe(followupPrompt);
+
+    // Deliberately backdate the terminal result. Supersession follows the persisted
+    // recurrence rule stamp, not wall-clock order.
+    const terminal = await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    expect(terminal.status).toBe('confirmed');
+
+    const settled = await loadTeachingBrief(testDb(), NOW);
+    expect(settled.brief).toMatchObject({
+      brief_id: proposalId,
+      state: 'outcome_confirmed',
+      current_outcome: {
+        probe_question_id: followup.id,
+        probe_result_event_id: terminal.probe_result_event_id,
+      },
+    });
+    await acknowledgeTeachingBriefOutcome(testDb(), terminal.probe_result_event_id, NOW);
+    // The terminal result supersedes the older preliminary result. Acknowledging the
+    // terminal must close the brief rather than regress it to "needs revalidation".
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+  });
+
+  it('does not let an invalid terminal chain suppress valid preliminary evidence', async () => {
+    const proposalId = 'p_invalid_terminal_chain';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+
+    // Simulate a corrupted/mutated question chain after the terminal event was
+    // appended. The canonical terminal payload must not hide the still-valid
+    // preliminary result when its authored prompt no longer matches.
+    await testDb()
+      .update(question)
+      .set({ prompt_md: 'drifted follow-up prompt' })
+      .where(eq(question.id, followup.id));
+
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        brief_id: proposalId,
+        state: 'outcome_evidence_for',
+        current_outcome: {
+          probe_result_event_id: first.probe_result_event_id,
+          status: 'evidence_for',
+        },
+      },
+    });
+  });
+
+  it('does not resurrect preliminary evidence when an older terminal crosses the display TTL first', async () => {
+    const proposalId = 'p_terminal_permanent_supersession';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    const terminalAt = new Date(NOW.getTime() - 20 * 60 * 1000);
+    await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: terminalAt,
+    });
+
+    const afterTerminalExpiry = new Date(terminalAt.getTime() + TEACHING_BRIEF_OUTCOME_TTL_MS + 1);
+    await expect(loadTeachingBrief(testDb(), afterTerminalExpiry)).resolves.toEqual({
+      brief: null,
+    });
+  });
+
+  it('hides a recurrence outcome when its preliminary evidence is corrected, then restores it', async () => {
+    const proposalId = 'p_corrected_dependency';
+    await seedProposal({
+      id: proposalId,
+      createdAt: new Date(NOW.getTime() - DAY_MS),
+      followupProbeMd: 'independent follow-up',
+      followupProbeReferenceMd: 'independent reference',
+    });
+    await acceptProposal(proposalId, new Date(NOW.getTime() - 30 * 60 * 1000));
+    const firstProbeId = await seedProbe({
+      proposalId,
+      createdAt: new Date(NOW.getTime() - 25 * 60 * 1000),
+    });
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbeId,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    const followup = (
+      await testDb().select().from(question).where(eq(question.source_ref, proposalId))
+    ).find((row) => (row.metadata as Record<string, unknown>).probe_sequence === 2);
+    if (!followup) throw new Error('expected recurrence probe');
+    const terminal = await answerProbe({
+      db: testDb(),
+      probeQuestionId: followup.id,
+      outcome: 0,
+      now: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: terminal.probe_result_event_id },
+      },
+    });
+
+    await writeEvent(testDb(), {
+      id: `correct_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'preliminary evidence invalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date(NOW.getTime() - 5 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+
+    await writeEvent(testDb(), {
+      id: `restore_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'preliminary evidence revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date(NOW.getTime() - 4 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: terminal.probe_result_event_id },
+      },
+    });
+  });
+
+  it('does not display a corrected outcome and restores it on a later restore event', async () => {
+    const seeded = await seedOutcome({
+      proposalId: 'p_corrected_outcome',
+      proposalAt: new Date(NOW.getTime() - DAY_MS),
+      probeAt: new Date(NOW.getTime() - 60 * 60 * 1000),
+      resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
+    });
+    await writeEvent(testDb(), {
+      id: `correct_${seeded.resultId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seeded.resultId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'outcome invalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seeded.resultId }],
+      },
+      created_at: new Date(NOW.getTime() - 20 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toEqual({ brief: null });
+
+    await writeEvent(testDb(), {
+      id: `restore_${seeded.resultId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seeded.resultId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'outcome revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seeded.resultId }],
+      },
+      created_at: new Date(NOW.getTime() - 10 * 60 * 1000),
+    });
+    await expect(loadTeachingBrief(testDb(), NOW)).resolves.toMatchObject({
+      brief: {
+        state: 'outcome_confirmed',
+        current_outcome: { probe_result_event_id: seeded.resultId },
+      },
+    });
+  });
+
   it.each([
+    [
+      'evidence_for',
+      'outcome_evidence_for',
+      '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
+    ],
     ['confirmed', 'outcome_confirmed', '这条判断得到这次探针的支持；下一步可以针对这个点练习。'],
     ['retired', 'outcome_retired', '这条判断被这次探针排除；原计划可以继续。'],
   ] as const)('projects %s probe result as %s', async (resolution, state, summary) => {
@@ -326,6 +625,8 @@ describe('loadTeachingBrief', () => {
       resolution,
     });
 
+    const warn =
+      resolution === 'evidence_for' ? vi.spyOn(console, 'warn').mockImplementation(() => {}) : null;
     const response = await loadTeachingBrief(testDb(), NOW);
     expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();
     // YUK-708/709 — confirmed offers KC-scoped practice (knowledge_id === proposal KC);
@@ -361,6 +662,15 @@ describe('loadTeachingBrief', () => {
       kind: 'event',
       id: resultId,
     });
+    if (resolution === 'evidence_for') {
+      expect(summary).not.toContain('得到支持');
+      expect(summary).not.toContain('确证');
+      expect(warn).not.toHaveBeenCalledWith(
+        '[teaching-brief] skipped candidate',
+        expect.objectContaining({ reason: 'outcome_resolution_mismatch' }),
+      );
+    }
+    warn?.mockRestore();
   });
 
   it('applies global precedence outcome > active probe > pending finding', async () => {
@@ -393,7 +703,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
-      resolution: 'confirmed',
     });
     // A still-active probe sits behind the outcome; once the outcome is acked, the
     // probe is the next globally-preferred candidate (outcome > probe > finding).
@@ -419,7 +728,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt: new Date(NOW.getTime() - 30 * 60 * 1000),
-      resolution: 'retired',
     });
     await acknowledgeTeachingBriefOutcome(testDb(), resultId, NOW);
 
@@ -432,7 +740,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - DAY_MS),
-      resolution: 'confirmed',
     });
     // A window's worth of NEWER outcomes, each acknowledged. Excluded pre-window, they
     // must not crowd the older un-acked survivor out of the bounded candidate set.
@@ -463,7 +770,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 10 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 9 * DAY_MS),
       resultAt: new Date(NOW.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS),
-      resolution: 'confirmed',
     });
     await seedAcceptedProbe({
       proposalId: 'p_old_active',
@@ -495,7 +801,6 @@ describe('loadTeachingBrief', () => {
       db: testDb(),
       probeQuestionId: activeQuestion.id,
       outcome: 1,
-      resolution: 'retired',
       now: new Date(NOW.getTime() - TEACHING_BRIEF_OUTCOME_TTL_MS),
     });
 
@@ -509,7 +814,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt: new Date(NOW.getTime() - 60 * 60 * 1000),
-      resolution: 'confirmed',
     });
     await writeEvent(testDb(), {
       id: 'r_orphan_newer',
@@ -625,14 +929,12 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * 60 * 60 * 1000),
       resultAt,
-      resolution: 'confirmed',
     });
     const outcomeB = await seedOutcome({
       proposalId: 'p_tie_outcome_b',
       proposalAt: new Date(NOW.getTime() - DAY_MS),
       probeAt: new Date(NOW.getTime() - 90 * 60 * 1000),
       resultAt,
-      resolution: 'retired',
     });
     const expectedOutcome = [outcomeA, outcomeB].sort((a, b) =>
       a.resultId < b.resultId ? 1 : -1,
@@ -838,7 +1140,6 @@ describe('loadTeachingBrief', () => {
       proposalAt: new Date(NOW.getTime() - 3 * DAY_MS),
       probeAt: new Date(NOW.getTime() - 2 * DAY_MS),
       resultAt: new Date(NOW.getTime() - DAY_MS),
-      resolution: 'confirmed',
     });
     // Newer results with non-canonical resolution/outcome pairs — these must be
     // filtered before the bounded window, not occupy it.

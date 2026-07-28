@@ -9,6 +9,22 @@ export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
 export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
 /**
+ * Persisted conjecture-survival decisions derived from a graded probe outcome.
+ *
+ * `evidence_for` is deliberately distinct from `confirmed`: it records one
+ * within-learner observation that matched the conjecture, while `confirmed`
+ * requires an independent prior probe for the same conjecture. Existing
+ * `confirmed` / `retired` events remain valid and replay with their stored value.
+ */
+export const PROBE_RESOLUTIONS = ['evidence_for', 'confirmed', 'retired'] as const;
+export type ProbeResolution = (typeof PROBE_RESOLUTIONS)[number];
+export function isProbeResolution(value: unknown): value is ProbeResolution {
+  return typeof value === 'string' && (PROBE_RESOLUTIONS as readonly string[]).includes(value);
+}
+/** Writer rule stamped on results whose resolution passed the YUK-787 recurrence fold. */
+export const PROBE_RESOLUTION_RULE_VERSION = 'within_learner_probe_recurrence_v2' as const;
+
+/**
  * The append-only event that acknowledges (dismisses) a delivered teaching-brief
  * outcome (YUK-708 / contract §4.2). Keyed by the probe_result event it acks:
  * `subject_kind='event'`, `subject_id=<probe_result event id>`. It NEVER writes
@@ -44,10 +60,11 @@ export const PRIMARY_ACTION_STARTED_ACTION = 'experimental:primary_action_starte
 export const PRIMARY_ACTION_KINDS = ['accept_probe', 'answer_probe', 'scoped_practice'] as const;
 export type PrimaryActionKind = (typeof PRIMARY_ACTION_KINDS)[number];
 
-/** The four brief states carried as metadata on a `brief_seen` ledger row. */
+/** The brief states carried as metadata on a `brief_seen` ledger row. */
 export const BRIEF_STATES = [
   'finding',
   'probe_ready',
+  'outcome_evidence_for',
   'outcome_confirmed',
   'outcome_retired',
 ] as const;

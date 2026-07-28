@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // YUK-707 (P0F/3) — TeachingBriefBand interactions (jsdom/RTL): loading / error, the
 // accept-dismiss CTA wiring through the canonical decideProposal pipeline, fail-closed
-// inline error, the probe_ready single-card reveal, the [裁决 4] forward-only announce +
+// inline error, the probe_ready single-card reveal, the [裁决 4] lifecycle announce +
 // focus move, and the getByRole heading/region a11y that SSR strings can't assert.
 
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
@@ -14,6 +14,7 @@ import { TeachingBriefBand } from './TeachingBrief';
 import type {
   FindingTeachingBrief,
   OutcomeConfirmedTeachingBrief,
+  OutcomeEvidenceForTeachingBrief,
   OutcomeRetiredTeachingBrief,
   ProbeReadyTeachingBrief,
 } from './teaching-brief-api';
@@ -59,7 +60,10 @@ function findingBrief(): FindingTeachingBrief {
   };
 }
 
-function probeReadyBrief(briefId = 'evt_conj_01'): ProbeReadyTeachingBrief {
+function probeReadyBrief(
+  briefId = 'evt_conj_01',
+  probeQuestionId = 'q_probe_01',
+): ProbeReadyTeachingBrief {
   return {
     brief_id: briefId,
     state: 'probe_ready',
@@ -74,12 +78,12 @@ function probeReadyBrief(briefId = 'evt_conj_01'): ProbeReadyTeachingBrief {
       summary_md: '这个模式在最近几次相关作答中重复出现。',
       evidence_trace: [
         { role: 'induction', kind: 'event', id: 'evt_attempt_a' },
-        { role: 'probe', kind: 'question', id: 'q_probe_01' },
+        { role: 'probe', kind: 'question', id: probeQuestionId },
       ],
     },
     prepared_action: {
       kind: 'answer_probe',
-      probe_question_id: 'q_probe_01',
+      probe_question_id: probeQuestionId,
       prompt_md: PROBE_TEXT,
     },
     current_outcome: {
@@ -131,6 +135,20 @@ function retiredBrief(): OutcomeRetiredTeachingBrief {
     current_outcome: {
       status: 'retired',
       summary_md: '这条判断被这次探针排除；原计划可以继续。',
+      probe_question_id: 'q_probe_01',
+      probe_result_event_id: 'evt_probe_result_01',
+    },
+  };
+}
+
+function evidenceForBrief(): OutcomeEvidenceForTeachingBrief {
+  return {
+    ...outcomeBrief(),
+    state: 'outcome_evidence_for',
+    prepared_action: { kind: 'acknowledge_outcome', probe_result_event_id: 'evt_probe_result_01' },
+    current_outcome: {
+      status: 'evidence_for',
+      summary_md: '这次表现与这条判断一致，但单次探针不足以下结论；还需要一次独立复验。',
       probe_question_id: 'q_probe_01',
       probe_result_event_id: 'evt_probe_result_01',
     },
@@ -346,6 +364,46 @@ describe('TeachingBriefBand — probe_ready reveal (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: '提交作答' })).toHaveLength(1);
     expect(screen.getByPlaceholderText(/写下你的解答/)).toBeTruthy();
   });
+
+  it('collapses a recurrence probe and records a distinct start per question', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ brief: null }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: probeReadyBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    const firstCta = await screen.findByRole('button', { name: '现在就试做这道题' });
+    await user.click(firstCta);
+    expect(firstCta.getAttribute('aria-expanded')).toBe('true');
+
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    });
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], {
+        brief: probeReadyBrief('evt_conj_01', 'q_probe_02'),
+      });
+    });
+
+    const secondCta = screen.getByRole('button', { name: '现在就试做这道题' });
+    await waitFor(() => expect(secondCta.getAttribute('aria-expanded')).toBe('false'));
+    expect(screen.queryByPlaceholderText(/写下你的解答/)).toBeNull();
+    await user.click(secondCta);
+
+    const answerStarts = fetchMock.mock.calls
+      .filter((call) => String(call[0]).includes('/api/prep-desk/brief/interaction'))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
+      .filter(
+        (body) => body.type === 'primary_action_started' && body.action_kind === 'answer_probe',
+      );
+    expect(answerStarts).toEqual([
+      expect.objectContaining({ probe_question_id: 'q_probe_01' }),
+      expect.objectContaining({ probe_question_id: 'q_probe_02' }),
+    ]);
+  });
 });
 
 describe('TeachingBriefBand — outcome ack (jsdom, YUK-708)', () => {
@@ -375,6 +433,27 @@ describe('TeachingBriefBand — outcome ack (jsdom, YUK-708)', () => {
     );
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['overnight-digest'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['prep-desk-probes'] });
+  });
+
+  it('preliminary evidence can be acknowledged without exposing scoped practice', async () => {
+    ackOutcomeMock.mockResolvedValue({
+      brief_acknowledgement_event_id: 'ack_1',
+      probe_result_event_id: 'evt_probe_result_01',
+      brief_id: 'evt_conj_01',
+      idempotent: false,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    const user = userEvent.setup();
+    renderWith(qc);
+
+    expect(screen.queryByRole('button', { name: '针对这个点练一组' })).toBeNull();
+    await user.click(await screen.findByRole('button', { name: '知道了' }));
+    expect(ackOutcomeMock).toHaveBeenCalledWith('evt_probe_result_01');
   });
 
   it('ack failure keeps the outcome and surfaces a non-blaming retry (contract §7)', async () => {
@@ -514,6 +593,26 @@ describe('TeachingBriefBand — forward announce + focus ([裁决 4])', () => {
 
     const outcome = screen.getByRole('heading', { level: 3, name: '当前结果' });
     await waitFor(() => expect(document.activeElement).toBe(outcome));
+    expect(document.querySelector('.tb-live')?.textContent).toBe(next.current_outcome.summary_md);
+  });
+
+  it('preliminary outcome→recurrence probe announces the new question and focuses its heading', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ brief: null })),
+    );
+    const qc = mkClient();
+    qc.setQueryData(['teaching-brief'], { brief: evidenceForBrief() });
+    renderWith(qc);
+    await screen.findByRole('heading', { level: 3, name: '当前结果' });
+
+    const next = probeReadyBrief();
+    await act(async () => {
+      qc.setQueryData(['teaching-brief'], { brief: next });
+    });
+
+    const prepared = screen.getByRole('heading', { level: 3, name: '已经为你备好' });
+    await waitFor(() => expect(document.activeElement).toBe(prepared));
     expect(document.querySelector('.tb-live')?.textContent).toBe(next.current_outcome.summary_md);
   });
 

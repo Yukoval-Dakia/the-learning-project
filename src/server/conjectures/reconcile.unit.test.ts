@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   PREDICTION_SCORE_ACTION,
+  PROBE_RESULT_PROJECTED_ACTION,
   type ReconcileDeps,
   type UnscoredProbeResult,
   reconcileConjecturePredictions,
@@ -54,7 +55,7 @@ function probe(over: Partial<UnscoredProbeResult> = {}): UnscoredProbeResult {
     probe_result_event_id: 'pr_1',
     conjecture_event_id: 'cj_1',
     outcome: 0,
-    resolution: 'confirmed',
+    resolution: 'evidence_for',
     retrievability_at_judge: null,
     created_at: new Date('2026-06-26T10:00:00Z'),
     ...over,
@@ -72,6 +73,7 @@ function baseDeps(over: Partial<ReconcileDeps> = {}): {
     now: () => new Date('2026-06-27T00:00:00Z'),
     listUnscoredProbeResultsFn: vi.fn(async () => [probe()]),
     getEventByIdFn: vi.fn(async () => conjectureEvent()),
+    repairCorrectedProjectionsFn: vi.fn(async () => {}),
     writeEventFn: vi.fn(async (_db: Db, input: WriteEventInput) => {
       events.push(input);
       return input.id;
@@ -119,15 +121,43 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(p.skill_score_point as number).toBeGreaterThan(0);
   });
 
+  it('projects a recurrence result without fabricating a prediction score', async () => {
+    const { deps, events, upserts } = baseDeps({
+      listUnscoredProbeResultsFn: vi.fn(async () => [
+        probe({
+          probe_result_event_id: 'pr_2',
+          resolution: 'confirmed',
+          prediction_score_eligible: false,
+        }),
+      ]),
+    });
+
+    await expect(reconcileConjecturePredictions(DB, deps)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    expect(upserts[0].evidence_event_ids).toEqual(['cj_1', 'pr_2']);
+    expect(events[0]).toMatchObject({
+      id: 'probe_result_projected:pr_2',
+      action: PROBE_RESULT_PROJECTED_ACTION,
+      subject_id: 'pr_2',
+    });
+    expect(events[0].payload).toMatchObject({
+      projection_kind: 'recurrence_without_prediction',
+      resolution: 'confirmed',
+    });
+    expect(events[0].payload).not.toHaveProperty('predicted_p');
+    expect(events[0].payload).not.toHaveProperty('brier_model');
+  });
+
   it('RED-LINE: upsert is FLIP-inert — confused_with null → soft, never `mastered`, no FSRS', async () => {
     const { deps, upserts } = baseDeps();
     await reconcileConjecturePredictions(DB, deps);
     const u = upserts[0];
     expect(u.subject_id).toBe('k_a');
     expect(u.subject_kind).toBe('knowledge');
-    // confirmed → proposes confused-with-X, but the conjecture names no X → null →
-    // §修正-4 gate keeps it soft. The reconcile NEVER supplies a confused_with KC in Phase 0.
-    expect(u.proposed).toBe('confused-with-X');
+    // One matching probe is only preliminary, so reconcile proposes no-evidence.
+    expect(u.proposed).toBe('no-evidence');
     expect(u.confused_with_kc_id).toBeNull();
     expect(u.discriminating).toBe(true);
     expect(u.recurrence_count).toBe(3);

@@ -95,6 +95,8 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
       evidence_event_ids: cell.evidence_event_ids,
       probe_md: `probe for ${cell.knowledge_id}`,
       probe_reference_md: `reference answer for ${cell.knowledge_id}`,
+      followup_probe_md: `follow-up probe for ${cell.knowledge_id}`,
+      followup_probe_reference_md: `follow-up reference answer for ${cell.knowledge_id}`,
       cause_category: cell.cause_category,
       recurrence_count: cell.recurrence_count,
       predicted_p: 0.3,

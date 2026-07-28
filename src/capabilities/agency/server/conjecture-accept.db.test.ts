@@ -26,6 +26,7 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
@@ -94,17 +95,48 @@ async function allProbeQuestions() {
 }
 
 /**
- * Fill N active mind_probe slots via direct serves (synthetic conjecture ids — the cap
- * only counts unanswered mind_probe question rows, so how they got there is irrelevant).
+ * Fill N active mind_probe slots from well-formed historical v1 conjectures. The cap
+ * counts unanswered questions, while answerProbe also verifies the proposal provenance;
+ * seeding the proposal keeps the fixture representative instead of relying on an orphan.
  * Returns the served probe question ids so a test can answer one to free a slot.
  */
 async function fillProbeSlots(n: number): Promise<string[]> {
   const db = testDb();
   const ids: string[] = [];
   for (let i = 0; i < n; i += 1) {
+    const conjectureProposalId = `cj_fill_${i}`;
+    const payload = baseConjecture();
+    await writeAiProposal(db, {
+      id: conjectureProposalId,
+      actor_ref: 'research_meeting',
+      payload: {
+        ...payload,
+        cooldown_key: `conjecture:fill:${i}`,
+        proposed_change: {
+          ...payload.proposed_change,
+          probe_md: `filler probe ${i}`,
+          probe_reference_md: 'ref',
+        },
+      },
+    });
+    await writeEvent(db, {
+      id: `rate_${conjectureProposalId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: conjectureProposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        conjecture_id: conjectureProposalId,
+        calibration_anchor: 'accept',
+      },
+      caused_by_event_id: conjectureProposalId,
+    });
     const r = await serveProbeOnce({
       db,
-      conjectureProposalId: `cj_fill_${i}`,
+      conjectureProposalId,
       knowledgeId: 'kn_chain_rule',
       probeMd: `filler probe ${i}`,
       referenceMd: 'ref',
@@ -703,12 +735,11 @@ describe('acceptConjectureProposal lifecycle', () => {
       });
       expect(await rateEvents(proposalId)).toHaveLength(0);
 
-      // (3) Complete one active probe → a slot frees.
+      // (3) Retire one active probe → no follow-up is needed, so a slot frees.
       await answerProbe({
         db,
         probeQuestionId: seededProbeIds[0],
-        outcome: 0,
-        resolution: 'confirmed',
+        outcome: 1,
       });
       expect(await countActiveProbes(db)).toBe(MAX_CONCURRENT_ACTIVE_PROBES - 1);
 

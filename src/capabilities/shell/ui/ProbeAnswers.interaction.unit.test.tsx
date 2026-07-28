@@ -24,8 +24,15 @@ interface CapturedAnswer {
 
 // Routes by url + method: probes list, asset upload/content, and the answer POST
 // (whose body is captured). `answerStatus` drives the answer route's status.
-function mockFetch(opts: { answerStatus?: number; captured?: CapturedAnswer[] } = {}) {
+function mockFetch(
+  opts: {
+    answerStatus?: number;
+    captured?: CapturedAnswer[];
+    resolution?: 'evidence_for' | 'confirmed' | 'retired';
+  } = {},
+) {
   const answerStatus = opts.answerStatus ?? 200;
+  const resolution = opts.resolution ?? 'retired';
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
@@ -49,11 +56,11 @@ function mockFetch(opts: { answerStatus?: number; captured?: CapturedAnswer[] } 
       if (answerStatus >= 400)
         return new Response(JSON.stringify({ error: 'fail-closed' }), { status: answerStatus });
       return Response.json({
-        status: 'retired',
-        resolution: 'retired',
-        outcome: 1,
+        status: resolution,
+        resolution,
+        outcome: resolution === 'retired' ? 1 : 0,
         probe_result_event_id: 'ev_pr',
-        coarse_outcome: 'correct',
+        coarse_outcome: resolution === 'retired' ? 'correct' : 'incorrect',
         idempotent: false,
       });
     }
@@ -111,6 +118,20 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
     expect(captured[0]).toEqual({ answer_md: '2x·cos(x^2)', answer_image_refs: [] });
   });
 
+  it('frames the first incorrect probe as preliminary, not confirmed remediation', async () => {
+    vi.stubGlobal('fetch', mockFetch({ resolution: 'evidence_for' }));
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByText('求 d/dx sin(x^2)。');
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), 'cos(x^2)');
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+
+    expect(await screen.findByText(/还需要独立复验/)).toBeTruthy();
+    expect(screen.queryByText(/确实卡了/)).toBeNull();
+    expect(screen.queryByText(/据此为你备练/)).toBeNull();
+  });
+
   it('carries an uploaded image ref in a photo-only answer (owner requirement)', async () => {
     const captured: CapturedAnswer[] = [];
     vi.stubGlobal('fetch', mockFetch({ captured }));
@@ -149,7 +170,7 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
 // advances in place) and call onAnswered; onDismiss must keep touching ONLY the probe
 // queue, never the brief.
 describe('ProbeAnswerCard — teaching brief coupling (jsdom)', () => {
-  function renderCard(onAnswered?: (resolution: 'confirmed' | 'retired') => void) {
+  function renderCard(onAnswered?: (resolution: 'evidence_for' | 'confirmed' | 'retired') => void) {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
     render(

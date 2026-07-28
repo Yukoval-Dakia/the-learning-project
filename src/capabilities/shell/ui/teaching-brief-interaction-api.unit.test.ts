@@ -57,6 +57,25 @@ describe('reportBriefInteraction (YUK-710)', () => {
     });
   });
 
+  it('sends probe_question_id for an answer_probe start', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ interaction_event_id: 'x' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    reportBriefInteraction({
+      type: 'primary_action_started',
+      brief_id: 'b1',
+      action_kind: 'answer_probe',
+      probe_question_id: 'q_probe_2',
+    });
+    await flush();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      action_kind: 'answer_probe',
+      probe_question_id: 'q_probe_2',
+    });
+  });
+
   it('does NOT invalidate the token on a 401 (no auth-invalidation listener fires; token kept)', async () => {
     const fetchMock = vi
       .fn()
