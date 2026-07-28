@@ -390,6 +390,7 @@ interface ConjectureIdentity {
   knowledge_id: string;
   predictedP: number;
   baselinePAtInduction: number;
+  discriminating: boolean;
 }
 
 export interface ConjectureIdentityTarget {
@@ -403,6 +404,14 @@ interface ProbeResultSource {
   createdAt: Date;
   causedByEventId: string | null;
   payload: Record<string, unknown> | null;
+}
+
+function normalizedIdSet(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string' || id.length === 0)) {
+    return null;
+  }
+  return [...new Set(value as string[])].sort();
 }
 
 function anchorMatchesProbeResult(
@@ -421,7 +430,15 @@ function anchorMatchesProbeResult(
     return false;
   }
   const anchorQuestionId = anchorPayload?.probe_question_id;
-  return anchorQuestionId === undefined || anchorQuestionId === source.questionId;
+  if (anchorQuestionId !== undefined && anchorQuestionId !== source.questionId) return false;
+  const anchorLineage = normalizedIdSet(anchorPayload?.independent_probe_question_ids);
+  const sourceLineage = normalizedIdSet(source.payload?.independent_probe_question_ids);
+  return (
+    anchorLineage !== null &&
+    sourceLineage !== null &&
+    anchorLineage.length === sourceLineage.length &&
+    anchorLineage.every((id, index) => id === sourceLineage[index])
+  );
 }
 
 function conjectureIdentityKey(causeCategory: string, knowledgeId: string): string {
@@ -481,11 +498,13 @@ function extractConjectureIdentity(
     knowledge_id?: unknown;
     predicted_p?: unknown;
     baseline_p_at_induction?: unknown;
+    discriminating?: unknown;
   } | null;
   const cause = change?.cause_category;
   const kc = change?.knowledge_id;
   const predictedP = change?.predicted_p;
   const baselinePAtInduction = change?.baseline_p_at_induction;
+  const discriminating = change?.discriminating;
   if (typeof cause !== 'string' || cause.length === 0) return null;
   if (typeof kc !== 'string' || kc.length === 0) return null;
   if (
@@ -504,11 +523,13 @@ function extractConjectureIdentity(
   ) {
     return null;
   }
+  if (typeof discriminating !== 'boolean') return null;
   return {
     cause_category: cause,
     knowledge_id: kc,
     predictedP,
     baselinePAtInduction,
+    discriminating,
   };
 }
 
@@ -542,20 +563,28 @@ export async function gatherDissociationRecordsByIdentity(
   const targetKeyByIdentity = new Map<string, string>();
   const identityByTargetKey = new Map<string, string>();
   for (const target of targets) {
+    if (!out.has(target.key)) out.set(target.key, []);
     const identity = conjectureIdentityKey(target.causeCategory, target.knowledgeId);
     const priorKey = targetKeyByIdentity.get(identity);
     if (priorKey !== undefined && priorKey !== target.key) {
-      throw new Error(
-        `Duplicate conjecture identity target ${target.causeCategory} × ${target.knowledgeId}`,
+      console.warn(
+        '[accountability] skipping duplicate conjecture identity target',
+        target.causeCategory,
+        target.knowledgeId,
+        target.key,
       );
+      continue;
     }
     const priorIdentity = identityByTargetKey.get(target.key);
     if (priorIdentity !== undefined && priorIdentity !== identity) {
-      throw new Error(`Accountability target key ${target.key} maps to multiple identities`);
+      console.warn(
+        '[accountability] skipping target key mapped to multiple identities',
+        target.key,
+      );
+      continue;
     }
     targetKeyByIdentity.set(identity, target.key);
     identityByTargetKey.set(target.key, identity);
-    out.set(target.key, []);
   }
   if (targets.length === 0) return out;
   const knowledgeIds = [...new Set(targets.map((target) => target.knowledgeId))];
@@ -736,7 +765,8 @@ export async function gatherDissociationRecordsByIdentity(
       typeof payloadKnowledgeId !== 'string' ||
       payloadKnowledgeId !== identity.knowledge_id ||
       payload?.predicted_p !== identity.predictedP ||
-      payload?.baseline_p !== identity.baselinePAtInduction
+      payload?.baseline_p !== identity.baselinePAtInduction ||
+      (payload?.discriminating !== undefined && payload.discriminating !== identity.discriminating)
     ) {
       continue;
     }
@@ -763,7 +793,12 @@ export async function gatherDissociationRecordsByIdentity(
       const confirmed = confirmationTime
         ? { ...parsed, resolution: 'confirmed' as const, judgedAt: confirmationTime }
         : parsed;
-      out.get(targetKey)?.push(confirmed);
+      const bucket = out.get(targetKey);
+      if (bucket) {
+        bucket.push(confirmed);
+      } else {
+        console.warn('[accountability] missing initialized result bucket', targetKey);
+      }
     }
   }
   return out;

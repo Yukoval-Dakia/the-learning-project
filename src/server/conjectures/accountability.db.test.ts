@@ -1,9 +1,11 @@
+import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import { event, question } from '@/db/schema';
 import {
   type AccountabilityCandidate,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
+import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -23,6 +25,7 @@ async function writeConjecture(
   id: string,
   cellValue: AccountabilityCandidate,
   minute: number,
+  options: { discriminating?: boolean } = {},
 ): Promise<void> {
   await testDb()
     .insert(event)
@@ -50,7 +53,7 @@ async function writeConjecture(
             probe_reference_md: `reference ${id}`,
             followup_probe_md: `followup ${id}`,
             followup_probe_reference_md: `followup reference ${id}`,
-            discriminating: true,
+            discriminating: options.discriminating ?? true,
             predicted_p: 0.2,
             baseline_p_at_induction: 0.8,
           },
@@ -144,6 +147,7 @@ async function writeProbeResult(
   minute: number,
   resolution: 'evidence_for' | 'confirmed' | 'retired' = 'evidence_for',
   outcome: 0 | 1 = resolution === 'retired' ? 1 : 0,
+  independentProbeQuestionIds?: readonly string[],
 ): Promise<void> {
   await testDb()
     .insert(event)
@@ -158,6 +162,12 @@ async function writeProbeResult(
         conjecture_event_id: conjectureId,
         outcome,
         resolution,
+        ...(independentProbeQuestionIds
+          ? {
+              resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
+              independent_probe_question_ids: [...independentProbeQuestionIds],
+            }
+          : {}),
       },
       caused_by_event_id: conjectureId,
       created_at: new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:00.000Z`),
@@ -174,8 +184,17 @@ async function writeTerminalProjection(
 ): Promise<void> {
   const probeResultId = `result_${id}`;
   const terminalQuestionId = `question_${id}`;
+  const lineage = [preliminaryQuestionId, terminalQuestionId];
   await writeProbeQuestion(terminalQuestionId, conjectureId, cellValue.knowledge_id, 2, minute);
-  await writeProbeResult(probeResultId, conjectureId, terminalQuestionId, minute, 'confirmed');
+  await writeProbeResult(
+    probeResultId,
+    conjectureId,
+    terminalQuestionId,
+    minute,
+    'confirmed',
+    0,
+    lineage,
+  );
   await testDb()
     .insert(event)
     .values({
@@ -193,7 +212,7 @@ async function writeTerminalProjection(
         outcome: 0,
         resolution: 'confirmed',
         projection_kind: 'recurrence_without_prediction',
-        independent_probe_question_ids: [preliminaryQuestionId, terminalQuestionId],
+        independent_probe_question_ids: lineage,
       },
       created_at: new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:30.000Z`),
     });
@@ -202,13 +221,13 @@ async function writeTerminalProjection(
 describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
   beforeEach(resetDb);
 
-  it('fails loudly when two output keys alias the same conjecture identity', async () => {
+  it('isolates duplicate identity aliases without aborting the accountability batch', async () => {
     const target = cell('concept::kc_collision', 2);
     const alias = { ...target, key: 'unexpected_alias' };
 
-    await expect(loadPredictionAccountabilityByKey(testDb(), [target, alias])).rejects.toThrow(
-      'Duplicate conjecture identity target concept × kc_collision',
-    );
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [target, alias]);
+    expect(profiles.get(target.key)?.state).toBe('watch');
+    expect(profiles.get(alias.key)?.state).toBe('watch');
   });
 
   it('rejects a mis-stamped score when both payload and proposal KCs are in the batch', async () => {
@@ -316,6 +335,21 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
       });
     },
   );
+
+  it('rejects a score that changes the proposal-authored discriminating fact', async () => {
+    const target = cell('concept::kc_discriminating_drift', 2);
+    await writeConjecture('conjecture_discriminating_drift', target, 1, {
+      discriminating: false,
+    });
+    await writeScore('score_discriminating_drift', 'conjecture_discriminating_drift', target, 0, 1);
+
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(profiles.get(target.key)).toMatchObject({
+      state: 'watch',
+      consecutive_count: 0,
+      score_event_ids: [],
+    });
+  });
 
   it('turns repeated prediction misses into an observable candidate downweight', async () => {
     const target = cell('concept::kc_high', 4);
@@ -603,6 +637,55 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
       consecutive_count: 1,
       rank_multiplier: 1,
     });
+  });
+
+  it('does not confirm a score from projection lineage that disagrees with its source result', async () => {
+    const target = cell('concept::kc_lineage_drift', 2);
+    const conjectureId = 'conjecture_lineage_drift';
+    const preliminaryQuestionId = 'question_score_lineage_drift';
+    const terminalQuestionId = 'question_terminal_lineage_drift';
+    const terminalResultId = 'result_terminal_lineage_drift';
+    await writeConjecture(conjectureId, target, 1);
+    await writeScore('score_lineage_drift', conjectureId, target, 0, 1, {
+      resolution: 'evidence_for',
+    });
+    await writeProbeQuestion(terminalQuestionId, conjectureId, target.knowledge_id, 2, 2);
+    await writeProbeResult(terminalResultId, conjectureId, terminalQuestionId, 2, 'confirmed', 0, [
+      preliminaryQuestionId,
+      terminalQuestionId,
+    ]);
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'projection_lineage_drift',
+        actor_kind: 'system',
+        actor_ref: 'research_meeting',
+        action: 'experimental:probe_result_projected',
+        subject_kind: 'event',
+        subject_id: terminalResultId,
+        payload: {
+          conjecture_event_id: conjectureId,
+          probe_result_event_id: terminalResultId,
+          probe_question_id: terminalQuestionId,
+          knowledge_id: target.knowledge_id,
+          outcome: 0,
+          resolution: 'confirmed',
+          discriminating: true,
+          projection_kind: 'recurrence_without_prediction',
+          independent_probe_question_ids: ['question_from_another_claim', terminalQuestionId],
+        },
+        created_at: new Date('2026-07-28T11:02:30.000Z'),
+      });
+
+    const records = await gatherDissociationRecordsByIdentity(testDb(), [
+      {
+        key: target.key,
+        causeCategory: target.cause_category,
+        knowledgeId: target.knowledge_id,
+      },
+    ]);
+    expect(records.get(target.key)).toHaveLength(1);
+    expect(records.get(target.key)?.[0]?.resolution).toBe('evidence_for');
   });
 
   it('consumes the live hard-confirm flag without allowing the nightly caller to hard-confirm', async () => {
