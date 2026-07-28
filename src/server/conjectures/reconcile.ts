@@ -48,7 +48,12 @@ import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
 import { z } from 'zod';
 
-import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
+import {
+  PROBE_RESULT_PROJECTED_ACTION,
+  type ProbeResolution,
+  isProbeResolution,
+} from '@/core/schema/conjecture';
+export { PROBE_RESULT_PROJECTED_ACTION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -62,8 +67,6 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 /** Canonical score fact consumed by the YUK-795 accountability ranker. */
 export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
-/** Score-free sequence-2 projection anchor; never represents a calibrated prediction. */
-export const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
 /** The U3 producer's outcome event we consume. */
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 /** actor_ref stamped on each derived anchor event (same job as the propose half). */

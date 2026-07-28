@@ -8,6 +8,9 @@ export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
 /** The canonical event action that records the qualitative probe outcome. */
 export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
+/** The score-free terminal recurrence projection appended by reconciliation. */
+export const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
+
 /**
  * Persisted conjecture-survival decisions derived from a graded probe outcome.
  *

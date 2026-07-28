@@ -26,29 +26,28 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
-import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import { PROBE_RESULT_ACTION, PROBE_RESULT_PROJECTED_ACTION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
 
 /** The canonical score fact the reconcile loop appends (reconcile.ts). */
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
-/** Score-free terminal recurrence projection appended by reconcile.ts. */
-const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
 
 // ── Tier-1 knobs (NAMED consts + owner-tunable — never learner-fitted) ───────────────
 
 /**
  * Proper-distractor SEPARATION floor: a probe is admissible as CRUCIAL evidence only when
  * |predicted_p − baseline_p| ≥ δ_sep (the conjecture's prediction genuinely diverges from
- * the quantitative baseline, so the outcome can DISCRIMINATE held-M from缺-skill). 0.20 ≈
+ * the quantitative baseline, so the outcome can discriminate a held misconception from a skill
+ * deficit). 0.20 ≈
  * Köhn-Chiu-Wang proper-distractor separation. Owner-tunable.
  */
 export const DELTA_SEP = 0.2;
 
 /**
  * "High mastery" p(L) band for the DISCRIMINATION gate: a HELD misconception is credible only
- * when the learner errs WITH mastery in place (an error at low p(L) is缺-skill, not held-M).
+ * when the learner errs WITH mastery in place (an error at low p(L) is a skill deficit, not held-M).
  * Read as a three-value band (high / low / unknown≡null). 0.6 = owner-tunable operating point.
  */
 export const HELD_M_MASTERY_BAND = 0.6;
@@ -550,7 +549,11 @@ export async function gatherDissociationRecordsByIdentity(
   ];
   const probeResultChunks = boundedChunks(probeResultEventIds);
   const [statusChunks, sourceTimeChunks] = await Promise.all([
-    Promise.all(probeResultChunks.map((chunk) => getEffectiveProbeResultStatuses(db, chunk))),
+    Promise.all(
+      probeResultChunks.map((chunk) =>
+        getEffectiveProbeResultStatuses(db, chunk, { validateDirectChain: true }),
+      ),
+    ),
     Promise.all(
       probeResultChunks.map((chunk) =>
         db

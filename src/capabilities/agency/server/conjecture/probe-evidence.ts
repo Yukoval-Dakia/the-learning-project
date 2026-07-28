@@ -144,6 +144,7 @@ function supportingQuestionSequence(
 export async function getEffectiveProbeResultStatuses(
   db: DbLike,
   probeResultEventIds: readonly string[],
+  options: { validateDirectChain?: boolean } = {},
 ): Promise<Map<string, EffectiveProbeResultStatus>> {
   const ids = [...new Set(probeResultEventIds)];
   const statuses = new Map<string, EffectiveProbeResultStatus>(ids.map((id) => [id, 'missing']));
@@ -203,11 +204,13 @@ export async function getEffectiveProbeResultStatuses(
     dependencyRows.map((row) => row.id),
   );
 
-  // Direct evidence keeps its existing correction-only status fold; the
-  // proposal/question chain is authoritative in each consumer's full validator.
-  // Recurrence is stricter here because every supporting question must be
-  // canonical before the terminal result may strengthen the conjecture.
-  const evidenceRows = dependencyRows;
+  // Recurrence always validates every supporting question. Consumers that use
+  // already-anchored direct results as live inputs can opt into the same
+  // proposal/question provenance validation so later generic question edits
+  // fail closed instead of changing ranking or other derived state.
+  const evidenceRows = options.validateDirectChain
+    ? [...new Map([...dependencyRows, ...activeRows].map((row) => [row.id, row] as const)).values()]
+    : dependencyRows;
   const evidenceQuestionIds = [...new Set(evidenceRows.map((row) => row.subject_id))];
   const evidenceConjectureEventIds = [
     ...new Set(
@@ -255,6 +258,18 @@ export async function getEffectiveProbeResultStatuses(
   };
 
   for (const row of activeRows) statuses.set(row.id, 'active');
+  if (options.validateDirectChain) {
+    for (const row of activeRows) {
+      const conjectureEventId = toRecord(row.payload).conjecture_event_id;
+      if (
+        typeof conjectureEventId !== 'string' ||
+        row.caused_by_event_id !== conjectureEventId ||
+        sequenceForResult(row) === null
+      ) {
+        statuses.set(row.id, 'dependency_inactive');
+      }
+    }
+  }
   for (const { row, questionIds } of recurrenceRows) {
     const conjectureEventId = toRecord(row.payload).conjecture_event_id;
     if (

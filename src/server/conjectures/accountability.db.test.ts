@@ -1,9 +1,10 @@
-import { event } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import {
   type AccountabilityCandidate,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
@@ -35,9 +36,23 @@ async function writeConjecture(
       payload: {
         ai_proposal: {
           kind: 'conjecture',
+          target: { subject_kind: 'mind_model', subject_id: cellValue.knowledge_id },
+          reason_md: 'accountability test fixture',
+          evidence_refs: [{ kind: 'event', id: `evidence_${id}` }],
+          cooldown_key: `conjecture:${id}`,
           proposed_change: {
+            claim_md: `claim ${id}`,
             cause_category: cellValue.cause_category,
             knowledge_id: cellValue.knowledge_id,
+            confidence: 0.7,
+            recurrence_count: 2,
+            probe_md: `probe ${id}`,
+            probe_reference_md: `reference ${id}`,
+            followup_probe_md: `followup ${id}`,
+            followup_probe_reference_md: `followup reference ${id}`,
+            discriminating: true,
+            predicted_p: 0.2,
+            baseline_p_at_induction: 0.8,
           },
         },
       },
@@ -60,8 +75,10 @@ async function writeScore(
   } = {},
 ): Promise<void> {
   const probeResultId = `result_${id}`;
+  const questionId = `question_${id}`;
   const resolution = options.resolution ?? (outcome === 0 ? 'evidence_for' : 'retired');
-  await writeProbeResult(probeResultId, conjectureId, `question_${id}`, minute, resolution);
+  await writeProbeQuestion(questionId, conjectureId, cellValue.knowledge_id, 1, minute);
+  await writeProbeResult(probeResultId, conjectureId, questionId, minute, resolution);
   await testDb()
     .insert(event)
     .values({
@@ -74,9 +91,7 @@ async function writeScore(
       payload: {
         conjecture_event_id: conjectureId,
         probe_result_event_id: probeResultId,
-        ...(options.includeProbeQuestionId === false
-          ? {}
-          : { probe_question_id: `question_${id}` }),
+        ...(options.includeProbeQuestionId === false ? {} : { probe_question_id: questionId }),
         knowledge_id: cellValue.knowledge_id,
         predicted_p: 0.2,
         baseline_p: 0.8,
@@ -90,6 +105,35 @@ async function writeScore(
         options.anchorCreatedAt ??
         new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:00.000Z`),
     });
+}
+
+async function writeProbeQuestion(
+  id: string,
+  conjectureId: string,
+  knowledgeId: string,
+  sequence: 1 | 2,
+  minute: number,
+): Promise<void> {
+  const now = new Date(`2026-07-28T10:${String(minute).padStart(2, '0')}:30.000Z`);
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: 'short_answer',
+      prompt_md: sequence === 1 ? `probe ${conjectureId}` : `followup ${conjectureId}`,
+      reference_md: `reference ${conjectureId}`,
+      knowledge_ids: [knowledgeId],
+      source: 'mind_probe',
+      source_ref: conjectureId,
+      draft_status: 'draft',
+      metadata: {
+        conjecture_proposal_id: conjectureId,
+        probe_sequence: sequence,
+      },
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflictDoNothing();
 }
 
 async function writeProbeResult(
@@ -128,6 +172,7 @@ async function writeTerminalProjection(
 ): Promise<void> {
   const probeResultId = `result_${id}`;
   const terminalQuestionId = `question_${id}`;
+  await writeProbeQuestion(terminalQuestionId, conjectureId, cellValue.knowledge_id, 2, minute);
   await writeProbeResult(probeResultId, conjectureId, terminalQuestionId, minute, 'confirmed');
   await testDb()
     .insert(event)
@@ -209,6 +254,27 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     ).toEqual([neutral.key, target.key]);
   });
 
+  it('drops anchored direct evidence after its proposal-specific question chain drifts', async () => {
+    const target = cell('concept::kc_stale_question', 2);
+    await writeConjecture('conjecture_stale_question', target, 1);
+    await writeScore('score_stale_question', 'conjecture_stale_question', target, 0, 1);
+
+    const before = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(before.get(target.key)?.consecutive_count).toBe(1);
+
+    await testDb()
+      .update(question)
+      .set({ prompt_md: 'generic edit changed the tested claim', version: 1 })
+      .where(eq(question.id, 'question_score_stale_question'));
+
+    const after = await loadPredictionAccountabilityByKey(testDb(), [target]);
+    expect(after.get(target.key)).toMatchObject({
+      state: 'watch',
+      consecutive_count: 0,
+      score_event_ids: [],
+    });
+  });
+
   it('turns persistent hits into an observable boost while one hit remains neutral', async () => {
     const target = cell('concept::kc_target', 2);
     await writeConjecture('conjecture_hit_1', target, 1);
@@ -266,8 +332,6 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     const target = cell('concept::kc_correctable', 2);
     await writeConjecture('conjecture_correctable_1', target, 1);
     await writeConjecture('conjecture_correctable_2', target, 2);
-    await writeProbeResult('result_score_correctable_1', 'conjecture_correctable_1', 'q_1', 1);
-    await writeProbeResult('result_score_correctable_2', 'conjecture_correctable_2', 'q_2', 2);
     await writeScore('score_correctable_1', 'conjecture_correctable_1', target, 0, 1);
     await writeScore('score_correctable_2', 'conjecture_correctable_2', target, 0, 2);
 
