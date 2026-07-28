@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type AccountabilityCandidate,
+  type PredictionAccountability,
   type PredictionAccountabilityRecord,
   derivePredictionAccountability,
   rankEvidenceCellsByAccountability,
@@ -139,5 +140,29 @@ describe('rankEvidenceCellsByAccountability (YUK-795)', () => {
         (candidate) => candidate.key,
       ),
     ).toEqual([neutral.key, high.key]);
+  });
+
+  it('uses deterministic tiebreakers for mathematically equal floating weighted scores', () => {
+    const highRecurrence = cell('concept::kc_high', 3);
+    const lowRecurrence = cell('method::kc_low', 1);
+    const profile = (multiplier: number): PredictionAccountability => ({
+      state: 'watch',
+      latest_direction: 'neutral',
+      consecutive_count: 0,
+      rank_multiplier: multiplier,
+      hard_confirm_verdict: 'INSUFFICIENT',
+      hard_confirm_enabled: false,
+      score_event_ids: [],
+    });
+
+    expect(
+      rankEvidenceCellsByAccountability(
+        [lowRecurrence, highRecurrence],
+        new Map([
+          [highRecurrence.key, profile(0.1)],
+          [lowRecurrence.key, profile(0.3)],
+        ]),
+      ).map((candidate) => candidate.key),
+    ).toEqual([highRecurrence.key, lowRecurrence.key]);
   });
 });

@@ -295,6 +295,43 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     expect(restored.get(target.key)?.state).toBe('supported');
   });
 
+  it('orders dissociation by terminal confirmation while preserving score streak chronology', async () => {
+    const target = cell('concept::kc_confirmation_time', 2);
+    await writeConjecture('conjecture_timeline_confirm', target, 1);
+    await writeConjecture('conjecture_timeline_retired', target, 2);
+    await writeScore('score_timeline_confirm', 'conjecture_timeline_confirm', target, 0, 1, {
+      resolution: 'evidence_for',
+      mDiagnostic: true,
+      context: 'symbolic',
+    });
+    await writeScore('score_timeline_retired', 'conjecture_timeline_retired', target, 1, 2, {
+      resolution: 'retired',
+      mDiagnostic: true,
+      context: 'transfer',
+    });
+    await writeTerminalProjection(
+      'projection_timeline_confirm',
+      'conjecture_timeline_confirm',
+      target,
+      'question_score_timeline_confirm',
+      3,
+    );
+
+    const profiles = await loadPredictionAccountabilityByKey(testDb(), [target]);
+
+    expect(profiles.get(target.key)).toMatchObject({
+      // Dissociation sees retired@02 followed by confirmation@03, so the
+      // terminal confirmation resets the asymmetry counter.
+      hard_confirm_verdict: 'EMERGING',
+      // Prediction accountability still orders the calibrated scores at
+      // sequence-1@01 then retired@02; the score-free terminal event does not
+      // reorder or fabricate a prediction.
+      latest_direction: 'miss',
+      consecutive_count: 1,
+      rank_multiplier: 1,
+    });
+  });
+
   it('consumes the live hard-confirm flag without allowing the nightly caller to hard-confirm', async () => {
     const target = cell('concept::kc_emerging', 2);
     await writeConjecture('conjecture_emerging_1', target, 1);

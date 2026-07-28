@@ -34,6 +34,7 @@ function rec(over: Partial<DissociationRecord> = {}): DissociationRecord {
     discriminating: true,
     mDiagnostic: true,
     resolution: 'confirmed',
+    scoredAt: new Date('2026-07-01T00:00:00Z'),
     judgedAt: new Date('2026-07-01T00:00:00Z'),
     ...over,
   };

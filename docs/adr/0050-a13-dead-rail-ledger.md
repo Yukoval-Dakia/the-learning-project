@@ -17,7 +17,7 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 
 > **读这份文档的人请注意裁定方向**：本票初稿曾建议 (a)(b)(d) 走「显式记 deferred」（依据是仓库「不建无消费者基建」的既有纪律）。**owner 当场推翻了三条**——理由是这三条不是「无消费者的投机基建」，而是 A13 问责回路**本身的承重段**：回路缺了它们就不闭合，「问责」二字落空。(c) 的 deferred 被维持，因为它确实是一个还没有消费者的 palette。
 
-**唯一不受裁定影响、必须无条件成立的一条**：代码与文档不得互相矛盾。反向漂移（文档宣称一条当下不会发生的行为）在任何裁定下都是 bug——deferred 时它谎称「已通电」，通电前它同样谎称「已通电」。本 ADR 的文案对齐工作因此照常落地，只是措辞从「结构性恒空」改为「**待通电**」。
+**唯一不受裁定影响、必须无条件成立的一条**：代码与文档不得互相矛盾。反向漂移（文档宣称一条当下不会发生的行为）在任何裁定下都是 bug——deferred 时它谎称「已通电」，通电前它同样谎称「已通电」。YUK-795 已落地的 (b) 按当前 live consumer 叙述；仍未落地的 YUK-794/YUK-796（(a)/(d)）才继续使用「**待通电**」，不得把三张执行票整体写成未通电。
 
 ---
 
@@ -106,6 +106,8 @@ v2 的第二道独立 probe 没有自己的校准概率，因此仍只写 score-
 `probe_result_projected`，绝不借用首题概率伪造第二个 score。该 projection 会保留
 `independent_probe_question_ids`；hard-confirm reader 在 terminal result 及其依赖均
 有效时，把 `confirmed` 结论折回同一 conjecture 已计分的 sequence-1 observation。
+证据不对称/recency 按 terminal confirmation 时间排序，prediction streak 仍按首题
+score 时间排序，两条时间轴不得互相覆盖。
 因此真实 producer 生成的 `evidence_for → confirmed` 链可以进入 dissociation fold，
 而不是依赖生产路径不会生成的手写 `confirmed prediction_score`。
 题目 UUID 不等于语义 context class：reconcile 不把 `probe_question_id` 写作

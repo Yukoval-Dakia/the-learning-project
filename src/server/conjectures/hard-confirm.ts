@@ -115,7 +115,9 @@ export interface DissociationRecord {
   mDiagnostic: boolean;
   /** probe lifecycle resolution. */
   resolution: 'evidence_for' | 'confirmed' | 'retired';
-  /** judging instant (→ recency / asymmetry ordering). */
+  /** score source instant; prediction-accountability streaks stay ordered by this. */
+  scoredAt: Date;
+  /** effective evidence instant (terminal confirmation time when recurrence confirms sequence 1). */
   judgedAt: Date;
 }
 
@@ -369,6 +371,7 @@ function predictionScoreToRecord(
     discriminating: payload.discriminating === true,
     mDiagnostic: payload.m_diagnostic === true,
     resolution,
+    scoredAt: createdAt,
     judgedAt: createdAt,
   };
 }
@@ -393,9 +396,6 @@ function conjectureIdentityKey(causeCategory: string, knowledgeId: string): stri
 
 function boundedChunks<T>(values: readonly T[]): T[][] {
   const size = MAX_ACCOUNTABILITY_KNOWLEDGE_IDS_PER_QUERY;
-  if (!Number.isInteger(size) || size <= 0) {
-    throw new Error(`Invalid accountability query chunk size: ${size}`);
-  }
   const chunks: T[][] = [];
   for (let offset = 0; offset < values.length; offset += size) {
     chunks.push(values.slice(offset, offset + size));
@@ -579,7 +579,7 @@ export async function gatherDissociationRecordsByIdentity(
   // independent_probe_question_ids lineage can nevertheless confirm the scored
   // sequence-1 observation. Fold that terminal fact onto the existing score rather
   // than fabricating a second score row.
-  const confirmedQuestionIdsByConjecture = new Map<string, Set<string>>();
+  const confirmationTimeByConjectureAndQuestion = new Map<string, Map<string, Date>>();
   for (const r of rows) {
     if (r.action !== PROBE_RESULT_PROJECTED_ACTION) continue;
     const payload = r.payload as Record<string, unknown> | null;
@@ -610,9 +610,16 @@ export async function gatherDissociationRecordsByIdentity(
       (id): id is string => typeof id === 'string' && id.length > 0,
     );
     if (new Set(validIds).size < 2) continue;
-    const confirmed = confirmedQuestionIdsByConjecture.get(conjectureEventId) ?? new Set<string>();
-    for (const questionId of validIds) confirmed.add(questionId);
-    confirmedQuestionIdsByConjecture.set(conjectureEventId, confirmed);
+    const confirmationTime = sourceCreatedAtById.get(probeResultEventId) ?? r.created_at;
+    const confirmationTimes =
+      confirmationTimeByConjectureAndQuestion.get(conjectureEventId) ?? new Map<string, Date>();
+    for (const questionId of validIds) {
+      const prior = confirmationTimes.get(questionId);
+      if (!prior || confirmationTime.getTime() > prior.getTime()) {
+        confirmationTimes.set(questionId, confirmationTime);
+      }
+    }
+    confirmationTimeByConjectureAndQuestion.set(conjectureEventId, confirmationTimes);
   }
 
   for (const r of rows) {
@@ -648,12 +655,15 @@ export async function gatherDissociationRecordsByIdentity(
       payload,
     );
     if (parsed) {
-      const confirmed =
-        parsed.resolution === 'evidence_for' &&
-        confirmedQuestionIdsByConjecture.get(parsed.conjectureEventId)?.has(parsed.questionId) ===
-          true
-          ? { ...parsed, resolution: 'confirmed' as const }
-          : parsed;
+      const confirmationTime =
+        parsed.resolution === 'evidence_for'
+          ? confirmationTimeByConjectureAndQuestion
+              .get(parsed.conjectureEventId)
+              ?.get(parsed.questionId)
+          : undefined;
+      const confirmed = confirmationTime
+        ? { ...parsed, resolution: 'confirmed' as const, judgedAt: confirmationTime }
+        : parsed;
       out.get(targetKey)?.push(confirmed);
     }
   }

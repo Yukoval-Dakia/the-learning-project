@@ -20,6 +20,7 @@ export const ACCOUNTABILITY_STREAK_FLOOR = 2;
 export const ACCOUNTABILITY_DOWNWEIGHT_MULTIPLIER = 0.25;
 export const ACCOUNTABILITY_SUPPORTED_MULTIPLIER = 1.15;
 export const ACCOUNTABILITY_EMERGING_MULTIPLIER = 1.25;
+const ACCOUNTABILITY_RANK_TIE_EPSILON = 1e-9;
 
 export interface PredictionAccountabilityRecord {
   score_event_id: string;
@@ -137,8 +138,10 @@ export function rankEvidenceCellsByAccountability<T extends AccountabilityCandid
     const aMultiplier = accountabilityByKey.get(a.key)?.rank_multiplier ?? 1;
     const bMultiplier = accountabilityByKey.get(b.key)?.rank_multiplier ?? 1;
     const adjusted = b.recurrence_count * bMultiplier - a.recurrence_count * aMultiplier;
+    const adjustedWithStableTie =
+      Math.abs(adjusted) < ACCOUNTABILITY_RANK_TIE_EPSILON ? 0 : adjusted;
     return (
-      adjusted ||
+      adjustedWithStableTie ||
       b.recurrence_count - a.recurrence_count ||
       Number(b.probe_here) - Number(a.probe_here) ||
       a.key.localeCompare(b.key)
@@ -189,7 +192,7 @@ export async function loadPredictionAccountabilityByKey(
                     record.baselineP,
                     record.outcome,
                   ).skillScorePoint,
-                  scored_at: record.judgedAt,
+                  scored_at: record.scoredAt,
                 },
               ],
         ),
