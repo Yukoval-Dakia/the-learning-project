@@ -22,13 +22,18 @@
 5. `MISCONCEPTION_HARD_CONFIRM_ENABLED` 仍默认 OFF：当前 Judge 没有
    `target_error_match`，不得把普通答错冒充 M-diagnostic；soft→hard 仍需 fresh owner
    confirmation。本票只把现有 hard-confirm verdict 接入 live consumer，不伪造 hard。
+6. 最新 OCR P2 已补齐真实 v2 terminal chain：sequence-2 projection 保留
+   `independent_probe_question_ids`，仅把 terminal `confirmed` 折回首题已校准 score；
+   sequence-2 仍不产生伪造 score。
 
 ## 验证与远端
 
 - YUK-795 已提交并推送为 PR #1101。
-- 定向 unit：accountability 7/7；定向 DB：accountability 4/4；改动文件
-  Biome 与 `git diff --check` 已通过。此前关联 reconcile/hard-confirm/nightly
-  定向测试也已通过。
+- 最新定向 unit：accountability + reconcile 20/20；定向 DB：accountability +
+  reconcile 18/18；改动文件 Biome 与 `git diff --check` 已通过。此前关联
+  hard-confirm/nightly 定向测试也已通过。
+- commit `72080e41` 的 GitHub CI Gate / OCR / CodeQL 已全绿；terminal confirmation
+  review fix 推送后需重新监听完整远端 gate。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。
 - 只在本地跑改动范围的定向测试/格式检查；完整 gate 只监听 GitHub Actions/OCR。

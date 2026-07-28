@@ -116,6 +116,39 @@ async function writeProbeResult(
     .onConflictDoNothing();
 }
 
+async function writeTerminalProjection(
+  id: string,
+  conjectureId: string,
+  cellValue: AccountabilityCandidate,
+  preliminaryQuestionId: string,
+  minute: number,
+): Promise<void> {
+  const probeResultId = `result_${id}`;
+  const terminalQuestionId = `question_${id}`;
+  await writeProbeResult(probeResultId, conjectureId, terminalQuestionId, minute, 'confirmed');
+  await testDb()
+    .insert(event)
+    .values({
+      id,
+      actor_kind: 'system',
+      actor_ref: 'research_meeting',
+      action: 'experimental:probe_result_projected',
+      subject_kind: 'event',
+      subject_id: probeResultId,
+      payload: {
+        conjecture_event_id: conjectureId,
+        probe_result_event_id: probeResultId,
+        probe_question_id: terminalQuestionId,
+        knowledge_id: cellValue.knowledge_id,
+        outcome: 0,
+        resolution: 'confirmed',
+        projection_kind: 'recurrence_without_prediction',
+        independent_probe_question_ids: [preliminaryQuestionId, terminalQuestionId],
+      },
+      created_at: new Date(`2026-07-28T11:${String(minute).padStart(2, '0')}:30.000Z`),
+    });
+}
+
 describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
   beforeEach(resetDb);
 
@@ -267,15 +300,32 @@ describe('loadPredictionAccountabilityByKey (YUK-795)', () => {
     await writeConjecture('conjecture_emerging_1', target, 1);
     await writeConjecture('conjecture_emerging_2', target, 2);
     await writeScore('score_emerging_1', 'conjecture_emerging_1', target, 0, 1, {
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       mDiagnostic: true,
       context: 'symbolic',
     });
     await writeScore('score_emerging_2', 'conjecture_emerging_2', target, 0, 2, {
-      resolution: 'confirmed',
+      resolution: 'evidence_for',
       mDiagnostic: true,
       context: 'transfer',
     });
+    // Production v2 never writes a confirmed prediction_score. Each terminal
+    // sequence-2 result is score-free and confirms the calibrated sequence-1
+    // observation through immutable question lineage.
+    await writeTerminalProjection(
+      'projection_emerging_1',
+      'conjecture_emerging_1',
+      target,
+      'question_score_emerging_1',
+      3,
+    );
+    await writeTerminalProjection(
+      'projection_emerging_2',
+      'conjecture_emerging_2',
+      target,
+      'question_score_emerging_2',
+      4,
+    );
 
     const original = process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED;
     try {

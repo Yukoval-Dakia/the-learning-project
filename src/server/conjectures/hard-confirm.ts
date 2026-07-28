@@ -32,6 +32,8 @@ import { scorePrediction } from '@/server/conjectures/scoring';
 
 /** The canonical score fact the reconcile loop appends (reconcile.ts). */
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
+/** Score-free terminal recurrence projection appended by reconcile.ts. */
+const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
 
 // ── Tier-1 knobs (NAMED consts + owner-tunable — never learner-fitted) ───────────────
 
@@ -462,9 +464,11 @@ function extractConjectureIdentity(
 /**
  * Gather dissociation evidence for ONE misconception identity = (cause_category × knowledge_id)
  * (PURE-READ, no writes). A misconception is keyed on cause×KC (misconception-promote.ts:100), so
- * this reads the KC's `experimental:prediction_score` events, JOINS each back to its conjecture
- * proposal (via `conjecture_event_id`) to recover the proposal's AUTHORITATIVE (cause × kc)
- * identity, and keeps ONLY the scores whose proposal identity equals the requested (cause×KC). The
+ * this reads the KC's `experimental:prediction_score` events plus terminal score-free recurrence
+ * projections, JOINS each back to its conjecture proposal (via `conjecture_event_id`) to recover
+ * the proposal's AUTHORITATIVE (cause × kc) identity, and keeps ONLY anchors whose proposal
+ * identity equals the requested (cause×KC). A valid terminal projection upgrades the associated
+ * sequence-1 `evidence_for` score to `confirmed`; it never receives or fabricates its own score. The
  * proposal — not the score payload — is the identity source of truth on BOTH axes: because the SQL
  * pre-filter already pins score.payload.knowledge_id == params.knowledgeId, re-checking the
  * proposal's knowledge_id here CROSS-VALIDATES the two kc copies, so a mis-stamped score whose
@@ -507,11 +511,16 @@ export async function gatherDissociationRecordsByIdentity(
   const scoreChunks = await Promise.all(
     boundedChunks(knowledgeIds).map((chunk) =>
       db
-        .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+        .select({
+          id: event.id,
+          action: event.action,
+          payload: event.payload,
+          created_at: event.created_at,
+        })
         .from(event)
         .where(
           and(
-            eq(event.action, PREDICTION_SCORE_ACTION),
+            inArray(event.action, [PREDICTION_SCORE_ACTION, PROBE_RESULT_PROJECTED_ACTION]),
             sql`${event.payload}->>'knowledge_id' IN (${sql.join(
               chunk.map((knowledgeId) => sql`${knowledgeId}`),
               sql`, `,
@@ -521,7 +530,8 @@ export async function gatherDissociationRecordsByIdentity(
         .orderBy(event.created_at, event.id),
     ),
   );
-  const rows: Array<{ id: string; payload: unknown; created_at: Date }> = scoreChunks.flat();
+  const rows: Array<{ id: string; action: string; payload: unknown; created_at: Date }> =
+    scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
   const probeResultEventIds = [
     ...new Set(
@@ -564,7 +574,49 @@ export async function gatherDissociationRecordsByIdentity(
   }
   const identityByConjectureId = await loadIdentityByConjectureId(db, conjectureEventIds);
 
+  // Sequence 2 intentionally has no calibrated probability, so reconcile writes a
+  // score-free projection instead of a prediction_score. Its immutable
+  // independent_probe_question_ids lineage can nevertheless confirm the scored
+  // sequence-1 observation. Fold that terminal fact onto the existing score rather
+  // than fabricating a second score row.
+  const confirmedQuestionIdsByConjecture = new Map<string, Set<string>>();
   for (const r of rows) {
+    if (r.action !== PROBE_RESULT_PROJECTED_ACTION) continue;
+    const payload = r.payload as Record<string, unknown> | null;
+    const probeResultEventId = payload?.probe_result_event_id;
+    if (
+      typeof probeResultEventId !== 'string' ||
+      scoreStatuses.get(probeResultEventId) !== 'active' ||
+      payload?.resolution !== 'confirmed'
+    ) {
+      continue;
+    }
+    const conjectureEventId = payload.conjecture_event_id;
+    const knowledgeId = payload.knowledge_id;
+    if (typeof conjectureEventId !== 'string' || typeof knowledgeId !== 'string') continue;
+    const identity = identityByConjectureId.get(conjectureEventId);
+    if (
+      !identity ||
+      identity.knowledge_id !== knowledgeId ||
+      !targetKeyByIdentity.has(
+        conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
+      )
+    ) {
+      continue;
+    }
+    const independentQuestionIds = payload.independent_probe_question_ids;
+    if (!Array.isArray(independentQuestionIds)) continue;
+    const validIds = independentQuestionIds.filter(
+      (id): id is string => typeof id === 'string' && id.length > 0,
+    );
+    if (new Set(validIds).size < 2) continue;
+    const confirmed = confirmedQuestionIdsByConjecture.get(conjectureEventId) ?? new Set<string>();
+    for (const questionId of validIds) confirmed.add(questionId);
+    confirmedQuestionIdsByConjecture.set(conjectureEventId, confirmed);
+  }
+
+  for (const r of rows) {
+    if (r.action !== PREDICTION_SCORE_ACTION) continue;
     const payload = r.payload as Record<string, unknown> | null;
     const probeResultEventId = payload?.probe_result_event_id;
     const sourceStatus =
@@ -587,7 +639,7 @@ export async function gatherDissociationRecordsByIdentity(
       conjectureIdentityKey(identity.cause_category, identity.knowledge_id),
     );
     if (!targetKey) continue;
-    const rec = predictionScoreToRecord(
+    const parsed = predictionScoreToRecord(
       r.id,
       // Legacy score anchors used the nightly batch time. Always prefer the
       // backing probe-result timestamp so old and new histories share the same
@@ -595,7 +647,15 @@ export async function gatherDissociationRecordsByIdentity(
       sourceCreatedAtById.get(probeResultEventId) ?? r.created_at,
       payload,
     );
-    if (rec) out.get(targetKey)?.push(rec);
+    if (parsed) {
+      const confirmed =
+        parsed.resolution === 'evidence_for' &&
+        confirmedQuestionIdsByConjecture.get(parsed.conjectureEventId)?.has(parsed.questionId) ===
+          true
+          ? { ...parsed, resolution: 'confirmed' as const }
+          : parsed;
+      out.get(targetKey)?.push(confirmed);
+    }
   }
   return out;
 }

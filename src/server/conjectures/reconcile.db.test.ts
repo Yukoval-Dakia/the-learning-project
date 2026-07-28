@@ -12,6 +12,7 @@ import {
 import { db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { gatherDissociationRecordsByIdentity } from '@/server/conjectures/hard-confirm';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -414,7 +415,26 @@ describe('reconcileConjecturePredictions (DB)', () => {
     });
     await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
     await expect(scoreEvents(terminal.probe_result_event_id)).resolves.toHaveLength(0);
-    await expect(projectionEvents(terminal.probe_result_event_id)).resolves.toHaveLength(1);
+    const projections = await projectionEvents(terminal.probe_result_event_id);
+    expect(projections).toHaveLength(1);
+    expect(projections[0].payload).toMatchObject({
+      resolution: 'confirmed',
+      independent_probe_question_ids: [seed.probeQuestionId, followup.id].sort(),
+    });
+    const records = await gatherDissociationRecordsByIdentity(db, [
+      {
+        key: 'concept_confusion::k_a',
+        causeCategory: 'concept_confusion',
+        knowledgeId: seed.knowledgeId,
+      },
+    ]);
+    expect(records.get('concept_confusion::k_a')).toMatchObject([
+      {
+        probeResultEventId: seed.probeResultEventId,
+        questionId: seed.probeQuestionId,
+        resolution: 'confirmed',
+      },
+    ]);
     const projected = await typedRow(seed.knowledgeId);
     expect([...(projected?.evidence_event_ids ?? [])].sort()).toEqual(
       [seed.conjectureProposalId, seed.probeResultEventId, terminal.probe_result_event_id].sort(),

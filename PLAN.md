@@ -3,10 +3,11 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-795 问责回路待远端验收】**
+> **【更新 2026-07-29 · YUK-795 terminal confirmation review fix 待远端验收】**
 > YUK-787 已随 PR #1098 合入 main；当前把 prediction_score 接入同一 owner 的
 > conjecture identity 生存排序，并让 hard-confirm Tier-1 verdict 进入真实消费者；
-> 实现和定向验证已完成，下一步只走 GitHub Actions/OCR gate。
+> 最新 review 已补齐真实 v2 score-free terminal projection → 首题 score 的确认折叠；
+> 定向验证已完成，下一步只走 GitHub Actions/OCR gate。
 
 ## NOW
 
@@ -21,6 +22,8 @@
     correction 后的失效 probe 不计入 streak。
   - hard-confirm 进入同一 live reader/ranker；hard flag 仍默认 OFF，因为当前 Judge
     尚无诚实 `target_error_match`，且 soft→hard 永远需要 owner 当刻新确认。
+  - sequence-2 不伪造 score；projection 保留独立题目 lineage，terminal confirmation
+    在依赖有效时只折回同一 conjecture 的 sequence-1 score。
   - 纯 fold、correction-aware DB reader、nightly top-K 前排序和 flag-on/fresh-owner
     fail-closed 路径均已有 unit/DB regression。
 - **CI 提速已并入**

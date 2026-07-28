@@ -161,6 +161,7 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
           probe_result_event_id: 'pr_2',
           resolution: 'confirmed',
           prediction_score_eligible: false,
+          independent_probe_question_ids: ['probe_1', 'probe_2'],
         }),
       ]),
     });
@@ -178,6 +179,7 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(events[0].payload).toMatchObject({
       projection_kind: 'recurrence_without_prediction',
       resolution: 'confirmed',
+      independent_probe_question_ids: ['probe_1', 'probe_2'],
     });
     expect(events[0].payload).not.toHaveProperty('predicted_p');
     expect(events[0].payload).not.toHaveProperty('brier_model');

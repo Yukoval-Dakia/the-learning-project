@@ -102,6 +102,13 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 `EMERGING` 的持续命中为 1.25×；flag 关闭仍保持基础 1.15×）。
 这是真实 nightly caller，不再是 test-only export。
 
+v2 的第二道独立 probe 没有自己的校准概率，因此仍只写 score-free
+`probe_result_projected`，绝不借用首题概率伪造第二个 score。该 projection 会保留
+`independent_probe_question_ids`；hard-confirm reader 在 terminal result 及其依赖均
+有效时，把 `confirmed` 结论折回同一 conjecture 已计分的 sequence-1 observation。
+因此真实 producer 生成的 `evidence_for → confirmed` 链可以进入 dissociation fold，
+而不是依赖生产路径不会生成的手写 `confirmed prediction_score`。
+
 `MISCONCEPTION_HARD_CONFIRM_ENABLED` 继续默认 OFF，理由不是 defer 问责，而是两条
 仍未满足的诚实门：当前 Judge 没有明确 `target_error_match`，且 soft→hard 必须
 owner 当刻新确认。nightly caller 强制 `ownerFreshlyConfirmed=false`，所以即使 flag

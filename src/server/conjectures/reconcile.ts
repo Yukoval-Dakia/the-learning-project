@@ -99,6 +99,13 @@ export interface UnscoredProbeResult {
   created_at: Date;
   /** false for sequence-2 recurrence probes, which have no independent prediction. */
   prediction_score_eligible?: boolean;
+  /**
+   * Immutable v2 recurrence lineage. A terminal sequence-2 result names both
+   * independent probe questions; the score-free projection preserves this so
+   * readers can apply the confirmation to the calibrated sequence-1 score
+   * without inventing a second prediction.
+   */
+  independent_probe_question_ids?: string[];
 }
 
 // The reconcile loop issues kc_typed_state writes typed DIRECTLY against the real
@@ -354,6 +361,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       outcome?: unknown;
       resolution?: unknown;
       retrievability_at_judge?: unknown;
+      independent_probe_question_ids?: unknown;
     } | null;
     const conjectureEventId = p?.conjecture_event_id;
     const outcome = p?.outcome;
@@ -373,6 +381,15 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       continue;
     }
     const rt = p?.retrievability_at_judge;
+    const independentProbeQuestionIds = Array.isArray(p?.independent_probe_question_ids)
+      ? [
+          ...new Set(
+            p.independent_probe_question_ids.filter(
+              (id): id is string => typeof id === 'string' && id.length > 0,
+            ),
+          ),
+        ]
+      : [];
     out.push({
       probe_result_event_id: r.id,
       probe_question_id: r.probe_question_id,
@@ -386,6 +403,9 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       created_at: r.created_at,
       prediction_score_eligible:
         (r.probe_metadata as Record<string, unknown> | null)?.probe_sequence !== 2,
+      ...(independentProbeQuestionIds.length > 0
+        ? { independent_probe_question_ids: independentProbeQuestionIds }
+        : {}),
     });
   }
   return out;
@@ -506,6 +526,9 @@ export async function reconcileConjecturePredictions(
         // immutable question ids are honest context identities. Do not stamp
         // m_diagnostic here: only an explicit target-error Judge may supply it.
         context: pr.probe_question_id,
+        ...(pr.independent_probe_question_ids && pr.independent_probe_question_ids.length > 0
+          ? { independent_probe_question_ids: pr.independent_probe_question_ids }
+          : {}),
         ...(score
           ? {
               predicted_p: facts.predicted_p,
