@@ -42,7 +42,12 @@
 // RESERVED_EXPERIMENTAL_ACTIONS → both validate via the loose generic ExperimentalEvent
 // with zero schema-file change. Do NOT reserve them.
 
-import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
+import {
+  type WriteEventInput,
+  getCorrectionStatuses,
+  getEventById,
+  writeEvent,
+} from '@/kernel/events';
 import { z } from 'zod';
 
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
@@ -187,7 +192,12 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     .orderBy(event.created_at);
 
   const out: UnscoredProbeResult[] = [];
+  const correctionStatuses = await getCorrectionStatuses(
+    db,
+    rows.map((row) => row.id),
+  );
   for (const r of rows) {
+    if (correctionStatuses.get(r.id)?.state !== 'active') continue;
     const p = r.payload as {
       conjecture_event_id?: unknown;
       outcome?: unknown;

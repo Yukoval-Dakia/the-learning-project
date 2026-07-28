@@ -184,6 +184,56 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(attempts).toHaveLength(0);
   });
 
+  it('ignores corrected probe evidence until a later restore', async () => {
+    const seed = await seedAnsweredProbe({ outcome: 0 });
+    await writeEvent(db, {
+      id: `correct_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'probe evidence is invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-01T00:00:00.000Z'),
+    });
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 0,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(0);
+    await expect(projectionEvents(seed.probeResultEventId)).resolves.toHaveLength(0);
+    await expect(typedRow(seed.knowledgeId)).resolves.toBeNull();
+
+    await writeEvent(db, {
+      id: `restore_${seed.probeResultEventId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: seed.probeResultEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'probe evidence was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: seed.probeResultEventId }],
+      },
+      created_at: new Date('2030-01-01T00:00:01.000Z'),
+    });
+
+    await expect(reconcileConjecturePredictions(db)).resolves.toEqual({
+      reconciled: 1,
+      skipped: 0,
+    });
+    await expect(scoreEvents(seed.probeResultEventId)).resolves.toHaveLength(1);
+    await expect(typedRow(seed.knowledgeId)).resolves.not.toBeNull();
+  });
+
   it('does not score a recurrence probe with the first probe prediction', async () => {
     const seed = await seedAnsweredProbe({ outcome: 0 });
     const [followup] = await db

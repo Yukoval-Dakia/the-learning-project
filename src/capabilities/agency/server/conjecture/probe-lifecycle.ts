@@ -94,6 +94,17 @@ const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
 // section runs one-at-a-time (genuine ≤cap guarantee, not just READ COMMITTED hope).
 const PROBE_SERVE_LOCK_KEY = 406_440_3 as const;
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function extractConjectureId(metadata: unknown): string | null {
+  const value = toRecord(metadata).conjecture_proposal_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 export interface ServeProbeOnceParams {
   // conjecture-wire #13 — acceptConjectureProposal passes its OUTER tx here so the
   // probe serve is atomic with the rate event + dark promotion hop (drizzle nests
@@ -146,26 +157,13 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
   const conjectureIds = [
     ...new Set(
       rows
-        .map((row) => {
-          const metadata =
-            row.metadata !== null &&
-            typeof row.metadata === 'object' &&
-            !Array.isArray(row.metadata)
-              ? (row.metadata as Record<string, unknown>)
-              : {};
-          const conjectureId = metadata.conjecture_proposal_id;
-          return typeof conjectureId === 'string' && conjectureId.length > 0 ? conjectureId : null;
-        })
+        .map((row) => extractConjectureId(row.metadata))
         .filter((id): id is string => id !== null),
     ),
   ];
   const correctionStatuses = await getCorrectionStatuses(db, conjectureIds);
   return rows.filter((row) => {
-    const metadata =
-      row.metadata !== null && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
-        ? (row.metadata as Record<string, unknown>)
-        : {};
-    const conjectureId = metadata.conjecture_proposal_id;
+    const conjectureId = extractConjectureId(row.metadata);
     // Corrupt provenance stays counted so it cannot silently bypass the safety cap.
     if (typeof conjectureId !== 'string' || conjectureId.length === 0) return true;
     return correctionStatuses.get(conjectureId)?.state === 'active';
@@ -324,6 +322,9 @@ async function loadProbeConjectureState(
  * Production-route preflight before the paid judge call. Malformed proposal
  * provenance fails before provider cost. A well-formed v1 proposal remains answerable
  * through the terminal legacy rule in answerProbe so old probes cannot occupy slots.
+ * This intentionally duplicates the later locked authority read: preflight avoids
+ * unnecessary provider cost, while answerProbe must re-fold mutable correction state
+ * under the proposal decision lock before it appends the result.
  */
 export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Promise<void> {
   const [probe] = await db
@@ -332,10 +333,7 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
     .where(eq(question.id, probeQuestionId))
     .limit(1);
   if (!probe || probe.source !== PROBE_QUESTION_SOURCE) return;
-  const metadata =
-    probe.metadata !== null && typeof probe.metadata === 'object' && !Array.isArray(probe.metadata)
-      ? (probe.metadata as Record<string, unknown>)
-      : {};
+  const metadata = toRecord(probe.metadata);
   const sequence = metadata.probe_sequence;
   if (sequence !== undefined && sequence !== 1 && sequence !== 2) {
     throw new ApiError(
@@ -560,21 +558,15 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     if (probe.source !== PROBE_QUESTION_SOURCE) {
       throw new ApiError('not_a_probe', `question ${probeQuestionId} is not a mind_probe`, 409);
     }
-    const conjectureEventId = (probe.metadata as Record<string, unknown> | null)
-      ?.conjecture_proposal_id;
-    if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+    const conjectureEventId = extractConjectureId(probe.metadata);
+    if (!conjectureEventId) {
       throw new ApiError(
         'probe_missing_conjecture_ref',
         `probe ${probeQuestionId} has no conjecture_proposal_id`,
         409,
       );
     }
-    const probeMetadata =
-      probe.metadata !== null &&
-      typeof probe.metadata === 'object' &&
-      !Array.isArray(probe.metadata)
-        ? (probe.metadata as Record<string, unknown>)
-        : {};
+    const probeMetadata = toRecord(probe.metadata);
     const probeSequence = probeMetadata.probe_sequence;
     if (probeSequence !== undefined && probeSequence !== 1 && probeSequence !== 2) {
       throw new ApiError(

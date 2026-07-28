@@ -52,11 +52,14 @@ function VerdictMessage({
       </span>
     );
   }
-  return (
-    <span className="pa-verdict-txt">
-      <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
-    </span>
-  );
+  if (verdict === 'confirmed') {
+    return (
+      <span className="pa-verdict-txt">
+        <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
+      </span>
+    );
+  }
+  return verdict satisfies never;
 }
 
 export function ProbeAnswers() {

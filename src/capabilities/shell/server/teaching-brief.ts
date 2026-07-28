@@ -273,6 +273,8 @@ export function validateCanonicalProbeResult(
   const payload = toRecord(row.payload);
   const resolution = payload.resolution;
   const outcome = payload.outcome;
+  // Keep this pair matrix aligned with the SQL bounded-window prefilters in
+  // loadOutcomeBrief and logNonCanonicalCandidates below.
   if (
     !(
       ((resolution === 'evidence_for' || resolution === 'confirmed') && outcome === 0) ||
@@ -702,7 +704,8 @@ export async function loadOutcomeBrief(
         lte(event.created_at, now),
         // Only canonical resolution/outcome pairs may occupy the bounded window,
         // otherwise a flood of corrupt results could evict an older valid outcome.
-        // The in-loop validation below stays authoritative for provenance.
+        // Keep this SQL mirror aligned with validateCanonicalProbeResult; the
+        // in-loop validation below stays authoritative for provenance.
         sql`((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
               AND ${event.payload}->>'outcome' = '0')
           OR (${event.payload}->>'resolution' = 'retired' AND ${event.payload}->>'outcome' = '1'))`,
@@ -973,6 +976,8 @@ async function logNonCanonicalCandidates(db: Db, now: Date): Promise<void> {
         eq(event.action, PROBE_RESULT_ACTION),
         gt(event.created_at, lowerBound),
         lte(event.created_at, now),
+        // Inverse of validateCanonicalProbeResult's resolution/outcome pair matrix;
+        // keep both sites aligned when the canonical contract changes.
         sql`NOT (${event.subject_kind} = 'question'
           AND ((${event.payload}->>'resolution' IN ('evidence_for', 'confirmed')
                 AND ${event.payload}->>'outcome' = '0')

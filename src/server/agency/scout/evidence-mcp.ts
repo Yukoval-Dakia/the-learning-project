@@ -22,6 +22,7 @@ import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { writeToolCallLog } from '@/server/ai/log';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -72,6 +73,21 @@ export const EVIDENCE_LIMITS = {
 //     pre-reconcile window.
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
+const PROBE_HISTORY_SCAN_BATCH = EVIDENCE_LIMITS.probeHistoryRows * 2;
+
+interface ProbeHistoryRow {
+  id: string;
+  action: string;
+  created_at: Date;
+  payload: unknown;
+}
+
+function correctionTargetId(row: ProbeHistoryRow): string | null {
+  if (row.action === PROBE_RESULT_ACTION) return row.id;
+  const probeResultEventId = (row.payload as { probe_result_event_id?: unknown } | null)
+    ?.probe_result_event_id;
+  return typeof probeResultEventId === 'string' ? probeResultEventId : null;
+}
 
 /** The knowledge-channel these agent-notes are addressed to (spec §1). */
 const AGENT_NOTES_CHANNEL = 'research_meeting' as const;
@@ -272,35 +288,56 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             .select({ id: question.id })
             .from(question)
             .where(sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`);
-          const rows = await db
-            .select({
-              id: event.id,
-              action: event.action,
-              created_at: event.created_at,
-              payload: event.payload,
-            })
-            .from(event)
-            .where(
-              or(
-                and(
-                  eq(event.action, PREDICTION_SCORE_ACTION),
-                  sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+          const activeRows: ProbeHistoryRow[] = [];
+          let offset = 0;
+          while (activeRows.length < EVIDENCE_LIMITS.probeHistoryRows) {
+            const rows = await db
+              .select({
+                id: event.id,
+                action: event.action,
+                created_at: event.created_at,
+                payload: event.payload,
+              })
+              .from(event)
+              .where(
+                or(
+                  and(
+                    eq(event.action, PREDICTION_SCORE_ACTION),
+                    sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+                  ),
+                  and(
+                    eq(event.action, PROBE_RESULT_ACTION),
+                    inArray(event.subject_id, probeQuestionIds),
+                  ),
                 ),
-                and(
-                  eq(event.action, PROBE_RESULT_ACTION),
-                  inArray(event.subject_id, probeQuestionIds),
-                ),
-              ),
-            )
-            .orderBy(desc(event.created_at), desc(event.id))
-            .limit(EVIDENCE_LIMITS.probeHistoryRows);
+              )
+              .orderBy(desc(event.created_at), desc(event.id))
+              .limit(PROBE_HISTORY_SCAN_BATCH)
+              .offset(offset);
+            if (rows.length === 0) break;
+            offset += rows.length;
+            const correctionStatuses = await getCorrectionStatuses(
+              db,
+              rows.flatMap((row) => {
+                const targetId = correctionTargetId(row);
+                return targetId ? [targetId] : [];
+              }),
+            );
+            for (const row of rows) {
+              const targetId = correctionTargetId(row);
+              if (targetId && correctionStatuses.get(targetId)?.state !== 'active') continue;
+              activeRows.push(row);
+              if (activeRows.length === EVIDENCE_LIMITS.probeHistoryRows) break;
+            }
+            if (rows.length < PROBE_HISTORY_SCAN_BATCH) break;
+          }
           trace(
             getProbeHistoryName,
             { knowledge_id: knowledgeId },
-            rows.map((r) => r.id),
+            activeRows.map((r) => r.id),
           );
           return textResult({
-            probes: rows.map((r) => ({
+            probes: activeRows.map((r) => ({
               event_id: r.id,
               action: r.action,
               created_at: r.created_at.toISOString(),

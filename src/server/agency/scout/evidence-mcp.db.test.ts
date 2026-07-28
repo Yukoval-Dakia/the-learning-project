@@ -8,6 +8,7 @@
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { event, kc_typed_state, question, tool_call_log } from '@/db/schema';
 import { artifact } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -341,6 +342,65 @@ describe('get_probe_history', () => {
       pr_v2: 'independent_recurrence',
       pr_legacy: 'legacy_confirmed_unverified',
     });
+  });
+
+  it('hides corrected probe evidence and its linked score until restore', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_corrected', ['k1']);
+    await db.insert(event).values([
+      probeResultRow(
+        'pr_corrected',
+        'q_corrected',
+        'invalid answer',
+        new Date(NOW.getTime() + 2000),
+      ),
+      {
+        ...predictionScoreRow('ps_corrected', 'k1', new Date(NOW.getTime() + 3000)),
+        payload: {
+          knowledge_id: 'k1',
+          score: 1,
+          probe_result_event_id: 'pr_corrected',
+        },
+      },
+    ]);
+    await writeEvent(db, {
+      id: 'correct_pr_corrected',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_corrected',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'probe evidence is invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_corrected' }],
+      },
+      created_at: new Date(NOW.getTime() + 4000),
+    });
+
+    let out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    expect(out.probes).toEqual([]);
+
+    await writeEvent(db, {
+      id: 'restore_pr_corrected',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'pr_corrected',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        reason_md: 'probe evidence was revalidated',
+        affected_refs: [{ kind: 'open_inquiry', id: 'pr_corrected' }],
+      },
+      created_at: new Date(NOW.getTime() + 5000),
+    });
+
+    out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const probes = out.probes as Array<{ event_id: string }>;
+    expect(probes.map((row) => row.event_id)).toEqual(['ps_corrected', 'pr_corrected']);
   });
 
   it('marks non-canonical outcome/resolution pairs unclassified', async () => {
