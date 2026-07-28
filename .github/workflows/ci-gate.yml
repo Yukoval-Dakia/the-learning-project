@@ -1,135 +1,34 @@
 name: CI Gate
 
-# 远端 pre-merge gate（替代本地手跑 full pnpm test）。
-# CI 绿 = mergeable。DB 测经 @testcontainers/postgresql 自起 Postgres（runner 自带 Docker）。
-# 无需 secret：DB 测用 testcontainer、build 用 DATABASE_URL 占位、AI 测全 mock。
-#
-# Path-aware：docs-only 改动（docs/** · *.md · .remember/**）跳过整条重 gate（install/
-# typecheck/lint/audit/test/build），秒过。同名 check 照常 success，不破坏 branch-protection
-# 的 required-check（job 永远 run + 永远绿，只是按需跳步）。判 docs-only 用 merge-base diff，
-# 无法判 base 时**保守跑全量**（false-negative 只是多跑，绝不漏测代码改动）。
+# GitHub-only pre-merge gate. The heavyweight lanes run in parallel; the final `gate` job keeps
+# the historical required-check name stable. DB tests use Testcontainers on GitHub-hosted runners.
+# Docs-only changes still make every lane succeed without installing dependencies.
 
 on:
   pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-gate-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  gate:
-    name: typecheck · lint · audits · test · build
+  changes:
+    name: detect code changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      code_changed: ${{ steps.filter.outputs.code_changed }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 需历史做 merge-base diff 判 docs-only
+          fetch-depth: 0
 
-      - name: Detect docs-only change
-        id: filter
-        run: |
-          set -uo pipefail
-          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            echo "Base 未知 — 保守跑全量 gate。"
-            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          MB="$(git merge-base "$BASE" HEAD || echo "$BASE")"
-          CHANGED="$(git diff --name-only "$MB" HEAD)"
-          echo "Changed files vs $MB:"; echo "$CHANGED"
-          if [ -z "$CHANGED" ]; then
-            echo "无文件变更 — 跳过重 gate。"
-            echo "code_changed=false" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # 任一文件不匹配 doc pattern → 跑全量；全匹配 → docs-only 跳过。
-          if echo "$CHANGED" | grep -qvE '^(docs/|\.remember/|.*\.md$)'; then
-            echo "含代码/配置改动 — 跑全量 gate。"
-            echo "code_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Docs-only 改动 — 跳过重 gate。"
-            echo "code_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Docs-only — heavy gate skipped
-        if: steps.filter.outputs.code_changed != 'true'
-        run: echo "✅ Docs-only PR — install/typecheck/lint/audit/test/build skipped. Gate green."
-
-      - uses: pnpm/action-setup@v4
-        if: steps.filter.outputs.code_changed == 'true'
-        with:
-          version: 11.13.1
-
-      - uses: actions/setup-node@v7
-        if: steps.filter.outputs.code_changed == 'true'
-        with:
-          node-version-file: '.node-version'
-          cache: 'pnpm'
-
-      - name: Install deps
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm typecheck
-
-      - name: Lint
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm lint
-
-      - name: Audit — schema write-path
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm audit:schema
-
-      - name: Audit — production dependencies
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm audit:dependencies
-
-      - name: Audit — test partition
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm audit:partition
-
-      # `pnpm test` = audit:profile + audit:draft-status + test:unit + test:db + test:migration
-      # test:db 经 testcontainers 起真 Postgres（runner Docker socket 自动探测）。
-      - name: Test (profile + draft-status + unit + db + migration)
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm test
-
-      - name: Build (server/worker/migrate + web)
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm build
-        env:
-          DATABASE_URL: postgres://placeholder
-
-  # YUK-789 — 浏览器级可用性回归进 CI。此前 `test:usability:container` 只是 package.json 里
-  # 的手动脚本（`.github/` 零命中），所以唯一的浏览器级教研团覆盖长期红着也没人看见。
-  # 形态与 docs/agents/usability-container-smoke.md 一致：跑 **构建产物**（dist/server.cjs +
-  # web/dist 的 hashed Vite bundle），不是 Vite dev server；浏览器里的 /api/* 全部由确定性
-  # fixture 拦截，所以不打付费 LLM、不碰任何数据库（server 只服务静态面 + /api/health）。
-  usability:
-    name: usability container (shipped SPA + API fixtures)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Least privilege: this job only reads the repo and uploads a failure artifact.
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 需历史做 merge-base diff 判 docs-only
-
-      # 与上面 gate job 的同名探测同语义，但按 GitHub 安全硬化惯例做两点加固：
-      #   1. context 值经 `env:` 传入，绝不直接展开进 run 块（当前是 SHA、注入风险低，
-      #      加固的理由是「将来有人把这个位置换成自由文本 context 时会立刻可利用」）；
-      #   2. `set -e` fail-fast —— 逐条核过：`git merge-base` 的非零由 `|| echo` 吸收，
-      #      `grep -q` 的非零在 `if` 条件位（errexit 不触发）。唯一会真失败的是 `git diff`
-      #      （base 不可达 / 历史被改写），旧行为是 CHANGED 静默为空 → 误判 docs-only →
-      #      整条门禁假绿跳过；现在显式接住并按本文件既定策略「无法判 base 时保守跑全量」
-      #      落 code_changed=true —— 既不静默跳过，也不因边界情况凭空红。
-      # gate job 的那份副本本 PR 不动（属全仓统一动作，见 YUK-801）。
+      # Fail closed: an unknown/unreachable base runs the full gate rather than skipping it.
       - name: Detect docs-only change
         id: filter
         env:
@@ -138,63 +37,230 @@ jobs:
           set -euo pipefail
           BASE="$BASE_SHA"
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            echo "Base 未知 — 保守跑全量 gate。"
-            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+            echo "Base unknown — running the full gate."
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          MB="$(git merge-base "$BASE" HEAD || echo "$BASE")"
+
+          if ! MB="$(git merge-base "$BASE" HEAD)"; then
+            echo "Base '$BASE' is unreachable — running the full gate."
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if ! CHANGED="$(git diff --name-only "$MB" HEAD)"; then
-            echo "git diff 对 base '$MB' 失败（不可达/历史被改写）— 保守跑全量 gate。"
-            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+            echo "Diff against '$MB' failed — running the full gate."
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "Changed files vs $MB:"
+          printf '%s\n' "$CHANGED"
           if [ -z "$CHANGED" ]; then
-            echo "code_changed=false" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if echo "$CHANGED" | grep -qvE '^(docs/|\.remember/|.*\.md$)'; then
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+          elif printf '%s\n' "$CHANGED" | grep -qvE '^(docs/|\.remember/|.*\.md$)'; then
             echo "code_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "code_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Docs-only — usability gate skipped
-        if: steps.filter.outputs.code_changed != 'true'
-        run: echo "✅ Docs-only PR — usability container gate skipped. Gate green."
-
+  static:
+    name: typecheck · lint · audits
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Docs-only — static lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — static lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
       - uses: pnpm/action-setup@v4
-        if: steps.filter.outputs.code_changed == 'true'
+        if: needs.changes.outputs.code_changed == 'true'
         with:
           version: 11.13.1
-
       - uses: actions/setup-node@v7
-        if: steps.filter.outputs.code_changed == 'true'
+        if: needs.changes.outputs.code_changed == 'true'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
-
-      - name: Install deps
-        if: steps.filter.outputs.code_changed == 'true'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
         run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm typecheck
+      - name: Lint
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm lint
+      # Keep this list equivalent to the standalone pre-PR audits plus the audit prefix of
+      # `pnpm test`. The split test lanes below must not call the umbrella script again.
+      - name: Audits
+        if: needs.changes.outputs.code_changed == 'true'
+        run: |
+          pnpm audit:schema
+          pnpm audit:dependencies
+          pnpm audit:partition
+          pnpm audit:api-contracts
+          pnpm audit:api-client
+          pnpm audit:api-client-usage
+          pnpm audit:capability-boundaries
+          pnpm audit:profile
+          pnpm audit:learner-copy
+          pnpm audit:no-learning-styles
+          pnpm audit:structured-judge
+          pnpm audit:draft-status
+          pnpm audit:draft-status-reads --strict
+          pnpm audit:hub-sync-writers
 
-      - name: Cache Playwright browsers
-        if: steps.filter.outputs.code_changed == 'true'
-        uses: actions/cache@v4
+  unit:
+    name: unit tests
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Docs-only — unit lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — unit lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code_changed == 'true'
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm test:unit
 
-      - name: Install Playwright Chromium
-        if: steps.filter.outputs.code_changed == 'true'
-        run: pnpm test:usability:install
+  db:
+    name: DB tests
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Docs-only — DB lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — DB lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: DB tests
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm test:db
 
-      - name: Build (server bundle + shipped SPA)
-        if: steps.filter.outputs.code_changed == 'true'
+  migration:
+    name: migration smoke
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Docs-only — migration lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — migration lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Migration smoke
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm test:migration
+
+  build:
+    name: production build
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Docs-only — build lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — build lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Build server, worker, migrate, and web
+        if: needs.changes.outputs.code_changed == 'true'
         run: pnpm build
         env:
           DATABASE_URL: postgres://placeholder
 
-      # 只服务 web/dist + /api/health：/api/* 业务面在浏览器侧被 fixture 全量拦截，
-      # 所以这里不需要 Postgres（subject hydrate 内部 never-throws，失败即走代码种子地板）。
+  usability:
+    name: usability container (shipped SPA + API fixtures)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Docs-only — usability lane skipped
+        if: needs.changes.outputs.code_changed != 'true'
+        run: echo "Docs-only change — usability lane is green."
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code_changed == 'true'
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Cache Playwright browsers
+        if: needs.changes.outputs.code_changed == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Playwright Chromium
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm test:usability:install
+      - name: Build shipped SPA and server
+        if: needs.changes.outputs.code_changed == 'true'
+        run: pnpm build
+        env:
+          DATABASE_URL: postgres://placeholder
       - name: Boot the built server on :18787
-        if: steps.filter.outputs.code_changed == 'true'
+        if: needs.changes.outputs.code_changed == 'true'
         run: |
           set -euo pipefail
           RW_STATIC_DIR=web/dist \
@@ -204,34 +270,65 @@ jobs:
           node dist/server.cjs > usability-server.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do
-            # 进程已死就立刻报错，别空转满 60 秒健康检查才说「never became healthy」——
-            # 那会把「启动即崩」误报成「启动慢」，日志也晚 60s 才打出来。
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
               echo "::error::server process ${SERVER_PID} exited before becoming healthy"
               cat usability-server.log
               exit 1
             fi
             if curl -sf http://127.0.0.1:18787/api/health > /dev/null; then
-              echo "server healthy after ${i}s (pid ${SERVER_PID})"; exit 0
+              echo "server healthy after ${i}s (pid ${SERVER_PID})"
+              exit 0
             fi
             sleep 1
           done
-          echo "::error::server never became healthy on :18787"; cat usability-server.log; exit 1
-
+          echo "::error::server never became healthy on :18787"
+          cat usability-server.log
+          exit 1
       - name: Usability container regression
-        if: steps.filter.outputs.code_changed == 'true'
+        if: needs.changes.outputs.code_changed == 'true'
         run: pnpm test:usability:container
         env:
           USABILITY_BASE_URL: http://127.0.0.1:18787
-
       - name: Server log (on failure)
-        if: failure() && steps.filter.outputs.code_changed == 'true'
+        if: failure() && needs.changes.outputs.code_changed == 'true'
         run: cat usability-server.log || true
-
       - name: Upload Playwright traces (on failure)
-        if: failure() && steps.filter.outputs.code_changed == 'true'
+        if: failure() && needs.changes.outputs.code_changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: usability-traces
           path: test-results/usability
           if-no-files-found: ignore
+
+  # Keep this name identical to the historical required check while the work moves into parallel jobs.
+  gate:
+    name: typecheck · lint · audits · test · build
+    if: always()
+    needs: [changes, static, unit, db, migration, build, usability]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI lane
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          STATIC_RESULT: ${{ needs.static.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          DB_RESULT: ${{ needs.db.result }}
+          MIGRATION_RESULT: ${{ needs.migration.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          USABILITY_RESULT: ${{ needs.usability.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for lane in CHANGES STATIC UNIT DB MIGRATION BUILD USABILITY; do
+            result_var="${lane}_RESULT"
+            result="${!result_var}"
+            printf '%-12s %s\n' "$lane" "$result"
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more required CI lanes did not succeed."
+            exit 1
+          fi

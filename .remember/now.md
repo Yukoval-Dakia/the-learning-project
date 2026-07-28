@@ -4,8 +4,8 @@
 
 - Architecture exit 已完成；Grounding 首切 PR #1089 已合并：
   `main@0966e1a1`，YUK-799/YUK-800 已 Done。
-- 当前唯一 active 线是 Grounding「猜想证据」YUK-804：
-  `codex/grounding-question-snapshots`。
+- Grounding「猜想证据」YUK-804 已由 PR #1097 合并到 `main@96579df`；下一产品
+  slice 是 YUK-787/795，尚未启动实现。
 
 ## 当前实现
 
@@ -28,7 +28,14 @@
 
 ## 下一步
 
-1. commit/push YUK-804，开 PR，完成独立 review + CI 后合并并对齐 Linear。
-2. 下一 slice：YUK-787/795 二次独立 probe 与 target-error-aware Judge；历史 v1
+1. 下一 slice：YUK-787/795 二次独立 probe 与 target-error-aware Judge；历史 v1
    不批量重解释。
-3. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
+2. YUK-814 真实 owner 数据 shadow/blind gate 仍必须单独执行；mock 不能代替。
+
+## CI 提速研究（2026-07-28）
+
+- GitHub gate 已拆为 centralized changes + static/audits、unit、DB、migration、build、
+  usability 并行 lanes；末端 aggregate 保留原 required-check 名称并 fail closed。
+- owner 明确不再本地跑 CI；验证以本 PR GitHub Actions 为准。当前容器无 gh/remote/token，
+  不伪造远端 timing，也不把本地 CI 设成前置。
+- 方案与落地说明：`docs/research/2026-07-28-ci-speedup.md`。
