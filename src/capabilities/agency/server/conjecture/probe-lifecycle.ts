@@ -569,6 +569,20 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         409,
       );
     }
+    const probeMetadata =
+      probe.metadata !== null &&
+      typeof probe.metadata === 'object' &&
+      !Array.isArray(probe.metadata)
+        ? (probe.metadata as Record<string, unknown>)
+        : {};
+    const probeSequence = probeMetadata.probe_sequence;
+    if (probeSequence !== undefined && probeSequence !== 1 && probeSequence !== 2) {
+      throw new ApiError(
+        'probe_sequence_invalid',
+        `probe ${probeQuestionId} has invalid probe_sequence`,
+        409,
+      );
+    }
 
     // One-shot guard / idempotency: a prior probe_result short-circuits — NO second
     // event (this is how the probe stays served exactly once).
@@ -654,7 +668,12 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         .orderBy(desc(event.created_at), desc(event.id))
         .limit(MAX_PROBE_HISTORY_FOR_RESOLUTION);
       const priorResults: PriorProbeResult[] = [];
+      const priorCorrectionStatuses = await getCorrectionStatuses(
+        tx,
+        priorRows.map((prior) => prior.probe_result_event_id),
+      );
       for (const prior of priorRows) {
+        if (priorCorrectionStatuses.get(prior.probe_result_event_id)?.state !== 'active') continue;
         const parsed = parseProbeResultEvent({
           id: prior.probe_result_event_id,
           payload: prior.payload,
@@ -720,7 +739,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       created_at: now,
     });
 
-    if (resolution === 'evidence_for') {
+    if (resolution === 'evidence_for' && probeSequence !== 2) {
       if (followup.status !== 'ready') {
         throw new ApiError(
           'probe_followup_state_invariant',

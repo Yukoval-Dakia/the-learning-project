@@ -303,6 +303,90 @@ describe('probe one-shot lifecycle (U3)', () => {
     });
   });
 
+  it('excludes corrected preliminary evidence and does not author a third probe', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:00.000Z'),
+    });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
+    await writeEvent(testDb(), {
+      id: `correct_${first.probe_result_event_id}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: first.probe_result_event_id,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'the preliminary probe evidence was invalid',
+        affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+      },
+      created_at: new Date('2026-07-28T00:00:01.000Z'),
+    });
+
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:02.000Z'),
+    });
+
+    expect(second.status).toBe('evidence_for');
+    expect(await probeQuestions(proposalId)).toHaveLength(2);
+    expect(await countActiveProbes(testDb())).toBe(0);
+  });
+
+  it('counts restored preliminary evidence toward recurrence confirmation', async () => {
+    const proposalId = await seedConjecture();
+    const firstProbe = await serve(proposalId);
+    if (firstProbe.status !== 'served') throw new Error('expected first served probe');
+    const first = await answerProbe({
+      db: testDb(),
+      probeQuestionId: firstProbe.probe_question_id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:00.000Z'),
+    });
+    const [secondProbe] = (await probeQuestions(proposalId)).filter(
+      (row) => (row.metadata as Record<string, unknown>).probe_sequence === 2,
+    );
+    if (!secondProbe) throw new Error('expected automatic follow-up probe');
+    for (const [index, correctionKind] of (['retract', 'restore'] as const).entries()) {
+      await writeEvent(testDb(), {
+        id: `${correctionKind}_${first.probe_result_event_id}`,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: first.probe_result_event_id,
+        outcome: 'success',
+        payload: {
+          correction_kind: correctionKind,
+          reason_md: `${correctionKind} preliminary evidence in test`,
+          affected_refs: [{ kind: 'open_inquiry', id: first.probe_result_event_id }],
+        },
+        created_at: new Date(`2026-07-28T00:00:0${index + 1}.000Z`),
+      });
+    }
+
+    const second = await answerProbe({
+      db: testDb(),
+      probeQuestionId: secondProbe.id,
+      outcome: 0,
+      now: new Date('2026-07-28T00:00:03.000Z'),
+    });
+
+    expect(second.status).toBe('confirmed');
+  });
+
   it('serializes concurrent distinct answers so exactly one crosses the confirmation gate', async () => {
     const proposalId = await seedConjecture();
     const firstProbe = await serve(proposalId);
