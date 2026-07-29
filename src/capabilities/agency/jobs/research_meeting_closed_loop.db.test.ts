@@ -106,21 +106,41 @@ const FOLLOWUP_PROBE_REFERENCE_MD =
   '意动用法：「以…为奇」，主语认为宾语「奇」，不是让宾语发生变化。';
 const CLAIM_MD = '你把「使动用法」和「意动用法」混为一谈——见到宾语前的活用动词就先当使动。';
 
-/** The ConjectureDraft every self-consistency sample returns (unanimous ⇒ no dedup call). */
+/** The hypothesis every self-consistency sample returns (unanimous ⇒ no grouping call). */
 const DRAFT = {
   kind: 'proposal',
   claim_md: CLAIM_MD,
   knowledge_id: KC_ID,
   evidence_event_ids: ['att_wy_0', 'att_wy_1', 'att_wy_2'],
-  probe_md: PROBE_MD,
-  probe_reference_md: PROBE_REFERENCE_MD,
-  followup_probe_md: FOLLOWUP_PROBE_MD,
-  followup_probe_reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
+  diagnostic_spec: {
+    schema_version: 1,
+    target_error_rule_md: '把表达主观评价的意动用法解释成让宾语发生变化的使动用法。',
+    trigger_conditions_md: '句中活用动词表达主语对宾语的主观看法，且宾语本身未被造成变化。',
+    scope_boundary_md: '不覆盖确实表示主语使宾语发生动作或状态变化的使动用法。',
+    expected_wrong_answer_signature_md: '把句意解释为“使宾语变得……”，并据此判为使动。',
+  },
   cause_category: CAUSE,
   recurrence_count: 3,
+};
+
+const PROBE_PACKAGE = {
+  primary: {
+    prompt_md: PROBE_MD,
+    reference_md: PROBE_REFERENCE_MD,
+    expected_target_error_answer_md: '使动；渔人使它变得奇异。',
+    elicits_target_error_reason_md: '保留“主观评价被误读为造成变化”的触发条件。',
+    context_kind: 'narrative',
+    representation_kind: 'natural_language',
+  },
+  followup: {
+    prompt_md: FOLLOWUP_PROBE_MD,
+    reference_md: FOLLOWUP_PROBE_REFERENCE_MD,
+    expected_target_error_answer_md: '使动；乡里人使它变得奇特。',
+    elicits_target_error_reason_md: '换成独立语境和选择形式，仍检验同一个目标错误。',
+    context_kind: 'document',
+    representation_kind: 'multiple_choice',
+  },
   predicted_p: 0.25,
-  discriminating: true,
-  agreement_count: 1,
 };
 
 /** What the vision judge model returns for a wrong answer (→ preliminary evidence, outcome 0). */
@@ -155,8 +175,20 @@ function sdkSuccess(structured: unknown) {
  * rather than as a silently-correct canned answer.
  */
 function fakeModel(prompt: string): unknown {
+  if (prompt.includes('"probe_package":')) {
+    return sdkSuccess({
+      review: {
+        verdict: 'pass',
+        failure_codes: [],
+        explanation_md: '两题保留同一触发条件，并使用不同情境与表征。',
+      },
+    });
+  }
+  if (prompt.includes('"generation_attempt":')) {
+    return sdkSuccess({ package: PROBE_PACKAGE });
+  }
   if (prompt.includes('"evidence_cells"')) return sdkSuccess(DRAFT);
-  if (prompt.includes('"claims"')) return sdkSuccess({ groups: [[0, 1, 2]] });
+  if (prompt.includes('"hypotheses"')) return sdkSuccess({ groups: [[0, 1, 2]] });
   if (prompt.includes('"student_final_answer_text"') || prompt.includes('"prompt_md"')) {
     return sdkSuccess(JUDGE_INCORRECT);
   }
@@ -370,6 +402,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     // The induction genuinely ran N samples through the real runner.
     expect(await taskKindCounts()).toMatchObject({
       MindModelInductionTask: RESEARCH_MEETING_SAMPLES,
+      ConjectureProbeAuthorTask: 1,
+      ConjectureProbeReviewTask: 1,
     });
 
     const pending = await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' });
@@ -388,7 +422,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(change.knowledge_id).toBe(KC_ID);
     expect(change.cause_category).toBe(CAUSE);
     expect(change.recurrence_count).toBe(3);
-    expect(change.predicted_p).toBe(DRAFT.predicted_p);
+    expect(change.predicted_p).toBe(PROBE_PACKAGE.predicted_p);
     expect(change.baseline_p_at_induction).toBe(0.5); // cold-start neutral
     expect(proposal.payload.evidence_refs.map((r) => r.id).sort()).toEqual([...attemptIds].sort());
 
@@ -482,7 +516,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       conjecture_event_id: proposalId,
       probe_result_event_id: probeResult.id,
       knowledge_id: KC_ID,
-      predicted_p: DRAFT.predicted_p,
+      predicted_p: PROBE_PACKAGE.predicted_p,
       baseline_p: 0.5,
       outcome: 0,
       resolution: 'evidence_for',
@@ -1116,7 +1150,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     });
   });
 
-  it('attributes malformed semantic grouping to ClaimGroupingTask in the health ledger', async () => {
+  it('attributes malformed semantic grouping to ConjectureGroupingTask in the health ledger', async () => {
     const db = testDb();
     await seedRecurringFailures(3);
     let inductionSample = 0;
@@ -1128,7 +1162,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
           claim_md: `${CLAIM_MD}（表述 ${inductionSample}）`,
         });
       }
-      if (prompt.includes('"claims"')) return sdkSuccess({ malformed: true });
+      if (prompt.includes('"hypotheses"')) return sdkSuccess({ malformed: true });
       throw new Error(`unexpected task: ${prompt.slice(0, 120)}`);
     };
 
@@ -1146,6 +1180,8 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       .select({ task_kind: cost_ledger.task_kind, outcome: cost_ledger.outcome })
       .from(cost_ledger)
       .where(eq(cost_ledger.outcome, 'failed_retryable'));
-    expect(failedRows).toEqual([{ task_kind: 'ClaimGroupingTask', outcome: 'failed_retryable' }]);
+    expect(failedRows).toEqual([
+      { task_kind: 'ConjectureGroupingTask', outcome: 'failed_retryable' },
+    ]);
   });
 });

@@ -23,7 +23,8 @@
 //      this the LLM sees 7 opaque scalars and can only invent the domain;
 //   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on
 //      the anthropic-sub OAuth lane, with the latest owner claim on a valid reopen)
-//      → one ConjectureDraft + A13 fields → writeAiProposal (propose-only).
+//      → frozen hypothesis → independently authored/reviewed probe package
+//      → writeAiProposal (propose-only).
 //
 // Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
 // a throw there is a legit retryable DB fault that propagates to the builder's
@@ -756,6 +757,10 @@ function buildConjectureProposalInput(
         // proposal change → acceptConjectureProposal → serveProbeOnce.referenceMd.
         probe_reference_md: draft.probe_reference_md,
         followup_probe_reference_md: draft.followup_probe_reference_md,
+        diagnostic_spec: draft.diagnostic_spec,
+        probe_spec: draft.probe_spec,
+        followup_probe_spec: draft.followup_probe_spec,
+        probe_quality: draft.probe_quality,
         discriminating: draft.discriminating,
         corrected_by_owner: false,
         // A13 (YUK-440): the falsifiable bet + the number it must later beat.
@@ -771,10 +776,13 @@ function buildConjectureProposalInput(
       action: 'experimental:proposal',
       subject_kind: 'mind_model',
       subject_id: cell.knowledge_id,
-      payload: { induction_task_run_ids: induced.task_run_ids },
+      payload: {
+        induction_task_run_ids: induced.task_run_ids,
+        probe_quality_attempts: induced.probe_quality_attempts,
+      },
     },
-    // Scalar correlation must point at a run that produced the winning
-    // claim/probe tuple; the payload retains every sample/grouping run.
+    // Scalar correlation points at the author run that produced the verified package;
+    // the payload retains induction, grouping, author, and reviewer provenance.
     task_run_id: induced.primary_task_run_id,
     cost_usd: induced.cost_usd,
   };
@@ -1179,6 +1187,7 @@ async function runResearchMeetingNightlyClaimed(
             evidence_event_ids: induced.draft.evidence_event_ids,
             input_evidence_event_ids: cell.evidence_event_ids,
             induction_task_run_ids: induced.task_run_ids,
+            probe_quality_attempts: induced.probe_quality_attempts,
             votes: induced.votes,
             requested_samples: induced.samples,
           },

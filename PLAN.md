@@ -3,61 +3,57 @@
 > Linear 是权威 tracker；本文件只镜像当前 active 线、下一步、parked 与 blockers。
 > 四栏就地改写，正文 ≤200 行，不追加历史日志。
 > 更新于：2026-07-29
-> **【更新 2026-07-29 · YUK-814 harness 已合并，真实 gate 等 owner 数据】**
-> backup→一次性 DB→生产 evidence chain→shadow/blind→score/canary harness 已随
-> PR #1105 落到 main。真实 shadow/blind/canary 尚未执行；唯一产品事实阻塞仍是
-> 6–10 个真实 owner 失败簇，不以 synthetic/mock 冒充。
+> **【更新 2026-07-29 · YUK-821 P0 实施中；真实数据不再阻塞开发】**
+> Owner 裁决：质量评测只 mock 输入，输出必须走真实模型/真实生产链；mock-input 的
+> real-output 评测可以关闭开发验收。真实 owner 数据仅用于决定是否扩大自动干预，
+> 不再阻塞 P0/P1 代码实施。本轮实施全部 P0；P1 学科确定性 validator 只写计划。
 
 ## NOW
 
-- **当前无代码 active 线；YUK-814 保持 In Progress，停在真实数据输入闸门**
-  - Harness 已随 PR #1105 / merge commit `ae02e020` 落到 main；exact final head
-    `7a39429a` 的 CI Gate run `30433913656` 全绿，actionable review threads 已清零。
-  - `pnpm grounding:gate` 已提供 inspect、shadow、score-blind、init-canary、
-    score-canary；backup 只恢复进自动清理的一次性 pgvector Testcontainer。
-  - 资格链复用生产 correction/history/accountability/evidence-enrichment/image gates，
-    额外排除 `payload.__synthetic=true` 与 `synthetic:*`；shadow 不写产品 proposal/event。
-  - deterministic selection 已锁 requested count + selection SHA-256；provider global
-    overrides 与 dirty worktree 均 fail closed；blind/private lineage 分离。
-  - blind gate 要求 6–10 簇、grounding ≥80%、三项红线为 0；canary 必须同一
-    owner/cohort、10 个 distinct intervention、监控 refs 与停机演练齐备。
-  - synthetic smoke 只证明 harness：12 failures → 6 eligible、`gate_passed=false`；
-    不构成 YUK-814 真实 gate 证据。
-- **近期已收口**
-  - YUK-820 已随 PR #1103 / `7dd15a8e` 落到 main：affected unit required、
-    direct-test guard 与 fail-closed fallback 已有 20 个历史 PR backfill 证据；
-    PR head full Gate `30431860540` 与 main full canary `30432387630` 均全绿，
-    main artifact 的 requested/effective/required 均为 `full`。
-  - YUK-788 已随 PR #1102 / `ff681b0c` 合并并 Done；identity history gate、terminal
-    reopen 约束与 owner feedback 回流均有回归证据。
-  - YUK-803 的 soft archive/hard 不变已在 PR #1080 / `a1fe8ab8` 落地，
-    `conjecture-accept.db.test.ts` 21/21，Linear Done。
-  - YUK-817/818/819 已 Done；DB shard、unit 长尾与 JYEOO hard timeout 修复在 main。
+- **YUK-821：修复两个失败输出暴露的 claim/probe 错配（P0）**
+  - `MindModelInductionTask` 只产 claim + 冻结 `DiagnosticSpec`，不再同时出题。
+  - 自洽共识覆盖完整 DiagnosticSpec；claim 相似但 trigger/scope/wrong-answer
+    signature 不同不算同票。
+  - 新增独立 `ConjectureProbeAuthorTask` / `ConjectureProbeReviewTask`；通用结构门先查
+    双题独立性和正确/目标错误答案差异，再由同模型第二次独立调用审查学科语义。
+  - 第一次质量失败整包重生成；第二次质量失败 `abstain(no_discriminating_probe)`；
+    provider/结构化输出故障保持 operational，不能凑成质量反对票。
+  - nightly 与 agent director 共用质量门；proposal 保存 spec、双题 metadata、task run、
+    failure code 和 audit；accept 缺 v3 包或发现持久化不一致时 409 fail closed。
+  - 定向验证当前：unit 6 files / 212 passed；DB 4 files / 70 passed；typecheck、
+    changed-file Biome、diff check 通过。完整 gate 不在本地跑，交给 GitHub CI Gate。
+  - 20:47 用 mock 输入启动 canonical Opus real-output 复评；第一簇的 3 个独立
+    induction call 均收到 429 weekly limit，按 operational stop condition 立即停止，
+    没有把 fallback 或空输出记成质量结果。
+- **YUK-814 闸门口径已按 owner 新决策修正**
+  - 现有 harness 可继续用于真实 owner 观察数据，但它是扩大使用闸门，不是产品实施闸门。
+  - synthetic/mock 仍不能冒充真实用户效果；但“mock 输入 + 真实模型输出”是合法的开发质量测试。
 
 ## NEXT
 
-1. 从 production `/api/_/export?include_assets=1` 获取真实 backup，先跑 inspect；
-   eligibility 不足 6 就继续积累真实使用，不制造错误。
-2. eligibility 满足后 shadow → owner blind review → score；grounding ≥80%，学科幻觉、
-   claim/probe 错配、严重事实错误均为 0，任一红线失败即停。
-3. 只有 blind PASS 后才依次启动 intervention snapshot、pedagogy、
-   QuestionAuthor/Verify、隔离 FSRS、结算、Brief/Copilot/profile 与 10-run canary。
+1. 完成本次 P0 文档、cockpit 和 Linear 对齐，提交 `codex/yuk-821-probe-quality`。
+2. 创建 PR，只监听 GitHub Actions 的 CI Gate；处理真实 review finding，不在本地重跑全 gate。
+3. CI/评审通过后合并 P0；再用固定 mock evidence packets 跑 canonical Opus real-output
+   质量评测。YUK-821 在 8 簇输出门通过前保持 In Progress，输出不合格就继续改模型合同，
+   不伪造 pass。
+4. 真实 owner shadow/blind/canary 留作扩大 auto-intervention 的发布证据，不阻塞后续功能实现。
 
 ## PARKED
 
-- **CI selector drift**：main full canary 或 direct-test guard 任一发现漏选，立即回退
-  full required；不靠漂亮 selection ratio 压掉证据。
-- **CI 后续调参**：usability artifact 复用、DB weighted shard / fork 数继续以
-  GitHub timing 决定，不用删覆盖换漂亮指标。
-- **干预准备**：YUK-791/796；Planning Panel 仅为 Teaching Brief 控制区。
-- **验证结算**：YUK-792；猜想与干预使用隔离 FSRS 状态，普通 KC/FSRS 不变。
-- **协作与档案**：YUK-815 Brief/Copilot public reader；YUK-816 intervention history。
-- **发布**：YUK-814 通过后才做单 owner/cohort 10-run canary；任一红线失败关闭
-  auto-intervention flag。
+- **YUK-822：P1 学科确定性验证器（本次不写代码）**
+  - 详细通俗计划：`docs/planning/2026-07-29-yuk-821-conjecture-probe-quality.md`。
+  - 第一批仅做数学的复合单位分母变换与异分母分数相加；subject-owned registry，
+    不在 Agency 写中央学科 switch；parser 不可判定时 fail closed。
+  - P1 需要版本化 validator provenance、mutation tests、shadow→blocking 切换与 kill switch。
+- **干预准备/结算/协作档案**：YUK-791/796、YUK-792、YUK-815、YUK-816；不再被
+  “必须先有真实 owner 数据”整体阻塞，但仍须按 mesh 依赖顺序推进。
+- **CI selector drift**：main full canary 或 direct-test guard 发现漏选即回退 full required；
+  以 GitHub timing/coverage 为证据，不在本机猜测。
 
 ## BLOCKED-ON
 
-- **YUK-814 真实执行** ← production backup ZIP / 6–10 个合格真实 owner 失败簇；
-  harness、anthropic-sub 与本机工具链已就绪。
-- **干预实现** ← YUK-814 grounding blind review 通过；不得先写产品状态机绕过门。
-- **auto-intervention 扩大** ← 单 owner/cohort 10 次 canary 全部事后审阅，红线为 0。
+- **本次 P0 代码：无产品数据 blocker**；只剩 GitHub CI Gate 与 review。
+- **canonical Opus 输出质量结论**：2026-07-29 20:47 实测被 429 weekly limit 阻断；
+  配额故障只记 operational，不能用 Mimo fallback 的结果冒充 canonical pass。
+- **auto-intervention 扩大使用**：仍需真实 owner/cohort shadow/blind/canary 证据；这是发布
+  和扩量条件，不是继续实现功能的前置条件。

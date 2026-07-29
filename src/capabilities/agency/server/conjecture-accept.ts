@@ -35,6 +35,12 @@ import {
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
 import { newId } from '@/core/ids';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureProbeQualityAudit,
+  ConjectureProbeSpec,
+  evaluateConjectureProbePackageStructure,
+} from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
@@ -60,6 +66,8 @@ import {
 // contract §7: accept 交互失败 → 保留当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error).
 export { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
+
+export const CONJECTURE_PROBE_QUALITY_REQUIRED_CODE = 'CONJECTURE_PROBE_QUALITY_REQUIRED' as const;
 
 export interface ConjectureApplierOpts {
   decision?: string;
@@ -108,6 +116,49 @@ export async function acceptConjectureProposal(
       weakness_confirmed: false,
       idempotent: true,
     };
+  }
+
+  // YUK-821: all newly accepted conjectures must carry a frozen DiagnosticSpec,
+  // both structured probe specs, and a passing independent-review audit. Optionality
+  // in the proposal JSON schema exists only so historical terminal rows remain readable.
+  const diagnosticSpec = ConjectureDiagnosticSpec.safeParse(change.diagnostic_spec);
+  const primaryProbeSpec = ConjectureProbeSpec.safeParse(change.probe_spec);
+  const followupProbeSpec = ConjectureProbeSpec.safeParse(change.followup_probe_spec);
+  const qualityAudit = ConjectureProbeQualityAudit.safeParse(change.probe_quality);
+  const persistedProbeMd = typeof change.probe_md === 'string' ? change.probe_md.trim() : '';
+  const persistedProbeReferenceMd =
+    typeof change.probe_reference_md === 'string' ? change.probe_reference_md.trim() : '';
+  const persistedFollowupMd =
+    typeof change.followup_probe_md === 'string' ? change.followup_probe_md.trim() : '';
+  const persistedFollowupReferenceMd =
+    typeof change.followup_probe_reference_md === 'string'
+      ? change.followup_probe_reference_md.trim()
+      : '';
+  const structuralFailureCount =
+    primaryProbeSpec.success && followupProbeSpec.success && typeof change.predicted_p === 'number'
+      ? evaluateConjectureProbePackageStructure({
+          primary: primaryProbeSpec.data,
+          followup: followupProbeSpec.data,
+          predicted_p: change.predicted_p,
+        }).length
+      : 1;
+  const qualityVerified =
+    diagnosticSpec.success &&
+    primaryProbeSpec.success &&
+    followupProbeSpec.success &&
+    qualityAudit.success &&
+    change.discriminating === true &&
+    structuralFailureCount === 0 &&
+    primaryProbeSpec.data.prompt_md === persistedProbeMd &&
+    primaryProbeSpec.data.reference_md === persistedProbeReferenceMd &&
+    followupProbeSpec.data.prompt_md === persistedFollowupMd &&
+    followupProbeSpec.data.reference_md === persistedFollowupReferenceMd;
+  if (!qualityVerified) {
+    throw new ApiError(
+      CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      'cannot accept: this conjecture has no verified v3 diagnostic/probe package; reprepare it before accepting',
+      409,
+    );
   }
 
   // Both claim schemas now trim at their boundaries. Keep a normalized content comparison

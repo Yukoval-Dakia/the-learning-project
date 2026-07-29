@@ -121,12 +121,13 @@ const validProposeArgs = {
   knowledge_id: KC,
   cause_category: CAUSE,
   claim_md: '你把必要条件当成充分条件',
-  probe_md: '给出一道只有该误解才会答错的判别题',
-  probe_reference_md: '参考答案：一个必要不充分的反例',
-  followup_probe_md: '换一个语境，再给出一道区分必要与充分的判别题',
-  followup_probe_reference_md: '参考答案：用新的反例说明充分性不成立',
-  predicted_p: 0.3,
-  discriminating: true,
+  diagnostic_spec: {
+    schema_version: 1,
+    target_error_rule_md: '把必要条件当成充分条件。',
+    trigger_conditions_md: '题目要求判断一个条件是否足以推出结论。',
+    scope_boundary_md: '不推断其它逻辑关系。',
+    expected_wrong_answer_signature_md: '把仅必要的条件判断为足够。',
+  },
   evidence_refs: ['att_1', 'att_2'],
 };
 
@@ -152,6 +153,49 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
       async () => new Map<string, MasteryProjection>([[KC, projection(0.42)]]),
     ),
     runAgentTaskFn: proposeOnceRunner(),
+    runTaskFn: vi.fn(async (kind: string) => {
+      if (kind === 'ConjectureProbeAuthorTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_author',
+          structured_output: {
+            package: {
+              primary: {
+                prompt_md: '判断条件 A 是否足以推出 B，并给出反例。',
+                reference_md: 'A 不是充分条件；存在满足 A 但不满足 B 的反例。',
+                expected_target_error_answer_md: 'A 足以推出 B。',
+                elicits_target_error_reason_md: '要求区分必要条件与充分条件。',
+                context_kind: 'abstract',
+                representation_kind: 'symbolic',
+              },
+              followup: {
+                prompt_md: '在门禁情境中判断持卡是否保证可以进入。',
+                reference_md: '持卡不是充分条件，还需权限有效。',
+                expected_target_error_answer_md: '持卡就一定可以进入。',
+                elicits_target_error_reason_md: '在应用情境中保持同一充分性判断。',
+                context_kind: 'applied',
+                representation_kind: 'natural_language',
+              },
+              predicted_p: 0.3,
+            },
+          },
+        };
+      }
+      if (kind === 'ConjectureProbeReviewTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_review',
+          structured_output: {
+            review: {
+              verdict: 'pass',
+              failure_codes: [],
+              explanation_md: '目标错因、参考答案和独立性均通过。',
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    }),
     ...overrides,
   };
 }

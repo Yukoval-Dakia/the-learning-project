@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureProbeQualityAttempt,
+  ConjectureProbeSpec,
+} from '@/core/schema/business';
 import type { InduceConjectureResult } from '@/server/agency/conjecture/induce';
 import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
 import { z } from 'zod';
@@ -15,7 +20,7 @@ const NullableReviewBoolean = z.boolean().nullable();
 const GateIdSchema = z.string().min(1);
 const ClusterIdSchema = z.string().regex(/^cluster-\d{2}$/);
 const GROUNDING_GATE_BLIND_INSTRUCTIONS =
-  '逐簇核对证据与 shadow 输出。grounded_proposal 只有在 claim、两道 probe 及 reference 均由证据支持且可用于教学验证时填 true；abstain 填 false。其余三项任一 true 都是红线。不要查看 private-lineage.json 后再评分。';
+  '逐簇核对证据与 shadow 输出。grounded_proposal 只有在 claim、DiagnosticSpec、两道 probe、reference 与 expected_target_error_answer 均由证据支持且可用于教学验证时填 true；abstain 填 false。其余三项任一 true 都是红线。不要查看 private-lineage.json 后再评分。';
 
 export const GroundingBlindReviewSchema = z.object({
   grounded_proposal: NullableReviewBoolean,
@@ -50,10 +55,18 @@ const BlindShadowOutputSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('proposal'),
     claim_md: z.string(),
+    // Optional only for v1 artifact replay. New builders always include the frozen
+    // diagnostic contract and complete specs so a blind reviewer can judge targeting.
+    diagnostic_spec: ConjectureDiagnosticSpec.optional(),
     probe_md: z.string(),
     probe_reference_md: z.string(),
     followup_probe_md: z.string(),
     followup_probe_reference_md: z.string(),
+    probe_spec: ConjectureProbeSpec.omit({ prompt_md: true, reference_md: true }).optional(),
+    followup_probe_spec: ConjectureProbeSpec.omit({
+      prompt_md: true,
+      reference_md: true,
+    }).optional(),
   }),
   z.object({
     outcome: z.literal('abstain'),
@@ -149,6 +162,7 @@ export const GroundingPrivateMapSchema = z.object({
       cost_usd: z.number().nonnegative(),
       confidence: z.number().min(0).max(1),
       confidence_capped: z.boolean(),
+      probe_quality_attempts: z.array(ConjectureProbeQualityAttempt).optional(),
       votes: z.object({
         proposal: z.number().int().nonnegative(),
         abstain: z.number().int().nonnegative(),
@@ -232,10 +246,25 @@ function blindShadowOutput(induced: InduceConjectureResult) {
     return {
       outcome: 'proposal' as const,
       claim_md: induced.draft.claim_md,
+      diagnostic_spec: induced.draft.diagnostic_spec,
       probe_md: induced.draft.probe_md,
       probe_reference_md: induced.draft.probe_reference_md,
       followup_probe_md: induced.draft.followup_probe_md,
       followup_probe_reference_md: induced.draft.followup_probe_reference_md,
+      probe_spec: {
+        expected_target_error_answer_md: induced.draft.probe_spec.expected_target_error_answer_md,
+        elicits_target_error_reason_md: induced.draft.probe_spec.elicits_target_error_reason_md,
+        context_kind: induced.draft.probe_spec.context_kind,
+        representation_kind: induced.draft.probe_spec.representation_kind,
+      },
+      followup_probe_spec: {
+        expected_target_error_answer_md:
+          induced.draft.followup_probe_spec.expected_target_error_answer_md,
+        elicits_target_error_reason_md:
+          induced.draft.followup_probe_spec.elicits_target_error_reason_md,
+        context_kind: induced.draft.followup_probe_spec.context_kind,
+        representation_kind: induced.draft.followup_probe_spec.representation_kind,
+      },
     };
   }
   return {
@@ -342,6 +371,7 @@ export function buildGroundingReviewArtifacts(input: BuildGroundingReviewArtifac
       cost_usd: induced.cost_usd,
       confidence: induced.confidence,
       confidence_capped: induced.confidence_capped,
+      probe_quality_attempts: induced.probe_quality_attempts,
       votes: induced.votes,
     })),
   });

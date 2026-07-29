@@ -90,12 +90,13 @@ function validProposeArgs(overrides: Record<string, unknown> = {}) {
     knowledge_id: 'k_a',
     cause_category: 'concept_confusion',
     claim_md: '你把必要条件当成充分条件',
-    probe_md: '给出一个只有该误解才会答错的判别题',
-    probe_reference_md: '参考答案：必要不充分的反例',
-    followup_probe_md: '换一个语境，再给出一道区分必要与充分的判别题',
-    followup_probe_reference_md: '参考答案：用新的反例说明充分性不成立',
-    predicted_p: 0.3,
-    discriminating: true,
+    diagnostic_spec: {
+      schema_version: 1,
+      target_error_rule_md: '把必要条件当成充分条件。',
+      trigger_conditions_md: '题目要求判断条件是否足以推出结论。',
+      scope_boundary_md: '不推断其它逻辑关系。',
+      expected_wrong_answer_signature_md: '把仅必要的条件判断为足够。',
+    },
     evidence_refs: ['att_1', 'att_2'],
     ...overrides,
   };
@@ -133,6 +134,49 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     getMasteryProjectionFn: async () => new Map<string, MasteryProjection>(),
     evidenceRefsExistFn: async () => true,
+    runTaskFn: async (kind) => {
+      if (kind === 'ConjectureProbeAuthorTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_author',
+          structured_output: {
+            package: {
+              primary: {
+                prompt_md: '判断条件 A 是否足以推出结论 B，并给出反例。',
+                reference_md: 'A 不是充分条件；反例满足 A 但不满足 B。',
+                expected_target_error_answer_md: 'A 足以推出 B。',
+                elicits_target_error_reason_md: '要求区分必要与充分。',
+                context_kind: 'abstract',
+                representation_kind: 'symbolic',
+              },
+              followup: {
+                prompt_md: '在门禁规则情境中判断持卡是否保证可以进入。',
+                reference_md: '持卡只是必要条件，还需权限有效，因此不能保证进入。',
+                expected_target_error_answer_md: '持卡就一定可以进入。',
+                elicits_target_error_reason_md: '在应用语境中保持同一充分性判断。',
+                context_kind: 'applied',
+                representation_kind: 'natural_language',
+              },
+              predicted_p: 0.3,
+            },
+          },
+        };
+      }
+      if (kind === 'ConjectureProbeReviewTask') {
+        return {
+          text: '',
+          task_run_id: 'probe_review',
+          structured_output: {
+            review: {
+              verdict: 'pass',
+              failure_codes: [],
+              explanation_md: '两题保持目标错因并改变情境与表征。',
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    },
     ...opts,
   });
   return { proposals, notes, caps };
@@ -186,8 +230,8 @@ describe('propose_conjecture — server-enforced single writer', () => {
     const input = h.proposals[0];
     expect(input.actor_ref).toBe(RESEARCH_MEETING_AGENT_ACTOR);
     expect(input.caused_by_event_id).toBe('trigger_1');
-    expect(input.task_run_id).toBe('toolrun_1');
-    expect(input.cost_usd).toBe(0); // cost rides the director run's scan event, not proposals
+    expect(input.task_run_id).toBe('probe_author');
+    expect(input.cost_usd).toBe(0);
     if (input.payload.kind !== 'conjecture') throw new Error('kind narrowing');
     expect(input.payload.target.subject_kind).toBe('mind_model');
     expect(input.payload.target.subject_id).toBe('k_a');
@@ -202,6 +246,53 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(change.confidence).toBe(DIRECTOR_FIXED_CONFIDENCE); // fixed, never LLM-reported
     expect(change.recurrence_count).toBe(3); // from the matching cell
     expect(change.corrected_by_owner).toBe(false);
+    expect(change.diagnostic_spec).toMatchObject({ schema_version: 1 });
+    expect(change.probe_quality).toMatchObject({ passed: true });
+    expect(change.probe_spec?.expected_target_error_answer_md).toBe('A 足以推出 B。');
+  });
+
+  it('fails closed after two structurally non-independent probe packages and releases the cap', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind !== 'ConjectureProbeAuthorTask') {
+        throw new Error(`review must not run after a structural rejection: ${kind}`);
+      }
+      return {
+        text: '',
+        task_run_id: `bad_author_${runTaskFn.mock.calls.length}`,
+        structured_output: {
+          package: {
+            primary: {
+              prompt_md: '判断 A 是否足以推出 B。',
+              reference_md: 'A 不是充分条件。',
+              expected_target_error_answer_md: 'A 足以推出 B。',
+              elicits_target_error_reason_md: '检验必要与充分。',
+              context_kind: 'abstract',
+              representation_kind: 'symbolic',
+            },
+            followup: {
+              prompt_md: '换一组字母，判断 C 是否足以推出 D。',
+              reference_md: 'C 不是充分条件。',
+              expected_target_error_answer_md: 'C 足以推出 D。',
+              elicits_target_error_reason_md: '只是换字母复测必要与充分。',
+              context_kind: 'abstract',
+              representation_kind: 'symbolic',
+            },
+            predicted_p: 0.3,
+          },
+        },
+      };
+    });
+    const h = build({ runTaskFn: runTaskFn as BuildDirectorServerOpts['runTaskFn'] });
+
+    const result = await callTool('propose_conjecture', validProposeArgs());
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('两次完整探针包'),
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0);
   });
 
   it('caps at DIRECTOR_MAX_PROPOSALS per run (soft stop, does not write beyond the cap)', async () => {
@@ -378,10 +469,19 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.caps.proposeCount).toBe(0); // a rejected proposal never consumes a cap slot
   });
 
-  it('rejects whitespace-only follow-up prompt or reference at the tool boundary', async () => {
-    for (const field of ['followup_probe_md', 'followup_probe_reference_md'] as const) {
+  it('rejects whitespace-only DiagnosticSpec fields at the tool boundary', async () => {
+    const base = validProposeArgs().diagnostic_spec as Record<string, unknown>;
+    for (const field of [
+      'target_error_rule_md',
+      'trigger_conditions_md',
+      'scope_boundary_md',
+      'expected_wrong_answer_signature_md',
+    ] as const) {
       const h = build();
-      const res = await callTool('propose_conjecture', validProposeArgs({ [field]: ' \n\t ' }));
+      const res = await callTool(
+        'propose_conjecture',
+        validProposeArgs({ diagnostic_spec: { ...base, [field]: ' \n\t ' } }),
+      );
       expect(res.ok).toBe(false);
       expect(h.proposals).toHaveLength(0);
       expect(h.caps.proposeCount).toBe(0);

@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { ActivityRef } from './activity';
-import { QuestionKind, normalizeProbeIdentity } from './business';
+import {
+  ConjectureDiagnosticSpec,
+  ConjectureProbePackage,
+  ConjectureProbeQualityAudit,
+  ConjectureProbeSpec,
+  QuestionKind,
+  evaluateConjectureProbePackageStructure,
+  normalizeProbeIdentity,
+} from './business';
 import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
@@ -515,6 +523,13 @@ export const ConjectureProposalChange = z
     // Like probe_reference_md above, this draft-fed cap MUST remain identical to
     // ConjectureProposalDraft.followup_probe_reference_md in business.ts.
     followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
+    // YUK-821 v3 additions are optional only so historical v1/v2 proposal JSON
+    // remains readable. Every new automatic producer writes the complete trio,
+    // and the accept path fails closed for a newly-created proposal without it.
+    diagnostic_spec: ConjectureDiagnosticSpec.optional(),
+    probe_spec: ConjectureProbeSpec.optional(),
+    followup_probe_spec: ConjectureProbeSpec.optional(),
+    probe_quality: ConjectureProbeQualityAudit.optional(),
     discriminating: z.boolean(),
     corrected_by_owner: z.boolean().default(false),
     predicted_p: z.number().min(0).max(1),
@@ -529,6 +544,63 @@ export const ConjectureProposalChange = z
         path: hasPrompt ? ['followup_probe_reference_md'] : ['followup_probe_md'],
         message: 'follow-up probe prompt and reference must be provided together',
       });
+    }
+    const qualityFields = [
+      change.diagnostic_spec,
+      change.probe_spec,
+      change.followup_probe_spec,
+      change.probe_quality,
+    ];
+    const qualityFieldCount = qualityFields.filter((value) => value !== undefined).length;
+    if (qualityFieldCount !== 0 && qualityFieldCount !== qualityFields.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality'],
+        message: 'diagnostic spec, both probe specs, and quality audit must be provided together',
+      });
+    }
+    if (
+      change.probe_spec !== undefined &&
+      (change.probe_spec.prompt_md !== change.probe_md ||
+        change.probe_spec.reference_md !== change.probe_reference_md)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_spec'],
+        message: 'probe_spec must describe the persisted primary prompt/reference',
+      });
+    }
+    if (
+      change.followup_probe_spec !== undefined &&
+      (change.followup_probe_spec.prompt_md !== change.followup_probe_md ||
+        change.followup_probe_spec.reference_md !== change.followup_probe_reference_md)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['followup_probe_spec'],
+        message: 'followup_probe_spec must describe the persisted follow-up prompt/reference',
+      });
+    }
+    if (
+      change.probe_spec !== undefined &&
+      change.followup_probe_spec !== undefined &&
+      ConjectureProbePackage.safeParse({
+        primary: change.probe_spec,
+        followup: change.followup_probe_spec,
+        predicted_p: change.predicted_p,
+      }).success
+    ) {
+      for (const failureCode of evaluateConjectureProbePackageStructure({
+        primary: change.probe_spec,
+        followup: change.followup_probe_spec,
+        predicted_p: change.predicted_p,
+      })) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['probe_spec'],
+          message: `probe package failed structural quality gate: ${failureCode}`,
+        });
+      }
     }
     if (
       change.followup_probe_md !== undefined &&

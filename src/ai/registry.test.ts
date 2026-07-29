@@ -31,13 +31,13 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(43);
+    expect(Object.keys(tasks)).toHaveLength(45);
   });
 });
 
 describe('task prompt definitions', () => {
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(43);
+    expect(Object.keys(tasks)).toHaveLength(45);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -73,10 +73,18 @@ describe('task prompt definitions', () => {
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
-        // YUK-799 intentionally revises this output contract from forced proposal to
-        // proposal|abstain. Its dedicated tests below pin the new behavior; the oracle
-        // remains the pre-refactor guard for every prompt whose behavior did not change.
-        if (task === 'MindModelInductionTask') continue;
+        // YUK-821 intentionally replaces the induction/grouping contracts, adds the
+        // author/reviewer tasks, and updates the director charter. Dedicated tests below
+        // pin those behaviors; the old oracle still guards every unchanged prompt.
+        if (
+          task === 'MindModelInductionTask' ||
+          task === 'ConjectureGroupingTask' ||
+          task === 'ConjectureProbeAuthorTask' ||
+          task === 'ConjectureProbeReviewTask' ||
+          task === 'ResearchMeetingDirectorTask'
+        ) {
+          continue;
+        }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
         const actualHash = createHash('sha256')
           .update(getTaskSystemPrompt(task, profile), 'utf8')
@@ -418,11 +426,15 @@ describe('MindModelInductionTask registry entry', () => {
     expect(p).toContain('禁止为了满足格式而补造');
   });
 
-  it('prompts for the A13 accountability fields (predicted_p + discriminating) and the 2nd-person framing', () => {
+  it('freezes the target-error rule, trigger, scope, and wrong-answer signature without probes', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
-    expect(p).toContain('predicted_p');
-    expect(p).toContain('discriminating');
     expect(p).toContain('第二人称');
+    expect(p).toContain('target_error_rule_md');
+    expect(p).toContain('trigger_conditions_md');
+    expect(p).toContain('scope_boundary_md');
+    expect(p).toContain('expected_wrong_answer_signature_md');
+    expect(p).toContain('本阶段**禁止出题**');
+    expect(p).not.toContain('"probe_md"');
   });
 
   // YUK-786 — the input contract the prompt DESCRIBES must match the one
@@ -501,6 +513,42 @@ describe('MindModelInductionTask registry entry', () => {
     expect(yuwen).not.toBe(math);
     expect(yuwen).toContain(resolveSubjectProfile('yuwen').displayName);
     expect(math).toContain(resolveSubjectProfile('math').displayName);
+  });
+});
+
+describe('Conjecture probe author/reviewer registry entries', () => {
+  it('uses two separate bounded multimodal tasks with profile-aware prompts', () => {
+    for (const kind of ['ConjectureProbeAuthorTask', 'ConjectureProbeReviewTask'] as const) {
+      const def: TaskDef = tasks[kind];
+      expect(def.needsToolCall).toBe(false);
+      expect(def.isMultimodal).toBe(true);
+      expect(def.allowedTools).toEqual([]);
+      expect(def.budget.maxIterations).toBe(2);
+      expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
+      expect(getTaskSystemPrompt(kind, resolveSubjectProfile('math'))).not.toBe(
+        getTaskSystemPrompt(kind, resolveSubjectProfile('yuwen')),
+      );
+    }
+  });
+
+  it('author keeps the frozen trigger and emits gold plus target-error answers', () => {
+    const p = getTaskSystemPrompt('ConjectureProbeAuthorTask');
+    expect(p).toContain('frozen_hypothesis');
+    expect(p).toContain('trigger_conditions_md');
+    expect(p).toContain('expected_target_error_answer_md');
+    expect(p).toContain('context_kind');
+    expect(p).toContain('representation_kind');
+    expect(p).toContain('不能只换数字');
+  });
+
+  it('reviewer is independent, does not repair, and emits bounded failure codes', () => {
+    const p = getTaskSystemPrompt('ConjectureProbeReviewTask');
+    expect(p).toContain('没有参与出题');
+    expect(p).toContain('不得替作者修题');
+    expect(p).toContain('claim_scope_expansion');
+    expect(p).toContain('probe_not_targeting');
+    expect(p).toContain('probe_pair_not_independent');
+    expect(p).toContain('reference_incorrect');
   });
 });
 

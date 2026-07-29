@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-19）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 42 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-07-29）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 45 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -138,9 +138,11 @@ Question (统一题库，single source of truth)
 | `SolutionGenerateVisionTask` | mimo-v2.5 | `source_verify` 图题独立求解（YUK-727） | 否 | 输入 | 读取题面图片后生成 reference + worked solution；图片或视觉调用失败时保持 draft |
 | `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
 | `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（带 evidence ids）|
-| `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-440) | 否 | — | 教研例会 conjecture 诱导：EvidenceCells → 1 conjecture（claim + probe + probe_reference_md + predicted_p + discriminating，YUK-538 ⑬ conjecture-wire S1）；N=3 self-consistency + judge-only cap |
-| `ClaimGroupingTask` | mimo-v2.5-pro | `induceConjecture`（per conjecture post-fast-path，YUK-538） | 否 | — | 语义去重：将 MindModelInductionTask N 个 paraphrase-diverse 样本按语义等价分组，使自洽置信度反映语义一致而非字节级一致 |
-| `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 否 | — | agent-led 教研例会 director（shadow lane）：charter agent，读 evidence MCP + 可派 1 名嵌套 evidence-scout，propose-only 经 director 写工具提猜想 / 留 agent note（服务端 cap 3/2 + dedup + baseline 快照）；从不结算 / 不碰 FSRS |
+| `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-821) | 否 | 输入 | EvidenceCells → claim + 冻结 DiagnosticSpec（本阶段不出题）；N=3 对完整 hypothesis 做 self-consistency + judge-only cap |
+| `ConjectureGroupingTask` | mimo-v2.5-pro | `induceConjecture`（per conjecture post-fast-path，YUK-821） | 否 | — | 语义去重：将 MindModelInductionTask N 个样本按 claim + 完整 DiagnosticSpec 等价分组，避免 claim 相似但触发条件或范围不同的结果被误判为共识 |
+| `ConjectureProbeAuthorTask` | Opus（per-call override） | `induceConjecture` / research meeting director（共识后，YUK-821） | 否 | 输入 | 只根据冻结的 claim + DiagnosticSpec 生成完整双 probe 包；最多允许一次整包重生成 |
+| `ConjectureProbeReviewTask` | Opus（per-call override） | `induceConjecture` / research meeting director（每个候选 probe 包，YUK-821） | 否 | 输入 | 独立复核范围、目标错误、双题独立性、正确答案与错误答案签名；失败关闭，不自行修题 |
+| `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可派 1 名 evidence-scout、留 agent note，从不结算 / 不碰 FSRS |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|

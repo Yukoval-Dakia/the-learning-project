@@ -8,9 +8,11 @@
 // scout (breadth cap = a PreToolUse hook that denies the 2nd Task).
 //
 // Provenance / evidence-first: the run anchors on a trigger event; the tool-call reads
-// persist to tool_call_log after the run; a scan event records the outcome + the run's
-// cost (mirrors dreaming_scan — proposals are 0-cost so the scan carries the spend once,
-// no double-count). Settlement single-home: this NEVER calls reconcile / writes FSRS.
+// persist to tool_call_log after the run; a scan event records the director main-thread
+// cost. YUK-821 adds separate author/reviewer task runs after a tool proposal: their cost
+// is attached to that proposal event and is not included in the director scan, so each
+// model call remains attributed once. Settlement single-home: this NEVER calls reconcile /
+// writes FSRS.
 //
 // Degrade (red line): a runAgentTask throw (maxTurns / 300s abort / SDK error) is caught
 // and turned into a PARTIAL scan event + a degraded result — it is NOT rethrown, so the
@@ -45,7 +47,9 @@ import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
 import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -149,6 +153,7 @@ type WriteAgentNoteFn = NonNullable<BuildDirectorServerOpts['writeAgentNoteFn']>
 export interface DirectorDeps {
   now?: () => Date;
   runAgentTaskFn?: RunAgentTaskFn;
+  runTaskFn?: TaskTextRunFn;
   writeEventFn?: WriteEventFn;
   getFailureAttemptsFn?: GetFailureAttemptsFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
@@ -199,6 +204,7 @@ export async function runResearchMeetingDirector(
     deps.listPendingConjecturesFn ??
     ((d: Db) => listProposalInboxRows(d, { status: 'pending', kind: 'conjecture' }));
   const runAgentTaskFn = deps.runAgentTaskFn ?? runAgentTask;
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const writeEventFn = deps.writeEventFn ?? writeEvent;
   const persistToolTraceFn = deps.persistToolTraceFn ?? persistToolTrace;
   const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
@@ -303,6 +309,7 @@ export async function runResearchMeetingDirector(
     getMasteryProjectionFn,
     failureAttempts: failures,
     loadConjectureHistoryFn,
+    runTaskFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
