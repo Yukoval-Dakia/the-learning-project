@@ -401,11 +401,12 @@ describe('MindModelInductionTask registry entry', () => {
     expect(def.budget.timeout).toBeGreaterThanOrEqual(120_000);
   });
 
-  it('asks for one-reply output but permits the bounded second turn to finish JSON', () => {
+  it('requires the same top-level draft envelope as the Agent SDK output schema', () => {
     const p = getTaskSystemPrompt('MindModelInductionTask');
-    expect(p).toContain('同一条回复');
-    expect(p).toContain('第二轮');
-    expect(p).toContain('把被截断的 JSON 说完');
+    expect(p).toContain('唯一字段是 draft');
+    expect(p).toContain('{"draft":{"kind":"proposal"');
+    expect(p).toContain('{"draft":{"kind":"abstain"');
+    expect(p).toContain('不输出推理过程、markdown 或代码块');
   });
 
   it('exposes proposal and abstain as explicit grounded output branches', () => {
