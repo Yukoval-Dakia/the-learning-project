@@ -17,7 +17,7 @@
 3. fail-closed guard：重复 begin 报错；活跃事务内 `resetDb()` 报错；cleanup 先清路由指针，
    再 rollback/release，避免失败后把后续测试绑定到已释放连接。
 4. 新增 `tests/helpers/db-transaction.db.test.ts`，覆盖 rollback 不泄漏、guard、savepoint 回滚、
-   reserved connection 复用。
+   configured transaction fail-closed、reserved connection 复用。
 5. `proposal-tools.test.ts` 全文件迁移为 beforeAll reset + per-test transaction rollback。
 6. `orchestrator.db.test.ts` 只迁移无显式并发的 trigger semantics 与 abandoned-run cancel
    两个 describe；包含 multi-worker/CAS `Promise.all` 的 catch-up/logging describe 保留 TRUNCATE。
@@ -26,9 +26,9 @@
 ## 性能与验证
 
 - 变更前基线（proposal + orchestrator，95 tests）：48.94s、56.55s。
-- 变更后（同两文件 + 4 个 helper tests，共 99 tests）：25.16s、26.27s、27.38s；下降
-  约 44%–55%。
-- shuffle seed 825/826：各 99 passed。
+- 变更后（同两文件 + 4–5 个 helper tests，共 99–100 tests）：24.46s、25.16s、26.27s、
+  27.38s；下降约 44%–57%。
+- shuffle seed 825/826：各 99 passed；review 修复后 seed 827：100 passed。
 - `pnpm typecheck`、`pnpm lint`、schema/partition/profile/draft-status audits 全绿。
 - 完整 `pnpm test`：unit 5917 passed / 33 skipped；DB 4271 passed / 9 skipped / 1 todo；
   migration 27 passed。

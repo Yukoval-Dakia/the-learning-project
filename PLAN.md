@@ -18,7 +18,7 @@
   - 首批迁移 `proposal-tools.test.ts` 全文件，以及 `orchestrator.db.test.ts` 中两个无并发
     describe；catch-up/concurrent logging 等并发语义仍保留 TRUNCATE。
   - 基线（proposal + orchestrator，95 tests）：48.94s / 56.55s；优化后连同新增 helper
-    测试共 99 tests：25.16s / 26.27s / 27.38s，墙钟下降约 44%–55%。
+    测试共 99–100 tests：24.46s / 25.16s / 26.27s / 27.38s，墙钟下降约 44%–57%。
   - shuffle seed 825/826 全绿；完整 pre-PR gate 全绿：unit 5917、DB 4271、migration 27，
     lint/audits/typecheck/build 通过。完整本地 DB 受另一 worktree 同时跑 DB 竞争影响为
     1305s，不作为性能对比样本。

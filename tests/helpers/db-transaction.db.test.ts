@@ -64,6 +64,16 @@ describe('DB test transaction isolation', () => {
     ).toHaveLength(0);
   });
 
+  it('fails closed instead of weakening configured transaction semantics', async () => {
+    await beginTestTransaction();
+
+    await expect(
+      testDb().transaction(async () => undefined, {
+        isolationLevel: 'serializable',
+      }),
+    ).rejects.toThrow(/SET TRANSACTION|transaction/i);
+  });
+
   it('releases the reserved connection for the next test', async () => {
     await beginTestTransaction();
     await rollbackTestTransaction();

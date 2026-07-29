@@ -32,8 +32,13 @@ function installTransactionShim(reserved: postgres.ReservedSql): void {
       await reserved.unsafe(`RELEASE SAVEPOINT "${name}"`);
       return result;
     } catch (error) {
-      await reserved.unsafe(`ROLLBACK TO SAVEPOINT "${name}"`);
-      await reserved.unsafe(`RELEASE SAVEPOINT "${name}"`);
+      // Preserve the application error if savepoint cleanup itself fails. The
+      // outer afterEach ROLLBACK remains the authoritative cleanup and will
+      // surface a broken/lost connection separately.
+      await reserved
+        .unsafe(`ROLLBACK TO SAVEPOINT "${name}"`)
+        .then(() => reserved.unsafe(`RELEASE SAVEPOINT "${name}"`))
+        .catch(() => undefined);
       throw error;
     }
   };
@@ -51,7 +56,14 @@ function installTransactionShim(reserved: postgres.ReservedSql): void {
   // calls client.begin() for db.transaction(). The reserved runtime client does
   // not expose begin/savepoint, so map both to savepoints inside the test's
   // already-open outer transaction.
-  shim.begin = (first, second) => withSavepoint(resolveCallback(first, second));
+  shim.begin = (first, second) => {
+    if (typeof first === 'string') {
+      return Promise.reject(
+        new Error('Test transaction savepoints do not support postgres-js begin options'),
+      );
+    }
+    return withSavepoint(resolveCallback(first, second));
+  };
   shim.savepoint = (first, second) => withSavepoint(resolveCallback(first, second));
 }
 
@@ -89,7 +101,9 @@ export async function beginTestTransaction(): Promise<void> {
     await reserved.unsafe('BEGIN');
     // postgres-js' ReservedSql runtime object omits `options` even though its
     // public type extends Sql. Drizzle reads parser/serializer options while
-    // constructing the session, so expose the owning pool's options here.
+    // constructing the session, so expose the owning pool's options here. Each
+    // reserve() call creates a fresh Sql(handler) wrapper, so these wrapper
+    // properties do not survive release() or mutate the physical pool connection.
     reserved.options = client.options;
     installTransactionShim(reserved);
     const transactionDb = drizzle(reserved, { schema }) as unknown as Db;
