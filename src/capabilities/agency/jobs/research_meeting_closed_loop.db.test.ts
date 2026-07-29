@@ -432,7 +432,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
       resolution: 'evidence_for',
     });
 
-    // The typed ledger advanced off the SAME two events (FLIP-inert soft cell).
+    // The typed ledger advanced off the SAME two events (typed-state-soft cell).
     const [cell] = await db
       .select()
       .from(kc_typed_state)

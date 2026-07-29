@@ -1,10 +1,10 @@
 # ADR-0049 — Conjecture-Engine Dark-Loop Wire（producer + consumer 通电 + A4 双读 reader）
 
 **Status**: Accepted (owner 2026-07-04「wire（不 retire）」+ 推荐组合 4A+3A+2A+1A)
-**Amended by**: **ADR-0050 §(a)**（YUK-790，2026-07-25）——本 ADR §3 / Consequences 里「reconcile 会在 confirmed probe 上 **auto-mint** `kc_typed_state`(`typed_state='confused-with-X'`)」是**未来时写成了现在时**。实际：`reconcile.ts` 的 `reconcileConjecturePredictions()` 硬编码 `confused_with_kc_id: null`，`typed-state.ts` 的 `nextTypedState()` §修正-4 gate 要求**具名** confused-with KC 才发该态，诱导侧 schema `ConjectureProposalChange` 亦无此字段 ⇒ 该行**当前不可产生**。Q3 的双读 reader **保留**（reader-before-producer 红线成立），其 (b) 半边在通电前**暂空**。**owner 2026-07-25 裁定该轨要通电，执行 YUK-794**——届时本 ADR 的 auto-mint 表述才真正成立；在那之前相关文案一律按 ADR-0050 记「待通电」。下文原文保留作历史记录，读时请以此更正为准。
+**Amended by**: **ADR-0050 §(a)/(b)**。§(a)（YUK-790，2026-07-25）更正本 ADR §3 / Consequences 的 `confused-with-X` auto-mint 未来时，结构轨仍待 YUK-794。§(b) 已由 YUK-795 于 2026-07-29 落地：`prediction_score` 不再只供 admin 观察；correction-aware 两条 streak 在下一次 research meeting 的 top-K 前重排 conjecture identity（miss 0.25×、hit 1.15×；hard flag 开启且 Tier-1 EMERGING 时 1.25×），且不写 mastery/typed-state/FSRS。下文原文保留作历史决策记录，当前事实以 ADR-0050 为准。
 **Part of**: YUK-538 ⑬（conjecture-wire #13）。spec：`docs/design/2026-07-04-conjecture-wire-spec.md`。
 **Decision source**: owner 2026-07-04 对话——猜测探针生命周期（`serveProbeOnce`/`answerProbe`）是**建好 + DB-tested + 零 live caller** 的 producer/consumer 对；consumer `reconcileConjecturePredictions` nightly cron 真跑但输入集恒空。owner 拍 **wire（不 retire）**，走「isolated probe-answer path that cannot physically reach the FSRS/attempt write」。
-**Related**: ADR-0046（Rust 数值核——skill_score_point 是 TS 单点，窗口均 Rust-deferred）· ADR-0036（misconception promote，dark flag）· ADR-0044（event-sourcing 基建——probe_result/prediction_score 是 LOG-only experimental: actions）· a13 design `docs/design/2026-06-27-a13-ts-half-design.md` · 关系脑 roadmap `docs/planning/2026-06-27-relationship-brain-roadmap.md` U3-U8 · prep-desk handoff `docs/design/handoff/2026-06-27-prep-desk-conjectures.md`（UI design-gated）。
+**Related**: ADR-0046（Rust 数值核——skill_score_point 是 TS 单点，窗口均 Rust-deferred）· ADR-0036（misconception promote，hard mutation flag 默认 OFF）· ADR-0044（event-sourcing 基建——probe_result/prediction_score 是 append-only experimental actions）· a13 design `docs/design/2026-06-27-a13-ts-half-design.md` · 关系脑 roadmap `docs/planning/2026-06-27-relationship-brain-roadmap.md` U3-U8 · prep-desk handoff `docs/design/handoff/2026-06-27-prep-desk-conjectures.md`（UI design-gated）。
 
 ---
 
@@ -41,7 +41,7 @@ fail-closed 的诚实：partial 在判别探针上不 cleanly discriminate，注
 ### 3. Q3 — Calibration reader：admin 双读（A4 fix）
 
 新 route `GET /api/admin/conjecture-scores`（token gate，observability manifest），READ-ONLY。spec §6 S4 原案只 SELECT `prediction_score` events——但 A4 发现 consumer 会在 confirmed probe 上 auto-mint `kc_typed_state`（typed_state='confused-with-X'），producer 接通后这些**结构性软态变更**owner 无观测面。**修正**：reader 双读——
-- (a) `prediction_score` events（LOG-only 校准锚，诚实 brier/log_loss/skill_score_point 单点 proper score，`score_basis='single_point'` 非「准确度」非窗口均——ADR-0046 Rust-deferred）
+- (a) `prediction_score` events（单点 proper-score 校准/问责事实；YUK-795 后由 nightly ranker 消费，仍非「准确度」或 Rust 窗口均）
 - (b) `kc_typed_state` WHERE `typed_state='confused-with-X'`（reconcile auto-mint 的结构性软态，provenance=`evidence_event_ids`）
 
 ### 4. Q4 — MISCONCEPTION_PROMOTE_ENABLED flag：不翻，wire only
@@ -65,7 +65,7 @@ flag 保持 OFF（dark default）。wire 只接通 probe 生命周期 + reader�
 ## Consequences
 
 - **producer 通电**：accept conjecture → 同步派发判别探针（≤3 cap，best-effort）。
-- **consumer 通电**：owner 作答 → judge → outcome → probe_result event → reconcile 下次 nightly mint 软态 + 写 prediction_score LOG。
+- **consumer 通电**：owner 作答 → judge → outcome → probe_result event → reconcile 写 prediction_score；YUK-795 在后续 nightly 读取 streak 并改变候选顺序。
 - **owner 观测面**：admin reader 看校准锚 + auto-minted 软态，无盲区。
 - **retire 语义**在本波就引入（非 defer）——猜测被反驳的探针 retire，不 mint confused-with-X。
 - **未做（S3b）**：prep-desk card 作答区 UI 是 design-gated（`docs/design/handoff/2026-06-27-prep-desk-conjectures.md`），需 design pre-flight + owner approve，本 ADR 不含。

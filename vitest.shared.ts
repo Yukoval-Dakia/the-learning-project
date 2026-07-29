@@ -298,6 +298,10 @@ export const fastTestInclude = [
   // hard-confirm.db.test.ts (the gatherDissociationEvidence reader) into the unit
   // partition (audit:partition P0). The .db.test.ts falls through to the db partition.
   'src/server/conjectures/hard-confirm.unit.test.ts',
+  // YUK-795 — deterministic prediction-accountability fold and candidate ranking.
+  // The companion accountability.db.test.ts exercises the traceable DB reader and
+  // intentionally remains in the DB partition.
+  'src/server/conjectures/accountability.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
   // YUK-572 — shared scout primitives. CONVENTION glob: every *.unit.test.ts under
   // src/server/agency/scout/ runs no-DB (pure schema / AgentDefinition assembly /

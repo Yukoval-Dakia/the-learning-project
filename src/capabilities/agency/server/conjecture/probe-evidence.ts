@@ -1,4 +1,6 @@
 import {
+  PROBE_QUESTION_INITIAL_VERSION,
+  PROBE_QUESTION_KIND,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
@@ -24,12 +26,24 @@ interface ConjectureProbeSpec {
   id: string;
   knowledgeId: string;
   promptMd: string;
+  referenceMd: string;
   followupPromptMd: string | null;
+  followupReferenceMd: string | null;
 }
 
 type SupportingQuestionRow = Pick<
   typeof question.$inferSelect,
-  'id' | 'source' | 'source_ref' | 'draft_status' | 'prompt_md' | 'knowledge_ids' | 'metadata'
+  | 'id'
+  | 'kind'
+  | 'prompt_md'
+  | 'reference_md'
+  | 'choices_md'
+  | 'knowledge_ids'
+  | 'source'
+  | 'source_ref'
+  | 'draft_status'
+  | 'metadata'
+  | 'version'
 >;
 
 const probeResultColumns = {
@@ -41,12 +55,16 @@ const probeResultColumns = {
 
 const supportingQuestionColumns = {
   id: question.id,
+  kind: question.kind,
+  prompt_md: question.prompt_md,
+  reference_md: question.reference_md,
+  choices_md: question.choices_md,
+  knowledge_ids: question.knowledge_ids,
   source: question.source,
   source_ref: question.source_ref,
   draft_status: question.draft_status,
-  prompt_md: question.prompt_md,
-  knowledge_ids: question.knowledge_ids,
   metadata: question.metadata,
+  version: question.version,
 } as const;
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -107,7 +125,9 @@ function parseConjectureProbeSpec(row: typeof event.$inferSelect): ConjecturePro
     id: row.id,
     knowledgeId: change.knowledge_id,
     promptMd: change.probe_md,
+    referenceMd: change.probe_reference_md,
     followupPromptMd: change.followup_probe_md ?? null,
+    followupReferenceMd: change.followup_probe_reference_md ?? null,
   };
 }
 
@@ -119,7 +139,10 @@ function supportingQuestionSequence(
   const sequence = metadata.probe_sequence ?? 1;
   if (sequence !== 1 && sequence !== 2) return null;
   const expectedPrompt = sequence === 2 ? spec.followupPromptMd : spec.promptMd;
+  const expectedReference = sequence === 2 ? spec.followupReferenceMd : spec.referenceMd;
   if (
+    row.kind !== PROBE_QUESTION_KIND ||
+    row.version !== PROBE_QUESTION_INITIAL_VERSION ||
     row.source !== PROBE_QUESTION_SOURCE ||
     row.source_ref !== spec.id ||
     row.draft_status !== 'draft' ||
@@ -127,7 +150,10 @@ function supportingQuestionSequence(
     row.knowledge_ids.length === 0 ||
     row.knowledge_ids[0] !== spec.knowledgeId ||
     expectedPrompt === null ||
-    row.prompt_md !== expectedPrompt
+    expectedReference === null ||
+    row.prompt_md !== expectedPrompt ||
+    row.reference_md !== expectedReference ||
+    row.choices_md !== null
   ) {
     return null;
   }
@@ -144,6 +170,7 @@ function supportingQuestionSequence(
 export async function getEffectiveProbeResultStatuses(
   db: DbLike,
   probeResultEventIds: readonly string[],
+  options: { validateDirectChain?: boolean } = {},
 ): Promise<Map<string, EffectiveProbeResultStatus>> {
   const ids = [...new Set(probeResultEventIds)];
   const statuses = new Map<string, EffectiveProbeResultStatus>(ids.map((id) => [id, 'missing']));
@@ -203,11 +230,13 @@ export async function getEffectiveProbeResultStatuses(
     dependencyRows.map((row) => row.id),
   );
 
-  // Direct evidence keeps its existing correction-only status fold; the
-  // proposal/question chain is authoritative in each consumer's full validator.
-  // Recurrence is stricter here because every supporting question must be
-  // canonical before the terminal result may strengthen the conjecture.
-  const evidenceRows = dependencyRows;
+  // Recurrence always validates every supporting question. Consumers that use
+  // already-anchored direct results as live inputs can opt into the same
+  // proposal/question provenance validation so later generic question edits
+  // fail closed instead of changing ranking or other derived state.
+  const evidenceRows = options.validateDirectChain
+    ? [...new Map([...dependencyRows, ...activeRows].map((row) => [row.id, row] as const)).values()]
+    : dependencyRows;
   const evidenceQuestionIds = [...new Set(evidenceRows.map((row) => row.subject_id))];
   const evidenceConjectureEventIds = [
     ...new Set(
@@ -239,9 +268,14 @@ export async function getEffectiveProbeResultStatuses(
               inArray(event.id, evidenceConjectureEventIds),
             ),
           );
+  const proposalCorrectionStatuses = await getCorrectionStatuses(
+    db,
+    proposalRows.map((row) => row.id),
+  );
   const questionById = new Map(questionRows.map((row) => [row.id, row] as const));
   const specByConjectureId = new Map(
     proposalRows.flatMap((row) => {
+      if (proposalCorrectionStatuses.get(row.id)?.state !== 'active') return [];
       const spec = parseConjectureProbeSpec(row);
       return spec ? [[spec.id, spec] as const] : [];
     }),
@@ -255,6 +289,18 @@ export async function getEffectiveProbeResultStatuses(
   };
 
   for (const row of activeRows) statuses.set(row.id, 'active');
+  if (options.validateDirectChain) {
+    for (const row of activeRows) {
+      const conjectureEventId = toRecord(row.payload).conjecture_event_id;
+      if (
+        typeof conjectureEventId !== 'string' ||
+        row.caused_by_event_id !== conjectureEventId ||
+        sequenceForResult(row) === null
+      ) {
+        statuses.set(row.id, 'dependency_inactive');
+      }
+    }
+  }
   for (const { row, questionIds } of recurrenceRows) {
     const conjectureEventId = toRecord(row.payload).conjecture_event_id;
     if (

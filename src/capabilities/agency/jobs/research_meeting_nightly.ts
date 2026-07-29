@@ -13,7 +13,8 @@
 //   1. (PRE-LLM, retryable) read recent failures (with their YUK-562 reasoning
 //      traces) + per-KC mastery projection + the set of cause×KC keys that
 //      already have a PENDING conjecture (dedup);
-//   2. deterministic 取证 (gatherConjectureEvidence) → salience-sorted cells;
+//   2. deterministic 取证 (gatherConjectureEvidence) → prediction-accountability
+//      re-rank (repeated within-owner misses downweight; repeated hits boost);
 //   3. (PRE-LLM, retryable) GROUND cells in salience-order batches until K usable
 //      cells are found or candidates are exhausted (enrichEvidenceCells, YUK-786):
 //      KC name + subject identity + the first-hand attempt evidence (question,
@@ -30,9 +31,10 @@
 // durable write failures escape as job-level infrastructure faults.
 //
 // ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
-// accepts/edits/rejects in the inbox; scoring + label flips are DEFERRED (PR-2 /
-// ADR-0046). The proposal only SNAPSHOTS predicted_p (the claim's bet) +
-// baseline_p_at_induction (the number to beat); it does not move any number.
+// accepts/edits/rejects in the inbox. The proposal snapshots predicted_p (the
+// claim's bet) + baseline_p_at_induction (the number to beat); YUK-795 consumes
+// the resulting score history only for conjecture ordering. It never writes
+// mastery/θ/FSRS.
 
 import { createHash } from 'node:crypto';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -47,6 +49,7 @@ import {
 import type {
   ConjectureEvidenceAssetRef,
   EnrichedEvidenceCell,
+  EvidenceCell,
   LoadedConjectureEvidenceImage,
 } from '@/capabilities/agency/server/conjecture/evidence';
 import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
@@ -72,6 +75,11 @@ import {
   type InduceConjectureResult,
   induceConjecture,
 } from '@/server/agency/conjecture/induce';
+import {
+  type PredictionAccountability,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
+} from '@/server/conjectures/accountability';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
@@ -180,6 +188,10 @@ type LoadEvidenceImagesFn = (
   db: Db,
   refs: readonly ConjectureEvidenceAssetRef[],
 ) => Promise<LoadedConjectureEvidenceImage[]>;
+type LoadPredictionAccountabilityFn = (
+  db: Db,
+  cells: readonly EvidenceCell[],
+) => Promise<Map<string, PredictionAccountability>>;
 
 interface PreparedConjectureCell {
   cell: EnrichedEvidenceCell;
@@ -381,6 +393,8 @@ export interface ResearchMeetingDeps {
   enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
   /** dedup base: cause×KC keys with a PENDING conjecture (default reads the inbox). */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
+  /** YUK-795: correction-aware score history folded by cause×KC identity. */
+  loadPredictionAccountabilityFn?: LoadPredictionAccountabilityFn;
   /** injected runner — defaults to the real db-bound runTask. */
   runTaskFn?: TaskTextRunFn;
   induceConjectureFn?: InduceConjectureFn;
@@ -776,6 +790,8 @@ async function runResearchMeetingNightlyClaimed(
   const enrichEvidenceCellsFn = deps.enrichEvidenceCellsFn ?? enrichEvidenceCells;
   const loadKnownConjectureKeysFn =
     deps.loadKnownConjectureKeysFn ?? defaultLoadKnownConjectureKeys;
+  const loadPredictionAccountabilityFn =
+    deps.loadPredictionAccountabilityFn ?? loadPredictionAccountabilityByKey;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
@@ -807,9 +823,9 @@ async function runResearchMeetingNightlyClaimed(
   if (completedResult) return completedResult;
 
   // ── A13 reconcile (U8): project PRIOR probe outcomes into the typed ledger.
-  // Sequence 1 also appends a LOG-only prediction_score; recurrence results append a
-  // score-free projection anchor
-  // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
+  // Sequence 1 appends a prediction_score consumed by the accountability ranker;
+  // recurrence results append a score-free projection anchor. Typed-state remains
+  // soft. Runs BEFORE the propose half: deterministic DB work, idempotent
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
   let reconcileResult = await loadReconciliationResultFn(db, executionId);
@@ -851,8 +867,17 @@ async function runResearchMeetingNightlyClaimed(
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
   const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
-  // ── Deterministic 取证 + grounded top-K salience cap ──
-  const cells = gatherConjectureEvidence({ failures, masteryByKnowledgeId, knownConjectureKeys });
+  // ── Deterministic 取证 + accountability upper-bound order ──
+  const gatheredCells = gatherConjectureEvidence({
+    failures,
+    masteryByKnowledgeId,
+    knownConjectureKeys,
+  });
+  const accountabilityByKey =
+    gatheredCells.length > 0
+      ? await loadPredictionAccountabilityFn(db, gatheredCells)
+      : new Map<string, PredictionAccountability>();
+  const cells = rankEvidenceCellsByAccountability(gatheredCells, accountabilityByKey);
 
   // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
   // evidence, or every cell deduped by a pending conjecture) means the propose half has
@@ -878,14 +903,16 @@ async function runResearchMeetingNightlyClaimed(
   }
 
   // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
-  // Enrich in salience order, at most K cells per read, and refill from lower-ranked cells
-  // whenever mutable/missing question context leaves an earlier candidate ungrounded. Taking
-  // `cells.slice(0, K)` before this filter lets a permanently invalid high-salience prefix
-  // occupy the cap every night and starve valid candidates behind it.
-  const preparedTopCells: PreparedConjectureCell[] = [];
+  // Enrich in bounded salience batches and refill from lower-ranked cells whenever
+  // mutable/missing question context leaves an earlier candidate ungrounded. Raw
+  // recurrence is only an UPPER BOUND: after enrichment validates the immutable
+  // evidence ids, re-apply accountability to the reproducible count before the
+  // final top-K cut. Stop early only when no unprocessed raw upper bound can enter
+  // the validated top-K.
+  const preparedCandidates: PreparedConjectureCell[] = [];
   let cellOffset = 0;
-  while (preparedTopCells.length < RESEARCH_MEETING_MAX_CONJECTURES && cellOffset < cells.length) {
-    const batchSize = RESEARCH_MEETING_MAX_CONJECTURES - preparedTopCells.length;
+  while (cellOffset < cells.length) {
+    const batchSize = Math.min(RESEARCH_MEETING_MAX_CONJECTURES, cells.length - cellOffset);
     const batch = cells.slice(cellOffset, cellOffset + batchSize);
     cellOffset += batch.length;
     const enriched = await enrichEvidenceCellsFn(db, {
@@ -922,12 +949,41 @@ async function runResearchMeetingNightlyClaimed(
         }
       }),
     );
-    preparedTopCells.push(
+    preparedCandidates.push(
       ...preparedBatch.filter(
         (candidate): candidate is PreparedConjectureCell => candidate !== null,
       ),
     );
+    if (preparedCandidates.length >= RESEARCH_MEETING_MAX_CONJECTURES) {
+      const preparedKeys = new Set(preparedCandidates.map((candidate) => candidate.cell.key));
+      // Unprocessed cells intentionally retain their raw recurrence count as an
+      // upper bound. Giving them the benefit of the doubt can only delay this
+      // optimization and enrich an extra batch; it cannot skip a candidate that
+      // would enter the validated top-K.
+      const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
+        [...preparedCandidates.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
+        accountabilityByKey,
+      )
+        .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
+        .map((candidate) => candidate.key);
+      if (bestPossibleTopKeys.every((key) => preparedKeys.has(key))) break;
+    }
   }
+  const preparedByKey = new Map(
+    preparedCandidates.map((candidate) => [candidate.cell.key, candidate] as const),
+  );
+  const preparedTopCells = rankEvidenceCellsByAccountability(
+    preparedCandidates.map((candidate) => candidate.cell),
+    accountabilityByKey,
+  )
+    .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
+    .map((cell) => {
+      const prepared = preparedByKey.get(cell.key);
+      if (!prepared) {
+        throw new Error(`research_meeting_nightly: prepared candidate missing for ${cell.key}`);
+      }
+      return prepared;
+    });
   if (preparedTopCells.length === 0) {
     const ungroundedResult: ResearchMeetingResult = {
       considered: 0,

@@ -4,9 +4,18 @@
 
 /** The question.source stamped on every served conjecture probe. */
 export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
+/** Canonical grading kind for every authored conjecture probe. */
+export const PROBE_QUESTION_KIND = 'short_answer' as const;
+/** A served probe is immutable; any later question edit increments this version. */
+export const PROBE_QUESTION_INITIAL_VERSION = 0 as const;
 
 /** The canonical event action that records the qualitative probe outcome. */
 export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
+
+/** The score-free terminal recurrence projection appended by reconciliation. */
+export const PROBE_RESULT_PROJECTED_ACTION = 'experimental:probe_result_projected' as const;
+/** The calibrated sequence-1 score fact appended by reconciliation. */
+export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 
 /**
  * Persisted conjecture-survival decisions derived from a graded probe outcome.

@@ -25,7 +25,7 @@
 | | A5 graph-Laplacian / A6 prereq 传播 | YUK-441 / YUK-442 | **Backlog（已解锁）** | ⚠️ 依赖 YUK-344 已 Done → 静默解锁 |
 | | A7/A8/A10–A15 + A1 精修簇 | YUK-437/443/444/445/446/447/439 等 | **DESIGN** | — |
 | **关系脑·定性半（A13 conjecture engine）** | Phase 0 conjecture + 例会 job + 备课台 | **YUK-406** | **CODE-LIVE / ACCEPTANCE IN-FLIGHT** | felt UI、probe、reconcile 均在；保留两周产品验收 |
-| | A13 prediction-grounding + typed KC ledger | **YUK-440** → **YUK-794 / YUK-795** | **CODE-LIVE（问责半边待通电）** | prediction_score 已在但**零行为消费者**；`confused-with-X` 软轨当前无写者可产出（诱导侧无具名 confused-with KC）。owner 2026-07-25 裁定两条都通电：结构轨 → YUK-794，FLIP 消费者 + hard-confirm → YUK-795 — ADR-0050 §(a)/(b) |
+| | A13 prediction-grounding + typed KC ledger | **YUK-440** → **YUK-794 / YUK-795** | **CODE-LIVE（prediction accountability 已通电；结构轨待 YUK-794）** | YUK-795 已把 correction-aware prediction_score streak 接入 nightly top-K 排序，并消费 hard-confirm Tier-1 verdict；`confused-with-X` 软轨仍待 YUK-794 补具名 KC 后通电。见 ADR-0050 §(a)/(b)。 |
 | | 错因 catalog + retrieve-rerank L1 | YUK-454 / YUK-462 | **LIVE（rerank dark，soft-track）** | — |
 | **规划脑·B3** | daily-stream merge engine（retire `review_plan`） | **YUK-349** | **CODE-LIVE / CLOSEOUT IN-FLIGHT** | default softmax、frontier、nightly compose、retire 均在 |
 | **规划脑·panel** | 单 Opus 审议 panel（SELECT-not-fuse） | **YUK-505** → **YUK-796** | **重新立项（设计先行）** | owner 2026-07-25 裁定**要**审议能力，但须不破 single-director anti-swarm 契约 + 守 P0 Stop Signal；2026-06-18 fan-out 规格仅作历史留档 — ADR-0050 §(d) |

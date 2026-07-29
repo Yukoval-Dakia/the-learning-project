@@ -50,6 +50,8 @@
 import { newId } from '@/core/ids';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
+  PROBE_QUESTION_INITIAL_VERSION,
+  PROBE_QUESTION_KIND,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
@@ -194,7 +196,7 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
 export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<ServeProbeOnceResult> {
   const { db, conjectureProposalId, knowledgeId, probeMd } = params;
   const now = params.now ?? new Date();
-  const kind = params.kind ?? 'short_answer';
+  const kind = params.kind ?? PROBE_QUESTION_KIND;
   const difficulty = params.difficulty ?? 3;
   const probeSequence = params.probeSequence ?? 1;
   const referenceMd = params.referenceMd ?? null;
@@ -213,6 +215,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
       withAnswerClass({
         id: probeQuestionId,
         kind,
+        version: PROBE_QUESTION_INITIAL_VERSION,
         prompt_md: probeMd,
         reference_md: referenceMd,
         knowledge_ids: [knowledgeId],

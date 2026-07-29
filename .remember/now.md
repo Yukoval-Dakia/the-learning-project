@@ -3,42 +3,48 @@
 ## Active line
 
 - Architecture exit、Grounding 首切、YUK-804 均已合并。
-- 当前唯一 active 线是 YUK-787：
-  `codex/grounding-probe-evidence-strength`，PR #1098。
-- 已合入 `origin/main@e7155fe5` 的 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
+- YUK-787 已随 PR #1098 合并并在 Linear Done；最终 CI Gate / OCR / CodeQL 全绿。
+- 当前唯一 active 线是 YUK-795：
+  `codex/yuk-795-accountability-loop`，PR #1101，基于 `origin/main@876a501a`。
+- 已合入 GitHub CI 并行化及 DB/unit 长尾提速；不在本地
   重复跑 CI gate。
 
 ## 当前实现
 
-1. probe route 只把 Judge 粗判映射为 `outcome`；resolution 在 lifecycle 事务内折叠。
-2. 首次 incorrect → `evidence_for`；第二个独立 probe incorrect → `confirmed`；
-   correct → `retired`。同 conjecture advisory lock 关闭并发竞态。
-3. induction/director 同次生成两道 probe；首次 evidence 与 follow-up serve 原子提交。
-4. 新结果保存 recurrence rule version 与独立 probe ids；历史 v1 不重解释。
-5. Teaching Brief、即时反馈、survival report 与 evidence MCP 明确区分 preliminary / confirmed；
-   n=1 不解锁 scoped practice。
-6. Agency public reader 折叠 probe result 自身 correction 及 recurrence dependency correction。
-7. Teaching Brief、Scout、observability 与 hard-confirm 只消费有效证据；restore 恢复资格。
-8. reconcile 对已有 anchor 的 correction 做 typed-state replay；失效证据删除，restore 后恢复。
-9. Prep Desk / active cap 在 SQL 中先折 latest correction 再限 3 行；无历史 backlog 扫描。
-10. Scout history 使用 `(created_at,id)` keyset、去重、10× scan ceiling 与
-    `scan_truncated`，避免 OFFSET 漂移和无界调用。
+1. YUK-795 的 deterministic rule 已在 Linear 开工评论中锁定：
+   `skill_score_point >0`=hit、`<0`=miss、`=0`=neutral。
+2. 同一 owner、同一 `(cause_category × knowledge_id)` 的有效 score 按时间折叠；
+   单次 miss 不动排序，连续两次 miss → 0.25×，连续两次 hit → 1.15×。
+3. hard flag 开启且 Tier-1 dissociation 到 `EMERGING` 时，持续命中提升到 1.25×；
+   mixed/neutral/不足两条保持 1.0×。后续相反 streak 可逆转。
+4. 接线目标是 research meeting 在 top-K 截断前重排 evidence cells；correction
+   后的 probe_result 不进入 fold。
+5. `MISCONCEPTION_HARD_CONFIRM_ENABLED` 仍默认 OFF：当前 Judge 没有
+   `target_error_match`，不得把普通答错冒充 M-diagnostic；soft→hard 仍需 fresh owner
+   confirmation。本票只把现有 hard-confirm verdict 接入 live consumer，不伪造 hard。
+6. 最新 OCR P2 已补齐真实 v2 terminal chain：sequence-2 projection 保留
+   `independent_probe_question_ids`，仅把 terminal `confirmed` 折回首题已校准 score；
+   sequence-2 仍不产生伪造 score。
 
 ## 验证与远端
 
-- 变更文件 Biome、`git diff --check` 已通过。
-- PR #1098 的已知 review 线程均已逐项回复并解决。
+- YUK-795 已提交并推送为 PR #1101。
+- 最新定向 unit：accountability + reconcile 20/20；定向 DB：accountability +
+  reconcile 18/18；改动文件 Biome 与 `git diff --check` 已通过。此前关联
+  hard-confirm/nightly 定向测试也已通过。
+- commit `72080e41` 的 GitHub CI Gate / OCR / CodeQL 已全绿；terminal confirmation
+  review fix 推送后需重新监听完整远端 gate。
 - main 新增 CI 并行 lanes：static/audits、unit、DB、migration、build、usability；
   aggregate 保留 required-check 名称并 fail closed。
-- 合并 main 后只监听 GitHub Actions/OCR；不在本地跑完整 CI gate。
+- 只在本地跑改动范围的定向测试/格式检查；完整 gate 只监听 GitHub Actions/OCR。
 - CI 方案说明：`docs/research/2026-07-28-ci-speedup.md`。
 
 ## 下一步
 
-1. 推送最新 main merge commit，监听 PR #1098 新一轮 GitHub Actions/OCR；处理新增阻塞项。
-2. 全绿后 squash merge，Linear YUK-787 → Done。
-3. 严格串行启动 YUK-795 prediction_score / hard-confirm 问责轨。
-4. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
+1. 只监听 PR #1101 的 GitHub Actions/OCR，处理远端失败或 review；不在本地重复
+   完整 CI gate。
+2. 全绿后合并，Linear YUK-795 对齐 Done。
+3. YUK-814 真实 owner 数据 shadow/blind gate 必须单独执行；mock 不能代替。
 
 ## CI 测试长尾二次提速（2026-07-29）
 
