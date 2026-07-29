@@ -311,6 +311,7 @@ export async function prepareConjectureProbePair(
         passed: true,
         attempts: auditAttempts,
         final_review: review,
+        reviewed_hypothesis: structuredClone(input.hypothesis),
         reviewed_package: structuredClone(probePackage),
       },
       primary_task_run_id: authorResult.task_run_id,

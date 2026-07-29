@@ -37,8 +37,10 @@ import {
 import { newId } from '@/core/ids';
 import {
   ConjectureDiagnosticSpec,
+  ConjectureHypothesisProposalDraft,
   ConjectureProbeQualityAudit,
   ConjectureProbeSpec,
+  conjectureHypothesesEqual,
   conjectureProbePackagesEqual,
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
@@ -143,6 +145,20 @@ export async function acceptConjectureProposal(
           predicted_p: change.predicted_p,
         })
       : [];
+  const persistedHypothesis =
+    diagnosticSpec.success && qualityAudit.success && qualityAudit.data.schema_version === 2
+      ? ConjectureHypothesisProposalDraft.safeParse({
+          kind: 'proposal',
+          claim_md: change.claim_md,
+          knowledge_id: change.knowledge_id,
+          evidence_event_ids: proposal.payload.evidence_refs
+            .filter((ref) => ref.kind === 'event')
+            .map((ref) => ref.id),
+          diagnostic_spec: diagnosticSpec.data,
+          cause_category: change.cause_category,
+          recurrence_count: change.recurrence_count,
+        })
+      : null;
   const failureReasons: string[] = [];
   if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
   if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
@@ -150,6 +166,17 @@ export async function acceptConjectureProposal(
   if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
   if (qualityAudit.success && qualityAudit.data.schema_version !== 2) {
     failureReasons.push('probe_quality_audit_unbound');
+  }
+  if (persistedHypothesis && !persistedHypothesis.success) {
+    failureReasons.push('persisted_hypothesis_invalid');
+  }
+  if (
+    persistedHypothesis?.success &&
+    qualityAudit.success &&
+    qualityAudit.data.schema_version === 2 &&
+    !conjectureHypothesesEqual(qualityAudit.data.reviewed_hypothesis, persistedHypothesis.data)
+  ) {
+    failureReasons.push('probe_quality_hypothesis_mismatch');
   }
   if (change.discriminating !== true) failureReasons.push('not_discriminating');
   failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));

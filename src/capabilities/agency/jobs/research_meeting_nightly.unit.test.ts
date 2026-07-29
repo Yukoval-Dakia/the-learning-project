@@ -139,6 +139,21 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
           failure_codes: [],
           explanation_md: 'verified',
         },
+        reviewed_hypothesis: {
+          kind: 'proposal',
+          claim_md: `你混淆 ${cell.knowledge_id}`,
+          knowledge_id: cell.knowledge_id,
+          evidence_event_ids: cell.evidence_event_ids,
+          diagnostic_spec: {
+            schema_version: 1,
+            target_error_rule_md: `错误应用 ${cell.knowledge_id} 的规则`,
+            trigger_conditions_md: `题目要求使用 ${cell.knowledge_id}`,
+            scope_boundary_md: '不推断其它知识点。',
+            expected_wrong_answer_signature_md: '答案呈现目标错误规则。',
+          },
+          cause_category: cell.cause_category,
+          recurrence_count: cell.recurrence_count,
+        },
         reviewed_package: {
           primary: {
             prompt_md: `probe for ${cell.knowledge_id}`,

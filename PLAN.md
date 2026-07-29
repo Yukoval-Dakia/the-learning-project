@@ -13,12 +13,14 @@
 - **YUK-821：P0 严格收口，不再把“主链已合并”误报成“全部完成”**
   - PR #1110 已把 claim + DiagnosticSpec 共识、独立 Author/Reviewer、整包重生成、
     nightly/director 共用质量门及 fail-closed accept 合入 main。
-  - 复审发现两个真实缺口：旧 `passed=true` audit 未绑定 reviewer 实际看过的题包；
-    成功 audit 仍允许 author/reviewer task-run id 为空。因此 P0 在本轮开始时并未全收。
-  - 当前补 `probe_quality` v2：保存独立 `reviewed_package` 快照；成功尝试强制完整
-    author/reviewer lineage；proposal schema 与 accept 同时校验 audit 和最终落库题包一致。
-  - 新迁移 0083 用 agent-authored correction 退出 pending 的 v1、缺 lineage 或题包错配
-    记录；不伪造 owner dismiss、不写 memory outbox、不留下永久 409 卡片。
+  - 复审发现三个真实缺口：旧 `passed=true` audit 未绑定 reviewer 实际看过的 frozen
+    hypothesis 和题包；成功 audit 仍允许 author/reviewer task-run id 为空。因此 P0
+    在本轮开始时并未全收。
+  - 当前补 `probe_quality` v2：保存独立 `reviewed_hypothesis` 与 `reviewed_package`
+    快照；成功尝试强制完整 author/reviewer lineage；proposal schema 与 accept 同时校验
+    audit 和最终落库 claim/spec/evidence/题包一致。
+  - 新迁移 0083 用 agent-authored correction 退出 pending 的 v1、缺 lineage、hypothesis
+    或题包错配记录；不伪造 owner dismiss、不写 memory outbox、不留下永久 409 卡片。
   - P1 学科确定性 validator 仍只保留详细计划，未写代码。
 - **开发/发布闸门**
   - 只 mock 输入，输出必须走真实模型与生产任务链；真实 owner 数据不阻塞开发，

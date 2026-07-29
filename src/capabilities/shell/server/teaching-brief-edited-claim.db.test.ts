@@ -100,6 +100,21 @@ function conjecturePayload() {
           failure_codes: [],
           explanation_md: '主探针与复验探针都能区分目标错误，且情境与表征独立。',
         },
+        reviewed_hypothesis: {
+          kind: 'proposal' as const,
+          claim_md: ORIGINAL_CLAIM,
+          knowledge_id: 'kn_chain_rule',
+          evidence_event_ids: ['evt_a', 'evt_b'],
+          diagnostic_spec: {
+            schema_version: 1 as const,
+            target_error_rule_md: '把链式法则误写成两个导数相加或顺序互换。',
+            trigger_conditions_md: '对复合函数求导时必须同时处理内层与外层。',
+            scope_boundary_md: '只判断链式法则，不推断其它求导法则。',
+            expected_wrong_answer_signature_md: '答案缺少内层导数因子，或把两层导数相加。',
+          },
+          cause_category: 'concept_misunderstanding',
+          recurrence_count: 2,
+        },
         reviewed_package: {
           primary: {
             prompt_md: PROBE_MD,

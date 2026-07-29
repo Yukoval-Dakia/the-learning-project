@@ -21838,6 +21838,23 @@ export interface operations {
                             };
                             /** @enum {boolean} */
                             passed: true;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
                             reviewed_package: {
                               followup: {
                                 /** @enum {string} */
@@ -22752,6 +22769,23 @@ export interface operations {
                             };
                             /** @enum {boolean} */
                             passed: true;
+                            reviewed_hypothesis: {
+                              cause_category: string;
+                              claim_md: string;
+                              diagnostic_spec: {
+                                expected_wrong_answer_signature_md: string;
+                                /** @enum {number} */
+                                schema_version: 1;
+                                scope_boundary_md: string;
+                                target_error_rule_md: string;
+                                trigger_conditions_md: string;
+                              };
+                              evidence_event_ids: string[];
+                              /** @enum {string} */
+                              kind: 'proposal';
+                              knowledge_id: string;
+                              recurrence_count: number;
+                            };
                             reviewed_package: {
                               followup: {
                                 /** @enum {string} */

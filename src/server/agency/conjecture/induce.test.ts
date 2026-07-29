@@ -1115,6 +1115,15 @@ describe('induceConjecture self-consistency', () => {
     expect(draft.probe_md).toBe('对 y=sin(x³) 求导。');
     expect(draft.probe_quality.schema_version).toBe(2);
     expect(draft.probe_quality).toMatchObject({
+      reviewed_hypothesis: {
+        kind: 'proposal',
+        claim_md: draft.claim_md,
+        knowledge_id: draft.knowledge_id,
+        evidence_event_ids: draft.evidence_event_ids,
+        diagnostic_spec: draft.diagnostic_spec,
+        cause_category: draft.cause_category,
+        recurrence_count: draft.recurrence_count,
+      },
       reviewed_package: {
         primary: draft.probe_spec,
         followup: draft.followup_probe_spec,
@@ -1122,6 +1131,7 @@ describe('induceConjecture self-consistency', () => {
       },
     });
     if (draft.probe_quality.schema_version !== 2) throw new Error('expected v2 audit');
+    expect(draft.probe_quality.reviewed_hypothesis).not.toBe(draft);
     expect(draft.probe_quality.reviewed_package.primary).not.toBe(draft.probe_spec);
     expect(draft.probe_quality.attempts).toMatchObject([
       {

@@ -1075,12 +1075,23 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       context_kind: 'applied',
       representation_kind: 'natural_language',
     };
+    const diagnostic = {
+      schema_version: 1,
+      target_error_rule_md: 'applies the wrong rule',
+      trigger_conditions_md: 'the target concept is required',
+      scope_boundary_md: 'does not generalize beyond this concept',
+      expected_wrong_answer_signature_md: 'answer follows the wrong rule',
+    };
     const v2Change = {
+      claim_md: 'you apply the wrong rule',
+      knowledge_id: 'k_test',
+      cause_category: 'concept_confusion',
+      recurrence_count: 2,
       probe_md: primary.prompt_md,
       probe_reference_md: primary.reference_md,
       followup_probe_md: followup.prompt_md,
       followup_probe_reference_md: followup.reference_md,
-      diagnostic_spec: { schema_version: 1 },
+      diagnostic_spec: diagnostic,
       probe_spec: primary,
       followup_probe_spec: followup,
       probe_quality: {
@@ -1097,6 +1108,15 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
           },
         ],
         final_review: { verdict: 'pass' },
+        reviewed_hypothesis: {
+          kind: 'proposal',
+          claim_md: 'you apply the wrong rule',
+          knowledge_id: 'k_test',
+          evidence_event_ids: ['attempt_1', 'attempt_2'],
+          diagnostic_spec: diagnostic,
+          cause_category: 'concept_confusion',
+          recurrence_count: 2,
+        },
         reviewed_package: { primary, followup, predicted_p: 0.3 },
       },
       discriminating: true,
@@ -1106,6 +1126,10 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       const payload = {
         ai_proposal: {
           kind: 'conjecture',
+          evidence_refs: [
+            { kind: 'event', id: 'attempt_1' },
+            { kind: 'event', id: 'attempt_2' },
+          ],
           proposed_change: proposedChange,
         },
       };
@@ -1121,7 +1145,11 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
       `;
     };
 
-    const { reviewed_package: _reviewedPackage, ...v1Audit } = v2Change.probe_quality;
+    const {
+      reviewed_hypothesis: _reviewedHypothesis,
+      reviewed_package: _reviewedPackage,
+      ...v1Audit
+    } = v2Change.probe_quality;
     await seedProposal('audit_v1_pending', {
       ...v2Change,
       probe_quality: { ...v1Audit, schema_version: 1 },
@@ -1146,6 +1174,16 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         reviewed_package: {
           ...v2Change.probe_quality.reviewed_package,
           predicted_p: 0.4,
+        },
+      },
+    });
+    await seedProposal('audit_v2_hypothesis_mismatch', {
+      ...v2Change,
+      probe_quality: {
+        ...v2Change.probe_quality,
+        reviewed_hypothesis: {
+          ...v2Change.probe_quality.reviewed_hypothesis,
+          claim_md: 'a different unreviewed claim',
         },
       },
     });
@@ -1193,6 +1231,13 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         already_ingested: true,
       },
       {
+        subject_id: 'audit_v2_hypothesis_mismatch',
+        actor_kind: 'agent',
+        actor_ref: 'yuk821_audit_binding_migration',
+        affected_scopes: [],
+        already_ingested: true,
+      },
+      {
         subject_id: 'audit_v2_mismatch',
         actor_kind: 'agent',
         actor_ref: 'yuk821_audit_binding_migration',
@@ -1215,6 +1260,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
         AND payload ->> 'rating' = 'dismiss'
         AND caused_by_event_id IN (
           'audit_v1_pending',
+          'audit_v2_hypothesis_mismatch',
           'audit_v2_mismatch',
           'audit_v2_missing_lineage'
         )

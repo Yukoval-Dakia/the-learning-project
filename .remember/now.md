@@ -12,12 +12,14 @@
 
 ## 为什么 PR #1110 合并后 P0 仍不能声称“全收”
 
-复审确认两个可复现缺口：
+复审确认三个可复现缺口：
 
 1. v1 `probe_quality` 只证明某次 review 返回 pass，没有保存 reviewer 实际看到的题包。
    因此把一个通过 audit 贴到另一个结构合法的题包上，accept 仍可能放行。
 2. v1 成功 audit 允许 `author_task_run_id` / `reviewer_task_run_id` 为 null，不能满足完整
    lineage 与可追溯要求。
+3. 首轮 v2 只绑定题包，没有绑定 reviewer 同时审查的 frozen hypothesis；替换 claim、
+   DiagnosticSpec 或 evidence refs 后仍可能复用旧 verdict。PR review 已指出并在同批修复。
 
 旧 8-case 真实输出复评也尚未完成：此前 canonical Opus 在第一簇三次 induction 都收到
 429 weekly limit；这是 operational stop，不是质量结果。
@@ -25,14 +27,16 @@
 ## 本轮实现
 
 1. `probe_quality` 增加 v2；v1 仅保留历史可读性。
-2. v2 保存与返回题包分离的 `reviewed_package` 快照；schema、proposal 与 accept 都逐字段
-   核对 primary、follow-up 和 `predicted_p`。
+2. v2 保存与返回对象分离的 `reviewed_hypothesis`、`reviewed_package` 快照；schema、
+   proposal 与 accept 逐字段核对 claim、DiagnosticSpec、证据事件、错因/KC、双题和
+   `predicted_p`。
 3. v2 最终 passed attempt 强制非空 author/reviewer task-run id；生产链若缺 lineage，按
    operational failure 重试，不能产生可接受 audit。
 4. accept 对 v1 返回 `probe_quality_audit_unbound`，对错贴题包返回
    `probe_quality_package_mismatch`；历史已接受记录仍先走幂等短路。
 5. 新迁移 `0083_yuk821_bind_probe_quality_audit`：agent-authored correction 收口 pending
-   的 v1、缺 lineage 或题包错配记录；empty scopes、非空 ingest_at、不写 owner dismiss。
+   的 v1、缺 lineage、hypothesis 或题包错配记录；empty scopes、非空 ingest_at、不写
+   owner dismiss。
 6. OpenAPI typed client 已重新生成；P1 subject deterministic validators 仍未实现。
 
 ## 当前定向验证

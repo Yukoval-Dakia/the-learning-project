@@ -67,9 +67,9 @@
 
 ### 2.6 可追溯、可接受、可拒绝
 
-新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。`probe_quality` v2 还保存 reviewer 实际看过的不可变 `reviewed_package`。只有最后一次通过尝试同时有 author 和 reviewer 的 durable task-run id，且 `reviewed_package` 与 proposal 最终落库的两道题及 `predicted_p` 完全一致，才允许 accept。不能再把别的题包的 `passed=true` 审计贴到当前题包上。
+新 proposal 保存：冻结合同、两道题的完整 spec、每次 author/reviewer task run id、失败码、解释和最终通过记录。`probe_quality` v2 还分别保存 reviewer 实际看过的不可变 `reviewed_hypothesis` 与 `reviewed_package`。只有最后一次通过尝试同时有 author 和 reviewer 的 durable task-run id，且两个快照与 proposal 最终落库的 claim、DiagnosticSpec、证据事件、错因/KC、两道题及 `predicted_p` 完全一致，才允许 accept。不能再把别的 claim 或题包的 `passed=true` 审计贴到当前 proposal 上。
 
-新的 accept 路径缺任一字段、使用未绑定的 v1 audit、嵌套题与实际持久化题不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。升级迁移会用 agent-authored correction 退出仍 pending 的 v1、缺 lineage 或题包不一致记录，不伪造 owner dismiss，也不留下永远 409 的死卡片。
+新的 accept 路径缺任一字段、使用未绑定的 v1 audit、审过的 hypothesis/题包与实际持久化内容不一致、结构门失败或最终 audit 未通过时，返回 409 `CONJECTURE_PROBE_QUALITY_REQUIRED`，要求重新准备；已经接受的历史记录仍可幂等读取。升级迁移会用 agent-authored correction 退出仍 pending 的 v1、缺 lineage、hypothesis 不一致或题包不一致记录，不伪造 owner dismiss，也不留下永远 409 的死卡片。
 
 自动 nightly 和 agent-led director 共用同一质量门，不存在一个入口严格、另一个入口仍可绕过的双轨。
 
@@ -184,8 +184,8 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 - author/reviewer 独立、同模型、同证据；
 - 一次整包重生成；两次质量失败 abstain；operational 不冒充质量反对票；
 - nightly/director/accept 三个入口均不能绕过；
-- proposal 保存完整 lineage、reviewed package 与审计；v1 只可读，不能用于新 accept；
-- 升级迁移收口 pending 的未绑定 audit、缺失 lineage 与题包不一致记录；
+- proposal 保存完整 lineage、reviewed hypothesis、reviewed package 与审计；v1 只可读，不能用于新 accept；
+- 升级迁移收口 pending 的未绑定 audit、缺失 lineage、hypothesis 或题包不一致记录；
 - 定向 unit、DB、typecheck、Biome 通过，完整 gate 由 GitHub Actions 执行。
 - 固定 8-case mock-input/真实模型-output 回归相对旧基线有改善后，通过开发 gate；
   真实 owner 数据只决定是否扩大自动干预。

@@ -1,10 +1,12 @@
 -- YUK-821 P0 closeout: retire still-pending conjectures whose passing review is
--- not bound to the exact persisted probe package or lacks durable task-run lineage.
+-- not bound to the exact frozen hypothesis + persisted probe package or lacks
+-- durable task-run lineage.
 --
 -- 0082 retired incomplete pre-v3 packets, but its v1 audit predicate could not
--- prove which package the reviewer actually saw. A v2 audit carries that immutable
--- reviewed_package snapshot and requires author + reviewer task-run ids on the
--- passing attempt. New accepts fail closed on the same contract.
+-- prove which hypothesis/package the reviewer actually saw. A v2 audit carries
+-- immutable reviewed_hypothesis + reviewed_package snapshots and requires author +
+-- reviewer task-run ids on the passing attempt. New accepts fail closed on the same
+-- contract.
 --
 -- Keep the upgrade correction agent-authored and already ingested. It is artifact
 -- retirement, not an owner rejection or learner-memory signal.
@@ -55,6 +57,28 @@ WHERE proposal."action" = 'experimental:proposal'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,final_review,verdict}' = 'pass'
     AND proposal."payload" #>> '{ai_proposal,proposed_change,discriminating}' = 'true'
     AND jsonb_typeof(proposal."payload" #> '{ai_proposal,proposed_change,predicted_p}') = 'number'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,kind}'
+      = 'proposal'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,claim_md}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,claim_md}'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,knowledge_id}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,knowledge_id}'
+    AND proposal."payload" #>> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,cause_category}'
+      = proposal."payload" #>> '{ai_proposal,proposed_change,cause_category}'
+    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,recurrence_count}'
+      = proposal."payload" #> '{ai_proposal,proposed_change,recurrence_count}'
+    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,diagnostic_spec}'
+      = proposal."payload" #> '{ai_proposal,proposed_change,diagnostic_spec}'
+    AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_hypothesis,evidence_event_ids}'
+      = COALESCE(
+        (
+          SELECT jsonb_agg(evidence.ref -> 'id' ORDER BY evidence.ordinality)
+          FROM jsonb_array_elements(proposal."payload" #> '{ai_proposal,evidence_refs}')
+            WITH ORDINALITY AS evidence(ref, ordinality)
+          WHERE evidence.ref ->> 'kind' = 'event'
+        ),
+        '[]'::jsonb
+      )
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,primary}'
       = proposal."payload" #> '{ai_proposal,proposed_change,probe_spec}'
     AND proposal."payload" #> '{ai_proposal,proposed_change,probe_quality,reviewed_package,followup}'

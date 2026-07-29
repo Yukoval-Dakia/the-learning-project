@@ -91,6 +91,21 @@ describe('ConjectureProposalChange', () => {
           failure_codes: [],
           explanation_md: '通过。',
         },
+        reviewed_hypothesis: {
+          kind: 'proposal',
+          claim_md: valid.claim_md,
+          knowledge_id: valid.knowledge_id,
+          evidence_event_ids: ['event_1'],
+          diagnostic_spec: {
+            schema_version: 1,
+            target_error_rule_md: '把必要条件当成充分条件。',
+            trigger_conditions_md: '判断条件是否足以推出结论。',
+            scope_boundary_md: '不扩展到其它逻辑关系。',
+            expected_wrong_answer_signature_md: '把仅必要判断成充分。',
+          },
+          cause_category: valid.cause_category,
+          recurrence_count: valid.recurrence_count,
+        },
         reviewed_package: {
           primary,
           followup,
@@ -120,8 +135,18 @@ describe('ConjectureProposalChange', () => {
         },
       }).success,
     ).toBe(false);
+    expect(
+      ConjectureProposalChange.safeParse({
+        ...parsed,
+        claim_md: '换成未经 reviewer 审查的判断',
+      }).success,
+    ).toBe(false);
 
-    const { reviewed_package: _reviewedPackage, ...historicalAudit } = parsed.probe_quality;
+    const {
+      reviewed_hypothesis: _reviewedHypothesis,
+      reviewed_package: _reviewedPackage,
+      ...historicalAudit
+    } = parsed.probe_quality;
     expect(
       ConjectureProposalChange.safeParse({
         ...parsed,

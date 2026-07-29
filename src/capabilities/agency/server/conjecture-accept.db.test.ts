@@ -101,6 +101,21 @@ function baseConjecture() {
           failure_codes: [],
           explanation_md: 'verified',
         },
+        reviewed_hypothesis: {
+          kind: 'proposal' as const,
+          claim_md: 'you treat the chain rule as multiplying derivatives',
+          knowledge_id: 'kn_chain_rule',
+          evidence_event_ids: ['evt_a', 'evt_b'],
+          diagnostic_spec: {
+            schema_version: 1 as const,
+            target_error_rule_md: 'Adds outer and inner derivatives instead of multiplying them.',
+            trigger_conditions_md: 'A composite function must be differentiated.',
+            scope_boundary_md: 'Does not claim other differentiation rules are misunderstood.',
+            expected_wrong_answer_signature_md: 'Outer derivative + inner derivative.',
+          },
+          cause_category: 'concept_misunderstanding',
+          recurrence_count: 2,
+        },
         reviewed_package: {
           primary: primaryProbeSpec,
           followup: followupProbeSpec,
@@ -291,8 +306,11 @@ describe('acceptConjectureProposal lifecycle', () => {
   it('keeps a v1 audit readable but refuses to use it for a new accept decision', async () => {
     const db = testDb();
     const payload = baseConjecture();
-    const { reviewed_package: _reviewedPackage, ...historicalAudit } =
-      payload.proposed_change.probe_quality;
+    const {
+      reviewed_hypothesis: _reviewedHypothesis,
+      reviewed_package: _reviewedPackage,
+      ...historicalAudit
+    } = payload.proposed_change.probe_quality;
     const proposalId = await writeAiProposal(db, {
       actor_ref: 'research_meeting',
       payload: {
@@ -331,6 +349,24 @@ describe('acceptConjectureProposal lifecycle', () => {
       message: expect.stringContaining('probe_quality_package_mismatch'),
     });
     expect(await rateEvents('tampered_probe_quality')).toHaveLength(0);
+  });
+
+  it('rejects a passing audit copied from a different frozen hypothesis', async () => {
+    const payload = baseConjecture();
+    const tampered = structuredClone(payload);
+    tampered.proposed_change.claim_md = 'you forget to simplify the final expression';
+
+    await expect(
+      acceptConjectureProposal(testDb(), 'tampered_hypothesis_quality', {
+        id: 'tampered_hypothesis_quality',
+        payload: tampered,
+      } as never),
+    ).rejects.toMatchObject({
+      code: CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+      status: 409,
+      message: expect.stringContaining('probe_quality_hypothesis_mismatch'),
+    });
+    expect(await rateEvents('tampered_hypothesis_quality')).toHaveLength(0);
   });
 
   it('does not accept a self-declared non-discriminating package even when an audit is present', async () => {
@@ -782,6 +818,11 @@ describe('acceptConjectureProposal lifecycle', () => {
         { kind: 'event' as const, id: 'evt_e' },
       ];
       second.proposed_change.recurrence_count = 3;
+      second.proposed_change.probe_quality.reviewed_hypothesis = {
+        ...second.proposed_change.probe_quality.reviewed_hypothesis,
+        evidence_event_ids: ['evt_c', 'evt_d', 'evt_e'],
+        recurrence_count: 3,
+      };
       const proposalB = await writeAiProposal(db, {
         actor_ref: 'research_meeting',
         payload: second,

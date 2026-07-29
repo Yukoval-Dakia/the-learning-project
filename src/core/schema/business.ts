@@ -405,6 +405,42 @@ export const ConjectureHypothesisProposalDraft = z.object({
   kind: z.literal('proposal'),
   ...ConjectureHypothesisFields,
 });
+export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
+
+export type ConjectureHypothesisCoreT = Omit<
+  ConjectureHypothesisProposalDraftT,
+  'kind' | 'evidence_event_ids'
+>;
+
+export function conjectureHypothesisCoreMatches(
+  left: ConjectureHypothesisProposalDraftT,
+  right: ConjectureHypothesisCoreT,
+): boolean {
+  return (
+    left.claim_md === right.claim_md &&
+    left.knowledge_id === right.knowledge_id &&
+    left.cause_category === right.cause_category &&
+    left.recurrence_count === right.recurrence_count &&
+    left.diagnostic_spec.schema_version === right.diagnostic_spec.schema_version &&
+    left.diagnostic_spec.target_error_rule_md === right.diagnostic_spec.target_error_rule_md &&
+    left.diagnostic_spec.trigger_conditions_md === right.diagnostic_spec.trigger_conditions_md &&
+    left.diagnostic_spec.scope_boundary_md === right.diagnostic_spec.scope_boundary_md &&
+    left.diagnostic_spec.expected_wrong_answer_signature_md ===
+      right.diagnostic_spec.expected_wrong_answer_signature_md
+  );
+}
+
+/** Exact identity of the frozen hypothesis supplied to probe author and reviewer. */
+export function conjectureHypothesesEqual(
+  left: ConjectureHypothesisProposalDraftT,
+  right: ConjectureHypothesisProposalDraftT,
+): boolean {
+  return (
+    conjectureHypothesisCoreMatches(left, right) &&
+    left.evidence_event_ids.length === right.evidence_event_ids.length &&
+    left.evidence_event_ids.every((id, index) => id === right.evidence_event_ids[index])
+  );
+}
 
 export const CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH = 500;
 
@@ -645,6 +681,7 @@ export const ConjectureProbeQualityAudit = z
     z.object({
       schema_version: z.literal(2),
       ...ConjectureProbeQualityAuditFields,
+      reviewed_hypothesis: ConjectureHypothesisProposalDraft,
       reviewed_package: ConjectureProbePackage,
     }),
   ])
@@ -713,7 +750,6 @@ export const ConjectureHypothesisDraft = z.discriminatedUnion('kind', [
   ConjectureHypothesisProposalDraft,
   ConjectureModelAbstainDraft,
 ]);
-export type ConjectureHypothesisProposalDraftT = z.infer<typeof ConjectureHypothesisProposalDraft>;
 export type ConjectureHypothesisDraftT = z.infer<typeof ConjectureHypothesisDraft>;
 
 /**
@@ -785,6 +821,24 @@ export const ConjectureDraft = z
         code: z.ZodIssueCode.custom,
         path: ['probe_spec'],
         message: `probe package failed structural quality gate: ${failureCode}`,
+      });
+    }
+    if (
+      draft.probe_quality.schema_version === 2 &&
+      !conjectureHypothesesEqual(draft.probe_quality.reviewed_hypothesis, {
+        kind: 'proposal',
+        claim_md: draft.claim_md,
+        knowledge_id: draft.knowledge_id,
+        evidence_event_ids: draft.evidence_event_ids,
+        diagnostic_spec: draft.diagnostic_spec,
+        cause_category: draft.cause_category,
+        recurrence_count: draft.recurrence_count,
+      })
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['probe_quality', 'reviewed_hypothesis'],
+        message: 'probe_quality must be bound to the persisted frozen hypothesis',
       });
     }
     if (
