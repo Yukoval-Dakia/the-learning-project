@@ -14,7 +14,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import postgres from 'postgres';
+import postgres, { type JSONValue } from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 // Mirror tests/global-setup.ts docker socket auto-detection (OrbStack / Docker Desktop)
@@ -923,7 +923,7 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
       discriminating: true,
       predicted_p: 0.3,
     };
-    const seedProposal = async (id: string, proposedChange: Record<string, unknown>) => {
+    const seedProposal = async (id: string, proposedChange: Record<string, JSONValue>) => {
       const payload = {
         ai_proposal: {
           kind: 'conjecture',
