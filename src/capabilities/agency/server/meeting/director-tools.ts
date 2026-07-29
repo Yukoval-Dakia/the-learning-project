@@ -194,7 +194,8 @@ export interface BuildDirectorServerOpts {
   writeAgentNoteFn?: WriteAgentNoteFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
   evidenceRefsExistFn?: EvidenceRefsExistFn;
-  /** Same lifecycle facts/gate as the deterministic lane; re-read at write time. */
+  /** Same failure-attempt snapshot as the deterministic lane, read once at meeting
+   * start. Only conjecture history is re-read fresh by the write handler below. */
   failureAttempts: FailureAttempt[];
   loadConjectureHistoryFn?: LoadConjectureHistoryFn;
 }

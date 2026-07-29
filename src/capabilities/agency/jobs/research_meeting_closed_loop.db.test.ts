@@ -671,12 +671,21 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     });
     expect((await acceptViaRoute(olderProposal.id)).status).toBe(201);
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
     const newerProposalId = await writeAiProposal(db, {
       actor_ref: 'research_meeting',
       payload: olderProposal.payload,
     });
     expect((await acceptViaRoute(newerProposalId)).status).toBe(201);
+    // Pin the test fixture's append order explicitly. Wall-clock sleeps can still
+    // collapse to one timestamp on CI, leaving compareNewest to an unrelated id tie-break.
+    await db
+      .update(event)
+      .set({ created_at: new Date('2026-01-01T00:00:00Z') })
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, olderProposal.id)));
+    await db
+      .update(event)
+      .set({ created_at: new Date('2026-01-01T00:00:01Z') })
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, newerProposalId)));
 
     const olderTerminal = await answerBothProbes(olderProposal.id);
     await seedRecurringFailures(2, {
